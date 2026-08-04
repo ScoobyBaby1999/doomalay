@@ -115,7 +115,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
-		httpReq.Header.Set("HTTP-Referer", "https://github.com/ScoobyBaby1999/doomalay")
+		httpReq.Header.Set("HTTP-Referer", "https://doomalay.app")
 		httpReq.Header.Set("X-Title", "Doomalay")
 
 		ch <- ChatChunk{Type: "status", State: "running"}

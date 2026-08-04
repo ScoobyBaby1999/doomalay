@@ -1,19 +1,24 @@
-# Python venv (brain/.venv/) — users create their own
-brain/.venv/
+# Python
 .venv/
 venv/
 __pycache__/
 *.pyc
+brain/.venv/
 
-# Go build artifacts
+# Go
 *.exe
 *.dll
 *.so
 *.dylib
-doomalay-engine
 /bin/
+engine/doomalay-engine
 
-# Built PWA (built from app/ branch via make build)
+# Node / PWA
+node_modules/
+app/dist/
+app/node_modules/
+
+# Built PWA (built from app/ via make build)
 engine/internal/server/web/assets/
 
 # Local data
@@ -21,9 +26,10 @@ engine/internal/server/web/assets/
 /secrets.json
 /master.key
 
-# Node (app branch only, but safe to ignore here too)
-node_modules/
-dist/
+# Android
+platforms/android/app/build/
+platforms/android/.gradle/
+platforms/android/local.properties
 
 # Editor
 .vscode/
@@ -34,3 +40,10 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# CI artifacts
+/artifacts/
+
+# Android jniLibs (Go binary built by CI)
+platforms/android/app/src/main/jniLibs/arm64-v8a/libdoomalayengine.so
+platforms/hf-space/engine/doomalay-engine

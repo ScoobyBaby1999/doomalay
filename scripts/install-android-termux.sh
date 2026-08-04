@@ -15,7 +15,7 @@
 #   - ~500MB free storage (for Go toolchain + Python deps + the build)
 #
 # USAGE:
-#   curl -fsSL https://raw.githubusercontent.com/ScoobyBaby1999/doomalay/lib/scripts/install-android-termux.sh | bash
+#   curl -fsSL ${REPO_RAW:-https://raw.githubusercontent.com/ScoobyBaby1999/doomalay}/lib/scripts/install-android-termux.sh | bash
 #
 #   OR, if you've cloned the repo already:
 #   cd doomalay && bash scripts/install-android-termux.sh
@@ -49,7 +49,7 @@ DOOMALAY_APP_DIR="$HOME/doomalay-app"
 
 if [ ! -d "$DOOMALAY_DIR" ]; then
     echo "▶ Cloning doomalay (lib branch)…"
-    git clone --branch lib --depth 1 https://github.com/ScoobyBaby1999/doomalay.git "$DOOMALAY_DIR"
+    git clone --branch lib --depth 1 ${REPO_URL:-https://github.com/ScoobyBaby1999/doomalay.git} "$DOOMALAY_DIR"
     echo "  ✓ cloned to $DOOMALAY_DIR"
 else
     echo "  ✓ $DOOMALAY_DIR exists, pulling latest…"
@@ -58,7 +58,7 @@ fi
 
 if [ ! -d "$DOOMALAY_APP_DIR" ]; then
     echo "▶ Cloning doomalay (app branch)…"
-    git clone --branch app --depth 1 https://github.com/ScoobyBaby1999/doomalay.git "$DOOMALAY_APP_DIR"
+    git clone --branch app --depth 1 ${REPO_URL:-https://github.com/ScoobyBaby1999/doomalay.git} "$DOOMALAY_APP_DIR"
     echo "  ✓ cloned to $DOOMALAY_APP_DIR"
 else
     echo "  ✓ $DOOMALAY_APP_DIR exists, pulling latest…"

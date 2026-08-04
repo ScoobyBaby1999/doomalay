@@ -1,0 +1,11 @@
+# Android (Chaquopy) requirements — pure Python only, no C extensions.
+# Used by platforms/android/app/build.gradle.kts (Chaquopy pip block).
+# The full requirements.txt is for PC/Mac/Linux/HF Space (FastAPI, pydantic, lxml OK).
+litellm==1.55.10
+strands-agents
+httpx
+duckduckgo-search
+beautifulsoup4
+PyGithub
+gitpython
+uvicorn
