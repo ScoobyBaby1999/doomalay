@@ -150,6 +150,14 @@ func (b *Brain) Healthy() bool {
         return b.healthy
 }
 
+// URL returns the brain's base URL (e.g. "http://localhost:9090").
+func (b *Brain) URL() string {
+        if b == nil {
+                return ""
+        }
+        return b.url
+}
+
 // SetEnv sets the provider key env vars to inject when proxying to the brain.
 // Called by the secrets vault when keys change.
 func (b *Brain) SetEnv(env map[string]string) {

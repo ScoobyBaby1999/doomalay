@@ -10,6 +10,7 @@ import (
 
         "github.com/gorilla/websocket"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -188,20 +189,108 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
                 brainReq["model"] = v // allow per-message override
         }
 
-        // Stream from the brain.
-        if s.brain == nil || !s.brain.Healthy() {
-                s.emit(conn, sessionID, "error", `{"error":"brain_offline","message":"Python brain not running. Install python + brain/requirements.txt to enable chat."}`, "")
-                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
-                return
+        // Stream from the brain, OR the direct LLM proxy if brain is down.
+        if s.brain != nil && s.brain.Healthy() {
+                s.streamFromBrain(ctx, conn, sessionID, sess, brainReq, userText)
+        } else {
+                s.streamFromDirectProxy(ctx, conn, sessionID, sess, userText)
         }
+}
 
+// streamFromBrain proxies the chat turn through the Python brain (full
+// agent: Strands, tools, panel, templates). Used when the brain is available.
+func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, brainReq map[string]any, userText string) {
         events, errs, err := s.brain.Chat(ctx, brainReq)
         if err != nil {
                 s.emit(conn, sessionID, "error", `{"error":"brain","message":"`+err.Error()+`"}`, "")
                 s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
+        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, errs)
+}
 
+// streamFromDirectProxy calls the cloud LLM directly from Go (no Python brain
+// needed). Used when the brain is unavailable (e.g. the Android APK). Cloud
+// chat only — no local tools, no panel, no templates. But the streaming,
+// persistence, and V0 fixes are identical.
+func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string) {
+        if s.vault == nil {
+                s.emit(conn, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
+                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                return
+        }
+        keys := s.vault.AsEnv()
+        model := sess.Model
+        provider := sess.Provider
+        if model == "" || provider == "" {
+                s.emit(conn, sessionID, "error", `{"error":"no_model","message":"no model selected for this chat"}`, "")
+                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                return
+        }
+
+        llmModel, baseURL, _, apiKey, err := llm.ResolveModel(model, provider, keys)
+        if err != nil {
+                s.emit(conn, sessionID, "error", `{"error":"model_resolve","message":"`+err.Error()+`"}`, "")
+                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                return
+        }
+
+        req := llm.ChatRequest{
+                Model:    llmModel,
+                Messages: []llm.Message{{Role: "user", Content: userText}},
+                Effort:   sess.Effort,
+                APIKey:   apiKey,
+                BaseURL:  baseURL,
+        }
+        chunks, errs := llm.Chat(ctx, req)
+
+        // Convert ChatChunk → map[string]any (the format forwardEvents expects).
+        events := make(chan map[string]any, 64)
+        go func() {
+                defer close(events)
+                for chunk := range chunks {
+                        ev := map[string]any{
+                                "type":       chunk.Type,
+                                "session_id": sessionID,
+                        }
+                        if chunk.Text != "" {
+                                ev["text"] = chunk.Text
+                        }
+                        if chunk.State != "" {
+                                ev["state"] = chunk.State
+                        }
+                        if chunk.Usage != nil {
+                                ev["usage"] = map[string]any{
+                                        "input_tokens":  chunk.Usage.InputTokens,
+                                        "output_tokens": chunk.Usage.OutputTokens,
+                                        "total_tokens":  chunk.Usage.TotalTokens,
+                                }
+                        }
+                        if chunk.Error != "" {
+                                ev["error"] = chunk.Error
+                                ev["message"] = chunk.Message
+                        }
+                        events <- ev
+                }
+                select {
+                case e := <-errs:
+                        if e != nil {
+                                events <- map[string]any{"type": "error", "error": "llm", "message": e.Error()}
+                        }
+                default:
+                }
+        }()
+
+        // errs channel is consumed above; create a dummy one for forwardEvents.
+        dummyErrs := make(chan error, 1)
+        close(dummyErrs)
+        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, dummyErrs)
+}
+
+// forwardEvents is the shared event-handling loop for both brain and direct
+// proxy paths. It persists each event to chat_events (V0 fix) + forwards to
+// the PWA via WebSocket + handles auto-naming.
+func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, events <-chan map[string]any, errs <-chan error) {
         for ev := range events {
                 // Normalize the event into the wire format + persist.
                 evType, _ := ev["type"].(string)
