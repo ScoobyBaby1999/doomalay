@@ -10,14 +10,18 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "zustand": "^5.0.2",
+    "@tanstack/react-virtual": "^3.11.0",
     "framer-motion": "^11.15.0",
     "lucide-react": "^0.468.0",
-    "marked": "^14.1.2"
+    "marked": "^14.1.2",
+    "matter-js": "^0.20.0",
+    "pixi.js": "^8.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@types/matter-js": "^0.20.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
