@@ -1,4 +1,3 @@
-// Root build file — the Chaquopy plugin version is set here.
-plugins {
-    id("com.chaquo.python") version "17.0.0" apply false
-}
+// Root build file.
+// The Chaquopy plugin is applied in settings.gradle.kts via pluginManagement.
+// Each module applies it individually.
