@@ -1,0 +1,124 @@
+// Package store is the SQLite persistence layer (pure-Go modernc.org/sqlite,
+// no CGO so the engine cross-compiles cleanly).
+//
+// Tables:
+//   - chat_sessions (one row per ChatSession)
+//   - chat_events   (append-only event log, seq-ordered per session)
+//   - provider_keys (AES-256-GCM encrypted API keys)
+//   - workspaces    (cloned repo metadata)
+//   - chat_artifacts (file index per chat)
+//
+// The V0 bug-fix "backend-writes-events-as-it-emits" lives in events.go:
+// the Go engine appends to chat_events as the brain streams events back,
+// not the frontend at turn-end.
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"path/filepath"
+
+	_ "modernc.org/sqlite"
+)
+
+// DB wraps the sql.DB connection.
+type DB struct {
+	*sql.DB
+}
+
+// Open opens (or creates) the SQLite database at dataDir/doomalay.db.
+// WAL journal mode for concurrent reads during writes.
+func Open(dataDir string) (*DB, error) {
+	path := filepath.Join(dataDir, "doomalay.db")
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping %s: %w", path, err)
+	}
+	return &DB{db}, nil
+}
+
+// Migrate creates the schema if missing. Idempotent.
+func (db *DB) Migrate() error {
+	const schema = `
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL DEFAULT 'New Chat',
+  model           TEXT,
+  provider        TEXT,
+  effort          TEXT DEFAULT 'med',
+  mode            TEXT DEFAULT 'auto',
+  web_search      INTEGER DEFAULT 0,
+  deep_research   INTEGER DEFAULT 0,
+  web_template    TEXT,
+  deep_template   TEXT,
+  deep_mode       TEXT,
+  judge_count     INTEGER DEFAULT 3,
+  judge_template  TEXT DEFAULT 'critique',
+  sliding_window  INTEGER DEFAULT 40,
+  max_context     INTEGER DEFAULT 128000,
+  tool_allowlist  TEXT,
+  hooks_config    TEXT,
+  routing         TEXT,
+  workspace_id    TEXT,
+  manually_renamed INTEGER DEFAULT 0,
+  created_at      REAL NOT NULL,
+  updated_at      REAL NOT NULL
+);
+
+-- ONE definition of chat_events (resolves the schema conflict from the old
+-- c-branch where db.py and chat_routes.py disagreed). AUTOINCREMENT id is
+-- the source of truth; (session_id, seq) is unique for dedup.
+CREATE TABLE IF NOT EXISTS chat_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT NOT NULL,
+  seq         INTEGER NOT NULL,
+  event_type  TEXT NOT NULL,
+  content     TEXT,
+  tool_use_id TEXT,
+  created_at  REAL NOT NULL,
+  UNIQUE(session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_events_session ON chat_events(session_id, seq);
+
+CREATE TABLE IF NOT EXISTS provider_keys (
+  env_var     TEXT PRIMARY KEY,
+  provider    TEXT NOT NULL,
+  key_enc     BLOB NOT NULL,
+  key_nonce   BLOB NOT NULL,
+  extra       TEXT,
+  extra_enc   BLOB,
+  extra_nonce BLOB,
+  created_at  REAL NOT NULL,
+  updated_at  REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspaces (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT,
+  repo_url    TEXT,
+  branch      TEXT,
+  sandbox_path TEXT NOT NULL,
+  provider    TEXT,
+  created_at  REAL NOT NULL,
+  updated_at  REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_artifacts (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  kind        TEXT,
+  size        INTEGER,
+  produced_by TEXT,
+  created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_id);
+`
+	_, err := db.Exec(schema)
+	return err
+}

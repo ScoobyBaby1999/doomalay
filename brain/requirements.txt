@@ -1,0 +1,11 @@
+# Doomalay brain — Python AI layer.
+# Run: pip install -r requirements.txt
+# Then: python server.py --port 9090
+# (The Go engine spawns this automatically — you usually don't run it directly.)
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+strands-agents==0.1.5
+litellm==1.55.10
+httpx==0.28.1
+pydantic==2.10.4

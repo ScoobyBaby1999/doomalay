@@ -1,0 +1,103 @@
+{
+  "openrouter": {
+    "env_var": "OPENROUTER_API_KEY",
+    "base_url": "https://openrouter.ai/api/v1",
+    "litellm_prefix": "openrouter",
+    "label": "OpenRouter",
+    "description": "100+ models via one API. Free tier available.",
+    "signup_url": "https://openrouter.ai/keys",
+    "free_tier": true,
+    "color": "#7C3AED"
+  },
+  "nvidia": {
+    "env_var": "NVIDIA_API_KEY",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "litellm_prefix": "nvidia",
+    "label": "NVIDIA",
+    "description": "NVIDIA NIM endpoints. Free credits for new accounts.",
+    "signup_url": "https://build.nvidia.com/",
+    "free_tier": true,
+    "color": "#76B900"
+  },
+  "openai": {
+    "env_var": "OPENAI_API_KEY",
+    "base_url": "https://api.openai.com/v1",
+    "litellm_prefix": "openai",
+    "label": "OpenAI",
+    "description": "GPT-4o, o1, etc. Paid only.",
+    "signup_url": "https://platform.openai.com/api-keys",
+    "free_tier": false,
+    "color": "#10A37F"
+  },
+  "anthropic": {
+    "env_var": "ANTHROPIC_API_KEY",
+    "base_url": "https://api.anthropic.com/v1",
+    "litellm_prefix": "anthropic",
+    "label": "Anthropic",
+    "description": "Claude 3.5 Sonnet, Opus, etc. Paid only.",
+    "signup_url": "https://console.anthropic.com/",
+    "free_tier": false,
+    "color": "#D97706"
+  },
+  "groq": {
+    "env_var": "GROQ_API_KEY",
+    "base_url": "https://api.groq.com/openai/v1",
+    "litellm_prefix": "groq",
+    "label": "Groq",
+    "description": "Ultra-fast Llama/Mixtral inference. Free tier.",
+    "signup_url": "https://console.groq.com/keys",
+    "free_tier": true,
+    "color": "#F55036"
+  },
+  "deepseek": {
+    "env_var": "DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com/v1",
+    "litellm_prefix": "deepseek",
+    "label": "DeepSeek",
+    "description": "DeepSeek V3/R1. Cheap, capable.",
+    "signup_url": "https://platform.deepseek.com/",
+    "free_tier": false,
+    "color": "#4D6BFE"
+  },
+  "together": {
+    "env_var": "TOGETHER_API_KEY",
+    "base_url": "https://api.together.xyz/v1",
+    "litellm_prefix": "together",
+    "label": "Together AI",
+    "description": "Open-source models hosted. Free credits.",
+    "signup_url": "https://api.together.xyz/settings/api-keys",
+    "free_tier": true,
+    "color": "#0F6FFF"
+  },
+  "mistral": {
+    "env_var": "MISTRAL_API_KEY",
+    "base_url": "https://api.mistral.ai/v1",
+    "litellm_prefix": "mistral",
+    "label": "Mistral",
+    "description": "Mistral models. Free tier.",
+    "signup_url": "https://console.mistral.ai/api-keys",
+    "free_tier": true,
+    "color": "#FF7000"
+  },
+  "cloudflare": {
+    "env_var": "CLOUDFLARE_API_KEY",
+    "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+    "litellm_prefix": "cloudflare",
+    "label": "Cloudflare Workers AI",
+    "description": "Free tier, fast inference at the edge.",
+    "signup_url": "https://dash.cloudflare.com/",
+    "free_tier": true,
+    "extra_env_var": "CLOUDFLARE_ACCOUNT_ID",
+    "color": "#F38020"
+  },
+  "github-models": {
+    "env_var": "GITHUB_MODELS_TOKEN",
+    "base_url": "https://models.inference.ai.azure.com",
+    "litellm_prefix": "github",
+    "label": "GitHub Models",
+    "description": "Free preview of GPT-4o, Llama, etc. via GitHub token.",
+    "signup_url": "https://github.com/marketplace/models",
+    "free_tier": true,
+    "color": "#24292E"
+  }
+}
