@@ -14,37 +14,48 @@
 package store
 
 import (
-	"database/sql"
-	"fmt"
-	"path/filepath"
+        "database/sql"
+        "fmt"
+        "os"
+        "path/filepath"
 
-	_ "modernc.org/sqlite"
+        _ "modernc.org/sqlite"
 )
 
 // DB wraps the sql.DB connection.
 type DB struct {
-	*sql.DB
+        *sql.DB
 }
 
 // Open opens (or creates) the SQLite database at dataDir/doomalay.db.
 // WAL journal mode for concurrent reads during writes.
+//
+// SECURITY: the DB file is created with 0600 perms (owner-only). Chat
+// sessions, events, and workspaces live here — they're plaintext at rest
+// (SQLite doesn't encrypt by default) but only the user can read them.
+// For full at-rest encryption, a future phase can use SQLCipher.
 func Open(dataDir string) (*DB, error) {
-	path := filepath.Join(dataDir, "doomalay.db")
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping %s: %w", path, err)
-	}
-	return &DB{db}, nil
+        path := filepath.Join(dataDir, "doomalay.db")
+        dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_busy_timeout=5000", path)
+        db, err := sql.Open("sqlite", dsn)
+        if err != nil {
+                return nil, fmt.Errorf("open %s: %w", path, err)
+        }
+        db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
+        if err := db.Ping(); err != nil {
+                return nil, fmt.Errorf("ping %s: %w", path, err)
+        }
+        // SECURITY: tighten file perms to 0600 (SQLite creates 0644 by default).
+        // Also the WAL + SHM files. Best-effort — ignore errors (the dir is already 0700).
+        _ = os.Chmod(path, 0o600)
+        _ = os.Chmod(path+"-wal", 0o600)
+        _ = os.Chmod(path+"-shm", 0o600)
+        return &DB{db}, nil
 }
 
 // Migrate creates the schema if missing. Idempotent.
 func (db *DB) Migrate() error {
-	const schema = `
+        const schema = `
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id              TEXT PRIMARY KEY,
   title           TEXT NOT NULL DEFAULT 'New Chat',
@@ -119,6 +130,6 @@ CREATE TABLE IF NOT EXISTS chat_artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_id);
 `
-	_, err := db.Exec(schema)
-	return err
+        _, err := db.Exec(schema)
+        return err
 }

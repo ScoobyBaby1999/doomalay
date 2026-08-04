@@ -81,12 +81,12 @@ func main() {
                 _ = srv.Shutdown(context.Background())
         }()
 
-        addr := fmt.Sprintf(":%d", cfg.Port)
-        log.Printf("listening on http://localhost%s", addr)
+        addr := fmt.Sprintf("%s:%d", cfg.Bind, cfg.Port)
+        log.Printf("listening on http://%s (bind=%s)", addr, cfg.Bind)
         if cfg.OpenBrowser {
                 go func() {
-                        time.Sleep(300 * time.Millisecond) // let the server bind
-                        openBrowserURL("http://localhost" + addr)
+                        time.Sleep(300 * time.Millisecond)
+                        openBrowserURL(fmt.Sprintf("http://localhost:%d", cfg.Port))
                 }()
         }
         if err := srv.ListenAndServe(addr); err != nil {
