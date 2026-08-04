@@ -18,6 +18,11 @@ export default function App() {
   const { sessions, activeSessionId, createSession, setActive, loadSessionEvents } = useSessionsStore();
   const refreshModels = useModelsStore((s) => s.refresh);
   const [showProviders, setShowProviders] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(() => {
+    // Show sidebar by default on desktop (>= 768px), hidden on mobile.
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= 768;
+  });
 
   // Init: load engines from localStorage on mount.
   useEffect(() => {
@@ -75,54 +80,98 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-full">
-      {/* Sidebar — Phase 1 only. Phase 2 replaces with canvas icons. */}
-      <aside className="flex w-64 flex-col border-r border-border bg-surface">
-        <div className="border-b border-border p-3">
-          <div className="mb-2 text-xs font-semibold uppercase text-muted">
-            {engines.find((e) => e.id === activeEngineId)?.name || 'Engine'}
-          </div>
-          <button
-            onClick={handleNewChat}
-            className="w-full rounded-lg bg-accent p-2 text-sm font-semibold text-white hover:bg-accent-hover"
-          >
-            + New Chat
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          {sessionList.length === 0 && (
-            <div className="p-4 text-center text-sm text-muted">No chats yet</div>
-          )}
-          {sessionList.map(({ session }) => (
+    <div className="flex h-full safe-top safe-bottom">
+      {/* Sidebar — hidden on small screens unless toggled. Phase 2 replaces with canvas. */}
+      <AnimatePresence>
+      {showSidebar && (
+        <motion.aside
+          initial={{ x: -300 }}
+          animate={{ x: 0 }}
+          exit={{ x: -300 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 35 }}
+          className="absolute inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] flex-col border-r border-border bg-surface md:relative md:w-64"
+        >
+          <div className="border-b border-border p-3">
+            <div className="mb-2 text-xs font-semibold uppercase text-muted">
+              {engines.find((e) => e.id === activeEngineId)?.name || 'Engine'}
+            </div>
             <button
-              key={session.ID}
-              onClick={() => handleSelectSession(session.ID)}
-              className={`mb-1 flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition ${
-                activeSessionId === session.ID
-                  ? 'bg-surface-2 text-text'
-                  : 'text-muted hover:bg-surface-2 hover:text-text'
-              }`}
+              onClick={handleNewChat}
+              className="w-full rounded-lg bg-accent p-2 text-sm font-semibold text-white hover:bg-accent-hover"
             >
-              <div
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: `hsl(${hashHue(session.ID)}, 70%, 60%)` }}
-              />
-              <span className="truncate">{session.Title}</span>
+              + New Chat
             </button>
-          ))}
-        </div>
-        <div className="border-t border-border p-2">
-          <button
-            onClick={() => setShowProviders(true)}
-            className="w-full rounded-lg p-2 text-left text-sm text-muted hover:bg-surface-2 hover:text-text"
-          >
-            ⚙ Providers
-          </button>
-        </div>
-      </aside>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            {sessionList.length === 0 && (
+              <div className="p-4 text-center text-sm text-muted">No chats yet</div>
+            )}
+            {sessionList.map(({ session }) => (
+              <button
+                key={session.ID}
+                onClick={() => { handleSelectSession(session.ID); setShowSidebar(false); }}
+                className={`mb-1 flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm transition ${
+                  activeSessionId === session.ID
+                    ? 'bg-surface-2 text-text'
+                    : 'text-muted hover:bg-surface-2 hover:text-text'
+                }`}
+              >
+                <div
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: `hsl(${hashHue(session.ID)}, 70%, 60%)` }}
+                />
+                <span className="truncate">{session.Title}</span>
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-border p-2">
+            <button
+              onClick={() => { setShowProviders(true); setShowSidebar(false); }}
+              className="w-full rounded-lg p-2 text-left text-sm text-muted hover:bg-surface-2 hover:text-text"
+            >
+              ⚙ Providers
+            </button>
+          </div>
+        </motion.aside>
+      )}
+      </AnimatePresence>
+
+      {/* Backdrop on mobile when sidebar is open */}
+      <AnimatePresence>
+        {showSidebar && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowSidebar(false)}
+            className="absolute inset-0 z-20 bg-black/50 md:hidden"
+          />
+        )}
+      </AnimatePresence>
 
       {/* Main */}
-      <main className="flex-1">
+      <main className="relative flex-1">
+        {/* Mobile top bar with sidebar toggle */}
+        {!activeSessionId && (
+          <div className="absolute left-2 top-2 z-20 md:hidden">
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="rounded-lg border border-border bg-surface p-2 text-text"
+            >
+              ☰
+            </button>
+          </div>
+        )}
+        {activeSessionId && (
+          <div className="absolute left-2 top-2 z-20 md:hidden">
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="rounded-lg border border-border bg-surface p-2 text-text"
+            >
+              ☰
+            </button>
+          </div>
+        )}
         <ChatPanel onOpenProviders={() => setShowProviders(true)} />
       </main>
 
