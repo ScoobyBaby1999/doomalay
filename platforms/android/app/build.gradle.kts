@@ -47,16 +47,13 @@ chaquopy {
             install("PyGithub")
             install("gitpython")
         }
+    }
 
-        src {
+    // Include Python source from the monorepo's brain/ directory.
+    // See https://chaquo.com/chaquopy/doc/current/android.html#sourceSets
+    sourceSets {
+        getByName("main") {
             srcDir("../../../brain")
-            include("*.py")
-            include("tools/*.py")
-            include("catalog/*.json")
-            include("content/**")
-            include("orchestrator/**")
-            include("judge/**")
-            include("agent_skills/**")
         }
     }
 }
