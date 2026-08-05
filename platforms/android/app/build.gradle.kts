@@ -36,15 +36,37 @@ dependencies {
 }
 
 // ── Chaquopy ──────────────────────────────────────────────────────────────
-// Chaquopy auto-detects Python from PATH. The CI workflow installs Python 3.10
-// (required by Chaquopy 17.0 for the build step). The runtime Python version
-// bundled in the APK is 3.12 (managed by Chaquopy).
+// We install litellm with --no-deps (because tiktoken + pydantic v2 are C
+// extensions with no Android wheels). Then we install litellm's pure-Python
+// deps manually. For pydantic, we use v1 (pure Python). For tiktoken, litellm
+// falls back to word-count token estimation (close enough for UI display).
 chaquopy {
     defaultConfig {
         pip {
-            install("litellm==1.55.10")
-            install("strands-agents")
+            // litellm without deps — we install its deps manually below
+            install("--no-deps", "litellm==1.55.10")
+
+            // litellm's pure-Python deps (skip tiktoken + pydantic v2)
             install("httpx")
+            install("openai")
+            install("anthropic")
+            install("google-generativeai")
+            install("cohere")
+            install("redis")
+            install("python-dotenv")
+            install("requests")
+            install("aiohttp")
+            install("pyyaml")
+            install("jsonschema")
+            install("click")
+            install("jinja2")
+            install("tokenizers")  // pure-Python fallback for tiktoken
+
+            // pydantic v1 (pure Python — no C extension)
+            install("pydantic<2.0.0")
+
+            // Other brain deps (all pure Python)
+            install("strands-agents")
             install("duckduckgo-search")
             install("beautifulsoup4")
             install("PyGithub")
