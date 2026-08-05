@@ -1,85 +1,101 @@
 package com.doomalay.engine
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AppCompatActivity
+import android.widget.TextView
 
-/**
- * The main activity — a full-screen WebView that loads the PWA from the
- * Go engine at http://localhost:8080.
- *
- * The engine + brain are started by EngineService (a foreground service).
- * This activity just shows the WebView and binds to the service to check
- * when the engine is ready.
- */
-class MainActivity : AppCompatActivity() {
-
+class MainActivity : Activity() {
     private lateinit var webView: WebView
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.init(this)
+        AppLog.log("=== Doomalay starting ===")
+        AppLog.log("Package: $packageName")
+        AppLog.log("Files dir: ${filesDir.absolutePath}")
+        AppLog.log("Native lib dir: ${applicationInfo.nativeLibraryDir}")
 
-        // Start the engine service (foreground service).
-        val serviceIntent = Intent(this, EngineService::class.java)
-        startForegroundService(serviceIntent)
-
-        // Set up the WebView.
-        setContentView(R.layout.activity_main)
-        webView = findViewById(R.id.webview)
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = false
-            allowContentAccess = false
-            mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        // Global crash handler — writes stack trace to log file before dying
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            AppLog.error("UNCAUGHT EXCEPTION on ${thread.name}", throwable)
+            prev?.uncaughtException(thread, throwable)
         }
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                // Keep all URLs inside the WebView (no external browser).
-                return false
+
+        try {
+            AppLog.log("Step 1: Starting EngineService...")
+            startForegroundService(Intent(this, EngineService::class.java))
+            AppLog.log("Step 1: OK")
+
+            AppLog.log("Step 2: Setting up WebView...")
+            webView = WebView(this)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
             }
-        }
+            webView.webViewClient = object : WebViewClient() {
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    AppLog.error("WebView error: $errorCode $description ($failingUrl)")
+                }
+            }
+            setContentView(webView)
+            AppLog.log("Step 2: OK")
 
-        // Load the engine. Poll until it's ready (the engine takes ~2s to start).
-        loadWhenReady()
+            AppLog.log("Step 3: Waiting for engine...")
+            loadWhenReady()
+        } catch (e: Exception) {
+            AppLog.error("onCreate failed", e)
+            showError("Startup failed: ${e.message}\n\nLog:\n${AppLog.read().takeLast(2000)}")
+        }
     }
 
     private fun loadWhenReady() {
-        val url = "http://localhost:8080"
         Thread {
-            // Poll /api/health until the engine responds.
-            for (i in 1..30) {
+            for (i in 1..60) {
                 try {
-                    val conn = java.net.URL("$url/api/health").openConnection() as java.net.HttpURLConnection
+                    val conn = java.net.URL("http://localhost:8080/api/health")
+                        .openConnection() as java.net.HttpURLConnection
                     conn.connectTimeout = 1000
                     conn.readTimeout = 1000
                     if (conn.responseCode == 200) {
-                        runOnUiThread { webView.loadUrl(url) }
+                        val body = conn.inputStream.bufferedReader().readText()
+                        AppLog.log("Engine ready! Health: $body")
+                        runOnUiThread { webView.loadUrl("http://localhost:8080") }
                         return@Thread
                     }
                 } catch (e: Exception) {
-                    // Engine not ready yet — retry.
+                    if (i % 5 == 0) AppLog.log("Health check $i: ${e.message}")
                 }
                 Thread.sleep(500)
             }
-            // Timeout — show an error.
+            AppLog.error("Engine didn't start in 30s")
             runOnUiThread {
-                webView.loadData(
-                    "<html><body style='background:#0a0a0b;color:#e4e4e7;font-family:sans-serif;padding:2em'>" +
-                    "<h2>Engine failed to start</h2><p>Check the app notification for details.</p></body></html>",
-                    "text/html", "utf-8"
-                )
+                showError("Engine didn't start.\n\nLog:\n${AppLog.read().takeLast(3000)}")
             }
         }.start()
     }
 
+    private fun showError(msg: String) {
+        runOnUiThread {
+            setContentView(TextView(this).apply {
+                text = msg
+                textSize = 12f
+                setTextColor(0xFFE4E4E7.toInt())
+                setBackgroundColor(0xFF0A0A0B.toInt())
+                setPadding(48, 96, 48, 48)
+                setTextIsSelectable(true)
+            })
+        }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+        if (this::webView.isInitialized && webView.canGoBack()) webView.goBack()
+        else super.onBackPressed()
     }
 }

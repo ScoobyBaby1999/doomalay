@@ -7,100 +7,100 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 
-/**
- * The foreground service that keeps the Doomalay engine + brain alive.
- *
- * On start:
- *   1. Extracts + starts the Go engine binary (libdoomalayengine.so)
- *   2. Starts the Python brain (Chaquopy) on a background thread
- *   3. Shows a persistent notification (required by Android)
- *
- * On destroy:
- *   1. Stops the Go engine process
- *   2. The Python brain stops with the process
- *
- * The service runs as foregroundServiceType="dataSync" (Android 14+ requirement).
- * START_STICKY tells Android to restart the service if killed.
- */
 class EngineService : Service() {
-
     private var engineProcess: Process? = null
-    private val channelId = "doomalay_engine"
-    private val notificationId = 1
-
-    companion object {
-        private const val TAG = "DoomalayEngine"
-        private const val ENGINE_PORT = 8080
-        private const val BRAIN_PORT = 9090
-    }
 
     override fun onCreate() {
         super.onCreate()
+        AppLog.init(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
-        startForeground(notificationId, notification)
-
-        // Start the Go engine + Python brain.
+        AppLog.log("EngineService.onStartCommand")
+        startForeground(1, buildNotification())
         startEngine()
         startBrain()
-
         return START_STICKY
     }
 
-    /** Start the Go engine binary (libdoomalayengine.so → ProcessBuilder). */
     private fun startEngine() {
         Thread {
             try {
+                AppLog.log("=== Starting Go engine ===")
                 val binary = EngineBinary.getBinaryPath(this)
-                Log.i(TAG, "Starting Go engine: $binary")
+                val f = File(binary)
+                AppLog.log("Binary: $binary")
+                AppLog.log("Exists: ${f.exists()}, Executable: ${f.canExecute()}, Size: ${f.length()}")
 
-                val pb = ProcessBuilder(
-                    binary,
-                    "--port", ENGINE_PORT.toString(),
-                    "--bind", "127.0.0.1"
-                )
+                val pb = ProcessBuilder(binary, "--port", "8080", "--bind", "127.0.0.1")
                 pb.redirectErrorStream(true)
                 engineProcess = pb.start()
+                AppLog.log("Go process started, PID: ${engineProcess!!.pid}")
 
-                // Log engine output (goes to logcat).
                 val reader = engineProcess!!.inputStream.bufferedReader()
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    Log.i(TAG, "engine: $line")
+                    AppLog.log("[engine] $line")
                 }
+                AppLog.log("Go engine exited: code=${engineProcess!!.exitValue()}")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Go engine", e)
+                AppLog.error("Go engine failed", e)
             }
         }.start()
     }
 
-    /** Start the Python brain (Chaquopy) on a background thread. */
     private fun startBrain() {
         Thread {
             try {
+                AppLog.log("=== Starting Python brain ===")
                 if (!Python.isStarted()) {
                     Python.start(AndroidPlatform(this))
+                    AppLog.log("Chaquopy Python started")
                 }
                 val py = Python.getInstance()
-                Log.i(TAG, "Starting Python brain on port $BRAIN_PORT")
-                // This calls server_android.start_server(9090) which blocks
-                // this thread forever (running the HTTP server).
-                py.getModule("server_android").callAttr("start_server", BRAIN_PORT)
+                AppLog.log("Python instance obtained")
+
+                // Check sys.path
+                try {
+                    val sys = py.getModule("sys")
+                    val path = sys["path"]
+                    AppLog.log("sys.path: $path")
+                } catch (e: Exception) {
+                    AppLog.log("sys.path check failed: ${e.message}")
+                }
+
+                // Try to load server_android
+                try {
+                    val mod = py.getModule("server_android")
+                    AppLog.log("server_android module loaded!")
+                    AppLog.log("Calling start_server(9090)...")
+                    mod.callAttr("start_server", 9090)
+                } catch (e: Exception) {
+                    AppLog.error("server_android failed", e)
+                    // List what's available
+                    try {
+                        val os = py.getModule("os")
+                        val cwd = os.callAttr("getcwd").toString()
+                        AppLog.log("CWD: $cwd")
+                        val files = os.callAttr("listdir", cwd).toString()
+                        AppLog.log("CWD files: $files")
+                    } catch (e2: Exception) {
+                        AppLog.log("Can't list CWD: ${e2.message}")
+                    }
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start Python brain", e)
+                AppLog.error("Python brain failed", e)
             }
         }.start()
     }
 
     override fun onDestroy() {
+        AppLog.log("EngineService.onDestroy")
         engineProcess?.destroy()
         super.onDestroy()
     }
@@ -109,35 +109,19 @@ class EngineService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                getString(R.string.channel_name),
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = getString(R.string.channel_desc)
-                setShowBadge(false)
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            val ch = NotificationChannel("doomalay", "Doomalay", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
     }
 
     private fun buildNotification(): Notification {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, channelId)
-                .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(R.string.notification_text))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setOngoing(true)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-                .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(R.string.notification_text))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setOngoing(true)
-                .build()
-        }
+        val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            Notification.Builder(this, "doomalay")
+        else Notification.Builder(this)
+        return b.setContentTitle("Doomalay Engine")
+            .setContentText("Running")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
+            .build()
     }
 }
