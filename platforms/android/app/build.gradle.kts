@@ -38,6 +38,12 @@ dependencies {
 // ── Chaquopy ──────────────────────────────────────────────────────────────
 chaquopy {
     defaultConfig {
+        // Tell Chaquopy which Python to use for building (pip install).
+        // On CI, this is set via the BUILD_PYTHON env var (setup-python).
+        // On local dev, it defaults to "python3".
+        val buildPy = System.getenv("BUILD_PYTHON") ?: "python3"
+        buildPython(buildPy)
+
         pip {
             install("litellm==1.55.10")
             install("strands-agents")
@@ -49,8 +55,6 @@ chaquopy {
         }
     }
 
-    // Include Python source from the monorepo's brain/ directory.
-    // See https://chaquo.com/chaquopy/doc/current/android.html#sourceSets
     sourceSets {
         getByName("main") {
             srcDir("../../../brain")

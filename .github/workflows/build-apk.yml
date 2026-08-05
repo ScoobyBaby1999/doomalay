@@ -22,6 +22,9 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       # ── Setup Android SDK ──
       - name: Setup Android SDK
@@ -29,7 +32,6 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
 
-      # ── Accept Android licenses ──
       - name: Accept Android licenses
         run: yes | sdkmanager --licenses || true
 
@@ -53,6 +55,10 @@ jobs:
       # ── Build the APK ──
       - name: Build APK
         working-directory: platforms/android
+        env:
+          # Tell Chaquopy where to find Python (setup-python puts it on PATH, but
+          # Chaquopy needs the explicit path for the buildPython setting).
+          BUILD_PYTHON: python3
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
