@@ -6,25 +6,17 @@ plugins {
 android {
     namespace = "com.doomalay.engine"
     compileSdk = 34
-
     defaultConfig {
         applicationId = "com.doomalay.engine"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "0.3.0"
-
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
+        ndk { abiFilters += "arm64-v8a" }
     }
-
     buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
+        release { isMinifyEnabled = false }
     }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -35,24 +27,16 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
 }
 
-// ── Chaquopy ──────────────────────────────────────────────────────────────
-// We install litellm with --no-deps (because tiktoken + pydantic v2 are C
-// extensions with no Android wheels). Then we install litellm's pure-Python
-// deps manually. For pydantic, we use v1 (pure Python). For tiktoken, litellm
-// falls back to word-count token estimation (close enough for UI display).
 chaquopy {
     defaultConfig {
         pip {
-            // litellm without deps — we install its deps manually below
-            install("--no-deps", "litellm==1.55.10")
-
-            // litellm's pure-Python deps (skip tiktoken + pydantic v2)
+            // litellm without deps (tiktoken + pydantic v2 are C extensions)
+            options("--no-deps")
+            install("litellm==1.55.10")
+            // Reset and install pure-Python deps normally
+            options()
             install("httpx")
             install("openai")
-            install("anthropic")
-            install("google-generativeai")
-            install("cohere")
-            install("redis")
             install("python-dotenv")
             install("requests")
             install("aiohttp")
@@ -60,12 +44,7 @@ chaquopy {
             install("jsonschema")
             install("click")
             install("jinja2")
-            install("tokenizers")  // pure-Python fallback for tiktoken
-
-            // pydantic v1 (pure Python — no C extension)
             install("pydantic<2.0.0")
-
-            // Other brain deps (all pure Python)
             install("strands-agents")
             install("duckduckgo-search")
             install("beautifulsoup4")
@@ -73,7 +52,6 @@ chaquopy {
             install("gitpython")
         }
     }
-
     sourceSets {
         getByName("main") {
             srcDir("../../../brain")
