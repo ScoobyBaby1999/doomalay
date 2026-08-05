@@ -36,14 +36,11 @@ dependencies {
 }
 
 // ── Chaquopy ──────────────────────────────────────────────────────────────
+// Chaquopy auto-detects Python from PATH. The CI workflow installs Python 3.10
+// (required by Chaquopy 17.0 for the build step). The runtime Python version
+// bundled in the APK is 3.12 (managed by Chaquopy).
 chaquopy {
     defaultConfig {
-        // Tell Chaquopy which Python to use for building (pip install).
-        // On CI, this is set via the BUILD_PYTHON env var (setup-python).
-        // On local dev, it defaults to "python3".
-        val buildPy = System.getenv("BUILD_PYTHON") ?: "python3"
-        buildPython(buildPy)
-
         pip {
             install("litellm==1.55.10")
             install("strands-agents")
