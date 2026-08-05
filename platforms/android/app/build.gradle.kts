@@ -21,19 +21,31 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // Fix duplicate Kotlin stdlib classes
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/INDEX.LIST"
+            excludes += "META-INF/io.netty.versions.properties"
+        }
+    }
 }
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Force consistent Kotlin stdlib version to avoid duplicate classes
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.24")
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24")
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24")
+    }
 }
 
 chaquopy {
     defaultConfig {
         pip {
-            // litellm without deps (tiktoken + pydantic v2 are C extensions)
             options("--no-deps")
             install("litellm==1.55.10")
-            // Reset and install pure-Python deps normally
             options()
             install("httpx")
             install("openai")
