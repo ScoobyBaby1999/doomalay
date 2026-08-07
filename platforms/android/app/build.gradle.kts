@@ -10,8 +10,8 @@ android {
         applicationId = "com.doomalay.engine"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.4.0"
+        versionCode = 3
+        versionName = "0.4.1"
         ndk { abiFilters += "arm64-v8a" }
     }
     buildTypes {
