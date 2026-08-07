@@ -38,7 +38,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Brain modules (siblings)
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent))  # append (not insert) so OTA dir stays first
 from agent import run_turn  # noqa: E402
 from providers import (  # noqa: E402
     load_provider_catalog,
