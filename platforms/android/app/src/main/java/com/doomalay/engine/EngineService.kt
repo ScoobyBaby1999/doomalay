@@ -11,6 +11,15 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 
+/**
+ * EngineService — keeps the Go engine + Python brain alive as a foreground service.
+ *
+ * v0.4.0 changes:
+ *  - Notification is built BEFORE startForeground() (prevents Android O+ crash)
+ *  - OTA directory added to Python sys.path (patched files load first)
+ *  - Graceful fallback if Go binary missing (shows error, doesn't crash)
+ *  - Better error isolation (Go and Python failures are independent)
+ */
 class EngineService : Service() {
     private var engineProcess: Process? = null
 
@@ -22,7 +31,11 @@ class EngineService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         AppLog.log("EngineService.onStartCommand")
-        startForeground(1, buildNotification())
+        // Build notification FIRST, then call startForeground immediately
+        val notification = buildNotification()
+        startForeground(1, notification)
+        AppLog.log("startForeground(1) OK")
+
         startEngine()
         startBrain()
         return START_STICKY
@@ -36,6 +49,11 @@ class EngineService : Service() {
                 val f = File(binary)
                 AppLog.log("Binary: $binary")
                 AppLog.log("Exists: ${f.exists()}, Executable: ${f.canExecute()}, Size: ${f.length()}")
+
+                if (!f.exists()) {
+                    AppLog.error("Go engine binary NOT FOUND at $binary — engine will not start")
+                    return@Thread
+                }
 
                 val pb = ProcessBuilder(binary, "--port", "8080", "--bind", "127.0.0.1")
                 pb.redirectErrorStream(true)
@@ -64,6 +82,20 @@ class EngineService : Service() {
                 }
                 val py = Python.getInstance()
                 AppLog.log("Python instance obtained")
+
+                // Add OTA directory to sys.path so patched files load first
+                val otaDir = OtaUpdater.getOtaDir(this)
+                if (otaDir.exists() && otaDir.listFiles()?.isNotEmpty() == true) {
+                    try {
+                        val sys = py.getModule("sys")
+                        val path = sys["path"] as java.util.List<String>
+                        path.add(0, otaDir.absolutePath)
+                        AppLog.log("OTA dir added to sys.path: ${otaDir.absolutePath}")
+                        AppLog.log("Patched files: ${OtaUpdater.listPatches(this).joinToString(", ")}")
+                    } catch (e: Exception) {
+                        AppLog.log("OTA sys.path injection failed: ${e.message}")
+                    }
+                }
 
                 // Check sys.path
                 try {
