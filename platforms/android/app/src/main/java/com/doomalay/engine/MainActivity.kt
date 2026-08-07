@@ -8,6 +8,15 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
 
+/**
+ * Doomalay MainActivity — spatial canvas launcher with OTA hot-patch support.
+ *
+ * v0.4.0 changes:
+ *  - OTA check on startup (downloads only changed files, no full APK reinstall)
+ *  - Safer service startup (notification built BEFORE foreground service)
+ *  - Step-by-step logging with on-screen fallback if anything fails
+ *  - Global uncaught exception handler writes to log file
+ */
 class MainActivity : Activity() {
     private lateinit var webView: WebView
 
@@ -15,7 +24,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLog.init(this)
-        AppLog.log("=== Doomalay starting ===")
+        AppLog.log("=== Doomalay v0.4.0 starting ===")
         AppLog.log("Package: $packageName")
         AppLog.log("Files dir: ${filesDir.absolutePath}")
         AppLog.log("Native lib dir: ${applicationInfo.nativeLibraryDir}")
@@ -28,6 +37,9 @@ class MainActivity : Activity() {
         }
 
         try {
+            // Step 0: Check for OTA patches (background thread, non-blocking)
+            Thread { AppLog.log(OtaUpdater.checkAndApply(this)) }.start()
+
             AppLog.log("Step 1: Starting EngineService...")
             startForegroundService(Intent(this, EngineService::class.java))
             AppLog.log("Step 1: OK")
@@ -37,6 +49,9 @@ class MainActivity : Activity() {
             webView.settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                databaseEnabled = true
+                allowFileAccess = true
+                allowContentAccess = true
             }
             webView.webViewClient = object : WebViewClient() {
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
