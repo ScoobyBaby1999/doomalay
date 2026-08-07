@@ -48,8 +48,8 @@ object OtaUpdater {
     }
 
     /**
-     * Check for patches. Returns a human-readable status string.
-     * This runs on a background thread.
+     * Check for patches (background, respects 5-min cooldown).
+     * Returns a human-readable status string.
      */
     fun checkAndApply(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -57,11 +57,26 @@ object OtaUpdater {
         val lastCheck = prefs.getLong(KEY_LAST_CHECK, 0)
 
         if (now - lastCheck < CHECK_INTERVAL_MS) {
-            return "OTA: checked recently, skipping (${(now - lastCheck) / 1000}s ago)"
+            return "Checked ${(now - lastCheck) / 1000}s ago — tap button to force check"
         }
+        return doCheck(context, prefs, false)
+    }
+
+    /**
+     * Force a patch check immediately, bypassing the cooldown.
+     * Call this when the user taps the sync button.
+     */
+    fun forceCheck(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return doCheck(context, prefs, true)
+    }
+
+    private fun doCheck(context: Context, prefs: SharedPreferences, isForced: Boolean): String {
+        val now = System.currentTimeMillis()
         prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
 
-        AppLog.log("OTA: checking for patches...")
+        val action = if (isForced) "Force-checking" else "Checking"
+        AppLog.log("OTA: $action for patches...")
 
         return try {
             val release = fetchJson(RELEASES_API)
@@ -69,7 +84,7 @@ object OtaUpdater {
             val currentPatch = prefs.getString(KEY_CURRENT_PATCH, "") ?: ""
 
             if (tag.isEmpty()) {
-                return "OTA: no release tag found"
+                return "No release tag found"
             }
 
             // Find patch-manifest.json asset
@@ -84,7 +99,6 @@ object OtaUpdater {
             }
 
             if (manifestUrl == null) {
-                // Fallback: try raw GitHub URL
                 manifestUrl = "$GITHUB_RAW/$tag/patch-manifest.json"
                 AppLog.log("OTA: no manifest asset, trying raw URL: $manifestUrl")
             }
@@ -93,7 +107,7 @@ object OtaUpdater {
             val patchVersion = manifest.optString("version", tag)
 
             if (patchVersion == currentPatch) {
-                return "OTA: already on latest patch ($patchVersion)"
+                return "Already up to date ($patchVersion)"
             }
 
             AppLog.log("OTA: new patch available: $patchVersion (current: $currentPatch)")
@@ -112,7 +126,6 @@ object OtaUpdater {
                 val localFile = File(getOtaDir(context), relPath)
                 localFile.parentFile?.mkdirs()
 
-                // Skip if local hash matches
                 if (localFile.exists() && sha256(localFile) == expectedHash) {
                     skipped++
                     continue
@@ -139,15 +152,15 @@ object OtaUpdater {
             if (failed == 0) {
                 prefs.edit().putString(KEY_CURRENT_PATCH, patchVersion).apply()
                 AppLog.log("OTA: patch $patchVersion applied. Downloaded $downloaded, skipped $skipped")
-                return "OTA: updated to $patchVersion (+$downloaded files, skipped $skipped)"
+                return "Updated to $patchVersion (+$downloaded files, skipped $skipped)"
             } else {
                 AppLog.log("OTA: partial failure — $failed files failed")
-                return "OTA: partial update ($downloaded OK, $failed failed, $skipped skipped)"
+                return "Partial update ($downloaded OK, $failed failed, $skipped skipped)"
             }
 
         } catch (e: Exception) {
             AppLog.error("OTA check failed", e)
-            return "OTA error: ${e.message}"
+            return "Error: ${e.message}"
         }
     }
 
