@@ -37,4 +37,9 @@ object AppLog {
     }
 
     fun read(): String = try { logFile.readText() } catch (e: Exception) { "No log: ${e.message}" }
+
+    /** Clear the log file. */
+    fun clear() {
+        try { logFile.writeText("") } catch (_: Exception) {}
+    }
 }
