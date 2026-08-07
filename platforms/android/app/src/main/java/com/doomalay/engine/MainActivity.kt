@@ -4,27 +4,33 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * Doomalay MainActivity — spatial canvas launcher with OTA hot-patch support.
  *
- * v0.4.0 changes:
- *  - OTA check on startup (downloads only changed files, no full APK reinstall)
+ * v0.4.1 changes:
+ *  - Front-facing sync button (top-right) for manual OTA patch checks
+ *  - Removed automatic background check — user controls when to sync
  *  - Safer service startup (notification built BEFORE foreground service)
  *  - Step-by-step logging with on-screen fallback if anything fails
- *  - Global uncaught exception handler writes to log file
  */
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    private lateinit var syncBtn: ImageButton
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLog.init(this)
-        AppLog.log("=== Doomalay v0.4.0 starting ===")
+        AppLog.log("=== Doomalay v0.4.1 starting ===")
         AppLog.log("Package: $packageName")
         AppLog.log("Files dir: ${filesDir.absolutePath}")
         AppLog.log("Native lib dir: ${applicationInfo.nativeLibraryDir}")
@@ -37,14 +43,15 @@ class MainActivity : Activity() {
         }
 
         try {
-            // Step 0: Check for OTA patches (background thread, non-blocking)
-            Thread { AppLog.log(OtaUpdater.checkAndApply(this)) }.start()
-
             AppLog.log("Step 1: Starting EngineService...")
             startForegroundService(Intent(this, EngineService::class.java))
             AppLog.log("Step 1: OK")
 
-            AppLog.log("Step 2: Setting up WebView...")
+            AppLog.log("Step 2: Setting up WebView + sync button...")
+
+            // Root layout: FrameLayout so we can overlay the sync button
+            val root = FrameLayout(this)
+
             webView = WebView(this)
             webView.settings.apply {
                 javaScriptEnabled = true
@@ -58,7 +65,28 @@ class MainActivity : Activity() {
                     AppLog.error("WebView error: $errorCode $description ($failingUrl)")
                 }
             }
-            setContentView(webView)
+            root.addView(webView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+
+            // Sync button — floating top-right
+            syncBtn = ImageButton(this).apply {
+                setImageResource(android.R.drawable.ic_popup_sync)
+                setBackgroundColor(0x88000000.toInt())
+                setColorFilter(0xFFFFFFFF.toInt())
+                contentDescription = "Check for updates"
+                alpha = 0.7f
+                setOnClickListener { onSyncClicked() }
+            }
+            val btnParams = FrameLayout.LayoutParams(144, 144).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = 64
+                marginEnd = 32
+            }
+            root.addView(syncBtn, btnParams)
+
+            setContentView(root)
             AppLog.log("Step 2: OK")
 
             AppLog.log("Step 3: Waiting for engine...")
@@ -67,6 +95,22 @@ class MainActivity : Activity() {
             AppLog.error("onCreate failed", e)
             showError("Startup failed: ${e.message}\n\nLog:\n${AppLog.read().takeLast(2000)}")
         }
+    }
+
+    private fun onSyncClicked() {
+        syncBtn.isEnabled = false
+        syncBtn.alpha = 0.3f
+        Toast.makeText(this, "Checking for updates...", Toast.LENGTH_SHORT).show()
+
+        Thread {
+            val result = OtaUpdater.forceCheck(this)
+            AppLog.log("OTA sync result: $result")
+            runOnUiThread {
+                syncBtn.isEnabled = true
+                syncBtn.alpha = 0.7f
+                Toast.makeText(this, result, Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     private fun loadWhenReady() {
