@@ -1,7 +1,0 @@
-<resources>
-    <string name="app_name">Doomalay</string>
-    <string name="notification_title">Doomalay Engine</string>
-    <string name="notification_text">Engine running · Tap to open</string>
-    <string name="channel_name">Doomalay Engine Service</string>
-    <string name="channel_desc">Keeps the AI engine running in the background</string>
-</resources>
