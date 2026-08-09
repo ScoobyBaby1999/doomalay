@@ -46,14 +46,14 @@ class EngineService : Service() {
                 val pb = ProcessBuilder(binary, "--port", "8080", "--bind", "127.0.0.1")
                 pb.redirectErrorStream(true)
                 engineProcess = pb.start()
-                AppLog.log("Go PID: ${engineProcess!!.pid}")
+                AppLog.log("Go process started")
 
                 val reader = engineProcess!!.inputStream.bufferedReader()
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     AppLog.log("[engine] $line")
                 }
-                AppLog.log("Go engine exited: ${engineProcess!!.exitValue()}")
+                AppLog.log("Go engine exited")
             } catch (e: Exception) {
                 AppLog.error("Go engine failed", e)
             }
