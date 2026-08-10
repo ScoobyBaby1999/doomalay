@@ -43,7 +43,17 @@ class EngineService : Service() {
                 val f = java.io.File(binary)
                 AppLog.log("Binary: $binary exists=${f.exists()} size=${f.length()} exec=${f.canExecute()}")
 
-                val pb = ProcessBuilder(binary, "--port", "8080", "--bind", "127.0.0.1")
+                // Use the app's files dir as the engine data dir — it's writable,
+                // persistent, and uninstall-safe. Defaults to /data/data/.../files/.
+                val dataDir = filesDir.absolutePath
+                AppLog.log("Data dir: $dataDir")
+
+                val pb = ProcessBuilder(
+                    binary,
+                    "--port", "8080",
+                    "--bind", "127.0.0.1",
+                    "--data-dir", dataDir
+                )
                 pb.redirectErrorStream(true)
                 engineProcess = pb.start()
                 AppLog.log("Go process started")
@@ -53,7 +63,8 @@ class EngineService : Service() {
                 while (reader.readLine().also { line = it } != null) {
                     AppLog.log("[engine] $line")
                 }
-                AppLog.log("Go engine exited")
+                val exit = engineProcess!!.waitFor()
+                AppLog.log("Go engine exited (code=$exit)")
             } catch (e: Exception) {
                 AppLog.error("Go engine failed", e)
             }

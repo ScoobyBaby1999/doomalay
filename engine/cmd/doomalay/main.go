@@ -26,6 +26,8 @@ import (
 func main() {
         cfgPath := flag.String("config", "", "path to config.yaml (default: ~/.config/doomalay/config.yaml)")
         port := flag.Int("port", 0, "override listen port (default: 8080, or $PORT)")
+        bind := flag.String("bind", "", "override bind address (default: 127.0.0.1, or config bind; set to 0.0.0.0 for LAN)")
+        dataDir := flag.String("data-dir", "", "override data directory for SQLite + workspaces (default: ~/.local/share/doomalay)")
         openBrowser := flag.Bool("open", false, "open the system browser on start (default: true on desktop, false on Android)")
         flag.Parse()
 
@@ -38,6 +40,12 @@ func main() {
         }
         if cfg.Port == 0 {
                 cfg.Port = 8080
+        }
+        if *bind != "" {
+                cfg.Bind = *bind
+        }
+        if *dataDir != "" {
+                cfg.DataDir = *dataDir
         }
         if *openBrowser {
                 cfg.OpenBrowser = true
