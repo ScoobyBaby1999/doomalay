@@ -31,24 +31,18 @@ func main() {
         openBrowser := flag.Bool("open", false, "open the system browser on start (default: true on desktop, false on Android)")
         flag.Parse()
 
-        cfg, err := config.Load(*cfgPath)
+        // Pass CLI overrides INTO Load so they're applied BEFORE the MkdirAll
+        // on DataDir. Without this, Load would try to mkdir the default
+        // data dir (~/.local/share/doomalay, which is /sdcard/.local/share/doomalay
+        // on Android — not writable) even when --data-dir is passed.
+        cfg, err := config.Load(*cfgPath, config.Overrides{
+                Port:        *port,
+                Bind:        *bind,
+                DataDir:     *dataDir,
+                OpenBrowser: *openBrowser,
+        })
         if err != nil {
                 log.Fatalf("config: %v", err)
-        }
-        if *port != 0 {
-                cfg.Port = *port
-        }
-        if cfg.Port == 0 {
-                cfg.Port = 8080
-        }
-        if *bind != "" {
-                cfg.Bind = *bind
-        }
-        if *dataDir != "" {
-                cfg.DataDir = *dataDir
-        }
-        if *openBrowser {
-                cfg.OpenBrowser = true
         }
 
         log.Printf("doomalay engine starting (port %d, mode=%s)", cfg.Port, cfg.Mode)
