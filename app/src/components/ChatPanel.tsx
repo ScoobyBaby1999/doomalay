@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useSessionsStore, useActiveSession } from '../store/sessions';
 import { useChat } from '../hooks/useChat';
 import { useEngineStore } from '../store/engines';
+import { useModelsStore } from '../store/models';
 import { fmtTokens } from '../lib/utils';
 import { Message } from './Message';
 import { ChatInput } from './ChatInput';
@@ -18,6 +19,7 @@ export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) 
   const { send, stop } = useChat(activeId);
   const client = useEngineStore((s) => s.client);
   const capabilities = useEngineStore((s) => s.capabilities);
+  const keys = useModelsStore((s) => s.keys);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -40,6 +42,7 @@ export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) 
 
   const hasModel = !!active.session.Model;
   const brainAlive = capabilities?.brainAlive ?? false;
+  const hasAnyKey = Object.values(keys).some((k) => k.has_key);
   const contextPct = active.session.MaxContext > 0
     ? Math.min(100, (active.cumulativeUsage.total_tokens / active.session.MaxContext) * 100)
     : 0;
@@ -98,14 +101,29 @@ export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) 
         <div className="mx-auto max-w-3xl space-y-3">
           {active.messages.length === 0 && (
             <div className="mt-20 text-center text-muted">
-              <p>Say hi to {active.session.Title}…</p>
-              {!hasModel && (
-                <button
-                  onClick={() => setShowModelSelect(true)}
-                  className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-                >
-                  Select a model
-                </button>
+              {!hasAnyKey ? (
+                <>
+                  <p className="mb-2">No API keys set yet.</p>
+                  <p className="mb-4 text-sm">Add a provider key to start chatting with cloud LLMs.</p>
+                  <button
+                    onClick={onOpenProviders}
+                    className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+                  >
+                    Add API key
+                  </button>
+                </>
+              ) : !hasModel ? (
+                <>
+                  <p>Say hi to {active.session.Title}…</p>
+                  <button
+                    onClick={() => setShowModelSelect(true)}
+                    className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+                  >
+                    Select a model
+                  </button>
+                </>
+              ) : (
+                <p>Say hi to {active.session.Title}…</p>
               )}
             </div>
           )}
@@ -132,11 +150,15 @@ export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) 
       </div>
 
       {/* Input */}
+      {/* Input — enabled whenever we have a client + model, regardless of brain status.
+          The engine's streamFromDirectProxy path works without the Python brain
+          (calls cloud LLMs directly from Go), so brainAlive is NOT a hard gate.
+          The "brain offline" badge in the header is informational, not a blocker. */}
       <ChatInput
         onSend={send}
         onStop={stop}
         isBusy={active.isBusy}
-        disabled={!client || !brainAlive || !hasModel}
+        disabled={!client || !hasModel}
       />
 
       {/* Model select overlay */}

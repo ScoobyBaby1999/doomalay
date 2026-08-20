@@ -10,8 +10,8 @@ android {
         applicationId = "com.doomalay.engine"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.4.6-fix-datadir-mkdir"
+        versionCode = 7
+        versionName = "0.5.0-chat-unblock"
         ndk { abiFilters += "arm64-v8a" }
     }
     // CRITICAL: libdoomalayengine.so is NOT a JNI library — it is a standalone
