@@ -57,6 +57,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/keys", s.handleKeysList)
         s.mux.HandleFunc("POST /api/keys", s.handleKeysSet)
         s.mux.HandleFunc("DELETE /api/keys/{envVar}", s.handleKeysDelete)
+        s.mux.HandleFunc("GET /api/keys/validate", s.handleKeysValidate)
 
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)

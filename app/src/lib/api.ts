@@ -24,6 +24,7 @@ export interface EngineClient {
   listKeys(): Promise<Record<string, ProviderKeyInfo>>;
   setKey(envVar: string, provider: string, key: string, extra?: string): Promise<void>;
   deleteKey(envVar: string): Promise<void>;
+  validateKey(envVar: string): Promise<{ valid: boolean; model_count?: number; error?: string }>;
 
   // Sessions.
   listSessions(): Promise<ChatSession[]>;
@@ -82,6 +83,10 @@ export function makeClient(baseUrl: string, token: string): EngineClient {
 
     async deleteKey(envVar) {
       await req(`/api/keys/${encodeURIComponent(envVar)}`, { method: 'DELETE' });
+    },
+
+    async validateKey(envVar) {
+      return req(`/api/keys/validate?env_var=${encodeURIComponent(envVar)}`);
     },
 
     async listSessions() {

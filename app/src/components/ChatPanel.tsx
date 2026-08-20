@@ -68,20 +68,29 @@ export function ChatPanel({ onOpenProviders, onOpenEngines }: { onOpenProviders:
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Context ring */}
+          {/* Context ring + token count + approx cost */}
           {active.lastUsage && (
-            <div className="flex items-center gap-1 text-xs text-muted">
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <circle cx="8" cy="8" r="6" fill="none" stroke="#2a2a32" strokeWidth="2" />
-                <circle
-                  cx="8" cy="8" r="6" fill="none"
-                  stroke={contextPct > 80 ? '#f87171' : contextPct > 50 ? '#fbbf24' : '#34d399'}
-                  strokeWidth="2"
-                  strokeDasharray={`${(contextPct / 100) * 37.7} 37.7`}
-                  transform="rotate(-90 8 8)"
-                />
-              </svg>
-              <span className="tabular-nums">{fmtTokens(active.cumulativeUsage.total_tokens)}</span>
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-1">
+                <svg width="16" height="16" viewBox="0 0 16 16">
+                  <circle cx="8" cy="8" r="6" fill="none" stroke="#2a2a32" strokeWidth="2" />
+                  <circle
+                    cx="8" cy="8" r="6" fill="none"
+                    stroke={contextPct > 80 ? '#f87171' : contextPct > 50 ? '#fbbf24' : '#34d399'}
+                    strokeWidth="2"
+                    strokeDasharray={`${(contextPct / 100) * 37.7} 37.7`}
+                    transform="rotate(-90 8 8)"
+                  />
+                </svg>
+                <span className="tabular-nums">{fmtTokens(active.cumulativeUsage.total_tokens)}</span>
+              </div>
+              {/* Approximate cost — $0.01/1K tokens blended average. Clearly
+                  imprecise; real per-model pricing is future work. */}
+              {active.cumulativeUsage.total_tokens > 0 && (
+                <span className="tabular-nums text-muted" title="Approximate cost (blended $0.01/1K tokens)">
+                  ≈${(active.cumulativeUsage.total_tokens / 1000 * 0.01).toFixed(3)}
+                </span>
+              )}
             </div>
           )}
           {!brainAlive && (

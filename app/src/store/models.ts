@@ -10,6 +10,7 @@ interface ModelsStore {
   models: ModelInfo[];
   syncStatus: SyncStatus[];
   keys: Record<string, ProviderKeyInfo>;
+  keyValidation: Record<string, { valid: boolean; model_count?: number; error?: string; checking: boolean }>;
   totalModels: number;
   loading: boolean;
   refreshing: boolean;
@@ -20,6 +21,7 @@ interface ModelsStore {
   refreshKeys: () => Promise<void>;
   setKey: (envVar: string, provider: string, key: string, extra?: string) => Promise<void>;
   deleteKey: (envVar: string) => Promise<void>;
+  validateKey: (envVar: string) => Promise<void>;
 }
 
 export const useModelsStore = create<ModelsStore>((set, get) => ({
@@ -27,6 +29,7 @@ export const useModelsStore = create<ModelsStore>((set, get) => ({
   models: [],
   syncStatus: [],
   keys: {},
+  keyValidation: {},
   totalModels: 0,
   loading: false,
   refreshing: false,
@@ -75,6 +78,8 @@ export const useModelsStore = create<ModelsStore>((set, get) => ({
     await get().refreshKeys();
     // Force-refresh models so the sync status updates.
     await get().refresh(true);
+    // Auto-validate the key we just saved.
+    get().validateKey(envVar);
   },
 
   async deleteKey(envVar) {
@@ -83,5 +88,24 @@ export const useModelsStore = create<ModelsStore>((set, get) => ({
     await client.deleteKey(envVar);
     await get().refreshKeys();
     await get().refresh(true);
+    // Clear validation status for this key.
+    set((s) => {
+      const kv = { ...s.keyValidation };
+      delete kv[envVar];
+      return { keyValidation: kv };
+    });
+  },
+
+  async validateKey(envVar) {
+    const client = useEngineStore.getState().client;
+    if (!client) return;
+    // Mark as checking.
+    set((s) => ({ keyValidation: { ...s.keyValidation, [envVar]: { valid: false, checking: true } } }));
+    try {
+      const result = await client.validateKey(envVar);
+      set((s) => ({ keyValidation: { ...s.keyValidation, [envVar]: { ...result, checking: false } } }));
+    } catch (e: any) {
+      set((s) => ({ keyValidation: { ...s.keyValidation, [envVar]: { valid: false, error: e.message, checking: false } } }));
+    }
   },
 }));
