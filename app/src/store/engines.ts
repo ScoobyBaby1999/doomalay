@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import type { Engine, EngineCapabilities } from '../types';
 import { makeClient, type EngineClient } from '../lib/api';
+import { fetchWithRetry } from '../lib/retry';
 
 interface EngineState {
   engines: Engine[];
@@ -151,18 +152,34 @@ export const useEngineStore = create<EngineState>((set, get) => ({
   async pingHealth(id) {
     const e = get().engines.find((x) => x.id === id);
     if (!e) return { online: false, error: 'engine not found' };
+    // Local engines get a short timeout (3s) — they should respond instantly.
+    // Remote engines (HF Space, cloud) get retry logic to handle cold starts.
+    const isLocal = e.type === 'local' || e.url.includes('127.0.0.1') || e.url.includes('localhost');
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${e.url}/api/health`, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (!res.ok) return { online: false, error: `HTTP ${res.status}` };
-      const data = await res.json();
-      return {
-        online: data.status === 'ok',
-        brainAlive: data.brain,
-        version: data.version,
-      };
+      if (isLocal) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch(`${e.url}/api/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) return { online: false, error: `HTTP ${res.status}` };
+        const data = await res.json();
+        return { online: data.status === 'ok', brainAlive: data.brain, version: data.version };
+      } else {
+        // Remote: retry with backoff to handle HF Space cold starts (up to 60s).
+        const res = await fetchWithRetry(
+          `${e.url}/api/health`,
+          {},
+          {
+            maxAttempts: 8,
+            baseDelayMs: 2000,
+            maxDelayMs: 15000,
+            timeoutMs: 10000,
+          },
+        );
+        if (!res.ok) return { online: false, error: `HTTP ${res.status}` };
+        const data = await res.json();
+        return { online: data.status === 'ok', brainAlive: data.brain, version: data.version };
+      }
     } catch (err: any) {
       return { online: false, error: err.message };
     }

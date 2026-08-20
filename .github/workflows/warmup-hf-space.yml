@@ -1,0 +1,36 @@
+name: Warmup HF Space
+
+# Pings the HF Space every 6 hours to prevent it from sleeping (HF free tier
+# sleeps after 48h idle). Free to run — GitHub Actions cron + a single curl.
+# Can also be triggered manually via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours at :00
+  workflow_dispatch:
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping HF Space health
+        env:
+          HF_SPACE_REPO: ${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || 'ScoobyBaby1999/doomalay-space' }}
+        run: |
+          USERNAME=$(echo "$HF_SPACE_REPO" | cut -d'/' -f1)
+          SPACENAME=$(echo "$HF_SPACE_REPO" | cut -d'/' -f2)
+          SPACE_URL="https://${USERNAME}-${SPACENAME}.hf.space"
+          echo "Pinging $SPACE_URL/api/health ..."
+          # Retry up to 3 times with 10s backoff (Space might be cold).
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 30 "$SPACE_URL/api/health" 2>/dev/null || echo "000")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Space is warm."
+              cat /tmp/health.json | python3 -m json.tool 2>/dev/null || cat /tmp/health.json
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "⚠️ Space didn't respond after 3 attempts — it may need a manual rebuild."
+          exit 0  # Don't fail the workflow — this is best-effort.

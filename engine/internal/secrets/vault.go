@@ -231,27 +231,36 @@ func (v *Vault) Set(envVar, provider, key, extra string) error {
 
 // Get returns the decrypted key (for the brain to use as an env var).
 // Not exposed via the HTTP API — only the brain calls this internally.
+// Get returns the key for envVar. Checks the vault first, then falls back to
+// the process environment (so HF Space Secrets / Docker env vars work without
+// needing to be imported into the vault file first).
 func (v *Vault) Get(envVar string) (key, extra string, err error) {
         v.mu.RLock()
         e, ok := v.keyStore[envVar]
         v.mu.RUnlock()
-        if !ok {
-                return "", "", fmt.Errorf("no key for %s", envVar)
+        if ok {
+                key, err = v.decrypt(e.KeyCipher, e.KeyNonce)
+                if err != nil {
+                        return "", "", err
+                }
+                if e.ExtraCipher != "" {
+                        extra, _ = v.decrypt(e.ExtraCipher, e.ExtraNonce)
+                }
+                return key, extra, nil
         }
-        key, err = v.decrypt(e.KeyCipher, e.KeyNonce)
-        if err != nil {
-                return "", "", err
+        // Fallback: check process env (HF Space Secrets, Docker env, Termux env).
+        if envVal := os.Getenv(envVar); envVal != "" {
+                return envVal, os.Getenv(envVar + "_EXTRA"), nil
         }
-        if e.ExtraCipher != "" {
-                extra, err = v.decrypt(e.ExtraCipher, e.ExtraNonce)
-        }
-        return key, extra, err
+        return "", "", fmt.Errorf("no key for %s", envVar)
 }
 
-// List returns which providers have keys (never the values).
+// List returns which providers have keys (never the values). Includes keys
+// that are only in the process env (not yet imported into the vault).
 func (v *Vault) List() []HasKey {
         v.mu.RLock()
         defer v.mu.RUnlock()
+        seen := make(map[string]bool, len(v.keyStore))
         out := make([]HasKey, 0, len(v.keyStore))
         for _, e := range v.keyStore {
                 out = append(out, HasKey{
@@ -260,6 +269,21 @@ func (v *Vault) List() []HasKey {
                         HasKey:   e.KeyCipher != "",
                         HasExtra: e.ExtraCipher != "",
                 })
+                seen[e.EnvVar] = true
+        }
+        // Also include keys from the process env (HF Space Secrets, etc.).
+        for envVar, provider := range PROVIDER_KEY_ALLOWLIST {
+                if seen[envVar] {
+                        continue
+                }
+                if os.Getenv(envVar) != "" {
+                        out = append(out, HasKey{
+                                EnvVar:   envVar,
+                                Provider: provider,
+                                HasKey:   true,
+                                HasExtra: os.Getenv(envVar+"_EXTRA") != "",
+                        })
+                }
         }
         return out
 }
@@ -278,18 +302,35 @@ func (v *Vault) Delete(envVar string) error {
 // AsEnv returns all stored keys as a map suitable for setting as env vars
 // when the brain spawns a subprocess. This is how provider keys reach the
 // Python brain without ever touching the filesystem unencrypted.
+// Also includes keys from the process env (HF Space Secrets) so they reach
+// the brain even if not imported into the vault file.
 func (v *Vault) AsEnv() map[string]string {
         v.mu.RLock()
         defer v.mu.RUnlock()
-        env := make(map[string]string, len(v.keyStore))
+        env := make(map[string]string, len(v.keyStore)+len(PROVIDER_KEY_ALLOWLIST))
+        // Vault keys (encrypted on disk, decrypted here).
+        seen := make(map[string]bool, len(v.keyStore))
         for envVar, e := range v.keyStore {
                 if key, err := v.decrypt(e.KeyCipher, e.KeyNonce); err == nil {
                         env[envVar] = key
+                        seen[envVar] = true
                 }
                 if e.ExtraCipher != "" {
                         if extra, err := v.decrypt(e.ExtraCipher, e.ExtraNonce); err == nil {
                                 env[e.EnvVar+"_EXTRA"] = extra
                         }
+                }
+        }
+        // Process env keys (HF Space Secrets, Docker env) — only if not in vault.
+        for envVar := range PROVIDER_KEY_ALLOWLIST {
+                if seen[envVar] {
+                        continue
+                }
+                if val := os.Getenv(envVar); val != "" {
+                        env[envVar] = val
+                }
+                if extra := os.Getenv(envVar + "_EXTRA"); extra != "" {
+                    env[envVar+"_EXTRA"] = extra
                 }
         }
         return env

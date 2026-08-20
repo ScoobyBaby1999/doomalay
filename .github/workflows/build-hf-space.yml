@@ -3,8 +3,14 @@ name: Build HF Space Docker
 on:
   push:
     tags: ['v*']
-    branches: [main]
-    paths: ['platforms/hf-space/**', 'engine/**', 'brain/**']
+    branches:
+      - main
+    paths:
+      - 'platforms/hf-space/**'
+      - 'engine/**'
+      - 'brain/**'
+      - 'app/**'
+      - '.github/workflows/build-hf-space.yml'
   workflow_dispatch:
 
 jobs:
@@ -15,29 +21,73 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build PWA
+        run: |
+          cd app && npm install && npm run build
+
+      - name: Copy PWA into engine
+        run: |
+          rm -rf engine/internal/server/web/assets
+          cp -r app/dist/* engine/internal/server/web/
+
       - name: Build Go engine (linux/amd64)
         run: |
           cd engine
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../platforms/hf-space/engine/doomalay-engine ./cmd/doomalay
-      - name: Build Docker image
+          chmod +x ../platforms/hf-space/engine/doomalay-engine
+
+      - name: Build Docker image (validation only)
         run: |
           cd platforms/hf-space
           docker build -t doomalay-hf-space .
+
       - name: Push to HF Space
         if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: ${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || 'ScoobyBaby1999/doomalay-space' }}
         run: |
-          # Push the Docker image to HF Space (requires HF_TOKEN secret)
-          echo "Pushing to HF Space..."
-          # This uses huggingface_hub to push the Docker image
+          echo "Pushing to HF Space: $HF_SPACE_REPO"
           pip install huggingface_hub
           python3 -c "
+          import os
           from huggingface_hub import HfApi
-          api = HfApi(token='$HF_TOKEN')
+          api = HfApi(token=os.environ['HF_TOKEN'])
           api.upload_folder(
               folder_path='platforms/hf-space',
-              repo_id='${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || \"doomalay/doomalay\" }}',
+              repo_id=os.environ['HF_SPACE_REPO'],
               repo_type='space',
           )
+          print('✅ Pushed to HF Space')
           "
+
+      - name: Verify HF Space health (if deployed)
+        if: env.HF_TOKEN != ''
+        env:
+          HF_SPACE_REPO: ${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || 'ScoobyBaby1999/doomalay-space' }}
+        run: |
+          # Extract username from repo_id for the Space URL
+          USERNAME=$(echo "$HF_SPACE_REPO" | cut -d'/' -f1)
+          SPACENAME=$(echo "$HF_SPACE_REPO" | cut -d'/' -f2)
+          SPACE_URL="https://${USERNAME}-${SPACENAME}.hf.space"
+          echo "Space URL: $SPACE_URL"
+          # Wait for build + cold start (up to 5 min)
+          echo "Waiting for Space to build and start..."
+          for i in $(seq 1 30); do
+            sleep 10
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$SPACE_URL/api/health" 2>/dev/null || echo "000")
+            echo "  Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ HF Space is healthy!"
+              curl -s "$SPACE_URL/api/health" | python3 -m json.tool
+              exit 0
+            fi
+          done
+          echo "⚠️ Space didn't become healthy in 5 min — check HF dashboard"

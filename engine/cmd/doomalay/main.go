@@ -14,6 +14,7 @@ import (
         "os"
         "os/exec"
         "os/signal"
+        "strings"
         "syscall"
         "time"
 
@@ -28,24 +29,37 @@ func main() {
         port := flag.Int("port", 0, "override listen port (default: 8080, or $PORT)")
         bind := flag.String("bind", "", "override bind address (default: 127.0.0.1, or config bind; set to 0.0.0.0 for LAN)")
         dataDir := flag.String("data-dir", "", "override data directory for SQLite + workspaces (default: ~/.local/share/doomalay)")
+        allowedOriginsStr := flag.String("allowed-origins", "", "comma-separated CORS+WS allowed origins (e.g. \"https://huggingface.co,https://user-space.hf.space\")")
         openBrowser := flag.Bool("open", false, "open the system browser on start (default: true on desktop, false on Android)")
         flag.Parse()
+
+        // Parse allowed-origins into a slice.
+        var allowedOrigins []string
+        if *allowedOriginsStr != "" {
+                for _, o := range strings.Split(*allowedOriginsStr, ",") {
+                        o = strings.TrimSpace(o)
+                        if o != "" {
+                                allowedOrigins = append(allowedOrigins, o)
+                        }
+                }
+        }
 
         // Pass CLI overrides INTO Load so they're applied BEFORE the MkdirAll
         // on DataDir. Without this, Load would try to mkdir the default
         // data dir (~/.local/share/doomalay, which is /sdcard/.local/share/doomalay
         // on Android — not writable) even when --data-dir is passed.
         cfg, err := config.Load(*cfgPath, config.Overrides{
-                Port:        *port,
-                Bind:        *bind,
-                DataDir:     *dataDir,
-                OpenBrowser: *openBrowser,
+                Port:           *port,
+                Bind:           *bind,
+                DataDir:        *dataDir,
+                AllowedOrigins: allowedOrigins,
+                OpenBrowser:    *openBrowser,
         })
         if err != nil {
                 log.Fatalf("config: %v", err)
         }
 
-        log.Printf("doomalay engine starting (port %d, mode=%s)", cfg.Port, cfg.Mode)
+        log.Printf("doomalay engine starting (port %d, mode=%s, origins=%v)", cfg.Port, cfg.Mode, cfg.AllowedOrigins)
 
         // Open the SQLite store (pure-Go driver, no CGO).
         db, err := store.Open(cfg.DataDir)

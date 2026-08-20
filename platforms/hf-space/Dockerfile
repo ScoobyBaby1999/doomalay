@@ -6,6 +6,19 @@
 #
 # Limits (HF free tier): 16GB RAM, 2 CPU, 50GB ephemeral disk, sleeps after 48h.
 # Can't do: UE5/AAA games (needs 32GB+ RAM + GPU), KVM VMs, docker-in-docker.
+#
+# ── HF Space Secrets (set in Space → Settings → Secrets) ──────────────────
+# At least one provider key is needed for chat to work:
+#   OPENROUTER_API_KEY  — recommended (free tier, 300+ models)
+#   ANTHROPIC_API_KEY   — Claude models
+#   OPENAI_API_KEY      — GPT models
+#   NVIDIA_API_KEY      — free tier, Llama/Nemotron
+#   GROQ_API_KEY        — free tier, fast inference
+#   ZAI_API_KEY         — GLM models
+#
+# The engine reads these from the process env (vault.go env fallback) and
+# passes them to the brain / direct LLM proxy automatically. No vault file
+# needed on the Space — env vars are the source of truth.
 
 FROM python:3.11-slim
 
@@ -47,4 +60,7 @@ ENV BRAIN_DIR=/app/brain
 EXPOSE 8080
 
 # The Go engine serves the PWA + proxies to the Python brain.
-CMD ["/app/doomalay-engine", "--port", "8080", "--bind", "0.0.0.0"]
+# --allowed-origins: allow the HF Space's own URL + huggingface.co for embedding.
+# The Space URL is derived from the repo name (USERNAME-SPACENAME.hf.space).
+# Users add their own origins via the CLI flag if embedding elsewhere.
+CMD ["/app/doomalay-engine", "--port", "8080", "--bind", "0.0.0.0", "--allowed-origins", "https://huggingface.co"]
