@@ -122,14 +122,15 @@ export function makeClient(baseUrl: string, token: string): EngineClient {
 
     chatWS(sessionId) {
       const wsBase = base.replace(/^http/, 'ws');
-      const url = `${wsBase}/api/chat?session_id=${encodeURIComponent(sessionId)}`;
-      const ws = new WebSocket(url);
+      let url = `${wsBase}/api/chat?session_id=${encodeURIComponent(sessionId)}`;
+      // Browsers don't support custom headers on WebSocket, so we pass the
+      // token as a query param. This is safe over WSS (TLS) and over ws://
+      // localhost (no network transit). The engine accepts ?token= as a
+      // fallback when the Authorization header isn't present.
       if (token) {
-        // Inject auth via subprotocol (WebSocket doesn't support custom headers
-        // in the browser; the engine accepts ?token= as a fallback).
-        // For now, localhost trusts without auth.
+        url += `&token=${encodeURIComponent(token)}`;
       }
-      return ws;
+      return new WebSocket(url);
     },
   };
 }

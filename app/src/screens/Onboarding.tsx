@@ -1,24 +1,46 @@
-// Onboarding — first-launch screen. Three paths:
-//   1. "Try Demo" → connects to the HF Demo Engine
-//   2. "Connect My Device" → enter localhost URL (engine running locally)
+// Onboarding — first-launch screen. Auto-detects a local engine on
+// 127.0.0.1:8080 (the APK's default). If found, connects automatically.
+// Otherwise offers three paths:
+//   1. "Try Demo" → connects to the HF Demo Engine (Phase C)
+//   2. "Connect My Device" → retry localhost:8080
 //   3. "Enter Engine URL" → manual (for cloud/remote engines)
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useEngineStore } from '../store/engines';
 import { useModelsStore } from '../store/models';
 
-const HF_DEMO_URL = ''  // User configures their own HF Space URL;
+const HF_DEMO_URL = ''; // Set in Phase C when the HF Space is deployed
 
 export function Onboarding() {
-  const addEngine = useEngineStore((s) => s.addEngine);
+  const { addEngine, autoDetectLocal } = useEngineStore();
   const refreshModels = useModelsStore((s) => s.refresh);
   const [url, setUrl] = useState('http://localhost:8080');
   const [name, setName] = useState('My Device');
   const [token, setToken] = useState('');
-  const [mode, setMode] = useState<'choose' | 'manual'>('choose');
+  const [mode, setMode] = useState<'detecting' | 'choose' | 'manual'>('detecting');
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-detect local engine on mount. This is the primary path on Android
+  // where the APK's EngineService has already started the Go engine on
+  // 127.0.0.1:8080 before the WebView loads.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const local = await autoDetectLocal();
+      if (cancelled) return;
+      if (local) {
+        // Found a local engine — auto-connect.
+        await addEngine(local);
+        // App.tsx will re-render with the engine active, replacing Onboarding.
+      } else {
+        // No local engine — show manual options.
+        setMode('choose');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function connect(engineUrl: string, engineName: string, engineToken: string, type: 'local' | 'hf-demo' | 'cloud') {
     setConnecting(true);
@@ -31,7 +53,7 @@ export function Onboarding() {
       const data = await res.json();
       if (data.status !== 'ok') throw new Error('engine not healthy');
 
-      addEngine({
+      await addEngine({
         id: `${engineName}-${Date.now()}`,
         name: engineName,
         url: base,
@@ -48,6 +70,26 @@ export function Onboarding() {
     } finally {
       setConnecting(false);
     }
+  }
+
+  // Detecting local engine — show a spinner.
+  if (mode === 'detecting') {
+    return (
+      <div className="flex h-full items-center justify-center bg-bg">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-center"
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            className="mx-auto mb-4 h-8 w-8 rounded-full border-2 border-border border-t-accent"
+          />
+          <p className="text-sm text-muted">Detecting local engine…</p>
+        </motion.div>
+      </div>
+    );
   }
 
   return (
@@ -68,16 +110,18 @@ export function Onboarding() {
 
         {mode === 'choose' && (
           <div className="space-y-3">
+            {HF_DEMO_URL && (
+              <button
+                onClick={() => connect(HF_DEMO_URL, 'HF Demo', '', 'hf-demo')}
+                disabled={connecting}
+                className="w-full rounded-xl bg-accent p-4 text-left text-white transition hover:bg-accent-hover disabled:opacity-50"
+              >
+                <div className="font-semibold">🤗 Try Demo</div>
+                <div className="text-sm opacity-80">Zero install. Uses HF Space (free, may sleep).</div>
+              </button>
+            )}
             <button
-              onClick={() => connect(HF_DEMO_URL, 'HF Demo', '', 'hf-demo')}
-              disabled={connecting}
-              className="w-full rounded-xl bg-accent p-4 text-left text-white transition hover:bg-accent-hover disabled:opacity-50"
-            >
-              <div className="font-semibold">🤗 Try Demo</div>
-              <div className="text-sm opacity-80">Zero install. Uses HF Space (free, may sleep).</div>
-            </button>
-            <button
-              onClick={() => connect('http://localhost:8080', 'This Device', '', 'local')}
+              onClick={() => connect('http://127.0.0.1:8080', 'This Device', '', 'local')}
               disabled={connecting}
               className="w-full rounded-xl border border-border bg-surface-2 p-4 text-left text-text transition hover:border-accent disabled:opacity-50"
             >

@@ -11,7 +11,7 @@ import { pickName } from '../canvas/names';
 import { ChatPanel } from './ChatPanel';
 import { RoutingOverlay } from './RoutingOverlay';
 
-export function SpatialCanvas({ onOpenProviders }: { onOpenProviders: () => void }) {
+export function SpatialCanvas({ onOpenProviders, onOpenEngines }: { onOpenProviders: () => void; onOpenEngines: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const appRef = useRef<CanvasApp | null>(null);
   const [showRouting, setShowRouting] = useState(false);
@@ -164,7 +164,7 @@ export function SpatialCanvas({ onOpenProviders }: { onOpenProviders: () => void
             transition={{ type: 'spring', stiffness: 400, damping: 35 }}
             className="absolute inset-y-0 right-0 z-30 w-full max-w-2xl bg-bg shadow-2xl"
           >
-            <ChatPanel onOpenProviders={onOpenProviders} />
+            <ChatPanel onOpenProviders={onOpenProviders} onOpenEngines={onOpenEngines} />
             <button
               onClick={() => setActiveChatId(null)}
               className="absolute left-2 top-2 z-40 rounded-lg border border-border bg-surface p-2 text-text hover:border-accent"

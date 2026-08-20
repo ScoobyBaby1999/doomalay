@@ -13,7 +13,7 @@ import { Message } from './Message';
 import { ChatInput } from './ChatInput';
 import { ModelSelect } from './ModelSelect';
 
-export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) {
+export function ChatPanel({ onOpenProviders, onOpenEngines }: { onOpenProviders: () => void; onOpenEngines: () => void }) {
   const active = useActiveSession();
   const activeId = useSessionsStore((s) => s.activeSessionId);
   const { send, stop } = useChat(activeId);
@@ -88,8 +88,16 @@ export function ChatPanel({ onOpenProviders }: { onOpenProviders: () => void }) 
             <span className="rounded-full bg-warning/20 px-2 py-0.5 text-xs text-warning">brain offline</span>
           )}
           <button
+            onClick={onOpenEngines}
+            className="rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-text"
+            title="Switch engine"
+          >
+            ⇄
+          </button>
+          <button
             onClick={onOpenProviders}
             className="rounded-lg border border-border px-2 py-1 text-xs text-muted hover:text-text"
+            title="API keys"
           >
             ⚙
           </button>

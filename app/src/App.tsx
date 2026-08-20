@@ -8,6 +8,7 @@ import { useSessionsStore } from './store/sessions';
 import { useModelsStore } from './store/models';
 import { useChat } from './hooks/useChat';
 import { Onboarding } from './screens/Onboarding';
+import { EnginesScreen } from './screens/EnginesScreen';
 import { SpatialCanvas } from './components/SpatialCanvas';
 import { Providers } from './components/Providers';
 
@@ -16,6 +17,7 @@ export default function App() {
   const { sessions, activeSessionId, createSession, setActive, loadSessionEvents } = useSessionsStore();
   const refreshModels = useModelsStore((s) => s.refresh);
   const [showProviders, setShowProviders] = useState(false);
+  const [showEngines, setShowEngines] = useState(false);
 
   // Init: load engines from localStorage on mount.
   useEffect(() => {
@@ -46,7 +48,25 @@ export default function App() {
 
   return (
     <div className="h-full safe-top safe-bottom">
-      <SpatialCanvas onOpenProviders={() => setShowProviders(true)} />
+      <SpatialCanvas
+        onOpenProviders={() => setShowProviders(true)}
+        onOpenEngines={() => setShowEngines(true)}
+      />
+
+      {/* Engines overlay */}
+      <AnimatePresence>
+        {showEngines && (
+          <motion.div
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', stiffness: 400, damping: 35 }}
+            className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-bg shadow-2xl"
+          >
+            <EnginesScreen onClose={() => setShowEngines(false)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Providers overlay */}
       <AnimatePresence>
