@@ -1,16 +1,231 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0a0a0b" />
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <title>Doomalay</title>
-    <script type="module" crossorigin src="/assets/index-DND0qycG.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DIOMPpjT.css">
-  </head>
-  <body class="bg-bg text-text antialiased">
-    <div id="root"></div>
-  </body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
+<title>Doomalay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #0a0a0b;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; position: fixed; top: 0; left: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  let W = 0, H = 0;
+
+  // ── View state ────────────────────────────────────────────────
+  // offsetX/Y is the world-space coordinate at the top-left corner
+  // of the screen. Panning changes these. The grid extends infinitely
+  // in all directions — it's rendered procedurally from the offset.
+  let offsetX = 0, offsetY = 0;
+  let velX = 0, velY = 0;       // momentum (px/frame at 60fps)
+  let animating = false;
+
+  // ── Grid appearance ───────────────────────────────────────────
+  const GRID = 48;                // px between grid lines
+  const BG = '#0a0a0b';
+  const LINE_COLOR = '#131318';
+  const DOT_COLOR = '#2e2e3a';
+  const DOT_RADIUS = 1.4;
+  const ORIGIN_COLOR = '#4a4a5e';
+  const ORIGIN_RADIUS = 5;
+
+  // ── Resize ────────────────────────────────────────────────────
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    render();
+  }
+
+  // ── Render ────────────────────────────────────────────────────
+  function render() {
+    // Clear
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid lines — only draw what's visible (plus a 1-cell margin).
+    const startX = ((offsetX % GRID) + GRID) % GRID;
+    const startY = ((offsetY % GRID) + GRID) % GRID;
+
+    ctx.strokeStyle = LINE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = startX; x < W; x += GRID) {
+      ctx.moveTo(Math.round(x) + 0.5, 0);
+      ctx.lineTo(Math.round(x) + 0.5, H);
+    }
+    for (let y = startY; y < H; y += GRID) {
+      ctx.moveTo(0, Math.round(y) + 0.5);
+      ctx.lineTo(W, Math.round(y) + 0.5);
+    }
+    ctx.stroke();
+
+    // Dots at grid intersections.
+    ctx.fillStyle = DOT_COLOR;
+    for (let x = startX; x < W; x += GRID) {
+      for (let y = startY; y < H; y += GRID) {
+        ctx.beginPath();
+        ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Origin marker (world-space 0,0 → screen-space -offsetX, -offsetY).
+    const ox = -offsetX;
+    const oy = -offsetY;
+    if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
+      ctx.fillStyle = ORIGIN_COLOR;
+      ctx.beginPath();
+      ctx.arc(ox, oy, ORIGIN_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ── Animation loop (momentum/inertia) ─────────────────────────
+  function tick() {
+    if (Math.abs(velX) < 0.15 && Math.abs(velY) < 0.15) {
+      velX = 0; velY = 0;
+      animating = false;
+      render();
+      return;
+    }
+    offsetX += velX;
+    offsetY += velY;
+    velX *= 0.93;  // friction
+    velY *= 0.93;
+    render();
+    requestAnimationFrame(tick);
+  }
+
+  function startMomentum() {
+    if (animating) return;
+    animating = true;
+    requestAnimationFrame(tick);
+  }
+
+  function stopMomentum() {
+    animating = false;
+    velX = 0; velY = 0;
+  }
+
+  // ── Input: touch + mouse ──────────────────────────────────────
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  let lastTime = 0;
+
+  function dragStart(x, y) {
+    dragging = true;
+    stopMomentum();
+    lastX = x;
+    lastY = y;
+    lastTime = performance.now();
+  }
+
+  function dragMove(x, y) {
+    if (!dragging) return;
+    const dx = x - lastX;
+    const dy = y - lastY;
+    const now = performance.now();
+    const dt = now - lastTime;
+    // Track velocity (px per 16ms frame) for momentum.
+    if (dt > 0) {
+      velX = (dx / dt) * 16;
+      velY = (dy / dt) * 16;
+    }
+    offsetX += dx;
+    offsetY += dy;
+    lastX = x;
+    lastY = y;
+    lastTime = now;
+    render();
+  }
+
+  function dragEnd() {
+    if (!dragging) return;
+    dragging = false;
+    // Only apply momentum if the last move was recent (within 100ms).
+    if (performance.now() - lastTime < 100) {
+      startMomentum();
+    } else {
+      velX = 0; velY = 0;
+    }
+  }
+
+  // Touch events
+  canvas.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    dragStart(t.clientX, t.clientY);
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    dragMove(t.clientX, t.clientY);
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', function (e) {
+    e.preventDefault();
+    dragEnd();
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', function () {
+    dragEnd();
+  });
+
+  // Mouse events (desktop testing)
+  canvas.addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    dragStart(e.clientX, e.clientY);
+  });
+
+  window.addEventListener('mousemove', function (e) {
+    dragMove(e.clientX, e.clientY);
+  });
+
+  window.addEventListener('mouseup', function () {
+    dragEnd();
+  });
+
+  // Prevent context menu (long-press on mobile).
+  canvas.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+  });
+
+  // Resize
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function () {
+    setTimeout(resize, 100);
+  });
+
+  // Start
+  resize();
+})();
+</script>
+</body>
 </html>

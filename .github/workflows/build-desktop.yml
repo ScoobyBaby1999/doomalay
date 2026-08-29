@@ -28,18 +28,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Build PWA
-        run: |
-          cd app
-          npm install
-          npm run build
-      - name: Copy PWA into engine
-        run: |
-          rm -rf engine/internal/server/web/assets
-          cp -r app/dist/* engine/internal/server/web/
       - name: Build Go engine
         run: |
           cd engine
