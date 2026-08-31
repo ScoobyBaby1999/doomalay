@@ -12,6 +12,7 @@ brain/.venv/
 *.dylib
 /bin/
 engine/doomalay-engine
+doomalay-engine-test
 
 # Node / PWA
 node_modules/

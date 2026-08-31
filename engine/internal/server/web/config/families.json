@@ -1,0 +1,50 @@
+{
+  "defaultFamily": "default",
+  "families": {
+    "default": {
+      "label": "Default",
+      "color": "#4a4a5e",
+      "icons": []
+    },
+    "anthropic": {
+      "label": "Anthropic",
+      "color": "#d97757",
+      "icons": []
+    },
+    "openai": {
+      "label": "OpenAI",
+      "color": "#10a37f",
+      "icons": []
+    },
+    "google": {
+      "label": "Google",
+      "color": "#4285f4",
+      "icons": []
+    },
+    "deepseek": {
+      "label": "DeepSeek",
+      "color": "#4f46e5",
+      "icons": []
+    },
+    "qwen": {
+      "label": "Qwen",
+      "color": "#6c4cf1",
+      "icons": []
+    },
+    "glm": {
+      "label": "GLM",
+      "color": "#3b82f6",
+      "icons": []
+    },
+    "meta": {
+      "label": "Meta",
+      "color": "#0866ff",
+      "icons": []
+    },
+    "mistral": {
+      "label": "Mistral",
+      "color": "#fa520f",
+      "icons": []
+    }
+  }
+}

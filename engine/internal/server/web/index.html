@@ -7,225 +7,185 @@
 <title>Doomalay</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
   html, body {
     width: 100%; height: 100%;
     overflow: hidden;
     background: #0a0a0b;
+    color: #e0e0e8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-user-select: none; user-select: none;
     -webkit-touch-callout: none;
     touch-action: none;
     overscroll-behavior: none;
   }
-  canvas { display: block; position: fixed; top: 0; left: 0; }
+
+  canvas {
+    display: block;
+    position: fixed;
+    top: 0; left: 0;
+  }
+
+  /* ── Chatbot icons layer ───────────────────────────────────────
+     The layer itself has pointer-events:none so events fall through
+     to the canvas (for panning) — but each .chatbot child opts back
+     into pointer events so it's draggable. */
+  #chatbots {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .chatbot {
+    position: absolute;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: grab;
+    will-change: transform;  /* hint to browser for GPU compositing */
+  }
+  .chatbot.dragging {
+    cursor: grabbing;
+    z-index: 200;  /* dragged bot always on top */
+  }
+  .chatbot .icon {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: #2a2a35;
+    border: 2px solid #3a3a45;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #e0e0e8;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    overflow: hidden;  /* clip img to circle */
+  }
+  .chatbot .icon img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    -webkit-user-drag: none;  /* disable browser's image drag */
+  }
+  .chatbot .name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a0a0b0;
+    background: rgba(20,20,28,0.85);
+    padding: 2px 8px;
+    border-radius: 6px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    white-space: nowrap;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Long-press dropdown menu ──────────────────────────────── */
+  #menu {
+    position: fixed;
+    background: #1a1a20;
+    border: 1px solid #2a2a35;
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    min-width: 160px;
+    z-index: 1000;
+    transform: translate(-50%, -50%);  /* center on the press point */
+    animation: menu-pop 0.15s ease-out;
+  }
+  @keyframes menu-pop {
+    from { transform: translate(-50%, -50%) scale(0.85); opacity: 0; }
+    to   { transform: translate(-50%, -50%) scale(1);    opacity: 1; }
+  }
+  #menu.hidden { display: none; }
+  #menu button {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: #e0e0e8;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: inherit;
+  }
+  #menu button:hover, #menu button:active {
+    background: #2a2a35;
+  }
+
+  /* ── Debug family-switcher (TEMPORARY — remove when model
+     picker is added) ────────────────────────────────────────── */
+  #debug {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 500;
+    background: rgba(20,20,28,0.85);
+    padding: 6px;
+    border-radius: 8px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid #2a2a35;
+  }
+  #debug .label {
+    color: #707080;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px;
+    text-align: center;
+  }
+  #debug button {
+    background: #1a1a20;
+    border: 1px solid #2a2a35;
+    color: #e0e0e8;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    min-width: 80px;
+  }
+  #debug button.active {
+    background: #2a2a45;
+    border-color: #4a4a5e;
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<script>
-(function () {
-  'use strict';
-
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-
-  let W = 0, H = 0;
-
-  // ── View state ────────────────────────────────────────────────
-  // offsetX/Y is the world-space coordinate at the top-left corner
-  // of the screen. Panning changes these. The grid extends infinitely
-  // in all directions — it's rendered procedurally from the offset.
-  let offsetX = 0, offsetY = 0;
-  let velX = 0, velY = 0;       // momentum (px/frame at 60fps)
-  let animating = false;
-
-  // ── Grid appearance ───────────────────────────────────────────
-  const GRID = 48;                // px between grid lines
-  const BG = '#0a0a0b';
-  const LINE_COLOR = '#131318';
-  const DOT_COLOR = '#2e2e3a';
-  const DOT_RADIUS = 1.4;
-  const ORIGIN_COLOR = '#4a4a5e';
-  const ORIGIN_RADIUS = 5;
-
-  // ── Resize ────────────────────────────────────────────────────
-  function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
-    canvas.width = Math.floor(W * dpr);
-    canvas.height = Math.floor(H * dpr);
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    render();
-  }
-
-  // ── Render ────────────────────────────────────────────────────
-  function render() {
-    // Clear
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-
-    // Grid lines — only draw what's visible (plus a 1-cell margin).
-    const startX = ((offsetX % GRID) + GRID) % GRID;
-    const startY = ((offsetY % GRID) + GRID) % GRID;
-
-    ctx.strokeStyle = LINE_COLOR;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = startX; x < W; x += GRID) {
-      ctx.moveTo(Math.round(x) + 0.5, 0);
-      ctx.lineTo(Math.round(x) + 0.5, H);
-    }
-    for (let y = startY; y < H; y += GRID) {
-      ctx.moveTo(0, Math.round(y) + 0.5);
-      ctx.lineTo(W, Math.round(y) + 0.5);
-    }
-    ctx.stroke();
-
-    // Dots at grid intersections.
-    ctx.fillStyle = DOT_COLOR;
-    for (let x = startX; x < W; x += GRID) {
-      for (let y = startY; y < H; y += GRID) {
-        ctx.beginPath();
-        ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // Origin marker (world-space 0,0 → screen-space -offsetX, -offsetY).
-    const ox = -offsetX;
-    const oy = -offsetY;
-    if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
-      ctx.fillStyle = ORIGIN_COLOR;
-      ctx.beginPath();
-      ctx.arc(ox, oy, ORIGIN_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // ── Animation loop (momentum/inertia) ─────────────────────────
-  function tick() {
-    if (Math.abs(velX) < 0.15 && Math.abs(velY) < 0.15) {
-      velX = 0; velY = 0;
-      animating = false;
-      render();
-      return;
-    }
-    offsetX += velX;
-    offsetY += velY;
-    velX *= 0.93;  // friction
-    velY *= 0.93;
-    render();
-    requestAnimationFrame(tick);
-  }
-
-  function startMomentum() {
-    if (animating) return;
-    animating = true;
-    requestAnimationFrame(tick);
-  }
-
-  function stopMomentum() {
-    animating = false;
-    velX = 0; velY = 0;
-  }
-
-  // ── Input: touch + mouse ──────────────────────────────────────
-  let dragging = false;
-  let lastX = 0, lastY = 0;
-  let lastTime = 0;
-
-  function dragStart(x, y) {
-    dragging = true;
-    stopMomentum();
-    lastX = x;
-    lastY = y;
-    lastTime = performance.now();
-  }
-
-  function dragMove(x, y) {
-    if (!dragging) return;
-    const dx = x - lastX;
-    const dy = y - lastY;
-    const now = performance.now();
-    const dt = now - lastTime;
-    // Track velocity (px per 16ms frame) for momentum.
-    if (dt > 0) {
-      velX = (dx / dt) * 16;
-      velY = (dy / dt) * 16;
-    }
-    offsetX += dx;
-    offsetY += dy;
-    lastX = x;
-    lastY = y;
-    lastTime = now;
-    render();
-  }
-
-  function dragEnd() {
-    if (!dragging) return;
-    dragging = false;
-    // Only apply momentum if the last move was recent (within 100ms).
-    if (performance.now() - lastTime < 100) {
-      startMomentum();
-    } else {
-      velX = 0; velY = 0;
-    }
-  }
-
-  // Touch events
-  canvas.addEventListener('touchstart', function (e) {
-    if (e.touches.length !== 1) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    dragStart(t.clientX, t.clientY);
-  }, { passive: false });
-
-  canvas.addEventListener('touchmove', function (e) {
-    if (e.touches.length !== 1) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    dragMove(t.clientX, t.clientY);
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', function (e) {
-    e.preventDefault();
-    dragEnd();
-  }, { passive: false });
-
-  canvas.addEventListener('touchcancel', function () {
-    dragEnd();
-  });
-
-  // Mouse events (desktop testing)
-  canvas.addEventListener('mousedown', function (e) {
-    e.preventDefault();
-    dragStart(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mousemove', function (e) {
-    dragMove(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mouseup', function () {
-    dragEnd();
-  });
-
-  // Prevent context menu (long-press on mobile).
-  canvas.addEventListener('contextmenu', function (e) {
-    e.preventDefault();
-  });
-
-  // Resize
-  window.addEventListener('resize', resize);
-  window.addEventListener('orientationchange', function () {
-    setTimeout(resize, 100);
-  });
-
-  // Start
-  resize();
-})();
-</script>
+<div id="chatbots"></div>
+<div id="menu" class="hidden">
+  <button data-action="new-chat">＋ New Chat</button>
+</div>
+<div id="debug">
+  <div class="label">Family (debug)</div>
+  <button data-family="default" class="active">default</button>
+  <button data-family="anthropic">anthropic</button>
+  <button data-family="openai">openai</button>
+  <button data-family="google">google</button>
+  <button data-family="deepseek">deepseek</button>
+  <button data-family="qwen">qwen</button>
+  <button data-family="glm">glm</button>
+  <button data-family="meta">meta</button>
+  <button data-family="mistral">mistral</button>
+</div>
+<script src="physics.js"></script>
+<script src="chatbot.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
