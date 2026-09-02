@@ -19,10 +19,11 @@
 (function () {
   'use strict';
 
-  // Friction coefficient per 16ms frame. 0.97 = loses 3% of velocity per
-  // frame at 60fps. Higher = slides longer. 0.93 (used for canvas pan)
-  // = stops faster.
-  const FRICTION = 0.97;
+  // Friction coefficient per 16ms frame. Lower = stops sooner = heavier feel.
+  // Was 0.97 (too light — icons traveled too far). 0.92 makes them feel
+  // weighty: a hard fling travels ~12x the initial velocity before stopping,
+  // vs ~33x at 0.97. Tuned to feel like dragging a physical object.
+  const FRICTION = 0.92;
 
   // Below this speed (px/frame), snap to zero. Prevents perpetual
   // micro-jitter from accumulated floating-point error.

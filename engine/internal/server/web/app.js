@@ -66,8 +66,16 @@
   // changes these. World point (wx, wy) appears on screen at
   // (wx - offsetX, wy - offsetY).
   let offsetX = 0, offsetY = 0;
+  let scale = 1;              // zoom level (1 = default)
+  const MIN_SCALE = 0.5;      // zoomed out 2x
+  const MAX_SCALE = 3.0;      // zoomed in 3x
   let velX = 0, velY = 0;   // pan momentum (px / 16ms frame)
   let animating = false;
+
+  // Pan momentum tuning — heavier feel. Was 0.93 (traveled ~285px on a
+  // fast flick). 0.88 + velocity cap = ~150px, feels weighty.
+  const PAN_FRICTION = 0.88;
+  const MAX_PAN_VELOCITY = 18;
 
   const GRID = 48;
   const BG = '#0a0a0b';
@@ -88,43 +96,92 @@
     update();
   }
 
+  // World → screen coordinate conversion (with zoom).
+  function worldToScreen(wx, wy) {
+    return { x: (wx - offsetX) * scale, y: (wy - offsetY) * scale };
+  }
+  function screenToWorld(sx, sy) {
+    return { x: sx / scale + offsetX, y: sy / scale + offsetY };
+  }
+
   function renderGrid() {
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
 
-    const startX = ((offsetX % GRID) + GRID) % GRID;
-    const startY = ((offsetY % GRID) + GRID) % GRID;
+    const scaledGrid = GRID * scale;
+    // First visible grid line in screen space. Uses -offsetX so the grid
+    // lines align with the world origin (world 0 is always on a line).
+    const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
+    const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
     ctx.strokeStyle = LINE_COLOR;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = startX; x < W; x += GRID) {
+    for (let x = startX; x < W; x += scaledGrid) {
       ctx.moveTo(Math.round(x) + 0.5, 0);
       ctx.lineTo(Math.round(x) + 0.5, H);
     }
-    for (let y = startY; y < H; y += GRID) {
+    for (let y = startY; y < H; y += scaledGrid) {
       ctx.moveTo(0, Math.round(y) + 0.5);
       ctx.lineTo(W, Math.round(y) + 0.5);
     }
     ctx.stroke();
 
+    // Dots at intersections — shrink slightly at low zoom but stay visible.
     ctx.fillStyle = DOT_COLOR;
-    for (let x = startX; x < W; x += GRID) {
-      for (let y = startY; y < H; y += GRID) {
+    const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+    for (let x = startX; x < W; x += scaledGrid) {
+      for (let y = startY; y < H; y += scaledGrid) {
         ctx.beginPath();
-        ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Origin marker (world 0,0 → screen -offsetX, -offsetY)
-    const ox = -offsetX;
-    const oy = -offsetY;
-    if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
+    // Origin marker (world 0,0)
+    const o = worldToScreen(0, 0);
+    if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
       ctx.fillStyle = ORIGIN_COLOR;
       ctx.beginPath();
-      ctx.arc(ox, oy, ORIGIN_RADIUS, 0, Math.PI * 2);
+      ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  // ── Off-screen chatbot arrows ────────────────────────────────
+  // When a chatbot's screen position is off-screen, draw a directional
+  // arrow at the nearest screen edge pointing toward it. Colored by
+  // the chatbot's family color so the user knows which bot it is.
+  function renderOffScreenArrows() {
+    const margin = 50;
+    for (const bot of world.entities) {
+      const s = worldToScreen(bot.x, bot.y);
+      const onScreen = s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H;
+      if (onScreen) continue;
+
+      // Clamp arrow position to screen edge with margin.
+      const ax = Math.max(margin, Math.min(W - margin, s.x));
+      const ay = Math.max(margin, Math.min(H - margin, s.y));
+      // Direction from arrow toward the chatbot (screen space).
+      const dx = s.x - ax;
+      const dy = s.y - ay;
+      const angle = Math.atan2(dy, dx);
+
+      const fam = (config.families[bot.family] || config.families.default || {});
+      const color = fam.color || '#4a4a5e';
+
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(angle);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.lineTo(-8, -9);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-8, 9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -187,10 +244,9 @@
       bot.setFamily(family, iconIndex);
     }
     scheduleSave();
-    updateDebugActive();
   }
 
-  // Public API (used by debug controls now, by the model picker later).
+  // Public API (used by the model picker when it lands).
   window.doomalay = {
     setFamily,
     getFamily: () => currentFamily,
@@ -198,23 +254,24 @@
   };
 
   // ── Animation loop ───────────────────────────────────────────
-  // One rAF loop drives both the canvas-pan momentum and the chatbot
-  // physics. Stops when nothing is moving (saves battery).
+  // One rAF loop drives pan momentum, chatbot physics, and off-screen
+  // arrows. Stops when nothing is moving (saves battery).
   function update() {
     world.step();
     renderGrid();
-    for (const bot of world.entities) bot.render(offsetX, offsetY);
+    for (const bot of world.entities) bot.render(offsetX, offsetY, scale);
+    renderOffScreenArrows();
   }
 
   function tick() {
     let moving = false;
 
-    // Pan momentum (existing v0.6.0 behavior)
+    // Pan momentum — heavier friction (0.88 vs old 0.93).
     if (Math.abs(velX) >= 0.15 || Math.abs(velY) >= 0.15) {
       offsetX += velX;
       offsetY += velY;
-      velX *= 0.93;
-      velY *= 0.93;
+      velX *= PAN_FRICTION;
+      velY *= PAN_FRICTION;
       moving = true;
     } else if (velX !== 0 || velY !== 0) {
       velX = 0; velY = 0;
@@ -232,7 +289,8 @@
     }
 
     renderGrid();
-    for (const bot of world.entities) bot.render(offsetX, offsetY);
+    for (const bot of world.entities) bot.render(offsetX, offsetY, scale);
+    renderOffScreenArrows();
 
     if (moving) {
       scheduleSave();
@@ -277,7 +335,8 @@
       const r = menuEl.getBoundingClientRect();
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
-      const bot = createChatbotAt(cx + offsetX, cy + offsetY);
+      const wp = screenToWorld(cx, cy);
+      const bot = createChatbotAt(wp.x, wp.y);
       // Tiny random nudge so multiple new chats don't perfectly stack.
       bot.vx = (Math.random() - 0.5) * 6;
       bot.vy = (Math.random() - 0.5) * 6;
@@ -313,17 +372,18 @@
   let dragVel = { vx: 0, vy: 0, t: 0 };  // tracked velocity for fling
 
   // Hit-test: is the screen point over a chatbot icon?
+  // Accounts for zoom — the icon's visual radius scales with `scale`.
   function findChatbotAt(screenX, screenY) {
     // Iterate from topmost (last in DOM) to bottom.
     const bots = world.entities;
     for (let i = bots.length - 1; i >= 0; i--) {
       const bot = bots[i];
-      const sx = bot.x - offsetX;
-      const sy = bot.y - offsetY;
+      const sx = (bot.x - offsetX) * scale;
+      const sy = (bot.y - offsetY) * scale;
       const dx = screenX - sx;
       const dy = screenY - sy;
-      // Use radius + a small slack for easier grabbing on touch.
-      const r = bot.radius + 4;
+      // Use radius * scale + a small slack for easier grabbing on touch.
+      const r = bot.radius * scale + 4;
       if (dx * dx + dy * dy <= r * r) return bot;
     }
     return null;
@@ -389,19 +449,28 @@
     const dy = screenY - lastScreenY;
 
     if (inputState === 'PANNING') {
-      // Natural scrolling: drag right = world moves right.
-      offsetX += dx;
-      offsetY += dy;
+      // INVERTED scroll: content follows the finger. Drag right → grid
+      // moves right (not left). dx = lastX - currentX, so dragging right
+      // (currentX > lastX) gives negative dx, decreasing offsetX, shifting
+      // world content right on screen.
+      const ddx = -dx;
+      const ddy = -dy;
+      offsetX += ddx;
+      offsetY += ddy;
       const dt = now - lastTime;
       if (dt > 0) {
-        velX = (dx / dt) * 16;   // px per 16ms frame
-        velY = (dy / dt) * 16;
+        velX = (ddx / dt) * 16;   // px per 16ms frame
+        velY = (ddy / dt) * 16;
+        // Cap velocity for a heavier feel.
+        velX = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, velX));
+        velY = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, velY));
       }
-      update();  // re-render + step physics (in case a dragged-into collision happens)
+      update();
     } else if (inputState === 'CHATBOT_DRAG' && draggedBot) {
-      // Move the chatbot in world space (canvas offset unchanged).
-      draggedBot.x += dx;
-      draggedBot.y += dy;
+      // Move the chatbot in world space. Account for zoom: a dx-pixel
+      // screen move = dx/scale world-space move.
+      draggedBot.x += dx / scale;
+      draggedBot.y += dy / scale;
       const dt = now - lastTime;
       if (dt > 0) {
         dragVel.vx = (dx / dt) * 16;
@@ -456,42 +525,115 @@
     }
   }
 
+  // ── Zoom ───────────────────────────────────────────────────────
+  // Zoom by `factor` centered at screen point (cx, cy), keeping the world
+  // point under (cx, cy) fixed on screen. Clamped to [MIN_SCALE, MAX_SCALE].
+  function zoomAt(factor, cx, cy) {
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+    if (newScale === scale) return;
+    // World point under (cx, cy): worldX = cx/scale + offsetX
+    // After zoom: cx = (worldX - newOffsetX) * newScale
+    // → newOffsetX = worldX - cx/newScale = offsetX + cx/scale - cx/newScale
+    const f = 1 / scale - 1 / newScale;
+    offsetX = offsetX + cx * f;
+    offsetY = offsetY + cy * f;
+    scale = newScale;
+    update();
+  }
+
+  // ── Pinch state (2-finger touch) ──────────────────────────────
+  let pinching = false;
+  let pinchStartDist = 0;
+  let pinchStartScale = 1;
+  let pinchStartOffsetX = 0, pinchStartOffsetY = 0;
+  let pinchCenter = { x: 0, y: 0 };
+
+  function touchDist(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
   // ── Event listeners (on document/window so we catch events on
   //    chatbot divs too — they're inside #chatbots which has
   //    pointer-events:none, but events bubble through the DOM tree) ──
   //
-  // We explicitly skip events whose target is inside the menu or debug
-  // panel, so those UI elements work normally.
+  // We explicitly skip events whose target is inside the menu or the
+  // settings button, so those UI elements work normally.
 
   function isInsideUI(target) {
     if (!target) return false;
-    return menuEl.contains(target) || debugEl.contains(target);
+    return menuEl.contains(target) || settingsBtnEl.contains(target);
   }
 
-  // Touch
+  // Touch — handle 1-finger (pan/drag) and 2-finger (pinch) separately.
   document.addEventListener('touchstart', function (e) {
-    if (e.touches.length !== 1) return;
     if (isInsideUI(e.target)) return;
-    e.preventDefault();  // stop scroll / pull-to-refresh
-    const t = e.touches[0];
-    inputStart(t.clientX, t.clientY);
+    if (e.touches.length === 2) {
+      // Start pinch — cancel any in-progress drag/pan.
+      e.preventDefault();
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      inputState = 'IDLE';
+      velX = 0; velY = 0;
+      if (draggedBot) {
+        draggedBot.dragging = false;
+        draggedBot.el.classList.remove('dragging');
+        draggedBot = null;
+      }
+      pinching = true;
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartScale = scale;
+      pinchStartOffsetX = offsetX;
+      pinchStartOffsetY = offsetY;
+      pinchCenter = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+      };
+    } else if (e.touches.length === 1 && !pinching) {
+      e.preventDefault();
+      const t = e.touches[0];
+      inputStart(t.clientX, t.clientY);
+    }
   }, { passive: false });
 
   document.addEventListener('touchmove', function (e) {
-    if (e.touches.length !== 1) return;
     if (isInsideUI(e.target)) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    inputMove(t.clientX, t.clientY);
+    if (e.touches.length === 2 && pinching) {
+      e.preventDefault();
+      const d = touchDist(e.touches[0], e.touches[1]);
+      const factor = d / pinchStartDist;
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * factor));
+      // Keep the world point under the pinch center fixed.
+      const worldX = pinchCenter.x / pinchStartScale + pinchStartOffsetX;
+      const worldY = pinchCenter.y / pinchStartScale + pinchStartOffsetY;
+      offsetX = worldX - pinchCenter.x / newScale;
+      offsetY = worldY - pinchCenter.y / newScale;
+      scale = newScale;
+      update();
+    } else if (e.touches.length === 1 && !pinching) {
+      e.preventDefault();
+      const t = e.touches[0];
+      inputMove(t.clientX, t.clientY);
+    }
   }, { passive: false });
 
   document.addEventListener('touchend', function (e) {
     if (isInsideUI(e.target)) return;
-    e.preventDefault();
-    inputEnd();
+    if (e.touches.length === 0) {
+      if (pinching) { pinching = false; }
+      e.preventDefault();
+      inputEnd();
+    } else if (e.touches.length === 1 && pinching) {
+      // Dropped from 2 fingers to 1 — end pinch, don't start a drag
+      // (avoids a jump when lifting one finger).
+      pinching = false;
+      inputState = 'IDLE';
+      velX = 0; velY = 0;
+    }
   }, { passive: false });
 
   document.addEventListener('touchcancel', function () {
+    if (pinching) { pinching = false; }
     if (inputState !== 'IDLE') inputEnd();
   });
 
@@ -510,6 +652,14 @@
     inputEnd();
   });
 
+  // Wheel zoom (desktop) — zoom toward cursor.
+  document.addEventListener('wheel', function (e) {
+    if (isInsideUI(e.target)) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    zoomAt(factor, e.clientX, e.clientY);
+  }, { passive: false });
+
   // Prevent the browser's context menu on long-press / right-click.
   document.addEventListener('contextmenu', function (e) {
     if (isInsideUI(e.target)) return;
@@ -522,19 +672,17 @@
     setTimeout(resize, 100);
   });
 
-  // ── Debug family-switcher (TEMPORARY) ────────────────────────
-  // Remove this whole block once the real model picker lands.
-  const debugEl = document.getElementById('debug');
-
-  function updateDebugActive() {
-    debugEl.querySelectorAll('button').forEach(function (b) {
-      b.classList.toggle('active', b.dataset.family === currentFamily);
-    });
-  }
-  debugEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('button[data-family]');
-    if (!btn) return;
-    setFamily(btn.dataset.family);
+  // ── Settings button (replaces the old debug family-switcher) ──
+  // Currently resets the view (zoom 1x, pan to origin). Will open a real
+  // settings panel once there are settings to configure.
+  const settingsBtnEl = document.getElementById('settings-btn');
+  settingsBtnEl.addEventListener('click', function () {
+    offsetX = 0;
+    offsetY = 0;
+    scale = 1;
+    velX = 0; velY = 0;
+    update();
+    scheduleSave();
   });
 
   // ── Persistence ──────────────────────────────────────────────
@@ -555,6 +703,7 @@
   function saveNow() {
     const state = {
       offset: { x: offsetX, y: offsetY },
+      scale: scale,
       currentFamily: currentFamily,
       chatbots: world.entities.map(function (c) { return c.serialize(); }),
       savedAt: Date.now()
@@ -611,6 +760,9 @@
     if (saved) {
       offsetX = (saved.offset && saved.offset.x) || 0;
       offsetY = (saved.offset && saved.offset.y) || 0;
+      if (typeof saved.scale === 'number') {
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
+      }
       if (saved.currentFamily && config.families[saved.currentFamily]) {
         currentFamily = saved.currentFamily;
       }
@@ -627,7 +779,6 @@
       }
     }
 
-    updateDebugActive();
     resize();
   }
 

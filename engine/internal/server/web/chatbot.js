@@ -139,14 +139,17 @@
     }
 
     // Position the DOM element on screen. World (this.x, this.y) →
-    // screen (sx, sy) by subtracting the canvas pan offset.
-    render(offsetX, offsetY) {
-      const sx = this.x - offsetX;
-      const sy = this.y - offsetY;
+    // screen (sx, sy) by applying the canvas pan offset AND the zoom scale.
+    // The element is also visually scaled by `scale` so icons grow/shrink
+    // with the zoom level.
+    render(offsetX, offsetY, scale) {
+      const s = scale || 1;
+      const sx = (this.x - offsetX) * s;
+      const sy = (this.y - offsetY) * s;
       // translate3d for GPU acceleration; translate(-50%, -50%) to
-      // center the element on (sx, sy).
+      // center the element on (sx, sy); scale(s) to zoom the icon.
       this.el.style.transform =
-        'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%)';
+        'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
     }
 
     // Serialize for localStorage persistence.
