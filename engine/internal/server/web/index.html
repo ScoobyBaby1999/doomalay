@@ -17,10 +17,45 @@
     overscroll-behavior: none;
   }
   canvas { display: block; position: fixed; top: 0; left: 0; }
+
+  /* Settings icon — the only UI element on the empty canvas.
+     Tapping it resets the view (zoom 1x, pan to origin). Will open
+     a real settings panel when there are settings to show. */
+  #settings-btn {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    width: 44px;
+    height: 44px;
+    background: rgba(20, 20, 24, 0.8);
+    border: 1px solid #2a2a32;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.15s, transform 0.1s;
+  }
+  #settings-btn:active {
+    background: rgba(40, 40, 48, 0.9);
+    transform: scale(0.92);
+  }
+  #settings-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: #71717a;
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<button id="settings-btn" aria-label="Reset view">
+  <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+</button>
 <script>
 (function () {
   'use strict';
@@ -28,25 +63,41 @@
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
+  const settingsBtn = document.getElementById('settings-btn');
 
   let W = 0, H = 0;
 
   // ── View state ────────────────────────────────────────────────
-  // offsetX/Y is the world-space coordinate at the top-left corner
-  // of the screen. Panning changes these. The grid extends infinitely
-  // in all directions — it's rendered procedurally from the offset.
+  // offsetX/Y is the world-space coordinate at the top-left of the screen.
+  // scale is the zoom level (1 = default, 0.5 = zoomed out 2x, 3 = zoomed in 3x).
   let offsetX = 0, offsetY = 0;
+  let scale = 1;
+  const MIN_SCALE = 0.5;
+  const MAX_SCALE = 3.0;
   let velX = 0, velY = 0;       // momentum (px/frame at 60fps)
   let animating = false;
 
   // ── Grid appearance ───────────────────────────────────────────
-  const GRID = 48;                // px between grid lines
+  const GRID = 48;                // px between grid lines (at scale 1)
   const BG = '#0a0a0b';
   const LINE_COLOR = '#131318';
   const DOT_COLOR = '#2e2e3a';
   const DOT_RADIUS = 1.4;
   const ORIGIN_COLOR = '#4a4a5e';
   const ORIGIN_RADIUS = 5;
+
+  // ── Momentum tuning ───────────────────────────────────────────
+  // Heavier feel: more friction + capped velocity. The old 0.93 friction
+  // let a flick travel ~285px. 0.88 + maxV=18 caps travel to ~150px.
+  const FRICTION = 0.88;
+  const MAX_VELOCITY = 18;
+
+  // ── Chats (empty for now — infrastructure for off-screen arrows) ──
+  // Each chat: { x, y, title, color } in world coordinates.
+  // When a chat's screen position is off-screen, an arrow points toward
+  // it from the nearest screen edge. The array is empty now; when the
+  // chat feature is added, arrows will work automatically.
+  const chats = [];
 
   // ── Resize ────────────────────────────────────────────────────
   function resize() {
@@ -60,53 +111,118 @@
     render();
   }
 
+  // ── Coordinate conversion ─────────────────────────────────────
+  function worldToScreen(wx, wy) {
+    return { x: (wx - offsetX) * scale, y: (wy - offsetY) * scale };
+  }
+  function screenToWorld(sx, sy) {
+    return { x: sx / scale + offsetX, y: sy / scale + offsetY };
+  }
+
   // ── Render ────────────────────────────────────────────────────
   function render() {
-    // Clear
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
 
-    // Grid lines — only draw what's visible (plus a 1-cell margin).
-    const startX = ((offsetX % GRID) + GRID) % GRID;
-    const startY = ((offsetY % GRID) + GRID) % GRID;
+    const scaledGrid = GRID * scale;
+    // First visible grid line position (screen space).
+    const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
+    const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
+    // Grid lines
     ctx.strokeStyle = LINE_COLOR;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = startX; x < W; x += GRID) {
-      ctx.moveTo(Math.round(x) + 0.5, 0);
-      ctx.lineTo(Math.round(x) + 0.5, H);
+    for (let x = startX; x < W; x += scaledGrid) {
+      const px = Math.round(x) + 0.5;
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, H);
     }
-    for (let y = startY; y < H; y += GRID) {
-      ctx.moveTo(0, Math.round(y) + 0.5);
-      ctx.lineTo(W, Math.round(y) + 0.5);
+    for (let y = startY; y < H; y += scaledGrid) {
+      const py = Math.round(y) + 0.5;
+      ctx.moveTo(0, py);
+      ctx.lineTo(W, py);
     }
     ctx.stroke();
 
-    // Dots at grid intersections.
+    // Dots at intersections
     ctx.fillStyle = DOT_COLOR;
-    for (let x = startX; x < W; x += GRID) {
-      for (let y = startY; y < H; y += GRID) {
+    const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+    for (let x = startX; x < W; x += scaledGrid) {
+      for (let y = startY; y < H; y += scaledGrid) {
         ctx.beginPath();
-        ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Origin marker (world-space 0,0 → screen-space -offsetX, -offsetY).
-    const ox = -offsetX;
-    const oy = -offsetY;
-    if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
+    // Origin marker (world-space 0,0)
+    const o = worldToScreen(0, 0);
+    if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
       ctx.fillStyle = ORIGIN_COLOR;
       ctx.beginPath();
-      ctx.arc(ox, oy, ORIGIN_RADIUS, 0, Math.PI * 2);
+      ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // Render chats (bubbles on canvas)
+    renderChats();
+
+    // Render off-screen arrows for chats that are off-screen
+    renderOffScreenArrows();
+  }
+
+  function renderChats() {
+    for (const c of chats) {
+      const s = worldToScreen(c.x, c.y);
+      const r = 24 * Math.min(scale, 1.5);
+      if (s.x > -r && s.x < W + r && s.y > -r && s.y < H + r) {
+        ctx.fillStyle = c.color || '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(c.title || 'chat', s.x, s.y);
+      }
     }
   }
 
-  // ── Animation loop (momentum/inertia) ─────────────────────────
+  function renderOffScreenArrows() {
+    const margin = 50;
+    for (const c of chats) {
+      const s = worldToScreen(c.x, c.y);
+      const onScreen = s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H;
+      if (onScreen) continue;
+
+      // Clamp arrow position to screen edge with margin
+      const ax = Math.max(margin, Math.min(W - margin, s.x));
+      const ay = Math.max(margin, Math.min(H - margin, s.y));
+      // Direction from arrow toward the chat (screen space)
+      const dx = s.x - ax;
+      const dy = s.y - ay;
+      const angle = Math.atan2(dy, dx);
+
+      ctx.save();
+      ctx.translate(ax, ay);
+      ctx.rotate(angle);
+      ctx.fillStyle = c.color || '#3b82f6';
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.lineTo(-8, -9);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-8, 9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ── Animation loop (momentum / inertia) ────────────────────────
   function tick() {
-    if (Math.abs(velX) < 0.15 && Math.abs(velY) < 0.15) {
+    if (Math.abs(velX) < 0.1 && Math.abs(velY) < 0.1) {
       velX = 0; velY = 0;
       animating = false;
       render();
@@ -114,8 +230,8 @@
     }
     offsetX += velX;
     offsetY += velY;
-    velX *= 0.93;  // friction
-    velY *= 0.93;
+    velX *= FRICTION;
+    velY *= FRICTION;
     render();
     requestAnimationFrame(tick);
   }
@@ -131,93 +247,196 @@
     velX = 0; velY = 0;
   }
 
-  // ── Input: touch + mouse ──────────────────────────────────────
-  let dragging = false;
-  let lastX = 0, lastY = 0;
-  let lastTime = 0;
-
-  function dragStart(x, y) {
-    dragging = true;
-    stopMomentum();
-    lastX = x;
-    lastY = y;
-    lastTime = performance.now();
-  }
-
-  function dragMove(x, y) {
-    if (!dragging) return;
-    const dx = x - lastX;
-    const dy = y - lastY;
-    const now = performance.now();
-    const dt = now - lastTime;
-    // Track velocity (px per 16ms frame) for momentum.
-    if (dt > 0) {
-      velX = (dx / dt) * 16;
-      velY = (dy / dt) * 16;
-    }
-    offsetX += dx;
-    offsetY += dy;
-    lastX = x;
-    lastY = y;
-    lastTime = now;
+  // ── Zoom ───────────────────────────────────────────────────────
+  // Zoom by `factor` centered at screen point (cx, cy), keeping the world
+  // point under (cx, cy) fixed on screen. Clamped to [MIN_SCALE, MAX_SCALE].
+  function zoomAt(factor, cx, cy) {
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+    if (newScale === scale) return;
+    // World point under (cx, cy): worldX = cx/scale + offsetX
+    // After zoom: cx = (worldX - newOffsetX) * newScale
+    // → newOffsetX = worldX - cx/newScale = offsetX + cx/scale - cx/newScale
+    const f = 1 / scale - 1 / newScale;
+    offsetX = offsetX + cx * f;
+    offsetY = offsetY + cy * f;
+    scale = newScale;
     render();
   }
 
-  function dragEnd() {
+  // ── Input: touch (drag + pinch) ─────────────────────────────────
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  let lastTime = 0;
+  let pinching = false;
+  let pinchStartDist = 0;
+  let pinchStartScale = 1;
+  let pinchStartOffsetX = 0, pinchStartOffsetY = 0;
+  let pinchCenter = { x: 0, y: 0 };
+
+  function touchDist(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  canvas.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      dragging = false;
+      stopMomentum();
+      pinching = true;
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartScale = scale;
+      pinchStartOffsetX = offsetX;
+      pinchStartOffsetY = offsetY;
+      pinchCenter = {
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      };
+    } else if (e.touches.length === 1 && !pinching) {
+      e.preventDefault();
+      const t = e.touches[0];
+      dragging = true;
+      stopMomentum();
+      lastX = t.clientX;
+      lastY = t.clientY;
+      lastTime = performance.now();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', function (e) {
+    if (e.touches.length === 2 && pinching) {
+      e.preventDefault();
+      const d = touchDist(e.touches[0], e.touches[1]);
+      const factor = d / pinchStartDist;
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * factor));
+      // Keep the world point under the pinch center fixed.
+      const worldX = pinchCenter.x / pinchStartScale + pinchStartOffsetX;
+      const worldY = pinchCenter.y / pinchStartScale + pinchStartOffsetY;
+      offsetX = worldX - pinchCenter.x / newScale;
+      offsetY = worldY - pinchCenter.y / newScale;
+      scale = newScale;
+      render();
+    } else if (e.touches.length === 1 && dragging) {
+      e.preventDefault();
+      const t = e.touches[0];
+      // INVERTED: content follows the finger. Dragging right moves the
+      // grid right (not left). dx = lastX - currentX, so dragging right
+      // (currentX > lastX) gives negative dx, which decreases offsetX,
+      // shifting world content right on screen.
+      const dx = lastX - t.clientX;
+      const dy = lastY - t.clientY;
+      const now = performance.now();
+      const dt = now - lastTime;
+      if (dt > 0) {
+        velX = (dx / dt) * 16;
+        velY = (dy / dt) * 16;
+        // Cap velocity for a heavier feel.
+        velX = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velX));
+        velY = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velY));
+      }
+      offsetX += dx;
+      offsetY += dy;
+      lastX = t.clientX;
+      lastY = t.clientY;
+      lastTime = now;
+      render();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', function (e) {
+    if (e.touches.length === 0) {
+      if (pinching) { pinching = false; }
+      if (dragging) {
+        dragging = false;
+        // Apply momentum only if the last move was recent (within 100ms).
+        if (performance.now() - lastTime < 100) {
+          startMomentum();
+        } else {
+          velX = 0; velY = 0;
+        }
+      }
+    } else if (e.touches.length === 1 && pinching) {
+      // Dropped from 2 fingers to 1 — start dragging with the remaining finger.
+      pinching = false;
+      dragging = true;
+      lastX = e.touches[0].clientX;
+      lastY = e.touches[0].clientY;
+      lastTime = performance.now();
+      velX = 0; velY = 0;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', function () {
+    dragging = false;
+    pinching = false;
+    stopMomentum();
+  });
+
+  // ── Input: mouse (desktop testing) ─────────────────────────────
+  canvas.addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    dragging = true;
+    stopMomentum();
+    lastX = e.clientX;
+    lastY = e.clientY;
+    lastTime = performance.now();
+  });
+
+  window.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    // INVERTED (same as touch).
+    const dx = lastX - e.clientX;
+    const dy = lastY - e.clientY;
+    const now = performance.now();
+    const dt = now - lastTime;
+    if (dt > 0) {
+      velX = (dx / dt) * 16;
+      velY = (dy / dt) * 16;
+      velX = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velX));
+      velY = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velY));
+    }
+    offsetX += dx;
+    offsetY += dy;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    lastTime = now;
+    render();
+  });
+
+  window.addEventListener('mouseup', function () {
     if (!dragging) return;
     dragging = false;
-    // Only apply momentum if the last move was recent (within 100ms).
     if (performance.now() - lastTime < 100) {
       startMomentum();
     } else {
       velX = 0; velY = 0;
     }
-  }
+  });
 
-  // Touch events
-  canvas.addEventListener('touchstart', function (e) {
-    if (e.touches.length !== 1) return;
+  // Wheel zoom (desktop) — zoom toward cursor.
+  canvas.addEventListener('wheel', function (e) {
     e.preventDefault();
-    const t = e.touches[0];
-    dragStart(t.clientX, t.clientY);
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    zoomAt(factor, e.clientX, e.clientY);
   }, { passive: false });
-
-  canvas.addEventListener('touchmove', function (e) {
-    if (e.touches.length !== 1) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    dragMove(t.clientX, t.clientY);
-  }, { passive: false });
-
-  canvas.addEventListener('touchend', function (e) {
-    e.preventDefault();
-    dragEnd();
-  }, { passive: false });
-
-  canvas.addEventListener('touchcancel', function () {
-    dragEnd();
-  });
-
-  // Mouse events (desktop testing)
-  canvas.addEventListener('mousedown', function (e) {
-    e.preventDefault();
-    dragStart(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mousemove', function (e) {
-    dragMove(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mouseup', function () {
-    dragEnd();
-  });
 
   // Prevent context menu (long-press on mobile).
-  canvas.addEventListener('contextmenu', function (e) {
-    e.preventDefault();
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  // ── Settings button ────────────────────────────────────────────
+  // Currently resets the view (zoom 1x, pan to origin). Will open a real
+  // settings panel once there are settings to configure.
+  settingsBtn.addEventListener('click', function () {
+    offsetX = 0;
+    offsetY = 0;
+    scale = 1;
+    velX = 0; velY = 0;
+    stopMomentum();
+    render();
   });
 
-  // Resize
+  // ── Resize / orientation ───────────────────────────────────────
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () {
     setTimeout(resize, 100);
