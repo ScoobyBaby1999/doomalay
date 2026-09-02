@@ -5,15 +5,21 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
+import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
@@ -26,6 +32,16 @@ class MainActivity : Activity() {
         AppLog.init(this)
         AppLog.log("=== Doomalay starting ===")
         AppLog.log("SDK: ${Build.VERSION.SDK_INT}, ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
+
+        // Edge-to-edge: let the WebView content draw under the status bar
+        // and navigation bar. The grid takes up the full phone screen.
+        // The PWA handles safe areas via env(safe-area-inset-*) in CSS.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        // Make status-bar icons light (white) so they're visible on the dark grid.
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = false
 
         // Global crash handler
         val prev = Thread.getDefaultUncaughtExceptionHandler()
@@ -79,12 +95,15 @@ class MainActivity : Activity() {
             }
             setContentView(webView)
 
-            // Show a loading page while waiting for the engine
+            // Loading page — matches the dark grid background (#0a0a0b), no header.
+            // Full-screen, centered text. Grid takes up the entire phone screen.
             webView.loadData(
-                "<html><body style='background:#0a0a0b;color:#a78bfa;font-family:sans-serif;" +
-                "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>" +
-                "<div style='text-align:center'><h2>Starting engine...</h2>" +
-                "<p>Brick 2-5</p></div></body></html>",
+                "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover\"></head>" +
+                "<body style='background:#0a0a0b;color:#71717a;font-family:-apple-system,BlinkMacSystemFont,sans-serif;" +
+                "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;overflow:hidden'>" +
+                "<div style='text-align:center'><div style='width:32px;height:32px;border:2px solid #2a2a32;border-top-color:#4a4a5e;border-radius:50%;margin:0 auto 16px;animation:spin 1s linear infinite'></div>" +
+                "<style>@keyframes spin{to{transform:rotate(360deg)}}</style>" +
+                "<p style='font-size:14px'>Starting engine…</p></div></body></html>",
                 "text/html", "utf-8"
             )
             AppLog.log("Step 2: OK")

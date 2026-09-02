@@ -492,7 +492,17 @@
     }
 
     if (inputState === 'PENDING') {
-      // Tap with no movement and no long-press — for now, no action.
+      // Tap with no movement and no long-press. If the tap was on a
+      // chatbot, trigger the tap-flash + open the chat panel. Otherwise,
+      // it's a tap on empty canvas — no action (for now).
+      const bot = findChatbotAt(startScreenX, startScreenY);
+      if (bot) {
+        flashChatbot(bot);
+        // Half-second delay between the flash starting and the panel
+        // sliding up, so the user sees the icon react before the panel
+        // covers it.
+        setTimeout(function () { openChatPanel(bot); }, 500);
+      }
       inputState = 'IDLE';
       return;
     }
@@ -563,7 +573,10 @@
 
   function isInsideUI(target) {
     if (!target) return false;
-    return menuEl.contains(target) || settingsBtnEl.contains(target);
+    return menuEl.contains(target) ||
+           settingsBtnEl.contains(target) ||
+           panelEl.contains(target) ||
+           scrimEl.contains(target);
   }
 
   // Touch — handle 1-finger (pan/drag) and 2-finger (pinch) separately.
@@ -722,6 +735,143 @@
       return JSON.parse(raw);
     } catch (e) { return null; }
   }
+
+  // ── Chat panel (slide-up from bottom) ─────────────────────────
+  // Opened by tapping a chatbot icon. Each panel is associated with
+  // the specific chatbot (its own convo + settings + storage — for now
+  // just metadata, chat interface comes later). Closes by dragging the
+  // handle down or tapping the scrim.
+
+  const panelEl = document.getElementById('chat-panel');
+  const scrimEl = document.getElementById('chat-scrim');
+  const handleEl = document.getElementById('panel-handle');
+  const avatarEl = document.getElementById('panel-avatar');
+  const nameEl = document.getElementById('panel-name');
+  const subEl = document.getElementById('panel-sub');
+  const bodyEl = document.getElementById('panel-body');
+  let panelBot = null;   // the chatbot the panel is currently showing
+
+  // Tap-flash: add the 'tapped' class for 400ms to trigger the CSS pulse.
+  function flashChatbot(bot) {
+    bot.el.classList.add('tapped');
+    setTimeout(function () { bot.el.classList.remove('tapped'); }, 400);
+  }
+
+  // Open the panel for a specific chatbot. Populates the header with the
+  // chatbot's metadata (name, family, id) and shows the panel + scrim.
+  function openChatPanel(bot) {
+    panelBot = bot;
+
+    // Header: avatar + name + family/id.
+    const fam = (config.families[bot.family] || config.families.default || {});
+    avatarEl.innerHTML = '';
+    avatarEl.style.background = fam.color || '#4a4a5e';
+    if (bot.iconIndex >= 0 && fam.icons && bot.iconIndex < fam.icons.length) {
+      const img = document.createElement('img');
+      img.src = fam.icons[bot.iconIndex];
+      img.alt = bot.name;
+      avatarEl.appendChild(img);
+    } else {
+      avatarEl.textContent = (bot.name || '?').charAt(0).toUpperCase();
+    }
+    nameEl.textContent = bot.name || 'Chat';
+    const famLabel = fam.label || bot.family;
+    subEl.textContent = famLabel + ' · ' + bot.id;
+
+    // Body: placeholder for now (chat interface comes later).
+    bodyEl.innerHTML =
+      '<div class="placeholder">' +
+      'Chat interface goes here.<br>' +
+      'Each chat has its own conversation, settings, and storage.<br><br>' +
+      '<span style="color:#3a3a45;font-size:12px">Bot ID: ' + bot.id + '</span>' +
+      '</div>';
+
+    // Trigger the slide-up + scrim fade.
+    // requestAnimationFrame ensures the browser has rendered the panel
+    // in its hidden state before we add .open, so the CSS transition fires.
+    requestAnimationFrame(function () {
+      scrimEl.classList.add('open');
+      panelEl.classList.add('open');
+    });
+  }
+
+  function closeChatPanel() {
+    scrimEl.classList.remove('open');
+    panelEl.classList.remove('open');
+    panelBot = null;
+  }
+
+  // Tap scrim to close.
+  scrimEl.addEventListener('click', closeChatPanel);
+
+  // Drag the handle down to close. Track touch/mouse on the handle only
+  // (so dragging the body scrolls the content instead).
+  let panelDragStartY = 0;
+  let panelDragOffset = 0;
+  let panelDragging = false;
+
+  function panelDragStart(clientY) {
+    panelDragging = true;
+    panelDragStartY = clientY;
+    panelDragOffset = 0;
+    // Disable the CSS transition while dragging so it follows the finger.
+    panelEl.style.transition = 'none';
+  }
+
+  function panelDragMove(clientY) {
+    if (!panelDragging) return;
+    panelDragOffset = clientY - panelDragStartY;
+    // Only allow dragging DOWN (positive offset). Dragging up does nothing.
+    if (panelDragOffset < 0) panelDragOffset = 0;
+    panelEl.style.transform = 'translateY(' + panelDragOffset + 'px)';
+  }
+
+  function panelDragEnd() {
+    if (!panelDragging) return;
+    panelDragging = false;
+    // Re-enable the CSS transition.
+    panelEl.style.transition = '';
+    // If dragged more than ~120px (or 25% of panel height), close.
+    // Otherwise snap back to open.
+    const panelH = panelEl.offsetHeight;
+    const closeThreshold = Math.min(120, panelH * 0.25);
+    if (panelDragOffset > closeThreshold) {
+      closeChatPanel();
+    }
+    // Reset the transform (closeChatPanel or the .open class handles it).
+    panelEl.style.transform = '';
+  }
+
+  // Touch on handle.
+  handleEl.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();  // don't let it bubble to the canvas pan handler
+    panelDragStart(e.touches[0].clientY);
+  }, { passive: false });
+  handleEl.addEventListener('touchmove', function (e) {
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    panelDragMove(e.touches[0].clientY);
+  }, { passive: false });
+  handleEl.addEventListener('touchend', function (e) {
+    e.stopPropagation();
+    panelDragEnd();
+  });
+
+  // Mouse on handle (desktop testing).
+  handleEl.addEventListener('mousedown', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    panelDragStart(e.clientY);
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (panelDragging) panelDragMove(e.clientY);
+  });
+  window.addEventListener('mouseup', function () {
+    if (panelDragging) panelDragEnd();
+  });
 
   // ── Init ─────────────────────────────────────────────────────
   async function init() {
