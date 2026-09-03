@@ -392,9 +392,10 @@
         dragVel.vx = (dx / dt) * 16;
         dragVel.vy = (dy / dt) * 16;
         // Cap fling velocity so even a hard flick doesn't send the icon
-        // flying off-screen. Combined with the heavy friction (0.85 in
-        // physics.js), a max-velocity fling travels ~120px before stopping.
-        const MAX_FLING = 14;
+        // flying off-screen. With the airy friction (0.92 in physics.js),
+        // a max-velocity fling (18px/frame) travels ~225px — satisfying
+        // slide distance, not lost in the void.
+        const MAX_FLING = 18;
         dragVel.vx = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vx));
         dragVel.vy = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vy));
         dragVel.t = now;

@@ -20,10 +20,10 @@
   'use strict';
 
   // Friction coefficient per 16ms frame. Lower = stops sooner = heavier feel.
-  // Tuned heavy: 0.85 makes flung icons stop within ~6-8x their initial
-  // velocity (a strong flick travels ~100-150px max). Combined with the
-  // velocity cap in app.js, even a hard fling stops nearby.
-  const FRICTION = 0.85;
+  // 0.92 = airy/bouncy feel — icons slide freely after a fling, decelerating
+  // gradually like an 8-ball on felt. Combined with the velocity cap in app.js,
+  // flings travel a satisfying distance without flying off-screen.
+  const FRICTION = 0.92;
 
   // Below this speed (px/frame), snap to zero. Prevents perpetual
   // micro-jitter from accumulated floating-point error.
@@ -31,15 +31,16 @@
 
   // Restitution (bounciness) for collisions. 1.0 = perfectly elastic
   // (no energy lost), 0.0 = perfectly inelastic (stick together).
-  // 0.92 = very bouncy — chats bounce off each other with real energy,
-  // so a collision imparts a visible "kick" to the hit chatbot.
-  const RESTITUTION = 0.92;
+  // 0.98 = near-perfectly elastic — chats bounce off each other like
+  // 8-balls on a pool table, retaining almost all impact energy.
+  const RESTITUTION = 0.98;
 
   // Impact boost: extra velocity injected into the HIT icon on collision,
   // on top of the elastic exchange. This makes collisions feel weighty —
   // the hit icon gets visibly "swung" away, not just gently pushed.
-  // Tuned so a moderate-speed hit sends the target sliding ~60-100px.
-  const IMPACT_BOOST = 3.5;
+  // 17.5 = 5× the previous value. A moderate-speed hit sends the target
+  // sliding ~200-300px with a satisfying bounce. 8-ball aesthetic.
+  const IMPACT_BOOST = 17.5;
 
   // An Entity is anything that has a position, velocity, and radius.
   // Chatbot extends this (see chatbot.js).
