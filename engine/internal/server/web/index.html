@@ -155,6 +155,11 @@
     width: 22px;
     height: 22px;
     fill: #71717a;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #settings-btn:active svg,
+  #settings-btn.spinning svg {
+    transform: rotate(180deg);
   }
 
   /* ── Slide-up chat panel ───────────────────────────────────────
@@ -177,7 +182,7 @@
     display: flex;
     flex-direction: column;
     transform: translateY(100%);   /* hidden below screen by default */
-    transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform 0.18s cubic-bezier(0.32, 0.72, 0, 1);
     will-change: transform;
     /* Pad for the rounded top + safe area */
     padding-top: 8px;
@@ -208,7 +213,10 @@
     align-items: center;
     gap: 12px;
     border-bottom: 1px solid #1a1a22;
+    cursor: grab;
+    -webkit-tap-highlight-color: transparent;
   }
+  #chat-panel .panel-header:active { cursor: grabbing; }
   #chat-panel .panel-header .avatar {
     width: 40px; height: 40px;
     border-radius: 50%;
@@ -260,7 +268,7 @@
     z-index: 1900;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.35s;
+    transition: opacity 0.18s;
   }
   #chat-scrim.open {
     opacity: 1;

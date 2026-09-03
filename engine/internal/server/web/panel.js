@@ -19,6 +19,7 @@
       this.panelEl  = opts.panelEl;
       this.scrimEl  = opts.scrimEl;
       this.handleEl = opts.handleEl;
+      this.headerEl = opts.headerEl || null;  // the panel-header (also draggable)
       this.avatarEl = opts.avatarEl;
       this.nameEl   = opts.nameEl;
       this.subEl    = opts.subEl;
@@ -110,6 +111,30 @@
         e.preventDefault(); e.stopPropagation();
         start(e.clientY);
       });
+
+      // Also wire the header (avatar + name + subtitle) as a drag zone,
+      // so the user doesn't have to grab the tiny handle bar. The header
+      // is the whole top strip above the body — much easier to grab.
+      if (this.headerEl) {
+        this.headerEl.addEventListener('touchstart', function (e) {
+          if (e.touches.length !== 1) return;
+          e.preventDefault(); e.stopPropagation();
+          start(e.touches[0].clientY);
+        }, { passive: false });
+        this.headerEl.addEventListener('touchmove', function (e) {
+          if (e.touches.length !== 1) return;
+          e.preventDefault(); e.stopPropagation();
+          move(e.touches[0].clientY);
+        }, { passive: false });
+        this.headerEl.addEventListener('touchend', function (e) {
+          e.stopPropagation(); end();
+        });
+        this.headerEl.addEventListener('mousedown', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          start(e.clientY);
+        });
+      }
+
       window.addEventListener('mousemove', function (e) { if (dragging) move(e.clientY); });
       window.addEventListener('mouseup', function () { if (dragging) end(); });
     }

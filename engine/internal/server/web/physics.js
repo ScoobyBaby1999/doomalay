@@ -20,10 +20,10 @@
   'use strict';
 
   // Friction coefficient per 16ms frame. Lower = stops sooner = heavier feel.
-  // Was 0.97 (too light — icons traveled too far). 0.92 makes them feel
-  // weighty: a hard fling travels ~12x the initial velocity before stopping,
-  // vs ~33x at 0.97. Tuned to feel like dragging a physical object.
-  const FRICTION = 0.92;
+  // Tuned heavy: 0.85 makes flung icons stop within ~6-8x their initial
+  // velocity (a strong flick travels ~100-150px max). Combined with the
+  // velocity cap in app.js, even a hard fling stops nearby.
+  const FRICTION = 0.85;
 
   // Below this speed (px/frame), snap to zero. Prevents perpetual
   // micro-jitter from accumulated floating-point error.
@@ -31,8 +31,9 @@
 
   // Restitution (bounciness) for collisions. 1.0 = perfectly elastic
   // (no energy lost), 0.0 = perfectly inelastic (stick together).
-  // 0.85 feels natural — bouncy but not hyperactive.
-  const RESTITUTION = 0.85;
+  // 0.92 = very bouncy — chats bounce off each other with real energy,
+  // so a collision imparts a visible "kick" to the hit chatbot.
+  const RESTITUTION = 0.92;
 
   // An Entity is anything that has a position, velocity, and radius.
   // Chatbot extends this (see chatbot.js).

@@ -257,6 +257,7 @@
     panelEl:  document.getElementById('chat-panel'),
     scrimEl:  document.getElementById('chat-scrim'),
     handleEl: document.getElementById('panel-handle'),
+    headerEl: document.querySelector('#chat-panel .panel-header'),
     avatarEl: document.getElementById('panel-avatar'),
     nameEl:   document.getElementById('panel-name'),
     subEl:    document.getElementById('panel-sub'),
@@ -379,6 +380,12 @@
       if (dt > 0) {
         dragVel.vx = (dx / dt) * 16;
         dragVel.vy = (dy / dt) * 16;
+        // Cap fling velocity so even a hard flick doesn't send the icon
+        // flying off-screen. Combined with the heavy friction (0.85 in
+        // physics.js), a max-velocity fling travels ~120px before stopping.
+        const MAX_FLING = 14;
+        dragVel.vx = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vx));
+        dragVel.vy = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vy));
         dragVel.t = now;
       }
       update();
@@ -540,8 +547,13 @@
     e.preventDefault();
   });
 
-  // Settings gear → open settings panel (Appearance page first).
+  // Settings gear → spin animation + open settings panel.
   settingsBtnEl.addEventListener('click', function () {
+    // Trigger the spin animation: add .spinning, remove after 0.4s.
+    // The CSS rotates the SVG 180° while .spinning is active; removing
+    // it snaps back, giving a quick spin-and-return effect.
+    settingsBtnEl.classList.add('spinning');
+    setTimeout(function () { settingsBtnEl.classList.remove('spinning'); }, 400);
     window.Settings.openInPanel(panel);
   });
 
