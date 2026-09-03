@@ -276,6 +276,70 @@
     30%  { transform: scale(0.82); box-shadow: 0 8px 24px rgba(74,74,94,0.6); }
     100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
   }
+
+  /* ── Settings UI (inside the panel body) ──────────────────────
+     Modular settings: a nav (horizontal tabs) + the active page's
+     content. Each page has sections with headings and setting rows
+     (label + control). */
+  .settings-nav {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 0 0 12px;
+    border-bottom: 1px solid #1a1a22;
+    margin-bottom: 16px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-nav .tab {
+    background: transparent;
+    border: none;
+    color: #71717a;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-family: inherit;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .settings-nav .tab.active {
+    background: #1a1a22;
+    color: #e0e0e8;
+  }
+  .settings-section {
+    margin-bottom: 24px;
+  }
+  .settings-section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    gap: 12px;
+  }
+  .setting-row label {
+    font-size: 14px;
+    color: #e0e0e8;
+    flex-shrink: 0;
+  }
+  .setting-row .control {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .hint {
+    font-size: 12px;
+    color: #71717a;
+    margin-bottom: 8px;
+  }
 </style>
 </head>
 <body>
@@ -307,7 +371,11 @@
 </div>
 
 <script src="physics.js"></script>
+<script src="gridicon.js"></script>
 <script src="chatbot.js"></script>
+<script src="panel.js"></script>
+<script src="settings.js"></script>
+<script src="appearance.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

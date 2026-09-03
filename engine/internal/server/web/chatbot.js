@@ -1,58 +1,49 @@
-// chatbot.js — Chatbot entity + name/icon pickers.
+// chatbot.js — ChatIcon: a GridIcon representing a chat conversation.
+//
+// ChatIcon extends GridIcon (the modular base). It adds name, family,
+// iconIndex. The slide-up panel shows chat UI (placeholder for now —
+// the real chat interface comes in a future commit).
+//
+// Also exports NamePicker + IconPicker (unchanged from v0.7.0).
 //
 // Depends on: window.Physics.Entity (from physics.js)
-//             window.DoomalayConfig (set by app.js — holds the loaded
-//             names + families config)
+//             window.GridIcon.GridIcon (from gridicon.js)
+//             window.DoomalayConfig (set by app.js)
 //
-// Exposes: window.Chatbot = { Chatbot, NamePicker, IconPicker }
-//
-// Rules implemented here:
-//   • NamePicker — picks a name not currently in use anywhere on the
-//     canvas. If every name is in use, allows repeats. This is the
-//     "no-repeat-until-exhausted" rule from the spec.
-//   • IconPicker — same rule, but per-family (each family has its own
-//     icon set, so each family has its own no-repeat cycle).
-//   • When the active model family changes, all chatbots re-pick an
-//     icon from the new family's set (still no-repeat).
+// Exposes: window.ChatIcon = { ChatIcon, NamePicker, IconPicker }
+// Registers: GridIcon.register('chat', factory)
 
 (function () {
   'use strict';
 
-  const Entity = window.Physics.Entity;
+  const GridIcon = window.GridIcon.GridIcon;
+  const register = window.GridIcon.register;
 
   // ── NamePicker ─────────────────────────────────────────────────
-  // The pool of names is the user-editable list from /config/names.json.
-  // `pick(usedNames)` returns a name from the pool that's not currently
-  // in `usedNames` (a Set of names already assigned to chatbots on the
-  // canvas). If every name is in use, falls back to a random pick from
-  // the full pool — this is the "reuse names" case from the spec.
+  // Picks a name not currently in use anywhere on the canvas.
+  // If every name is in use, allows repeats.
   class NamePicker {
     constructor(names) {
       this.names = Array.isArray(names) ? [...names] : [];
     }
-
     pick(usedNames) {
       const used = usedNames instanceof Set ? usedNames : new Set(usedNames);
       const available = this.names.filter(n => !used.has(n));
       const pool = available.length > 0 ? available : this.names;
-      if (pool.length === 0) return "Chatbot";  // ultimate fallback
+      if (pool.length === 0) return "Chatbot";
       return pool[Math.floor(Math.random() * pool.length)];
     }
   }
 
   // ── IconPicker ─────────────────────────────────────────────────
-  // One IconPicker per family. `pick(usedIndices)` returns an index
-  // into the family's `iconSet` array that's not currently in
-  // `usedIndices`. If every index is in use (or iconSet is empty),
-  // allows repeats (or returns -1 for "use placeholder").
+  // One IconPicker per family. No-repeat-until-exhausted rule, per-family.
   class IconPicker {
     constructor(family, iconSet) {
       this.family = family;
       this.iconSet = Array.isArray(iconSet) ? iconSet : [];
     }
-
     pick(usedIndices) {
-      if (this.iconSet.length === 0) return -1;  // no real icons → placeholder
+      if (this.iconSet.length === 0) return -1;
       const used = usedIndices instanceof Set ? usedIndices : new Set(usedIndices);
       const allIndices = this.iconSet.map((_, i) => i);
       const available = allIndices.filter(i => !used.has(i));
@@ -61,27 +52,20 @@
     }
   }
 
-  // ── Chatbot ────────────────────────────────────────────────────
-  // A chatbot is an Entity with a name, family, iconIndex, and a
-  // corresponding DOM element. The element is created in the
-  // constructor and appended to #chatbots by the caller.
+  // ── ChatIcon ────────────────────────────────────────────────────
+  // A GridIcon representing a chat conversation.
   let nextId = 1;
 
-  class Chatbot extends Entity {
+  class ChatIcon extends GridIcon {
     constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28 }) {
-      super({ id: id || ('cb_' + nextId++), x, y, radius, mass: 1 });
+      super({ id: id || ('chat_' + nextId++), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
       this.iconIndex = (typeof iconIndex === 'number') ? iconIndex : -1;
       this.vx = vx;
       this.vy = vy;
 
-      // Build the DOM element once. Subsequent updates only touch
-      // innerHTML / inline styles, not the element itself.
-      this.el = document.createElement('div');
-      this.el.className = 'chatbot';
-      this.el.dataset.id = this.id;
-
+      // Build the DOM element: icon circle + name label.
       const icon = document.createElement('div');
       icon.className = 'icon';
       this._iconEl = icon;
@@ -96,10 +80,6 @@
       this._renderIcon();
     }
 
-    // Re-render the icon based on family + iconIndex.
-    // If the family has real icons and iconIndex is valid → use the SVG.
-    // Otherwise → placeholder: colored circle with the first letter of
-    // the chatbot's name.
     _renderIcon() {
       const cfg = window.DoomalayConfig;
       const fam = (cfg && cfg.families && cfg.families[this.family]) ||
@@ -108,24 +88,20 @@
       const iconSet = fam.icons || [];
 
       this._iconEl.innerHTML = '';
-      this._iconEl.style.background = '';  // clear any inline bg from prior render
+      this._iconEl.style.background = '';
 
       if (this.iconIndex >= 0 && this.iconIndex < iconSet.length) {
-        // Real icon — SVG/PNG file
         const img = document.createElement('img');
         img.src = iconSet[this.iconIndex];
         img.alt = this.name;
         img.draggable = false;
         this._iconEl.appendChild(img);
       } else {
-        // Placeholder: family color + first letter of name
         this._iconEl.style.background = fam.color || '#4a4a5e';
         this._iconEl.textContent = (this.name || '?').charAt(0).toUpperCase();
       }
     }
 
-    // Update family + icon (called by setFamily() in app.js when the
-    // active model family changes).
     setFamily(family, iconIndex) {
       this.family = family;
       if (typeof iconIndex === 'number') this.iconIndex = iconIndex;
@@ -135,39 +111,43 @@
     setName(name) {
       this.name = name;
       this._nameEl.textContent = name;
-      this._renderIcon();  // placeholder shows the first letter, so re-render
+      this._renderIcon();
     }
 
-    // Position the DOM element on screen. World (this.x, this.y) →
-    // screen (sx, sy) by applying the canvas pan offset AND the zoom scale.
-    // The element is also visually scaled by `scale` so icons grow/shrink
-    // with the zoom level.
-    render(offsetX, offsetY, scale) {
-      const s = scale || 1;
-      const sx = (this.x - offsetX) * s;
-      const sy = (this.y - offsetY) * s;
-      // translate3d for GPU acceleration; translate(-50%, -50%) to
-      // center the element on (sx, sy); scale(s) to zoom the icon.
-      this.el.style.transform =
-        'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
+    // ── Panel content (overrides GridIcon) ──────────────────────
+    getPanelTitle() { return this.name || 'Chat'; }
+    getPanelSubtitle() {
+      const cfg = window.DoomalayConfig;
+      const fam = (cfg && cfg.families && cfg.families[this.family]) || {};
+      return (fam.label || this.family) + ' · ' + this.id;
+    }
+    getAvatarHTML() {
+      const cfg = window.DoomalayConfig;
+      const fam = (cfg && cfg.families && cfg.families[this.family]) || {};
+      if (this.iconIndex >= 0 && fam.icons && this.iconIndex < fam.icons.length) {
+        return '<img src="' + fam.icons[this.iconIndex] + '" alt="' + this.name + '">';
+      }
+      return (this.name || '?').charAt(0).toUpperCase();
+    }
+    getPanelBodyHTML() {
+      return '<div class="placeholder">' +
+        'Chat interface goes here.<br>' +
+        'Each chat has its own conversation, settings, and storage.<br><br>' +
+        '<span style="color:#3a3a45;font-size:12px">Bot ID: ' + this.id + '</span>' +
+        '</div>';
     }
 
-    // Serialize for localStorage persistence.
+    // ── Serialization ────────────────────────────────────────────
     serialize() {
-      return {
-        id: this.id,
-        name: this.name,
-        family: this.family,
-        iconIndex: this.iconIndex,
-        x: this.x, y: this.y,
-        vx: this.vx, vy: this.vy,
-        radius: this.radius
-      };
+      const base = super.serialize();
+      base.name = this.name;
+      base.family = this.family;
+      base.iconIndex = this.iconIndex;
+      return base;
     }
 
-    // Restore from localStorage data.
     static deserialize(data) {
-      return new Chatbot({
+      return new ChatIcon({
         id: data.id,
         name: data.name,
         family: data.family,
@@ -179,5 +159,8 @@
     }
   }
 
-  window.Chatbot = { Chatbot, NamePicker, IconPicker };
+  // Register the 'chat' type so GridIcon.create() can build these from saved data.
+  register('chat', function (data) { return ChatIcon.deserialize(data); });
+
+  window.ChatIcon = { ChatIcon, NamePicker, IconPicker };
 })();
