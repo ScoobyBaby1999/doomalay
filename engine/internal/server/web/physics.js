@@ -35,6 +35,12 @@
   // so a collision imparts a visible "kick" to the hit chatbot.
   const RESTITUTION = 0.92;
 
+  // Impact boost: extra velocity injected into the HIT icon on collision,
+  // on top of the elastic exchange. This makes collisions feel weighty —
+  // the hit icon gets visibly "swung" away, not just gently pushed.
+  // Tuned so a moderate-speed hit sends the target sliding ~60-100px.
+  const IMPACT_BOOST = 3.5;
+
   // An Entity is anything that has a position, velocity, and radius.
   // Chatbot extends this (see chatbot.js).
   class Entity {
@@ -125,6 +131,9 @@
           // fighting the cursor)
 
           // ── Velocity response ────────────────────────────────
+          // The IMPACT_BOOST injects extra velocity into the HIT icon
+          // (the one being pushed away) so collisions feel weighty —
+          // the target gets visibly "swung" away, not just nudged.
           if (a.dragging && !b.dragging) {
             // a = infinite mass, b reflects off it. n points from a → b.
             // b's velocity along n: vbn. If vbn < 0, b is moving toward
@@ -134,6 +143,9 @@
               b.vx -= (1 + RESTITUTION) * vbn * nx;
               b.vy -= (1 + RESTITUTION) * vbn * ny;
             }
+            // Boost: b gets pushed away from a along the normal.
+            b.vx += nx * IMPACT_BOOST;
+            b.vy += ny * IMPACT_BOOST;
           } else if (b.dragging && !a.dragging) {
             // b = infinite mass, a reflects off it. n points from a → b.
             // a's velocity along n: van. If van > 0, a is moving toward
@@ -143,6 +155,9 @@
               a.vx -= (1 + RESTITUTION) * van * nx;
               a.vy -= (1 + RESTITUTION) * van * ny;
             }
+            // Boost: a gets pushed away from b (negative normal direction).
+            a.vx -= nx * IMPACT_BOOST;
+            a.vy -= ny * IMPACT_BOOST;
           } else if (!a.dragging && !b.dragging) {
             // Both free — equal-mass elastic collision along the normal.
             // Exchange normal components, scaled by restitution.
@@ -162,6 +177,15 @@
               a.vy += (new_van - van) * ny;
               b.vx += (new_vbn - vbn) * nx;
               b.vy += (new_vbn - vbn) * ny;
+              // Boost: both get pushed apart along the normal so the
+              // collision has visible impact energy. b gets +n, a gets -n.
+              // Scale by the approach speed so fast hits boost more.
+              const approach = van - vbn;
+              const boost = IMPACT_BOOST * Math.min(1, approach / 5);
+              b.vx += nx * boost;
+              b.vy += ny * boost;
+              a.vx -= nx * boost;
+              a.vy -= ny * boost;
             }
           }
         }
@@ -169,5 +193,5 @@
     }
   }
 
-  window.Physics = { Entity, World, FRICTION, MIN_VEL, RESTITUTION };
+  window.Physics = { Entity, World, FRICTION, MIN_VEL, RESTITUTION, IMPACT_BOOST };
 })();

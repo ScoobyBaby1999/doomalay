@@ -20,7 +20,8 @@
   // These are available even before the page registers, so the app
   // can read them on init.
   const defaultState = {
-    // ── Appearance (grid colors) ──────────────────────────────
+    // ── Appearance (grid) ─────────────────────────────────────
+    gridSize: 1,           // 1× = default (48px), up to 5× = 240px
     bg: '#0a0a0b',
     lineColor: '#131318',
     dotColor: '#2e2e3a',
@@ -159,6 +160,18 @@
         const patch = {};
         patch[key] = val;
         setState(patch);
+        // Live-update the range display next to the slider.
+        const display = panelRef.bodyEl.querySelector('[data-range-display="' + key + '"]');
+        if (display) display.textContent = val + '×';
+      });
+    });
+
+    // Wire up collapsible section headers (tap to toggle).
+    const sectionHeaders = panelRef.bodyEl.querySelectorAll('[data-section-toggle]');
+    sectionHeaders.forEach(function (h) {
+      h.addEventListener('click', function () {
+        const section = h.parentElement;
+        if (section) section.classList.toggle('expanded');
       });
     });
 

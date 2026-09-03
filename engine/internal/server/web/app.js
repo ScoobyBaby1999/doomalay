@@ -62,13 +62,19 @@
   const PAN_FRICTION = 0.88;
   const MAX_PAN_VELOCITY = 18;
 
-  const GRID = 48;
+  const GRID_BASE = 48;    // base grid spacing in px (at scale 1, gridSize 1)
   const DOT_RADIUS = 1.4;
   const ORIGIN_RADIUS = 5;
 
-  // Grid colors now come from Settings (live-editable via Appearance page).
-  // These are the fallbacks if Settings hasn't loaded yet.
+  // Grid colors + size now come from Settings (live-editable via
+  // Appearance page). These are the fallbacks if Settings hasn't loaded.
   function theme() { return window.Settings.getState(); }
+  // Effective grid spacing = base * gridSize setting (1x to 5x).
+  function gridSpacing() {
+    const t = theme();
+    const gs = (t && typeof t.gridSize === 'number') ? t.gridSize : 1;
+    return GRID_BASE * gs;
+  }
 
   function resize() {
     W = window.innerWidth;
@@ -93,7 +99,7 @@
     ctx.fillStyle = t.bg || '#0a0a0b';
     ctx.fillRect(0, 0, W, H);
 
-    const scaledGrid = GRID * scale;
+    const scaledGrid = gridSpacing() * scale;
     const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
     const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
@@ -312,7 +318,12 @@
       const sy = (bot.y - offsetY) * scale;
       const dx = screenX - sx;
       const dy = screenY - sy;
-      const r = bot.radius * scale + 4;
+      // Hit-test radius: the icon's visual radius * scale, plus a
+      // generous slack (20px) so icons are easy to tap even when zoomed
+      // out. Also enforce a minimum hit radius of 28px so tiny icons
+      // at low zoom are still tappable — finger-friendly.
+      const visualR = bot.radius * scale;
+      const r = Math.max(28, visualR + 20);
       if (dx * dx + dy * dy <= r * r) return bot;
     }
     return null;

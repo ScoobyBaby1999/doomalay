@@ -10,8 +10,8 @@ android {
         applicationId = "com.doomalay.engine"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.9.1-nitpicks"
+        versionCode = 16
+        versionName = "0.9.2-hitboxes-bounce-gridsize"
         ndk { abiFilters += "arm64-v8a" }
     }
     // CRITICAL: libdoomalayengine.so is NOT a JNI library — it is a standalone

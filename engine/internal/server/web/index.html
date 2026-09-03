@@ -316,16 +316,39 @@
     color: #e0e0e8;
   }
   .settings-section {
-    margin-bottom: 24px;
+    margin-bottom: 16px;
+    border: 1px solid #1a1a22;
+    border-radius: 8px;
+    overflow: hidden;
   }
   .settings-section h3 {
     font-size: 13px;
     font-weight: 600;
-    color: #71717a;
+    color: #e0e0e8;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 10px;
+    padding: 12px 14px;
+    margin: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    -webkit-tap-highlight-color: transparent;
+    background: #14141a;
+    transition: background 0.15s;
   }
+  .settings-section h3:active { background: #1a1a22; }
+  .settings-section h3 .chevron {
+    font-size: 10px;
+    color: #71717a;
+    transition: transform 0.2s;
+  }
+  .settings-section.expanded h3 .chevron { transform: rotate(90deg); }
+  .settings-section .section-body {
+    display: none;
+    padding: 4px 14px 12px;
+  }
+  .settings-section.expanded .section-body { display: block; }
   .setting-row {
     display: flex;
     align-items: center;
