@@ -421,6 +421,11 @@
             bodyHTML: icon.getPanelBodyHTML(),
             context: icon
           });
+          // If the icon is a ChatIcon, render the interactive chat panel
+          // into the panel body (replaces the static placeholder HTML).
+          if (icon.type === 'chat' && window.ChatPanel) {
+            window.ChatPanel.render(panel.bodyEl, icon, panel);
+          }
         }, 500);
       }
       inputState = 'IDLE';

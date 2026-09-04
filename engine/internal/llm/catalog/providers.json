@@ -99,5 +99,25 @@
     "signup_url": "https://github.com/marketplace/models",
     "free_tier": true,
     "color": "#24292E"
+  },
+  "opencode": {
+    "env_var": "OPENCODE_ZEN_API_KEY",
+    "base_url": "https://api.opencode.ai/v1",
+    "litellm_prefix": "opencode",
+    "label": "OpenCode Zen",
+    "description": "Free tier with 100 requests/day. OpenAI-compatible proxy.",
+    "signup_url": "https://opencode.ai/",
+    "free_tier": true,
+    "color": "#00D9A0"
+  },
+  "privatemodeai": {
+    "env_var": "PRIVATEMODEAI_API_KEY",
+    "base_url": "http://localhost:8080/v1",
+    "litellm_prefix": "privatemodeai",
+    "label": "PrivateMode AI",
+    "description": "Confidential-computing proxy. E2E encrypted. 5M free tokens.",
+    "signup_url": "https://privatemode.ai/",
+    "free_tier": true,
+    "color": "#9333EA"
   }
 }

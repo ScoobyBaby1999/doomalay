@@ -57,13 +57,17 @@
   let nextId = 1;
 
   class ChatIcon extends GridIcon {
-    constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28 }) {
+    constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '' }) {
       super({ id: id || ('chat_' + nextId++), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
       this.iconIndex = (typeof iconIndex === 'number') ? iconIndex : -1;
       this.vx = vx;
       this.vy = vy;
+      this.sandbox = sandbox;     // 'quick', 'hf', 'terminal', 'device'
+      this.model = model;         // 'openai/gpt-4o', 'ollama/llama3.2:3b', etc.
+      this.provider = provider;   // 'openai', 'ollama', etc.
+      this._sessionData = null;   // engine session object (fetched on first chat)
 
       // Build the DOM element: icon circle + name label.
       const icon = document.createElement('div');
@@ -119,7 +123,9 @@
     getPanelSubtitle() {
       const cfg = window.DoomalayConfig;
       const fam = (cfg && cfg.families && cfg.families[this.family]) || {};
-      return (fam.label || this.family) + ' · ' + this.id;
+      var sub = (fam.label || this.family) + ' · ' + this.id;
+      if (this.sandbox) sub += ' · ' + this.sandbox;
+      return sub;
     }
     getAvatarHTML() {
       const cfg = window.DoomalayConfig;
@@ -129,12 +135,10 @@
       }
       return (this.name || '?').charAt(0).toUpperCase();
     }
+    // The panel body is now rendered by ChatPanel (interactive, not static HTML).
+    // app.js calls ChatPanel.render(bodyEl, this, panel) after the panel opens.
     getPanelBodyHTML() {
-      return '<div class="placeholder">' +
-        'Chat interface goes here.<br>' +
-        'Each chat has its own conversation, settings, and storage.<br><br>' +
-        '<span style="color:#3a3a45;font-size:12px">Bot ID: ' + this.id + '</span>' +
-        '</div>';
+      return '<div class="placeholder">Loading…</div>';
     }
 
     // ── Serialization ────────────────────────────────────────────
@@ -143,6 +147,9 @@
       base.name = this.name;
       base.family = this.family;
       base.iconIndex = this.iconIndex;
+      base.sandbox = this.sandbox;
+      base.model = this.model;
+      base.provider = this.provider;
       return base;
     }
 
@@ -154,7 +161,10 @@
         iconIndex: data.iconIndex,
         x: data.x, y: data.y,
         vx: data.vx || 0, vy: data.vy || 0,
-        radius: data.radius || 28
+        radius: data.radius || 28,
+        sandbox: data.sandbox || '',
+        model: data.model || '',
+        provider: data.provider || ''
       });
     }
   }

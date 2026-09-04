@@ -371,6 +371,12 @@
     color: #71717a;
     margin-bottom: 8px;
   }
+
+  /* Streaming cursor blink animation */
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
 </style>
 </head>
 <body>
@@ -407,6 +413,13 @@
 <script src="panel.js"></script>
 <script src="settings.js"></script>
 <script src="appearance.js"></script>
+<script src="connectoverlay.js"></script>
+<script src="sandboxpicker.js"></script>
+<script src="modelpicker.js"></script>
+<script src="providers.js"></script>
+<script src="localmodels.js"></script>
+<script src="chatclient.js"></script>
+<script src="chatpanel.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

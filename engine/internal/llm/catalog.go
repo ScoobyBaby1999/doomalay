@@ -261,3 +261,34 @@ func ResolveModel(userModel, userProvider string, keys map[string]string) (model
         }
         return model, baseURL, envVar, apiKey, nil
 }
+
+// ValidateKey pings the provider's /v1/models endpoint with the given API key
+// to verify the key is valid. Returns (valid, modelCount, error).
+func ValidateKey(envVar, apiKey string) (bool, int, error) {
+	if apiKey == "" {
+		return false, 0, fmt.Errorf("no API key provided")
+	}
+	catalog, err := LoadCatalog()
+	if err != nil {
+		return false, 0, fmt.Errorf("load catalog: %w", err)
+	}
+	var cfg ProviderConfig
+	var providerName string
+	found := false
+	for name, c := range catalog {
+		if c.EnvVar == envVar {
+			cfg = c
+			providerName = name
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, 0, fmt.Errorf("unknown env_var: %s", envVar)
+	}
+	models, err := fetchProviderModels(providerName, cfg, apiKey)
+	if err != nil {
+		return false, 0, err
+	}
+	return true, len(models), nil
+}
