@@ -4,16 +4,23 @@
 //   1. Connect Cloud Provider → opens the providers screen (ported from HF)
 //   2. Use Local Model        → opens the local model screen (Ollama detection)
 //
+// When the user picks an option, the overlay content is REPLACED smoothly
+// (fade out → swap → fade in) instead of closing + reopening — no snappy jump.
+//
 // Exposes: window.ModelPicker
 
 (function () {
   'use strict';
 
   function open(onPick) {
+    renderPicker(onPick);
+  }
+
+  function renderPicker(onPick) {
     var html =
       '<div style="padding:24px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">' +
-      '<h2 style="font-size:18px;font-weight:600;color:#e0e0e8;margin:0">Connect Model</h2>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+      '<h2 style="font-size:18px;font-weight:600;color:#e0e0e8;margin:0">Choose a model and sandbox and go!</h2>' +
       '<button id="mp-close" style="background:transparent;border:none;color:#71717a;font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
       '</div>' +
       '<p style="font-size:13px;color:#71717a;margin:0 0 20px">Pick how this chat will run AI. Cloud needs an API key; local runs on your device.</p>' +
@@ -30,13 +37,19 @@
     window.ConnectOverlay.open(html);
 
     var contentEl = window.ConnectOverlay.getContentEl();
-    contentEl.querySelector('#mp-close').addEventListener('click', window.ConnectOverlay.close);
+    var closeBtn = contentEl.querySelector('#mp-close');
+    if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
     contentEl.querySelectorAll('[data-model-type]').forEach(function (card) {
       card.addEventListener('click', function () {
         var type = card.dataset.modelType;
-        window.ConnectOverlay.close();
-        if (onPick) onPick(type);
+        // Don't close the overlay — replace its content smoothly with the
+        // providers or local-models screen.
+        if (type === 'cloud') {
+          window.ProvidersScreen.open(onPick, { useReplaceContent: true });
+        } else {
+          window.LocalModelsScreen.open(onPick, { useReplaceContent: true });
+        }
       });
     });
   }

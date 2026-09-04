@@ -21,7 +21,8 @@
     return 2;
   }
 
-  function open(onPick) {
+  function open(onPick, opts) {
+    opts = opts || {};
     var clientRAM = detectClientRAM();
 
     // Fetch local models from the engine (which probes Ollama).
@@ -97,10 +98,15 @@
 
       html += '</div>';
 
-      window.ConnectOverlay.open(html);
+      if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
+        window.ConnectOverlay.replaceContent(html, { onClose: opts.onClose });
+      } else {
+        window.ConnectOverlay.open(html, { onClose: opts.onClose });
+      }
 
       var contentEl = window.ConnectOverlay.getContentEl();
-      contentEl.querySelector('#lm-close').addEventListener('click', window.ConnectOverlay.close);
+      var closeBtn = contentEl.querySelector('#lm-close');
+      if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
       // Wire up model selection
       contentEl.querySelectorAll('[data-model]').forEach(function (el) {

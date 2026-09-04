@@ -81,7 +81,7 @@
     flash() {
       this.el.classList.add('tapped');
       const self = this;
-      setTimeout(function () { self.el.classList.remove('tapped'); }, 400);
+      setTimeout(function () { self.el.classList.remove('tapped'); }, 200);
     }
 
     // ── Serialization ────────────────────────────────────────────

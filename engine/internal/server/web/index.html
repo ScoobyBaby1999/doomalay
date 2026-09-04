@@ -182,7 +182,7 @@
     display: flex;
     flex-direction: column;
     transform: translateY(100%);   /* hidden below screen by default */
-    transition: transform 0.06s cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
     will-change: transform;
     /* Pad for the rounded top + safe area */
     padding-top: 8px;
@@ -268,7 +268,7 @@
     z-index: 1900;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.06s;
+    transition: opacity 0.25s;
   }
   #chat-scrim.open {
     opacity: 1;
@@ -277,11 +277,11 @@
 
   /* Chatbot tap-flash animation — quick scale pulse when tapped. */
   .chatbot.tapped .icon {
-    animation: tap-pulse 0.4s ease-out;
+    animation: tap-pulse 0.2s ease-out;
   }
   @keyframes tap-pulse {
     0%   { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-    30%  { transform: scale(0.82); box-shadow: 0 8px 24px rgba(74,74,94,0.6); }
+    40%  { transform: scale(0.82); box-shadow: 0 8px 24px rgba(74,74,94,0.6); }
     100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
   }
 

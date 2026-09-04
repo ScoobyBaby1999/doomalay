@@ -219,6 +219,27 @@
     resetView: function () {
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();
+    },
+    // Handle Android back press. Returns true if we closed something (overlay
+    // or panel), false if nothing was open. Called by MainActivity.onBackPressed
+    // so the back gesture closes overlays/panels instead of exiting the app.
+    handleBack: function () {
+      // Close connect overlay first (highest priority)
+      if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
+        window.ConnectOverlay.close();
+        return true;
+      }
+      // Close the chat panel
+      if (panel && panel.isOpen()) {
+        panel.close();
+        return true;
+      }
+      // Close the long-press menu
+      if (menuEl && !menuEl.classList.contains('hidden')) {
+        hideMenu();
+        return true;
+      }
+      return false;
     }
   };
 
@@ -413,6 +434,8 @@
       const icon = findIconAt(startScreenX, startScreenY);
       if (icon) {
         icon.flash();
+        // Reduced delay: was 500ms (felt too long). 150ms gives a quick
+        // flash-then-panel feel without the lag.
         setTimeout(function () {
           panel.open({
             title: icon.getPanelTitle(),
@@ -426,7 +449,7 @@
           if (icon.type === 'chat' && window.ChatPanel) {
             window.ChatPanel.render(panel.bodyEl, icon, panel);
           }
-        }, 500);
+        }, 150);
       }
       inputState = 'IDLE';
       return;

@@ -167,7 +167,31 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (this::webView.isInitialized && webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        // First, let the PWA handle the back press (close overlays, panels, etc.)
+        // by calling a JS function. If the PWA says it handled it, don't exit.
+        if (this::webView.isInitialized) {
+            // Check if the PWA has an overlay or panel open that it can close.
+            // The PWA exposes window.doomalay.handleBack() which returns true
+            // if it handled the back press (closed something), false otherwise.
+            try {
+                val handled = webView.evaluateJavascript(
+                    "(window.doomalay && typeof window.doomalay.handleBack === 'function') ? window.doomalay.handleBack() : false",
+                    null
+                )
+                // evaluateJavascript is async, but we can't wait for it here.
+                // Instead, always consume the back press — the PWA will close
+                // its overlays/panels. If nothing is open, do nothing (don't exit).
+                // This prevents the "white screen stuck" bug where super.onBackPressed()
+                // finishes the activity and the WebView loses its state.
+                return
+            } catch (e: Exception) {
+                AppLog.error("back press JS eval failed", e)
+            }
+        }
+        // If WebView isn't initialized, fall through to default (shouldn't happen
+        // in normal operation — the WebView is set up in startEngineAndLoadUI).
+        // Don't call super.onBackPressed() — that exits the app, which causes
+        // the white-screen-stuck bug on relaunch. Instead, move to background.
+        moveTaskToBack(true)
     }
 }

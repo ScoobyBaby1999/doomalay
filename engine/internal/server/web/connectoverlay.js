@@ -4,34 +4,39 @@
 // to overlay the entire screen with a blurred backdrop. Content-agnostic:
 // the caller provides HTML, the overlay handles show/hide/blur/scrim-tap.
 //
+// Has smooth open/close transitions (fade + scale) — not instant.
 // Exposes: window.ConnectOverlay
 
 (function () {
   'use strict';
 
   // Singleton overlay element — created lazily on first open.
-  let overlayEl = null;
-  let contentEl = null;
-  let scrimEl = null;
-  let onCloseCb = null;
+  var overlayEl = null;
+  var contentEl = null;
+  var scrimEl = null;
+  var onCloseCb = null;
+  var closing = false;
 
   function ensureElements() {
     if (overlayEl) return;
     overlayEl = document.createElement('div');
     overlayEl.id = 'connect-overlay';
     overlayEl.style.cssText =
-      'position:fixed;inset:0;z-index:3000;display:none;' +
+      'position:fixed;inset:0;z-index:3000;visibility:hidden;' +
       'align-items:center;justify-content:center;padding:20px;';
     scrimEl = document.createElement('div');
     scrimEl.style.cssText =
       'position:absolute;inset:0;background:rgba(0,0,0,0.5);' +
-      'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
+      'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
+      'opacity:0;transition:opacity 0.25s ease;';
     contentEl = document.createElement('div');
     contentEl.style.cssText =
       'position:relative;z-index:1;width:100%;max-width:480px;max-height:85vh;' +
       'overflow-y:auto;background:#0e0e12;border:1px solid #1a1a22;' +
       'border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.6);' +
-      '-webkit-overflow-scrolling:touch;';
+      '-webkit-overflow-scrolling:touch;' +
+      'opacity:0;transform:scale(0.95) translateY(10px);' +
+      'transition:opacity 0.25s ease, transform 0.25s ease;';
     overlayEl.appendChild(scrimEl);
     overlayEl.appendChild(contentEl);
     document.body.appendChild(overlayEl);
@@ -43,27 +48,72 @@
   function open(html, opts) {
     opts = opts || {};
     ensureElements();
+    closing = false;
     contentEl.innerHTML = html;
+    // Show the overlay (visibility:visible + flex)
+    overlayEl.style.visibility = 'visible';
     overlayEl.style.display = 'flex';
+    // Force reflow so the transition fires (not instant)
+    void contentEl.offsetWidth;
+    // Animate in
+    scrimEl.style.opacity = '1';
+    contentEl.style.opacity = '1';
+    contentEl.style.transform = 'scale(1) translateY(0)';
     onCloseCb = opts.onClose || null;
-    // Prevent body scroll
     document.body.style.overflow = 'hidden';
   }
 
   function close() {
-    if (!overlayEl || overlayEl.style.display === 'none') return;
-    overlayEl.style.display = 'none';
-    document.body.style.overflow = '';
-    var cb = onCloseCb;
-    onCloseCb = null;
-    if (cb) cb();
+    if (!overlayEl || overlayEl.style.visibility === 'hidden' || closing) return;
+    closing = true;
+    // Animate out
+    scrimEl.style.opacity = '0';
+    contentEl.style.opacity = '0';
+    contentEl.style.transform = 'scale(0.95) translateY(10px)';
+    setTimeout(function () {
+      overlayEl.style.visibility = 'hidden';
+      overlayEl.style.display = 'none';
+      document.body.style.overflow = '';
+      closing = false;
+      var cb = onCloseCb;
+      onCloseCb = null;
+      if (cb) cb();
+    }, 250);
+  }
+
+  // Replace content WITHOUT closing/reopening the overlay (smooth transition
+  // between nested pickers — e.g. model picker → providers screen). Fades
+  // the old content out, swaps, fades new content in.
+  function replaceContent(html, opts) {
+    if (!overlayEl || overlayEl.style.visibility === 'hidden') {
+      open(html, opts);
+      return;
+    }
+    opts = opts || {};
+    // Fade out current content
+    contentEl.style.opacity = '0';
+    contentEl.style.transform = 'scale(0.98) translateY(4px)';
+    setTimeout(function () {
+      contentEl.innerHTML = html;
+      void contentEl.offsetWidth; // reflow
+      onCloseCb = opts.onClose || null;
+      // Fade in new content
+      contentEl.style.opacity = '1';
+      contentEl.style.transform = 'scale(1) translateY(0)';
+    }, 150);
   }
 
   function isOpen() {
-    return overlayEl && overlayEl.style.display !== 'none';
+    return overlayEl && overlayEl.style.visibility !== 'hidden';
   }
 
   function getContentEl() { return contentEl; }
 
-  window.ConnectOverlay = { open: open, close: close, isOpen: isOpen, getContentEl: getContentEl };
+  window.ConnectOverlay = {
+    open: open,
+    close: close,
+    isOpen: isOpen,
+    getContentEl: getContentEl,
+    replaceContent: replaceContent
+  };
 })();

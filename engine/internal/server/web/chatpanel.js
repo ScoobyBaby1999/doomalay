@@ -48,8 +48,8 @@
   function renderEmptyState(bodyEl, icon, state, panel) {
     bodyEl.innerHTML =
       '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:24px">' +
-      '<h3 style="font-size:16px;font-weight:600;color:#e0e0e8;margin:0 0 24px">New Chat — ' + icon.name + '</h3>' +
-      '<p style="font-size:13px;color:#71717a;margin:0 0 24px;text-align:center">Pick a sandbox and a model to start chatting.</p>' +
+      '<h3 style="font-size:16px;font-weight:600;color:#e0e0e8;margin:0 0 24px">Choose a model and sandbox and go!</h3>' +
+      '<p style="font-size:13px;color:#71717a;margin:0 0 24px;text-align:center">Pick a sandbox and a model to start chatting with ' + icon.name + '.</p>' +
       '<div style="display:flex;gap:16px;width:100%;max-width:400px">' +
         '<div id="box-sandbox" style="flex:1;background:#14141a;border:2px dashed #2a2a35;border-radius:16px;padding:32px 16px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">' +
           '<span style="font-size:32px">🔌</span>' +

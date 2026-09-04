@@ -22,6 +22,7 @@
     var providers = {};
     var keys = {};
     var validation = {};
+    var opened = false;
 
     // Fetch the provider catalog + current keys, then render.
     Promise.all([
@@ -46,7 +47,20 @@
         '</div>' +
         '</div>';
 
-      window.ConnectOverlay.open(html, { onClose: opts.onClose });
+      // First render: open the overlay (or replace content if already open).
+      // Subsequent renders (after tab switch / key save): just swap innerHTML
+      // (no fade needed — the user is already looking at it).
+      if (!opened) {
+        if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
+          window.ConnectOverlay.replaceContent(html, { onClose: opts.onClose });
+        } else {
+          window.ConnectOverlay.open(html, { onClose: opts.onClose });
+        }
+        opened = true;
+      } else {
+        var contentEl = window.ConnectOverlay.getContentEl();
+        contentEl.innerHTML = html;
+      }
       wireEvents();
     }
 
