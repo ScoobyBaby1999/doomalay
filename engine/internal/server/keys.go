@@ -101,27 +101,27 @@ func (s *Server) handleKeysDelete(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// handleKeysValidate is GET /api/keys/validate?env_var=X — pings the provider's
-// /v1/models endpoint to verify the key works.
+// handleKeysValidate is GET /api/keys/validate?env_var=X — checks the stored
+// key against the provider. Returns {state: valid|invalid|unverified, valid,
+// model_count, reason}. "invalid" is only reported when the provider itself
+// rejected the key (v0.12: previously a wrong base URL or an unsupported
+// auth style made every key look invalid).
 func (s *Server) handleKeysValidate(w http.ResponseWriter, r *http.Request) {
-	if s.vault == nil {
-		writeError(w, 500, "vault not initialized")
-		return
-	}
-	envVar := r.URL.Query().Get("env_var")
-	if envVar == "" {
-		writeError(w, 400, "env_var query param is required")
-		return
-	}
-	apiKey, _, err := s.vault.Get(envVar)
-	if err != nil {
-		writeJSON(w, 200, map[string]any{"valid": false, "error": "no key set for " + envVar})
-		return
-	}
-	valid, modelCount, err := llm.ValidateKey(envVar, apiKey)
-	if err != nil {
-		writeJSON(w, 200, map[string]any{"valid": false, "error": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"valid": valid, "model_count": modelCount})
+        if s.vault == nil {
+                writeError(w, 500, "vault not initialized")
+                return
+        }
+        envVar := r.URL.Query().Get("env_var")
+        if envVar == "" {
+                writeError(w, 400, "env_var query param is required")
+                return
+        }
+        if _, _, err := s.vault.Get(envVar); err != nil {
+                writeJSON(w, 200, map[string]any{"state": "invalid", "valid": false, "reason": "no key set for " + envVar})
+                return
+        }
+        // Pass the full env map so extra vars (e.g. CLOUDFLARE_ACCOUNT_ID)
+        // are available to the validator.
+        result := llm.ValidateKey(envVar, s.vault.AsEnv())
+        writeJSON(w, 200, result)
 }

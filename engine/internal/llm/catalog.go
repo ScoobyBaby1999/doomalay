@@ -2,12 +2,29 @@
 // and syncs /v1/models directly — no Python brain needed. This lets the
 // Android APK (which can't bundle Python) still show the provider list +
 // model picker.
+//
+// Validation strategies (per provider, "validate" field in providers.json):
+//   - "" / "models"    : GET {base_url}/models. 200 = valid (+model count).
+//                        401/403 = invalid. Anything else = "unverified" —
+//                        the key is saved but we could not confirm it.
+//   - "auth_key"       : GET {base_url}{validate_path} (an endpoint that
+//                        REQUIRES auth, e.g. OpenRouter's /auth/key). This
+//                        is for providers whose /models is public.
+//   - "chat_probe"     : POST {base_url}/chat/completions with probe_model
+//                        and max_tokens=1. Auth errors = invalid; quota or
+//                        model errors mean auth PASSED (the key is fine).
+//
+// The golden rule: never report "invalid" unless the provider itself said
+// the key is bad. A valid key must never be shown as invalid (the v0.11
+// bug: wrong base URLs made every key look invalid).
 package llm
 
 import (
+        "bytes"
         "embed"
         "encoding/json"
         "fmt"
+        "io"
         "io/fs"
         "net/http"
         "strings"
@@ -29,6 +46,14 @@ type ProviderConfig struct {
         FreeTier     bool   `json:"free_tier"`
         Color        string `json:"color"`
         ExtraEnvVar  string `json:"extra_env_var,omitempty"`
+        // AuthStyle: "bearer" (default) or "anthropic" (x-api-key + version).
+        AuthStyle string `json:"auth_style,omitempty"`
+        // Validate strategy: "" / "models" / "auth_key" / "chat_probe".
+        Validate string `json:"validate,omitempty"`
+        // ValidatePath is appended to base_url for the "auth_key" strategy.
+        ValidatePath string `json:"validate_path,omitempty"`
+        // ProbeModel is the model used for the "chat_probe" strategy.
+        ProbeModel string `json:"probe_model,omitempty"`
 }
 
 // ModelInfo is one model from a provider's /v1/models endpoint.
@@ -107,9 +132,11 @@ func SyncModels(keys map[string]string, force bool) *ModelsResponse {
                         defer wg.Done()
 
                         apiKey := keys[cfg.EnvVar]
+                        accountID := ""
                         if cfg.ExtraEnvVar != "" {
                                 // Cloudflare needs the account ID too — check if we have it.
-                                if keys[cfg.ExtraEnvVar] == "" {
+                                accountID = keys[cfg.ExtraEnvVar]
+                                if accountID == "" {
                                         mu.Lock()
                                         syncStatus = append(syncStatus, SyncStatus{Provider: name, HasKey: false, ModelCount: 0})
                                         mu.Unlock()
@@ -138,7 +165,7 @@ func SyncModels(keys map[string]string, force bool) *ModelsResponse {
                         }
 
                         // Fetch /v1/models.
-                        models, err := fetchProviderModels(name, cfg, apiKey)
+                        models, err := fetchProviderModels(name, cfg, apiKey, accountID)
                         syncCacheMu.Lock()
                         syncCache[name] = syncCacheEntry{fetchedAt: time.Now(), models: models, err: err}
                         syncCacheMu.Unlock()
@@ -163,22 +190,36 @@ func SyncModels(keys map[string]string, force bool) *ModelsResponse {
         }
 }
 
-// fetchProviderModels calls the provider's /v1/models endpoint.
-func fetchProviderModels(name string, cfg ProviderConfig, apiKey string) ([]ModelInfo, error) {
-        baseURL := cfg.BaseURL
-        if cfg.ExtraEnvVar != "" {
-                // Cloudflare: substitute account ID.
-                // (Not implemented for direct proxy — Cloudflare needs the account ID
-                // which we don't have in this context. Skip for now.)
+// resolveBaseURL substitutes the {account_id} placeholder (Cloudflare).
+func resolveBaseURL(cfg ProviderConfig, accountID string) string {
+        if strings.Contains(cfg.BaseURL, "{account_id}") {
+                if accountID == "" {
+                        accountID = "missing-account-id"
+                }
+                return strings.ReplaceAll(cfg.BaseURL, "{account_id}", accountID)
         }
+        return cfg.BaseURL
+}
 
-        url := baseURL + "/models"
+// setAuthHeaders applies the provider's auth style to a request.
+func setAuthHeaders(req *http.Request, cfg ProviderConfig, apiKey string) {
+        if cfg.AuthStyle == "anthropic" {
+                req.Header.Set("x-api-key", apiKey)
+                req.Header.Set("anthropic-version", "2023-06-01")
+                return
+        }
+        req.Header.Set("Authorization", "Bearer "+apiKey)
+}
+
+// fetchProviderModels calls the provider's /v1/models endpoint.
+func fetchProviderModels(name string, cfg ProviderConfig, apiKey, accountID string) ([]ModelInfo, error) {
+        url := resolveBaseURL(cfg, accountID) + "/models"
         client := &http.Client{Timeout: 10 * time.Second}
         req, err := http.NewRequest("GET", url, nil)
         if err != nil {
                 return nil, err
         }
-        req.Header.Set("Authorization", "Bearer "+apiKey)
+        setAuthHeaders(req, cfg, apiKey)
 
         resp, err := client.Do(req)
         if err != nil {
@@ -236,59 +277,141 @@ func fetchProviderModels(name string, cfg ProviderConfig, apiKey string) ([]Mode
         return models, nil
 }
 
-// ResolveModel resolves a user-facing model id (e.g. "openrouter/auto")
-// to (litellm_model, base_url, env_var). Used by the direct LLM proxy.
-func ResolveModel(userModel, userProvider string, keys map[string]string) (model, baseURL, envVar, apiKey string, err error) {
+// ValidateResult is the outcome of a key check.
+type ValidateResult struct {
+        State      string `json:"state"`       // "valid" | "invalid" | "unverified"
+        Valid      bool   `json:"valid"`       // true only for State == "valid"
+        ModelCount int    `json:"model_count"`
+        Reason     string `json:"reason,omitempty"`
+}
+
+// ValidateKey checks a stored key against the provider. keys is the full
+// vault env map (so extra env vars like CLOUDFLARE_ACCOUNT_ID are available).
+//
+// Only reports "invalid" when the provider explicitly rejects the key.
+func ValidateKey(envVar string, keys map[string]string) ValidateResult {
+        apiKey := keys[envVar]
+        if apiKey == "" {
+                return ValidateResult{State: "invalid", Reason: "no key stored for " + envVar}
+        }
         catalog, err := LoadCatalog()
         if err != nil {
-                return "", "", "", "", err
+                return ValidateResult{State: "unverified", Reason: "load catalog: " + err.Error()}
+        }
+        var cfg ProviderConfig
+        var providerName string
+        found := false
+        for name, c := range catalog {
+                if c.EnvVar == envVar {
+                        cfg, providerName, found = c, name, true
+                        break
+                }
+        }
+        if !found {
+                return ValidateResult{State: "invalid", Reason: "unknown env_var: " + envVar}
+        }
+        accountID := keys[cfg.ExtraEnvVar]
+
+        client := &http.Client{Timeout: 12 * time.Second}
+
+        switch cfg.Validate {
+        case "auth_key":
+                // An endpoint that requires auth (e.g. OpenRouter /auth/key).
+                url := strings.TrimSuffix(resolveBaseURL(cfg, accountID), "/") + cfg.ValidatePath
+                req, err := http.NewRequest("GET", url, nil)
+                if err != nil {
+                        return ValidateResult{State: "unverified", Reason: err.Error()}
+                }
+                setAuthHeaders(req, cfg, apiKey)
+                resp, err := client.Do(req)
+                if err != nil {
+                        return ValidateResult{State: "unverified", Reason: "network: " + err.Error()}
+                }
+                defer resp.Body.Close()
+                body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+                if resp.StatusCode == 200 {
+                        return ValidateResult{State: "valid", Valid: true}
+                }
+                if resp.StatusCode == 401 || resp.StatusCode == 403 {
+                        return ValidateResult{State: "invalid", Reason: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
+                }
+                return ValidateResult{State: "unverified", Reason: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+
+        case "chat_probe":
+                // POST a 1-token completion with a known model. Auth is checked
+                // before quota/model errors, so: auth error = invalid key;
+                // model/quota error = auth passed (key is fine).
+                url := resolveBaseURL(cfg, accountID) + "/chat/completions"
+                payload := map[string]any{
+                        "model":      cfg.ProbeModel,
+                        "messages":   []map[string]string{{"role": "user", "content": "hi"}},
+                        "max_tokens": 1,
+                }
+                bodyBytes, _ := json.Marshal(payload)
+                req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+                if err != nil {
+                        return ValidateResult{State: "unverified", Reason: err.Error()}
+                }
+                req.Header.Set("Content-Type", "application/json")
+                setAuthHeaders(req, cfg, apiKey)
+                resp, err := client.Do(req)
+                if err != nil {
+                        return ValidateResult{State: "unverified", Reason: "network: " + err.Error()}
+                }
+                defer resp.Body.Close()
+                body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+                status := resp.StatusCode
+                bodyStr := strings.TrimSpace(string(body))
+                if status == 200 {
+                        return ValidateResult{State: "valid", Valid: true}
+                }
+                if status == 401 || status == 403 {
+                        return ValidateResult{State: "invalid", Reason: fmt.Sprintf("HTTP %d: %s", status, bodyStr)}
+                }
+                // Quota / model / billing errors all mean auth PASSED.
+                return ValidateResult{State: "valid", Valid: true, Reason: bodyStr}
+
+        default:
+                // GET {base_url}/models. Some providers return 200 without
+                // checking the key (public lists) — those always pass, which
+                // is the safe direction: a real key is never called invalid.
+                models, err := fetchProviderModels(providerName, cfg, apiKey, accountID)
+                if err == nil {
+                        return ValidateResult{State: "valid", Valid: true, ModelCount: len(models)}
+                }
+                errStr := err.Error()
+                if strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
+                        return ValidateResult{State: "invalid", Reason: errStr}
+                }
+                return ValidateResult{State: "unverified", Reason: errStr}
+        }
+}
+
+// ResolveModel resolves a user-facing model id (e.g. "openrouter/auto")
+// to (model, base_url, env_var, api_key, auth_style). Used by the direct LLM proxy.
+func ResolveModel(userModel, userProvider string, keys map[string]string) (model, baseURL, envVar, apiKey, authStyle string, err error) {
+        catalog, err := LoadCatalog()
+        if err != nil {
+                return "", "", "", "", "", err
         }
         cfg, ok := catalog[userProvider]
         if !ok {
-                return "", "", "", "", fmt.Errorf("unknown provider: %s", userProvider)
+                return "", "", "", "", "", fmt.Errorf("unknown provider: %s", userProvider)
         }
         envVar = cfg.EnvVar
-        baseURL = cfg.BaseURL
         apiKey = keys[envVar]
         if apiKey == "" {
-                return "", "", "", "", fmt.Errorf("no API key for %s", envVar)
+                return "", "", "", "", "", fmt.Errorf("no API key for %s", envVar)
         }
-        // If the model already has a provider prefix, use as-is.
-        if strings.Contains(userModel, "/") {
-                model = userModel
-        } else {
-                model = fmt.Sprintf("%s/%s", cfg.LitellmPrefix, userModel)
-        }
-        return model, baseURL, envVar, apiKey, nil
-}
+        accountID := keys[cfg.ExtraEnvVar]
+        baseURL = resolveBaseURL(cfg, accountID)
+        authStyle = cfg.AuthStyle
 
-// ValidateKey pings the provider's /v1/models endpoint with the given API key
-// to verify the key is valid. Returns (valid, modelCount, error).
-func ValidateKey(envVar, apiKey string) (bool, int, error) {
-	if apiKey == "" {
-		return false, 0, fmt.Errorf("no API key provided")
-	}
-	catalog, err := LoadCatalog()
-	if err != nil {
-		return false, 0, fmt.Errorf("load catalog: %w", err)
-	}
-	var cfg ProviderConfig
-	var providerName string
-	found := false
-	for name, c := range catalog {
-		if c.EnvVar == envVar {
-			cfg = c
-			providerName = name
-			found = true
-			break
-		}
-	}
-	if !found {
-		return false, 0, fmt.Errorf("unknown env_var: %s", envVar)
-	}
-	models, err := fetchProviderModels(providerName, cfg, apiKey)
-	if err != nil {
-		return false, 0, err
-	}
-	return true, len(models), nil
+        // SyncModels prefixes model IDs with the provider name
+        // ("openrouter/llama-3.3-70b"). The provider's own API expects the
+        // bare ID — strip our prefix. (v0.11 bug: the prefix was sent as-is.)
+        model = strings.TrimPrefix(userModel, userProvider+"/")
+        // Cloudflare model IDs keep their native "@cf/vendor/model" shape —
+        // nothing else to strip.
+        return model, baseURL, envVar, apiKey, authStyle, nil
 }

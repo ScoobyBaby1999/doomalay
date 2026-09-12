@@ -510,6 +510,9 @@
     // preventDefault on touchstart — which is why desktop dogfooding
     // never caught it.)
     if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) return true;
+    // The in-app redirect browser (Get API key) also covers the full
+    // screen — same rule: touches inside it are UI touches.
+    if (window.RedirectPanel && window.RedirectPanel.isOpen()) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
@@ -608,8 +611,14 @@
 
   // Listen for custom action events (e.g. "reset-view" from Appearance page).
   window.addEventListener('doomalay:action', function (e) {
-    if (e.detail && e.detail.action === 'reset-view') {
+    if (!e.detail) return;
+    if (e.detail.action === 'reset-view') {
       window.doomalay.resetView();
+    }
+    if (e.detail.action === 'connect-cloud') {
+      // Settings → Cloud → "Connect Cloud Providers": pop up the provider
+      // screen over the settings panel (no chat to configure — key mgmt).
+      window.ProvidersScreen.open(null, {});
     }
   });
 

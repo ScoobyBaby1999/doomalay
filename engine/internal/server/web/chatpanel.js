@@ -15,6 +15,38 @@
   // Per-chat state registry. Keyed by chat ID.
   var chatStates = {};
 
+  // Pretty labels for sandbox types (the picker values are terse ids —
+  // the UI should speak human).
+  var SANDBOX_LABELS = { quick: 'Quick Chat', hf: 'Hugging Face', device: 'Another Device', terminal: 'Termux' };
+
+  // Provider display labels ("openrouter" → "OpenRouter"), fetched once
+  // from the engine catalog and cached for every chat panel.
+  var providerLabels = {};
+  var catalogPromise = null;
+  function ensureCatalog() {
+    if (catalogPromise) return catalogPromise;
+    catalogPromise = fetch('/api/models').then(function (r) { return r.json(); }).then(function (d) {
+      var provs = (d && d.providers) || {};
+      for (var name in provs) providerLabels[name] = provs[name].label || name;
+      return provs;
+    }).catch(function () { return {}; });
+    return catalogPromise;
+  }
+
+  function providerLabel(name) {
+    if (!name) return '';
+    if (providerLabels[name]) return providerLabels[name];
+    // Fallback: prettify the id ("privatemodeai" → "Privatemodeai").
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  function modelDetail(modelId) {
+    // Strip the provider prefix from "provider/model-id" for display.
+    var id = String(modelId || '');
+    var slash = id.indexOf('/');
+    return slash >= 0 ? id.slice(slash + 1) : id;
+  }
+
   function getOrCreateState(chatId, sessionData) {
     if (!chatStates[chatId]) {
       chatStates[chatId] = {
@@ -46,20 +78,54 @@
 
   // ── Empty state: 2 boxes ──────────────────────────────────────
   function renderEmptyState(bodyEl, icon, state, panel) {
+    // Kick off (or reuse) the catalog fetch — when labels arrive we
+    // re-render once so the model box shows the proper provider label.
+    ensureCatalog().then(function () {
+      if (state.provider && !providerLabels[state.provider] && bodyEl.isConnected) {
+        render(bodyEl, icon, panel);
+      }
+    });
+
+    // v0.12 title/subtitle FLIP: once a sandbox or provider is selected, the
+    // selected item becomes the MAIN title and the "+ Sandbox" / "+ Model"
+    // selector label becomes the SUBTITLE — e.g. "Quick Chat" over
+    // "+ Sandbox", "OpenRouter" over "+ Model".
+    var sandboxSelected = !!state.sandbox;
+    var modelSelected = !!state.model;
+
+    var sandboxTitle = sandboxSelected ? (SANDBOX_LABELS[state.sandbox] || state.sandbox) : '+ Sandbox';
+    var sandboxSub = sandboxSelected ? '+ Sandbox' : 'Tap to connect';
+
+    var modelTitle = modelSelected ? providerLabel(state.provider) : '+ Model';
+    var modelSub = modelSelected ? '+ Model' : 'Tap to connect';
+    var modelExtra = modelSelected ? '<span style="font-size:10px;color:#4a4a5e;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + modelDetail(state.model) + '</span>' : '';
+
+    var heading = !sandboxSelected && !modelSelected
+      ? 'Choose a model and sandbox and go!'
+      : (sandboxSelected && !modelSelected ? 'One more thing — pick a model' : 'One more thing — pick a sandbox');
+    var intro = !sandboxSelected && !modelSelected
+      ? 'Pick a sandbox and a model to start chatting with ' + icon.name + '.'
+      : 'Finish connecting to start chatting with ' + icon.name + '.';
+
+    var boxStyle = function (selected) {
+      return 'flex:1;background:' + (selected ? '#181820' : '#14141a') + ';border:2px ' + (selected ? 'solid #34344a' : 'dashed #2a2a35') + ';border-radius:16px;padding:24px 16px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px';
+    };
+
     bodyEl.innerHTML =
       '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:24px">' +
-      '<h3 style="font-size:16px;font-weight:600;color:#e0e0e8;margin:0 0 24px">Choose a model and sandbox and go!</h3>' +
-      '<p style="font-size:13px;color:#71717a;margin:0 0 24px;text-align:center">Pick a sandbox and a model to start chatting with ' + icon.name + '.</p>' +
+      '<h3 style="font-size:16px;font-weight:600;color:#e0e0e8;margin:0 0 12px">' + heading + '</h3>' +
+      '<p style="font-size:13px;color:#71717a;margin:0 0 24px;text-align:center">' + intro + '</p>' +
       '<div style="display:flex;gap:16px;width:100%;max-width:400px">' +
-        '<div id="box-sandbox" style="flex:1;background:#14141a;border:2px dashed #2a2a35;border-radius:16px;padding:32px 16px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">' +
-          '<span style="font-size:32px">🔌</span>' +
-          '<span style="font-size:14px;font-weight:600;color:#e0e0e8">+ Sandbox</span>' +
-          '<span style="font-size:11px;color:#71717a">' + (state.sandbox ? '✓ ' + state.sandbox : 'Tap to connect') + '</span>' +
+        '<div id="box-sandbox" style="' + boxStyle(sandboxSelected) + '">' +
+          '<span style="font-size:28px">' + (sandboxSelected ? '⚡' : '🔌') + '</span>' +
+          '<span style="font-size:14px;font-weight:600;color:#e0e0e8">' + sandboxTitle + '</span>' +
+          '<span style="font-size:11px;color:' + (sandboxSelected ? '#34d399' : '#71717a') + '">' + sandboxSub + '</span>' +
         '</div>' +
-        '<div id="box-model" style="flex:1;background:#14141a;border:2px dashed #2a2a35;border-radius:16px;padding:32px 16px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">' +
-          '<span style="font-size:32px">🤖</span>' +
-          '<span style="font-size:14px;font-weight:600;color:#e0e0e8">+ Model</span>' +
-          '<span style="font-size:11px;color:#71717a">' + (state.model ? '✓ ' + state.model : 'Tap to connect') + '</span>' +
+        '<div id="box-model" style="' + boxStyle(modelSelected) + '">' +
+          '<span style="font-size:28px">🤖</span>' +
+          '<span style="font-size:14px;font-weight:600;color:#e0e0e8">' + modelTitle + '</span>' +
+          '<span style="font-size:11px;color:' + (modelSelected ? '#34d399' : '#71717a') + '">' + modelSub + '</span>' +
+          modelExtra +
         '</div>' +
       '</div>' +
       '</div>';
@@ -69,9 +135,9 @@
     var boxModel = bodyEl.querySelector('#box-model');
 
     boxSandbox.addEventListener('mouseover', function () { this.style.borderColor = '#4a4a5e'; });
-    boxSandbox.addEventListener('mouseout', function () { this.style.borderColor = '#2a2a35'; });
+    boxSandbox.addEventListener('mouseout', function () { this.style.borderColor = sandboxSelected ? '#34344a' : '#2a2a35'; });
     boxModel.addEventListener('mouseover', function () { this.style.borderColor = '#4a4a5e'; });
-    boxModel.addEventListener('mouseout', function () { this.style.borderColor = '#2a2a35'; });
+    boxModel.addEventListener('mouseout', function () { this.style.borderColor = modelSelected ? '#34344a' : '#2a2a35'; });
 
     boxSandbox.addEventListener('click', function () {
       window.SandboxPicker.open(function (sandboxType) {
@@ -103,10 +169,10 @@
   function renderChatUI(bodyEl, icon, state, panel) {
     bodyEl.innerHTML =
       '<div style="display:flex;flex-direction:column;height:100%">' +
-        // Header: model badge + sandbox badge
-        '<div style="flex-shrink:0;padding:8px 16px;border-bottom:1px solid #1a1a22;display:flex;align-items:center;gap:8px">' +
-          '<span style="font-size:11px;color:#71717a;background:#1a1a22;padding:3px 8px;border-radius:6px">' + state.sandbox + '</span>' +
-          '<span style="font-size:11px;color:#4a4a5e;background:#1a1a22;padding:3px 8px;border-radius:6px">' + state.model + '</span>' +
+        // Header: sandbox badge + model badge (pretty labels, not raw ids)
+        '<div style="flex-shrink:0;padding:8px 16px;border-bottom:1px solid #1a1a22;display:flex;align-items:center;gap:8px;overflow:hidden">' +
+          '<span style="font-size:11px;color:#71717a;background:#1a1a22;padding:3px 8px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%">' + (SANDBOX_LABELS[state.sandbox] || state.sandbox) + '</span>' +
+          '<span style="font-size:11px;color:#4a4a5e;background:#1a1a22;padding:3px 8px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%">' + (state.provider ? providerLabel(state.provider) + ' · ' + modelDetail(state.model) : state.model) + '</span>' +
         '</div>' +
         // Messages
         '<div id="chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;-webkit-overflow-scrolling:touch">' +
@@ -154,13 +220,32 @@
     function send() {
       var text = input.value.trim();
       if (!text || state.isStreaming) return;
-      if (!state.client || !state.client.connected) {
-        connectWS(bodyEl, icon, state, msgContainer, function () {
-          doSend(text);
-        });
-      } else {
+      if (!state.client) connectWS(bodyEl, icon, state, msgContainer);
+      if (state.client && state.client.connected) {
         doSend(text);
+        return;
       }
+      // Engine still handshaking — wait for the EXISTING client (never spawn
+      // a second one), up to 15s, then send. v0.12 fix: the old code created
+      // a duplicate WS client here and silently dropped the message when its
+      // 5s poll timed out — typing fast right after opening the chat ate the
+      // first message.
+      sendBtn.textContent = '…';
+      var tries = 0;
+      var check = setInterval(function () {
+        tries++;
+        if (state.client && state.client.connected) {
+          clearInterval(check);
+          if (!state.isStreaming) sendBtn.textContent = 'Send';
+          doSend(text);
+        } else if (tries > 150) {
+          clearInterval(check);
+          sendBtn.textContent = 'Send';
+          var err = 'Still connecting to the engine — tap Send again in a moment.';
+          state.messages.push({ role: 'error', text: err });
+          appendMessage(msgContainer, { role: 'error', text: err });
+        }
+      }, 100);
     }
 
     function doSend(text) {

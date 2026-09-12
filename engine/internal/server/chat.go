@@ -228,7 +228,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                 return
         }
 
-        llmModel, baseURL, _, apiKey, err := llm.ResolveModel(model, provider, keys)
+        llmModel, baseURL, _, apiKey, authStyle, err := llm.ResolveModel(model, provider, keys)
         if err != nil {
                 s.emit(conn, sessionID, "error", `{"error":"model_resolve","message":"`+err.Error()+`"}`, "")
                 s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
@@ -236,11 +236,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
         }
 
         req := llm.ChatRequest{
-                Model:    llmModel,
-                Messages: []llm.Message{{Role: "user", Content: userText}},
-                Effort:   sess.Effort,
-                APIKey:   apiKey,
-                BaseURL:  baseURL,
+                Model:     llmModel,
+                Messages:  []llm.Message{{Role: "user", Content: userText}},
+                Effort:    sess.Effort,
+                APIKey:    apiKey,
+                BaseURL:   baseURL,
+                AuthStyle: authStyle,
         }
         chunks, errs := llm.Chat(ctx, req)
 

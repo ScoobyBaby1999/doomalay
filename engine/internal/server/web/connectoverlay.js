@@ -70,6 +70,11 @@
   function close() {
     if (!overlayEl || overlayEl.style.visibility === 'hidden' || closing) return;
     closing = true;
+    // Stop the overlay from eating taps WHILE it fades out (v0.12 fix):
+    // for the 250ms close animation the overlay still sat at z-index 3000
+    // intercepting touches — a fast tap right after picking a model landed
+    // on the invisible scrim instead of the chat UI underneath.
+    overlayEl.style.pointerEvents = 'none';
     // Animate out
     scrimEl.style.opacity = '0';
     contentEl.style.opacity = '0';
@@ -77,6 +82,7 @@
     setTimeout(function () {
       overlayEl.style.visibility = 'hidden';
       overlayEl.style.display = 'none';
+      overlayEl.style.pointerEvents = '';
       document.body.style.overflow = '';
       closing = false;
       var cb = onCloseCb;

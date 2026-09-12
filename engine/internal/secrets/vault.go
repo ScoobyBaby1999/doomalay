@@ -37,13 +37,14 @@ type Vault struct {
         path     string // path to the JSON keystore file
 }
 
-// Entry is one stored secret.
+// Entry is one stored secret. All secret material (key + extra) is stored
+// ONLY as AES-256-GCM ciphertext — nothing sensitive lands on disk in the
+// clear (v0.12 fix: the Extra field used to duplicate the plaintext value).
 type Entry struct {
         Provider    string `json:"provider"`
         EnvVar      string `json:"env_var"`
         KeyCipher   string `json:"key_cipher"`   // base64
         KeyNonce    string `json:"key_nonce"`     // base64
-        Extra       string `json:"extra,omitempty"`
         ExtraCipher string `json:"extra_cipher,omitempty"` // base64
         ExtraNonce  string `json:"extra_nonce,omitempty"`  // base64
         CreatedAt   float64 `json:"created_at"`
@@ -61,6 +62,10 @@ type HasKey struct {
 
 // PROVIDER_KEY_ALLOWLIST is the security allowlist: users can only set
 // these env vars, not arbitrary ones. Ported from the old db.PROVIDER_KEY_ALLOWLIST.
+// v0.12: added OPENCODE_ZEN_API_KEY + PRIVATEMODEAI_API_KEY — they were
+// missing, so saving keys for those providers 400'd and the UI showed
+// every valid key as "invalid". GITHUB_MODELS_TOKEN removed (GitHub
+// Models retired — endpoints return 410).
 var PROVIDER_KEY_ALLOWLIST = map[string]string{
         "OPENROUTER_API_KEY":    "openrouter",
         "NVIDIA_API_KEY":        "nvidia",
@@ -69,7 +74,8 @@ var PROVIDER_KEY_ALLOWLIST = map[string]string{
         "GROQ_API_KEY":          "groq",
         "CLOUDFLARE_API_KEY":    "cloudflare",
         "CLOUDFLARE_ACCOUNT_ID": "cloudflare", // extra field
-        "GITHUB_MODELS_TOKEN":   "github-models",
+        "OPENCODE_ZEN_API_KEY":  "opencode",
+        "PRIVATEMODEAI_API_KEY": "privatemodeai",
         "TAVILY_API_KEY":        "tavily",
         "BRAVE_API_KEY":         "brave",
         "DEEPSEEK_API_KEY":      "deepseek",
@@ -209,7 +215,6 @@ func (v *Vault) Set(envVar, provider, key, extra string) error {
                 EnvVar:    envVar,
                 KeyCipher: keyC,
                 KeyNonce:  keyN,
-                Extra:     extra,
         }
         if extra != "" {
                 ec, en, err := v.encrypt(extra)

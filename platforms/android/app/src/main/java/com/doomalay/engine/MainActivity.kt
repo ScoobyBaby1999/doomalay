@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
@@ -61,6 +62,31 @@ class MainActivity : Activity() {
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
             webView.webViewClient = object : WebViewClient() {
+                // Keep the app self-contained: engine URLs (127.0.0.1) load
+                // inside the WebView; ANY external URL (the ↗ "open in browser"
+                // button, an API-key page, a stray link) is handed to the
+                // real browser — the user leaves the app completely.
+                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                    return handleUrl(url)
+                }
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    // Sub-frame (iframe) navigations — e.g. the in-app redirect
+                    // browser embedding a provider's key page — must load in
+                    // place, NOT pop open Chrome. Only main-frame navigations
+                    // that leave the engine get handed to the browser.
+                    if (request?.isForMainFrame == false) return false
+                    return handleUrl(request?.url?.toString())
+                }
+                private fun handleUrl(url: String?): Boolean {
+                    if (url == null) return false
+                    if (url.startsWith("http://127.0.0.1:8080") || url.startsWith("about:")) return false
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                    } catch (e: Exception) {
+                        AppLog.error("external open failed: $url", e)
+                    }
+                    return true
+                }
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                     AppLog.error("WebView error: $errorCode $description ($failingUrl)")
                 }
