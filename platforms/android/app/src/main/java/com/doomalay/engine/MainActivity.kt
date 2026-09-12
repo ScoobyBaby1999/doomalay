@@ -5,144 +5,111 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.View
-import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private val handler = Handler(Looper.getMainLooper())
-    private val REQUEST_NOTIFICATION = 1001
+    private val REQUEST_NOTIF = 1001
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLog.init(this)
         AppLog.log("=== Doomalay starting ===")
-        AppLog.log("SDK: ${Build.VERSION.SDK_INT}, ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
+        AppLog.log("SDK: ${Build.VERSION.SDK_INT}")
 
-        // Edge-to-edge: let the WebView content draw under the status bar
-        // and navigation bar. The grid takes up the full phone screen.
-        // The PWA handles safe areas via env(safe-area-inset-*) in CSS.
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
-        // Make status-bar icons light (white) so they're visible on the dark grid.
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = false
-
-        // Global crash handler
+        // Crash handler
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             AppLog.error("CRASH on ${thread.name}", throwable)
             prev?.uncaughtException(thread, throwable)
         }
 
-        // Step 1: Request POST_NOTIFICATIONS permission (Android 13+)
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-                AppLog.log("Requesting POST_NOTIFICATIONS permission...")
-                ActivityCompat.requestPermissions(this,
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION)
-                // The service starts AFTER the user responds (onRequestPermissionsResult)
-                showWaitingScreen("Requesting notification permission...\nPlease allow it.")
-                return
-            }
+        // Request POST_NOTIFICATIONS on Android 13+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            AppLog.log("Requesting notification permission...")
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIF)
+            showScreen("Requesting notification permission...\nPlease allow it.")
+            return
         }
-        // Permission already granted (or Android < 13) — proceed
-        startEngineAndLoadUI()
+        proceed()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_NOTIFICATION) {
-            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            AppLog.log("POST_NOTIFICATIONS: ${if (granted) "granted" else "denied"}")
-            // Start service regardless — even if denied, we try (the notification just won't show)
-            startEngineAndLoadUI()
-        }
+        AppLog.log("Notification permission: ${if (grantResults.isNotEmpty() && grantResults[0] == 0) "granted" else "denied"}")
+        proceed()
     }
 
-    private fun startEngineAndLoadUI() {
+    private fun proceed() {
         try {
-            AppLog.log("Step 1: Starting EngineService...")
+            AppLog.log("Starting EngineService...")
             startForegroundService(Intent(this, EngineService::class.java))
-            AppLog.log("Step 1: OK")
 
-            AppLog.log("Step 2: Setting up WebView...")
+            // Set up WebView immediately — show a loading page
             webView = WebView(this)
-            webView.settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-            }
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
             webView.webViewClient = object : WebViewClient() {
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                     AppLog.error("WebView error: $errorCode $description ($failingUrl)")
                 }
             }
             setContentView(webView)
-
-            // Loading page — matches the dark grid background (#0a0a0b), no header.
-            // Full-screen, centered text. Grid takes up the entire phone screen.
             webView.loadData(
-                "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover\"></head>" +
-                "<body style='background:#0a0a0b;color:#71717a;font-family:-apple-system,BlinkMacSystemFont,sans-serif;" +
-                "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;overflow:hidden'>" +
-                "<div style='text-align:center'><div style='width:32px;height:32px;border:2px solid #2a2a32;border-top-color:#4a4a5e;border-radius:50%;margin:0 auto 16px;animation:spin 1s linear infinite'></div>" +
-                "<style>@keyframes spin{to{transform:rotate(360deg)}}</style>" +
-                "<p style='font-size:14px'>Starting engine…</p></div></body></html>",
+                "<html><body style='background:#0a0a0b;color:#a78bfa;font-family:sans-serif;" +
+                "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>" +
+                "<div style='text-align:center'><h2>Starting engine...</h2></div></body></html>",
                 "text/html", "utf-8"
             )
-            AppLog.log("Step 2: OK")
 
-            AppLog.log("Step 3: Polling engine health...")
-            pollEngineHealth()
+            // Poll engine health
+            Thread {
+                for (i in 1..60) {
+                    try {
+                        val conn = java.net.URL("http://127.0.0.1:8080/api/health")
+                            .openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 1000
+                        conn.readTimeout = 1000
+                        if (conn.responseCode == 200) {
+                            val body = conn.inputStream.bufferedReader().readText()
+                            AppLog.log("Engine ready: $body")
+                            handler.post { webView.loadUrl("http://127.0.0.1:8080") }
+                            return@Thread
+                        }
+                    } catch (e: Exception) {
+                        if (i % 5 == 0) AppLog.log("Health $i: ${e.message}")
+                    }
+                    Thread.sleep(500)
+                }
+                AppLog.error("Engine didn't start in 30s")
+                handler.post {
+                    webView.loadData(
+                        "<html><body style='background:#0a0a0b;color:#f87171;font-family:sans-serif;padding:24px'>" +
+                        "<h2>Engine failed to start</h2><pre style='font-size:11px;color:#71717a;white-space:pre-wrap'>" +
+                        AppLog.tail(40).replace("<", "&lt;").replace(">", "&gt;") +
+                        "</pre></body></html>",
+                        "text/html", "utf-8"
+                    )
+                }
+            }.start()
         } catch (e: Exception) {
-            AppLog.error("startEngineAndLoadUI failed", e)
-            showError("Startup failed: ${e.message}\n\nLog:\n${AppLog.tail(30)}")
+            AppLog.error("proceed() failed", e)
+            showError("Failed: ${e.message}\n\n${AppLog.tail(30)}")
         }
     }
 
-    private fun pollEngineHealth() {
-        Thread {
-            for (i in 1..60) {
-                try {
-                    val conn = java.net.URL("http://127.0.0.1:8080/api/health")
-                        .openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 1000
-                    conn.readTimeout = 1000
-                    if (conn.responseCode == 200) {
-                        val body = conn.inputStream.bufferedReader().readText()
-                        AppLog.log("Engine ready! Health: $body")
-                        handler.post { webView.loadUrl("http://127.0.0.1:8080") }
-                        return@Thread
-                    }
-                } catch (e: Exception) {
-                    if (i % 5 == 0) AppLog.log("Health $i: ${e.message}")
-                }
-                Thread.sleep(500)
-            }
-            AppLog.error("Engine didn't start in 30s")
-            handler.post {
-                showError("Engine didn't start in 30s.\n\nLog:\n${AppLog.tail(40)}")
-            }
-        }.start()
-    }
-
-    private fun showWaitingScreen(msg: String) {
+    private fun showScreen(msg: String) {
         val tv = TextView(this).apply {
             text = msg
             textSize = 16f
@@ -167,31 +134,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // First, let the PWA handle the back press (close overlays, panels, etc.)
-        // by calling a JS function. If the PWA says it handled it, don't exit.
-        if (this::webView.isInitialized) {
-            // Check if the PWA has an overlay or panel open that it can close.
-            // The PWA exposes window.doomalay.handleBack() which returns true
-            // if it handled the back press (closed something), false otherwise.
-            try {
-                val handled = webView.evaluateJavascript(
-                    "(window.doomalay && typeof window.doomalay.handleBack === 'function') ? window.doomalay.handleBack() : false",
-                    null
-                )
-                // evaluateJavascript is async, but we can't wait for it here.
-                // Instead, always consume the back press — the PWA will close
-                // its overlays/panels. If nothing is open, do nothing (don't exit).
-                // This prevents the "white screen stuck" bug where super.onBackPressed()
-                // finishes the activity and the WebView loses its state.
-                return
-            } catch (e: Exception) {
-                AppLog.error("back press JS eval failed", e)
-            }
-        }
-        // If WebView isn't initialized, fall through to default (shouldn't happen
-        // in normal operation — the WebView is set up in startEngineAndLoadUI).
-        // Don't call super.onBackPressed() — that exits the app, which causes
-        // the white-screen-stuck bug on relaunch. Instead, move to background.
-        moveTaskToBack(true)
+        if (this::webView.isInitialized && webView.canGoBack()) webView.goBack()
+        else super.onBackPressed()
     }
 }

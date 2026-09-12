@@ -1,425 +1,330 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0b">
-<title>Doomalay</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  html, body {
-    width: 100%; height: 100%;
-    overflow: hidden;
-    background: #0a0a0b;
-    color: #e0e0e8;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-user-select: none; user-select: none;
-    -webkit-touch-callout: none;
-    touch-action: none;
-    overscroll-behavior: none;
-  }
-
-  canvas {
-    display: block;
-    position: fixed;
-    top: 0; left: 0;
-  }
-
-  /* ── Chatbot icons layer ───────────────────────────────────────
-     The layer itself has pointer-events:none so events fall through
-     to the canvas (for panning) — but each .chatbot child opts back
-     into pointer events so it's draggable. */
-  #chatbots {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    pointer-events: none;
-    z-index: 100;
-  }
-  .chatbot {
-    position: absolute;
-    pointer-events: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    cursor: grab;
-    will-change: transform;  /* hint to browser for GPU compositing */
-  }
-  .chatbot.dragging {
-    cursor: grabbing;
-    z-index: 200;  /* dragged bot always on top */
-  }
-  .chatbot .icon {
-    width: 56px; height: 56px;
-    border-radius: 50%;
-    background: #2a2a35;
-    border: 2px solid #3a3a45;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 22px;
-    font-weight: 700;
-    color: #e0e0e8;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    overflow: hidden;  /* clip img to circle */
-  }
-  .chatbot .icon img {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    border-radius: 50%;
-    -webkit-user-drag: none;  /* disable browser's image drag */
-  }
-  .chatbot .name {
-    font-size: 12px;
-    font-weight: 600;
-    color: #a0a0b0;
-    background: rgba(20,20,28,0.85);
-    padding: 2px 8px;
-    border-radius: 6px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    white-space: nowrap;
-    max-width: 80px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ── Long-press dropdown menu ──────────────────────────────── */
-  #menu {
-    position: fixed;
-    background: #1a1a20;
-    border: 1px solid #2a2a35;
-    border-radius: 12px;
-    padding: 6px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-    min-width: 160px;
-    z-index: 1000;
-    transform: translate(-50%, -50%);  /* center on the press point */
-    animation: menu-pop 0.15s ease-out;
-  }
-  @keyframes menu-pop {
-    from { transform: translate(-50%, -50%) scale(0.85); opacity: 0; }
-    to   { transform: translate(-50%, -50%) scale(1);    opacity: 1; }
-  }
-  #menu.hidden { display: none; }
-  #menu button {
-    display: block;
-    width: 100%;
-    background: transparent;
-    border: none;
-    color: #e0e0e8;
-    padding: 10px 14px;
-    text-align: left;
-    font-size: 14px;
-    font-weight: 500;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.15s;
-    font-family: inherit;
-  }
-  #menu button:hover, #menu button:active {
-    background: #2a2a35;
-  }
-
-  /* ── Settings icon (the only persistent UI element) ───────────
-     A gear button in the top-right corner. Tapping it resets the
-     view (zoom 1x, pan to origin). Will open a real settings panel
-     once there are settings to configure. */
-  #settings-btn {
-    position: fixed;
-    top: max(16px, env(safe-area-inset-top));
-    right: max(16px, env(safe-area-inset-right));
-    width: 44px;
-    height: 44px;
-    background: rgba(20, 20, 24, 0.8);
-    border: 1px solid #2a2a32;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 500;
-    -webkit-tap-highlight-color: transparent;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    transition: background 0.15s, transform 0.1s;
-  }
-  #settings-btn:active {
-    background: rgba(40, 40, 48, 0.9);
-    transform: scale(0.92);
-  }
-  #settings-btn svg {
-    width: 22px;
-    height: 22px;
-    fill: #71717a;
-    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  #settings-btn:active svg,
-  #settings-btn.spinning svg {
-    transform: rotate(180deg);
-  }
-
-  /* ── Slide-up chat panel ───────────────────────────────────────
-     Slides from the bottom of the screen to near the top when a chatbot
-     icon is tapped. Has a drag handle bar at the top — drag it down
-     (or tap the scrim) to close. Each panel is associated with the
-     specific chatbot that was tapped (its own convo + settings + storage).
-     For now the panel shows the chatbot's metadata; it'll become the
-     chat interface in a future commit. */
-  #chat-panel {
-    position: fixed;
-    left: 0; right: 0;
-    bottom: 0;
-    height: 85vh;          /* slides up to 85% of screen height */
-    background: #0e0e12;
-    border-top: 1px solid #1a1a22;
-    border-radius: 16px 16px 0 0;
-    box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
-    z-index: 2000;
-    display: flex;
-    flex-direction: column;
-    transform: translateY(100%);   /* hidden below screen by default */
-    transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
-    will-change: transform;
-    /* Pad for the rounded top + safe area */
-    padding-top: 8px;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  #chat-panel.open {
-    transform: translateY(0);
-  }
-  #chat-panel .handle {
-    flex-shrink: 0;
-    padding: 8px 0;
-    display: flex;
-    justify-content: center;
-    cursor: grab;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #chat-panel .handle:active { cursor: grabbing; }
-  #chat-panel .handle-bar {
-    width: 36px;
-    height: 4px;
-    background: #2a2a35;
-    border-radius: 2px;
-  }
-  #chat-panel .panel-header {
-    flex-shrink: 0;
-    padding: 4px 20px 12px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-bottom: 1px solid #1a1a22;
-    cursor: grab;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #chat-panel .panel-header:active { cursor: grabbing; }
-  #chat-panel .panel-header .avatar {
-    width: 40px; height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    color: #fff;
-    overflow: hidden;
-  }
-  #chat-panel .panel-header .avatar img {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    border-radius: 50%;
-  }
-  #chat-panel .panel-header .meta {
-    flex: 1;
-    min-width: 0;
-  }
-  #chat-panel .panel-header .meta .name {
-    font-size: 16px;
-    font-weight: 600;
-    color: #e0e0e8;
-  }
-  #chat-panel .panel-header .meta .sub {
-    font-size: 12px;
-    color: #71717a;
-    margin-top: 2px;
-  }
-  #chat-panel .panel-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-    -webkit-overflow-scrolling: touch;
-  }
-  #chat-panel .panel-body .placeholder {
-    text-align: center;
-    color: #71717a;
-    font-size: 14px;
-    padding: 40px 20px;
-    line-height: 1.6;
-  }
-
-  /* Scrim — dims the grid behind the panel. Tap to close. */
-  #chat-scrim {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    z-index: 1900;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.25s;
-  }
-  #chat-scrim.open {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* Chatbot tap-flash animation — quick scale pulse when tapped. */
-  .chatbot.tapped .icon {
-    animation: tap-pulse 0.2s ease-out;
-  }
-  @keyframes tap-pulse {
-    0%   { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-    40%  { transform: scale(0.82); box-shadow: 0 8px 24px rgba(74,74,94,0.6); }
-    100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-  }
-
-  /* ── Settings UI (inside the panel body) ──────────────────────
-     Modular settings: a nav (horizontal tabs) + the active page's
-     content. Each page has sections with headings and setting rows
-     (label + control). */
-  .settings-nav {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-    padding: 0 0 12px;
-    border-bottom: 1px solid #1a1a22;
-    margin-bottom: 16px;
-    -webkit-overflow-scrolling: touch;
-  }
-  .settings-nav .tab {
-    background: transparent;
-    border: none;
-    color: #71717a;
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 500;
-    border-radius: 8px;
-    cursor: pointer;
-    white-space: nowrap;
-    font-family: inherit;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .settings-nav .tab.active {
-    background: #1a1a22;
-    color: #e0e0e8;
-  }
-  .settings-section {
-    margin-bottom: 16px;
-    border: 1px solid #1a1a22;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .settings-section h3 {
-    font-size: 13px;
-    font-weight: 600;
-    color: #e0e0e8;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 12px 14px;
-    margin: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    -webkit-tap-highlight-color: transparent;
-    background: #14141a;
-    transition: background 0.15s;
-  }
-  .settings-section h3:active { background: #1a1a22; }
-  .settings-section h3 .chevron {
-    font-size: 10px;
-    color: #71717a;
-    transition: transform 0.2s;
-  }
-  .settings-section.expanded h3 .chevron { transform: rotate(90deg); }
-  .settings-section .section-body {
-    display: none;
-    padding: 4px 14px 12px;
-  }
-  .settings-section.expanded .section-body { display: block; }
-  .setting-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 0;
-    gap: 12px;
-  }
-  .setting-row label {
-    font-size: 14px;
-    color: #e0e0e8;
-    flex-shrink: 0;
-  }
-  .setting-row .control {
-    flex: 1;
-    display: flex;
-    justify-content: flex-end;
-  }
-  .hint {
-    font-size: 12px;
-    color: #71717a;
-    margin-bottom: 8px;
-  }
-
-  /* Streaming cursor blink animation */
-  @keyframes blink {
-    0%, 50% { opacity: 1; }
-    51%, 100% { opacity: 0; }
-  }
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
+body { background: #0a0a0b; color: #e4e4e7; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+#header { padding: 12px 16px; background: #131316; border-bottom: 1px solid #2a2a32; display: flex; gap: 8px; align-items: center; padding-top: env(safe-area-inset-top); }
+#header h1 { font-size: 16px; font-weight: 600; color: #a78bfa; }
+#status { font-size: 11px; color: #71717a; margin-left: auto; }
+#setup { padding: 24px 16px; overflow-y: auto; flex: 1; }
+#setup h2 { font-size: 18px; margin-bottom: 12px; color: #a78bfa; }
+#setup label { display: block; font-size: 13px; color: #71717a; margin: 12px 0 4px; }
+#setup input, #setup select { width: 100%; padding: 10px 12px; background: #1c1c21; border: 1px solid #2a2a32; border-radius: 8px; color: #e4e4e7; font-size: 14px; outline: none; }
+#setup input:focus, #setup select:focus { border-color: #a78bfa; }
+#setup button { width: 100%; padding: 12px; background: #a78bfa; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; margin-top: 16px; cursor: pointer; }
+#setup button:hover { background: #c4b5fd; }
+#chat { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+#messages { flex: 1; overflow-y: auto; padding: 16px; }
+#messages .msg { margin-bottom: 12px; max-width: 85%; }
+#messages .user { margin-left: auto; background: #a78bfa; color: #fff; padding: 8px 14px; border-radius: 14px 14px 4px 14px; }
+#messages .assistant { background: #1c1c21; padding: 8px 14px; border-radius: 14px 14px 14px 4px; white-space: pre-wrap; word-break: break-word; }
+#messages .assistant.streaming { border-left: 2px solid #a78bfa; }
+#messages .error { background: #7f1d1d; padding: 8px 14px; border-radius: 8px; }
+#messages .system { color: #71717a; font-size: 12px; text-align: center; }
+#input-bar { padding: 12px 16px; background: #131316; border-top: 1px solid #2a2a32; display: flex; gap: 8px; padding-bottom: env(safe-area-inset-bottom); }
+#msg-input { flex: 1; padding: 10px 14px; background: #1c1c21; border: 1px solid #2a2a32; border-radius: 8px; color: #e4e4e7; font-size: 14px; outline: none; }
+#msg-input:focus { border-color: #a78bfa; }
+#send-btn { padding: 10px 16px; background: #a78bfa; color: #fff; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+#send-btn:disabled { opacity: 0.4; }
+#model-bar { padding: 8px 16px; background: #131316; border-bottom: 1px solid #2a2a32; display: flex; gap: 8px; align-items: center; font-size: 12px; }
+#model-bar select { background: #1c1c21; border: 1px solid #2a2a32; color: #e4e4e7; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+#model-bar button { background: none; border: none; color: #71717a; font-size: 12px; cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="chatbots"></div>
-<div id="menu" class="hidden">
-  <button data-action="new-chat">＋ New Chat</button>
-</div>
-<button id="settings-btn" aria-label="Reset view">
-  <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-</button>
 
-<!-- Slide-up chat panel (hidden by default, opened by tapping a chatbot) -->
-<div id="chat-scrim"></div>
-<div id="chat-panel">
-  <div class="handle" id="panel-handle">
-    <div class="handle-bar"></div>
-  </div>
-  <div class="panel-header">
-    <div class="avatar" id="panel-avatar"></div>
-    <div class="meta">
-      <div class="name" id="panel-name">Chat</div>
-      <div class="sub" id="panel-sub">Family · ID</div>
-    </div>
-  </div>
-  <div class="panel-body" id="panel-body">
-    <div class="placeholder">Chat interface goes here.<br>Each chat has its own conversation, settings, and storage.</div>
-  </div>
+<div id="header">
+  <h1>Doomalay</h1>
+  <span id="status">connecting...</span>
 </div>
 
-<script src="physics.js"></script>
-<script src="gridicon.js"></script>
-<script src="chatbot.js"></script>
-<script src="panel.js"></script>
-<script src="settings.js"></script>
-<script src="appearance.js"></script>
-<script src="connectoverlay.js"></script>
-<script src="sandboxpicker.js"></script>
-<script src="modelpicker.js"></script>
-<script src="providers.js"></script>
-<script src="localmodels.js"></script>
-<script src="chatclient.js"></script>
-<script src="chatpanel.js"></script>
-<script src="app.js"></script>
+<!-- Setup screen: API key + model selection -->
+<div id="setup">
+  <h2>Quick Chat Setup</h2>
+  <p style="color:#71717a;font-size:13px;margin-bottom:16px">Add a cloud API key to start chatting.</p>
+  
+  <label>Provider</label>
+  <select id="provider-select" onchange="updateProviderInfo()">
+    <option value="">Loading providers...</option>
+  </select>
+  
+  <label>API Key</label>
+  <input id="api-key-input" type="password" placeholder="sk-...">
+  
+  <label>Model</label>
+  <select id="model-select">
+    <option value="">Select provider first</option>
+  </select>
+  
+  <button onclick="saveKeyAndStart()">Start Chatting</button>
+</div>
+
+<!-- Chat screen -->
+<div id="chat">
+  <div id="model-bar">
+    <span>Model:</span>
+    <select id="chat-model-select" onchange="changeModel()"></select>
+    <button onclick="logout()">Change Key</button>
+  </div>
+  <div id="messages"></div>
+  <div id="input-bar">
+    <input id="msg-input" type="text" placeholder="Send a message..." onkeydown="if(event.key==='Enter')sendMsg()">
+    <button id="send-btn" onclick="sendMsg()">Send</button>
+  </div>
+</div>
+
+<script>
+let ws = null;
+let isStreaming = false;
+let providers = {};
+let models = [];
+let currentSession = null;
+
+// ── Init: check engine health ──
+async function init() {
+  try {
+    const r = await fetch('/api/health');
+    const h = await r.json();
+    document.getElementById('status').textContent = h.brain ? 'engine+brain' : 'engine';
+    
+    // Load providers + models
+    const mr = await fetch('/api/models');
+    const m = await mr.json();
+    providers = m.providers || {};
+    models = m.models || [];
+    
+    const sel = document.getElementById('provider-select');
+    sel.innerHTML = '<option value="">Choose...</option>';
+    for (const [name, cfg] of Object.entries(providers)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = cfg.label || name;
+      sel.appendChild(opt);
+    }
+    
+    // Check if user already has a key
+    const kr = await fetch('/api/keys');
+    const keys = await kr.json();
+    const hasKey = Object.values(keys).some(k => k.has_key);
+    if (hasKey) {
+      // Skip to chat
+      startChat();
+    }
+  } catch (e) {
+    document.getElementById('status').textContent = 'engine offline';
+    document.getElementById('setup').innerHTML = '<h2>Engine not running</h2><p>Cannot connect to the engine. Please restart the app.</p>';
+  }
+}
+
+function updateProviderInfo() {
+  const prov = document.getElementById('provider-select').value;
+  if (!prov) return;
+  const cfg = providers[prov];
+  if (!cfg) return;
+  document.getElementById('api-key-input').placeholder = cfg.env_var || 'API key';
+  
+  // Update model dropdown
+  const ms = document.getElementById('model-select');
+  const providerModels = models.filter(m => m.provider === prov);
+  if (providerModels.length > 0) {
+    ms.innerHTML = providerModels.map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+  } else {
+    ms.innerHTML = `<option value="${prov}/auto">auto</option>`;
+  }
+}
+
+async function saveKeyAndStart() {
+  const prov = document.getElementById('provider-select').value;
+  const key = document.getElementById('api-key-input').value;
+  const model = document.getElementById('model-select').value;
+  
+  if (!prov || !key) { alert('Select a provider and enter an API key'); return; }
+  
+  const cfg = providers[prov];
+  const envVar = cfg.env_var;
+  
+  try {
+    await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env_var: envVar, provider: prov, key: key })
+    });
+    startChat(model);
+  } catch (e) {
+    alert('Failed to save key: ' + e.message);
+  }
+}
+
+async function startChat(forceModel) {
+  // Create a session
+  try {
+    const r = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Quick Chat' })
+    });
+    currentSession = await r.json();
+    
+    // Load models for the model bar
+    const mr = await fetch('/api/models');
+    const m = await mr.json();
+    models = m.models || [];
+    
+    const cms = document.getElementById('chat-model-select');
+    if (models.length > 0) {
+      cms.innerHTML = models.map(mo => `<option value="${mo.id}">${mo.label}</option>`).join('');
+      if (forceModel) cms.value = forceModel;
+    } else {
+      cms.innerHTML = '<option value="openrouter/auto">auto</option>';
+    }
+    
+    // Set the model on the session
+    const selectedModel = cms.value || 'openrouter/auto';
+    const provider = selectedModel.split('/')[0];
+    await fetch(`/api/sessions/${currentSession.ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: selectedModel, provider: provider })
+    });
+    currentSession.Model = selectedModel;
+    currentSession.Provider = provider;
+    
+    // Show chat
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('chat').style.display = 'flex';
+    
+    // Connect WebSocket
+    connectWS();
+    
+    addMessage('system', 'Ready! Send a message to start chatting.');
+  } catch (e) {
+    alert('Failed to start chat: ' + e.message);
+  }
+}
+
+function connectWS() {
+  if (ws) ws.close();
+  ws = new WebSocket(`ws://${location.host}/api/chat?session_id=${currentSession.ID}`);
+  
+  ws.onopen = () => {
+    document.getElementById('status').textContent = 'connected';
+  };
+  
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    handleEvent(ev);
+  };
+  
+  ws.onerror = (e) => {
+    document.getElementById('status').textContent = 'ws error';
+  };
+  
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'disconnected';
+    // Reconnect after 2s
+    setTimeout(() => { if (currentSession) connectWS(); }, 2000);
+  };
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'user':
+      addMessage('user', ev.text);
+      break;
+    case 'assistant_delta':
+      appendToStreaming(ev.text);
+      break;
+    case 'status':
+      if (ev.state === 'idle' || ev.state === 'error') {
+        finalizeStreaming();
+        isStreaming = false;
+        document.getElementById('send-btn').disabled = false;
+        document.getElementById('send-btn').textContent = 'Send';
+      }
+      if (ev.state === 'running') {
+        isStreaming = true;
+        document.getElementById('send-btn').disabled = true;
+        document.getElementById('send-btn').textContent = '...';
+      }
+      break;
+    case 'error':
+      addMessage('error', ev.message || ev.error || 'Unknown error');
+      isStreaming = false;
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('send-btn').textContent = 'Send';
+      break;
+    case 'thinking':
+      // Ignore for now (or show a subtle indicator)
+      break;
+  }
+}
+
+function addMessage(role, text) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  document.getElementById('messages').appendChild(div);
+  scrollDown();
+}
+
+let streamingDiv = null;
+function appendToStreaming(text) {
+  if (!streamingDiv) {
+    streamingDiv = document.createElement('div');
+    streamingDiv.className = 'msg assistant streaming';
+    document.getElementById('messages').appendChild(streamingDiv);
+  }
+  streamingDiv.textContent += text;
+  scrollDown();
+}
+
+function finalizeStreaming() {
+  if (streamingDiv) {
+    streamingDiv.classList.remove('streaming');
+    streamingDiv = null;
+  }
+}
+
+function scrollDown() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function sendMsg() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text || !ws || isStreaming) return;
+  input.value = '';
+  ws.send(JSON.stringify({ type: 'send', message: text }));
+}
+
+async function changeModel() {
+  const model = document.getElementById('chat-model-select').value;
+  const provider = model.split('/')[0];
+  if (!currentSession) return;
+  await fetch(`/api/sessions/${currentSession.ID}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: model, provider: provider })
+  });
+  currentSession.Model = model;
+  currentSession.Provider = provider;
+}
+
+function logout() {
+  if (ws) ws.close();
+  ws = null;
+  currentSession = null;
+  document.getElementById('chat').style.display = 'none';
+  document.getElementById('setup').style.display = 'block';
+  document.getElementById('messages').innerHTML = '';
+}
+
+// Start
+init();
+</script>
 </body>
 </html>
