@@ -1,43 +1,46 @@
-// app.js — main controller.
+// app.js — main controller (v0.8.0 rewrite).
 //
-// Depends on: window.Physics, window.Chatbot (loaded before this file).
+// Depends on: window.Physics, window.Chatbot, window.DoomalayAPI,
+//             window.DoomalayUI, window.DoomalayChat (all loaded before
+//             this file — see index.html script order).
 //
-// Responsibilities:
-//   • Load user-editable config from /config/names.json + /config/families.json
-//     (falls back to hardcoded defaults if fetch fails).
-//   • Render the infinite grid canvas (existing v0.6.0 behavior).
-//   • Maintain the World of chatbot entities (in world-space, so they
-//     pan with the grid).
-//   • Long-press detection on the canvas → show dropdown menu.
-//   • "New Chat" action → create a chatbot at the long-press location
-//     with a random name + a random icon from the active family.
-//   • Drag / fling chatbots (with physics — friction, elastic collisions).
-//   • Drag the canvas background to pan (existing v0.6.0 behavior).
-//   • Persist everything (canvas offset + all chatbots) to localStorage,
-//     throttled to one save per 200ms.
-//   • Debug family-switcher (top-right) — TEMPORARY, removed when the
-//     real model picker lands.
+// ── THE v0.8.0 INPUT MODEL (fixes the v0.7.0 touch race) ───────────────
+// v0.7.0 put touch/mouse handlers on `document` and called preventDefault
+// on everything "not inside the UI". On real touch devices that suppressed
+// the synthetic click events menu buttons need → nothing was interactable.
+//
+// v0.8.0 scope:
+//   • Canvas gestures (pan, long-press): pointerdown/move/up ON THE CANVAS
+//     ELEMENT ONLY. UI never routes through this code.
+//   • Chatbot drag/fling/tap: pointer events attached to each .chatbot
+//     element itself. No document-level hit-testing.
+//   • touch-action: none ONLY on #c, #panelHotbox, #panelHandle. Every
+//     button/menu/sheet keeps touch-action: manipulation → taps always
+//     produce clicks.
+//   • The UI layer (menu/sheets) sits on its own backdrop; while it's up,
+//     the canvas receives zero events. No races by construction.
+//
+// ── Features ───────────────────────────────────────────────────────────
+//   • Long-press canvas → menu: New Chat / Change model / API keys /
+//     Local models.
+//   • New Chat → creates a chat session (POST /api/sessions) + spawns a
+//     chatbot bound to it.
+//   • Tap a chatbot → opens the swipe-down chat panel for its session.
+//   • Model picker → PATCH the active session, chatbot re-colors to the
+//     provider color, top bar chip updates.
+//   • API keys sheet → POST /api/keys (engine vault).
+//   • Persistence: bots + their session ids + canvas offset → localStorage.
 
 (function () {
   'use strict';
 
-  // ── Default config (overwritten by fetch on init) ─────────────
-  // These are baked into the binary as a fallback in case /config/*.json
-  // 404s or fails to parse. The user edits the JSON files, not these.
+  // ── Default config (fallback if /config/*.json fails) ────────
   const DEFAULT_NAMES = [
     "Scooby", "Doobie", "4rth Grade", "Crippy", "Lippy", "Trippy",
     "Baby", "Boonboon", "Dock", "Faqous", "Lip", "Sky", "Kenny"
   ];
   const DEFAULT_FAMILIES = {
-    default:   { label: "Default",   color: "#4a4a5e", icons: [] },
-    anthropic: { label: "Anthropic", color: "#d97757", icons: [] },
-    openai:    { label: "OpenAI",    color: "#10a37f", icons: [] },
-    google:    { label: "Google",    color: "#4285f4", icons: [] },
-    deepseek:  { label: "DeepSeek",  color: "#4f46e5", icons: [] },
-    qwen:      { label: "Qwen",      color: "#6c4cf1", icons: [] },
-    glm:       { label: "GLM",       color: "#3b82f6", icons: [] },
-    meta:      { label: "Meta",      color: "#0866ff", icons: [] },
-    mistral:   { label: "Mistral",   color: "#fa520f", icons: [] }
+    default:   { label: "Default",   color: "#4a4a5e", icons: [] }
   };
 
   const config = {
@@ -45,28 +48,18 @@
     families: DEFAULT_FAMILIES,
     defaultFamily: 'default'
   };
-  // Exposed globally so chatbot.js can look up family colors + icon sets
-  // when rendering icons.
   window.DoomalayConfig = config;
 
-  // The "active model family". Defaults to "default" (no model picked yet).
-  // When the user picks a model (future feature), it'll call
-  // window.doomalay.setFamily('anthropic') etc. For now, the debug
-  // family-switcher (top-right) calls the same API.
-  let currentFamily = 'default';
+  let providerCatalog = {};   // name → {label, color, env_var, ...} from /api/models
 
-  // ── Canvas / grid (carried over from v0.6.0) ──────────────────
+  // ── Canvas / grid (unchanged from v0.6.0/v0.7.0) ──────────────
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
 
   let W = 0, H = 0;
-
-  // World-space coord of the screen's top-left corner. Panning
-  // changes these. World point (wx, wy) appears on screen at
-  // (wx - offsetX, wy - offsetY).
   let offsetX = 0, offsetY = 0;
-  let velX = 0, velY = 0;   // pan momentum (px / 16ms frame)
+  let velX = 0, velY = 0;
   let animating = false;
 
   const GRID = 48;
@@ -117,9 +110,7 @@
       }
     }
 
-    // Origin marker (world 0,0 → screen -offsetX, -offsetY)
-    const ox = -offsetX;
-    const oy = -offsetY;
+    const ox = -offsetX, oy = -offsetY;
     if (ox > -20 && ox < W + 20 && oy > -20 && oy < H + 20) {
       ctx.fillStyle = ORIGIN_COLOR;
       ctx.beginPath();
@@ -132,84 +123,416 @@
   const world = new Physics.World();
   const chatbotLayer = document.getElementById('chatbots');
   const namePicker = new Chatbot.NamePicker(config.names);
-  const iconPickers = {};  // family → IconPicker (lazy-created)
 
-  function getIconPicker(family) {
-    if (!iconPickers[family]) {
-      const fam = (config.families[family] || { icons: [] });
-      iconPickers[family] = new Chatbot.IconPicker(family, fam.icons || []);
-    }
-    return iconPickers[family];
-  }
-
-  // Names currently in use by any chatbot on the canvas.
   function usedNames() {
-    return new Set(world.entities.map(c => c.name));
+    const s = new Set();
+    world.entities.forEach(function (b) { s.add(b.name); });
+    return s;
   }
 
-  // Icon indices currently in use by chatbots of the given family.
-  function usedIconIndices(family) {
-    return new Set(
-      world.entities
-        .filter(c => c.family === family)
-        .map(c => c.iconIndex)
-        .filter(i => i >= 0)  // exclude placeholders
-    );
-  }
-
-  function createChatbotAt(worldX, worldY) {
-    const family = currentFamily;
-    const name = namePicker.pick(usedNames());
-    const iconIndex = getIconPicker(family).pick(usedIconIndices(family));
+  // Create a chatbot at world coords, bound to a session.
+  function createChatbotAt(wx, wy, sess, presetName) {
+    const name = presetName || namePicker.pick(usedNames());
+    const family = (sess && sess.provider) || 'default';
     const bot = new Chatbot.Chatbot({
-      name, family, iconIndex,
-      x: worldX, y: worldY
+      name: name, family: family, iconIndex: -1, x: wx, y: wy
     });
-    world.add(bot);
+    bot.sessionId = sess ? sess.id : null;
+    bot.session = sess || null;
     chatbotLayer.appendChild(bot.el);
-    bot.render(offsetX, offsetY);
+    world.add(bot);
+    attachBotGestures(bot);
+    update();
     scheduleSave();
     return bot;
   }
 
-  // When the active model family changes, every chatbot re-picks an
-  // icon from the new family's set. The no-repeat rule is enforced
-  // per-family (see IconPicker).
-  function setFamily(family) {
-    if (!config.families[family]) return;
-    currentFamily = family;
-    // Reset the icon picker for the new family so the no-repeat cycle
-    // starts fresh. (This is per-family, so other families' pickers
-    // stay in their current state.)
-    delete iconPickers[family];
-    for (const bot of world.entities) {
-      const iconIndex = getIconPicker(family).pick(usedIconIndices(family));
-      bot.setFamily(family, iconIndex);
-    }
+  // Remove a chatbot (its session stays in the engine's history).
+  function removeChatbot(bot) {
+    world.remove(bot.id);
+    if (bot.el && bot.el.parentNode) bot.el.parentNode.removeChild(bot.el);
+    if (activeBot === bot) activeBot = null;
     scheduleSave();
-    updateDebugActive();
+    update();
   }
 
-  // Public API (used by debug controls now, by the model picker later).
-  window.doomalay = {
-    setFamily,
-    getFamily: () => currentFamily,
-    getConfig: () => config
+  let activeBot = null;   // last-tapped bot (model changes apply here)
+
+  // ── Chatbot gestures (attached per-bot; canvas untouched) ────
+  // Drag → move. Fling → throw. Tap (<10px move, <400ms) → open chat.
+  const LONG_PRESS_MS = 500;
+  const MOVE_THRESHOLD = 10;
+
+  function attachBotGestures(bot) {
+    const st = { down: false, moved: false, sx: 0, sy: 0, lx: 0, ly: 0, lt: 0, t0: 0, vx: 0, vy: 0, id: null };
+
+    bot.el.addEventListener('pointerdown', function (e) {
+      if (st.down) return;
+      st.down = true;
+      st.moved = false;
+      st.sx = st.lx = e.clientX;
+      st.sy = st.ly = e.clientY;
+      st.lt = st.t0 = performance.now();
+      st.vx = st.vy = 0;
+      st.id = e.pointerId;
+      try { bot.el.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+
+    bot.el.addEventListener('pointermove', function (e) {
+      if (!st.down || e.pointerId !== st.id) return;
+      const dx = e.clientX - st.lx;
+      const dy = e.clientY - st.ly;
+      const totalDx = e.clientX - st.sx;
+      const totalDy = e.clientY - st.sy;
+
+      if (!st.moved && totalDx * totalDx + totalDy * totalDy > MOVE_THRESHOLD * MOVE_THRESHOLD) {
+        st.moved = true;
+        bot.dragging = true;
+        bot.el.classList.add('dragging');
+        bot.vx = 0; bot.vy = 0;
+      }
+      if (st.moved) {
+        bot.x += dx;
+        bot.y += dy;
+        const now = performance.now();
+        const dt = now - st.lt;
+        if (dt > 0) {
+          st.vx = (dx / dt) * 16;
+          st.vy = (dy / dt) * 16;
+        }
+        st.lt = now;
+        update();
+      }
+      st.lx = e.clientX;
+      st.ly = e.clientY;
+      e.preventDefault();
+    });
+
+    function release(e) {
+      if (!st.down || (e && e.pointerId != null && e.pointerId !== st.id)) return;
+      st.down = false;
+      if (st.moved) {
+        // Fling if the last move was recent.
+        if (performance.now() - st.lt < 100) {
+          bot.vx = st.vx; bot.vy = st.vy;
+        } else {
+          bot.vx = 0; bot.vy = 0;
+        }
+        bot.dragging = false;
+        bot.el.classList.remove('dragging');
+        startAnimation();
+        scheduleSave();
+      } else if (performance.now() - st.t0 < 400) {
+        // Tap → open the chat panel for this bot's session.
+        activeBot = bot;
+        openChatForBot(bot);
+      }
+      e.preventDefault();
+    }
+
+    bot.el.addEventListener('pointerup', release);
+    bot.el.addEventListener('pointercancel', release);
+  }
+
+  // ── Canvas gestures (pan + long-press) ────────────────────────
+  // Only the CANVAS element. touch-action:none is set on #c in CSS.
+  let pan = { down: false, pending: false, lx: 0, ly: 0, lt: 0 };
+  let longPressTimer = null;
+
+  canvas.addEventListener('pointerdown', function (e) {
+    pan.down = true;
+    pan.pending = true;
+    pan.lx = e.clientX;
+    pan.ly = e.clientY;
+    pan.lt = performance.now();
+    velX = 0; velY = 0;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+
+    // Long-press timer → menu.
+    const sx = e.clientX, sy = e.clientY;
+    if (longPressTimer) clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(function () {
+      longPressTimer = null;
+      if (pan.pending) {
+        pan.pending = false;
+        showCanvasMenu(sx, sy);
+      }
+    }, LONG_PRESS_MS);
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    if (!pan.down) return;
+    const dx = e.clientX - pan.lx;
+    const dy = e.clientY - pan.ly;
+
+    if (pan.pending) {
+      if (dx * dx + dy * dy > MOVE_THRESHOLD * MOVE_THRESHOLD) {
+        pan.pending = false;
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      } else {
+        return;
+      }
+    }
+    offsetX += dx;
+    offsetY += dy;
+    const now = performance.now();
+    const dt = now - pan.lt;
+    if (dt > 0) {
+      velX = (dx / dt) * 16;
+      velY = (dy / dt) * 16;
+    }
+    pan.lt = now;
+    pan.lx = e.clientX;
+    pan.ly = e.clientY;
+    update();
+  });
+
+  function canvasUp(e) {
+    if (!pan.down) return;
+    pan.down = false;
+    pan.pending = false;
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (performance.now() - pan.lt < 100) startAnimation();
+    else { velX = 0; velY = 0; }
+    scheduleSave();
+  }
+  canvas.addEventListener('pointerup', canvasUp);
+  canvas.addEventListener('pointercancel', canvasUp);
+
+  // Prevent the context menu on long-press / right-click on the canvas.
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  // ── Hotbox → canvas pan handoff (used by chat.js when a swipe in the
+  //    hotbox turns out to be a horizontal pan instead of a panel pull).
+  let hbPan = { down: false, lx: 0, ly: 0, lt: 0 };
+  window.DoomalayApp = {
+    beginPan: function (x, y) {
+      hbPan.down = true;
+      hbPan.lx = x; hbPan.ly = y; hbPan.lt = performance.now();
+      velX = 0; velY = 0;
+    },
+    movePan: function (x, y) {
+      if (!hbPan.down) return;
+      const dx = x - hbPan.lx, dy = y - hbPan.ly;
+      offsetX += dx; offsetY += dy;
+      const now = performance.now();
+      const dt = now - hbPan.lt;
+      if (dt > 0) { velX = (dx / dt) * 16; velY = (dy / dt) * 16; }
+      hbPan.lt = now; hbPan.lx = x; hbPan.ly = y;
+      update();
+    },
+    endPan: function () {
+      if (!hbPan.down) return;
+      hbPan.down = false;
+      if (performance.now() - hbPan.lt < 100) startAnimation();
+      else { velX = 0; velY = 0; }
+      scheduleSave();
+    }
   };
 
-  // ── Animation loop ───────────────────────────────────────────
-  // One rAF loop drives both the canvas-pan momentum and the chatbot
-  // physics. Stops when nothing is moving (saves battery).
+  // ── Long-press menu ───────────────────────────────────────────
+  function showCanvasMenu(x, y) {
+    window.DoomalayUI.showMenu(x, y, [
+      { action: 'new-chat',   label: 'New Chat',      icon: '＋' },
+      { action: 'model',      label: 'Change model',  icon: '⌘' },
+      { action: 'keys',       label: 'API keys',      icon: '🔑' },
+      { action: 'local',      label: 'Local models',  icon: '⬇' }
+    ], function (action) {
+      switch (action) {
+        case 'new-chat':
+          newChatAt(x, y);
+          break;
+        case 'model':
+          window.DoomalayUI.openSheet('models', {
+            title: 'Pick a model',
+            onPick: pickModel
+          });
+          break;
+        case 'keys':
+          window.DoomalayUI.openSheet('keys', {});
+          break;
+        case 'local':
+          window.DoomalayUI.openSheet('models', {
+            title: 'Local models (demo)',
+            onPick: pickModel
+          });
+          break;
+      }
+    });
+  }
+
+  // ── New Chat: session + chatbot ───────────────────────────────
+  function newChatAt(x, y) {
+    // Pick the name up front so the session title matches the bot name.
+    const name = namePicker.pick(usedNames());
+    window.DoomalayAPI.createSession({ title: name }).then(function (sess) {
+      const bot = createChatbotAt(x + offsetX, y + offsetY, sess, name);
+      bot.vx = (Math.random() - 0.5) * 6;
+      bot.vy = (Math.random() - 0.5) * 6;
+      startAnimation();
+      activeBot = bot;
+      window.DoomalayUI.toast('Chat "' + bot.name + '" created — pick a model next');
+      // Pre-open the model picker the first time (no model selected yet).
+      if (!sess.model) {
+        window.DoomalayUI.openSheet('models', {
+          title: 'Pick a model for ' + bot.name,
+          onPick: function (mid, prov, label) { pickModel(mid, prov, label, bot); }
+        });
+      }
+    }).catch(function (err) {
+      window.DoomalayUI.toast('Could not create session: ' + (err && err.message || err));
+    });
+  }
+
+  // ── Model pick → session PATCH + bot re-color ─────────────────
+  function pickModel(modelId, provider, label, bot) {
+    window.DoomalayUI.closeSheet();
+    // Fallback chain: explicit bot → last-tapped bot → most recent bot.
+    // If there are no chatbots at all, create one (center of the viewport)
+    // so "pick a model first, chat later" works without a New Chat first.
+    bot = bot || activeBot || world.entities[world.entities.length - 1];
+    if (!bot) {
+      const cx = window.innerWidth / 2 + offsetX;
+      const cy = window.innerHeight / 2 + offsetY;
+      const name = namePicker.pick(usedNames());
+      window.DoomalayUI.toast('Setting up chat with ' + modelId + '…');
+      window.DoomalayAPI.createSession({
+        title: name, model: modelId, provider: provider
+      }).then(function (sess) {
+        const nb = createChatbotAt(cx, cy, sess, name);
+        nb.vx = (Math.random() - 0.5) * 6;
+        nb.vy = (Math.random() - 0.5) * 6;
+        startAnimation();
+        activeBot = nb;
+        updateTopbar();
+        window.DoomalayChat.setSessionModel(modelId, provider);
+        window.DoomalayUI.toast('Model set: ' + modelId);
+      }).catch(function (err) {
+        window.DoomalayUI.toast('Create failed: ' + (err && err.message || err));
+      });
+      return;
+    }
+    const target = bot;
+    window.DoomalayUI.toast('Setting ' + (target.name) + ' → ' + modelId + '…');
+
+    const done = function (sess) {
+      sess.model = modelId;
+      sess.provider = provider;
+      target.session = sess;
+      target.sessionId = sess.id;
+      // Re-color the bot to the provider color.
+      target.setFamily(provider, -1);
+      activeBot = target;
+      scheduleSave();
+      updateTopbar();
+      window.DoomalayChat.setSessionModel(modelId, provider);
+      window.DoomalayUI.toast('Model set: ' + modelId);
+    };
+
+    if (target.sessionId) {
+      window.DoomalayAPI.updateSession(target.sessionId, {
+        model: modelId, provider: provider
+      }).then(function (sess) { done(sess); }).catch(function (err) {
+        window.DoomalayUI.toast('Save failed: ' + (err && err.message || err));
+      });
+    } else {
+      window.DoomalayAPI.createSession({
+        model: modelId, provider: provider, title: target.name
+      }).then(function (sess) { done(sess); }).catch(function (err) {
+        window.DoomalayUI.toast('Create failed: ' + (err && err.message || err));
+      });
+    }
+  }
+
+  // ── Open chat panel for a bot ─────────────────────────────────
+  function openChatForBot(bot) {
+    if (!bot.sessionId) {
+      // Bot without a session (from old persisted state) → create one.
+      window.DoomalayAPI.createSession({ title: bot.name }).then(function (sess) {
+        bot.session = sess;
+        bot.sessionId = sess.id;
+        scheduleSave();
+        window.DoomalayChat.openForSession(sess);
+      }).catch(function (err) {
+        window.DoomalayUI.toast('No session for this chat: ' + (err && err.message || err));
+      });
+      return;
+    }
+    if (bot.session) {
+      window.DoomalayChat.openForSession(bot.session);
+    } else {
+      window.DoomalayAPI.getSession(bot.sessionId).then(function (sess) {
+        bot.session = sess;
+        window.DoomalayChat.openForSession(sess);
+      }).catch(function () {
+        // Session deleted on the engine side → make a fresh one.
+        window.DoomalayAPI.createSession({ title: bot.name }).then(function (sess) {
+          bot.session = sess; bot.sessionId = sess.id;
+          scheduleSave();
+          window.DoomalayChat.openForSession(sess);
+        });
+      });
+    }
+  }
+
+  // ── Top bar ───────────────────────────────────────────────────
+  const modelChipEl = document.getElementById('modelChip');
+  const modelChipLabelEl = document.getElementById('modelChipLabel');
+  const keyChipEl = document.getElementById('keyChip');
+  const statusDotEl = document.getElementById('statusDot');
+
+  function updateTopbar() {
+    const sess = activeBot && activeBot.session;
+    modelChipLabelEl.textContent = sess && sess.model ? shortModel(sess.model) : 'Pick a model';
+    modelChipEl.classList.toggle('set', !!(sess && sess.model));
+  }
+
+  function shortModel(id) {
+    if (!id) return '';
+    return id.length > 18 ? id.slice(0, 16) + '…' : id;
+  }
+
+  modelChipEl.addEventListener('click', function () {
+    window.DoomalayUI.openSheet('models', {
+      title: 'Pick a model',
+      onPick: function (mid, prov, label) { pickModel(mid, prov, label); }
+    });
+  });
+  keyChipEl.addEventListener('click', function () {
+    window.DoomalayUI.openSheet('keys', {});
+  });
+
+  function refreshKeyChip() {
+    window.DoomalayAPI.listKeys().then(function (keys) {
+      const any = Object.keys(keys || {}).some(function (k) {
+        return keys[k] && keys[k].has_key;
+      });
+      keyChipEl.classList.toggle('set', any);
+      keyChipEl.textContent = any ? '🔑' : '🔒';
+    }).catch(function () { /* engine not up */ });
+  }
+  // Key changes made in the keys sheet update the topbar chip.
+  document.addEventListener('doomalay:keys-changed', refreshKeyChip);
+
+  window.DoomalayAPI.health().then(function (h) {
+    statusDotEl.classList.add('ok');
+    statusDotEl.title = 'engine v' + h.version + (h.brain ? ' (brain on)' : ' (cloud direct)');
+  }).catch(function () {
+    statusDotEl.classList.add('bad');
+  });
+
+  // ── Physics + render loop (pattern from v0.7.0: update() renders once;
+  //    startAnimation() runs a rAF loop that stops when nothing moves) ──
   function update() {
-    world.step();
     renderGrid();
-    for (const bot of world.entities) bot.render(offsetX, offsetY);
+    world.entities.forEach(function (b) { b.render(offsetX, offsetY); });
   }
 
   function tick() {
     let moving = false;
 
-    // Pan momentum (existing v0.6.0 behavior)
+    // Pan momentum.
     if (Math.abs(velX) >= 0.15 || Math.abs(velY) >= 0.15) {
       offsetX += velX;
       offsetY += velY;
@@ -220,10 +543,9 @@
       velX = 0; velY = 0;
     }
 
-    // Step chatbot physics
+    // Step chatbot physics.
     world.step();
 
-    // Check if any chatbot is still moving
     for (const e of world.entities) {
       if (!e.dragging && (Math.abs(e.vx) > 0.01 || Math.abs(e.vy) > 0.01)) {
         moving = true;
@@ -232,14 +554,13 @@
     }
 
     renderGrid();
-    for (const bot of world.entities) bot.render(offsetX, offsetY);
+    world.entities.forEach(function (b) { b.render(offsetX, offsetY); });
 
     if (moving) {
-      scheduleSave();
       requestAnimationFrame(tick);
     } else {
       animating = false;
-      scheduleSave();  // final save after motion settles
+      scheduleSave();
     }
   }
 
@@ -249,298 +570,8 @@
     requestAnimationFrame(tick);
   }
 
-  // ── Long-press dropdown menu ──────────────────────────────────
-  const menuEl = document.getElementById('menu');
-
-  function showMenu(x, y) {
-    // Make menu visible so we can measure it, then clamp to viewport.
-    menuEl.classList.remove('hidden');
-    const menuW = menuEl.offsetWidth || 160;
-    const menuH = menuEl.offsetHeight || 50;
-    // Center the menu on (x, y) — CSS uses transform: translate(-50%, -50%).
-    const cx = Math.max(menuW / 2 + 8, Math.min(W - menuW / 2 - 8, x));
-    const cy = Math.max(menuH / 2 + 8, Math.min(H - menuH / 2 - 8, y));
-    menuEl.style.left = cx + 'px';
-    menuEl.style.top = cy + 'px';
-  }
-
-  function hideMenu() {
-    menuEl.classList.add('hidden');
-  }
-
-  menuEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('button[data-action]');
-    if (!btn) return;
-    const action = btn.dataset.action;
-    if (action === 'new-chat') {
-      // Place the new chatbot at the menu's center, in world space.
-      const r = menuEl.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      const bot = createChatbotAt(cx + offsetX, cy + offsetY);
-      // Tiny random nudge so multiple new chats don't perfectly stack.
-      bot.vx = (Math.random() - 0.5) * 6;
-      bot.vy = (Math.random() - 0.5) * 6;
-      startAnimation();
-    }
-    hideMenu();
-  });
-
-  // ── Input state machine ───────────────────────────────────────
-  // The same handlers cover canvas pan, chatbot drag, and long-press.
-  // State transitions:
-  //
-  //   IDLE ──(input start)──→ PENDING
-  //   PENDING ──(move > 10px)──→ PANNING  or  CHATBOT_DRAG
-  //                              (depending on whether the start point
-  //                               was over a chatbot)
-  //   PENDING ──(500ms timer)──→ MENU_OPEN  (show long-press menu)
-  //   PENDING ──(release)──→ IDLE  (tap — no action for now)
-  //   PANNING / CHATBOT_DRAG ──(release)──→ IDLE  (+ momentum / fling)
-  //   MENU_OPEN ──(release / outside tap)──→ IDLE  (menu hides)
-  //
-  // Edge case: if a touch starts while the menu is open, we close the
-  // menu and ignore that touch (no drag starts).
-  const LONG_PRESS_MS = 500;
-  const MOVE_THRESHOLD = 10;  // px from start before it counts as a drag
-
-  let inputState = 'IDLE';
-  let startScreenX = 0, startScreenY = 0;
-  let lastScreenX = 0, lastScreenY = 0;
-  let lastTime = 0;
-  let longPressTimer = null;
-  let draggedBot = null;
-  let dragVel = { vx: 0, vy: 0, t: 0 };  // tracked velocity for fling
-
-  // Hit-test: is the screen point over a chatbot icon?
-  function findChatbotAt(screenX, screenY) {
-    // Iterate from topmost (last in DOM) to bottom.
-    const bots = world.entities;
-    for (let i = bots.length - 1; i >= 0; i--) {
-      const bot = bots[i];
-      const sx = bot.x - offsetX;
-      const sy = bot.y - offsetY;
-      const dx = screenX - sx;
-      const dy = screenY - sy;
-      // Use radius + a small slack for easier grabbing on touch.
-      const r = bot.radius + 4;
-      if (dx * dx + dy * dy <= r * r) return bot;
-    }
-    return null;
-  }
-
-  function inputStart(screenX, screenY) {
-    // If the menu is already open, a tap outside it just closes the menu.
-    if (!menuEl.classList.contains('hidden')) {
-      const r = menuEl.getBoundingClientRect();
-      if (screenX >= r.left && screenX <= r.right &&
-          screenY >= r.top && screenY <= r.bottom) {
-        return;  // inside menu — let the menu's click handler deal with it
-      }
-      hideMenu();
-      return;  // don't start a drag from this tap
-    }
-
-    inputState = 'PENDING';
-    startScreenX = lastScreenX = screenX;
-    startScreenY = lastScreenY = screenY;
-    lastTime = performance.now();
-
-    // Stop any in-progress pan momentum.
-    velX = 0; velY = 0;
-
-    // Start the long-press timer. Cancelled on move > threshold or release.
-    longPressTimer = setTimeout(function () {
-      longPressTimer = null;
-      if (inputState === 'PENDING') {
-        inputState = 'MENU_OPEN';
-        showMenu(startScreenX, startScreenY);
-      }
-    }, LONG_PRESS_MS);
-  }
-
-  function inputMove(screenX, screenY) {
-    if (inputState === 'IDLE' || inputState === 'MENU_OPEN') return;
-
-    if (inputState === 'PENDING') {
-      const dx = screenX - startScreenX;
-      const dy = screenY - startScreenY;
-      if (dx * dx + dy * dy < MOVE_THRESHOLD * MOVE_THRESHOLD) {
-        return;  // still within threshold — stay pending
-      }
-      // Exceeded threshold — commit to either canvas pan or chatbot drag.
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-      draggedBot = findChatbotAt(startScreenX, startScreenY);
-      if (draggedBot) {
-        inputState = 'CHATBOT_DRAG';
-        draggedBot.dragging = true;
-        draggedBot.el.classList.add('dragging');
-        draggedBot.vx = 0; draggedBot.vy = 0;
-      } else {
-        inputState = 'PANNING';
-      }
-    }
-
-    const now = performance.now();
-    const dx = screenX - lastScreenX;
-    const dy = screenY - lastScreenY;
-
-    if (inputState === 'PANNING') {
-      // Natural scrolling: drag right = world moves right.
-      offsetX += dx;
-      offsetY += dy;
-      const dt = now - lastTime;
-      if (dt > 0) {
-        velX = (dx / dt) * 16;   // px per 16ms frame
-        velY = (dy / dt) * 16;
-      }
-      update();  // re-render + step physics (in case a dragged-into collision happens)
-    } else if (inputState === 'CHATBOT_DRAG' && draggedBot) {
-      // Move the chatbot in world space (canvas offset unchanged).
-      draggedBot.x += dx;
-      draggedBot.y += dy;
-      const dt = now - lastTime;
-      if (dt > 0) {
-        dragVel.vx = (dx / dt) * 16;
-        dragVel.vy = (dy / dt) * 16;
-        dragVel.t = now;
-      }
-      update();  // step physics so other chatbots get pushed out of the way
-    }
-
-    lastScreenX = screenX;
-    lastScreenY = screenY;
-    lastTime = now;
-  }
-
-  function inputEnd() {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-
-    if (inputState === 'PENDING') {
-      // Tap with no movement and no long-press — for now, no action.
-      inputState = 'IDLE';
-      return;
-    }
-
-    if (inputState === 'PANNING') {
-      inputState = 'IDLE';
-      // Apply pan momentum if the last move was recent (<100ms).
-      if (performance.now() - lastTime < 100) {
-        startAnimation();
-      } else {
-        velX = 0; velY = 0;
-      }
-      scheduleSave();
-    } else if (inputState === 'CHATBOT_DRAG' && draggedBot) {
-      // Fling: apply the tracked velocity (if recent).
-      if (performance.now() - dragVel.t < 100) {
-        draggedBot.vx = dragVel.vx;
-        draggedBot.vy = dragVel.vy;
-      } else {
-        draggedBot.vx = 0; draggedBot.vy = 0;
-      }
-      draggedBot.dragging = false;
-      draggedBot.el.classList.remove('dragging');
-      draggedBot = null;
-      inputState = 'IDLE';
-      startAnimation();  // physics ticks until everything stops
-      scheduleSave();
-    } else {
-      inputState = 'IDLE';
-    }
-  }
-
-  // ── Event listeners (on document/window so we catch events on
-  //    chatbot divs too — they're inside #chatbots which has
-  //    pointer-events:none, but events bubble through the DOM tree) ──
-  //
-  // We explicitly skip events whose target is inside the menu or debug
-  // panel, so those UI elements work normally.
-
-  function isInsideUI(target) {
-    if (!target) return false;
-    return menuEl.contains(target) || debugEl.contains(target);
-  }
-
-  // Touch
-  document.addEventListener('touchstart', function (e) {
-    if (e.touches.length !== 1) return;
-    if (isInsideUI(e.target)) return;
-    e.preventDefault();  // stop scroll / pull-to-refresh
-    const t = e.touches[0];
-    inputStart(t.clientX, t.clientY);
-  }, { passive: false });
-
-  document.addEventListener('touchmove', function (e) {
-    if (e.touches.length !== 1) return;
-    if (isInsideUI(e.target)) return;
-    e.preventDefault();
-    const t = e.touches[0];
-    inputMove(t.clientX, t.clientY);
-  }, { passive: false });
-
-  document.addEventListener('touchend', function (e) {
-    if (isInsideUI(e.target)) return;
-    e.preventDefault();
-    inputEnd();
-  }, { passive: false });
-
-  document.addEventListener('touchcancel', function () {
-    if (inputState !== 'IDLE') inputEnd();
-  });
-
-  // Mouse (desktop testing)
-  document.addEventListener('mousedown', function (e) {
-    if (isInsideUI(e.target)) return;
-    e.preventDefault();
-    inputStart(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mousemove', function (e) {
-    inputMove(e.clientX, e.clientY);
-  });
-
-  window.addEventListener('mouseup', function () {
-    inputEnd();
-  });
-
-  // Prevent the browser's context menu on long-press / right-click.
-  document.addEventListener('contextmenu', function (e) {
-    if (isInsideUI(e.target)) return;
-    e.preventDefault();
-  });
-
-  // Resize
-  window.addEventListener('resize', resize);
-  window.addEventListener('orientationchange', function () {
-    setTimeout(resize, 100);
-  });
-
-  // ── Debug family-switcher (TEMPORARY) ────────────────────────
-  // Remove this whole block once the real model picker lands.
-  const debugEl = document.getElementById('debug');
-
-  function updateDebugActive() {
-    debugEl.querySelectorAll('button').forEach(function (b) {
-      b.classList.toggle('active', b.dataset.family === currentFamily);
-    });
-  }
-  debugEl.addEventListener('click', function (e) {
-    const btn = e.target.closest('button[data-family]');
-    if (!btn) return;
-    setFamily(btn.dataset.family);
-  });
-
-  // ── Persistence ──────────────────────────────────────────────
-  // Save canvas offset + all chatbots to localStorage, throttled.
-  // Loaded on init so the user's last layout is restored.
-  const STORAGE_KEY = 'doomalay.state.v1';
+  // ── Persistence ───────────────────────────────────────────────
+  const STORAGE_KEY = 'doomalay.state.v2';
   let saveScheduled = false;
 
   function scheduleSave() {
@@ -553,83 +584,88 @@
   }
 
   function saveNow() {
-    const state = {
-      offset: { x: offsetX, y: offsetY },
-      currentFamily: currentFamily,
-      chatbots: world.entities.map(function (c) { return c.serialize(); }),
-      savedAt: Date.now()
-    };
     try {
+      const state = {
+        offset: { x: offsetX, y: offsetY },
+        chatbots: world.entities.map(function (c) {
+          return {
+            id: c.id, name: c.name, family: c.family,
+            sessionId: c.sessionId || null,
+            x: c.x, y: c.y, vx: c.vx, vy: c.vy, radius: c.radius
+          };
+        }),
+        savedAt: Date.now()
+      };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      console.warn('doomalay: save failed', e);
-    }
+    } catch (e) { /* storage full / private mode */ }
   }
 
   function loadState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (e) { return null; }
+    let state = null;
+    try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (e) {}
+    if (!state) return;
+    if (state.offset) {
+      offsetX = state.offset.x || 0;
+      offsetY = state.offset.y || 0;
+    }
+    (state.chatbots || []).forEach(function (d) {
+      const bot = new Chatbot.Chatbot({
+        id: d.id, name: d.name, family: d.family || 'default',
+        iconIndex: -1, x: d.x, y: d.y,
+        vx: d.vx || 0, vy: d.vy || 0, radius: d.radius || 28
+      });
+      bot.sessionId = d.sessionId || null;
+      bot.session = null;   // fetched lazily on first tap
+      chatbotLayer.appendChild(bot.el);
+      world.add(bot);
+      attachBotGestures(bot);
+    });
+    update();
   }
 
-  // ── Init ─────────────────────────────────────────────────────
-  async function init() {
-    // Load config from the server (best-effort — fall back to defaults).
-    try {
-      const [namesRes, famRes] = await Promise.all([
-        fetch('config/names.json'),
-        fetch('config/families.json')
-      ]);
-      if (namesRes.ok) {
-        const d = await namesRes.json();
-        if (Array.isArray(d.names) && d.names.length > 0) {
-          config.names = d.names;
-          namePicker.names = [...d.names];  // refresh picker
-        }
-      }
-      if (famRes.ok) {
-        const d = await famRes.json();
-        if (d.families && typeof d.families === 'object') {
-          // Merge: keep any default family not in the file, so the
-          // user can ship a partial families.json.
-          config.families = Object.assign({}, DEFAULT_FAMILIES, d.families);
-        }
-        if (typeof d.defaultFamily === 'string') {
-          config.defaultFamily = d.defaultFamily;
-        }
-      }
-    } catch (e) {
-      console.warn('doomalay: config fetch failed, using defaults', e);
-    }
-
-    currentFamily = config.defaultFamily;
-
-    // Restore saved state.
-    const saved = loadState();
-    if (saved) {
-      offsetX = (saved.offset && saved.offset.x) || 0;
-      offsetY = (saved.offset && saved.offset.y) || 0;
-      if (saved.currentFamily && config.families[saved.currentFamily]) {
-        currentFamily = saved.currentFamily;
-      }
-      if (Array.isArray(saved.chatbots)) {
-        for (const c of saved.chatbots) {
-          try {
-            const bot = Chatbot.Chatbot.deserialize(c);
-            world.add(bot);
-            chatbotLayer.appendChild(bot.el);
-          } catch (e) {
-            console.warn('doomalay: failed to restore chatbot', c, e);
-          }
-        }
-      }
-    }
-
-    updateDebugActive();
-    resize();
+  // ── Init ──────────────────────────────────────────────────────
+  function loadConfig() {
+    fetch('/config/names.json').then(function (r) { return r.json(); })
+      .then(function (names) { config.names = names; })
+      .catch(function () { /* keep defaults */ });
+    fetch('/config/families.json').then(function (r) { return r.json(); })
+      .then(function (fams) {
+        Object.keys(fams).forEach(function (k) {
+          config.families[k] = fams[k];
+        });
+        update();
+      })
+      .catch(function () { /* keep defaults */ });
   }
 
-  init();
+  function loadProviders() {
+    // Merge the engine's provider catalog into families so chatbot colors
+    // follow the provider brand colors (anthropic #D97706, groq #F55036…).
+    window.DoomalayAPI.models().then(function (data) {
+      providerCatalog = data.providers || {};
+      Object.keys(providerCatalog).forEach(function (p) {
+        const cfg = providerCatalog[p];
+        if (!config.families[p]) {
+          config.families[p] = {
+            label: cfg.label || p, color: cfg.color || '#4a4a5e', icons: []
+          };
+        }
+      });
+      // Re-render existing bots with provider colors.
+      world.entities.forEach(function (b) { b.setFamily(b.family, -1); });
+      update();
+    }).catch(function () { /* engine offline — defaults are fine */ });
+  }
+
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function () {
+    setTimeout(resize, 100);
+  });
+
+  resize();
+  loadConfig();
+  loadProviders();
+  loadState();
+  refreshKeyChip();
+  updateTopbar();
 })();

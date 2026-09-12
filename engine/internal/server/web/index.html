@@ -8,6 +8,10 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /* NOTE: NO touch-action:none on html/body (v0.7.0 bug: it killed
+     synthetic clicks on menu buttons on real touch devices).
+     touch-action:none is set ONLY on elements whose gestures we track
+     by hand: #c (canvas), #panelHotbox, #panelHandle. */
   html, body {
     width: 100%; height: 100%;
     overflow: hidden;
@@ -16,20 +20,18 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-user-select: none; user-select: none;
     -webkit-touch-callout: none;
-    touch-action: none;
     overscroll-behavior: none;
   }
 
-  canvas {
+  /* ══ Canvas (grid) ═══════════════════════════════════════════ */
+  #c {
     display: block;
     position: fixed;
     top: 0; left: 0;
+    touch-action: none;      /* we track pan + long-press by hand */
   }
 
-  /* ── Chatbot icons layer ───────────────────────────────────────
-     The layer itself has pointer-events:none so events fall through
-     to the canvas (for panning) — but each .chatbot child opts back
-     into pointer events so it's draggable. */
+  /* ══ Chatbot icons layer ═════════════════════════════════════ */
   #chatbots {
     position: fixed;
     top: 0; left: 0;
@@ -45,12 +47,10 @@
     align-items: center;
     gap: 4px;
     cursor: grab;
-    will-change: transform;  /* hint to browser for GPU compositing */
+    will-change: transform;
+    touch-action: none;      /* per-bot drag gestures */
   }
-  .chatbot.dragging {
-    cursor: grabbing;
-    z-index: 200;  /* dragged bot always on top */
-  }
+  .chatbot.dragging { cursor: grabbing; z-index: 200; }
   .chatbot .icon {
     width: 56px; height: 56px;
     border-radius: 50%;
@@ -64,13 +64,13 @@
     color: #e0e0e8;
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    overflow: hidden;  /* clip img to circle */
+    overflow: hidden;
   }
   .chatbot .icon img {
     width: 100%; height: 100%;
     object-fit: cover;
     border-radius: 50%;
-    -webkit-user-drag: none;  /* disable browser's image drag */
+    -webkit-user-drag: none;
   }
   .chatbot .name {
     font-size: 12px;
@@ -87,105 +87,620 @@
     text-overflow: ellipsis;
   }
 
-  /* ── Long-press dropdown menu ──────────────────────────────── */
+  /* ══ Top bar ═════════════════════════════════════════════════ */
+  #topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    padding-top: env(safe-area-inset-top, 0px);
+    z-index: 300;
+    background: linear-gradient(rgba(10,10,11,0.92), rgba(10,10,11,0.75) 80%, transparent);
+    touch-action: manipulation;   /* taps OK, swipes pass through */
+  }
+  #statusDot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #555;
+    margin: 0 2px;
+    flex-shrink: 0;
+  }
+  #statusDot.ok { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
+  #statusDot.bad { background: #ef4444; }
+  #brand {
+    font-size: 13px;
+    font-weight: 700;
+    color: #8a8a9a;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+  }
+  #modelChip {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 36px;
+    margin: 0 4px;
+    padding: 0 12px;
+    background: rgba(26,26,32,0.9);
+    border: 1px solid #2a2a35;
+    border-radius: 18px;
+    color: #8a8a9a;
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #modelChip.set { color: #e0e0e8; border-color: #3d3d4a; }
+  #modelChip:active { background: #2a2a35; transform: scale(0.98); }
+  #keyChip {
+    width: 36px; height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(26,26,32,0.9);
+    border: 1px solid #2a2a35;
+    border-radius: 18px;
+    font-size: 15px;
+    flex-shrink: 0;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #keyChip:active { background: #2a2a35; transform: scale(0.94); }
+  #keyChip.set { border-color: #3d3d4a; }
+
+  /* ══ Panel hotbox (the "big hotbox") ═════════════════════════ */
+  /* Invisible strip covering the top 35% of the screen. A downward
+     swipe ANYWHERE inside it drags the chat panel out — the user does
+     not need to start at the very top edge. Horizontal swipes inside
+     it fall through to canvas panning (handed off in chat.js). */
+  #panelHotbox {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 35%;
+    z-index: 40;
+    touch-action: none;
+    /* transparent — no visual */
+  }
+
+  /* ══ Chat panel (swipe-down) ═════════════════════════════════ */
+  #chatPanel {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 72vh;
+    background: #101014;
+    border-radius: 0 0 20px 20px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(-100%);
+    touch-action: manipulation;
+    will-change: transform;
+  }
+  #chatPanel.animated { transition: transform 0.22s cubic-bezier(0.25, 0.1, 0.25, 1); }
+  #chatPanel.hidden { display: none; }
+  #panelHandle {
+    padding: 8px 0 4px;
+    display: flex;
+    justify-content: center;
+    touch-action: none;      /* swipe-up-to-close tracked by hand */
+  }
+  #panelHandle .bar {
+    width: 40px; height: 4px;
+    border-radius: 2px;
+    background: #3a3a45;
+  }
+  #panelHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 14px 10px;
+    border-bottom: 1px solid #1d1d24;
+  }
+  #panelHeader .titles { flex: 1; min-width: 0; }
+  #panelTitle {
+    font-size: 15px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #panelSub {
+    font-size: 11px;
+    color: #707080;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #panelSub.streaming { color: #d97757; }
+  #panelClose {
+    width: 34px; height: 34px;
+    border: none;
+    background: #1a1a20;
+    border-radius: 17px;
+    color: #a0a0b0;
+    font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    touch-action: manipulation;
+  }
+  #panelClose:active { background: #2a2a35; }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    touch-action: pan-y;     /* scrollable — NOT intercepted */
+  }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .msg .msg-inner {
+    max-width: 82%;
+    padding: 9px 13px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user .msg-inner {
+    background: #2a4a6a;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant .msg-inner {
+    background: #1d1d24;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.thinking .msg-inner {
+    background: transparent;
+    color: #606070;
+    font-size: 12px;
+    font-style: italic;
+    padding: 2px 6px;
+  }
+  .msg.tool .msg-inner {
+    background: transparent;
+    color: #5e8a5e;
+    font-size: 12px;
+    padding: 2px 6px;
+  }
+  .msg.error .msg-inner {
+    background: #3a1a1a;
+    color: #e08a8a;
+    font-size: 13px;
+    border: 1px solid #5a2a2a;
+  }
+  #inputRow {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid #1d1d24;
+    align-items: flex-end;
+  }
+  #chatInput {
+    flex: 1;
+    min-width: 0;
+    background: #1a1a20;
+    border: 1px solid #2a2a35;
+    border-radius: 18px;
+    color: #e0e0e8;
+    font-size: 14px;
+    padding: 10px 14px;
+    font-family: inherit;
+    resize: none;
+    max-height: 120px;
+    line-height: 1.4;
+    touch-action: manipulation;
+  }
+  #chatInput:focus { outline: none; border-color: #4a4a5e; }
+  #sendBtn, #stopBtn {
+    width: 44px; height: 44px;
+    border: none;
+    border-radius: 22px;
+    font-size: 18px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #sendBtn { background: #2a4a6a; color: #e0e0e8; }
+  #sendBtn:active { transform: scale(0.92); background: #3a5a7a; }
+  #stopBtn { background: #6a2a2a; color: #e0e0e8; }
+  #stopBtn:active { transform: scale(0.92); }
+  .hidden { display: none !important; }
+
+  #panelDim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 350;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  #panelDim.show { opacity: 1; pointer-events: auto; }
+
+  /* ══ Long-press menu ═════════════════════════════════════════ */
+  #backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: transparent;   /* menu stays spatial; backdrop only blocks */
+    display: none;
+  }
+  #backdrop.show { display: block; }
+
   #menu {
     position: fixed;
     background: #1a1a20;
     border: 1px solid #2a2a35;
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 6px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-    min-width: 160px;
+    min-width: 210px;
     z-index: 1000;
-    transform: translate(-50%, -50%);  /* center on the press point */
+    touch-action: manipulation;
     animation: menu-pop 0.15s ease-out;
   }
   @keyframes menu-pop {
-    from { transform: translate(-50%, -50%) scale(0.85); opacity: 0; }
-    to   { transform: translate(-50%, -50%) scale(1);    opacity: 1; }
+    from { transform: scale(0.9); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
   }
   #menu.hidden { display: none; }
-  #menu button {
-    display: block;
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     width: 100%;
+    min-height: 48px;         /* ≥44px hit target — taps register */
     background: transparent;
     border: none;
     color: #e0e0e8;
     padding: 10px 14px;
     text-align: left;
-    font-size: 14px;
+    font-size: 14.5px;
     font-weight: 500;
-    border-radius: 8px;
+    border-radius: 9px;
     cursor: pointer;
-    transition: background 0.15s;
     font-family: inherit;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
-  #menu button:hover, #menu button:active {
+  .menu-item:active {
+    background: #2f2f3d;      /* visible press feedback */
+    transform: scale(0.98);
+  }
+  .menu-icon {
+    width: 22px;
+    text-align: center;
+    color: #8a8a9a;
+    font-size: 15px;
+  }
+  .menu-close {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    width: 30px; height: 30px;
+    border-radius: 15px;
     background: #2a2a35;
+    border: 1px solid #3a3a45;
+    color: #a0a0b0;
+    font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
+  .menu-close:active { background: #3f3f4d; transform: scale(0.92); }
 
-  /* ── Debug family-switcher (TEMPORARY — remove when model
-     picker is added) ────────────────────────────────────────── */
-  #debug {
+  /* ══ Bottom sheet (model picker / keys / local models) ═══════ */
+  #sheet {
     position: fixed;
-    top: 8px;
-    right: 8px;
+    left: 0; right: 0; bottom: 0;
+    max-height: 86vh;
+    background: #101014;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,0.65);
+    z-index: 1000;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    z-index: 500;
-    background: rgba(20,20,28,0.85);
-    padding: 6px;
-    border-radius: 8px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: 1px solid #2a2a35;
+    touch-action: manipulation;
   }
-  #debug .label {
-    color: #707080;
-    font-size: 9px;
+  #sheet.hidden { display: none; }
+  #sheet.open { animation: sheet-up 0.22s cubic-bezier(0.25, 0.1, 0.25, 1); }
+  #sheet.closing { animation: sheet-down 0.2s ease-in forwards; }
+  @keyframes sheet-up   { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes sheet-down { from { transform: translateY(0); } to { transform: translateY(100%); } }
+  #sheetHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid #1d1d24;
+    flex-shrink: 0;
+  }
+  #sheetTitle { flex: 1; font-size: 16px; font-weight: 700; }
+  #sheetClose {
+    width: 34px; height: 34px;
+    border: none;
+    background: #1a1a20;
+    border-radius: 17px;
+    color: #a0a0b0;
+    font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    touch-action: manipulation;
+  }
+  #sheetClose:active { background: #2a2a35; }
+  #sheetBody {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 14px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+    touch-action: pan-y;      /* scrollable — NOT intercepted */
+  }
+
+  /* Sheet content */
+  .sheet-section { margin-bottom: 18px; }
+  .sheet-section-title {
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 2px;
+    letter-spacing: 1px;
+    color: #606070;
+    margin: 6px 2px 8px;
+    font-weight: 700;
+  }
+  .sheet-note {
+    font-size: 12.5px;
+    color: #707080;
+    line-height: 1.5;
+    margin: 4px 2px 10px;
+  }
+  .sheet-error {
+    color: #e08a8a;
+    font-size: 13px;
+    padding: 12px;
+    background: #3a1a1a;
+    border-radius: 10px;
+    line-height: 1.5;
+  }
+  .provider-group {
+    background: #15151b;
+    border: 1px solid #1f1f26;
+    border-radius: 14px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .provider-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+  }
+  .provider-header.tappable:active { background: #1d1d24; }
+  .provider-chip {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .provider-titles { flex: 1; min-width: 0; }
+  .provider-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .provider-label { font-size: 14.5px; font-weight: 600; }
+  .provider-sub {
+    font-size: 11.5px;
+    color: #707080;
+    margin-top: 2px;
+  }
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .badge-free { background: #16321f; color: #4ade80; }
+  .badge-key  { background: #1f2937; color: #60a5fa; }
+  .model-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-top: 1px solid #1a1a21;
+  }
+  .model-row.tappable:active { background: #1d1d24; }
+  .model-row.downloading .model-sub { color: #d97757; }
+  .model-row.downloaded { border-top: 1px solid #1f3a2a; }
+  .model-info { flex: 1; min-width: 0; }
+  .model-name {
+    font-size: 13.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-sub {
+    font-size: 11px;
+    color: #606070;
+    margin-top: 1px;
+  }
+  .key-form {
+    padding: 4px 12px 12px;
+    border-top: 1px solid #1a1a21;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .key-form.collapsed { display: none; }
+  .key-input {
+    background: #101016;
+    border: 1px solid #2a2a35;
+    border-radius: 10px;
+    color: #e0e0e8;
+    font-size: 13px;
+    padding: 11px 12px;
+    font-family: ui-monospace, monospace;
+    touch-action: manipulation;
+  }
+  .key-input:focus { outline: none; border-color: #4a4a5e; }
+  .key-actions { display: flex; gap: 8px; }
+  .btn {
+    border: 1px solid #2f2f3d;
+    background: #1d1d24;
+    color: #e0e0e8;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13.5px;
+    font-weight: 600;
+    font-family: inherit;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active { background: #2f2f3d; transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; }
+  .btn-small { padding: 7px 12px; font-size: 12px; border-radius: 8px; }
+  .btn-primary { background: #2a4a6a; border-color: #3a5a7a; }
+  .btn-primary:active { background: #3a5a7a; }
+  .btn-danger { background: #2a1a1a; border-color: #4a2a2a; color: #e08a8a; }
+  .btn-success { background: #16321f; border-color: #1f4a2f; color: #4ade80; }
+  .search-wrap { margin: 4px 2px 12px; }
+  .search-input {
+    width: 100%;
+    background: #15151b;
+    border: 1px solid #2a2a35;
+    border-radius: 12px;
+    color: #e0e0e8;
+    font-size: 14px;
+    padding: 11px 14px;
+    font-family: inherit;
+    touch-action: manipulation;
+  }
+  .search-input:focus { outline: none; border-color: #4a4a5e; }
+  .loading-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #707080;
+    font-size: 13px;
+    padding: 28px 0;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid #2a2a35;
+    border-top-color: #8a8a9a;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ══ Toast ══════════════════════════════════════════════════ */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #22222b;
+    border: 1px solid #3a3a45;
+    color: #e0e0e8;
+    font-size: 13px;
+    padding: 10px 18px;
+    border-radius: 20px;
+    z-index: 1100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: 88vw;
     text-align: center;
   }
-  #debug button {
-    background: #1a1a20;
-    border: 1px solid #2a2a35;
-    color: #e0e0e8;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    cursor: pointer;
-    font-family: inherit;
-    min-width: 80px;
-  }
-  #debug button.active {
-    background: #2a2a45;
-    border-color: #4a4a5e;
-  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="chatbots"></div>
-<div id="menu" class="hidden">
-  <button data-action="new-chat">＋ New Chat</button>
-</div>
-<div id="debug">
-  <div class="label">Family (debug)</div>
-  <button data-family="default" class="active">default</button>
-  <button data-family="anthropic">anthropic</button>
-  <button data-family="openai">openai</button>
-  <button data-family="google">google</button>
-  <button data-family="deepseek">deepseek</button>
-  <button data-family="qwen">qwen</button>
-  <button data-family="glm">glm</button>
-  <button data-family="meta">meta</button>
-  <button data-family="mistral">mistral</button>
-</div>
-<script src="physics.js"></script>
-<script src="chatbot.js"></script>
-<script src="app.js"></script>
+  <!-- Grid canvas (pan + long-press, tracked by hand) -->
+  <canvas id="c"></canvas>
+
+  <!-- Chatbot icons (each .chatbot handles its own pointer events) -->
+  <div id="chatbots"></div>
+
+  <!-- Big invisible hotbox: swipe DOWN anywhere in the top 35% to pull
+       the chat panel down. Horizontal swipes hand off to canvas pan. -->
+  <div id="panelHotbox"></div>
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div id="statusDot"></div>
+    <span id="brand">doomalay</span>
+    <button id="modelChip"><span id="modelChipLabel">Pick a model</span></button>
+    <button id="keyChip" title="API keys">🔒</button>
+  </div>
+
+  <!-- Chat panel (swipes down from the hotbox) -->
+  <div id="chatPanel" class="hidden">
+    <div id="panelHandle"><div class="bar"></div></div>
+    <div id="panelHeader">
+      <div class="titles">
+        <div id="panelTitle">Chat</div>
+        <div id="panelSub">No model — pick one from the menu</div>
+      </div>
+      <button id="panelClose" aria-label="Close panel">✕</button>
+    </div>
+    <div id="messages"></div>
+    <div id="inputRow">
+      <textarea id="chatInput" rows="1" placeholder="Message… (long-press canvas for menu)"></textarea>
+      <button id="sendBtn" aria-label="Send">➤</button>
+      <button id="stopBtn" class="hidden" aria-label="Stop">■</button>
+    </div>
+  </div>
+  <div id="panelDim"></div>
+
+  <!-- Long-press menu (built dynamically by ui.js) -->
+  <div id="menu" class="hidden"></div>
+
+  <!-- Bottom sheet: model picker / API keys / local models -->
+  <div id="sheet" class="hidden">
+    <div id="sheetHeader">
+      <div id="sheetTitle">Pick a model</div>
+      <button id="sheetClose" aria-label="Close sheet">✕</button>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
+
+  <!-- Backdrop: while a menu/sheet is open, the canvas gets ZERO events
+       (fixes the v0.7.0 race where gesture handlers fought the menu) -->
+  <div id="backdrop"></div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <!-- Load order: no deps → api → ui → chat → app -->
+  <script src="physics.js"></script>
+  <script src="chatbot.js"></script>
+  <script src="api.js"></script>
+  <script src="ui.js"></script>
+  <script src="chat.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
