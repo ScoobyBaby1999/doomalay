@@ -50,18 +50,28 @@
       // First render: open the overlay (or replace content if already open).
       // Subsequent renders (after tab switch / key save): just swap innerHTML
       // (no fade needed — the user is already looking at it).
+      //
+      // onSwap: wireEvents must run AFTER the DOM swap. replaceContent()
+      // defers the swap by 150ms (fade-out) — wiring synchronously here
+      // attached listeners to the OLD content (v0.10.1 dead-buttons bug).
       if (!opened) {
         if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
-          window.ConnectOverlay.replaceContent(html, { onClose: opts.onClose });
+          window.ConnectOverlay.replaceContent(html, {
+            onClose: opts.onClose,
+            onSwap: wireEvents
+          });
         } else {
-          window.ConnectOverlay.open(html, { onClose: opts.onClose });
+          window.ConnectOverlay.open(html, {
+            onClose: opts.onClose,
+            onSwap: wireEvents
+          });
         }
         opened = true;
       } else {
         var contentEl = window.ConnectOverlay.getContentEl();
         contentEl.innerHTML = html;
+        wireEvents();
       }
-      wireEvents();
     }
 
     function header() {

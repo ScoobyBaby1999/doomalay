@@ -501,6 +501,15 @@
 
   function isInsideUI(target) {
     if (!target) return false;
+    // ConnectOverlay covers the full screen (inset:0) while open — any
+    // touch during that state is a UI touch. v0.10.1 MISSING THIS CHECK
+    // WAS THE "nothing is interactable, not even the X" BUG: touches in
+    // the overlay fell through to the document handlers, whose
+    // preventDefault() suppressed the synthetic click events the
+    // overlay's buttons need. (Mouse clicks fire regardless of
+    // preventDefault on touchstart — which is why desktop dogfooding
+    // never caught it.)
+    if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||

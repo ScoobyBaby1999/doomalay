@@ -35,6 +35,8 @@
       'overflow-y:auto;background:#0e0e12;border:1px solid #1a1a22;' +
       'border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.6);' +
       '-webkit-overflow-scrolling:touch;' +
+      'touch-action:pan-y;' +   // native scrolling — do NOT let the document
+                                 // touch handlers preventDefault these
       'opacity:0;transform:scale(0.95) translateY(10px);' +
       'transition:opacity 0.25s ease, transform 0.25s ease;';
     overlayEl.appendChild(scrimEl);
@@ -50,6 +52,8 @@
     ensureElements();
     closing = false;
     contentEl.innerHTML = html;
+    // Wire events AFTER the DOM swap — callers pass onSwap for this.
+    if (opts.onSwap) { try { opts.onSwap(); } catch (e) { console.error(e); } }
     // Show the overlay (visibility:visible + flex)
     overlayEl.style.visibility = 'visible';
     overlayEl.style.display = 'flex';
@@ -84,6 +88,12 @@
   // Replace content WITHOUT closing/reopening the overlay (smooth transition
   // between nested pickers — e.g. model picker → providers screen). Fades
   // the old content out, swaps, fades new content in.
+  //
+  // IMPORTANT: the swap happens in a setTimeout (fade-out first). Callers
+  // that wire event listeners to the new DOM MUST pass `opts.onSwap` — it
+  // fires right after innerHTML is assigned. (v0.10.1 bug: providers.js +
+  // localmodels.js wired their buttons synchronously, i.e. against the OLD
+  // content — the new save buttons / model rows were never wired.)
   function replaceContent(html, opts) {
     if (!overlayEl || overlayEl.style.visibility === 'hidden') {
       open(html, opts);
@@ -97,6 +107,8 @@
       contentEl.innerHTML = html;
       void contentEl.offsetWidth; // reflow
       onCloseCb = opts.onClose || null;
+      // Wire events AFTER the DOM swap.
+      if (opts.onSwap) { try { opts.onSwap(); } catch (e) { console.error(e); } }
       // Fade in new content
       contentEl.style.opacity = '1';
       contentEl.style.transform = 'scale(1) translateY(0)';

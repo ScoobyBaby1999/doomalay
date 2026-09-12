@@ -84,24 +84,17 @@
     });
 
     boxModel.addEventListener('click', function () {
-      window.ModelPicker.open(function (modelType) {
-        // modelType is 'cloud' or 'local'
-        if (modelType === 'cloud') {
-          window.ProvidersScreen.open(function (provider, modelId) {
-            state.model = modelId;
-            state.provider = provider;
-            updateSession(icon, state, { model: modelId, provider: provider });
-            render(bodyEl, icon, panel);
-          });
-        } else {
-          // local
-          window.LocalModelsScreen.open(function (provider, modelId) {
-            state.model = modelId;
-            state.provider = provider;
-            updateSession(icon, state, { model: modelId, provider: provider });
-            render(bodyEl, icon, panel);
-          });
-        }
+      // ModelPicker navigates to the providers / local-models screens itself
+      // (smooth content replace) and calls us back ONCE with the final
+      // (provider, modelId). v0.10.1 bug: we passed an intermediate
+      // modelType callback here, but ModelPicker forwarded it verbatim to
+      // ProvidersScreen — which invoked it as (provider, modelId), the
+      // 'cloud' branch never matched, and nothing happened after picking.
+      window.ModelPicker.open(function (provider, modelId) {
+        state.model = modelId;
+        state.provider = provider;
+        updateSession(icon, state, { model: modelId, provider: provider });
+        render(bodyEl, icon, panel);
       });
     });
   }

@@ -98,24 +98,29 @@
 
       html += '</div>';
 
-      if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
-        window.ConnectOverlay.replaceContent(html, { onClose: opts.onClose });
-      } else {
-        window.ConnectOverlay.open(html, { onClose: opts.onClose });
-      }
+      // Wire close button + model rows AFTER the DOM swap — replaceContent
+      // defers the swap by 150ms (fade-out); wiring synchronously attached
+      // listeners to the OLD content (v0.10.1 dead-buttons bug).
+      var wireUp = function () {
+        var contentEl = window.ConnectOverlay.getContentEl();
+        var closeBtn = contentEl.querySelector('#lm-close');
+        if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
-      var contentEl = window.ConnectOverlay.getContentEl();
-      var closeBtn = contentEl.querySelector('#lm-close');
-      if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
-
-      // Wire up model selection
-      contentEl.querySelectorAll('[data-model]').forEach(function (el) {
-        el.addEventListener('click', function () {
-          var modelId = el.dataset.model;
-          window.ConnectOverlay.close();
-          if (onPick) onPick('ollama', modelId);
+        // Wire up model selection
+        contentEl.querySelectorAll('[data-model]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            var modelId = el.dataset.model;
+            window.ConnectOverlay.close();
+            if (onPick) onPick('ollama', modelId);
+          });
         });
-      });
+      };
+
+      if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
+        window.ConnectOverlay.replaceContent(html, { onClose: opts.onClose, onSwap: wireUp });
+      } else {
+        window.ConnectOverlay.open(html, { onClose: opts.onClose, onSwap: wireUp });
+      }
     }
   }
 
