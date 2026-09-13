@@ -59,8 +59,16 @@
     };
   };
 
-  ChatClient.prototype.send = function (text) {
-    var msg = JSON.stringify({ type: 'send', message: text });
+  ChatClient.prototype.send = function (text, opts) {
+    // v0.13: opts carries capability flags (effort / web_search /
+    // deep_research) — per-message overrides for the engine's chat turn.
+    var payload = { type: 'send', message: text };
+    if (opts) {
+      if (opts.effort !== undefined) payload.effort = opts.effort;
+      if (opts.web_search !== undefined) payload.web_search = !!opts.web_search;
+      if (opts.deep_research !== undefined) payload.deep_research = !!opts.deep_research;
+    }
+    var msg = JSON.stringify(payload);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(msg);
     } else {

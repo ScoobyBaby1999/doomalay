@@ -69,7 +69,7 @@
       this.provider = provider;   // 'openai', 'ollama', etc.
       this._sessionData = null;   // engine session object (fetched on first chat)
 
-      // Build the DOM element: icon circle + name label.
+      // Build the DOM element: icon circle + name label + sandbox badge.
       const icon = document.createElement('div');
       icon.className = 'icon';
       this._iconEl = icon;
@@ -83,6 +83,11 @@
 
       this._renderIcon();
     }
+
+    // Sandbox emoji per type — shown as a mini badge at the icon's corner
+    // so the chat's sandbox is readable at a glance on the canvas (v0.13:
+    // the panel icon updated but the canvas icon never did).
+    static SANDBOX_BADGES = { quick: '⚡', hf: '🤗', device: '🔗', terminal: '⌨️' };
 
     _renderIcon() {
       const cfg = window.DoomalayConfig;
@@ -104,12 +109,40 @@
         this._iconEl.style.background = fam.color || '#4a4a5e';
         this._iconEl.textContent = (this.name || '?').charAt(0).toUpperCase();
       }
+
+      // Sandbox corner badge (after the icon content so it overlays).
+      this._renderSandboxBadge();
+    }
+
+    _renderSandboxBadge() {
+      const old = this._badgeEl;
+      if (old) old.remove();
+      if (!this.sandbox) return;
+      const badge = document.createElement('div');
+      badge.className = 'sandbox-badge';
+      badge.textContent = ChatIcon.SANDBOX_BADGES[this.sandbox] || '⚡';
+      badge.title = this.sandbox;
+      this._badgeEl = badge;
+      this.el.appendChild(badge);
+    }
+
+    setSandbox(sandbox) {
+      this.sandbox = sandbox;
+      this._renderSandboxBadge();
     }
 
     setFamily(family, iconIndex) {
       this.family = family;
       if (typeof iconIndex === 'number') this.iconIndex = iconIndex;
       this._renderIcon();
+    }
+
+    // v0.13: persist the icon's chat config (called by chatpanel after a
+    // sandbox/model change so localStorage stays in sync).
+    save() {
+      if (typeof window.doomalay !== 'undefined' && window.doomalay.scheduleSave) {
+        window.doomalay.scheduleSave();
+      }
     }
 
     setName(name) {

@@ -16,7 +16,7 @@
     "base_url": "https://api.privatemode.ai/v1",
     "litellm_prefix": "privatemodeai",
     "label": "PrivateMode AI",
-    "description": "Confidential AI inference — prompts are hardware-encrypted in transit and at rest. Free: 5M tokens on signup, then 1M prompt + 1M completion tokens/month.",
+    "description": "Confidential AI inference \u2014 prompts are hardware-encrypted in transit and at rest. Free: 5M tokens on signup, then 1M prompt + 1M completion tokens/month.",
     "signup_url": "https://portal.privatemode.ai/api-keys",
     "free_tier": true,
     "color": "#9333EA"
@@ -29,7 +29,9 @@
     "description": "Hosted open models (Llama, Kimi, DeepSeek, Qwen) on NVIDIA NIM. Free credits for new accounts; ~40 requests/min.",
     "signup_url": "https://build.nvidia.com/settings/api-keys",
     "free_tier": true,
-    "color": "#76B900"
+    "color": "#76B900",
+    "validate": "chat_probe",
+    "probe_model": "nvidia/mistral-nemo-minitron-8b-8k-instruct"
   },
   "openrouter": {
     "env_var": "OPENROUTER_API_KEY",

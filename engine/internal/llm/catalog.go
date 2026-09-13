@@ -214,14 +214,18 @@ func setAuthHeaders(req *http.Request, cfg ProviderConfig, apiKey string) {
 // fetchProviderModels calls the provider's /v1/models endpoint.
 func fetchProviderModels(name string, cfg ProviderConfig, apiKey, accountID string) ([]ModelInfo, error) {
         url := resolveBaseURL(cfg, accountID) + "/models"
-        client := &http.Client{Timeout: 10 * time.Second}
         req, err := http.NewRequest("GET", url, nil)
         if err != nil {
                 return nil, err
         }
+        // v0.13: browser-ish UA — several provider CDNs (Cloudflare-fronted)
+        // challenge or block the default Go UA, which made valid keys look
+        // "unverified" in v0.12.
+        req.Header.Set("User-Agent", browserUA)
+        req.Header.Set("Accept", "application/json")
         setAuthHeaders(req, cfg, apiKey)
 
-        resp, err := client.Do(req)
+        resp, err := providerHTTP.Do(req)
         if err != nil {
                 return nil, fmt.Errorf("fetch: %w", err)
         }
@@ -231,6 +235,13 @@ func fetchProviderModels(name string, cfg ProviderConfig, apiKey, accountID stri
                 return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
         }
 
+        body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+        if err != nil {
+                return nil, fmt.Errorf("read: %w", err)
+        }
+
+        var models []ModelInfo
+        // Shape 1+2: {"data":[...]} / {"models":[...]}
         var data struct {
                 Data []struct {
                         ID   string `json:"id"`
@@ -241,40 +252,55 @@ func fetchProviderModels(name string, cfg ProviderConfig, apiKey, accountID stri
                         Name string `json:"name"`
                 } `json:"models"`
         }
-        if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-                return nil, fmt.Errorf("decode: %w", err)
+        if err := json.Unmarshal(body, &data); err == nil {
+                for _, m := range data.Data {
+                        models = append(models, modelInfoFrom(name, m.ID, m.Name))
+                }
+                for _, m := range data.Models {
+                        models = append(models, modelInfoFrom(name, m.ID, m.Name))
+                }
         }
+        // Shape 3: bare top-level array [{"id":...},...] (GitHub-style).
+        if len(models) == 0 {
+                var bare []struct {
+                        ID   string `json:"id"`
+                        Name string `json:"name"`
+                }
+                if err := json.Unmarshal(body, &bare); err == nil {
+                        for _, m := range bare {
+                                models = append(models, modelInfoFrom(name, m.ID, m.Name))
+                        }
+                }
+        }
+        if len(models) == 0 {
+                return nil, fmt.Errorf("no models parsed from response")
+        }
+        // Drop empty entries (ids that parsed to "").
+        filtered := models[:0]
+        for _, m := range models {
+                if m.ID != "" {
+                        filtered = append(filtered, m)
+                }
+        }
+        if len(filtered) == 0 {
+                return nil, fmt.Errorf("no models parsed from response")
+        }
+        return filtered, nil
+}
 
-        var models []ModelInfo
-        for _, m := range data.Data {
-                id := m.ID
-                if id == "" {
-                        id = m.Name
-                }
-                if id == "" {
-                        continue
-                }
-                models = append(models, ModelInfo{
-                        ID:       fmt.Sprintf("%s/%s", name, id),
-                        Provider: name,
-                        Label:    id,
-                })
+func modelInfoFrom(provider, id, name string) ModelInfo {
+        realID := id
+        if realID == "" {
+                realID = name
         }
-        for _, m := range data.Models {
-                id := m.ID
-                if id == "" {
-                        id = m.Name
-                }
-                if id == "" {
-                        continue
-                }
-                models = append(models, ModelInfo{
-                        ID:       fmt.Sprintf("%s/%s", name, id),
-                        Provider: name,
-                        Label:    id,
-                })
+        if realID == "" {
+                return ModelInfo{}
         }
-        return models, nil
+        return ModelInfo{
+                ID:       fmt.Sprintf("%s/%s", provider, realID),
+                Provider: provider,
+                Label:    realID,
+        }
 }
 
 // ValidateResult is the outcome of a key check.
@@ -322,6 +348,8 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 if err != nil {
                         return ValidateResult{State: "unverified", Reason: err.Error()}
                 }
+                req.Header.Set("User-Agent", browserUA)
+                req.Header.Set("Accept", "application/json")
                 setAuthHeaders(req, cfg, apiKey)
                 resp, err := client.Do(req)
                 if err != nil {
@@ -353,6 +381,7 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                         return ValidateResult{State: "unverified", Reason: err.Error()}
                 }
                 req.Header.Set("Content-Type", "application/json")
+                req.Header.Set("User-Agent", browserUA)
                 setAuthHeaders(req, cfg, apiKey)
                 resp, err := client.Do(req)
                 if err != nil {
@@ -383,8 +412,68 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 if strings.Contains(errStr, "HTTP 401") || strings.Contains(errStr, "HTTP 403") {
                         return ValidateResult{State: "invalid", Reason: errStr}
                 }
+                // v0.13: 429 means auth PASSED — the provider knows the key
+                // and is rate limiting. Never show a working key as broken.
+                if strings.Contains(errStr, "HTTP 429") {
+                        return ValidateResult{State: "valid", Valid: true, Reason: "rate-limited (auth passed)"}
+                }
+                // v0.13 MULTI-STRATEGY FALLBACK: the models endpoint glitched
+                // (timeout, shape change, transient 5xx) — before declaring
+                // "unverified", run a chat probe. Auth errors = invalid;
+                // anything else = the key is fine. This kills the v0.12
+                // yellow-"unverified" dead-end that also blocked auto-pick.
+                if probeCfg, ok := probeModelFor(providerName, models); ok {
+                        if probe, ok := chatProbe(providerName, cfg, apiKey, accountID, probeCfg); ok {
+                                return probe
+                        }
+                }
                 return ValidateResult{State: "unverified", Reason: errStr}
         }
+}
+
+// probeModelFor picks a model for the chat-probe fallback: the provider's
+// configured probe_model, else the first synced model, else a live fetch.
+func probeModelFor(provider string, models []ModelInfo) (string, bool) {
+        catalog, err := LoadCatalog()
+        if err != nil {
+                return "", false
+        }
+        if cfg, ok := catalog[provider]; ok && cfg.ProbeModel != "" {
+                return cfg.ProbeModel, true
+        }
+        if len(models) > 0 {
+                return models[0].Label, true
+        }
+        // No cached models — try a keyless public sync for the probe id.
+        if cfg, ok := catalog[provider]; ok {
+            if fetched, err := fetchProviderModels(provider, cfg, "", ""); err == nil && len(fetched) > 0 {
+                return fetched[0].Label, true
+            }
+        }
+        return "", false
+}
+
+// chatProbe POSTs a 1-token completion. Auth checked before quota/model
+// errors, so: 401/403 = invalid key; anything else = auth passed (valid).
+func chatProbe(provider string, cfg ProviderConfig, apiKey, accountID, probeModel string) (ValidateResult, bool) {
+        payload := map[string]any{
+                "model":      probeModel,
+                "messages":   []map[string]string{{"role": "user", "content": "hi"}},
+                "max_tokens": 1,
+        }
+        status, body, err := httpPostJSON(resolveBaseURL(cfg, accountID)+"/chat/completions", apiKey, payload, nil)
+        if err != nil {
+                return ValidateResult{}, false // network down — can't judge
+        }
+        bodyStr := strings.TrimSpace(string(body))
+        if status == 200 {
+                return ValidateResult{State: "valid", Valid: true}, true
+        }
+        if status == 401 || status == 403 {
+                return ValidateResult{State: "invalid", Reason: fmt.Sprintf("HTTP %d: %s", status, bodyStr)}, true
+        }
+        // Quota / model / billing errors all mean auth PASSED.
+        return ValidateResult{State: "valid", Valid: true, Reason: "chat probe: auth passed (" + bodyStr + ")"}, true
 }
 
 // ResolveModel resolves a user-facing model id (e.g. "openrouter/auto")

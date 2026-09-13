@@ -216,6 +216,7 @@
     setFamily,
     getFamily: () => currentFamily,
     getConfig: () => config,
+    scheduleSave,
     resetView: function () {
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();

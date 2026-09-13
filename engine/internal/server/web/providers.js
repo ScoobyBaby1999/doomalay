@@ -47,10 +47,44 @@
       catalogModels = (results[0] && results[0].models) || [];
       keys = results[1] || {};
       render();
+      // v0.13: returning users — quietly re-validate saved keys so the
+      // Active badges are fresh (stale validations from a past session
+      // no longer linger as yellow "unverified").
+      backgroundRevalidate();
     }).catch(function (e) {
       console.error('providers fetch failed', e);
       render();
     });
+
+    // Re-validate every saved key (once per open, best-effort, staggered
+    // so we don't hammer providers that rate-limit validation calls).
+    var revalidated = false;
+    function backgroundRevalidate() {
+      if (revalidated) return;
+      revalidated = true;
+      var envVars = [];
+      for (var env in keys) {
+        if (keys[env] && keys[env].has_key && !env.endsWith('_EXTRA')) envVars.push(env);
+      }
+      var i = 0;
+      function next() {
+        if (i >= envVars.length) return;
+        var env = envVars[i++];
+        // find provider name for the badge
+        var pname = (keys[env] && keys[env].provider) || '';
+        fetch('/api/keys/validate?env_var=' + encodeURIComponent(env))
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.state) {
+              validation[pname] = { state: d.state, model_count: d.model_count, reason: d.reason };
+              render();
+            }
+          })
+          .catch(function () {})
+          .then(function () { setTimeout(next, 400); });
+      }
+      setTimeout(next, 300);
+    }
 
     function render() {
       var html =
@@ -163,14 +197,22 @@
         ? '<button data-use="' + name + '" style="margin-top:8px;width:100%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.4);color:#34d399;padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Use ' + provModels.length + ' models →</button>'
         : '';
 
-      return '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;padding:14px">' +
+      // v0.13 MODULAR ACTIVE INDICATOR: the card gets the shared dd-active
+      // ring (tinted with the provider's own color) + a green check-dot
+      // next to the name. One mechanism (uiactive.js), used everywhere.
+      var activeClass = isActive ? ' dd-active' : '';
+      var activeStyle = isActive ? ' --dd-accent:' + (cfg.color || '#34d399') + ';' : '';
+      var activeDot = isActive ? window.UIActive.dotHTML() : '';
+
+      return '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
         '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || '#4a4a5e') + ';display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
         '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
         '<span style="font-size:14px;font-weight:600;color:#e0e0e8">' + (cfg.label || name) + '</span>' +
+        activeDot +
         (cfg.free_tier ? '<span style="font-size:10px;color:#34d399;background:rgba(52,211,153,0.15);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size:10px;color:' + GOLD + ';background:rgba(232,180,74,0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
-        (isActive ? '<span style="font-size:10px;color:#71717a;background:rgba(113,113,122,0.15);padding:2px 6px;border-radius:4px">Active</span>' : '') +
+        (isActive ? '<span style="font-size:10px;color:#34d399;background:rgba(52,211,153,0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(52,211,153,0.3)">Active</span>' : '') +
         valHTML +
         '</div>' +
         '<p style="font-size:11px;color:#71717a;margin:2px 0 0;line-height:1.4">' + (cfg.description || '') + '</p>' +
@@ -178,7 +220,7 @@
         '</div>' +
         // Key input (disabled once a key is saved — paste new to replace)
         '<div style="display:flex;gap:6px">' +
-        '<input type="password" ' + (isActive ? 'disabled ' : '') + 'placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:#0a0a0e;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
+        '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:#0a0a0e;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
         '<button data-save="' + name + '" style="background:#4a4a5e;border:none;color:#e0e0e8;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
         '</div>' +
         (needAccount
@@ -365,8 +407,14 @@
         providers = (results[1] && results[1].providers) || providers;
         catalogModels = (results[1] && results[1].models) || catalogModels;
         render();
-        // If valid + onPick provided, call it with the first model
-        if (validation[name] && validation[name].state === 'valid' && onPick) {
+        // v0.13 FIX: auto-pick whenever the key is NOT explicitly invalid
+        // and the provider has models — "unverified" (engine couldn't reach
+        // the validator, or the provider's models endpoint glitched) must
+        // NOT dead-end the workflow anymore. v0.12 required state === 'valid',
+        // which is why "+ model doesn't update / chatbot doesn't appear".
+        var v = validation[name];
+        var notInvalid = !v || v.state !== 'invalid';
+        if (notInvalid && onPick) {
           var models = (results[1] && results[1].models) || [];
           var firstModel = null;
           for (var i = 0; i < models.length; i++) {
@@ -375,10 +423,27 @@
           if (firstModel) {
             window.ConnectOverlay.close();
             onPick(name, firstModel.id);
-          } else if (validation[name].model_count === 0 && (validation[name].reason || '').length > 0) {
-            // Provider verified the key but sync returned no models —
-            // still proceed with a chat-usable default if onPick exists.
-            // (Some providers gate /models behind extra scopes.)
+          } else {
+            // Key saved but 0 models synced — force a refresh and retry once.
+            fetch('/api/models?refresh=1').then(function (r) { return r.json(); }).then(function (d2) {
+              var retry = (d2 && d2.models) || [];
+              var m2 = null;
+              for (var j = 0; j < retry.length; j++) {
+                if (retry[j].provider === name) { m2 = retry[j]; break; }
+              }
+              if (m2) {
+                window.ConnectOverlay.close();
+                onPick(name, m2.id);
+              } else {
+                // Models endpoint down but key accepted — pick the chat-probe
+                // model from the catalog config as a usable default.
+                var cfg2 = (d2 && d2.providers && d2.providers[name]) || null;
+                if (cfg2 && cfg2.probe_model) {
+                  window.ConnectOverlay.close();
+                  onPick(name, name + '/' + cfg2.probe_model);
+                }
+              }
+            }).catch(function () {});
           }
         }
       }).catch(function (e) {

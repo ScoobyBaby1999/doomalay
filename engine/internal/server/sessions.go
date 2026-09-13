@@ -31,6 +31,7 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 Title         string `json:"title"`
                 Model         string `json:"model"`
                 Provider      string `json:"provider"`
+                Sandbox       string `json:"sandbox"`
                 Effort        string `json:"effort"`
                 Mode          string `json:"mode"`
                 WebSearch     bool   `json:"web_search"`
@@ -79,6 +80,7 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 Title:         req.Title,
                 Model:         req.Model,
                 Provider:      req.Provider,
+                Sandbox:       req.Sandbox,
                 Effort:        req.Effort,
                 Mode:          req.Mode,
                 WebSearch:     req.WebSearch,
@@ -150,6 +152,9 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
         }
         if v, ok := req["provider"].(string); ok {
                 sess.Provider = v
+        }
+        if v, ok := req["sandbox"].(string); ok {
+                sess.Sandbox = v
         }
         if v, ok := req["effort"].(string); ok {
                 sess.Effort = v

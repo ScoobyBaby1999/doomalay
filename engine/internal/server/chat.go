@@ -166,11 +166,11 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         }
         defer release()
 
-        // Persist the user's message immediately (V0 FIX: backend writes events).
+        // Persist the user's message immediately (V0 FIX: backend writes
+        // events). s.emit persists AND forwards — no separate AppendEvent
+        // (v0.13 fix: the direct AppendEvent + emit double-persisted every
+        // user message, doubling them in reconstructed history).
         userText, _ := msg["message"].(string)
-        if _, err := s.db.AppendEvent(sessionID, "user", userText, ""); err != nil {
-                log.Printf("persist user msg: %v", err)
-        }
         s.emit(conn, sessionID, "user", userText, "")
 
         // Build the brain request.
@@ -187,6 +187,26 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         }
         if v, ok := msg["model"].(string); ok && v != "" {
                 brainReq["model"] = v // allow per-message override
+        }
+        // v0.13: per-message capability overrides (the chat toolbar) —
+        // message flags win over the session defaults.
+        if v, ok := msg["effort"].(string); ok && v != "" {
+                brainReq["effort"] = v
+                sess.Effort = v
+        }
+        if v, ok := msg["web_search"].(bool); ok {
+                brainReq["web_search"] = v
+                sess.WebSearch = v
+        }
+        if v, ok := msg["deep_research"].(bool); ok {
+                brainReq["deep_research"] = v
+                sess.DeepResearch = v
+        }
+        // Persist capability changes so the next turn / reload keeps them.
+        if _, ok := msg["effort"]; ok {
+                if err := s.db.UpdateSession(sess); err != nil {
+                        log.Printf("persist session caps: %v", err)
+                }
         }
 
         // Stream from the brain, OR the direct LLM proxy if brain is down.
@@ -213,6 +233,10 @@ func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sess
 // needed). Used when the brain is unavailable (e.g. the Android APK). Cloud
 // chat only — no local tools, no panel, no templates. But the streaming,
 // persistence, and V0 fixes are identical.
+//
+// v0.13: builds conversation HISTORY from the event log (multi-turn now
+// works on the APK), and forwards capabilities (effort / web_search /
+// deep_research) into the llm.Chat pipeline.
 func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string) {
         if s.vault == nil {
                 s.emit(conn, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
@@ -235,18 +259,29 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                 return
         }
 
+        // v0.13: conversation history — walk the event log, fold consecutive
+        // assistant_delta fragments into single assistant messages, keep
+        // the last ~40 turns (sliding window, same default as the brain).
+        history := s.buildHistory(sessionID, 40)
+        history = append(history, llm.Message{Role: "user", Content: userText})
+
         req := llm.ChatRequest{
-                Model:     llmModel,
-                Messages:  []llm.Message{{Role: "user", Content: userText}},
-                Effort:    sess.Effort,
-                APIKey:    apiKey,
-                BaseURL:   baseURL,
-                AuthStyle: authStyle,
+                Model:        llmModel,
+                Provider:     provider,
+                Messages:     history,
+                Effort:       sess.Effort,
+                WebSearch:    sess.WebSearch, // quick chat capability (not bash/app-building)
+                DeepResearch: sess.DeepResearch,
+                TavilyKey:    keys["TAVILY_API_KEY"],
+                APIKey:       apiKey,
+                BaseURL:      baseURL,
+                AuthStyle:    authStyle,
         }
         chunks, errs := llm.Chat(ctx, req)
 
         // Convert ChatChunk → map[string]any (the format forwardEvents expects).
         events := make(chan map[string]any, 64)
+        var assistantText strings.Builder
         go func() {
                 defer close(events)
                 for chunk := range chunks {
@@ -271,6 +306,22 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                                 ev["error"] = chunk.Error
                                 ev["message"] = chunk.Message
                         }
+                        if chunk.Name != "" {
+                                ev["name"] = chunk.Name
+                                ev["summary"] = chunk.Summary
+                        }
+                        if chunk.Sources != nil {
+                                srcs := make([]map[string]any, 0, len(chunk.Sources))
+                                for _, sr := range chunk.Sources {
+                                        srcs = append(srcs, map[string]any{
+                                                "title": sr.Title, "url": sr.URL, "snippet": sr.Snippet,
+                                        })
+                                }
+                                ev["sources"] = srcs
+                        }
+                        if chunk.Type == "assistant_delta" && chunk.Text != "" {
+                                assistantText.WriteString(chunk.Text)
+                        }
                         events <- ev
                 }
                 select {
@@ -280,12 +331,50 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                         }
                 default:
                 }
+                // v0.13: persist the full assistant reply as ONE event so
+                // history reconstruction on later turns is exact.
+                if assistantText.Len() > 0 {
+                        events <- map[string]any{"type": "assistant", "text": assistantText.String()}
+                }
         }()
 
         // errs channel is consumed above; create a dummy one for forwardEvents.
         dummyErrs := make(chan error, 1)
         close(dummyErrs)
         s.forwardEvents(ctx, conn, sessionID, sess, userText, events, dummyErrs)
+}
+
+// buildHistory reconstructs the conversation from the event log: "user" and
+// "assistant" events in seq order (assistant events carry the full reply —
+// v0.13 emits one at turn end). Falls back to folding consecutive
+// assistant_delta fragments for sessions created before v0.13. Windowed to
+// the last N messages.
+func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
+        events, err := s.db.ListEvents(sessionID, 0)
+        if err != nil {
+                return nil
+        }
+        var msgs []llm.Message
+        for _, ev := range events {
+                switch ev.EventType {
+                case "user":
+                        msgs = append(msgs, llm.Message{Role: "user", Content: ev.Content})
+                case "assistant":
+                        msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content})
+                case "assistant_delta":
+                        // Pre-v0.13 sessions: fold consecutive deltas into one message.
+                        last := len(msgs) - 1
+                        if last >= 0 && msgs[last].Role == "assistant" && !msgs[last].FoldedDone {
+                                msgs[last].Content += ev.Content
+                        } else {
+                                msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
+                        }
+                }
+        }
+        if len(msgs) > window {
+                msgs = msgs[len(msgs)-window:]
+        }
+        return msgs
 }
 
 // forwardEvents is the shared event-handling loop for both brain and direct
@@ -298,10 +387,23 @@ func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessio
                 // Extract text/content for persistence.
                 var content string
                 switch evType {
-                case "thinking", "assistant_delta", "tool_result", "title", "error":
+                case "thinking", "assistant_delta", "assistant", "tool_result", "title":
                         if t, ok := ev["text"].(string); ok {
                                 content = t
                         }
+                case "error":
+                        // v0.13: error events carry "message" (human text) +
+                        // "error" (code) — persist the human-readable one.
+                        if t, ok := ev["message"].(string); ok {
+                                content = t
+                        } else if t, ok := ev["text"].(string); ok {
+                                content = t
+                        } else if t, ok := ev["error"].(string); ok {
+                                content = t
+                        }
+                case "sources":
+                        b, _ := json.Marshal(ev["sources"])
+                        content = string(b)
                 case "tool_use":
                         name, _ := ev["name"].(string)
                         summary, _ := ev["summary"].(string)

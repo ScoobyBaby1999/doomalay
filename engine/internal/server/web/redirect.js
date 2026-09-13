@@ -1,18 +1,21 @@
 // redirect.js — the in-app redirect browser screen.
 //
-// Opens when the user taps "Get API key →" on a provider card. Instead of
-// yanking the user out of the app, we slide up a full-screen panel that:
-//   - shows the provider's sign-in / API-key page in an iframe (best effort —
-//     some sites block embedding with X-Frame-Options)
-//   - has a VERY NARROW header: [✕] ... domain ... [↗]
-//       ✕  = slides the panel back DOWN, returning to whatever screen the
-//             user was on before (the providers overlay stays mounted
-//             underneath, so closing reveals it exactly as it was)
-//       ↗  = opens the link in the REAL browser (Chrome), taking the user
-//             out of the app completely. On Android the WebView routes
-//             external URLs to Chrome via shouldOverrideUrlLoading.
-//   - if the page hasn't confirmed a load after a few seconds, shows a slim
-//     "not loading?" strip (most provider portals block embedding).
+// Opens when the user taps "Get API key →" on a provider card.
+//
+// v0.13 PROBE-FIRST flow (fixes the three redirect regressions):
+//   1. Ask the ENGINE to probe the URL first (GET /api/probe-embed):
+//      it walks the redirect chain, reads X-Frame-Options / CSP
+//      frame-ancestors, and detects SSO/identity-provider moves.
+//   2. EMBEDDABLE → slide up the panel with the iframe (the nice UX).
+//   3. BLOCKED (NVIDIA / PrivateMode portals, opencode's OAuth) → don't
+//      even try the iframe (that's what rendered "net::ERR_BLOCKED_BY_
+//      RESPONSE" / Google's 403 in v0.12). Instead show a clean portal
+//      card explaining why + a big "Open in browser ↗" button that
+//      launches Chrome (MainActivity routes external URLs). The key-paste
+//      screen is still underneath — come back and paste.
+//
+// Header (42px): [✕ | domain | ↗] — ✕ slides down (the screen underneath
+// stays mounted), ↗ always opens the real browser.
 //
 // Exposes: window.RedirectPanel = { open, close, isOpen }
 (function () {
@@ -85,7 +88,7 @@
     header.appendChild(extBtn);
     panelEl.appendChild(header);
 
-    // ── The iframe (best-effort embed of the provider's page) ───
+    // ── The iframe (embeddable pages) ──────────────────────────
     iframeEl = document.createElement('iframe');
     iframeEl.id = 'redirect-iframe';
     iframeEl.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
@@ -93,7 +96,7 @@
       'flex:1;width:100%;border:none;background:#0e0e12;';
     panelEl.appendChild(iframeEl);
 
-    // ── The "not loading?" strip (most portals block embedding) ─
+    // ── The "not loading?" strip ────────────────────────────────
     hintEl = document.createElement('div');
     hintEl.style.cssText =
       'flex-shrink:0;display:none;align-items:center;gap:8px;' +
@@ -105,36 +108,105 @@
     hintEl.addEventListener('click', function () { openExternal(); });
     panelEl.appendChild(hintEl);
 
+    // ── The blocked-portal card (replaces the iframe) ───────────
+    var blockedEl = document.createElement('div');
+    blockedEl.id = 'redirect-blocked';
+    blockedEl.style.cssText =
+      'flex:1;display:none;flex-direction:column;align-items:center;' +
+      'justify-content:center;padding:32px 24px;overflow-y:auto;';
+    panelEl.appendChild(blockedEl);
+
     document.body.appendChild(panelEl);
   }
 
-  // Open the redirect screen for a URL. Slides up over everything
-  // (z-index 4000 > the connect overlay's 3000), so whatever the user
-  // was looking at stays mounted underneath — closing slides back down
-  // and reveals it untouched.
+  // Open the redirect screen for a URL. PROBE FIRST (v0.13):
+  // the engine checks embeddability before we build an iframe.
   function open(url, opts) {
     if (!url) return;
     opts = opts || {};
     ensureElements();
     closing = false;
     currentURL = url;
-    try {
-      domainEl.textContent = new URL(url).hostname;
-    } catch (e) {
-      domainEl.textContent = url;
-    }
-    hintEl.style.display = 'none';
-    iframeEl.src = url;
+    var host = url;
+    try { host = new URL(url).hostname; } catch (e) {}
+    domainEl.textContent = host;
 
-    // Show the hint strip after a grace period — the iframe fires "load"
-    // even when a site is X-Frame-Options blocked (it loads an error
-    // page), so we can't reliably detect failure. Instead, give the user
-    // the escape hatch after a few seconds.
+    slideUp();
+
+    // While probing: subtle loading shimmer in the iframe area.
+    iframeEl.style.display = '';
+    blockedEl().style.display = 'none';
+    hintEl.style.display = 'none';
+    iframeEl.src = 'about:blank';
+
+    fetch('/api/probe-embed?url=' + encodeURIComponent(url))
+      .then(function (r) { return r.json(); })
+      .then(function (verdict) {
+        if (!isOpen() || currentURL !== url) return; // closed / navigated meanwhile
+        if (verdict && verdict.embeddable) {
+          iframeEl.src = url;
+          armHintTimer();
+        } else {
+          showBlockedCard(host, (verdict && verdict.reason) || 'this site blocks embedding');
+        }
+      })
+      .catch(function () {
+        // Engine unreachable → best-effort iframe (old behavior).
+        if (isOpen() && currentURL === url) {
+          iframeEl.src = url;
+          armHintTimer();
+        }
+      });
+  }
+
+  function armHintTimer() {
     if (hintTimer) clearTimeout(hintTimer);
+    // Even an "embeddable" verdict can be wrong (JS-driven logins) — keep
+    // the escape hatch armed, but shorter since the probe already passed.
     hintTimer = setTimeout(function () {
       if (isOpen()) hintEl.style.display = 'flex';
-    }, 5000);
+    }, 4000);
+  }
 
+  function blockedEl() { return panelEl.querySelector('#redirect-blocked'); }
+
+  // The clean "can't open inside the app" card.
+  function showBlockedCard(host, reason) {
+    iframeEl.style.display = 'none';
+    iframeEl.src = 'about:blank';
+    if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+    hintEl.style.display = 'none';
+
+    var el = blockedEl();
+    el.innerHTML =
+      '<div style="width:64px;height:64px;border-radius:18px;background:#14141a;border:1px solid #2a2a35;display:flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:20px">🔒</div>' +
+      '<h3 style="font-size:17px;font-weight:600;color:#e0e0e8;margin:0 0 8px;text-align:center">' + escHTML(host) + '</h3>' +
+      '<p style="font-size:13px;color:#71717a;margin:0 0 6px;text-align:center;max-width:340px;line-height:1.5">' +
+        'This portal opens outside the app.' +
+      '</p>' +
+      '<p style="font-size:11px;color:#4a4a5e;margin:0 0 28px;text-align:center;max-width:340px;line-height:1.5">' +
+        escHTML(reason) +
+      '</p>' +
+      '<button id="redirect-open-ext" style="background:#E8B44A;border:none;color:#0a0a0b;padding:14px 28px;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;box-shadow:0 4px 16px rgba(232,180,74,0.25);display:flex;align-items:center;gap:8px">' +
+        'Open in browser <span style="font-size:16px">↗</span>' +
+      '</button>' +
+      '<p style="font-size:11px;color:#4a4a5e;margin:20px 0 0;text-align:center;max-width:320px;line-height:1.5">Create or copy your API key in the browser, come back to the app, and paste it below.</p>';
+    el.style.display = 'flex';
+
+    var btn = el.querySelector('#redirect-open-ext');
+    if (btn) btn.addEventListener('click', function () {
+      openExternal();
+      // Slide down AFTER launching Chrome so the key-paste screen is
+      // waiting when the user returns to the app.
+      setTimeout(function () { close(); }, 350);
+    });
+  }
+
+  function escHTML(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function slideUp() {
     panelEl.style.transition = 'transform 0.34s ' + EASE;
     panelEl.style.visibility = 'visible';
     // Force reflow so the slide-up transition fires.
@@ -142,30 +214,28 @@
     panelEl.style.transform = 'translateY(0)';
   }
 
-  // Slide the panel back DOWN and return to the app — the screen the user
-  // was on before the redirect is still mounted underneath.
+  // Slide the panel back DOWN and return to the app.
   function close() {
     if (!panelEl || panelEl.style.visibility === 'hidden' || closing) return;
     closing = true;
     if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
-    // Stop the panel from eating taps while it slides down (same fix as
-    // connectoverlay's close — the 310ms slide-out still covered the app).
+    // Stop the panel from eating taps while it slides down.
     panelEl.style.pointerEvents = 'none';
     panelEl.style.transition = 'transform 0.30s ' + EASE;
     panelEl.style.transform = 'translateY(100%)';
     setTimeout(function () {
       panelEl.style.visibility = 'hidden';
       panelEl.style.pointerEvents = '';
-      // Drop the iframe content (stops any in-flight loads / audio).
+      iframeEl.style.display = '';
       iframeEl.src = 'about:blank';
+      blockedEl().style.display = 'none';
       hintEl.style.display = 'none';
       closing = false;
     }, 310);
   }
 
-  // Open the current URL in the real browser — out of the app completely.
-  // On Android, MainActivity's shouldOverrideUrlLoading routes external
-  // URLs to Chrome. Desktop dev: a new tab.
+  // Open the current URL in the real browser. On Android, MainActivity's
+  // shouldOverrideUrlLoading routes external URLs to Chrome.
   function openExternal() {
     if (!currentURL) return;
     var a = document.createElement('a');

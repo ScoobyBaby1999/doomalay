@@ -1,8 +1,11 @@
 // modelpicker.js — the "+ Model" picker.
 //
-// Opens as a blur-background overlay with 2 options:
-//   1. Connect Cloud Provider → opens the providers screen (ported from HF)
-//   2. Use Local Model        → opens the local model screen (Ollama detection)
+// Opens as a blur-background overlay with 3 options:
+//   1. Browse All Models  → the v0.13 dynamic model browser (ported from
+//      the HF space: provider view + model view, search, filters, sort —
+//      every model from every provider you can see, live-synced)
+//   2. Connect Cloud Provider → the providers screen (key paste flow)
+//   3. Use Local Model        → the local model screen (Ollama detection)
 //
 // When the user picks an option, the overlay content is REPLACED smoothly
 // (fade out → swap → fade in) instead of closing + reopening — no snappy jump.
@@ -25,12 +28,15 @@
       '</div>' +
       '<p style="font-size:13px;color:#71717a;margin:0 0 20px">Pick how this chat will run AI. Cloud needs an API key; local runs on your device.</p>' +
       '<div style="display:flex;flex-direction:column;gap:12px">' +
+        optionCard('browse', '✨', 'Browse All Models',
+          'Every model from every provider — live-synced, searchable, filterable by capability. Providers you have keys for are one tap away.',
+          'dynamic', false, 'browse') +
         optionCard('cloud', '☁️', 'Connect Cloud Provider',
           'Use a cloud LLM (OpenRouter, NVIDIA, Anthropic, etc.). Requires an API key. Free tiers available.',
-          'recommended') +
+          'recommended', false, 'cloud') +
         optionCard('local', '🖥️', 'Use Local Model',
           'Run a model on your device (Ollama). Private, offline, no API key. We recommend one based on your specs.',
-          'private') +
+          'private', false, 'local') +
       '</div>' +
       '</div>';
 
@@ -43,9 +49,12 @@
     contentEl.querySelectorAll('[data-model-type]').forEach(function (card) {
       card.addEventListener('click', function () {
         var type = card.dataset.modelType;
-        // Don't close the overlay — replace its content smoothly with the
-        // providers or local-models screen.
-        if (type === 'cloud') {
+        // Don't close the overlay — replace its content smoothly.
+        if (type === 'browse') {
+          if (window.ModelBrowser) {
+            window.ModelBrowser.open(onPick, { useReplaceContent: true });
+          }
+        } else if (type === 'cloud') {
           window.ProvidersScreen.open(onPick, { useReplaceContent: true });
         } else {
           window.LocalModelsScreen.open(onPick, { useReplaceContent: true });
@@ -54,16 +63,19 @@
     });
   }
 
-  function optionCard(type, icon, title, desc, badge) {
+  function optionCard(type, icon, title, desc, badge, disabled, dataId) {
+    var opacity = disabled ? 'opacity:0.5;pointer-events:none' : 'cursor:pointer';
+    var badgeHTML = badge ? '<span style="font-size:11px;color:#71717a;background:#4a4a5e;padding:3px 8px;border-radius:6px">' + badge + '</span>' : '';
     return '<div data-model-type="' + type + '"' +
-      ' style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;padding:16px;cursor:pointer;transition:border-color 0.15s"' +
+      ' style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;padding:16px;' +
+      opacity + ';transition:border-color 0.15s"' +
       ' onmouseover="this.style.borderColor=\'#3a3a45\'"' +
       ' onmouseout="this.style.borderColor=\'#1a1a22\'"' +
       '>' +
       '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
       '<span style="font-size:24px">' + icon + '</span>' +
       '<span style="font-size:15px;font-weight:600;color:#e0e0e8;flex:1">' + title + '</span>' +
-      '<span style="font-size:11px;color:#71717a;background:#4a4a5e;padding:3px 8px;border-radius:6px">' + badge + '</span>' +
+      badgeHTML +
       '</div>' +
       '<p style="font-size:12px;color:#71717a;margin:0;line-height:1.5">' + desc + '</p>' +
       '</div>';

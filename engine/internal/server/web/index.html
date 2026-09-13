@@ -94,6 +94,25 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* v0.13 — sandbox corner badge on the canvas chatbot icon */
+  .chatbot .sandbox-badge {
+    position: absolute;
+    right: -2px;
+    top: 34px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #0e0e12;
+    border: 1.5px solid #34d399;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 2;
+  }
 
   /* ── Long-press dropdown menu ──────────────────────────────── */
   #menu {
@@ -388,6 +407,7 @@
   }
 
   /* Streaming cursor blink animation */
+  @keyframes mb-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
   @keyframes blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }
@@ -429,11 +449,13 @@
 <script src="settings.js"></script>
 <script src="appearance.js"></script>
 <script src="connectoverlay.js"></script>
+<script src="uiactive.js"></script>
 <script src="redirect.js"></script>
 <script src="sandboxpicker.js"></script>
 <script src="modelpicker.js"></script>
 <script src="providers.js"></script>
 <script src="localmodels.js"></script>
+<script src="modelbrowser.js"></script>
 <script src="chatclient.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>

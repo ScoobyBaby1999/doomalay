@@ -58,6 +58,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/keys", s.handleKeysSet)
         s.mux.HandleFunc("DELETE /api/keys/{envVar}", s.handleKeysDelete)
         s.mux.HandleFunc("GET /api/keys/validate", s.handleKeysValidate)
+        s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
         s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
         s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
 

@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   title           TEXT NOT NULL DEFAULT 'New Chat',
   model           TEXT,
   provider        TEXT,
+  sandbox         TEXT,
   effort          TEXT DEFAULT 'med',
   mode            TEXT DEFAULT 'auto',
   web_search      INTEGER DEFAULT 0,
@@ -131,5 +132,44 @@ CREATE TABLE IF NOT EXISTS chat_artifacts (
 CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_id);
 `
         _, err := db.Exec(schema)
+        if err != nil {
+                return err
+        }
+        // v0.13: sandbox column added for chat_sessions (older installs
+        // created the table without it). Idempotent column adds for any
+        // field introduced after first release.
+        migrations := []struct{ table, col, ddl string }{
+                {"chat_sessions", "sandbox", "ALTER TABLE chat_sessions ADD COLUMN sandbox TEXT"},
+        }
+        for _, m := range migrations {
+                if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
+                        return err
+                }
+        }
+        return nil
+}
+
+// ensureColumn adds a column to a table if it doesn't exist yet (SQLite has
+// no ADD COLUMN IF NOT EXISTS).
+func (db *DB) ensureColumn(table, col, ddl string) error {
+        rows, err := db.Query("PRAGMA table_info(" + table + ")")
+        if err != nil {
+                return err
+        }
+        defer rows.Close()
+        for rows.Next() {
+                var cid int
+                var name, ctype string
+                var notNull int
+                var dfltValue any
+                var pk int
+                if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+                        return err
+                }
+                if name == col {
+                        return nil // already exists
+                }
+        }
+        _, err = db.Exec(ddl)
         return err
 }
