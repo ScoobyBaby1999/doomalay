@@ -11,6 +11,8 @@ import android.os.IBinder
 
 class EngineService : Service() {
     private var engineProcess: Process? = null
+    @Volatile private var engineRunning = false
+    private var restarts = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -31,14 +33,19 @@ class EngineService : Service() {
         }
         AppLog.log("Foreground service started")
 
-        startEngine()
+        // v0.15: startEngine() is now guarded — calling onStartCommand twice
+        // (app reopen while the service lives) must not double-spawn the
+        // binary on port 8080 (the second instance would die and confuse
+        // the watchdog).
+        if (!engineRunning) startEngine()
         return START_STICKY
     }
 
     private fun startEngine() {
+        engineRunning = true
         Thread {
             try {
-                AppLog.log("=== Starting Go engine ===")
+                AppLog.log("=== Starting Go engine (attempt ${restarts + 1}) ===")
                 val binary = EngineBinary.getBinaryPath(this)
                 val f = java.io.File(binary)
                 AppLog.log("Binary: $binary exists=${f.exists()} size=${f.length()} exec=${f.canExecute()}")
@@ -67,12 +74,35 @@ class EngineService : Service() {
                 AppLog.log("Go engine exited (code=$exit)")
             } catch (e: Exception) {
                 AppLog.error("Go engine failed", e)
+            } finally {
+                engineRunning = false
+                engineProcess = null
+
+                // v0.15 — THE WATCHDOG: the v0.14 service logged the exit and
+                // gave up. If the engine ever crashed, every API call failed
+                // (model list stopped opening) and reopening the app landed
+                // on a dead white screen. Now the engine restarts itself:
+                //   - immediate for the first 5 restarts (fast recovery)
+                //   - 10s backoff afterwards (crash-loop protection)
+                //   - hard cap at 20 restarts per service lifetime
+                if (restarts < 20 && !serviceStopping) {
+                    val delay = if (restarts < 5) 500L else 10000L
+                    restarts++
+                    AppLog.log("Watchdog: restarting engine in ${delay}ms (restart #$restarts)")
+                    Thread.sleep(delay)
+                    if (!serviceStopping) startEngine()
+                } else {
+                    AppLog.error("Watchdog: restart limit reached — engine stays down")
+                }
             }
         }.start()
     }
 
+    private var serviceStopping = false
+
     override fun onDestroy() {
         AppLog.log("EngineService.onDestroy")
+        serviceStopping = true
         engineProcess?.destroy()
         super.onDestroy()
     }

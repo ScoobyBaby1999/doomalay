@@ -430,28 +430,23 @@
         // the validator, or the provider's models endpoint glitched) must
         // NOT dead-end the workflow anymore. v0.12 required state === 'valid',
         // which is why "+ model doesn't update / chatbot doesn't appear".
+        // v0.15: prefer a FREE model for the auto-pick — models[0] is
+        // alphabetical junk (claude-fable-5, 01-ai/yi-large) and often a
+        // PAID model, which 401s/free-tier-exhausts on fresh accounts.
         var v = validation[name];
         var notInvalid = !v || v.state !== 'invalid';
         if (notInvalid && onPick) {
-          var models = (results[1] && results[1].models) || [];
-          var firstModel = null;
-          for (var i = 0; i < models.length; i++) {
-            if (models[i].provider === name) { firstModel = models[i]; break; }
-          }
-          if (firstModel) {
+          var pick = pickAutoModel(results[1], name);
+          if (pick) {
             window.ConnectOverlay.close();
-            onPick(name, firstModel.id);
+            onPick(name, pick);
           } else {
             // Key saved but 0 models synced — force a refresh and retry once.
             fetch('/api/models?refresh=1').then(function (r) { return r.json(); }).then(function (d2) {
-              var retry = (d2 && d2.models) || [];
-              var m2 = null;
-              for (var j = 0; j < retry.length; j++) {
-                if (retry[j].provider === name) { m2 = retry[j]; break; }
-              }
-              if (m2) {
+              var pick2 = pickAutoModel(d2, name);
+              if (pick2) {
                 window.ConnectOverlay.close();
-                onPick(name, m2.id);
+                onPick(name, pick2);
               } else {
                 // Models endpoint down but key accepted — pick the chat-probe
                 // model from the catalog config as a usable default.
@@ -469,6 +464,47 @@
         validation[name] = { state: 'unverified', reason: e.message };
         render();
       });
+    }
+
+    // v0.15: best auto-pick model for a provider — a FREE one (works on any
+    // account), scored by family popularity so users land on a capable
+    // default (Kimi/DeepSeek/Qwen/Llama) instead of "01-ai/yi-large".
+    function pickAutoModel(catalog, name) {
+      if (!catalog) return null;
+      var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
+      var group = null;
+      var groups = catalog.groups || [];
+      for (var g = 0; g < groups.length; g++) {
+        if (groups[g].name === name) { group = groups[g]; break; }
+      }
+      var candidates = [];
+      if (group && group.models) {
+        for (var i = 0; i < group.models.length; i++) {
+          var m = group.models[i];
+          if (m.isFree) candidates.push(m);
+        }
+        if (!candidates.length) candidates = group.models.slice();
+      }
+      if (!candidates.length) {
+        // Fall back to the flat v0.12 list.
+        var flat = catalog.models || [];
+        for (var f = 0; f < flat.length; f++) {
+          if (flat[f].provider === name) return flat[f].id;
+        }
+        return null;
+      }
+      var best = null, bestScore = -1;
+      for (var c = 0; c < candidates.length; c++) {
+        var cm = candidates[c];
+        var rawId = String(cm.rawId || cm.id || '').toLowerCase();
+        var score = 0;
+        for (var p = 0; p < POPULAR.length; p++) {
+          if (rawId.indexOf(POPULAR[p]) >= 0) { score = POPULAR.length - p; break; }
+        }
+        if (cm.isFree) score += 100;
+        if (score > bestScore) { bestScore = score; best = cm; }
+      }
+      return best ? (best.id || (name + '/' + (best.rawId || ''))) : null;
     }
   }
 

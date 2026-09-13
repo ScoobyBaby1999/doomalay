@@ -89,6 +89,12 @@ class MainActivity : Activity() {
                 }
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                     AppLog.error("WebView error: $errorCode $description ($failingUrl)")
+                    // v0.15: a failed main-frame load (e.g. the engine was
+                    // mid-restart when the page loaded) must not leave a
+                    // blank screen — retry once after a short delay.
+                    if (failingUrl != null && failingUrl.startsWith("http://127.0.0.1:8080")) {
+                        handler.postDelayed({ view?.loadUrl(failingUrl) }, 2500)
+                    }
                 }
             }
             setContentView(webView)
@@ -99,9 +105,12 @@ class MainActivity : Activity() {
                 "text/html", "utf-8"
             )
 
-            // Poll engine health
+            // Poll engine health. v0.15: the EngineService watchdog restarts
+            // a crashed engine automatically — so keep polling LONGER (60s
+            // instead of 30s) and never dead-end: the failure screen has a
+            // working Retry button that restarts the service + polls again.
             Thread {
-                for (i in 1..60) {
+                for (i in 1..120) {
                     try {
                         val conn = java.net.URL("http://127.0.0.1:8080/api/health")
                             .openConnection() as java.net.HttpURLConnection
@@ -110,7 +119,7 @@ class MainActivity : Activity() {
                         if (conn.responseCode == 200) {
                             val body = conn.inputStream.bufferedReader().readText()
                             AppLog.log("Engine ready: $body")
-                            handler.post { webView.loadUrl("http://127.0.0.1:8080") }
+                            handler.post { if (retrying) retrying = false else webView.loadUrl("http://127.0.0.1:8080") }
                             return@Thread
                         }
                     } catch (e: Exception) {
@@ -118,20 +127,76 @@ class MainActivity : Activity() {
                     }
                     Thread.sleep(500)
                 }
-                AppLog.error("Engine didn't start in 30s")
-                handler.post {
-                    webView.loadData(
-                        "<html><body style='background:#0a0a0b;color:#f87171;font-family:sans-serif;padding:24px'>" +
-                        "<h2>Engine failed to start</h2><pre style='font-size:11px;color:#71717a;white-space:pre-wrap'>" +
-                        AppLog.tail(40).replace("<", "&lt;").replace(">", "&gt;") +
-                        "</pre></body></html>",
-                        "text/html", "utf-8"
-                    )
-                }
+                AppLog.error("Engine didn't start in 60s")
+                handler.post { showEngineRetry() }
             }.start()
         } catch (e: Exception) {
             AppLog.error("proceed() failed", e)
             showError("Failed: ${e.message}\n\n${AppLog.tail(30)}")
+        }
+    }
+
+    @Volatile private var retrying = false
+
+    /** v0.15: engine-down screen WITH a retry path (was a dead end). */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun showEngineRetry() {
+        retrying = true
+        val html = """
+            <html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="background:#0a0a0b;color:#e0e0e8;font-family:sans-serif;display:flex;
+            align-items:center;justify-content:center;height:100vh;margin:0">
+            <div style="text-align:center;max-width:300px">
+              <div style="font-size:34px;margin-bottom:10px">🔌</div>
+              <h2 style="font-size:16px;color:#f87171;margin:0 0 6px">Engine didn't respond</h2>
+              <p style="font-size:12px;color:#71717a;line-height:1.5;margin:0 0 16px">
+                It usually recovers on its own within a few seconds (the watchdog restarts it).
+                If this screen stays, tap Retry.</p>
+              <button onclick="doomalay.retry()" style="background:#4a4a5e;border:none;color:#e0e0e8;
+              padding:10px 22px;border-radius:9px;font-size:14px;font-family:inherit">Retry</button>
+            </div>
+            <script>
+              window.doomalay = { retry: function() {
+                window.__doomalayKotlin && window.__doomalayKotlin.retryEngine();
+              }};
+            </script>
+            </body></html>
+        """.trimIndent()
+        if (this::webView.isInitialized) {
+            webView.addJavascriptInterface(object : Any() {
+                @android.webkit.JavascriptInterface
+                fun retryEngine() {
+                    AppLog.log("User pressed engine Retry")
+                    handler.post { retryEngine() }
+                }
+            }, "__doomalayKotlin")
+            webView.loadData(html, "text/html", "utf-8")
+        }
+    }
+
+    /** Restart the engine service and resume health polling. */
+    private fun retryEngine() {
+        try {
+            startForegroundService(Intent(this, EngineService::class.java))
+            Thread {
+                for (i in 1..120) {
+                    try {
+                        val conn = java.net.URL("http://127.0.0.1:8080/api/health")
+                            .openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 1000
+                        conn.readTimeout = 1000
+                        if (conn.responseCode == 200) {
+                            handler.post { webView.loadUrl("http://127.0.0.1:8080") }
+                            return@Thread
+                        }
+                    } catch (e: Exception) { /* keep polling */ }
+                    Thread.sleep(500)
+                }
+                AppLog.error("Retry: engine still down after 60s")
+                handler.post { showEngineRetry() }
+            }.start()
+        } catch (e: Exception) {
+            AppLog.error("retryEngine failed", e)
         }
     }
 

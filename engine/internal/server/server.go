@@ -10,6 +10,8 @@ import (
         "io/fs"
         "log"
         "net/http"
+        "runtime"
+        "strconv"
         "strings"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
@@ -58,6 +60,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/keys", s.handleKeysSet)
         s.mux.HandleFunc("DELETE /api/keys/{envVar}", s.handleKeysDelete)
         s.mux.HandleFunc("GET /api/keys/validate", s.handleKeysValidate)
+        // v0.15: the PrivateMode SDK bridge (running in the WebView) needs the
+        // key to establish its E2E-encrypted channel. Scoped to PM ONLY (a
+        // general key-value endpoint would leak every provider's secret to
+        // any same-origin JS bug). CORS middleware blocks foreign origins.
+        s.mux.HandleFunc("GET /api/keys/value", s.handleKeysValue)
         s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
         s.mux.HandleFunc("GET /api/netdiag", s.handleNetDiag)
         s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
@@ -70,6 +77,10 @@ func (s *Server) routes() {
         s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handleSessionsUpdate)
         s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionsDelete)
         s.mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionsEvents)
+        // v0.15: frontend-driven turns (the PrivateMode SDK bridge chats
+        // directly from the WebView — the engine can't speak PM's encrypted
+        // protocol) append their events here so history + replay stay exact.
+        s.mux.HandleFunc("POST /api/sessions/{id}/events", s.handleSessionsAppendEvent)
 
         // WebSocket chat.
         s.mux.HandleFunc("GET /api/chat", s.handleChatWS)
@@ -77,16 +88,35 @@ func (s *Server) routes() {
         // Embedded PWA (serves web/dist at /).
         distFS, _ := fs.Sub(webFS, "web")
         s.mux.Handle("/", http.FileServer(http.FS(distFS)))
+
+        // v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
+        // Content-Encoding: gzip so the WebView decompresses transparently —
+        // WebAssembly.instantiateStreaming requires the correct MIME type.
+        wasmGz, err := fs.ReadFile(webFS, "web/vendor/pm/privatemode.wasm.gz")
+        if err == nil {
+                s.mux.HandleFunc("GET /vendor/pm/privatemode.wasm", func(w http.ResponseWriter, r *http.Request) {
+                        w.Header().Set("Content-Type", "application/wasm")
+                        w.Header().Set("Content-Encoding", "gzip")
+                        w.Header().Set("Cache-Control", "public, max-age=86400")
+                        w.Header().Set("Content-Length", strconv.Itoa(len(wasmGz)))
+                        if r.Method == http.MethodGet {
+                                _, _ = w.Write(wasmGz)
+                        }
+                })
+        } else {
+                log.Printf("warning: PM wasm asset missing: %v", err)
+        }
 }
 
 // ListenAndServe starts the HTTP server on addr (e.g. ":8080").
-// Middleware order (outermost → innermost): CORS → auth → logging → handler.
+// Middleware order (outermost → innermost): CORS → auth → logging → panic
+// recovery → handler.
 func (s *Server) ListenAndServe(addr string) error {
-        handler := s.corsMiddleware(s.authMiddleware(s.loggingMiddleware(s.mux)))
+        handler := s.corsMiddleware(s.authMiddleware(s.loggingMiddleware(s.recoverMiddleware(s.mux))))
         s.httpSrv = &http.Server{
                 Addr:              addr,
                 Handler:           handler,
-                ReadHeaderTimeout: 10_000_000_000, // 10s — mitigate slowloris
+                ReadHeaderTimeout: 10_000_000_000,  // 10s — mitigate slowloris
                 ReadTimeout:       0,               // no limit (streaming)
                 WriteTimeout:      0,               // no limit (streaming/SSE)
                 IdleTimeout:       120_000_000_000, // 120s
@@ -109,9 +139,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // your chats or keys if you have the engine running).
 //
 // Allowed origins:
-//   1. The PWA itself (same-origin — always allowed)
-//   2. localhost + 127.0.0.1 on any port (dev server, the PWA in dev)
-//   3. Origins explicitly listed in cfg.AllowedOrigins (for LAN/remote access)
+//  1. The PWA itself (same-origin — always allowed)
+//  2. localhost + 127.0.0.1 on any port (dev server, the PWA in dev)
+//  3. Origins explicitly listed in cfg.AllowedOrigins (for LAN/remote access)
 //
 // When the engine is bound to localhost only (the default), this is defense-
 // in-depth. When bound to 0.0.0.0 (LAN/remote), this is critical.
@@ -207,6 +237,34 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
                 log.Printf("%s %s", r.Method, r.URL.Path)
                 next.ServeHTTP(w, r)
         })
+}
+
+// recoverMiddleware (v0.15, the crash fix): a panic in ANY handler would
+// kill the whole engine process — on Android that meant a dead app with a
+// white screen and no restart. A panic is now logged, returned as a 500,
+// and the engine keeps serving.
+func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                defer func() {
+                        if rec := recover(); rec != nil {
+                                log.Printf("PANIC recovered in %s %s: %v\n%s", r.Method, r.URL.Path, rec, debugStack())
+                                // Best-effort 500 — headers may already be written.
+                                defer func() { recover() }()
+                                http.Error(w, `{"error":"internal panic — engine recovered"}`, http.StatusInternalServerError)
+                        }
+                }()
+                next.ServeHTTP(w, r)
+        })
+}
+
+// debugStack returns the current stack (trimmed) for panic logs.
+func debugStack() string {
+        buf := make([]byte, 8192)
+        n := runtime.Stack(buf, false)
+        if n > len(buf) {
+                n = len(buf)
+        }
+        return string(buf[:n])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

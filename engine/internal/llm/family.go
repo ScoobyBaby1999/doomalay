@@ -91,11 +91,11 @@ func hasDigit(s string) bool {
 // capability regex families from the old backend's
 // derive_capabilities_from_name — the fallback when no live metadata exists.
 var (
-	visionKws   = []string{"vision", "-vl", "llava", "florence", "gemma", "kimi", "llama-4", "qwen3", "glm-5", "step"}
-	audioKws    = []string{"aura-", "whisper", "-tts", "speech", "bark", "voxtral", "melotts"}
-	embedKws    = []string{"bge-", "embed-", "gte-", "e5-"}
-	toolsKws    = []string{"tool", "function", "agent", "instruct", "chat", "turbo", "hermes", "big-pickle", "coder"}
-	reasonKws   = []string{"r1", "o1", "o3", "o4", "qwq", "nemotron", "reasoning", "thinking", "deepseek-r", "reasoner"}
+	visionKws = []string{"vision", "-vl", "llava", "florence", "gemma", "kimi", "llama-4", "qwen3", "glm-5", "step"}
+	audioKws  = []string{"aura-", "whisper", "-tts", "speech", "bark", "voxtral", "melotts"}
+	embedKws  = []string{"bge-", "embed-", "gte-", "e5-"}
+	toolsKws  = []string{"tool", "function", "agent", "instruct", "chat", "turbo", "hermes", "big-pickle", "coder"}
+	reasonKws = []string{"r1", "o1", "o3", "o4", "qwq", "nemotron", "reasoning", "thinking", "deepseek-r", "reasoner"}
 )
 
 // InferCapabilitiesFromName derives capability strings for a model id

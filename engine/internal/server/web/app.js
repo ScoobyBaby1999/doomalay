@@ -727,6 +727,11 @@
     }
 
     resize();
+
+    // v0.15: recovery.js's boot watchdog — flip the flag once the canvas +
+    // icons are live. (A stalled boot shows the recovery screen instead of
+    // a dead white screen.)
+    window.__doomalayReady = true;
   }
 
   init();

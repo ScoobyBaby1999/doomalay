@@ -5,14 +5,14 @@
 //
 // Validation strategies (per provider, "validate" field in providers.json):
 //   - "" / "models"    : GET {base_url}/models. 200 = valid (+model count).
-//                        401/403 = invalid. Anything else = "unverified" —
-//                        the key is saved but we could not confirm it.
+//     401/403 = invalid. Anything else = "unverified" —
+//     the key is saved but we could not confirm it.
 //   - "auth_key"       : GET {base_url}{validate_path} (an endpoint that
-//                        REQUIRES auth, e.g. OpenRouter's /auth/key). This
-//                        is for providers whose /models is public.
+//     REQUIRES auth, e.g. OpenRouter's /auth/key). This
+//     is for providers whose /models is public.
 //   - "chat_probe"     : POST {base_url}/chat/completions with probe_model
-//                        and max_tokens=1. Auth errors = invalid; quota or
-//                        model errors mean auth PASSED (the key is fine).
+//     and max_tokens=1. Auth errors = invalid; quota or
+//     model errors mean auth PASSED (the key is fine).
 //
 // The golden rule: never report "invalid" unless the provider itself said
 // the key is bad. A valid key must never be shown as invalid (the v0.11
@@ -20,7 +20,6 @@
 package llm
 
 import (
-        "bytes"
         "embed"
         "encoding/json"
         "fmt"
@@ -39,15 +38,15 @@ var catalogFS embed.FS
 
 // ProviderConfig is one provider's config (matches brain/catalog/providers.json).
 type ProviderConfig struct {
-        EnvVar       string `json:"env_var"`
-        BaseURL      string `json:"base_url"`
+        EnvVar        string `json:"env_var"`
+        BaseURL       string `json:"base_url"`
         LitellmPrefix string `json:"litellm_prefix"`
-        Label        string `json:"label"`
-        Description  string `json:"description"`
-        SignupURL    string `json:"signup_url"`
-        FreeTier     bool   `json:"free_tier"`
-        Color        string `json:"color"`
-        ExtraEnvVar  string `json:"extra_env_var,omitempty"`
+        Label         string `json:"label"`
+        Description   string `json:"description"`
+        SignupURL     string `json:"signup_url"`
+        FreeTier      bool   `json:"free_tier"`
+        Color         string `json:"color"`
+        ExtraEnvVar   string `json:"extra_env_var,omitempty"`
         // AuthStyle: "bearer" (default) or "anthropic" (x-api-key + version).
         AuthStyle string `json:"auth_style,omitempty"`
         // Validate strategy: "" / "models" / "auth_key" / "chat_probe".
@@ -96,8 +95,8 @@ func LoadCatalog() (map[string]ProviderConfig, error) {
 
 // syncCache caches /v1/models results per provider (5 min TTL).
 var (
-        syncCacheMu sync.RWMutex
-        syncCache   = make(map[string]syncCacheEntry)
+        syncCacheMu  sync.RWMutex
+        syncCache    = make(map[string]syncCacheEntry)
         syncCacheTTL = 5 * time.Minute
 )
 
@@ -307,8 +306,8 @@ func modelInfoFrom(provider, id, name string) ModelInfo {
 
 // ValidateResult is the outcome of a key check.
 type ValidateResult struct {
-        State      string `json:"state"`       // "valid" | "invalid" | "unverified"
-        Valid      bool   `json:"valid"`       // true only for State == "valid"
+        State      string `json:"state"` // "valid" | "invalid" | "unverified"
+        Valid      bool   `json:"valid"` // true only for State == "valid"
         ModelCount int    `json:"model_count"`
         Reason     string `json:"reason,omitempty"`
 }
@@ -370,39 +369,55 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 return ValidateResult{State: "unverified", Reason: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 
         case "chat_probe":
-                // POST a 1-token completion with a known model. Auth is checked
-                // before quota/model errors, so: auth error = invalid key;
-                // model/quota error = auth passed (key is fine).
-                url := resolveBaseURL(cfg, accountID) + "/chat/completions"
-                payload := map[string]any{
-                        "model":      cfg.ProbeModel,
-                        "messages":   []map[string]string{{"role": "user", "content": "hi"}},
-                        "max_tokens": 1,
+                // v0.15: probe a LADDER of models instead of one. Some keys
+                // are fine but lack access to a specific model (free-tier
+                // accounts can't use paid models and vice versa) — a single
+                // 401 on ONE model must not damn the whole key. Order:
+                //   1. the configured probe model,
+                //   2. FREE models (work on any account) from the live list,
+                //   3. the first model of the live list.
+                // Verdicts: 200/429/402 = valid; 401/403 = the key was
+                // rejected (invalid if any candidate says so); 404/410/400
+                // = inconclusive for that model (keep trying, never
+                // "invalid"); network error = unverified.
+                candidates := probeCandidates(providerName, cfg, apiKey, accountID)
+                if len(candidates) == 0 {
+                        return ValidateResult{State: "unverified", Reason: "no probe model available"}
                 }
-                bodyBytes, _ := json.Marshal(payload)
-                req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
-                if err != nil {
-                        return ValidateResult{State: "unverified", Reason: err.Error()}
+                var lastAuthErr, lastInconclusive string
+                for _, probeModel := range candidates {
+                        res, tryNext := chatProbeResult(providerName, cfg, apiKey, accountID, probeModel)
+                        if res.State == "valid" {
+                                if probeModel != cfg.ProbeModel {
+                                        extra := ""
+                                        if res.Reason != "" {
+                                                extra = " — " + res.Reason
+                                        }
+                                        res.Reason = "auth passed via " + probeModel + extra
+                                }
+                                return res
+                        }
+                        if res.State == "invalid" {
+                                lastAuthErr = res.Reason // a REAL key rejection — remember it
+                                continue
+                        }
+                        if tryNext {
+                                lastInconclusive = res.Reason // model-level error — keep trying
+                                continue
+                        }
+                        return res // network error — can't judge
                 }
-                req.Header.Set("Content-Type", "application/json")
-                req.Header.Set("User-Agent", browserUA)
-                setAuthHeaders(req, cfg, apiKey)
-                resp, err := client.Do(req)
-                if err != nil {
-                        return ValidateResult{State: "unverified", Reason: "network: " + err.Error()}
+                if lastAuthErr != "" {
+                        // At least one model ran the auth check and the
+                        // provider rejected the key.
+                        return ValidateResult{State: "invalid", Reason: lastAuthErr}
                 }
-                defer resp.Body.Close()
-                body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-                status := resp.StatusCode
-                bodyStr := strings.TrimSpace(string(body))
-                if status == 200 {
-                        return ValidateResult{State: "valid", Valid: true}
+                if lastInconclusive != "" {
+                        // No candidate reached the auth layer (all model-level
+                        // errors) — can't confirm either way.
+                        return ValidateResult{State: "unverified", Reason: lastInconclusive}
                 }
-                if status == 401 || status == 403 {
-                        return ValidateResult{State: "invalid", Reason: fmt.Sprintf("HTTP %d: %s", status, bodyStr)}
-                }
-                // Quota / model / billing errors all mean auth PASSED.
-                return ValidateResult{State: "valid", Valid: true, Reason: bodyStr}
+                return ValidateResult{State: "unverified", Reason: "probe ladder exhausted"}
 
         default:
                 // GET {base_url}/models. Some providers return 200 without
@@ -427,7 +442,7 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 // anything else = the key is fine. This kills the v0.12
                 // yellow-"unverified" dead-end that also blocked auto-pick.
                 if probeCfg, ok := probeModelFor(providerName, models); ok {
-                        if probe, ok := chatProbe(providerName, cfg, apiKey, accountID, probeCfg); ok {
+                        if probe, tryNext := chatProbeResult(providerName, cfg, apiKey, accountID, probeCfg); tryNext || probe.State != "unverified" {
                                 return probe
                         }
                 }
@@ -450,16 +465,25 @@ func probeModelFor(provider string, models []ModelInfo) (string, bool) {
         }
         // No cached models — try a keyless public sync for the probe id.
         if cfg, ok := catalog[provider]; ok {
-            if fetched, err := fetchProviderModels(provider, cfg, "", ""); err == nil && len(fetched) > 0 {
-                return fetched[0].Label, true
-            }
+                if fetched, err := fetchProviderModels(provider, cfg, "", ""); err == nil && len(fetched) > 0 {
+                        return fetched[0].Label, true
+                }
         }
         return "", false
 }
 
-// chatProbe POSTs a 1-token completion. Auth checked before quota/model
-// errors, so: 401/403 = invalid key; anything else = auth passed (valid).
-func chatProbe(provider string, cfg ProviderConfig, apiKey, accountID, probeModel string) (ValidateResult, bool) {
+// chatProbeResult POSTs a 1-token completion with one model.
+//
+// Verdict honesty (v0.15 refinement): some providers check the MODEL before
+// the key (NVIDIA returns 404/410 for retired models even with a garbage
+// key), so "any non-401 = auth passed" was too loose — a bad key probed
+// against a dead model looked VALID. Now:
+//   200 / 429 / 402      → auth passed (rate/billing errors prove the key)
+//   401 / 403            → the provider rejected the key for THIS model
+//   404 / 410 / 400 / 5xx → inconclusive (model-level or shape error) —
+//                          try the next candidate; if none resolve,
+//                          the validator reports unverified, not valid.
+func chatProbeResult(provider string, cfg ProviderConfig, apiKey, accountID, probeModel string) (ValidateResult, bool) {
         payload := map[string]any{
                 "model":      probeModel,
                 "messages":   []map[string]string{{"role": "user", "content": "hi"}},
@@ -467,17 +491,107 @@ func chatProbe(provider string, cfg ProviderConfig, apiKey, accountID, probeMode
         }
         status, body, err := httpPostJSON(resolveBaseURL(cfg, accountID)+"/chat/completions", apiKey, payload, nil)
         if err != nil {
-                return ValidateResult{}, false // network down — can't judge
+                return ValidateResult{State: "unverified", Reason: "network: " + err.Error()}, false
         }
-        bodyStr := strings.TrimSpace(string(body))
-        if status == 200 {
+        bodyStr := friendlyProviderError(status, body)
+        switch {
+        case status == 200:
                 return ValidateResult{State: "valid", Valid: true}, true
+        case status == 429 || status == 402:
+                // Rate limit / billing — the auth layer RAN and accepted the key.
+                return ValidateResult{State: "valid", Valid: true, Reason: bodyStr}, true
+        case status == 401 || status == 403:
+                return ValidateResult{State: "invalid", Reason: bodyStr}, true
+        default:
+                // Inconclusive — this model didn't reach the auth check.
+                return ValidateResult{State: "unverified", Reason: "probe " + probeModel + ": " + bodyStr}, true
         }
-        if status == 401 || status == 403 {
-                return ValidateResult{State: "invalid", Reason: fmt.Sprintf("HTTP %d: %s", status, bodyStr)}, true
+}
+
+// probeCandidates builds the model ladder for the chat_probe strategy.
+func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID string) []string {
+        var out []string
+        seen := map[string]bool{}
+        add := func(id string) {
+                if id == "" || seen[id] {
+                        return
+                }
+                seen[id] = true
+                out = append(out, id)
         }
-        // Quota / model / billing errors all mean auth PASSED.
-        return ValidateResult{State: "valid", Valid: true, Reason: "chat probe: auth passed (" + bodyStr + ")"}, true
+        add(cfg.ProbeModel)
+
+        // Live model list (best-effort; keyless for public lists). Prefer
+        // FREE models — they work on zero-credit accounts.
+        if fetched, err := fetchProviderModels(provider, cfg, apiKey, accountID); err == nil {
+                for _, m := range fetched {
+                        if isFreeProbeModel(provider, m.Label) {
+                                add(m.Label)
+                        }
+                }
+                if len(out) == 0 {
+                        add(fetched[0].Label)
+                } else {
+                        add(fetched[0].Label) // any-model fallback last
+                }
+        }
+        return out
+}
+
+// isFreeProbeModel knows the per-provider free-model rules (probe ladder only).
+func isFreeProbeModel(provider, modelID string) bool {
+        switch provider {
+        case "opencode":
+                // Zen free models: big-pickle + "-free" suffix, minus the
+                // known paid exceptions.
+                if modelID == "big-pickle" {
+                        return true
+                }
+                if strings.HasSuffix(modelID, "-free") &&
+                        modelID != "minimax-m3-free" && modelID != "qwen3.6-plus-free" {
+                        return true
+                }
+                return false
+        case "nvidia":
+                // v0.15: NVIDIA NIM models default to FREE (user-verified:
+                // build.nvidia.com exposes free endpoints for ~all listed
+                // models, e.g. Kimi K3).
+                return true
+        }
+        return false
+}
+
+// friendlyProviderError extracts the human message from an OpenAI-style
+// error body ({"error":{"message":"Invalid API key."}}) so badges read
+// "Invalid API key" instead of a wall of JSON.
+func friendlyProviderError(status int, body []byte) string {
+        raw := strings.TrimSpace(string(body))
+        if raw == "" {
+                return fmt.Sprintf("HTTP %d", status)
+        }
+        var shaped struct {
+                Error struct {
+                        Message string `json:"message"`
+                } `json:"error"`
+                Detail  string `json:"detail"`
+                Title   string `json:"title"`
+                Message string `json:"message"`
+        }
+        if json.Unmarshal(body, &shaped) == nil {
+                if shaped.Error.Message != "" {
+                        return fmt.Sprintf("HTTP %d: %s", status, shaped.Error.Message)
+                }
+                if shaped.Message != "" {
+                        return fmt.Sprintf("HTTP %d: %s", status, shaped.Message)
+                }
+                if shaped.Detail != "" {
+                        return fmt.Sprintf("HTTP %d: %s", status, shaped.Detail)
+                }
+        }
+        if len(raw) > 160 {
+                raw = raw[:160] + "…"
+        }
+        return fmt.Sprintf("HTTP %d: %s", status, raw)
 }
 
 // ResolveModel resolves a user-facing model id (e.g. "openrouter/auto")

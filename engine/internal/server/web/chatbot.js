@@ -57,7 +57,7 @@
   let nextId = 1;
 
   class ChatIcon extends GridIcon {
-    constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '' }) {
+    constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '', sessionId = '' }) {
       super({ id: id || ('chat_' + nextId++), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
@@ -67,6 +67,8 @@
       this.sandbox = sandbox;     // 'quick', 'hf', 'terminal', 'device'
       this.model = model;         // 'openai/gpt-4o', 'ollama/llama3.2:3b', etc.
       this.provider = provider;   // 'openai', 'ollama', etc.
+      this.sessionId = sessionId; // v0.15: the ENGINE session id — persisted so
+                                  // a restart reattaches to the same conversation
       this._sessionData = null;   // engine session object (fetched on first chat)
 
       // Build the DOM element: icon circle + name label + sandbox badge.
@@ -183,6 +185,7 @@
       base.sandbox = this.sandbox;
       base.model = this.model;
       base.provider = this.provider;
+      base.sessionId = this.sessionId || ''; // v0.15: survive restarts
       return base;
     }
 
@@ -197,7 +200,8 @@
         radius: data.radius || 28,
         sandbox: data.sandbox || '',
         model: data.model || '',
-        provider: data.provider || ''
+        provider: data.provider || '',
+        sessionId: data.sessionId || ''
       });
     }
   }

@@ -86,7 +86,8 @@
         draftText: '',
         client: null,
         setupOpen: true,      // v0.14: collapsible setup section
-        fulfilled: false      // sandbox + model both chosen?
+        fulfilled: false,     // sandbox + model both chosen?
+        lastEventI: 0         // v0.15: max event id seen (replay dedup)
       };
       if (icon) icon._sessionData = sessionData || null;
     }
@@ -114,10 +115,13 @@
     if (complete) state.fulfilled = true;
 
     // On first fulfillment, collapse the setup (the chat takes over below)
-    // — the user can always tap the header to expand again.
+    // — the user can always tap the pills row chevron to expand again.
     if (justFulfilled) state.setupOpen = false;
 
-    // ── The setup section (collapsible) ──
+    // v0.15 (#2): the pills row is PINNED — it never scrolls off screen.
+    // The setup boxes + intro text live INSIDE the scrollable flow (they
+    // scroll away like the initial message they are).
+    var pillsHTML = renderPills(state, sandboxSelected, modelSelected);
     var setupHTML = renderSetup(icon, state, sandboxSelected, modelSelected);
 
     // ── The chat section ──
@@ -145,9 +149,12 @@
       '</div>';
 
     bodyEl.innerHTML =
-      '<div id="chat-scroll" style="height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;display:flex;flex-direction:column">' +
+      '<div id="chat-root" style="height:100%;display:flex;flex-direction:column;overflow:hidden">' +
+        pillsHTML +
+        '<div id="chat-scroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;display:flex;flex-direction:column">' +
         setupHTML +
         chatHTML +
+        '</div>' +
       '</div>';
 
     var scrollEl = bodyEl.querySelector('#chat-scroll');
@@ -180,15 +187,19 @@
 
       // Connect WS if not connected — but ONLY after the engine session
       // exists (the lazy create is async; connecting with session_id=null
-      // 404s the WS handshake and can eat the first message).
+      // 404s the WS handshake and can eat the first message). v0.15: first
+      // re-bind the icon to its previously persisted engine session so a
+      // restart replays the SAME conversation instead of forking a new one.
       if (!state.client) {
-        if (state.sessionId) {
-          connectWS(bodyEl, state, msgContainer);
-        } else {
-          ensureSession(icon, state, function () {
-            if (bodyEl.querySelector('#chat-input')) connectWS(bodyEl, state, msgContainer);
-          });
-        }
+        bindEngineSession(icon, state, function () {
+          if (state.sessionId) {
+            connectWS(bodyEl, state, msgContainer);
+          } else {
+            ensureSession(icon, state, function () {
+              if (bodyEl.querySelector('#chat-input')) connectWS(bodyEl, state, msgContainer);
+            });
+          }
+        });
       } else {
         state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl); };
       }
@@ -211,6 +222,12 @@
     function send() {
       var text = input.value.trim();
       if (!text || state.isStreaming) return;
+      // v0.15: PrivateMode turns run through the SDK bridge — they do NOT
+      // need the engine WS, so never wait for it.
+      if (state.provider === 'privatemodeai') {
+        doSend(text);
+        return;
+      }
       if (state.client && state.client.connected) {
         doSend(text);
         return;
@@ -244,15 +261,8 @@
     }
 
     function doSend(text) {
-      state.messages.push({ role: 'user', text: text });
+      state.messages.push({ role: 'user', text: text, local: true });
       appendMessage(msgContainer, scrollEl, { role: 'user', text: text });
-
-      // v0.13: capability flags ride every send (per-message override).
-      state.client.send(text, {
-        effort: state.effort,
-        web_search: !!state.webSearch,
-        deep_research: !!state.deepResearch
-      });
 
       input.value = '';
       state.draftText = '';
@@ -260,31 +270,194 @@
 
       state.isStreaming = true;
       sendBtn.textContent = 'Stop';
+
+      // v0.15: PrivateMode turns run through the official SDK bridge IN THE
+      // WEBVIEW — PM's chat API requires their E2E-encryption protocol
+      // (attestation + WASM crypto) which the Go engine cannot speak.
+      if (state.provider === 'privatemodeai') {
+        if (window.PMBridge && window.PMBridge.available && window.PMBridge.available()) {
+          runPMTurn(text, state, msgContainer, scrollEl, sendBtn);
+          return;
+        }
+        state.isStreaming = false;
+        sendBtn.textContent = 'Send';
+        sendBtn.onclick = null;
+        var pmErr = 'PrivateMode needs the secure-channel module (still loading — try again in a moment).';
+        state.messages.push({ role: 'error', text: pmErr });
+        appendMessage(msgContainer, scrollEl, { role: 'error', text: pmErr });
+        return;
+      }
+
+      // v0.13: capability flags ride every send (per-message override).
+      // v0.15: model + provider ride too — the engine re-fetches the
+      // session per turn AND honors these overrides, so the turn can
+      // never run through a stale provider again (the universal-401 bug).
+      state.client.send(text, {
+        effort: state.effort,
+        web_search: !!state.webSearch,
+        deep_research: !!state.deepResearch,
+        model: state.model,
+        provider: state.provider
+      });
+
       sendBtn.onclick = function () { state.client.stop(); };
     }
   }
 
-  // ── The setup section: collapsible header + the two big boxes ──
-  function renderSetup(icon, state, sandboxSelected, modelSelected) {
-    var open = state.setupOpen || !(sandboxSelected && modelSelected);
+  // ── v0.15: a PrivateMode turn (SDK bridge, runs in the WebView) ──────
+  // Streams through PM's encrypted channel, feeds the same message
+  // pipeline as WS turns, and persists user/assistant/status events via
+  // the engine's REST append endpoint so replay + reload stay exact.
+  function runPMTurn(text, state, msgContainer, scrollEl, sendBtn) {
+    var abort = new AbortController();
+    sendBtn.onclick = function () { abort.abort(); };
 
-    // Summary line (always visible, on the collapsible header).
+    // History: user + complete assistant messages, last 40 (same window
+    // as the engine's buildHistory).
+    var history = [];
+    for (var i = 0; i < state.messages.length; i++) {
+      var m = state.messages[i];
+      if (m.role === 'user') history.push({ role: 'user', content: m.text });
+      else if (m.role === 'assistant' && m.complete) history.push({ role: 'assistant', content: m.text });
+    }
+    if (history.length > 40) history = history.slice(-40);
+
+    var model = String(state.model || '');
+    if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
+
+    // First-turn progress hint (attestation takes a few seconds).
+    var hintEl = null;
+    var showHint = function (msg) {
+      if (!hintEl) {
+        var hint = { role: 'tool', text: '· ' + msg, progress: true };
+        state.messages.push(hint);
+        hintEl = appendMessage(msgContainer, scrollEl, hint);
+      }
+    };
+    var clearHint = function () {
+      if (hintEl && hintEl.parentNode) hintEl.parentNode.removeChild(hintEl);
+      // Drop from state too.
+      for (var j = state.messages.length - 1; j >= 0; j--) {
+        if (state.messages[j].progress) { state.messages.splice(j, 1); break; }
+      }
+      hintEl = null;
+    };
+
+    showHint('establishing PrivateMode secure channel…');
+
+    var streamMsg = null; // the assistant message being streamed
+    var getStreamMsg = function () {
+      if (!streamMsg) {
+        streamMsg = { role: 'assistant', text: '', complete: false, streaming: true };
+        state.messages.push(streamMsg);
+        appendMessage(msgContainer, scrollEl, streamMsg);
+      }
+      return streamMsg;
+    };
+
+    var persist = function (type, payload) {
+      if (!state.sessionId) return;
+      fetch('/api/sessions/' + state.sessionId + '/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: type, text: payload })
+      }).then(function (r) { return r.json(); }).then(function (saved) {
+        // v0.15: track the id so a later WS replay stays idempotent.
+        if (saved && saved.id && saved.id > (state.lastEventI || 0)) {
+          state.lastEventI = saved.id;
+        }
+      }).catch(function (e) { console.error('persist PM event failed', e); });
+    };
+
+    var finish = function (errText) {
+      clearHint();
+      state.isStreaming = false;
+      sendBtn.textContent = 'Send';
+      sendBtn.onclick = null;
+      if (streamMsg) {
+        streamMsg.complete = true;
+        streamMsg.streaming = false;
+        if (streamMsg.text) persist('assistant', streamMsg.text);
+        updateLastMessage(msgContainer, scrollEl, streamMsg);
+      }
+      if (errText) {
+        persist('error', errText);
+        state.messages.push({ role: 'error', text: errText });
+        appendMessage(msgContainer, scrollEl, { role: 'error', text: errText });
+        persist('status', JSON.stringify({ state: 'error', usage: null }));
+      } else {
+        persist('status', JSON.stringify({ state: 'idle', usage: null }));
+      }
+    };
+
+    // Persist the user message through the engine (same as WS turns).
+    persist('user', text);
+
+    window.PMBridge.streamChat({
+      model: model,
+      messages: history,
+      signal: abort.signal,
+      onThinking: function (t) {
+        clearHint();
+        var last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== 'thinking') {
+          last = { role: 'thinking', text: '', open: true };
+          state.messages.push(last);
+          appendMessage(msgContainer, scrollEl, last);
+        }
+        last.text += t;
+        updateLastMessage(msgContainer, scrollEl, last);
+      },
+      onDelta: function (t) {
+        clearHint();
+        var m2 = getStreamMsg();
+        m2.text += t;
+        updateLastMessage(msgContainer, scrollEl, m2);
+      },
+      onStatus: function (st) {
+        if (st === 'running') showHint('establishing PrivateMode secure channel…');
+      }
+    }).then(function (result) {
+      if (result && result.aborted) {
+        finish(null);
+        return;
+      }
+      finish(null);
+    }).catch(function (e) {
+      finish(e && e.message ? e.message : 'PrivateMode turn failed');
+    });
+  }
+
+  // ── v0.15 (#2): the PINNED pills row — tiny, always-visible controls ──
+  // sandbox pill + model pill + chevron. Never scrolls off screen.
+  function renderPills(state, sandboxSelected, modelSelected) {
     var sumSandbox = sandboxSelected
       ? (SANDBOX_ICONS[state.sandbox] || '⚡') + ' ' + (SANDBOX_LABELS[state.sandbox] || state.sandbox)
       : '+ Sandbox';
     var sumModel = modelSelected ? providerLabel(state.provider) : '+ Model';
-    var sumColor = (sandboxSelected && modelSelected) ? '#e0e0e8' : '#34d399';
-
-    var headHTML =
-      '<div id="setup-head" style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">' +
-        '<span style="font-size:13px;font-weight:600;color:' + sumColor + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0">' +
-          esc(sumSandbox) + ' <span style="color:#4a4a5e">·</span> ' + esc(sumModel) +
-        '</span>' +
-        '<span id="setup-chevron" style="font-size:11px;color:#71717a;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ');flex-shrink:0">▶</span>' +
+    var open = state.setupOpen || !(sandboxSelected && modelSelected);
+    var pill = function (id, label, selected, color) {
+      return '<button id="' + id + '" style="display:flex;align-items:center;gap:5px;min-width:0;flex-shrink:1;' +
+        'background:' + (selected ? 'rgba(52,211,153,0.10)' : 'rgba(52,211,153,0.06)') + ';' +
+        'border:1px solid ' + (selected ? 'rgba(52,211,153,0.35)' : 'rgba(52,211,153,0.55)') + ';' +
+        'color:' + (selected ? '#e0e0e8' : color) + ';' +
+        'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(label) + '</button>';
+    };
+    return '<div id="chat-pills" style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:8px 12px;background:#0e0e12;border-bottom:1px solid #1a1a22;z-index:3">' +
+      pill('pill-sandbox', sumSandbox, sandboxSelected, '#34d399') +
+      pill('pill-model', sumModel, modelSelected, '#34d399') +
+      '<button id="pill-chevron" aria-label="Toggle setup" style="flex-shrink:0;margin-left:auto;background:transparent;border:none;color:#71717a;font-size:11px;cursor:pointer;padding:5px 6px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
       '</div>';
+  }
 
-    // The two big boxes (identical to the empty-state design; still tappable
-    // to CHANGE the selection at any time).
+  // ── The setup section: the two big boxes, INSIDE the scroll flow ──
+  // (v0.15 #2: the "One more thing — pick a model" heading + intro text are
+  // part of the initial conversation flow — they scroll off like messages.)
+  function renderSetup(icon, state, sandboxSelected, modelSelected) {
+    var open = state.setupOpen || !(sandboxSelected && modelSelected);
+
     var sandboxTitle = sandboxSelected ? (SANDBOX_LABELS[state.sandbox] || state.sandbox) : '+ Sandbox';
     var sandboxSub = sandboxSelected ? '+ Sandbox' : 'Tap to connect';
     var sandboxIcon = sandboxSelected ? (SANDBOX_ICONS[state.sandbox] || '⚡') : '🔌';
@@ -305,7 +478,7 @@
     };
 
     var bodyHTML =
-      '<div id="setup-body" style="' + (open ? '' : 'display:none;') + 'padding:0 16px 16px;border-bottom:1px solid #1a1a22">' +
+      '<div id="setup-body" style="' + (open ? '' : 'display:none;') + 'padding:16px 16px 8px;flex-shrink:0">' +
         '<h3 style="font-size:16px;font-weight:600;color:#e0e0e8;margin:0 0 8px">' + heading + '</h3>' +
         '<p style="font-size:13px;color:#71717a;margin:0 0 16px">' + intro + '</p>' +
         '<div style="display:flex;gap:16px;width:100%;max-width:400px">' +
@@ -322,36 +495,54 @@
         '</div>' +
       '</div>';
 
-    return '<div id="chat-setup" style="flex-shrink:0;background:#0e0e12">' + headHTML + bodyHTML + '</div>';
+    return bodyHTML;
   }
 
   function wireSetup(bodyEl, icon, state, panel) {
-    var head = bodyEl.querySelector('#setup-head');
     var body = bodyEl.querySelector('#setup-body');
-    var chevron = bodyEl.querySelector('#setup-chevron');
-    if (head && body) {
-      head.addEventListener('click', function () {
-        state.setupOpen = !state.setupOpen;
-        var open = state.setupOpen || !(state.sandbox && state.model);
-        body.style.display = open ? '' : 'none';
-        if (chevron) chevron.style.transform = 'rotate(' + (open ? '90deg' : '0deg') + ')';
+    var chevron = bodyEl.querySelector('#pill-chevron');
+    var pillsRow = bodyEl.querySelector('#chat-pills');
+
+    // v0.15 (#2): the chevron (and a tap on the pills row's empty space)
+    // toggles the setup section INSIDE the scroll flow. The pills
+    // themselves are direct change-buttons.
+    var toggleSetup = function () {
+      state.setupOpen = !state.setupOpen;
+      var open = state.setupOpen || !(state.sandbox && state.model);
+      if (body) body.style.display = open ? '' : 'none';
+      if (chevron) chevron.style.transform = 'rotate(' + (open ? '90deg' : '0deg') + ')';
+      // Scroll back up so the setup boxes are visible when expanding.
+      if (open) {
+        var scrollEl = bodyEl.querySelector('#chat-scroll');
+        if (scrollEl) scrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    if (chevron) chevron.addEventListener('click', function (e) { e.stopPropagation(); toggleSetup(); });
+    if (pillsRow) {
+      pillsRow.addEventListener('click', function (e) {
+        // Only toggle when the tap hit the row itself (not a pill button).
+        if (e.target === pillsRow) toggleSetup();
       });
     }
 
-    var boxSandbox = bodyEl.querySelector('#box-sandbox');
-    var boxModel = bodyEl.querySelector('#box-model');
-    if (boxSandbox) {
-      boxSandbox.addEventListener('click', function () {
-        window.SandboxPicker.open(function (sandboxType) {
-          applySandbox(icon, state, sandboxType, bodyEl, panel);
-        });
+    // v0.15: the PILLS are direct change-buttons (usable while the setup
+    // section is collapsed); the big boxes do the same when visible.
+    var wirePicker = function (sel, fn) {
+      var el = bodyEl.querySelector(sel);
+      if (el) el.addEventListener('click', fn);
+    };
+    wirePicker('#pill-sandbox', function () {
+      window.SandboxPicker.open(function (sandboxType) {
+        applySandbox(icon, state, sandboxType, bodyEl, panel);
       });
-    }
-    if (boxModel) {
-      boxModel.addEventListener('click', function () {
-        openModelPicker(icon, state, bodyEl, panel);
+    });
+    wirePicker('#pill-model', function () { openModelPicker(icon, state, bodyEl, panel); });
+    wirePicker('#box-sandbox', function () {
+      window.SandboxPicker.open(function (sandboxType) {
+        applySandbox(icon, state, sandboxType, bodyEl, panel);
       });
-    }
+    });
+    wirePicker('#box-model', function () { openModelPicker(icon, state, bodyEl, panel); });
   }
 
   // Apply a sandbox selection: state + icon + session + re-render.
@@ -569,16 +760,69 @@
       if (data && data.ID) {
         state.sessionId = data.ID;
         icon._sessionData = data;
+        bindSessionToIcon(icon, data.ID); // v0.15: persist the binding
         cb();
       }
     }).catch(function (e) { console.error('create session failed', e); });
   }
 
+  // v0.15: reattach to the ENGINE session the icon was bound to (persisted
+  // in localStorage via icon.sessionId) — a restart now replays the SAME
+  // conversation instead of silently forking a new, empty session.
+  function bindEngineSession(icon, state, cb) {
+    if (state.sessionId) { cb(); return; }
+    var sid = icon && icon.sessionId;
+    if (!sid) { ensureSession(icon, state, cb); return; }
+    fetch('/api/sessions/' + sid).then(function (r) {
+      if (r.status === 404) {
+        if (icon) icon.sessionId = ''; // engine lost it (fresh data dir) — recreate
+        return null;
+      }
+      return r.json();
+    }).then(function (data) {
+      if (data && data.ID) {
+        state.sessionId = data.ID;
+        icon._sessionData = data;
+        // Seed any config the icon lost (the session is the source of truth).
+        if (!state.sandbox && data.Sandbox) state.sandbox = data.Sandbox;
+        if (!state.model && data.Model) state.model = data.Model;
+        if (!state.provider && data.Provider) state.provider = data.Provider;
+        cb();
+      } else {
+        ensureSession(icon, state, cb);
+      }
+    }).catch(function () { ensureSession(icon, state, cb); });
+  }
+
+  // v0.15: persist the session binding on the icon (survives app restarts).
+  function bindSessionToIcon(icon, sessionId) {
+    if (!icon) return;
+    icon.sessionId = sessionId;
+    if (typeof icon.save === 'function') icon.save();
+  }
+
   // ── Handle a WS event ─────────────────────────────────────────
   function handleEvent(ev, state, msgContainer, scrollEl) {
     var type = ev.type;
+    // v0.15: idempotent replay — the engine re-sends every event on
+    // (re)connect; skip anything already seen (same id). PM-turn events
+    // persisted via REST update lastEventI from the append response.
+    if (ev.i !== undefined && ev.i !== null && !isNaN(ev.i)) {
+      if (ev.i <= (state.lastEventI || 0)) return;
+      state.lastEventI = ev.i;
+    }
     if (type === 'user') {
-      return; // already added locally
+      // v0.15: REPLAYED user events must restore the conversation; the
+      // live-turn echo is already rendered locally (doSend pushed it with
+      // local:true) — skip only that exact echo.
+      var last = state.messages[state.messages.length - 1];
+      if (last && last.role === 'user' && last.local && last.text === (ev.text || '')) {
+        delete last.local; // the echo arrived — clear the marker
+        return;
+      }
+      state.messages.push({ role: 'user', text: ev.text || '' });
+      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' });
+      return;
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
       if (ev.text) {
@@ -597,12 +841,12 @@
       }
     } else if (type === 'assistant') {
       // Full-reply event (persisted history replay / final fold) — skip if
-      // the deltas already assembled it.
+      // the deltas already assembled it (live turn), add on replay.
       var assembled = '';
       for (var i = 0; i < state.messages.length; i++) {
         if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
       }
-      if ((ev.text || '') && assembled.indexOf(ev.text) === -1 && ev.text.length > assembled.length + 40) {
+      if ((ev.text || '') && assembled.indexOf(ev.text) === -1) {
         state.messages.push({ role: 'assistant', text: ev.text, complete: true });
         appendMessage(msgContainer, scrollEl, { role: 'assistant', text: ev.text, complete: true });
       }
@@ -643,8 +887,14 @@
       }
     } else if (type === 'error') {
       state.isStreaming = false;
-      state.messages.push({ role: 'error', text: ev.message || ev.error || ev.text || 'Unknown error' });
-      appendMessage(msgContainer, scrollEl, { role: 'error', text: ev.message || ev.error || ev.text || 'Unknown error' });
+      // v0.15: error events carry the provider + model the engine ACTUALLY
+      // used — show them so any desync is instantly visible.
+      var errText = ev.message || ev.error || ev.text || 'Unknown error';
+      if (ev.provider) {
+        errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
+      }
+      state.messages.push({ role: 'error', text: errText });
+      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText });
       var btn2 = document.querySelector('#chat-send');
       if (btn2) { btn2.textContent = 'Send'; btn2.onclick = null; }
     }
@@ -698,6 +948,7 @@
     container.appendChild(el);
     if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
     else container.scrollTop = container.scrollHeight;
+    return el; // v0.15: PM turns track the hint element for removal
   }
 
   function updateLastMessage(container, scrollEl, msg) {
@@ -735,6 +986,7 @@
         if (data && data.ID) {
           state.sessionId = data.ID;
           icon._sessionData = data;
+          bindSessionToIcon(icon, data.ID); // v0.15: persist the binding
         }
       }).catch(function (e) { console.error('create session failed', e); });
     } else {

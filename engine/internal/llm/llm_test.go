@@ -167,3 +167,59 @@ func TestReasoningCatalogLoads(t *testing.T) {
                 t.Error("catalog missing chat_template_kwargs entries")
         }
 }
+
+// TestParseNvidiaCards — the build.nvidia.com card parser. The badge row
+// ("Free Endpoint") sits BEFORE the artifact-card anchor; the WAF
+// interstitial (no artifact-cards) must return (nil, nil) so the caller
+// defaults every model to free.
+func TestParseNvidiaCards(t *testing.T) {
+        // WAF interstitial / empty page → no cards → nil (default-free upstream).
+        if f, a := parseNvidiaCards("<html><body>challenge</body></html>"); f != nil || a != nil {
+                t.Errorf("empty page should parse to nil, got %v %v", f, a)
+        }
+
+        // Real card shape (trimmed from the live page): publisher link + badges,
+        // then the artifact-card anchor with the slug.
+        page := `<div><a data-nvtrack-nav-object-label="moonshotai" href="/moonshotai">Moonshotai</a></div>` +
+                `<div class="ml-auto flex shrink-0 gap-1">` +
+                `<span class="nv-badge">Downloadable</span>` +
+                `<span class="nv-badge nv-badge--color-purple">Free Endpoint</span></div>` +
+                `<h3><a data-nvtrack="Navigate" data-nvtrack-nav-object="artifact-card" ` +
+                `data-nvtrack-nav-object-label="kimi-k3" href="/moonshotai/kimi-k3">Kimi K3</a></h3>` +
+                `<div><a data-nvtrack-nav-object-label="somevendor" href="/somevendor">SomeVendor</a></div>` +
+                `<div class="ml-auto flex shrink-0 gap-1">` +
+                `<span class="nv-badge">Downloadable</span></div>` + // no Free Endpoint badge → paid
+                `<h3><a data-nvtrack-nav-object="artifact-card" ` +
+                `data-nvtrack-nav-object-label="paid-model" href="/somevendor/paid-model">Paid</a></h3>`
+
+        free, all := parseNvidiaCards(page)
+        if all == nil {
+                t.Fatal("cards should parse")
+        }
+        if len(all) != 2 {
+                t.Errorf("want 2 cards, got %d", len(all))
+        }
+        if !all["kimi-k3"] || !all["paid-model"] {
+                t.Errorf("slugs missing: %v", all)
+        }
+        if !free["kimi-k3"] {
+                t.Error("kimi-k3 must be free (Free Endpoint badge before the anchor)")
+        }
+        if free["paid-model"] {
+                t.Error("paid-model has no badge — must NOT be free")
+        }
+
+        // Slug matching: kimi-k3 API id "moonshotai/kimi-k3" → site slug "kimi-k3".
+        if isFree, found := nvidiaSlugMatch("kimi-k3", free, all); !found || !isFree {
+                t.Errorf("kimi-k3 should match free, got free=%v found=%v", isFree, found)
+        }
+        // Underscore/dot normalization: site "kimi.k3" vs API "kimi_k3" → match.
+        all2 := map[string]bool{"kimi.k3": true}
+        if _, found := nvidiaSlugMatch("kimi_k3", map[string]bool{}, all2); !found {
+                t.Error("underscore/dot normalization should match")
+        }
+        // Unknown model → not found (caller keeps the default: free).
+        if _, found := nvidiaSlugMatch("totally-unknown", free, all); found {
+                t.Error("unknown slug should not match")
+        }
+}

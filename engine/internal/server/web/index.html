@@ -475,7 +475,11 @@
   </div>
 </div>
 
+<script src="recovery.js"></script>
 <script src="physics.js"></script>
+<!-- v0.15: the PrivateMode SDK bridge (ES module — imports the vendored
+     privatemode-ai SDK + WASM). Loads async; PM turns await window.PMBridge. -->
+<script type="module" src="vendor/pm/pmsdk.js"></script>
 <script src="gridicon.js"></script>
 <script src="chatbot.js"></script>
 <script src="panel.js"></script>
