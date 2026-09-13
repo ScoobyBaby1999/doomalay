@@ -5,11 +5,19 @@
 // tap or drag the thumb, it slides and recolors (green = free, gold = paid).
 //
 // Each provider card: color dot, name, description, key input, ✓/✕/~
-// validation, and a GOLD "Get API key ↗" link that opens the in-app
-// redirect browser (redirect.js) straight on the provider's API-key page —
-// sign in there if needed and land right back on the key screen.
+// validation, and a GOLD "Get API key ↗" link.
 //
-// Validation (v0.12): the server now reports "valid" / "invalid" /
+// v0.14 (user spec #2): the in-app iframe embedding is GONE — it was the
+// source of the ERR_BLOCKED_BY_RESPONSE white screens and the broken
+// back-gesture behavior (iframes added entries to the WebView back list;
+// the back gesture navigated the WebView instead of returning to the app).
+// "Get API key ↗" now opens the REAL browser immediately (Chrome via
+// MainActivity's external-URL routing) and the provider card shows a
+// waiting hint: copy the key in the browser, come back, paste. The app
+// screen never navigates, so returning (back gesture / recents) lands
+// exactly where the user left off.
+//
+// Validation (v0.12): the server reports "valid" / "invalid" /
 // "unverified" and only calls a key invalid when the provider itself
 // rejected it. Cards show the reason when we couldn't verify.
 //
@@ -174,6 +182,11 @@
       var keyInfo = keys[cfg.env_var];
       var isActive = keyInfo && keyInfo.has_key;
       var val = validation[name];
+      // v0.14: friendly text for network-flavored reasons — the raw Go
+      // error ("network: post https://… : dial tcp …") is too noisy.
+      var badgeReason = String((val && val.reason) || '').replace(/^network:\s*/i, '');
+      if (/^(post |fetch |dial |lookup |timeout)/i.test(badgeReason)) badgeReason = 'provider unreachable — will retry';
+      else badgeReason = short(badgeReason);
       var valHTML = '';
       if (val && val.checking) {
         valHTML = '<span style="font-size:11px;color:#71717a">⟳ validating…</span>';
@@ -182,7 +195,7 @@
       } else if (val && val.state === 'invalid') {
         valHTML = '<span style="font-size:11px;color:#f87171" title="' + escAttr(val.reason || '') + '">✕ invalid' + (val.reason ? ' — ' + short(val.reason) : '') + '</span>';
       } else if (val && val.state === 'unverified') {
-        valHTML = '<span style="font-size:11px;color:#E8B44A" title="' + escAttr(val.reason || '') + '">◦ saved · unverified' + (val.reason ? ' (' + short(val.reason) + ')' : '') + '</span>';
+        valHTML = '<span style="font-size:11px;color:#E8B44A" title="' + escAttr(val.reason || '') + '">◦ saved · unverified' + (badgeReason ? ' (' + badgeReason + ')' : '') + '</span>';
       }
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
@@ -230,8 +243,11 @@
             '</div>'
           : '') +
         useHTML +
-        // Gold "Get API key" link → in-app redirect browser
+        // Gold "Get API key" link → opens the REAL browser (v0.14: no more
+        // in-app embedding). A waiting hint appears on the card — the user
+        // copies the key in the browser and pastes it right here.
         '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size:12px;font-weight:600;color:' + GOLD + ';margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size:13px">↗</span></a>' +
+        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size:11px;color:' + GOLD + ';background:rgba(232,180,74,0.08);border:1px solid rgba(232,180,74,0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
         '</div>';
     }
 
@@ -267,16 +283,18 @@
         });
       });
 
-      // Gold "Get API key" links → open the in-app redirect browser.
+      // Gold "Get API key" links (v0.14): open the REAL browser immediately
+      // and reveal the waiting hint. No embedding — the app screen stays
+      // put, so the back gesture returns here exactly as left.
       contentEl.querySelectorAll('[data-getkey]').forEach(function (link) {
         link.addEventListener('click', function (e) {
           e.preventDefault();
           var name = link.dataset.getkey;
           var cfg = providers[name];
-          if (cfg && cfg.signup_url && window.RedirectPanel) {
-            window.RedirectPanel.open(cfg.signup_url);
-          } else if (cfg && cfg.signup_url) {
-            window.open(cfg.signup_url, '_blank', 'noopener');
+          if (cfg && cfg.signup_url) {
+            openInSystemBrowser(cfg.signup_url);
+            var hint = contentEl.querySelector('#getkey-hint-' + name);
+            if (hint) hint.style.display = 'block';
           }
         });
       });
@@ -461,6 +479,25 @@
   }
   function escAttr(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+  function escHTMLInline(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function hostOf(u) {
+    try { return new URL(u).hostname; } catch (e) { return u; }
+  }
+  // Open a URL in the system browser. On Android the WebView's
+  // shouldOverrideUrlLoading hands external URLs to Chrome — a synthetic
+  // anchor click (target=_blank) triggers exactly that path. The WebView
+  // itself never navigates, so the app returns to THIS screen.
+  function openInSystemBrowser(url) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   // ── Settings page: Cloud ────────────────────────────────────────

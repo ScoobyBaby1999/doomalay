@@ -7,6 +7,8 @@ import (
         "net/url"
         "strings"
         "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 // probe.go — GET /api/probe-embed?url=...
@@ -38,6 +40,10 @@ var probeClient = &http.Client{
                 return http.ErrUseLastResponse
         },
         Timeout: 12 * time.Second,
+        // v0.14: netx transport — without this, the probe failed on Android
+        // (pure-Go DNS) and the frontend fell back to a best-effort iframe,
+        // which rendered the ERR_BLOCKED_BY_RESPONSE white screen.
+        Transport: netx.Transport(),
 }
 
 // embedProbeResult is the verdict for a URL.

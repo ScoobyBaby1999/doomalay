@@ -160,7 +160,24 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (this::webView.isInitialized && webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        // v0.14: the app is a single-page WebView — there is no navigation
+        // history to walk "back" through. The old code called
+        // webView.goBack(), which jumped to the leftover "Starting engine…"
+        // data-URL (or an iframe about:blank entry) and left users on a
+        // dead screen after the Android back gesture. Instead:
+        //   1. ask the app to close whatever overlay/panel is open
+        //      (window.doomalay.handleBack), and
+        //   2. if nothing was open, move the task to the background so the
+        //      gesture feels native (swipe back in from recents to return).
+        if (this::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "(window.doomalay && window.doomalay.handleBack) ? window.doomalay.handleBack() : false"
+            ) { result ->
+                val handled = result == "true"
+                if (!handled) moveTaskToBack(true)
+            }
+        } else {
+            super.onBackPressed()
+        }
     }
 }

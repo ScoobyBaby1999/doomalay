@@ -21,6 +21,8 @@ import (
         "regexp"
         "strings"
         "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 // SearchResult is one web hit.
@@ -96,7 +98,8 @@ func duckDuckGoSearch(ctx context.Context, query string, max int) ([]SearchResul
                 return nil, err
         }
         req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; doomalay-research/1.0)")
-        client := &http.Client{Timeout: 15 * time.Second}
+        // v0.14: netx transport — DoH fallback so search works on Android.
+        client := &http.Client{Timeout: 15 * time.Second, Transport: netx.Transport()}
         resp, err := client.Do(req)
         if err != nil {
                 return nil, fmt.Errorf("ddg: %w", err)
@@ -167,9 +170,11 @@ var ssrfClient = &http.Client{
                 }
                 return nil
         },
-        Transport: &http.Transport{
-                DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-        },
+        // v0.14: netx transport — DoH fallback dialer (Android egress). The
+        // SSRF policy is enforced by assertPublicURL below (per-hop) which
+        // itself uses netx.LookupIP so the guard resolves the same set of
+        // public IPs the dialer will actually connect to.
+        Transport: netx.Transport(),
 }
 
 // assertPublicURL validates that a URL's host resolves to a public address
@@ -186,9 +191,12 @@ func assertPublicURL(raw string) error {
         if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
                 return fmt.Errorf("local host blocked")
         }
-        ips, err := net.LookupIP(host)
-        if err != nil {
-                return fmt.Errorf("resolve %s: %w", host, err)
+        // v0.14: netx lookup (system → DoH) so the guard works on Android too —
+        // net.LookupIP alone fails there (pure-Go resolver) and would block
+        // every fetch with a spurious "resolve" error.
+        ips := netx.LookupIP(context.Background(), host)
+        if len(ips) == 0 {
+                return fmt.Errorf("resolve %s: no address", host)
         }
         for _, ip := range ips {
                 if !isPublicIP(ip) {

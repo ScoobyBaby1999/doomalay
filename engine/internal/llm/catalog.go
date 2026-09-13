@@ -30,6 +30,8 @@ import (
         "strings"
         "sync"
         "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 //go:embed catalog/providers.json
@@ -338,7 +340,9 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
         }
         accountID := keys[cfg.ExtraEnvVar]
 
-        client := &http.Client{Timeout: 12 * time.Second}
+        // v0.14: netx transport — the DoH fallback that makes validation work
+        // on Android (the pure-Go resolver has no /etc/resolv.conf there).
+        client := &http.Client{Timeout: 12 * time.Second, Transport: netx.Transport()}
 
         switch cfg.Validate {
         case "auth_key":
@@ -482,6 +486,14 @@ func ResolveModel(userModel, userProvider string, keys map[string]string) (model
         catalog, err := LoadCatalog()
         if err != nil {
                 return "", "", "", "", "", err
+        }
+        // v0.14: local models (picked via LocalModelsScreen) resolve to the
+        // on-device / LAN Ollama server. Ollama speaks the OpenAI-compatible
+        // /v1 chat shape; no key required. Previously this path died with
+        // "unknown provider: ollama" before a single token could stream.
+        if userProvider == "ollama" || userProvider == "local" {
+                model = strings.TrimPrefix(userModel, userProvider+"/")
+                return model, "http://127.0.0.1:11434/v1", "OLLAMA", "", "", nil
         }
         cfg, ok := catalog[userProvider]
         if !ok {

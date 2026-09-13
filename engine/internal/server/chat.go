@@ -501,16 +501,47 @@ func (s *Server) emit(conn *websocket.Conn, sessionID, evType, content, toolUseI
                 "session_id": sessionID,
                 "seq":        persisted.Seq,
         }
+        if toolUseID != "" {
+                out["tool_use_id"] = toolUseID
+        }
         switch evType {
-        case "user", "thinking", "assistant_delta", "tool_result", "title", "error":
+        case "user", "thinking", "assistant_delta", "tool_result", "title":
                 out["text"] = content
+        case "error":
+                // v0.14: error content is usually a JSON object
+                // {"error":"code","message":"human text"} — parse it so the
+                // frontend reads ev.message / ev.error (it never read the
+                // old "text" field → showed "Unknown error").
+                var obj map[string]any
+                if json.Unmarshal([]byte(content), &obj) == nil && len(obj) > 0 {
+                        for k, v := range obj {
+                                out[k] = v
+                        }
+                } else {
+                        out["text"] = content
+                        out["message"] = content
+                }
         case "tool_use":
                 out["name"] = content
         case "status":
-                out["state"] = content
-        }
-        if toolUseID != "" {
-                out["tool_use_id"] = toolUseID
+                // v0.14: status content is {"state":"idle"|"error","usage":…}
+                // — the OLD code shipped the raw JSON string as "state", so
+                // the frontend's ev.state === 'idle'/'error' checks never
+                // matched → isStreaming stuck true, Send stuck on "Stop"
+                // after any error turn.
+                var obj map[string]any
+                if json.Unmarshal([]byte(content), &obj) == nil && len(obj) > 0 {
+                        if st, ok := obj["state"].(string); ok {
+                                out["state"] = st
+                        } else {
+                                out["state"] = content
+                        }
+                        if u, ok := obj["usage"]; ok {
+                                out["usage"] = u
+                        }
+                } else {
+                        out["state"] = content
+                }
         }
         b, _ := json.Marshal(out)
         _ = conn.WriteMessage(websocket.TextMessage, b)

@@ -115,21 +115,31 @@
       // Also wire the header (avatar + name + subtitle) as a drag zone,
       // so the user doesn't have to grab the tiny handle bar. The header
       // is the whole top strip above the body — much easier to grab.
+      // v0.14: interactive children (the far-left model button etc.) are
+      // EXEMPT — their taps must produce clicks, not drags.
       if (this.headerEl) {
+        var isInteractive = function (target) {
+          return !!(target && target.closest &&
+            target.closest('button, a, input, textarea, select, [data-nodrag]'));
+        };
         this.headerEl.addEventListener('touchstart', function (e) {
           if (e.touches.length !== 1) return;
+          if (isInteractive(e.target)) return; // let the control receive the tap
           e.preventDefault(); e.stopPropagation();
           start(e.touches[0].clientY);
         }, { passive: false });
         this.headerEl.addEventListener('touchmove', function (e) {
           if (e.touches.length !== 1) return;
+          if (isInteractive(e.target)) return;
           e.preventDefault(); e.stopPropagation();
           move(e.touches[0].clientY);
         }, { passive: false });
         this.headerEl.addEventListener('touchend', function (e) {
+          if (isInteractive(e.target)) return;
           e.stopPropagation(); end();
         });
         this.headerEl.addEventListener('mousedown', function (e) {
+          if (isInteractive(e.target)) return;
           e.preventDefault(); e.stopPropagation();
           start(e.clientY);
         });

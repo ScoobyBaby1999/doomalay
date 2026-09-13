@@ -258,11 +258,43 @@
     font-weight: 700;
     color: #fff;
     overflow: hidden;
+    flex-shrink: 0;
   }
   #chat-panel .panel-header .avatar img {
     width: 100%; height: 100%;
     object-fit: cover;
     border-radius: 50%;
+  }
+  /* v0.14 (#5): far-left panel-header model button — "model · provider".
+     THE button that opens the dynamic model browser. */
+  #panel-model-btn {
+    display: none;              /* ChatPanel shows it when a model is set */
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 42%;
+    align-items: center;
+    gap: 5px;
+    background: rgba(165,180,252,0.08);
+    border: 1px solid rgba(165,180,252,0.28);
+    color: #a5b4fc;
+    padding: 6px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    line-height: 1.3;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #panel-model-btn:active {
+    background: rgba(165,180,252,0.16);
+  }
+  #panel-model-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   #chat-panel .panel-header .meta {
     flex: 1;
@@ -431,6 +463,7 @@
     <div class="handle-bar"></div>
   </div>
   <div class="panel-header">
+    <button id="panel-model-btn" aria-label="Change model"></button>
     <div class="avatar" id="panel-avatar"></div>
     <div class="meta">
       <div class="name" id="panel-name">Chat</div>
@@ -450,7 +483,6 @@
 <script src="appearance.js"></script>
 <script src="connectoverlay.js"></script>
 <script src="uiactive.js"></script>
-<script src="redirect.js"></script>
 <script src="sandboxpicker.js"></script>
 <script src="modelpicker.js"></script>
 <script src="providers.js"></script>

@@ -438,6 +438,13 @@
         // Reduced delay: was 500ms (felt too long). 150ms gives a quick
         // flash-then-panel feel without the lag.
         setTimeout(function () {
+          // v0.14: reset per-open header state — the far-left model button
+          // is hidden until ChatPanel shows it (chat icons with a model).
+          var modelBtn = document.getElementById('panel-model-btn');
+          if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+          // v0.14: the chat UI is full-bleed (its own padding); other panel
+          // types keep the default 20px from the stylesheet.
+          panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
           panel.open({
             title: icon.getPanelTitle(),
             subtitle: icon.getPanelSubtitle(),
@@ -511,9 +518,6 @@
     // preventDefault on touchstart — which is why desktop dogfooding
     // never caught it.)
     if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) return true;
-    // The in-app redirect browser (Get API key) also covers the full
-    // screen — same rule: touches inside it are UI touches.
-    if (window.RedirectPanel && window.RedirectPanel.isOpen()) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
