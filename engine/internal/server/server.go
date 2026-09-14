@@ -92,6 +92,15 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/sessions/{id}/export.md", s.handleSessionExport)
         s.mux.HandleFunc("GET /api/sessions/{id}/export.json", s.handleSessionExport)
 
+        // v0.17: per-chat ARTIFACTS (files the model / user produce —
+        // create, list, open, edit, rename, delete, download).
+        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts", s.handleArtifactsList)
+        s.mux.HandleFunc("POST /api/sessions/{id}/artifacts", s.handleArtifactsCreate)
+        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}", s.handleArtifactGet)
+        s.mux.HandleFunc("PUT /api/sessions/{id}/artifacts/{aid}", s.handleArtifactUpdate)
+        s.mux.HandleFunc("DELETE /api/sessions/{id}/artifacts/{aid}", s.handleArtifactDelete)
+        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/download", s.handleArtifactDownload)
+
         // WebSocket chat.
         s.mux.HandleFunc("GET /api/chat", s.handleChatWS)
 

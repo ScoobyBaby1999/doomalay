@@ -49,9 +49,24 @@
     contentEl.querySelectorAll('[data-model-type]').forEach(function (card) {
       card.addEventListener('click', function () {
         var type = card.dataset.modelType;
-        // Don't close the overlay — replace its content smoothly.
         if (type === 'cloud') {
-          window.ProvidersScreen.open(onPick, { useReplaceContent: true });
+          // v0.17 ONE-PRESS CONNECT (user spec): if the user already has
+          // a cloud provider key, pressing this card instantly connects a
+          // (provider, model) and unlocks the chat — no screen dance.
+          // With fewer than 3 providers connected we ALSO pop the
+          // providers GUI as a dismissible reminder (✕ or scrim tap
+          // closes it; the chat is already usable underneath).
+          // Zero keys → the full setup GUI (the original flow).
+          window.ProvidersScreen.smartConnect(function (provider, modelId) {
+            onPick(provider, modelId);
+          }).then(function (res) {
+            if (!res.connected) {
+              window.ProvidersScreen.open(onPick, { useReplaceContent: true });
+            } else if (res.connected < 3) {
+              window.ProvidersScreen.open(onPick, { useReplaceContent: true, reminder: true });
+            }
+            // ≥3 connected: silent one-press unlock, no GUI
+          });
         } else {
           window.LocalModelsScreen.open(onPick, { useReplaceContent: true });
         }

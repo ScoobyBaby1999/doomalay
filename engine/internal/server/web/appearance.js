@@ -4,7 +4,12 @@
 //   - Grid size (1x default, up to 5x — fewer/larger squares) — live
 //   - Grid colors (background, grid lines, dots, origin marker) — live
 //   - Font family (system default, serif, monospace)
-//   - Default chatbot names (the list used to name new chatbots) — editable
+//   - v0.17 CHAT COLORS: the markdown color scheme (presets of 2–3
+//     adjacent hues + per-slot overrides — every value is a CSS
+//     variable) — live
+//   - v0.17 CHAT TEXT SIZE: 0–100 slider scaling message text (bubbles
+//     + pills adapt; word-break guards against mid-word splices)
+//   - Default chatbot names (the list used to name new chatbots)
 //   - Reset View button (zoom 1x, pan to origin)
 //
 // All sections are collapsible (tap the header to expand/collapse) and
@@ -15,12 +20,105 @@
 
   const Settings = window.Settings;
 
+  // ── v0.17: chat color scheme + text size — applied live ─────────
+  function applyChatAppearance(s) {
+    if (window.Formatter) {
+      window.Formatter.applyScheme(s.chatScheme || 'teal', s.fmtOverrides || null);
+    }
+    var size = (typeof s.chatTextSize === 'number') ? s.chatTextSize : 50;
+    // 0 → 12px … 100 → 24px (default 50 → 16px)
+    var px = (12 + (size / 100) * 12).toFixed(1) + 'px';
+    document.documentElement.style.setProperty('--chat-fs', px);
+  }
+
+  Settings.onChange(function (s) { applyChatAppearance(s); });
+  applyChatAppearance(Settings.getState()); // boot with persisted values
+
+  // scheme preset buttons + reset (dispatched via doomalay:action)
+  window.addEventListener('doomalay:action', function (e) {
+    var d = e.detail || {};
+    if (d.action === 'chat-scheme' && d.data && d.data.scheme) {
+      Settings.setState({ chatScheme: d.data.scheme, fmtOverrides: {} });
+    } else if (d.action === 'chat-colors-reset') {
+      Settings.setState({ chatScheme: 'teal', fmtOverrides: {} });
+    }
+  });
+
+  function schemeSwatches() {
+    var current = Settings.getState().chatScheme || 'teal';
+    var schemes = (window.Formatter && window.Formatter.schemes) || {};
+    var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px">';
+    Object.keys(schemes).forEach(function (id) {
+      var sc = schemes[id];
+      var sel = id === current;
+      html += '<button data-action="chat-scheme" data-scheme="' + id + '" ' +
+        'style="display:flex;align-items:center;gap:6px;background:' +
+        (sel ? '#1e1e28' : 'transparent') + ';border:1px solid ' +
+        (sel ? '#34344a' : '#2a2a35') + ';border-radius:10px;padding:8px 12px;' +
+        'cursor:pointer;font-family:inherit;color:' + (sel ? '#e0e0e8' : '#a8a8b4') + ';font-size:12px;font-weight:600">' +
+        '<span style="display:flex">' +
+          '<i style="width:12px;height:12px;border-radius:50%;background:' + sc.a1 + ';display:inline-block"></i>' +
+          '<i style="width:12px;height:12px;border-radius:50%;background:' + sc.a2 + ';display:inline-block;margin-left:-3px"></i>' +
+          '<i style="width:12px;height:12px;border-radius:50%;background:' + sc.a3 + ';display:inline-block;margin-left:-3px"></i>' +
+        '</span>' + sc.label + '</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function fmtColorRow(key, label, hint) {
+    var s = Settings.getState();
+    var ov = s.fmtOverrides || {};
+    var preset = (window.Formatter && window.Formatter.schemes[s.chatScheme || 'teal']) || {};
+    var val = ov[key] || preset[key === 'a1' ? 'a1' : key === 'a2' ? 'a2' : key === 'a3' ? 'a3' : key === 'bright' ? 'bright' : 'link'] || '#22d3ee';
+    return row(label + (hint ? ' <span style="font-size:10px;color:#71717a">' + hint + '</span>' : ''),
+      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt" value="' + val + '" ' +
+      'style="width:40px;height:32px;border:1px solid #2a2a35;border-radius:6px;background:transparent;cursor:pointer">');
+  }
+
+  // intercept fmt color inputs (they nest under fmtOverrides, not flat)
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || el.getAttribute('data-custom') !== 'fmt') return;
+    var keyMap = { fmtA_a1: 'a1', fmtA_a2: 'a2', fmtA_a3: 'a3', fmtA_bright: 'bright', fmtA_link: 'link' };
+    var slot = keyMap[el.getAttribute('data-setting-key')];
+    if (!slot) return;
+    var s = Settings.getState();
+    var ov = Object.assign({}, s.fmtOverrides || {});
+    ov[slot] = el.value;
+    Settings.setState({ fmtOverrides: ov });
+  }, true);
+
   Settings.registerPage('appearance', {
     title: 'Appearance',
     icon: '🎨',
     render: function (getState, setState) {
       const s = getState();
       return (
+        section('Chat Colors', '' +
+          '<p class="hint">The markdown color scheme for messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below (all values are CSS variables).</p>' +
+          schemeSwatches() +
+          fmtColorRow('a1', 'Accent 1', 'headings · keywords') +
+          fmtColorRow('a2', 'Accent 2', 'subheads · code') +
+          fmtColorRow('a3', 'Accent 3', 'emphasis · links') +
+          fmtColorRow('bright', 'Bright text', 'bold') +
+          fmtColorRow('link', 'Links', '') +
+          '<button data-action="chat-colors-reset" style="background:transparent;border:1px solid #2a2a35;color:#71717a;padding:8px 14px;border-radius:8px;font-size:12px;font-family:inherit;cursor:pointer;margin-top:6px">reset to preset defaults</button>'
+        ) +
+        section('Chat Text Size', '' +
+          '<div class="setting-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<label>Message text size</label>' +
+          '<span style="font-size:13px;color:#71717a;font-variant-numeric:tabular-nums" data-range-display="chatTextSize" data-suffix="">' +
+            (typeof s.chatTextSize === 'number' ? s.chatTextSize : 50) + '</span>' +
+          '</div>' +
+          '<input type="range" data-setting-key="chatTextSize" data-setting-event="input" ' +
+          'data-setting-transform="number" min="0" max="100" step="1" value="' +
+            (typeof s.chatTextSize === 'number' ? s.chatTextSize : 50) + '" ' +
+          'style="width:100%;accent-color:var(--fmt-a1);height:32px;cursor:pointer">' +
+          '<p class="hint" style="margin:0">0 = smallest (12px) · 100 = largest (24px). Bubbles and pills adapt; long words wrap without splicing.</p>' +
+          '</div>'
+        ) +
         section('Grid', '' +
           rangeRow('gridSize', 'Grid Size', s.gridSize || 1, 1, 5, 0.5,
             'Scales the grid spacing. 1× = default (48px). 5× = largest (240px), fewer squares.') +

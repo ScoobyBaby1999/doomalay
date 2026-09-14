@@ -1,33 +1,41 @@
-// chatpanel.js — v0.16 the GENERIC CHAT HOST.
+// chatpanel.js — v0.17 the GENERIC CHAT HOST (formatted + artifacts).
 //
-// THE ARCHITECTURE (user spec, v0.16):
+// THE ARCHITECTURE (unchanged since v0.16):
 //   Everything chat-KIND-specific lives in a ChatType (chatframework.js —
 //   QuickChat today; Termux + Hugging Face later). This host owns the
-//   LAYOUT + STATE + PERSISTENCE and DELEGATES to the registered type:
+//   LAYOUT + STATE + PERSISTENCE and DELEGATES to the registered type.
 //
 //     ┌──────────────────────────────────────────────┐
 //     │ ▸ ⚡ Quick Chat · NVIDIA · nemotron…  (pinned)│  ← collapsible header:
 //     │ ┄┄┄ dropdown (hidden by default) ┄┄┄         │     tap the arrow to
 //     │   [⚡ Quick Chat] [☁ NVIDIA]  (pills)        │     drop the pills down.
-//     │   [⇩ export] [memory 40 ▾]     (utilities)  │     More pills ship per
+//     │   [🗄 artifacts N] [⇩ export] [⌕] [memory]   │     More pills ship per
 //     └──────────────────────────────────────────────┘     chat type later.
 //     ┌──────────────────────────────────────────────┐
 //     │ do this quickly - setup the AI bot           │  ← THE GATELOCK: the
 //     │ [ 🔌 + Sandbox ]  [ 🤖 + Model ]  (big boxes)│     start of the convo.
 //     ├──────────────────────────────────────────────┤     NOT collapsible —
-//     │  (chat + messages + toolbar + input appear   │     it scrolls with the
-//     │   BELOW once the gate is fulfilled)          │     conversation.
+//     │  (formatted chat + artifacts + toolbar +     │     it scrolls with the
+//     │   input appear BELOW once the gate is met)   │     conversation.
 //     └──────────────────────────────────────────────┘
 //
-// The gatelock heading + boxes are message-zero of the conversation: they
-// never collapse (you scroll back to them), and once both boxes are filled
-// the full chat overlay appears in the same flow.
+// v0.17 additions:
+//   - EVERY message renders through window.Formatter (markdown + scheme
+//     colors + Prism code cards + tappable links) — assistant, thinking
+//     AND user bubbles.
+//   - Artifact pipeline: complete ```artifact file=… blocks in assistant
+//     replies → saved to the engine (per-session) → artifact cards in the
+//     message + the 🗄 drawer pill in the header dropdown.
+//   - Tool pills are TAPPABLE: expand to show the full query/result.
+//   - Sources render as rich tappable cards.
+//   - Long-press a message → copy / quote / regenerate action sheet.
+//   - In-chat search pill (creative extra) + auto-title after the first
+//     exchange + thinking stats while reasoning streams.
 //
-// v0.15 carry-overs that still hold: per-turn session re-fetch (universal-401
-// fix), absolute WS URLs, PM SDK bridge turns, idempotent event replay,
-// sessionId→icon binding, per-message provider/model overrides.
-//
-// Exposes: window.ChatPanel
+// v0.15/16 carry-overs that still hold: per-turn session re-fetch,
+// absolute WS URLs, PM SDK bridge turns, idempotent event replay,
+// sessionId→icon binding, per-message provider/model overrides,
+// single-flight WS binding.
 
 (function () {
   'use strict';
@@ -38,6 +46,22 @@
 
   // Per-chat state registry. Keyed by chat ID.
   var chatStates = {};
+  var currentCtx = null; // the chat currently shown in the panel
+
+  // The artifact protocol the model follows (mirrors chat.go's const —
+  // PM bridge turns need it client-side since they bypass the engine).
+  var ARTIFACT_PROMPT = 'You are chatting inside the Doomalay app, which has an artifact system.\n' +
+    'When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n' +
+    'Artifact format (a fenced code block whose info string starts with "artifact"):\n' +
+    '  ```artifact file=<filename.ext>\n  <the complete file content as plain text>\n  ```\n' +
+    'For binary file types (e.g. .docx, .xlsx, .pdf, .zip, images) provide the bytes base64-encoded instead:\n' +
+    '  ```artifact file=<filename> encoding=base64\n  <base64 payload>\n  ```\n' +
+    'Rules:\n' +
+    '- Prefer text formats when the user has no strong preference (.md, .txt, .json, .csv, .html, code files, config files).\n' +
+    '- Use a real, descriptive filename with the correct extension.\n' +
+    '- The artifact block must contain the COMPLETE file, never truncated.\n' +
+    '- Keep the spoken answer short and mention the attached file name.\n' +
+    '- Regular markdown (headings, lists, bold, links, code blocks) is rendered nicely — use it freely.';
 
   function getOrCreateState(chatId, sessionData, icon) {
     if (!chatStates[chatId]) {
@@ -55,9 +79,13 @@
         isStreaming: false,
         draftText: '',
         client: null,
-        dropdownOpen: false,  // v0.16: pills hidden by default until the arrow
+        dropdownOpen: false,  // pills hidden by default until the arrow
         fulfilled: false,     // gatelock passed?
-        lastEventI: 0         // idempotent replay dedup
+        lastEventI: 0,        // idempotent replay dedup
+        artifactsCount: 0,
+        artifactSaved: {},    // msg-index → true (avoid re-saving)
+        search: null,         // in-chat search state {q, matches}
+        _icon: icon
       };
       if (icon) icon._sessionData = sessionData || null;
     }
@@ -72,14 +100,14 @@
 
   function renderHost(bodyEl, icon, state, panel) {
     var type = window.ChatTypes.get(state.sandbox || 'quick');
+    currentCtx = { bodyEl: bodyEl, icon: icon, state: state, panel: panel, type: type };
 
-    // Labels may land async (catalog fetch). v0.16: register the re-render
-    // callback ONLY while labels are still pending — a bare .then on the
-    // cached promise re-fired on EVERY render → infinite re-render loop.
+    // Labels may land async (catalog fetch): exactly ONE post-labels re-render.
     if (!H.hasLabels()) {
       H.ensureCatalog().then(function () {
-        if (bodyEl.isConnected && !state._labelsDone) {
-          state._labelsDone = true; // exactly ONE post-labels re-render
+        if (bodyEl.isConnected && !state._labelsDone && currentCtx &&
+            currentCtx.state === state) {
+          state._labelsDone = true;
           renderHost(bodyEl, icon, state, panel);
         }
       });
@@ -89,11 +117,11 @@
     var justFulfilled = complete && !state.fulfilled;
     if (complete) state.fulfilled = true;
 
-    // The context object handed to every ChatType hook.
     var ctx = buildCtx(bodyEl, icon, state, panel, type);
+    currentCtx.ctx = ctx;
 
     // ── PINNED header: arrow + summary; dropdown hidden by default ──
-    var headerHTML = renderHeader(type, state, ctx);
+    var headerHTML = renderHeader(type, state, ctx, complete);
 
     // ── THE GATELOCK (start of the convo — never collapsible) ──
     var gateHTML = renderGatelock(type, state, ctx, complete);
@@ -101,11 +129,12 @@
     // ── The chat (only once the gate is fulfilled) ──
     var chatHTML = complete
       ? '<div id="chat-live" style="flex:1 1 auto;display:flex;flex-direction:column;min-height:55%">' +
+          '<div id="chat-searchbar" style="display:none;padding:6px 16px"></div>' +
           '<div id="chat-messages" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px">' +
             (state.messages.length === 0
               ? '<div id="chat-greeting" style="text-align:center;color:#71717a;font-size:13px;padding:32px 20px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
-              : renderMessages(state.messages)) +
+              : renderMessages(state)) +
           '</div>' +
           // Sticky input bar — stays visible while scrolled.
           '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:#0e0e12;border-top:1px solid #1a1a22;padding:10px 16px 12px;z-index:2">' +
@@ -132,12 +161,52 @@
     var input = bodyEl.querySelector('#chat-input');
     var sendBtn = bodyEl.querySelector('#chat-send');
 
+    // mount formatting into every rendered bubble (renderMessages emits
+    // empty shells; the Formatter fills user/assistant/thinking)
+    mountAllFormatting(msgContainer, state);
+
     ctx.scrollEl = scrollEl;
     ctx.msgContainer = msgContainer;
 
     wireHeader(bodyEl, icon, state, type, ctx);
     wireGatelock(bodyEl, ctx);
     updateHeaderBtn(state, icon, bodyEl, panel);
+
+    // artifacts session binding + badge
+    if (state.sessionId) {
+      window.Artifacts.setSession(state.sessionId, { name: icon.name });
+      refreshArtifactCount(state, bodyEl);
+    }
+
+    // long-press message actions (copy / quote / regenerate)
+    if (msgContainer) {
+      window.MsgActions.wire(msgContainer, {
+        onQuote: function (text) {
+          var q = String(text).split('\n').map(function (l) { return '> ' + l; }).join('\n');
+          var ta = bodyEl.querySelector('#chat-input');
+          if (ta) {
+            ta.value = q + '\n\n' + ta.value;
+            state.draftText = ta.value;
+            ta.focus();
+            ta.scrollTop = ta.scrollHeight;
+          }
+        },
+        onRegenerate: function () {
+          if (state.isStreaming) return;
+          // drop trailing assistant messages, resend the last user text
+          var lastUser = null;
+          for (var i = state.messages.length - 1; i >= 0; i--) {
+            if (state.messages[i].role === 'user') { lastUser = state.messages[i]; break; }
+          }
+          if (!lastUser) return;
+          while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
+            state.messages.pop();
+          }
+          if (msgContainer) msgContainer.innerHTML = renderMessages(state);
+          doSend(lastUser.text, bodyEl, icon, state, panel);
+        }
+      });
+    }
 
     if (input && sendBtn) {
       buildToolbar(bodyEl, state, icon, type);
@@ -155,41 +224,34 @@
       });
       sendBtn.addEventListener('click', send);
 
-      // Connect the WS — only after the engine session exists, and prefer
-      // re-binding the icon's previously persisted engine session so a
-      // restart replays the SAME conversation (v0.15).
-      // v0.16 SINGLE-FLIGHT: a re-render while the (async) bind is in
-      // flight used to spawn a SECOND ChatClient — its replay raced the
-      // first into a detached container. One bind, one client; later
-      // renders only re-point onEvent at the CURRENT containers.
+      // Connect the WS — only after the engine session exists; rebind the
+      // icon's persisted session so a restart replays the SAME conversation.
+      // SINGLE-FLIGHT: one bind, one client; later renders re-point onEvent.
       if (state.client) {
-        state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl); };
-        // Self-heal: state already holds history but this fresh render
-        // shows the greeting (the replay landed on a detached DOM) —
-        // re-render the messages NOW.
+        state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, icon, panel); };
         if (state.messages.length > 0 && msgContainer && msgContainer.querySelector('#chat-greeting')) {
-          msgContainer.innerHTML = renderMessages(state.messages);
+          msgContainer.innerHTML = renderMessages(state);
           scrollEl.scrollTop = scrollEl.scrollHeight;
         }
       } else if (!state._wsBinding) {
         state._wsBinding = bindEngineSession(icon, state, function () {
           state._wsBinding = null;
           if (state.sessionId) {
+            window.Artifacts.setSession(state.sessionId, { name: icon.name });
+            refreshArtifactCount(state, bodyEl);
             connectWS(bodyEl, state, msgContainer);
           } else {
             ensureSession(icon, state, function () {
+              if (state.sessionId) window.Artifacts.setSession(state.sessionId, { name: icon.name });
+              refreshArtifactCount(state, bodyEl);
               if (bodyEl.querySelector('#chat-input')) connectWS(bodyEl, state, msgContainer);
             });
           }
         });
       }
-      // (a bind already in flight: its callback will connectWS with the
-      // containers it captured — and any LATER render re-points onEvent
-      // via the state.client branch above.)
     }
 
-    // The reveal: on first fulfillment, smooth-scroll past the gate so the
-    // chat (greeting + input) is front and center.
+    // The reveal: on first fulfillment, smooth-scroll past the gate.
     if (justFulfilled) {
       setTimeout(function () {
         var live = bodyEl.querySelector('#chat-live');
@@ -199,53 +261,12 @@
       scrollEl.scrollTop = scrollEl.scrollHeight;
     }
 
+    if (state.search && state.search.q) renderSearchbar(bodyEl, state, icon, panel);
+
     function send() {
       var text = input.value.trim();
       if (!text || state.isStreaming) return;
-      doSend(text);
-    }
-
-    function doSend(text) {
-      state.messages.push({ role: 'user', text: text, local: true });
-      appendMessage(msgContainer, scrollEl, { role: 'user', text: text });
-
-      input.value = '';
-      state.draftText = '';
-      input.style.height = 'auto';
-
-      state.isStreaming = true;
-      sendBtn.textContent = 'Stop';
-      sendBtn.onclick = function () { type.stop(state, ctx); };
-
-      // PrivateMode turns must never wait for the engine WS.
-      if (state.provider !== 'privatemodeai' && !(state.client && state.client.connected)) {
-        if (!state.client && !state.sessionId) {
-          ensureSession(icon, state, function () { connectWS(bodyEl, state, msgContainer); });
-        } else if (state.client && state.client.state !== 'connecting' && state.client.state !== 'open') {
-          state.client.connect();
-        }
-        sendBtn.textContent = '…';
-        var tries = 0;
-        var check = setInterval(function () {
-          tries++;
-          if (state.client && state.client.connected) {
-            clearInterval(check);
-            if (!state.isStreaming) sendBtn.textContent = 'Send';
-            type.send(text, state, ctx);
-          } else if (tries > 100) {
-            clearInterval(check);
-            sendBtn.textContent = 'Send';
-            var err = 'Still connecting to the engine — tap Send again in a moment.' +
-              (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
-            state.messages.push({ role: 'error', text: err });
-            appendMessage(msgContainer, scrollEl, { role: 'error', text: err });
-            state.isStreaming = false;
-          }
-        }, 100);
-        return;
-      }
-
-      type.send(text, state, ctx);
+      doSend(text, bodyEl, icon, state, panel);
     }
   }
 
@@ -305,7 +326,7 @@
       if (chevron) chevron.style.transform = 'rotate(' + (state.dropdownOpen ? '90deg' : '0deg') + ')';
     };
     if (row) row.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('#pill-row, #util-row')) return; // taps INSIDE the dropdown don't toggle
+      if (e.target.closest && e.target.closest('#pill-row, #util-row')) return;
       toggle();
     });
     if (chevron) chevron.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
@@ -328,13 +349,40 @@
           pillRow.appendChild(b);
         })(pills[i]);
       }
+
+      // v0.17: THE ARTIFACT DRAWER PILL (per user spec: in the collapsible
+      // header dropdown). Badge shows this chat's artifact count.
+      var art = document.createElement('button');
+      art.id = 'pill-artifacts';
+      art.className = 'pill-artifacts';
+      art.innerHTML = '🗄 <span id="pill-artifacts-count">' + (state.artifactsCount || 0) + '</span>';
+      art.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
+        'background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.55);color:#38bdf8;' +
+        'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
+      art.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (state.sessionId) window.Artifacts.openDrawer(state.sessionId, { name: icon.name });
+        else window.Artifacts.toast('connect a model first');
+      });
+      pillRow.appendChild(art);
     }
 
-    // Host utilities (available to every chat type): export + memory window.
+    // Host utilities: export + memory window + in-chat search.
     if (utilRow) {
       utilRow.innerHTML = '';
 
-      // Export — the chat log, 3 formats (engine renders from the event log).
+      // In-chat search (creative extra) — filter + highlight messages.
+      var search = document.createElement('button');
+      search.textContent = '⌕ search';
+      search.style.cssText = utilBtnStyle();
+      search.addEventListener('click', function (e) {
+        e.stopPropagation();
+        state.search = state.search && state.search.open ? null : { open: true, q: '' };
+        renderSearchbar(bodyEl, state, icon, ctx.panel);
+      });
+      utilRow.appendChild(search);
+
       var exp = document.createElement('button');
       exp.textContent = '⇩ export chat';
       exp.style.cssText = utilBtnStyle();
@@ -366,7 +414,7 @@
       });
       utilRow.appendChild(expJson);
 
-      // Memory — the sliding context window (msgs sent as history).
+      // Memory — the sliding context window.
       var mem = document.createElement('div');
       mem.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#71717a;flex-shrink:0';
       var memBtn = document.createElement('button');
@@ -374,7 +422,6 @@
       memBtn.style.cssText = utilBtnStyle();
       memBtn.addEventListener('click', function (e) {
         e.stopPropagation();
-        // cycle 10 → 20 → 40 → 80 → 160 → 10…
         var ladder = [10, 20, 40, 80, 160];
         var cur = state.slidingWindow || 40;
         var idx = ladder.indexOf(cur);
@@ -386,6 +433,76 @@
       mem.appendChild(memBtn);
       utilRow.appendChild(mem);
     }
+  }
+
+  // ── the in-chat search bar ─────────────────────────────────────
+  function renderSearchbar(bodyEl, state, icon, panel) {
+    var bar = bodyEl.querySelector('#chat-searchbar');
+    if (!bar) return;
+    var search = state.search;
+    if (!search || !search.open) { bar.style.display = 'none'; return; }
+    bar.style.display = 'block';
+    bar.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center">' +
+        '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" ' +
+          'style="flex:1;background:#14141a;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
+        '<button id="chat-search-close" style="background:transparent;border:none;color:#71717a;font-size:18px;cursor:pointer;padding:4px 8px">✕</button>' +
+      '</div>' +
+      '<div id="chat-search-info" style="font-size:11px;color:#71717a;margin-top:4px"></div>';
+    var inp = bar.querySelector('#chat-search-input');
+    var info = bar.querySelector('#chat-search-info');
+    var closeBtn = bar.querySelector('#chat-search-close');
+
+    var run = function () {
+      search.q = inp.value;
+      var n = highlightMatches(bodyEl, state, search.q);
+      info.textContent = search.q ? (n ? n + ' match' + (n > 1 ? 'es' : '') : 'no matches') : '';
+    };
+    var deb = null;
+    inp.addEventListener('input', function () {
+      clearTimeout(deb);
+      deb = setTimeout(run, 200);
+    });
+    closeBtn.addEventListener('click', function () {
+      state.search = null;
+      clearHighlights(bodyEl);
+      bar.style.display = 'none';
+      var msgC = bodyEl.querySelector('#chat-messages');
+      if (msgC) { msgC.innerHTML = renderMessages(state); scrollBottom(bodyEl); }
+    });
+    if (search.q) run();
+  }
+
+  function highlightMatches(bodyEl, state, q) {
+    clearHighlights(bodyEl);
+    if (!q || q.length < 2) return 0;
+    var count = 0;
+    var walker = document.createTreeWalker(bodyEl.querySelector('#chat-messages'), NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (n) {
+      if (!n.nodeValue || n.parentNode.closest('.fmt-codecard, script, style, textarea')) return;
+      var idx = n.nodeValue.toLowerCase().indexOf(q.toLowerCase());
+      if (idx < 0) return;
+      count++;
+      // wrap the match in a <mark>
+      var range = document.createRange();
+      range.setStart(n, idx); range.setEnd(n, idx + q.length);
+      var mark = document.createElement('mark');
+      mark.className = 'chat-search-mark';
+      try { range.surroundContents(mark); } catch (e) {}
+      var target = mark.closest('.msg-bubble') || mark;
+      if (target.scrollIntoView) target.scrollIntoView({ block: 'center' });
+    });
+    return count;
+  }
+  function clearHighlights(bodyEl) {
+    bodyEl.querySelectorAll('mark.chat-search-mark').forEach(function (m) {
+      var p = m.parentNode;
+      if (!p) return;
+      p.replaceChild(document.createTextNode(m.textContent), m);
+      p.normalize();
+    });
   }
 
   function utilBtnStyle(small) {
@@ -445,14 +562,20 @@
       },
 
       applyModel: function (provider, modelId) {
+        // v0.17: picking a model from THIS chat type's gatelock implies
+        // the type itself (one-press connect: no separate sandbox step
+        // needed when the user goes straight for a cloud provider).
+        if (!state.sandbox) state.sandbox = type.id;
         state.model = modelId;
         state.provider = provider;
         if (icon) {
           icon.model = modelId;
           icon.provider = provider;
+          icon.sandbox = state.sandbox;
+          if (typeof icon.setSandbox === 'function') icon.setSandbox(state.sandbox);
           if (typeof icon.save === 'function') icon.save();
         }
-        updateSession(icon, state, { model: modelId, provider: provider });
+        updateSession(icon, state, { model: modelId, provider: provider, sandbox: state.sandbox });
         renderHost(bodyEl, icon, state, panel);
       },
 
@@ -483,14 +606,14 @@
     state._pmAbort = abort;
     if (sendBtn) sendBtn.onclick = function () { abort.abort(); };
 
-    var history = [];
+    var history = [{ role: 'system', content: ARTIFACT_PROMPT }]; // v0.17: artifact protocol
     for (var i = 0; i < state.messages.length; i++) {
       var m = state.messages[i];
       if (m.role === 'user') history.push({ role: 'user', content: m.text });
       else if (m.role === 'assistant' && m.complete) history.push({ role: 'assistant', content: m.text });
     }
     var win = state.slidingWindow || 40;
-    if (history.length > win) history = history.slice(-win);
+    if (history.length > win + 1) history = history.slice(0, 1).concat(history.slice(-(win)));
 
     var model = String(state.model || '');
     if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
@@ -500,7 +623,7 @@
       if (!hintEl) {
         var hint = { role: 'tool', text: '· ' + msg, progress: true };
         state.messages.push(hint);
-        hintEl = appendMessage(msgContainer, scrollEl, hint);
+        hintEl = appendMessage(msgContainer, scrollEl, hint, bodyEl, icon);
       }
     };
     var clearHint = function () {
@@ -518,7 +641,7 @@
       if (!streamMsg) {
         streamMsg = { role: 'assistant', text: '', complete: false, streaming: true };
         state.messages.push(streamMsg);
-        appendMessage(msgContainer, scrollEl, streamMsg);
+        appendMessage(msgContainer, scrollEl, streamMsg, bodyEl, icon);
       }
       return streamMsg;
     };
@@ -544,12 +667,13 @@
         streamMsg.complete = true;
         streamMsg.streaming = false;
         if (streamMsg.text) persist('assistant', streamMsg.text);
-        updateLastMessage(msgContainer, scrollEl, streamMsg);
+        updateMessageEl(bodyEl, streamMsg, true);
+        finalizeArtifacts(streamMsg, state, bodyEl); // v0.17
       }
       if (errText) {
         persist('error', errText);
         state.messages.push({ role: 'error', text: errText });
-        appendMessage(msgContainer, scrollEl, { role: 'error', text: errText });
+        appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, icon);
         persist('status', JSON.stringify({ state: 'error', usage: null }));
       } else {
         persist('status', JSON.stringify({ state: 'idle', usage: null }));
@@ -562,40 +686,37 @@
       model: model,
       messages: history,
       signal: abort.signal,
-      // v0.16: web search for PM too — the bridge's ReAct loop calls the
-      // engine tool routes; deep research stays engine-only (WS turns).
       tools: !!state.webSearch && !state.deepResearch,
       onThinking: function (t) {
         clearHint();
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'thinking') {
-          last = { role: 'thinking', text: '', open: true };
+          last = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
           state.messages.push(last);
-          appendMessage(msgContainer, scrollEl, last);
+          appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
         }
         last.text += t;
-        updateLastMessage(msgContainer, scrollEl, last);
+        updateMessageEl(bodyEl, last, false);
       },
       onDelta: function (t) {
         clearHint();
         var m2 = getStreamMsg();
         m2.text += t;
-        updateLastMessage(msgContainer, scrollEl, m2);
+        updateMessageEl(bodyEl, m2, false);
       },
       onTool: function (ev) {
-        // ReAct progress chips — same shape as WS tool events.
         if (ev.name === 'web_search' && ev.sources) {
           var srcs = ev.sources.map(function (s) {
             return { title: s.title, url: s.url, snippet: s.snippet };
           });
           state.messages.push({ role: 'sources', sources: srcs });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1]);
+          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
           persist('sources', JSON.stringify(srcs));
         }
-        var chip = { role: 'tool', text: '⌕ ' + (ev.summary || ''), tool: true };
-        if (ev.result) chip = { role: 'tool', text: '↳ ' + String(ev.result).slice(0, 200), result: true };
+        var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev };
+        if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev };
         state.messages.push(chip);
-        appendMessage(msgContainer, scrollEl, chip);
+        appendMessage(msgContainer, scrollEl, chip, bodyEl, icon);
         persist(chip.result ? 'tool_result' : 'tool_use',
           JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '' }));
       },
@@ -622,7 +743,6 @@
     }).catch(function () {});
   }
 
-  // Find the effort ladder for the selected model from the live catalog.
   function effortLevelsFor(catalog, provider, modelId) {
     if (!catalog) return null;
     var detail = H.modelDetail(modelId);
@@ -710,7 +830,6 @@
     return 'flex-shrink:0;background:' + (active ? color + '22' : 'transparent') + ';border:1px solid ' + (active ? color + '88' : '#2a2a35') + ';color:' + (active ? color : '#71717a') + ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
-  // Persist capability flags + memory window on the engine session.
   function persistCaps(state, icon) {
     if (!state.sessionId) {
       updateSession(icon, state, {});
@@ -730,14 +849,16 @@
 
   // ── WebSocket connect ─────────────────────────────────────────
   function connectWS(bodyEl, state, msgContainer) {
-    if (!state.sessionId) return; // never connect without a session (404s)
-    if (state.client) {           // v0.16 single-flight: rebind, don't re-spawn
-      state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, bodyEl.querySelector('#chat-scroll')); };
+    if (!state.sessionId) return;
+    if (state.client) {
+      state.client.onEvent = function (ev) {
+        handleEvent(ev, state, msgContainer, bodyEl.querySelector('#chat-scroll'), bodyEl, null, null);
+      };
       return;
     }
     state.client = new window.ChatClient('', state.sessionId, '');
     var scrollEl = bodyEl.querySelector('#chat-scroll');
-    state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl); };
+    state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, null, null); };
     state.client.connect();
   }
 
@@ -747,16 +868,7 @@
     fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: icon.name,
-        sandbox: state.sandbox,
-        model: state.model,
-        provider: state.provider,
-        effort: state.effort || 'med',
-        web_search: !!state.webSearch,
-        deep_research: !!state.deepResearch,
-        sliding_window: state.slidingWindow || 40
-      })
+      body: JSON.stringify(sessionBody(icon, state))
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (data && data.ID) {
         state.sessionId = data.ID;
@@ -767,15 +879,27 @@
     }).catch(function (e) { console.error('create session failed', e); });
   }
 
-  // Reattach to the ENGINE session the icon was bound to — a restart
-  // replays the SAME conversation instead of forking a new one.
+  function sessionBody(icon, state) {
+    return {
+      title: icon.name,
+      sandbox: state.sandbox,
+      model: state.model,
+      provider: state.provider,
+      effort: state.effort || 'med',
+      web_search: !!state.webSearch,
+      deep_research: !!state.deepResearch,
+      sliding_window: state.slidingWindow || 40
+    };
+  }
+
+  // Reattach to the ENGINE session the icon was bound to.
   function bindEngineSession(icon, state, cb) {
     if (state.sessionId) { cb(); return 'sync'; }
     var sid = icon && icon.sessionId;
     if (!sid) { ensureSession(icon, state, cb); return; }
     fetch('/api/sessions/' + sid).then(function (r) {
       if (r.status === 404) {
-        if (icon) icon.sessionId = ''; // engine lost it — recreate
+        if (icon) icon.sessionId = '';
         return null;
       }
       return r.json();
@@ -801,7 +925,7 @@
   }
 
   // ── Handle a WS event (idempotent replay, streaming, errors) ─────
-  function handleEvent(ev, state, msgContainer, scrollEl) {
+  function handleEvent(ev, state, msgContainer, scrollEl, bodyEl, _icon, _panel) {
     var type = ev.type;
     if (ev.i !== undefined && ev.i !== null && !isNaN(ev.i)) {
       if (ev.i <= (state.lastEventI || 0)) return;
@@ -814,7 +938,8 @@
         return;
       }
       state.messages.push({ role: 'user', text: ev.text || '' });
-      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' });
+      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' }, bodyEl, state._icon);
+      autoTitle(state, bodyEl);
       return;
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
@@ -823,14 +948,19 @@
         if (!last || last.role !== 'assistant' || last.complete) {
           last = { role: 'assistant', text: '', complete: false, streaming: true };
           state.messages.push(last);
-          appendMessage(msgContainer, scrollEl, last);
+          appendMessage(msgContainer, scrollEl, last, bodyEl, state._icon);
         }
         last.text += ev.text;
-        updateLastMessage(msgContainer, scrollEl, last);
+        scheduleUpdate(bodyEl, last, false);
       }
       if (type === 'assistant_complete') {
         var last2 = state.messages[state.messages.length - 1];
-        if (last2) { last2.complete = true; last2.streaming = false; }
+        if (last2) {
+          last2.complete = true;
+          last2.streaming = false;
+          updateMessageEl(bodyEl, last2, true);
+          finalizeArtifacts(last2, state, bodyEl);
+        }
       }
     } else if (type === 'assistant') {
       var assembled = '';
@@ -838,39 +968,76 @@
         if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
       }
       if ((ev.text || '') && assembled.indexOf(ev.text) === -1) {
-        state.messages.push({ role: 'assistant', text: ev.text, complete: true });
-        appendMessage(msgContainer, scrollEl, { role: 'assistant', text: ev.text, complete: true });
+        var full = { role: 'assistant', text: ev.text, complete: true };
+        state.messages.push(full);
+        appendMessage(msgContainer, scrollEl, full, bodyEl, state._icon);
+        finalizeArtifacts(full, state, bodyEl);
+      } else if (ev.text) {
+        // v0.17: the trailing full-reply event confirms the streamed text
+        // (the engine has NO assistant_complete event — THIS + status idle
+        // are the completion signals). Mark the streaming message done and
+        // finalize artifacts.
+        for (var j = state.messages.length - 1; j >= 0; j--) {
+          if (state.messages[j].role === 'assistant') {
+            if (!state.messages[j].complete) {
+              state.messages[j].complete = true;
+              state.messages[j].streaming = false;
+              updateMessageEl(bodyEl, state.messages[j], true);
+              finalizeArtifacts(state.messages[j], state, bodyEl);
+            }
+            break;
+          }
+        }
       }
     } else if (type === 'thinking') {
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
-        lastThink = { role: 'thinking', text: '', open: true };
+        lastThink = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
         state.messages.push(lastThink);
-        appendMessage(msgContainer, scrollEl, lastThink);
+        appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon);
       }
       lastThink.text += ev.text;
-      updateLastMessage(msgContainer, scrollEl, lastThink);
+      scheduleUpdate(bodyEl, lastThink, false);
     } else if (type === 'tool_use') {
-      state.messages.push({ role: 'tool', text: (ev.name || 'tool') + ': ' + (ev.summary || ''), tool: true });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1]);
+      state.messages.push({ role: 'tool', text: ev.summary || ev.name || 'tool', tool: true, payload: ev });
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'tool_result') {
-      state.messages.push({ role: 'tool', text: '↳ ' + ((ev.text || ev.name || '').slice(0, 240)), result: true });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1]);
+      state.messages.push({ role: 'tool', text: ev.summary || ev.name || '', result: true, payload: ev });
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'sources') {
       var srcs = ev.sources || [];
       if (srcs.length) {
         state.messages.push({ role: 'sources', sources: srcs });
-        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1]);
+        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
       }
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;
+        // v0.17 belt-and-suspenders: status idle IS a completion signal —
+        // mark any still-streaming message done + finalize artifacts (the
+        // trailing 'assistant' event normally does this; some providers
+        // skip or reorder it).
+        for (var k = state.messages.length - 1; k >= 0; k--) {
+          var sm = state.messages[k];
+          if (sm.role === 'assistant' || sm.role === 'thinking') {
+            if (!sm.complete && sm.role === 'assistant') {
+              sm.complete = true;
+              sm.streaming = false;
+              updateMessageEl(bodyEl, sm, true);
+              finalizeArtifacts(sm, state, bodyEl);
+            } else if (sm.role === 'thinking' && sm.streaming) {
+              sm.streaming = false;
+              updateMessageEl(bodyEl, sm, true);
+            }
+            break;
+          }
+        }
         var btn = document.querySelector('#chat-send');
         if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
       } else if (ev.state === 'running' && (ev.text || ev.message)) {
         if (msgContainer) {
-          state.messages.push({ role: 'tool', text: '· ' + (ev.message || ev.text), progress: true });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1]);
+          state.messages.push({ role: 'tool', text: ev.message || ev.text, progress: true });
+          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
         }
       }
     } else if (type === 'error') {
@@ -880,74 +1047,261 @@
         errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
       }
       state.messages.push({ role: 'error', text: errText });
-      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText });
+      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, state._icon);
       var btn2 = document.querySelector('#chat-send');
       if (btn2) { btn2.textContent = 'Send'; btn2.onclick = null; }
     }
   }
 
-  // ── DOM helpers ───────────────────────────────────────────────
+  // throttled re-render for streaming (markdown every ~180ms, not per delta)
+  function scheduleUpdate(bodyEl, msg, immediate) {
+    if (immediate) { updateMessageEl(bodyEl, msg, true); return; }
+    msg._renderTimer = msg._renderTimer || 0;
+    var now = Date.now();
+    if (now - msg._renderTimer > 180) {
+      msg._renderTimer = now;
+      updateMessageEl(bodyEl, msg, false);
+    } else if (!msg._renderPending) {
+      msg._renderPending = setTimeout(function () {
+        msg._renderPending = null;
+        msg._renderTimer = Date.now();
+        updateMessageEl(bodyEl, msg, false);
+      }, 180);
+    }
+  }
+
+  // ── v0.17: artifact finalize (extract + save + refresh badge) ───
+  function finalizeArtifacts(msg, state, bodyEl) {
+    if (!msg || !msg.text || !state.sessionId) return;
+    var key = state.messages.indexOf(msg);
+    if (state.artifactSaved[key]) return;
+    var ex = window.Formatter.extractArtifacts(msg.text);
+    if (!ex.artifacts.length) { state.artifactSaved[key] = true; return; }
+    state.artifactSaved[key] = true;
+    ex.artifacts.forEach(function (art) {
+      window.Artifacts.saveFromMessage(state.sessionId, art).then(function () {
+        refreshArtifactCount(state, bodyEl);
+      }).catch(function (e) { console.error('artifact save failed', e); });
+    });
+    updateMessageEl(bodyEl, msg, true); // re-render → artifact cards appear
+  }
+
+  function refreshArtifactCount(state, bodyEl) {
+    if (!state.sessionId) return;
+    window.Artifacts.list(state.sessionId).then(function (items) {
+      state.artifactsCount = items.length;
+      var badge = (bodyEl || document).querySelector('#pill-artifacts-count');
+      if (badge) badge.textContent = String(items.length);
+    }).catch(function () {});
+  }
+
+  // ── v0.17 creative extra: auto-title after the first exchange ────
+  function autoTitle(state, bodyEl) {
+    var icon = currentCtx && currentCtx.icon;
+    if (!icon || icon._titled) return;
+    var firstUser = null;
+    for (var i = 0; i < state.messages.length; i++) {
+      if (state.messages[i].role === 'user') { firstUser = state.messages[i].text; break; }
+    }
+    if (!firstUser) return;
+    var title = String(firstUser).replace(/\s+/g, ' ').trim();
+    if (title.length > 20) title = title.slice(0, 19).trim() + '…';
+    if (!title) return;
+    icon._titled = true;
+    if (typeof icon.setName === 'function') icon.setName(title);
+    if (typeof icon.save === 'function') icon.save();
+    if (state.sessionId) {
+      fetch('/api/sessions/' + state.sessionId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title })
+      }).catch(function () {});
+    }
+    var nameEl = document.getElementById('panel-name');
+    if (nameEl && currentCtx && currentCtx.icon === icon) nameEl.textContent = title;
+  }
+
+  // ── THE MESSAGE RENDERER (everything formatted) ────────────────
   function renderMessages(messages) {
     var html = '';
     for (var i = 0; i < messages.length; i++) {
-      html += messageHTML(messages[i]);
+      html += messageHTML(messages[i], i);
     }
     return html;
   }
 
-  function messageHTML(msg) {
+  // The bubble wrapper + Formatter content. Long-press handlers read
+  // data-msg-role / data-msg-raw. data-mi = message index (streaming
+  // updates re-find the bubble by it).
+  function messageHTML(msg, mi) {
+    mi = (mi === undefined || mi === null) ? -1 : mi;
+    var miAttr = ' data-mi="' + mi + '"';
     if (msg.role === 'user') {
-      return '<div style="align-self:flex-end;background:#4a4a5e;color:#e0e0e8;padding:10px 14px;border-radius:14px 14px 4px 14px;max-width:80%;font-size:14px;line-height:1.4;white-space:pre-wrap;word-break:break-word">' + esc(msg.text) + '</div>';
+      return '<div class="msg-bubble msg-user" data-msg-role="user" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + '></div>';
     } else if (msg.role === 'assistant') {
-      return '<div style="align-self:flex-start;background:#14141a;color:#e0e0e8;padding:10px 14px;border-radius:14px 14px 14px 4px;max-width:80%;font-size:14px;line-height:1.4;white-space:pre-wrap;word-break:break-word">' + esc(msg.text) + (msg.streaming ? '<span style="display:inline-block;width:6px;height:14px;background:#4a4a5e;margin-left:2px;vertical-align:middle;animation:blink 1s infinite"></span>' : '') + '</div>';
+      return '<div class="msg-bubble msg-assistant" data-msg-role="assistant" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + '></div>';
     } else if (msg.role === 'error') {
-      return '<div style="align-self:center;color:#f87171;font-size:12px;padding:8px 12px;background:rgba(248,113,113,0.1);border-radius:8px;border:1px solid rgba(248,113,113,0.2);max-width:90%;word-break:break-word">' + esc(msg.text) + '</div>';
+      return '<div class="msg-bubble msg-error" data-msg-role="error"' + miAttr + '>' +
+        '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'thinking') {
-      return '<details style="align-self:stretch;max-width:95%;background:rgba(124,58,237,0.07);border:1px solid rgba(124,58,237,0.2);border-radius:10px;padding:8px 12px"' + (msg.open ? ' open' : '') + '>' +
-        '<summary style="font-size:11px;color:#a78bfa;cursor:pointer;user-select:none">✻ thinking…</summary>' +
-        '<div style="font-size:12px;color:#71717a;margin-top:6px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + esc(msg.text) + '</div>' +
+      return '<details class="msg-think"' + miAttr + ' ' + (msg.open ? ' open' : '') + '>' +
+        '<summary class="msg-think-summary"><span class="msg-think-dot">✻</span> thinking' +
+          (msg.streaming ? '<span class="msg-think-live"></span>' : '') + '</summary>' +
+        '<div class="msg-bubble msg-think-body" data-msg-role="thinking"></div>' +
         '</details>';
     } else if (msg.role === 'tool') {
-      var style = msg.progress
-        ? 'color:#71717a;background:transparent;border:1px dashed #2a2a35'
-        : (msg.result ? 'color:#34d399;background:rgba(52,211,153,0.05);border:1px solid rgba(52,211,153,0.15)' : 'color:#38bdf8;background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2)');
-      return '<div style="align-self:center;' + style + ';font-size:11px;padding:5px 10px;border-radius:8px;max-width:92%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(msg.text) + '</div>';
+      // TAPPABLE TOOL PILL — expands to the full payload (query / result).
+      var payload = msg.payload || null;
+      var hasDetail = !!(payload && ((payload.query || payload.name && (payload.result || payload.text || payload.summary)) || (payload.sources && payload.sources.length)));
+      var expanded = !!msg.expanded && hasDetail;
+      var cls = msg.progress ? 'tool-pill tool-pill-progress' :
+        (msg.result ? 'tool-pill tool-pill-result' : 'tool-pill tool-pill-use');
+      var head =
+        '<div class="tool-pill-head">' +
+          '<span class="tool-pill-ico">' + (msg.result ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
+          '<span class="tool-pill-text">' + esc(msg.text) + '</span>' +
+          (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +
+        '</div>';
+      var detail = '';
+      if (expanded) {
+        detail = '<div class="tool-pill-detail">' + toolDetailHTML(msg) + '</div>';
+      }
+      return '<div class="' + cls + '" data-msg-role="tool" data-mi="' + mi + '" data-expanded="' + (expanded ? '1' : '') + '">' +
+        head + detail + '</div>';
     } else if (msg.role === 'sources') {
       var items = '';
       for (var i = 0; i < msg.sources.length; i++) {
         var s = msg.sources[i];
-        items += '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer" style="display:block;font-size:11px;color:#38bdf8;text-decoration:none;padding:3px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">[' + (i + 1) + '] ' + esc(s.title || s.url) + '</a>';
+        var domain = '';
+        try { domain = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) { domain = s.url; }
+        items +=
+          '<a class="src-card" href="' + escAttr(s.url) + '" target="_blank" rel="noopener noreferrer">' +
+            '<span class="src-card-dom">' + esc((domain || '?').charAt(0).toUpperCase()) + '</span>' +
+            '<span class="src-card-meta">' +
+              '<span class="src-card-title">' + esc(s.title || s.url) + '</span>' +
+              '<span class="src-card-sub">' + esc(domain) + ' · tap to open ↗</span>' +
+            '</span>' +
+          '</a>';
       }
-      return '<div style="align-self:stretch;max-width:95%;background:#0a0a0e;border:1px solid #1a1a22;border-radius:10px;padding:8px 12px">' +
-        '<div style="font-size:10px;color:#71717a;margin-bottom:4px;letter-spacing:0.4px">SOURCES</div>' + items + '</div>';
+      return '<div class="src-wrap">' +
+        '<div class="src-wrap-label">SOURCES</div>' + items + '</div>';
     }
     return '';
   }
 
-  function appendMessage(container, scrollEl, msg) {
+  function toolDetailHTML(msg) {
+    var p = msg.payload || {};
+    var html = '';
+    if (p.name) html += '<div class="tool-pill-row"><span class="tool-pill-k">tool</span><span>' + esc(p.name) + '</span></div>';
+    if (p.summary) html += '<div class="tool-pill-row"><span class="tool-pill-k">query</span><span>' + esc(p.summary) + '</span></div>';
+    if (p.query) html += '<div class="tool-pill-row"><span class="tool-pill-k">query</span><span>' + esc(p.query) + '</span></div>';
+    var resultText = p.result || p.text || '';
+    if (resultText && !p.sources) {
+      html += '<div class="tool-pill-row"><span class="tool-pill-k">result</span><span class="tool-pill-pre">' +
+        esc(String(resultText).slice(0, 2000)) + '</span></div>';
+    }
+    if (p.sources && p.sources.length) {
+      html += '<div class="tool-pill-row"><span class="tool-pill-k">links</span><span>' +
+        p.sources.map(function (s, i) {
+          return '<a class="tool-pill-link" href="' + escAttr(s.url) + '" target="_blank" rel="noopener noreferrer">[' + (i + 1) + '] ' + esc(s.title || s.url) + '</a>';
+        }).join('') + '</span></div>';
+    }
+    return html || '<div class="tool-pill-row">' + esc(JSON.stringify(p).slice(0, 600)) + '</div>';
+  }
+
+  // ── DOM: mount a message + run the Formatter into its bubble ────
+  function appendMessage(container, scrollEl, msg, bodyEl, icon) {
     var greeting = container && container.querySelector('#chat-greeting');
     if (greeting && greeting.parentNode) greeting.parentNode.removeChild(greeting);
+    var st = currentCtx && currentCtx.state;
+    var mi = st ? st.messages.indexOf(msg) : -1;
     var div = document.createElement('div');
-    div.innerHTML = messageHTML(msg);
+    div.innerHTML = messageHTML(msg, mi);
     var el = div.firstChild;
     container.appendChild(el);
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    else container.scrollTop = container.scrollHeight;
+    mountFormatting(el, msg);
+    scrollBottom(bodyEl || container);
     return el;
   }
 
-  function updateLastMessage(container, scrollEl, msg) {
-    var last = container.lastChild;
-    if (!last) { appendMessage(container, scrollEl, msg); return; }
-    last.innerHTML = messageHTML(msg);
-    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    else container.scrollTop = container.scrollHeight;
+  // re-format an existing message's bubble (found via data-mi)
+  function updateMessageEl(bodyEl, msg, final) {
+    var container = bodyEl.querySelector('#chat-messages');
+    if (!container) return;
+    var st = currentCtx && currentCtx.state;
+    if (!st) return;
+    var mi = st.messages.indexOf(msg);
+    if (mi < 0) return;
+    var wrapper = container.querySelector('[data-mi="' + mi + '"]');
+    if (!wrapper) {
+      // not mounted yet (rare race) — append it
+      appendMessage(container, null, msg, bodyEl, null);
+      return;
+    }
+    var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
+    mountFormatting(el, msg, final);
+    if (final || msg.role === 'user') {
+      scrollBottom(bodyEl);
+    } else if (nearBottom(container)) {
+      scrollBottom(bodyEl);
+    }
   }
 
+  function nearBottom(container) {
+    if (!container) return true;
+    var sc = container.closest ? container.closest('#chat-scroll') : null;
+    if (!sc) return true;
+    return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140;
+  }
+
+  function scrollBottom(bodyEl) {
+    var sc = (bodyEl && bodyEl.querySelector('#chat-scroll')) || (bodyEl && bodyEl.querySelector('#chat-messages'));
+    if (sc) sc.scrollTop = sc.scrollHeight;
+    else if (bodyEl && bodyEl.querySelector) {
+      var c = bodyEl.querySelector('#chat-messages');
+      if (c) c.scrollTop = c.scrollHeight;
+    }
+  }
+
+  // mount formatting for ALL messages in a fresh container (no scroll)
+  function mountAllFormatting(container, state) {
+    if (!container || !state) return;
+    for (var i = 0; i < state.messages.length; i++) {
+      var msg = state.messages[i];
+      if (msg.role !== 'user' && msg.role !== 'assistant' && msg.role !== 'thinking') continue;
+      var wrapper = container.querySelector('[data-mi="' + i + '"]');
+      if (!wrapper) continue;
+      var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
+      mountFormatting(el, msg, true);
+    }
+  }
+
+  // run Formatter into a mounted bubble (user/assistant/thinking)
+  function mountFormatting(el, msg, final) {
+    if (!el) return;
+    if (msg.role === 'user') {
+      window.Formatter.renderInto(el, msg.text, { mode: 'user' });
+    } else if (msg.role === 'assistant') {
+      window.Formatter.renderInto(el, msg.text, {
+        mode: 'full',
+        streaming: !!msg.streaming && !final
+      });
+    } else if (msg.role === 'thinking' && el.classList.contains('msg-think-body')) {
+      var elapsed = msg.startedAt ? Math.max(0, Math.round((Date.now() - msg.startedAt) / 1000)) : 0;
+      window.Formatter.renderInto(el, msg.text, {
+        mode: 'thinking',
+        streaming: !!msg.streaming && !final,
+        thinkingMeta: { elapsed: elapsed, chars: (msg.text || '').length }
+      });
+    }
+  }
   function esc(text) {
     var d = document.createElement('div');
     d.textContent = text == null ? '' : String(text);
     return d.innerHTML;
+  }
+  function escAttr(text) {
+    return esc(text).replace(/"/g, '&quot;');
   }
 
   // ── Save session config to engine ─────────────────────────────
@@ -956,21 +1310,14 @@
       fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: icon.name,
-          sandbox: state.sandbox,
-          model: state.model,
-          provider: state.provider,
-          effort: state.effort || 'med',
-          web_search: !!state.webSearch,
-          deep_research: !!state.deepResearch,
-          sliding_window: state.slidingWindow || 40
-        })
+        body: JSON.stringify(sessionBody(icon, state))
       }).then(function (r) { return r.json(); }).then(function (data) {
         if (data && data.ID) {
           state.sessionId = data.ID;
           icon._sessionData = data;
           bindSessionToIcon(icon, data.ID);
+          window.Artifacts.setSession(state.sessionId, { name: icon.name });
+          refreshArtifactCount(state, null);
         }
       }).catch(function (e) { console.error('create session failed', e); });
     } else {
@@ -1010,8 +1357,132 @@
     };
   }
 
+  // ── doSend (shared by input + regenerate) ──────────────────────
+  function doSend(text, bodyEl, icon, state, panel) {
+    var type = window.ChatTypes.get(state.sandbox || 'quick');
+    var ctx = currentCtx && currentCtx.ctx;
+    var msgContainer = bodyEl.querySelector('#chat-messages');
+    var input = bodyEl.querySelector('#chat-input');
+    var sendBtn = bodyEl.querySelector('#chat-send');
+
+    state.messages.push({ role: 'user', text: text, local: true });
+    appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon);
+    autoTitle(state, bodyEl);
+
+    if (input) {
+      input.value = '';
+      state.draftText = '';
+      input.style.height = 'auto';
+    }
+
+    state.isStreaming = true;
+    if (sendBtn) {
+      sendBtn.textContent = 'Stop';
+      sendBtn.onclick = function () { type.stop(state, ctx || {}); };
+    }
+
+    // PrivateMode turns must never wait for the engine WS.
+    if (state.provider !== 'privatemodeai' && !(state.client && state.client.connected)) {
+      if (!state.client && !state.sessionId) {
+        ensureSession(icon, state, function () { connectWS(bodyEl, state, msgContainer); });
+      } else if (state.client && state.client.state !== 'connecting' && state.client.state !== 'open') {
+        state.client.connect();
+      }
+      if (sendBtn) sendBtn.textContent = '…';
+      var tries = 0;
+      var check = setInterval(function () {
+        tries++;
+        if (state.client && state.client.connected) {
+          clearInterval(check);
+          if (!state.isStreaming && sendBtn) sendBtn.textContent = 'Send';
+          type.send(text, state, ctx || makeCtxFallback(bodyEl, icon, state, panel, type));
+        } else if (tries > 100) {
+          clearInterval(check);
+          if (sendBtn) sendBtn.textContent = 'Send';
+          var err = 'Still connecting to the engine — tap Send again in a moment.' +
+            (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
+          state.messages.push({ role: 'error', text: err });
+          appendMessage(msgContainer, null, { role: 'error', text: err }, bodyEl, icon);
+          state.isStreaming = false;
+        }
+      }, 100);
+      return;
+    }
+
+    type.send(text, state, ctx || makeCtxFallback(bodyEl, icon, state, panel, type));
+  }
+
+  function makeCtxFallback(bodyEl, icon, state, panel, type) {
+    return buildCtx(bodyEl, icon, state, panel, type);
+  }
+
+  // ── v0.17: code-card "⇩ file" → save snippet as artifact ────────
+  window.addEventListener('doomalay:save-code-artifact', function (e) {
+    var st = currentCtx && currentCtx.state;
+    if (!st || !st.sessionId) {
+      if (window.Artifacts) window.Artifacts.toast('connect a model first');
+      return;
+    }
+    window.Artifacts.saveCodeBlock(st.sessionId, e.detail.language, e.detail.code)
+      .then(function (m) {
+        if (m) refreshArtifactCount(st, currentCtx.bodyEl);
+      })
+      .catch(function (err) { window.Artifacts.toast(err.message); });
+  });
+
+  // ── v0.17: in-message artifact cards — tap opens, ⇩ downloads ───
+  document.addEventListener('click', function (e) {
+    var card = e.target.closest && e.target.closest('.fmt-artifact');
+    if (!card) return;
+    var st = currentCtx && currentCtx.state;
+    if (!st || !st.sessionId) { window.Artifacts.toast('connect a model first'); return; }
+    var file = card.getAttribute('data-artifact-file');
+    var isDl = e.target.closest && e.target.closest('[data-artifact-dl]');
+    e.stopPropagation();
+    window.Artifacts.list(st.sessionId).then(function (items) {
+      var hit = items.find(function (m) { return m.name === file; });
+      if (!hit) { window.Artifacts.toast('artifact still saving — try again in a second'); return; }
+      if (isDl) {
+        window.open('/api/sessions/' + st.sessionId + '/artifacts/' + hit.id + '/download', '_blank');
+      } else {
+        window.Artifacts.openEditor(st.sessionId, hit.id);
+      }
+    }).catch(function (err) { window.Artifacts.toast(err.message); });
+  });
+
+  // ── tool pill tap → expand/collapse (event delegation) ──────────
+  document.addEventListener('click', function (e) {
+    var pill = e.target.closest && e.target.closest('.tool-pill');
+    if (!pill) return;
+    if (e.target.closest('a')) return; // links inside detail work normally
+    var hasChev = pill.querySelector('.tool-pill-chev');
+    if (!hasChev) return;
+    var container = pill.closest('#chat-messages');
+    if (!container) return;
+    // map the pill back to its message object
+    var st = currentCtx && currentCtx.state;
+    if (!st) return;
+    var pills = Array.prototype.slice.call(container.querySelectorAll('.tool-pill'));
+    var pillIdx = pills.indexOf(pill);
+    var msgIdx = -1, seen = 0;
+    for (var i = 0; i < st.messages.length; i++) {
+      if (st.messages[i].role === 'tool') {
+        if (seen === pillIdx) { msgIdx = i; break; }
+        seen++;
+      }
+    }
+    if (msgIdx < 0) return;
+    st.messages[msgIdx].expanded = !st.messages[msgIdx].expanded;
+    // re-render just this pill in place
+    var tmp = document.createElement('div');
+    tmp.innerHTML = messageHTML(st.messages[msgIdx], msgIdx);
+    var fresh = tmp.firstChild;
+    pill.replaceWith(fresh);
+  });
+
   window.ChatPanel = {
     render: render,
-    getState: function (id) { return chatStates[id]; }
+    getState: function (id) { return chatStates[id]; },
+    current: function () { return currentCtx; }
   };
 })();

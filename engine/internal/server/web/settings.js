@@ -20,7 +20,11 @@
   // These are available even before the page registers, so the app
   // can read them on init.
   const defaultState = {
-    // ── Appearance (grid) ─────────────────────────────────────
+    // ── v0.17: chat formatting (scheme + text size) ────────────
+    chatScheme: 'teal',
+    fmtOverrides: {},           // per-slot CSS-variable overrides
+    chatTextSize: 50,           // 0–100 (12px–24px, 50 → 16px)
+    // ── Appearance (grid) ─────────────────────────────────────────
     gridSize: 1,           // 1× = default (48px), up to 5× = 240px
     bg: '#0a0a0b',
     lineColor: '#131318',
@@ -146,6 +150,7 @@
     if (!page || !panelRef) return;
     const els = panelRef.bodyEl.querySelectorAll('[data-setting-key]');
     els.forEach(function (el) {
+      if (el.dataset.custom) return; // v0.17: page-module-managed inputs (fmt colors)
       const key = el.dataset.settingKey;
       const ev = el.dataset.settingEvent || 'input';
       el.addEventListener(ev, function () {
@@ -162,7 +167,10 @@
         setState(patch);
         // Live-update the range display next to the slider.
         const display = panelRef.bodyEl.querySelector('[data-range-display="' + key + '"]');
-        if (display) display.textContent = val + '×';
+        if (display) {
+          const suffix = display.dataset.suffix !== undefined ? display.dataset.suffix : '×';
+          display.textContent = val + suffix;
+        }
       });
     });
 
@@ -181,7 +189,11 @@
       btn.addEventListener('click', function () {
         const action = btn.dataset.action;
         // Dispatch a custom event so app.js or other modules can handle it.
-        window.dispatchEvent(new CustomEvent('doomalay:action', { detail: { action: action } }));
+        // v0.17: include the button's dataset + node so page modules can
+        // carry custom payloads (e.g. which color scheme was picked).
+        window.dispatchEvent(new CustomEvent('doomalay:action', {
+          detail: { action: action, data: btn.dataset, btn: btn }
+        }));
       });
     });
   }

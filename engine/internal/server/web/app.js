@@ -193,7 +193,15 @@
     const family = currentFamily;
     const name = namePicker.pick(usedNames());
     const iconIndex = getIconPicker(family).pick(usedIconIndices(family));
-    const icon = new ChatIcon.ChatIcon({ name, family, iconIndex, x: worldX, y: worldY });
+    // v0.17 FIX: nextId resets to 1 on every reload — a new chat created
+    // after a restart got "chat_1" which COLLIDED with the first restored
+    // icon → the new chat reused the OLD chat's state (same conversation,
+    // "identical to the old one") and third chats dead-ended. Generate an
+    // id guaranteed unused across the restored world.
+    const used = new Set(world.entities.map(e => e.id));
+    let n = 1;
+    while (used.has('chat_' + n)) n++;
+    const icon = new ChatIcon.ChatIcon({ id: 'chat_' + n, name, family, iconIndex, x: worldX, y: worldY });
     world.add(icon);
     iconLayer.appendChild(icon.el);
     icon.render(offsetX, offsetY, scale);
@@ -518,6 +526,14 @@
     // preventDefault on touchstart — which is why desktop dogfooding
     // never caught it.)
     if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) return true;
+    // v0.17: the artifacts drawer/editor overlay + the long-press action
+    // sheet are appended to document.body (NOT inside the chat panel) —
+    // without these checks their buttons were dead on touch for the
+    // exact same reason.
+    var artOverlay = document.getElementById('artifacts-overlay');
+    if (artOverlay && artOverlay.contains(target)) return true;
+    var actionSheet = document.getElementById('msg-action-sheet');
+    if (actionSheet && actionSheet.contains(target)) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||

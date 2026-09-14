@@ -132,7 +132,17 @@
     }
 
     function header() {
-      return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
+      var reminder = '';
+      if (opts.reminder) {
+        // v0.17 one-press connect reminder mode: the chat is ALREADY
+        // unlocked behind this overlay — this GUI is just a nudge that
+        // more providers can be connected. ✕ or scrim tap dismisses.
+        reminder = '<div style="background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#34d399;line-height:1.5">' +
+          '✓ chat is ready — you can tap ✕ and start talking right now. ' +
+          '<span style="color:#71717a">This screen is just a reminder you can connect more providers.</span></div>';
+      }
+      return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
         '<h2 style="font-size:18px;font-weight:600;color:#e0e0e8;margin:0">Cloud Providers</h2>' +
         '<button id="prov-close" style="background:transparent;border:none;color:#71717a;font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
         '</div>';
@@ -453,22 +463,26 @@
         if (notInvalid && onPick) {
           var pick = pickAutoModel(results[1], name);
           if (pick) {
-            window.ConnectOverlay.close();
+            // v0.17: NO auto-close — the user spec says the provider GUI
+            // stays open after key validation; only the ✕ or a scrim tap
+            // closes it. The model IS applied (chat unlocks behind the
+            // overlay) so dismissing it lands on a ready chat.
             onPick(name, pick);
+            flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
           } else {
             // Key saved but 0 models synced — force a refresh and retry once.
             fetch('/api/models?refresh=1').then(function (r) { return r.json(); }).then(function (d2) {
               var pick2 = pickAutoModel(d2, name);
               if (pick2) {
-                window.ConnectOverlay.close();
                 onPick(name, pick2);
+                flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
               } else {
                 // Models endpoint down but key accepted — pick the chat-probe
                 // model from the catalog config as a usable default.
                 var cfg2 = (d2 && d2.providers && d2.providers[name]) || null;
                 if (cfg2 && cfg2.probe_model) {
-                  window.ConnectOverlay.close();
                   onPick(name, name + '/' + cfg2.probe_model);
+                  flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
                 }
               }
             }).catch(function () {});
@@ -481,66 +495,6 @@
       });
     }
 
-    // v0.15: best auto-pick model for a provider — a FREE one (works on any
-    // account), scored by family popularity so users land on a capable
-    // default (Kimi/DeepSeek/Qwen/Llama) instead of "01-ai/yi-large".
-    // v0.16: NVIDIA NIM is account-gated per model — ~70% of the catalog
-    // 404s for a fresh key while a live-verified set always serves. Those
-    // rank ABOVE the popularity score so the auto-pick actually chats.
-    function pickAutoModel(catalog, name) {
-      if (!catalog) return null;
-      var KNOWN_GOOD = {
-        nvidia: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-super-120b-a12b',
-                 'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
-                 'google/gemma-4-31b-it']
-      };
-      var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
-      var group = null;
-      var groups = catalog.groups || [];
-      for (var g = 0; g < groups.length; g++) {
-        if (groups[g].name === name) { group = groups[g]; break; }
-      }
-      var candidates = [];
-      if (group && group.models) {
-        for (var i = 0; i < group.models.length; i++) {
-          var m = group.models[i];
-          if (m.isFree) candidates.push(m);
-        }
-        if (!candidates.length) candidates = group.models.slice();
-      }
-      if (!candidates.length) {
-        // Fall back to the flat v0.12 list.
-        var flat = catalog.models || [];
-        for (var f = 0; f < flat.length; f++) {
-          if (flat[f].provider === name) return flat[f].id;
-        }
-        return null;
-      }
-      // v0.16: live-verified working models outrank everything (they are
-      // also genuinely popular families).
-      var inKnownGood = function (id) {
-        var kg = KNOWN_GOOD[name];
-        if (!kg) return -1;
-        for (var k = 0; k < kg.length; k++) {
-          if (id === kg[k] || id === name + '/' + kg[k]) return k;
-        }
-        return -1;
-      };
-      var best = null, bestScore = -1;
-      for (var c = 0; c < candidates.length; c++) {
-        var cm = candidates[c];
-        var rawId = String(cm.rawId || cm.id || '').toLowerCase();
-        var score = 0;
-        var kgIdx = inKnownGood(String(cm.rawId || cm.id || ''));
-        if (kgIdx >= 0) score = 1000 - kgIdx;
-        for (var p = 0; p < POPULAR.length; p++) {
-          if (rawId.indexOf(POPULAR[p]) >= 0) { score += POPULAR.length - p; break; }
-        }
-        if (cm.isFree) score += 100;
-        if (score > bestScore) { bestScore = score; best = cm; }
-      }
-      return best ? (best.id || (name + '/' + (best.rawId || ''))) : null;
-    }
   }
 
   // ── helpers ─────────────────────────────────────────────────────
@@ -607,5 +561,121 @@
     });
   }
 
-  window.ProvidersScreen = { open: open };
+  // v0.15: best auto-pick model for a provider — a FREE one (works on any
+  // account), scored by family popularity so users land on a capable
+  // default (Kimi/DeepSeek/Qwen/Llama) instead of "01-ai/yi-large".
+  // v0.16: NVIDIA NIM is account-gated per model — ~70% of the catalog
+  // 404s for a fresh key while a live-verified set always serves. Those
+  // rank ABOVE the popularity score so the auto-pick actually chats.
+  function pickAutoModel(catalog, name) {
+    if (!catalog) return null;
+    var KNOWN_GOOD = {
+      nvidia: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-super-120b-a12b',
+               'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
+               'google/gemma-4-31b-it']
+    };
+    var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
+    var group = null;
+    var groups = catalog.groups || [];
+    for (var g = 0; g < groups.length; g++) {
+      if (groups[g].name === name) { group = groups[g]; break; }
+    }
+    var candidates = [];
+    if (group && group.models) {
+      for (var i = 0; i < group.models.length; i++) {
+        var m = group.models[i];
+        if (m.isFree) candidates.push(m);
+      }
+      if (!candidates.length) candidates = group.models.slice();
+    }
+    if (!candidates.length) {
+      // Fall back to the flat v0.12 list.
+      var flat = catalog.models || [];
+      for (var f = 0; f < flat.length; f++) {
+        if (flat[f].provider === name) return flat[f].id;
+      }
+      return null;
+    }
+    // v0.16: live-verified working models outrank everything (they are
+    // also genuinely popular families).
+    var inKnownGood = function (id) {
+      var kg = KNOWN_GOOD[name];
+      if (!kg) return -1;
+      for (var k = 0; k < kg.length; k++) {
+        if (id === kg[k] || id === name + '/' + kg[k]) return k;
+      }
+      return -1;
+    };
+    var best = null, bestScore = -1;
+    for (var c = 0; c < candidates.length; c++) {
+      var cm = candidates[c];
+      var rawId = String(cm.rawId || cm.id || '').toLowerCase();
+      var score = 0;
+      var kgIdx = inKnownGood(String(cm.rawId || cm.id || ''));
+      if (kgIdx >= 0) score = 1000 - kgIdx;
+      for (var p = 0; p < POPULAR.length; p++) {
+        if (rawId.indexOf(POPULAR[p]) >= 0) { score += POPULAR.length - p; break; }
+      }
+      if (cm.isFree) score += 100;
+      if (score > bestScore) { bestScore = score; best = cm; }
+    }
+    return best ? (best.id || (name + '/' + (best.rawId || ''))) : null;
+  }
+
+  // ── v0.17: one-press smart connect ─────────────────────────────
+  // "pressing connect cloud provider should be a one button press, it
+  // should use the cloud provider option and unlock the restriction and
+  // start the chat unless the user does not have any cloud providers or
+  // API keys." — finds a connected provider (priority: the 3 the app is
+  // built around), auto-picks its best model, fires onPick. Returns the
+  // number of connected providers so the caller can decide whether to
+  // ALSO show the dismissible reminder GUI.
+  function smartConnect(onPick) {
+    return Promise.all([
+      fetch('/api/keys').then(function (r) { return r.json(); }),
+      fetch('/api/models').then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      var keys = results[0] || {};
+      var catalog = results[1] || {};
+      var connected = [];
+      for (var env in keys) {
+        if (keys[env] && keys[env].has_key && !env.endsWith('_EXTRA')) {
+          connected.push(keys[env].provider || env);
+        }
+      }
+      if (!connected.length) return { connected: 0, picked: false };
+      var PRIORITY = ['nvidia', 'privatemodeai', 'opencode'];
+      var choice = null;
+      for (var i = 0; i < PRIORITY.length; i++) {
+        if (connected.indexOf(PRIORITY[i]) >= 0) { choice = PRIORITY[i]; break; }
+      }
+      if (!choice) choice = connected[0];
+      var model = pickAutoModel(catalog, choice);
+      if (!model) {
+        var cfg = (catalog.providers && catalog.providers[choice]) || null;
+        if (cfg && cfg.probe_model) model = choice + '/' + cfg.probe_model;
+      }
+      if (model && onPick) onPick(choice, model);
+      return { connected: connected.length, picked: !!model, provider: choice, model: model };
+    }).catch(function () {
+      return { connected: 0, picked: false };
+    });
+  }
+
+  function flashSavedHint(providerName, msg) {
+    var card = window.ConnectOverlay.getContentEl();
+    if (!card) return;
+    var el = card.querySelector('#use-btn-' + providerName) ||
+             card.querySelector('#save-' + providerName);
+    if (el) {
+      var old = el.textContent;
+      el.textContent = msg;
+      el.style.color = '#34d399';
+      setTimeout(function () {
+        if (el.isConnected) { el.textContent = old; el.style.color = ''; }
+      }, 2400);
+    }
+  }
+
+  window.ProvidersScreen = { open: open, smartConnect: smartConnect, pickAutoModel: pickAutoModel };
 })();

@@ -76,6 +76,29 @@ var (
         sessionLocks   = make(map[string]chan struct{})
 )
 
+// artifactSystemPrompt (v0.17) teaches the model the app's artifact
+// protocol: fenced blocks tagged with a filename become downloadable
+// files in the chat's artifact drawer (text formats open in an editor).
+// base64 blocks let it emit true binaries (docx, zip, …) download-only.
+// NOTE: double-quoted string — the protocol's fence marks can't live
+// inside a Go raw (backtick) string.
+const artifactSystemPrompt = "You are chatting inside the Doomalay app, which has an artifact system.\n" +
+        "When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output (e.g. a full markdown document, JSON dataset, CSV table, or a complete code file) — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n\n" +
+        "Artifact format (a fenced code block whose info string starts with \"artifact\"):\n" +
+        "  ```artifact file=<filename.ext>\n" +
+        "  <the complete file content as plain text>\n" +
+        "  ```\n" +
+        "For binary file types (e.g. .docx, .xlsx, .pdf, .zip, images) provide the bytes base64-encoded instead:\n" +
+        "  ```artifact file=<filename> encoding=base64\n" +
+        "  <base64 payload>\n" +
+        "  ```\n\n" +
+        "Rules:\n" +
+        "- Prefer text formats when the user has no strong preference (.md, .txt, .json, .csv, .html, code files, config files).\n" +
+        "- Use a real, descriptive filename with the correct extension (report.md, data.json, notes.txt, script.py…).\n" +
+        "- The artifact block must contain the COMPLETE file, never truncated with placeholders.\n" +
+        "- Keep the spoken answer short and mention the attached file name.\n" +
+        "- Regular markdown (headings, lists, bold, links, normal fenced code blocks) is rendered nicely — use it freely in your normal answers too."
+
 // lockSession acquires the per-session turn lock. Returns a release function
 // and false if already locked (busy).
 func lockSession(id string) (release func(), ok bool) {
@@ -215,7 +238,11 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
                 "mode":          sess.Mode,
                 "web_search":    sess.WebSearch,
                 "deep_research": sess.DeepResearch,
-                "system_prompt": "", // TODO: build from mode + workspace + memory
+                // v0.17: artifact capability — tells the model HOW to produce
+                // downloadable files (any type) the app extracts + lists in the
+                // chat's artifact drawer. The frontend parses completed
+                // assistant messages for these fenced artifact blocks.
+                "system_prompt": artifactSystemPrompt,
         }
         if v, ok := msg["model"].(string); ok && v != "" {
                 brainReq["model"] = v // allow per-message override
@@ -314,10 +341,18 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
         }
         history = append(history, llm.Message{Role: "user", Content: userText})
 
+        // v0.17: the artifact protocol rides every turn as the system
+        // message (the event-log history can't carry system entries —
+        // rebuild it each turn so the model always knows it can attach
+        // downloadable files).
+        full := make([]llm.Message, 0, len(history)+1)
+        full = append(full, llm.Message{Role: "system", Content: artifactSystemPrompt})
+        full = append(full, history...)
+
         req := llm.ChatRequest{
                 Model:        llmModel,
                 Provider:     provider,
-                Messages:     history,
+                Messages:     full,
                 Effort:       sess.Effort,
                 WebSearch:    sess.WebSearch, // quick chat capability (not bash/app-building)
                 DeepResearch: sess.DeepResearch,

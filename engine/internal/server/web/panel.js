@@ -28,7 +28,18 @@
       this.currentContext = null;  // whatever the caller passed to open()
       this.onClose = null;
 
-      this._wireDragging();
+      // v0.17: SNAP-POINT GESTURES (peek / default / full + velocity
+      // flings — "like scrolling down reels") replace the simple
+      // drag-to-close when gesture.js is loaded. They handle the handle +
+      // header drags AND hard downward swipes from anywhere in the body
+      // (when the body is scrolled to top). Drag/fling past peek closes.
+      if (window.PanelGestures) {
+        this.gestures = window.PanelGestures.attach(this.panelEl);
+        var selfG = this;
+        this.gestures.setCloseHook(function () { selfG.close(); });
+      } else {
+        this._wireDragging();
+      }
       var self = this;
       this.scrimEl.addEventListener('click', function () { self.close(); });
     }

@@ -168,7 +168,7 @@
 
     stop(state, ctx) {
       if (state.provider === 'privatemodeai') {
-        if (ctx.pmAbort) ctx.pmAbort.abort();
+        if (state._pmAbort) state._pmAbort.abort(); // v0.17 fix: was ctx.pmAbort (never set)
       } else if (state.client) {
         state.client.stop();
       }
