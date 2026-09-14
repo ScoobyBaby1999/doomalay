@@ -7,14 +7,14 @@
 package llm
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"time"
+        "bytes"
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "time"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 // browserUA mirrors a mobile Chrome client — several provider CDNs
@@ -26,91 +26,129 @@ const browserUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (
 // v0.14: uses netx.Transport() — the DoH fallback dialer that fixes outbound
 // HTTP on Android (pure-Go resolver without /etc/resolv.conf).
 var providerHTTP = &http.Client{
-	Timeout:   15 * time.Second,
-	Transport: netx.Transport(),
+        Timeout:   15 * time.Second,
+        Transport: netx.Transport(),
+}
+
+// providerStreamHTTP is the STREAMING client (v0.16). Chat completions from
+// reasoning models regularly exceed 15s WALL-CLOCK (nemotron/kimi think for
+// a minute before the first token) — an overall Client.Timeout would abort
+// mid-stream. Here: no wall-clock cap; the per-turn context (Stop button,
+// WS disconnect, 10-min engine turn guard) is the ONLY deadline.
+var providerStreamHTTP = &http.Client{
+        Timeout:   0,
+        Transport: netx.Transport(),
 }
 
 // httpGetJSON fetches a JSON URL. apiKey != "" adds a Bearer header.
 // Returns the raw body bytes (parsing is the caller's job — shapes vary).
 func httpGetJSON(url, apiKey string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", browserUA)
-	req.Header.Set("Accept", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	resp, err := providerHTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", redactURL(url), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, redactURL(url))
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 4<<20)) // 4MB cap
+        req, err := http.NewRequest("GET", url, nil)
+        if err != nil {
+                return nil, err
+        }
+        req.Header.Set("User-Agent", browserUA)
+        req.Header.Set("Accept", "application/json")
+        if apiKey != "" {
+                req.Header.Set("Authorization", "Bearer "+apiKey)
+        }
+        resp, err := providerHTTP.Do(req)
+        if err != nil {
+                return nil, fmt.Errorf("fetch %s: %w", redactURL(url), err)
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != 200 {
+                return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, redactURL(url))
+        }
+        return io.ReadAll(io.LimitReader(resp.Body, 4<<20)) // 4MB cap
 }
 
 // httpPostJSON posts a JSON body. Returns status + body bytes.
 func httpPostJSON(url, apiKey string, payload any, extraHeaders map[string]string) (int, []byte, error) {
-	bodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return 0, nil, err
-	}
-	req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", browserUA)
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	for k, v := range extraHeaders {
-		req.Header.Set(k, v)
-	}
-	resp, err := providerHTTP.Do(req)
-	if err != nil {
-		return 0, nil, fmt.Errorf("post %s: %w", redactURL(url), err)
-	}
-	defer resp.Body.Close()
-	bts, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return resp.StatusCode, bts, nil
+        bodyBytes, err := json.Marshal(payload)
+        if err != nil {
+                return 0, nil, err
+        }
+        req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+        if err != nil {
+                return 0, nil, err
+        }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("User-Agent", browserUA)
+        if apiKey != "" {
+                req.Header.Set("Authorization", "Bearer "+apiKey)
+        }
+        for k, v := range extraHeaders {
+                req.Header.Set(k, v)
+        }
+        resp, err := providerHTTP.Do(req)
+        if err != nil {
+                return 0, nil, fmt.Errorf("post %s: %w", redactURL(url), err)
+        }
+        defer resp.Body.Close()
+        bts, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+        return resp.StatusCode, bts, nil
+}
+
+// httpPostJSONStream posts a JSON body on the STREAM client (no wall-clock
+// cap — v0.16: ReAct rounds + research steps generate long completions).
+func httpPostJSONStream(url, apiKey string, payload any, extraHeaders map[string]string) (int, []byte, error) {
+        bodyBytes, err := json.Marshal(payload)
+        if err != nil {
+                return 0, nil, err
+        }
+        req, err := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+        if err != nil {
+                return 0, nil, err
+        }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("User-Agent", browserUA)
+        if apiKey != "" {
+                req.Header.Set("Authorization", "Bearer "+apiKey)
+        }
+        for k, v := range extraHeaders {
+                req.Header.Set(k, v)
+        }
+        resp, err := providerStreamHTTP.Do(req)
+        if err != nil {
+                return 0, nil, fmt.Errorf("post %s: %w", redactURL(url), err)
+        }
+        defer resp.Body.Close()
+        bts, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+        return resp.StatusCode, bts, nil
 }
 
 // httpGetRaw fetches a URL with a custom UA + Accept and returns the body
 // (for HTML scrapes like build.nvidia.com's model cards). 15s timeout.
 func httpGetRaw(url, ua, accept string) (string, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Accept", accept)
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	resp, err := providerHTTP.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", redactURL(url), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, redactURL(url))
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // 8MB cap
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+        req, err := http.NewRequest("GET", url, nil)
+        if err != nil {
+                return "", err
+        }
+        req.Header.Set("User-Agent", ua)
+        req.Header.Set("Accept", accept)
+        req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+        resp, err := providerHTTP.Do(req)
+        if err != nil {
+                return "", fmt.Errorf("fetch %s: %w", redactURL(url), err)
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != 200 {
+                return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, redactURL(url))
+        }
+        b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // 8MB cap
+        if err != nil {
+                return "", err
+        }
+        return string(b), nil
 }
 
 // redactURL strips query strings from URLs for logs (queries can carry keys).
 func redactURL(u string) string {
-	for i := 0; i < len(u); i++ {
-		if u[i] == '?' {
-			return u[:i]
-		}
-	}
-	return u
+        for i := 0; i < len(u); i++ {
+                if u[i] == '?' {
+                        return u[:i]
+                }
+        }
+        return u
 }

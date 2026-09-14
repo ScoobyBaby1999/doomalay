@@ -171,6 +171,10 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
 	if v, ok := req["routing"].(string); ok {
 		sess.Routing = v
 	}
+	// v0.16: the memory-window pill PATCHes this (sliding context size).
+	if v, ok := req["sliding_window"].(float64); ok && v > 0 {
+		sess.SlidingWindow = int(v)
+	}
 	if v, ok := req["workspace_id"].(string); ok {
 		sess.WorkspaceID = v
 	}

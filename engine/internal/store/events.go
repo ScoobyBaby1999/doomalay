@@ -87,18 +87,19 @@ ORDER BY seq ASC`, sessionID, since)
 // the PWA's streamWorker expects.
 func (e *Event) ToJSON() ([]byte, error) {
 	type wire struct {
-		ID        int64   `json:"i"`
-		Timestamp float64 `json:"ts"`
-		Type      string  `json:"type"`
-		Text      string  `json:"text,omitempty"`
-		Name      string  `json:"name,omitempty"`
-		Summary   string  `json:"summary,omitempty"`
-		ToolUseID string  `json:"tool_use_id,omitempty"`
-		IsError   bool    `json:"is_error,omitempty"`
-		State     string  `json:"state,omitempty"`
-		Usage     any     `json:"usage,omitempty"`
-		Title     string  `json:"title,omitempty"`
-		SessionID string  `json:"session_id,omitempty"`
+		ID        int64            `json:"i"`
+		Timestamp float64          `json:"ts"`
+		Type      string           `json:"type"`
+		Text      string           `json:"text,omitempty"`
+		Name      string           `json:"name,omitempty"`
+		Summary   string           `json:"summary,omitempty"`
+		ToolUseID string           `json:"tool_use_id,omitempty"`
+		IsError   bool             `json:"is_error,omitempty"`
+		State     string           `json:"state,omitempty"`
+		Usage     any              `json:"usage,omitempty"`
+		Title     string           `json:"title,omitempty"`
+		Sources   []map[string]any `json:"sources,omitempty"`
+		SessionID string           `json:"session_id,omitempty"`
 		Error     string  `json:"error,omitempty"`
 	}
 	w := wire{
@@ -118,6 +119,15 @@ func (e *Event) ToJSON() ([]byte, error) {
 		if json.Unmarshal([]byte(e.Content), &st) == nil {
 			w.State = st.State
 			w.Usage = st.Usage
+		}
+	}
+	// v0.16: "sources" content is the JSON array — decode it back into the
+	// wire's sources field so REPLAYED events render the source list (live
+	// turns always had it; reconnects used to lose it).
+	if e.EventType == "sources" && e.Content != "" {
+		var srcs []map[string]any
+		if json.Unmarshal([]byte(e.Content), &srcs) == nil {
+			w.Sources = srcs
 		}
 	}
 	return json.Marshal(w)

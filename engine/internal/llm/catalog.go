@@ -521,6 +521,14 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
         }
         add(cfg.ProbeModel)
 
+        // v0.16: NVIDIA NIM is account-gated per model ("Function not found
+        // for account") — many catalog models 404 for a given key while a
+        // live-verified set always serves. Insert those right after the
+        // configured probe so a valid key never lands on "unverified".
+        for _, kg := range knownGoodProbes(provider) {
+                add(kg)
+        }
+
         // Live model list (best-effort; keyless for public lists). Prefer
         // FREE models — they work on zero-credit accounts.
         if fetched, err := fetchProviderModels(provider, cfg, apiKey, accountID); err == nil {
@@ -536,6 +544,23 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
                 }
         }
         return out
+}
+
+// knownGoodProbes — live-verified (2026-09-14) models that served real chat
+// completions on a fresh NVIDIA key when ~70% of the catalog was account-404.
+// Used by the probe ladder AND by the frontend auto-pick preference list.
+func knownGoodProbes(provider string) []string {
+        if provider == "nvidia" {
+                return []string{
+                        "nvidia/nemotron-3.5-lightning-30b-a3b",
+                        "nvidia/nemotron-3-super-120b-a12b",
+                        "z-ai/glm-5.3-flash",
+                        "openai/gpt-oss-20b",
+                        "nvidia/nemotron-3-ultra-550b-a55b",
+                        "google/gemma-4-31b-it",
+                }
+        }
+        return nil
 }
 
 // isFreeProbeModel knows the per-provider free-model rules (probe ladder only).

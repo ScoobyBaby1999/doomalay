@@ -70,6 +70,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
         s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
 
+        // v0.16: browser-side tool server (the PM SDK bridge's ReAct loop
+        // calls these same-origin — search + SSRF-guarded page fetch).
+        s.mux.HandleFunc("GET /api/tools/websearch", s.handleToolsWebSearch)
+        s.mux.HandleFunc("GET /api/tools/webfetch", s.handleToolsWebFetch)
+
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
         s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)
@@ -81,6 +86,11 @@ func (s *Server) routes() {
         // directly from the WebView — the engine can't speak PM's encrypted
         // protocol) append their events here so history + replay stay exact.
         s.mux.HandleFunc("POST /api/sessions/{id}/events", s.handleSessionsAppendEvent)
+
+        // v0.16: chat-log export (the user-reviewable transcript — csv/md/json).
+        s.mux.HandleFunc("GET /api/sessions/{id}/export.csv", s.handleSessionExport)
+        s.mux.HandleFunc("GET /api/sessions/{id}/export.md", s.handleSessionExport)
+        s.mux.HandleFunc("GET /api/sessions/{id}/export.json", s.handleSessionExport)
 
         // WebSocket chat.
         s.mux.HandleFunc("GET /api/chat", s.handleChatWS)

@@ -105,6 +105,22 @@ class MainActivity : Activity() {
                 "text/html", "utf-8"
             )
 
+            // v0.16: chat-log EXPORT. The WebView doesn't download files
+            // itself — when the UI opens /api/sessions/{id}/export.csv the
+            // engine responds with Content-Disposition: attachment and the
+            // WebView fires onDownloadStart. Hand the URL to the system
+            // browser: Chrome can reach the local engine (same device) and
+            // saves the file. Desktop browsers download the same URL
+            // natively.
+            webView.setDownloadListener { url, _, _, mimeType, _ ->
+                try {
+                    AppLog.log("export download: $url ($mimeType)")
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                } catch (e: Exception) {
+                    AppLog.error("export open failed: $url", e)
+                }
+            }
+
             // Poll engine health. v0.15: the EngineService watchdog restarts
             // a crashed engine automatically — so keep polling LONGER (60s
             // instead of 30s) and never dead-end: the failure screen has a

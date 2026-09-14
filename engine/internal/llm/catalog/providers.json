@@ -31,7 +31,7 @@
     "free_tier": true,
     "color": "#76B900",
     "validate": "chat_probe",
-    "probe_model": "nvidia/mistral-nemo-minitron-8b-8k-instruct"
+    "probe_model": "nvidia/nemotron-3.5-lightning-30b-a3b"
   },
   "openrouter": {
     "env_var": "OPENROUTER_API_KEY",

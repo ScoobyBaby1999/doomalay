@@ -272,13 +272,28 @@
       contentEl.querySelectorAll('[data-use]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var name = btn.dataset.use;
-          var firstModel = null;
+          // v0.16: use the smart auto-pick (known-good working models for
+          // NVIDIA, free + popular families everywhere else) — NOT the
+          // alphabetically-first model (claude-fable-5, 01-ai/yi-large…).
+          var grouped = {};
           for (var i = 0; i < catalogModels.length; i++) {
-            if (catalogModels[i].provider === name) { firstModel = catalogModels[i]; break; }
+            var cm = catalogModels[i];
+            if (cm.provider === name) {
+              (grouped[cm.provider] = grouped[cm.provider] || []).push(cm);
+            }
           }
-          if (firstModel) {
+          var groups = [];
+          for (var pn in grouped) groups.push({ name: pn, models: grouped[pn] });
+          var pick = pickAutoModel({ groups: groups }, name);
+          var pickId = pick || null;
+          if (!pickId) {
+            for (var j = 0; j < catalogModels.length; j++) {
+              if (catalogModels[j].provider === name) { pickId = catalogModels[j].id; break; }
+            }
+          }
+          if (pickId) {
             window.ConnectOverlay.close();
-            onPick(name, firstModel.id);
+            onPick(name, pickId);
           }
         });
       });
@@ -469,8 +484,16 @@
     // v0.15: best auto-pick model for a provider — a FREE one (works on any
     // account), scored by family popularity so users land on a capable
     // default (Kimi/DeepSeek/Qwen/Llama) instead of "01-ai/yi-large".
+    // v0.16: NVIDIA NIM is account-gated per model — ~70% of the catalog
+    // 404s for a fresh key while a live-verified set always serves. Those
+    // rank ABOVE the popularity score so the auto-pick actually chats.
     function pickAutoModel(catalog, name) {
       if (!catalog) return null;
+      var KNOWN_GOOD = {
+        nvidia: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-super-120b-a12b',
+                 'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
+                 'google/gemma-4-31b-it']
+      };
       var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
       var group = null;
       var groups = catalog.groups || [];
@@ -493,13 +516,25 @@
         }
         return null;
       }
+      // v0.16: live-verified working models outrank everything (they are
+      // also genuinely popular families).
+      var inKnownGood = function (id) {
+        var kg = KNOWN_GOOD[name];
+        if (!kg) return -1;
+        for (var k = 0; k < kg.length; k++) {
+          if (id === kg[k] || id === name + '/' + kg[k]) return k;
+        }
+        return -1;
+      };
       var best = null, bestScore = -1;
       for (var c = 0; c < candidates.length; c++) {
         var cm = candidates[c];
         var rawId = String(cm.rawId || cm.id || '').toLowerCase();
         var score = 0;
+        var kgIdx = inKnownGood(String(cm.rawId || cm.id || ''));
+        if (kgIdx >= 0) score = 1000 - kgIdx;
         for (var p = 0; p < POPULAR.length; p++) {
-          if (rawId.indexOf(POPULAR[p]) >= 0) { score = POPULAR.length - p; break; }
+          if (rawId.indexOf(POPULAR[p]) >= 0) { score += POPULAR.length - p; break; }
         }
         if (cm.isFree) score += 100;
         if (score > bestScore) { bestScore = score; best = cm; }
