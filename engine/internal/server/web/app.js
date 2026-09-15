@@ -250,6 +250,13 @@
           ? window.Artifacts.backClose() : 'closed';
         if (r !== false) return true;
       }
+      // v0.19: the persona editor overlay (same pattern — dirty-aware).
+      var peOverlay = document.getElementById('persona-overlay');
+      if (peOverlay && peOverlay.style.display !== 'none' && peOverlay.style.display !== '') {
+        var pr = (window.Persona && window.Persona.backClose)
+          ? window.Persona.backClose() : 'closed';
+        if (pr !== false) return true;
+      }
       var actionSheet = document.getElementById('msg-action-sheet');
       if (actionSheet && window.MsgActions && window.MsgActions.isOpen && window.MsgActions.isOpen()) {
         window.MsgActions.dismiss();
@@ -316,6 +323,60 @@
     subEl:    document.getElementById('panel-sub'),
     bodyEl:   document.getElementById('panel-body')
   });
+
+  // ── v0.19: manual chat rename ─────────────────────────────────
+  // The user's spec: "don't have the chat rename from the default random
+  // name from the list unless the user manually changes the chat name
+  // themselves." The auto-title (first message → icon label) is GONE;
+  // tapping the chat's name in the panel header is now THE way to rename.
+  // Inline input (Android-safe — no window.prompt), commits on Enter/blur,
+  // cancels on Escape, and persists to the icon + the engine session
+  // (with manually_renamed so nothing ever overwrites it again).
+  const panelNameEl = document.getElementById('panel-name');
+  if (panelNameEl) {
+    panelNameEl.addEventListener('click', function () {
+      var icon = panel.currentContext;
+      if (!icon || icon.type !== 'chat') return;
+      // v0.19: a header DRAG that ended on the name still fires this click —
+      // ignore it (the drag just moved the panel).
+      if (panel.gestures && panel.gestures.justDragged && panel.gestures.justDragged()) return;
+      if (panelNameEl.querySelector('input')) return; // already editing
+      var old = icon.name || '';
+      panelNameEl.textContent = '';
+      var inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = old;
+      inp.maxLength = 48;
+      inp.style.cssText = 'width:100%;font-size:15px;font-weight:600;color:#e0e0e8;background:transparent;border:none;border-bottom:1px solid #34d399;outline:none;font-family:inherit;padding:0;box-sizing:border-box';
+      panelNameEl.appendChild(inp);
+      inp.focus();
+      try { inp.select(); } catch (e) {}
+      var settled = false;
+      var done = function (commit) {
+        if (settled) return;
+        settled = true;
+        var v = String(inp.value || '').trim();
+        panelNameEl.textContent = (commit && v) ? v : old;
+        if (commit && v && v !== old) {
+          if (typeof icon.setName === 'function') icon.setName(v);
+          if (typeof icon.save === 'function') icon.save();
+          var st = window.ChatPanel && window.ChatPanel.getState(icon.id);
+          if (st && st.sessionId) {
+            fetch('/api/sessions/' + st.sessionId, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: v, override_manual: true, manually_renamed: true })
+            }).catch(function () {});
+          }
+        }
+      };
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        else if (e.key === 'Escape') { settled = true; panelNameEl.textContent = old; inp.blur(); }
+      });
+      inp.addEventListener('blur', function () { done(true); });
+    });
+  }
 
   // ── Long-press dropdown menu ───────────────────────────────────
   const menuEl = document.getElementById('menu');
@@ -549,6 +610,9 @@
     // exact same reason.
     var artOverlay = document.getElementById('artifacts-overlay');
     if (artOverlay && artOverlay.contains(target)) return true;
+    // v0.19: the persona editor overlay — same reason (appended to body).
+    var peOverlay = document.getElementById('persona-overlay');
+    if (peOverlay && peOverlay.contains(target)) return true;
     var actionSheet = document.getElementById('msg-action-sheet');
     if (actionSheet && actionSheet.contains(target)) return true;
     return menuEl.contains(target) ||

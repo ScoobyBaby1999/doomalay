@@ -14,17 +14,17 @@
 package store
 
 import (
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
+        "database/sql"
+        "fmt"
+        "os"
+        "path/filepath"
 
-	_ "modernc.org/sqlite"
+        _ "modernc.org/sqlite"
 )
 
 // DB wraps the sql.DB connection.
 type DB struct {
-	*sql.DB
+        *sql.DB
 }
 
 // Open opens (or creates) the SQLite database at dataDir/doomalay.db.
@@ -35,27 +35,27 @@ type DB struct {
 // (SQLite doesn't encrypt by default) but only the user can read them.
 // For full at-rest encryption, a future phase can use SQLCipher.
 func Open(dataDir string) (*DB, error) {
-	path := filepath.Join(dataDir, "doomalay.db")
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_busy_timeout=5000", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping %s: %w", path, err)
-	}
-	// SECURITY: tighten file perms to 0600 (SQLite creates 0644 by default).
-	// Also the WAL + SHM files. Best-effort — ignore errors (the dir is already 0700).
-	_ = os.Chmod(path, 0o600)
-	_ = os.Chmod(path+"-wal", 0o600)
-	_ = os.Chmod(path+"-shm", 0o600)
-	return &DB{db}, nil
+        path := filepath.Join(dataDir, "doomalay.db")
+        dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_busy_timeout=5000", path)
+        db, err := sql.Open("sqlite", dsn)
+        if err != nil {
+                return nil, fmt.Errorf("open %s: %w", path, err)
+        }
+        db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
+        if err := db.Ping(); err != nil {
+                return nil, fmt.Errorf("ping %s: %w", path, err)
+        }
+        // SECURITY: tighten file perms to 0600 (SQLite creates 0644 by default).
+        // Also the WAL + SHM files. Best-effort — ignore errors (the dir is already 0700).
+        _ = os.Chmod(path, 0o600)
+        _ = os.Chmod(path+"-wal", 0o600)
+        _ = os.Chmod(path+"-shm", 0o600)
+        return &DB{db}, nil
 }
 
 // Migrate creates the schema if missing. Idempotent.
 func (db *DB) Migrate() error {
-	const schema = `
+        const schema = `
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id              TEXT PRIMARY KEY,
   title           TEXT NOT NULL DEFAULT 'New Chat',
@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   hooks_config    TEXT,
   routing         TEXT,
   workspace_id    TEXT,
+  persona         TEXT,
   manually_renamed INTEGER DEFAULT 0,
   created_at      REAL NOT NULL,
   updated_at      REAL NOT NULL
@@ -131,45 +132,48 @@ CREATE TABLE IF NOT EXISTS chat_artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_id);
 `
-	_, err := db.Exec(schema)
-	if err != nil {
-		return err
-	}
-	// v0.13: sandbox column added for chat_sessions (older installs
-	// created the table without it). Idempotent column adds for any
-	// field introduced after first release.
-	migrations := []struct{ table, col, ddl string }{
-		{"chat_sessions", "sandbox", "ALTER TABLE chat_sessions ADD COLUMN sandbox TEXT"},
-	}
-	for _, m := range migrations {
-		if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
-			return err
-		}
-	}
-	return nil
+        _, err := db.Exec(schema)
+        if err != nil {
+                return err
+        }
+        // v0.13: sandbox column added for chat_sessions (older installs
+        // created the table without it). Idempotent column adds for any
+        // field introduced after first release.
+        migrations := []struct{ table, col, ddl string }{
+                {"chat_sessions", "sandbox", "ALTER TABLE chat_sessions ADD COLUMN sandbox TEXT"},
+                // v0.19: per-chat persona (the editable system prompt /
+                // identity for this chat's bot).
+                {"chat_sessions", "persona", "ALTER TABLE chat_sessions ADD COLUMN persona TEXT"},
+        }
+        for _, m := range migrations {
+                if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
+                        return err
+                }
+        }
+        return nil
 }
 
 // ensureColumn adds a column to a table if it doesn't exist yet (SQLite has
 // no ADD COLUMN IF NOT EXISTS).
 func (db *DB) ensureColumn(table, col, ddl string) error {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notNull int
-		var dfltValue any
-		var pk int
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
-			return err
-		}
-		if name == col {
-			return nil // already exists
-		}
-	}
-	_, err = db.Exec(ddl)
-	return err
+        rows, err := db.Query("PRAGMA table_info(" + table + ")")
+        if err != nil {
+                return err
+        }
+        defer rows.Close()
+        for rows.Next() {
+                var cid int
+                var name, ctype string
+                var notNull int
+                var dfltValue any
+                var pk int
+                if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+                        return err
+                }
+                if name == col {
+                        return nil // already exists
+                }
+        }
+        _, err = db.Exec(ddl)
+        return err
 }

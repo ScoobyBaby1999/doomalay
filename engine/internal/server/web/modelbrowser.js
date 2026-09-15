@@ -330,22 +330,32 @@
         ? '<span style="font-size:9px;color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>'
         : '<span style="font-size:9px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:1px 6px;border-radius:4px">paid</span>';
 
-      // Host rank rows (expanded).
+      // Host rank rows (expanded). v0.19: TAPPING a host row selects THAT
+      // provider+model directly (selecting + reordering both live here —
+      // user spec: "Model view should allow re-ordering and selecting
+      // models both"). The ▲▼ buttons still reorder.
       var hostRows = '';
       if (expanded) {
         for (var h = 0; h < hosts.length; h++) {
           var hr = hosts[h];
-          hostRows += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04)">' +
+          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
             '<span style="font-size:10px;font-weight:700;color:#0a0a0b;background:' + (hr.color || '#4a4a5e') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
             '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || '#4a4a5e') + ';flex-shrink:0"></span>' +
             '<span style="font-size:12px;color:' + (hr.hasApiKey ? '#e0e0e8' : '#71717a') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (hr.providerDisplayName || hr.provider) + '</span>' +
             '<span style="font-size:10px;color:#4a4a5e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
             '<span style="font-size:10px;color:#71717a;flex-shrink:0">' + fmtCtx(hr.contextLength) + '</span>' +
+            '<span style="font-size:9px;font-weight:700;color:' + (hr.hasApiKey ? '#34d399' : '#4a4a5e') + ';flex-shrink:0;padding:2px 6px;border:1px solid ' + (hr.hasApiKey ? 'rgba(52,211,153,0.4)' : '#2a2a35') + ';border-radius:5px">use</span>' +
             '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid #2a2a35;color:#71717a;font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
             '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid #2a2a35;color:#71717a;font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
             '</div>';
         }
       }
+
+      // v0.19: the USE button — one tap selects this logical model on its
+      // best host (key-connected, in the user's preferred host order).
+      var useBtn = available
+        ? '<button data-use="' + escAttr(lm.logical) + '" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.45);color:#34d399;font-size:10px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit">use</button>'
+        : '';
 
       return '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;overflow:hidden;' + (available ? '' : 'opacity:0.75') + '">' +
         '<div data-logical="' + escAttr(lm.logical) + '" style="display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;touch-action:manipulation">' +
@@ -354,6 +364,7 @@
           '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">' + dots + '</span>' +
           '<span style="font-size:10px;color:#71717a;flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
           priceChip +
+          useBtn +
           '<span style="font-size:10px;color:#71717a;flex-shrink:0">' + (expanded ? '▾' : '▸') + '</span>' +
         '</div>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' +
@@ -561,9 +572,11 @@
         });
       });
 
-      // Logical row → expand or select-best.
+      // Logical row → expand (the ▸ chevron side) — the USE button does the
+      // selection now.
       contentEl.querySelectorAll('[data-logical]').forEach(function (rowEl) {
-        rowEl.addEventListener('click', function () {
+        rowEl.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('[data-use]')) return; // the use button handles it
           var logical = rowEl.dataset.logical;
           if (expandedLogical[logical]) {
             // Collapse on second tap; first tap expands.
@@ -573,6 +586,44 @@
           }
           expandedLogical[logical] = true;
           render();
+        });
+      });
+
+      // v0.19: the USE button on a logical row → pick the best host (a
+      // key-connected one, honoring the user's host order).
+      contentEl.querySelectorAll('[data-use]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var logical = btn.dataset.use;
+          var lm = null;
+          var logicals = (catalog && catalog.logical) || [];
+          for (var i = 0; i < logicals.length; i++) {
+            if (logicals[i].logical === logical) { lm = logicals[i]; break; }
+          }
+          if (!lm) return;
+          var hosts = orderedHosts(lm);
+          var best = null;
+          for (var h = 0; h < hosts.length; h++) {
+            if (hosts[h].hasApiKey) { best = hosts[h]; break; }
+          }
+          if (!best) best = hosts[0];
+          if (!best) return;
+          window.ConnectOverlay.close();
+          if (onPick) onPick(best.provider, best.modelId);
+        });
+      });
+
+      // v0.19: tapping a HOST row (in the expanded rank list) selects that
+      // exact provider+model.
+      contentEl.querySelectorAll('[data-hostslot]').forEach(function (row) {
+        row.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('[data-hostup], [data-hostdown]')) return;
+          e.stopPropagation();
+          var parts = row.dataset.hostslot.split('|');
+          var provider = parts.shift();
+          var modelId = parts.join('|');
+          window.ConnectOverlay.close();
+          if (onPick) onPick(provider, modelId);
         });
       });
 

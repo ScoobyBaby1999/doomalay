@@ -660,7 +660,12 @@
   //      sync) used to leave the gatelock stuck while the reminder GUI
   //      claimed "chat is ready". Now a known-good model is always picked.
   var FALLBACK_MODELS = {
-    nvidia: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    // NOTE: slot convention = 'provider/' + the id the PROVIDER'S API
+    // expects. NVIDIA NIM's API ids carry their own org prefix
+    // ("nvidia/nemotron-…") — the engine strips exactly one "nvidia/"
+    // per turn, so the slot keeps both. (Verified live: bare
+    // "nemotron-…" → NIM 404; org-prefixed → 200.)
+    nvidia: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
     privatemodeai: 'privatemodeai/kimi-k2.6',
     opencode: 'opencode/kimi-k2.6'
   };

@@ -23,6 +23,8 @@ import (
         "net/http"
         "regexp"
         "strings"
+        "sync/atomic"
+        "time"
         "sync"
 )
 
@@ -125,6 +127,66 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
 // streamCompletion performs ONE streaming chat completion, forwarding
 // thinking + assistant deltas to ch. Returns the final usage.
 func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, error) {
+        return scanSSE(ctx, req, extraBody, ch, func(reasoning, content string) {
+                if reasoning != "" {
+                        ch <- ChatChunk{Type: "thinking", Text: reasoning}
+                }
+                if content != "" {
+                        ch <- ChatChunk{Type: "assistant_delta", Text: content}
+                }
+        })
+}
+
+// idleTimeoutReader closes the underlying body when no bytes arrive for
+// the timeout (reset on every Read) — v0.19.
+//
+// WHY: observed live — a NIM model accepted the request and then streamed
+// NOTHING for 10 minutes: the turn lock held, the UI sat on "Stop", no
+// error, no terminal status. Reasoning models can think long before the
+// FIRST token, but once bytes flow the stream is alive — this watchdog
+// only kills true silence.
+type idleTimeoutReader struct {
+        rc       io.ReadCloser
+        timeout  time.Duration
+        timer    *time.Timer
+        stopped  chan struct{}
+        timedOut atomic.Bool
+}
+
+func newIdleTimeoutReader(rc io.ReadCloser, d time.Duration) *idleTimeoutReader {
+        r := &idleTimeoutReader{rc: rc, timeout: d, stopped: make(chan struct{})}
+        r.timer = time.AfterFunc(d, func() {
+                select {
+                case <-r.stopped:
+                default:
+                        r.timedOut.Store(true)
+                        rc.Close()
+                }
+        })
+        return r
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+        n, err := r.rc.Read(p)
+        if n > 0 {
+                r.timer.Reset(r.timeout)
+        }
+        return n, err
+}
+
+func (r *idleTimeoutReader) Close() error {
+        close(r.stopped)
+        r.timer.Stop()
+        return r.rc.Close()
+}
+
+// scanSSE performs ONE streaming chat completion, invoking onDelta for every
+// reasoning/content fragment AS IT ARRIVES (v0.19: extracted from
+// streamCompletion so ReAct rounds can stream live — the old loop used
+// completeSync, and tool turns were dead-silent until everything popped
+// at once). ch receives error chunks (so the UI sees provider failures);
+// onDelta receives the fragments.
+func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch chan<- ChatChunk, onDelta func(reasoning, content string)) (*Usage, error) {
         messages := make([]Message, 0, len(req.Messages)+1)
         if req.SystemPrompt != "" {
                 messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
@@ -183,15 +245,21 @@ func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk,
                 ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
                 return nil, nil // error already emitted; keep the turn terminal state clean
         }
+        // v0.19: no-data watchdog — 90s of total silence from the provider
+        // ends the stream (see idleTimeoutReader). The 10-min turn timeout
+        // stays as the hard backstop; this makes a HANG end in a minute and
+        // a half with a diagnosable error instead.
+        wd := newIdleTimeoutReader(resp.Body, 90*time.Second)
         defer resp.Body.Close()
+        defer wd.Close()
 
         if resp.StatusCode != 200 {
-                bts, _ := io.ReadAll(resp.Body)
+                bts, _ := io.ReadAll(wd)
                 ch <- ChatChunk{Type: "error", Error: "http", Message: fmt.Sprintf("%d: %s", resp.StatusCode, string(bts))}
                 return nil, nil
         }
 
-        scanner := bufio.NewScanner(resp.Body)
+        scanner := bufio.NewScanner(wd)
         scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
         usage := &Usage{}
         for scanner.Scan() {
@@ -208,11 +276,10 @@ func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk,
                         continue
                 }
                 for _, choice := range chunk.Choices {
-                        if choice.Delta.Reasoning != "" {
-                                ch <- ChatChunk{Type: "thinking", Text: choice.Delta.Reasoning}
-                        }
-                        if choice.Delta.Content != "" {
-                                ch <- ChatChunk{Type: "assistant_delta", Text: choice.Delta.Content}
+                        if choice.Delta.Reasoning != "" || choice.Delta.Content != "" {
+                                if onDelta != nil {
+                                        onDelta(choice.Delta.Reasoning, choice.Delta.Content)
+                                }
                         }
                 }
                 if chunk.Usage != nil {
@@ -221,6 +288,10 @@ func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk,
                 }
         }
         if err := scanner.Err(); err != nil {
+                if wd.timedOut.Load() {
+                        ch <- ChatChunk{Type: "error", Error: "timeout", Message: "the model went silent (no data for 90s) — try it again or pick another model"}
+                        return usage, nil
+                }
                 ch <- ChatChunk{Type: "error", Error: "stream", Message: err.Error()}
                 return usage, nil
         }
@@ -346,7 +417,11 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         var allSources []SearchResult
         for round := 0; round < 8; round++ {
                 roundReq.Messages = history
-                answer, err := completeSync(ctx, roundReq, nil)
+                // v0.19: STREAMED rounds — thinking deltas stream live during
+                // every round ("tool use streams like thinking does"), and the
+                // final answer streams token-by-token instead of the old
+                // completeSync + 220-char burst that popped all at once.
+                answer, err := runReActRoundStream(ctx, roundReq, ch)
                 if err != nil {
                         ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
                         ch <- ChatChunk{Type: "status", State: "error"}
@@ -355,11 +430,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 
                 action, argJSON, ok := parseAction(answer)
                 if !ok {
-                        // Final answer — stream it out (split into chunks so the
-                        // frontend renders it like any assistant reply).
-                        for _, seg := range splitAnswer(answer) {
-                                ch <- ChatChunk{Type: "assistant_delta", Text: seg}
-                        }
+                        // Final answer — ALREADY streamed live above.
                         if len(allSources) > 0 {
                                 ch <- ChatChunk{Type: "sources", Sources: allSources}
                         }
@@ -424,21 +495,96 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 }
         }
 
-        // One extra round to produce the forced final answer.
+        // One extra round to produce the forced final answer (streams live).
         roundReq.Messages = history
-        answer, err := completeSync(ctx, roundReq, nil)
+        answer, err := runReActRoundStream(ctx, roundReq, ch)
         if err != nil {
                 ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
                 ch <- ChatChunk{Type: "status", State: "error"}
                 return
         }
-        for _, seg := range splitAnswer(answer) {
-                ch <- ChatChunk{Type: "assistant_delta", Text: seg}
-        }
+        _ = answer // forced final — streamed, not emitted as one blob
         if len(allSources) > 0 {
                 ch <- ChatChunk{Type: "sources", Sources: allSources}
         }
         ch <- ChatChunk{Type: "status", State: "idle"}
+}
+
+// runReActRoundStream runs ONE ReAct round with LIVE streaming (v0.19).
+//
+// Thinking deltas stream to ch immediately. Content is buffered ONLY
+// until the first line proves whether this round is an ACTION (a tool
+// call — suppressed from the chat, shown as a tool pill by the caller)
+// or the final answer — then the final answer streams live too.
+// Returns the round's full content (for parseAction + ReAct history).
+func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, error) {
+        var answer strings.Builder
+        var buf strings.Builder // undecided content (final-answer candidate)
+        mode := 0               // 0 undecided · 1 streaming final · 2 suppressed ACTION
+
+        flush := func() { // decided: final answer — stream what we hold
+                mode = 1
+                if buf.Len() > 0 {
+                        ch <- ChatChunk{Type: "assistant_delta", Text: buf.String()}
+                        answer.WriteString(buf.String())
+                        buf.Reset()
+                }
+        }
+
+        _, err := scanSSE(ctx, req, nil, ch, func(reasoning, content string) {
+                if reasoning != "" {
+                        ch <- ChatChunk{Type: "thinking", Text: reasoning}
+                        return
+                }
+                if content == "" {
+                        return
+                }
+                if mode == 2 { // an ACTION line — kept for the protocol, never shown
+                        answer.WriteString(content)
+                        return
+                }
+                if mode == 1 {
+                        ch <- ChatChunk{Type: "assistant_delta", Text: content}
+                        answer.WriteString(content)
+                        return
+                }
+                buf.WriteString(content)
+                s := buf.String()
+                if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+                        // first line complete → decide NOW
+                        if isActionLine(s[:i]) {
+                                mode = 2
+                                answer.WriteString(s)
+                                buf.Reset()
+                        } else {
+                                flush()
+                        }
+                        return
+                }
+                // line still open: decide early once it provably can't be
+                // an ACTION (the protocol's ACTION prefix is "ACTION:").
+                trimmed := strings.TrimLeft(s, " \t")
+                if len(trimmed) >= 8 && !strings.HasPrefix(trimmed, "ACTION") {
+                        flush()
+                }
+        })
+        if err != nil {
+                return answer.String() + buf.String(), err
+        }
+        if mode == 0 && buf.Len() > 0 {
+                // stream ended mid-first-line — decide on what we have
+                if isActionLine(strings.TrimLeft(buf.String(), " \t")) {
+                        answer.WriteString(buf.String())
+                } else {
+                        ch <- ChatChunk{Type: "assistant_delta", Text: buf.String()}
+                        answer.WriteString(buf.String())
+                }
+        }
+        return answer.String(), nil
+}
+
+func isActionLine(line string) bool {
+        return strings.HasPrefix(strings.TrimSpace(line), "ACTION:")
 }
 
 // parseAction detects a ReAct ACTION line (action + JSON arg).

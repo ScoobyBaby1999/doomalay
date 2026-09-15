@@ -74,6 +74,7 @@
         effort: (sessionData && (sessionData.Effort || sessionData.effort)) || 'med',
         webSearch: !!(sessionData && (sessionData.WebSearch || sessionData.web_search)),
         deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
+        persona: (sessionData && (sessionData.Persona || sessionData.persona)) || '',
         slidingWindow: (sessionData && (sessionData.SlidingWindow || sessionData.sliding_window)) || 40,
         messages: [],
         isStreaming: false,
@@ -366,6 +367,26 @@
         else window.Artifacts.toast('connect a model first');
       });
       pillRow.appendChild(art);
+
+      // v0.19: THE PERSONA PILL — opens this chat's persona editor (its
+      // editable system prompt + the live identity line the engine
+      // prepends every turn).
+      var per = document.createElement('button');
+      per.id = 'pill-persona';
+      per.innerHTML = '🎭 persona';
+      per.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
+        'background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.55);color:#a78bfa;' +
+        'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
+      per.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (state.sessionId && window.Persona) {
+          window.Persona.open(state.sessionId, { name: icon.name, model: state.model, provider: state.provider });
+        } else if (window.Artifacts) {
+          window.Artifacts.toast('connect a model first');
+        }
+      });
+      pillRow.appendChild(per);
     }
 
     // Host utilities: export + memory window + in-chat search.
@@ -533,6 +554,21 @@
     });
   }
 
+  // v0.19: canonicalize a picked model to the SLOT format —
+  // 'provider/' + the id the provider's own API expects. The provider view
+  // passes raw ids ('nvidia/nemotron-…'), one-press passes slots
+  // ('nvidia/nvidia/nemotron-…') — both normalize to the same thing, and the
+  // engine strips exactly ONE provider prefix per turn. This WAS the
+  // "switched the model mid convo and the new model doesn't reply" bug:
+  // raw NVIDIA ids lost their org prefix in ResolveModel → NIM 404.
+  function canonicalModel(provider, modelId) {
+    var mid = String(modelId || '');
+    if (provider && mid && mid.indexOf(provider + '/') !== 0) {
+      mid = provider + '/' + mid;
+    }
+    return mid;
+  }
+
   // ── The ctx object: everything a ChatType can drive in the host ──
   function buildCtx(bodyEl, icon, state, panel, type) {
     var ctx = {
@@ -566,16 +602,16 @@
         // the type itself (one-press connect: no separate sandbox step
         // needed when the user goes straight for a cloud provider).
         if (!state.sandbox) state.sandbox = type.id;
-        state.model = modelId;
+        state.model = canonicalModel(provider, modelId);
         state.provider = provider;
         if (icon) {
-          icon.model = modelId;
+          icon.model = state.model;
           icon.provider = provider;
           icon.sandbox = state.sandbox;
           if (typeof icon.setSandbox === 'function') icon.setSandbox(state.sandbox);
           if (typeof icon.save === 'function') icon.save();
         }
-        updateSession(icon, state, { model: modelId, provider: provider, sandbox: state.sandbox });
+        updateSession(icon, state, { model: state.model, provider: provider, sandbox: state.sandbox });
         renderHost(bodyEl, icon, state, panel);
       },
 
@@ -598,6 +634,22 @@
   }
 
   // ── A PrivateMode turn (SDK bridge, runs in the WebView) ──────────
+
+  // v0.19: the PM system message mirrors the engine's systemPromptFor —
+  // a live identity line + the chat's persona (or the default prompt) +
+  // the artifact protocol when the persona doesn't carry it. PM turns
+  // bypass the engine, so the composition lives client-side.
+  function pmSystemMessage(state, model) {
+    var head = 'You are ' + (model || 'an AI assistant') +
+      (state.provider ? ', hosted via ' + state.provider : '') +
+      ", chatting inside the Doomalay app on the user's own device. Today is " +
+      new Date().toDateString() + '.';
+    var persona = (state.persona || '').trim();
+    var sys = head + '\n\n' + (persona || ARTIFACT_PROMPT);
+    if (persona && !/artifact/i.test(persona)) sys += '\n\n' + ARTIFACT_PROMPT;
+    return sys;
+  }
+
   function runPMTurn(text, state, bodyEl, icon) {
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var scrollEl = bodyEl.querySelector('#chat-scroll');
@@ -606,7 +658,7 @@
     state._pmAbort = abort;
     if (sendBtn) sendBtn.onclick = function () { abort.abort(); };
 
-    var history = [{ role: 'system', content: ARTIFACT_PROMPT }]; // v0.17: artifact protocol
+    var history = [{ role: 'system', content: pmSystemMessage(state, model) }]; // v0.19: persona + identity + artifact protocol
     for (var i = 0; i < state.messages.length; i++) {
       var m = state.messages[i];
       if (m.role === 'user') history.push({ role: 'user', content: m.text });
@@ -939,7 +991,9 @@
       }
       state.messages.push({ role: 'user', text: ev.text || '' });
       appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' }, bodyEl, state._icon);
-      autoTitle(state, bodyEl);
+      // v0.19: NO auto-title — the chat keeps its default random name from
+      // the list until the user renames it themselves (tap the name in the
+      // panel header).
       return;
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
@@ -1093,32 +1147,6 @@
       var badge = (bodyEl || document).querySelector('#pill-artifacts-count');
       if (badge) badge.textContent = String(items.length);
     }).catch(function () {});
-  }
-
-  // ── v0.17 creative extra: auto-title after the first exchange ────
-  function autoTitle(state, bodyEl) {
-    var icon = currentCtx && currentCtx.icon;
-    if (!icon || icon._titled) return;
-    var firstUser = null;
-    for (var i = 0; i < state.messages.length; i++) {
-      if (state.messages[i].role === 'user') { firstUser = state.messages[i].text; break; }
-    }
-    if (!firstUser) return;
-    var title = String(firstUser).replace(/\s+/g, ' ').trim();
-    if (title.length > 20) title = title.slice(0, 19).trim() + '…';
-    if (!title) return;
-    icon._titled = true;
-    if (typeof icon.setName === 'function') icon.setName(title);
-    if (typeof icon.save === 'function') icon.save();
-    if (state.sessionId) {
-      fetch('/api/sessions/' + state.sessionId, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title })
-      }).catch(function () {});
-    }
-    var nameEl = document.getElementById('panel-name');
-    if (nameEl && currentCtx && currentCtx.icon === icon) nameEl.textContent = title;
   }
 
   // ── THE MESSAGE RENDERER (everything formatted) ────────────────
@@ -1305,28 +1333,31 @@
   }
 
   // ── Save session config to engine ─────────────────────────────
+  // v0.19: this is a PATCH helper — it NEVER creates sessions anymore.
+  // The old POST-when-missing raced the WS-binding's ensureSession
+  // (applyModel fired BOTH): two sessions got created, and whichever
+  // response landed LAST stomped state.sessionId + icon.sessionId while
+  // the WebSocket was already binding the other one — a session SPLIT
+  // (history loss on reopen, double user events). The send path's
+  // ensureSession is now the ONLY session creator.
   function updateSession(icon, state, patch) {
     if (!state.sessionId) {
-      fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sessionBody(icon, state))
-      }).then(function (r) { return r.json(); }).then(function (data) {
-        if (data && data.ID) {
-          state.sessionId = data.ID;
-          icon._sessionData = data;
-          bindSessionToIcon(icon, data.ID);
-          window.Artifacts.setSession(state.sessionId, { name: icon.name });
-          refreshArtifactCount(state, null);
-        }
-      }).catch(function (e) { console.error('create session failed', e); });
-    } else {
-      fetch('/api/sessions/' + state.sessionId, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-      }).catch(function (e) { console.error('update session failed', e); });
+      // No session yet — the WS binding (bindEngineSession → ensureSession)
+      // will create it and carry these fields on creation. Just remember
+      // them on the icon so a reload restores them.
+      if (icon) {
+        if (patch && patch.model) icon.model = patch.model;
+        if (patch && patch.provider) icon.provider = patch.provider;
+        if (patch && patch.sandbox) icon.sandbox = patch.sandbox;
+        if (typeof icon.save === 'function') icon.save();
+      }
+      return;
     }
+    fetch('/api/sessions/' + state.sessionId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    }).catch(function (e) { console.error('update session failed', e); });
   }
 
   // ── The far-left panel-header model button ("model · provider") ──
@@ -1344,14 +1375,14 @@
     btn.onclick = function () {
       if (!window.ModelBrowser) return;
       window.ModelBrowser.open(function (provider, modelId) {
-        state.model = modelId;
+        state.model = canonicalModel(provider, modelId);
         state.provider = provider;
         if (icon) {
-          icon.model = modelId;
+          icon.model = state.model;
           icon.provider = provider;
           if (typeof icon.save === 'function') icon.save();
         }
-        updateSession(icon, state, { model: modelId, provider: provider });
+        updateSession(icon, state, { model: state.model, provider: provider });
         renderHost(bodyEl, icon, state, panel);
       });
     };
@@ -1367,7 +1398,8 @@
 
     state.messages.push({ role: 'user', text: text, local: true });
     appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon);
-    autoTitle(state, bodyEl);
+    // v0.19: no auto-title on the first message (user spec — the random
+    // default name stays until a manual rename).
 
     if (input) {
       input.value = '';
@@ -1415,6 +1447,17 @@
   function makeCtxFallback(bodyEl, icon, state, panel, type) {
     return buildCtx(bodyEl, icon, state, panel, type);
   }
+
+  // ── v0.19: persona edits (the persona editor) land in every open chat's
+  // state so PM turns compose the system message from the LATEST text.
+  window.addEventListener('doomalay:persona-saved', function (e) {
+    var sid = e.detail && e.detail.sessionId;
+    var persona = (e.detail && e.detail.persona) || '';
+    if (!sid) return;
+    for (var k in chatStates) {
+      if (chatStates[k] && chatStates[k].sessionId === sid) chatStates[k].persona = persona;
+    }
+  });
 
   // ── v0.17: code-card "⇩ file" → save snippet as artifact ────────
   window.addEventListener('doomalay:save-code-artifact', function (e) {

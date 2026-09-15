@@ -117,6 +117,92 @@ func lockSession(id string) (release func(), ok bool) {
         }
 }
 
+// turnAbort registers an in-flight turn's cancel per session, so a
+// client "stop" aborts ONLY that turn — not the shared read-loop context
+// (v0.19: the old code called cancel() on the loop's ctx, which poisoned
+// every future turn on the same socket — "the new model doesn't reply").
+// Each registration wraps the cancel in a unique struct so release can
+// identify exactly ITS handle (funcs aren't comparable in Go).
+type turnCancel struct{ cancel context.CancelFunc }
+
+var (
+        turnMu      sync.Mutex
+        turnCancels = map[string][]*turnCancel{}
+)
+
+func abortTurn(sessionID string) {
+        turnMu.Lock()
+        cancels := turnCancels[sessionID]
+        delete(turnCancels, sessionID)
+        turnMu.Unlock()
+        for _, c := range cancels {
+                c.cancel()
+        }
+}
+
+func registerTurnCancel(sessionID string, cancel context.CancelFunc) *turnCancel {
+        tc := &turnCancel{cancel: cancel}
+        turnMu.Lock()
+        turnCancels[sessionID] = append(turnCancels[sessionID], tc)
+        turnMu.Unlock()
+        return tc
+}
+
+func releaseTurnCancel(sessionID string, tc *turnCancel) {
+        if tc == nil {
+                return
+        }
+        turnMu.Lock()
+        list := turnCancels[sessionID]
+        for i, f := range list {
+                if f == tc {
+                        turnCancels[sessionID] = append(list[:i], list[i+1:]...)
+                        break
+                }
+        }
+        if len(turnCancels[sessionID]) == 0 {
+                delete(turnCancels, sessionID)
+        }
+        turnMu.Unlock()
+}
+
+// systemPromptFor composes the per-turn system message (v0.19 personas):
+//
+//      [identity line — ALWAYS fresh: the CURRENT model + provider + date,
+//       so a mid-conversation model switch instantly changes who the bot
+//       thinks it is]
+//      + [the chat's persona, or the default prompt when none is set]
+//      + [the artifact protocol, unless the persona already carries it]
+func (s *Server) systemPromptFor(sess *store.Session) string {
+        var b strings.Builder
+        b.WriteString("You are ")
+        if m := strings.TrimSpace(sess.Model); m != "" {
+                b.WriteString(m)
+        } else {
+                b.WriteString("an AI assistant")
+        }
+        if p := strings.TrimSpace(sess.Provider); p != "" {
+                b.WriteString(", hosted via " + p)
+        }
+        b.WriteString(", chatting inside the Doomalay app on the user's own device. ")
+        b.WriteString("Today is " + time.Now().Format("Monday, 2 January 2006") + ".")
+
+        persona := strings.TrimSpace(sess.Persona)
+        if persona == "" {
+                // No custom persona → the app's default prompt IS the persona
+                // (user spec: "whatever our default prompt currently is for the
+                // chatbots should act as the default persona").
+                b.WriteString("\n\n" + artifactSystemPrompt)
+                return b.String()
+        }
+        b.WriteString("\n\n" + persona)
+        if !strings.Contains(strings.ToLower(persona), "artifact") {
+                // Keep the file-save capability alive under custom personas.
+                b.WriteString("\n\n" + artifactSystemPrompt)
+        }
+        return b.String()
+}
+
 // handleChatWS is GET /api/chat?session_id=<id> — the WebSocket chat endpoint.
 func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
         sessionID := r.URL.Query().Get("session_id")
@@ -175,7 +261,11 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                 case "send":
                         go s.handleTurn(ctx, conn, sessionID, sess, msg)
                 case "stop":
-                        cancel() // aborts the in-flight brain.Chat (ctx cancellation)
+                        // v0.19: abort ONLY the in-flight turn(s) for this session.
+                        // The old cancel() killed the shared read-loop ctx — after ONE
+                        // stop, every later send on this socket ran with an already-
+                        // canceled context and died silently (no reply from any model).
+                        abortTurn(sessionID)
                 }
         }
 }
@@ -238,11 +328,9 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
                 "mode":          sess.Mode,
                 "web_search":    sess.WebSearch,
                 "deep_research": sess.DeepResearch,
-                // v0.17: artifact capability — tells the model HOW to produce
-                // downloadable files (any type) the app extracts + lists in the
-                // chat's artifact drawer. The frontend parses completed
-                // assistant messages for these fenced artifact blocks.
-                "system_prompt": artifactSystemPrompt,
+                // v0.19: persona system — the per-turn system message is
+                // identity + the chat's persona (or the default prompt).
+                "system_prompt": s.systemPromptFor(sess),
         }
         if v, ok := msg["model"].(string); ok && v != "" {
                 brainReq["model"] = v // allow per-message override
@@ -280,24 +368,37 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         // think for minutes) — this per-turn timeout is the backstop that
         // guarantees the turn lock is always released.
         turnCtx, turnCancel := context.WithTimeout(ctx, 10*time.Minute)
-        defer turnCancel()
+        tcHandle := registerTurnCancel(sessionID, turnCancel)
+        terminal := false // did the stream end with a status idle/error?
+        defer func() {
+                releaseTurnCancel(sessionID, tcHandle)
+                turnCancel()
+                // v0.19: GUARANTEED TERMINAL STATUS — the UI unblocks (Send
+                // button, isStreaming) only on a status idle/error event. A
+                // Stop or an edge-case stream end could leave none arriving,
+                // freezing the chat forever after. Emit one if the stream
+                // forgot.
+                if !terminal {
+                        s.emit(conn, sessionID, "status", `{"state":"idle","usage":null}`, "")
+                }
+        }()
         if s.brain != nil && s.brain.Healthy() {
-                s.streamFromBrain(turnCtx, conn, sessionID, sess, brainReq, userText)
+                s.streamFromBrain(turnCtx, conn, sessionID, sess, brainReq, userText, &terminal)
         } else {
-                s.streamFromDirectProxy(turnCtx, conn, sessionID, sess, userText)
+                s.streamFromDirectProxy(turnCtx, conn, sessionID, sess, userText, &terminal)
         }
 }
 
 // streamFromBrain proxies the chat turn through the Python brain (full
 // agent: Strands, tools, panel, templates). Used when the brain is available.
-func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, brainReq map[string]any, userText string) {
+func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool) {
         events, errs, err := s.brain.Chat(ctx, brainReq)
         if err != nil {
                 s.emit(conn, sessionID, "error", `{"error":"brain","message":"`+err.Error()+`"}`, "")
                 s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
-        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, errs)
+        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, errs, terminal)
 }
 
 // streamFromDirectProxy calls the cloud LLM directly from Go (no Python brain
@@ -308,7 +409,7 @@ func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sess
 // v0.13: builds conversation HISTORY from the event log (multi-turn now
 // works on the APK), and forwards capabilities (effort / web_search /
 // deep_research) into the llm.Chat pipeline.
-func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string) {
+func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, terminal *bool) {
         if s.vault == nil {
                 s.emit(conn, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
                 s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
@@ -341,12 +442,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
         }
         history = append(history, llm.Message{Role: "user", Content: userText})
 
-        // v0.17: the artifact protocol rides every turn as the system
-        // message (the event-log history can't carry system entries —
-        // rebuild it each turn so the model always knows it can attach
-        // downloadable files).
+        // v0.17→v0.19: the system message = identity + persona (or the
+        // default prompt) + the artifact protocol — composed fresh each
+        // turn so model switches change the identity instantly.
         full := make([]llm.Message, 0, len(history)+1)
-        full = append(full, llm.Message{Role: "system", Content: artifactSystemPrompt})
+        full = append(full, llm.Message{Role: "system", Content: s.systemPromptFor(sess)})
         full = append(full, history...)
 
         req := llm.ChatRequest{
@@ -399,6 +499,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                                 ev["name"] = chunk.Name
                                 ev["summary"] = chunk.Summary
                         }
+                        // v0.19: status running events may carry a human
+                        // message ("round 2 · searching …") — pass it through
+                        // so the frontend renders a live progress pill.
+                        if chunk.Type == "status" && chunk.Message != "" {
+                                ev["message"] = chunk.Message
+                        }
                         if chunk.Sources != nil {
                                 srcs := make([]map[string]any, 0, len(chunk.Sources))
                                 for _, sr := range chunk.Sources {
@@ -413,12 +519,15 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                         }
                         events <- ev
                 }
-                select {
-                case e := <-errs:
-                        if e != nil {
-                                events <- map[string]any{"type": "error", "error": "llm", "message": e.Error()}
-                        }
-                default:
+                // v0.19: BLOCKING drain — errs is always closed by the
+                // llm.Chat producer (right after ch), so this returns as
+                // soon as the chunks end. The old non-blocking
+                // select/default RACED the producer and silently dropped
+                // provider errors: the turn ended with NO error and NO
+                // terminal status — the UI stayed stuck on "Stop" and the
+                // chat looked dead ("the new model doesn't seem to reply").
+                if e := <-errs; e != nil {
+                        events <- map[string]any{"type": "error", "error": "llm", "message": e.Error()}
                 }
                 // v0.13: persist the full assistant reply as ONE event so
                 // history reconstruction on later turns is exact.
@@ -427,10 +536,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
                 }
         }()
 
-        // errs channel is consumed above; create a dummy one for forwardEvents.
+        // errs is consumed inside the goroutine above; hand forwardEvents a
+        // pre-closed dummy so its trailing read doesn't block.
         dummyErrs := make(chan error, 1)
         close(dummyErrs)
-        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, dummyErrs)
+        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, dummyErrs, terminal)
 }
 
 // buildHistory reconstructs the conversation from the event log: "user" and
@@ -469,7 +579,7 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
 // forwardEvents is the shared event-handling loop for both brain and direct
 // proxy paths. It persists each event to chat_events (V0 fix) + forwards to
 // the PWA via WebSocket + handles auto-naming.
-func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, events <-chan map[string]any, errs <-chan error) {
+func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, events <-chan map[string]any, errs <-chan error, terminal *bool) {
         for ev := range events {
                 // Normalize the event into the wire format + persist.
                 evType, _ := ev["type"].(string)
@@ -541,6 +651,11 @@ func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessio
                 // Auto-name on first turn (V0 FIX: flag-after-success).
                 if evType == "status" {
                         state, _ := ev["state"].(string)
+                        if state == "idle" || state == "error" {
+                                if terminal != nil {
+                                        *terminal = true
+                                }
+                        }
                         if state == "idle" {
                                 // Try LLM title if not yet set + not manually renamed.
                                 if sess.Title == "New Chat" && !sess.ManuallyRenamed {
