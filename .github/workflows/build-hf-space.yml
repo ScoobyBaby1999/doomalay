@@ -37,7 +37,7 @@ jobs:
           api = HfApi(token='$HF_TOKEN')
           api.upload_folder(
               folder_path='platforms/hf-space',
-              repo_id='${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || \"doomalay/doomalay\" }}',
+              repo_id='${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || 'doomalay/doomalay' }}',
               repo_type='space',
           )
           "
