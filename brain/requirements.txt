@@ -6,7 +6,8 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 strands-agents==0.1.5
 litellm==1.55.10
-httpx==0.28.1
+# litellm 1.55.x pins httpx<0.28.0 — keep 0.27.2 or bump litellm together
+httpx==0.27.2
 pydantic==2.10.4
 # Tool dependencies
 duckduckgo-search==7.3.0
