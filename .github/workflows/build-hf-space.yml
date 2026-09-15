@@ -20,24 +20,29 @@ jobs:
           cd engine
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../platforms/hf-space/engine/doomalay-engine ./cmd/doomalay
       - name: Build Docker image
-        run: |
-          cd platforms/hf-space
-          docker build -t doomalay-hf-space .
+        run: docker build -t doomalay-hf-space -f platforms/hf-space/Dockerfile .
       - name: Push to HF Space
         if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # Push the Docker image to HF Space (requires HF_TOKEN secret)
-          echo "Pushing to HF Space..."
-          # This uses huggingface_hub to push the Docker image
+          # Stage the exact Docker context the Space needs (paths match the Dockerfile,
+          # so the HF-side docker build resolves brain/ and the engine binary identically).
+          mkdir -p stage/platforms/hf-space/engine
+          cp -r brain stage/brain
+          cp platforms/hf-space/engine/doomalay-engine stage/platforms/hf-space/engine/doomalay-engine
+          cp platforms/hf-space/Dockerfile stage/Dockerfile
+          cp platforms/hf-space/entrypoint.sh stage/entrypoint.sh
+          cp platforms/hf-space/README.md stage/README.md
+          # Push the staged folder to HF Space (requires HF_TOKEN secret)
           pip install huggingface_hub
           python3 -c "
           from huggingface_hub import HfApi
           api = HfApi(token='$HF_TOKEN')
           api.upload_folder(
-              folder_path='platforms/hf-space',
+              folder_path='stage',
               repo_id='${{ vars.HF_SPACE_REPO || secrets.HF_SPACE_REPO || 'doomalay/doomalay' }}',
               repo_type='space',
+              ignore_patterns=['__pycache__', '*.pyc', '.venv'],
           )
           "

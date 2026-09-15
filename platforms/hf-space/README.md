@@ -1,3 +1,13 @@
+---
+title: Doomalay
+emoji: 🤖
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 8080
+pinned: false
+---
+
 # HF Space — App-Building Machine
 
 A pure-backend Docker container on Hugging Face Spaces. Full build toolchain

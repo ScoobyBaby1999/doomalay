@@ -1,0 +1,12 @@
+# Docker build context — keep only what the HF-space Dockerfile COPYs
+# (brain/ + platforms/hf-space/engine/doomalay-engine). Everything else is noise.
+.git
+.github
+docs/
+scripts/
+app/
+engine/
+doomalay-engine-test
+platforms/android/
+brain/.venv/
+**/__pycache__/

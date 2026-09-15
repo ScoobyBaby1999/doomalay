@@ -29,7 +29,8 @@ RUN cd /app/brain && pip install --no-cache-dir -r requirements.txt
 
 # ── Go engine (built in CI for linux/amd64) ──
 # The engine binary is copied here by the CI workflow.
-COPY engine/doomalay-engine /app/doomalay-engine
+# Build context = repo root (docker build -f platforms/hf-space/Dockerfile .)
+COPY platforms/hf-space/engine/doomalay-engine /app/doomalay-engine
 RUN chmod +x /app/doomalay-engine
 
 # ── Brain source ──
