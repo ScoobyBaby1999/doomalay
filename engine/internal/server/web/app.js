@@ -238,6 +238,23 @@
         window.ConnectOverlay.close();
         return true;
       }
+      // v0.18: the artifacts drawer/editor + the long-press action sheet
+      // are appended to document.body (not inside the chat panel) — the
+      // back gesture MUST know about them or a stuck overlay traps the
+      // user in the app ("had to close the app completely").
+      var artOverlay = document.getElementById('artifacts-overlay');
+      if (artOverlay && artOverlay.style.display !== 'none' && artOverlay.style.display !== '') {
+        // v0.18: dirty-aware — an editor with unsaved changes shows the
+        // in-DOM discard banner instead of losing edits ('blocked').
+        var r = (window.Artifacts && window.Artifacts.backClose)
+          ? window.Artifacts.backClose() : 'closed';
+        if (r !== false) return true;
+      }
+      var actionSheet = document.getElementById('msg-action-sheet');
+      if (actionSheet && window.MsgActions && window.MsgActions.isOpen && window.MsgActions.isOpen()) {
+        window.MsgActions.dismiss();
+        return true;
+      }
       // Close the chat panel
       if (panel && panel.isOpen()) {
         panel.close();

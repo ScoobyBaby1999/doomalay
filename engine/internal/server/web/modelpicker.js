@@ -57,15 +57,18 @@
           // providers GUI as a dismissible reminder (✕ or scrim tap
           // closes it; the chat is already usable underneath).
           // Zero keys → the full setup GUI (the original flow).
+          // v0.18: `picked:false` (no usable model found) opens the FULL
+          // setup GUI — the green "chat is ready" reminder would be a lie
+          // while the gatelock is still locked.
           window.ProvidersScreen.smartConnect(function (provider, modelId) {
             onPick(provider, modelId);
           }).then(function (res) {
-            if (!res.connected) {
+            if (!res.connected || !res.picked) {
               window.ProvidersScreen.open(onPick, { useReplaceContent: true });
             } else if (res.connected < 3) {
               window.ProvidersScreen.open(onPick, { useReplaceContent: true, reminder: true });
             }
-            // ≥3 connected: silent one-press unlock, no GUI
+            // ≥3 connected AND picked: silent one-press unlock, no GUI
           });
         } else {
           window.LocalModelsScreen.open(onPick, { useReplaceContent: true });

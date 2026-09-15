@@ -134,7 +134,7 @@
             (state.messages.length === 0
               ? '<div id="chat-greeting" style="text-align:center;color:#71717a;font-size:13px;padding:32px 20px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
-              : renderMessages(state)) +
+              : renderMessages(state.messages)) +
           '</div>' +
           // Sticky input bar — stays visible while scrolled.
           '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:#0e0e12;border-top:1px solid #1a1a22;padding:10px 16px 12px;z-index:2">' +
@@ -202,7 +202,7 @@
           while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
             state.messages.pop();
           }
-          if (msgContainer) msgContainer.innerHTML = renderMessages(state);
+          if (msgContainer) msgContainer.innerHTML = renderMessages(state.messages);
           doSend(lastUser.text, bodyEl, icon, state, panel);
         }
       });
@@ -230,7 +230,7 @@
       if (state.client) {
         state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, icon, panel); };
         if (state.messages.length > 0 && msgContainer && msgContainer.querySelector('#chat-greeting')) {
-          msgContainer.innerHTML = renderMessages(state);
+          msgContainer.innerHTML = renderMessages(state.messages);
           scrollEl.scrollTop = scrollEl.scrollHeight;
         }
       } else if (!state._wsBinding) {
@@ -468,7 +468,7 @@
       clearHighlights(bodyEl);
       bar.style.display = 'none';
       var msgC = bodyEl.querySelector('#chat-messages');
-      if (msgC) { msgC.innerHTML = renderMessages(state); scrollBottom(bodyEl); }
+      if (msgC) { msgC.innerHTML = renderMessages(state.messages); scrollBottom(bodyEl); }
     });
     if (search.q) run();
   }

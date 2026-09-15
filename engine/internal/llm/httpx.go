@@ -22,11 +22,15 @@ import (
 // Go http-client UA.
 const browserUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
-// providerHTTP is the shared client: 15s timeout, sane connection pooling.
-// v0.14: uses netx.Transport() — the DoH fallback dialer that fixes outbound
-// HTTP on Android (pure-Go resolver without /etc/resolv.conf).
+// providerHTTP is the shared client for model syncs + key validation.
+// v0.18: 9s timeout (was 15s) — a cold catalog sync runs 11 providers in
+// parallel and /api/models blocked on the slowest black-holed connection;
+// on congested mobile data one-press connect felt dead for the full 15s.
+// 9s still tolerates slow-but-alive providers, but the catalog returns
+// while the user is still looking at the screen. (Chat STREAMING uses
+// providerStreamHTTP below — unaffected.)
 var providerHTTP = &http.Client{
-        Timeout:   15 * time.Second,
+        Timeout:   9 * time.Second,
         Transport: netx.Transport(),
 }
 

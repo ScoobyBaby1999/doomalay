@@ -154,5 +154,6 @@
     return d.innerHTML;
   }
 
-  window.MsgActions = { wire: wire, hide: hideSheet };
+  window.MsgActions = { wire: wire, hide: hideSheet, dismiss: hideSheet,
+    isOpen: function () { return !!(sheetEl && sheetEl.isConnected && sheetEl.style.display !== 'none'); } };
 })();

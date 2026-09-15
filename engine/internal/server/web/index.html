@@ -203,7 +203,7 @@
     position: fixed;
     left: 0; right: 0;
     bottom: 0;
-    height: 85vh;          /* slides up to 85% of screen height */
+    height: 62vh;          /* v0.18: the DEFAULT sheet — top ~38% stays empty */
     background: #0e0e12;
     border-top: 1px solid #1a1a22;
     border-radius: 16px 16px 0 0;
@@ -684,12 +684,11 @@
   /* in-chat search highlight */
   mark.chat-search-mark { background: rgba(250,204,21,0.35); color: inherit; border-radius: 3px; }
 
-  /* ── v0.17: snap-state panel (gesture.js) ── */
+  /* ── v0.18: snap-state panel (gesture.js — TWO positions only) ── */
   #chat-panel.panel-full {
     height: 100vh !important; border-radius: 0;
     padding-top: 4px;
   }
-  #chat-panel.panel-peek { height: 22vh !important; }
 
   /* ── message action sheet (long-press) ── */
   .msg-action-btn {
@@ -803,6 +802,27 @@
     max-width: 86%; text-align: center;
   }
   .art-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── v0.18: unsaved-changes banner (in-DOM, replaces window.confirm) ── */
+  .art-unsaved {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    background: #1a1420;
+    border-top: 1px solid rgba(248,113,113,0.35);
+    transform: translateY(110%); opacity: 0;
+    transition: transform 0.22s cubic-bezier(0.32,0.72,0,1), opacity 0.2s;
+    z-index: 5;
+  }
+  .art-unsaved.show { transform: translateY(0); opacity: 1; }
+  .art-unsaved-text { flex: 1; min-width: 0; color: #f8a5a5; font-size: 12.5px; font-weight: 600; }
+  .art-unsaved-discard, .art-unsaved-stay {
+    background: transparent; border: 1px solid #2a2a35; color: #e0e0e8;
+    border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: inherit; flex-shrink: 0; touch-action: manipulation;
+  }
+  .art-unsaved-discard { color: #f87171; border-color: rgba(248,113,113,0.45); }
+  .art-unsaved-stay { color: #34d399; border-color: rgba(52,211,153,0.4); }
 
   /* CodeMirror theme — doomalay (matches the fmt scheme) */
   .cm-s-doomalay.CodeMirror { background: #0c0c11; color: #d4d4dc; }

@@ -14,6 +14,27 @@
 (function () {
   'use strict';
 
+  // v0.18: per-chat panel-position memory. Keyed by the context's id
+  // (the icon id) — "did THIS chat's panel sit at full or default when the
+  // user closed it?" Reopening that chat restores that height; chats with
+  // no memory open at the default (half-ish screen).
+  var POS_KEY = 'doomalay.panelpos.v1';
+  function readPosMap() {
+    try { return JSON.parse(localStorage.getItem(POS_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function rememberedPos(id) {
+    var m = readPosMap();
+    return (id && (m[id] === 'full' || m[id] === 'default')) ? m[id] : 'default';
+  }
+  function rememberPos(id, pos) {
+    if (!id) return;
+    if (pos !== 'full' && pos !== 'default') return;
+    var m = readPosMap();
+    m[id] = pos;
+    try { localStorage.setItem(POS_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+
   class Panel {
     constructor(opts) {
       this.panelEl  = opts.panelEl;
@@ -28,14 +49,15 @@
       this.currentContext = null;  // whatever the caller passed to open()
       this.onClose = null;
 
-      // v0.17: SNAP-POINT GESTURES (peek / default / full + velocity
-      // flings — "like scrolling down reels") replace the simple
-      // drag-to-close when gesture.js is loaded. They handle the handle +
-      // header drags AND hard downward swipes from anywhere in the body
-      // (when the body is scrolled to top). Drag/fling past peek closes.
+      // v0.17→v0.18: SNAP-POINT GESTURES (full / default only +
+      // close-on-fling — "like scrolling down reels") replace the simple
+      // drag-to-close when gesture.js is loaded. The remembered per-chat
+      // position is applied on every open() and saved on close().
       if (window.PanelGestures) {
-        this.gestures = window.PanelGestures.attach(this.panelEl);
         var selfG = this;
+        this.gestures = window.PanelGestures.attach(this.panelEl, {
+          onStateChange: function () { selfG._syncPosNow(); }
+        });
         this.gestures.setCloseHook(function () { selfG.close(); });
       } else {
         this._wireDragging();
@@ -57,6 +79,12 @@
       this.avatarEl.innerHTML = avatarHTML || '';
       this.bodyEl.innerHTML = bodyHTML || '';
       var self = this;
+      // v0.18: open at the REMEMBERED position for this chat (no memory →
+      // the half-ish default). Applied while still hidden so the slide-up
+      // animation lands at the right height — no visible jump.
+      if (this.gestures) {
+        this.gestures.openAt(rememberedPos(this.currentContext && this.currentContext.id));
+      }
       // requestAnimationFrame ensures the browser has rendered the panel
       // in its hidden state before we add .open, so the CSS transition fires.
       requestAnimationFrame(function () {
@@ -66,6 +94,9 @@
     }
 
     close() {
+      // v0.18: remember where this chat's panel was sitting (full vs
+      // default) BEFORE tearing it down — the next open restores it.
+      this._syncPosNow();
       this.scrimEl.classList.remove('open');
       this.panelEl.classList.remove('open');
       var cb = this.onClose;
@@ -75,6 +106,13 @@
     }
 
     isOpen() { return this.panelEl.classList.contains('open'); }
+
+    // live-persist the panel position for the current chat (full/default)
+    _syncPosNow() {
+      if (this.gestures && this.currentContext && this.currentContext.id) {
+        try { rememberPos(this.currentContext.id, this.gestures.state()); } catch (e) {}
+      }
+    }
 
     _wireDragging() {
       var startY = 0, offset = 0, dragging = false;

@@ -1,47 +1,52 @@
-// gesture.js — v0.17 SNAP-POINT PANEL GESTURES (bottom-sheet physics).
+// gesture.js — v0.18 TWO-POSITION PANEL GESTURES (bottom-sheet physics).
 //
-// User spec: "Sliding down hard, or sliding the panel down with an
-// exaggerated motion should lower the panel even if the slide wasn't
-// held from the anchor point. Similar to scrolling down reels. Moreso,
-// scrolling up or sliding your finger up from the anchor point should
-// full screen the panel, sliding it down with an exaggerated motion
-// should return it to default, not minimize it."
+// USER SPEC (v0.18 redteam):
+//   "Let's only have 2 positions, full screen, and the default screen.
+//    A big sliding down motion or gesture should slide the panel
+//    completely and close it whether it is full screen or not.
+//    When opening a panel, default to the half-ish screen default
+//    position, but remember the user's preference — next time the panel
+//    should open to default OR full depending on what position the user
+//    had for that chat before they closed it."
 //
-// THREE SNAP STATES (like reels):
-//   full   (100vh)  ← finger-up fling FROM the anchor (handle/header), or
-//                     any upward fling while the sheet is already tracking
-//   default(85vh)   ← the normal chat height; exaggerated downward fling
-//                     from full returns here (NOT to peek)
-//   peek   (~22vh)  ← exaggerated downward fling from default lowers the
-//                     sheet to a peek; another hard fling (or big drag) past
-//                     peek CLOSES the panel
+// TWO SNAP STATES:
+//   full   (100vh) — anchor up-gesture / upward fling lands here
+//   default(62vh)  — the normal chat height (top ~38% of the screen stays
+//                    empty — the user can still see the grid behind)
+//
+// CLOSING: any EXAGGERATED downward motion closes the panel completely —
+// a hard fling (velocity) or a big drag (distance) — from EITHER state.
+// The old third "peek" position is GONE (it caused confusion: users
+// expected the chat to lower completely and it got stuck at 15%).
 //
 // HOW "NOT FROM THE ANCHOR" WORKS: the chat body scrolls (pan-y). When
 // the body is scrolled to the TOP and the finger moves DOWN, the sheet
 // takes over the gesture (the classic bottom-sheet pattern) — so a hard
-// downward swipe ANYWHERE on the chat lowers it. Upward snaps only arm
+// downward swipe ANYWHERE on the chat closes it. Upward snaps only arm
 // from the anchor zone to avoid hijacking scroll.
 
 (function () {
   'use strict';
 
   var panelEl = null;   // #chat-panel
-  var states = { peek: 0.22, default: 0.85, full: 1.0 };
+  var states = { default: 0.62, full: 1.0 };
   var currentState = 'default';
+  var onStateChange = null;
 
   // velocity tuning
   var FLING_VY = 0.55;        // px/ms — "exaggerated" fast swipe
-  var DRAG_FRAC = 0.35;       // dragged > 35% of height → intent
-  var MAX_TRACK_MS = 320;     // velocity window
+  var UP_DRAG_FRAC = 0.22;    // dragged up > 22% of height → full intent
+  var FULL_CLOSE_FRAC = 0.45; // from full: a REALLY big slow drag → close
+  var CLOSE_FRAC = 0.10;      // from default: a deliberate 10%+ pull closes
 
-  function attach(panel) {
+  function attach(panel, opts) {
     panelEl = panel;
-    // full-state layout: taller sheet + flat top corners
-    setHeight('default', false);
+    onStateChange = (opts && opts.onStateChange) || null;
+    setHeight((opts && opts.initial) || 'default', false);
 
     var track = {
       active: false, y0: 0, t0: 0, lastY: 0, lastT: 0, vy: 0,
-      fromAnchor: false, moved: 0, hijacked: false, startTop: 0
+      fromAnchor: false, hijacked: false, baseFrac: 0
     };
 
     function stateFrac() { return states[currentState]; }
@@ -50,35 +55,41 @@
     function setHeight(next, animate) {
       currentState = next;
       panelEl.classList.toggle('panel-full', next === 'full');
-      panelEl.classList.toggle('panel-peek', next === 'peek');
       var h = Math.round(states[next] * 100) + 'vh';
       panelEl.style.transition = animate === false ? 'none' : '';
       panelEl.style.height = h;
       if (animate === false) {
         requestAnimationFrame(function () { panelEl.style.transition = ''; });
       }
+      if (onStateChange) { try { onStateChange(next); } catch (e) {} }
       window.dispatchEvent(new CustomEvent('doomalay:panel-state', { detail: { state: next } }));
     }
 
-    function snapFor(vy, dy) {
-      var order = ['peek', 'default', 'full'];
-      var idx = order.indexOf(currentState);
-      var far = Math.abs(dy) > panelH() * DRAG_FRAC;
-      if (vy < -FLING_VY || (dy < 0 && far)) {
-        // user spec: "scrolling up or sliding your finger up from the
-        // anchor point should full screen the panel" — ANY upward anchor
-        // intent goes straight to full.
-        return 'full';
-      }
-      if (vy > FLING_VY || (dy > 0 && far)) {            // downward intent
-        return order[Math.max(0, idx - 1)];              // step down one
-      }
-      // slow + short: settle to the NEAREST of the two neighbors
-      var frac = stateFrac() + dy / panelH();
+    // Where does this gesture END? (no side effects — end() acts on it)
+    function decide(vy, dy) {
+      var h = panelH();
+      var downward = dy > 0;
+      var upward = dy < 0;
+      // EXAGGERATED DOWN, any state → close ("reels" feel).
+      if (downward && vy > FLING_VY) return 'CLOSE';
+      // Upward intent → full.
+      if (upward && (vy < -FLING_VY || Math.abs(dy) > h * UP_DRAG_FRAC)) return 'full';
+      // From full: only a REALLY big slow drag closes — a moderate one
+      // (≈180-300px) settles down to default so both positions stay
+      // comfortably reachable.
+      if (downward && currentState === 'full' && dy > h * FULL_CLOSE_FRAC) return 'CLOSE';
+      // From default: down is the DISMISS direction (nothing sits below
+      // default) — a deliberate 10%+ pull closes.
+      if (downward && currentState === 'default' && dy > h * CLOSE_FRAC) return 'CLOSE';
+      // Otherwise settle to the NEAREST of the two positions.
+      // (frac = coverage after the drag: down REDUCES it — v0.18 sign fix;
+      // v0.17 had +dy/h which made downward drags settle the WRONG way and
+      // the panel never tracked the finger — the "isn't too accurate" feel.)
+      var frac = Math.min(1, Math.max(0, stateFrac() - dy / h));
       var best = currentState, dist = Math.abs(frac - stateFrac());
-      for (var i = 0; i < order.length; i++) {
-        var d = Math.abs(frac - states[order[i]]);
-        if (d < dist) { dist = d; best = order[i]; }
+      for (var k in states) {
+        var d = Math.abs(frac - states[k]);
+        if (d < dist) { dist = d; best = k; }
       }
       return best;
     }
@@ -88,7 +99,6 @@
       track.y0 = track.lastY = y;
       track.t0 = track.lastT = performance.now();
       track.vy = 0;
-      track.moved = 0;
       track.fromAnchor = !!fromAnchor;
       track.hijacked = false;
       track.baseFrac = states[currentState];
@@ -99,7 +109,6 @@
       if (!track.active) return;
       var now = performance.now();
       var dy = y - track.y0;
-      track.moved = Math.max(track.moved, Math.abs(dy));
       // velocity over a short window
       if (now - track.lastT > 0) {
         var instVy = (y - track.lastY) / (now - track.lastT);
@@ -108,17 +117,16 @@
       track.lastY = y;
       track.lastT = now;
 
-      // live drag: translate the sheet (rubber-band the extremes)
+      // live drag: translate the sheet so it FOLLOWS THE FINGER.
+      // v0.18 SIGN FIX: dragging DOWN (dy>0) must REDUCE coverage —
+      // frac = baseFrac - dy/h. v0.17 had +dy/h: downward drags clamped at
+      // zero movement and the sheet sat dead under the finger.
       var h = panelH();
-      var frac = track.baseFrac + dy / h;
+      var frac = track.baseFrac - dy / h;
       if (frac > 1) frac = 1 + (frac - 1) * 0.25;       // past full: damp
       var px = Math.round((1 - frac) * h);
-      if (currentState === 'full' && frac > 1) {
-        // dragging down from full: sheet follows fractionally
-        panelEl.style.height = Math.round(Math.min(1, frac) * 100) + 'vh';
-      } else {
-        panelEl.style.transform = 'translateY(' + Math.max(0, px) + 'px)';
-      }
+      if (px < 0) px = 0;                                // never above full
+      panelEl.style.transform = 'translateY(' + px + 'px)';
     }
 
     function end(closeFn) {
@@ -127,17 +135,13 @@
       var dy = track.lastY - track.y0;
       panelEl.style.transform = '';
 
-      var vy = track.vy;
-      var downward = dy > 0;
-      var hard = downward && (vy > FLING_VY || Math.abs(dy) > panelH() * DRAG_FRAC);
-
-      // past-peek fling → close
-      if (currentState === 'peek' && downward && (vy > FLING_VY * 0.8 || dy > panelH() * 0.18)) {
+      var next = decide(track.vy, dy);
+      if (next === 'CLOSE') {
+        // Restore a sane height for the next open, then slide away.
         panelEl.style.height = Math.round(states.default * 100) + 'vh';
         if (closeFn) closeFn();
         return;
       }
-      var next = snapFor(vy, dy);
       setHeight(next, true);
     }
 
@@ -172,8 +176,7 @@
         if (e.touches.length !== 1) return;
         if (track.active) return; // an ANCHOR gesture (handle/header) is
                                   // already running — this bubbled event
-                                  // must not kill it (v0.17 bug: it reset
-                                  // track.active mid-fling → dead gestures)
+                                  // must not kill it.
         track.bodyStart = {
           y: e.touches[0].clientY, top: body.scrollTop, t: performance.now(),
           hijackable: body.scrollTop <= 0
@@ -205,11 +208,21 @@
       });
     }
 
+    // viewport resize (rotation / split-screen): vh heights recompute on
+    // their own, but the state class stays consistent.
+    window.addEventListener('resize', function () {
+      panelEl.style.height = Math.round(states[currentState] * 100) + 'vh';
+    });
+
     var closeHook = null;
     return {
       setCloseHook: function (fn) { closeHook = fn; },
       state: function () { return currentState; },
       setHeight: setHeight,
+      // open at a remembered position (called by panel.open — no animation)
+      openAt: function (pos) {
+        setHeight(states[pos] !== undefined ? pos : 'default', false);
+      },
       reset: function () { setHeight('default', false); }
     };
   }

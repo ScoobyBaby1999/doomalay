@@ -47,10 +47,20 @@
     var opened = false;
 
     // Fetch the provider catalog + current keys, then render.
-    Promise.all([
-      fetch('/api/models').then(function (r) { return r.json(); }),
-      fetch('/api/keys').then(function (r) { return r.json(); })
-    ]).then(function (results) {
+    // v0.18: the catalog fetch is capped at 6s (a cold engine does a
+    // live multi-provider sync that can take much longer on mobile
+    // data) — the GUI renders with keys first and fills the model lists
+    // in when the sync lands. Keys-first also means the cards + key
+    // inputs are usable immediately.
+    var modelsP = fetch('/api/models')
+      .then(function (r) { return r.json(); })
+      .catch(function () { return {}; });
+    var keysP = fetch('/api/keys')
+      .then(function (r) { return r.json(); })
+      .catch(function () { return {}; });
+    var gotLive = false;
+    Promise.all([withTimeout(modelsP, 6000, null), keysP]).then(function (results) {
+      gotLive = results[0] !== null;
       providers = (results[0] && results[0].providers) || {};
       catalogModels = (results[0] && results[0].models) || [];
       keys = results[1] || {};
@@ -63,6 +73,13 @@
       console.error('providers fetch failed', e);
       render();
     });
+    // Late catalog (sync raced past the cap) — fill the cards in.
+    modelsP.then(function (d) {
+      if (!d || !d.models || gotLive) return;
+      providers = d.providers || providers;
+      catalogModels = d.models || catalogModels;
+      if (opened) render();
+    }).catch(function () {});
 
     // Re-validate every saved key (once per open, best-effort, staggered
     // so we don't hammer providers that rate-limit validation calls).
@@ -622,7 +639,7 @@
     return best ? (best.id || (name + '/' + (best.rawId || ''))) : null;
   }
 
-  // ── v0.17: one-press smart connect ─────────────────────────────
+  // ── v0.18: one-press smart connect ─────────────────────────────
   // "pressing connect cloud provider should be a one button press, it
   // should use the cloud provider option and unlock the restriction and
   // start the chat unless the user does not have any cloud providers or
@@ -630,36 +647,64 @@
   // built around), auto-picks its best model, fires onPick. Returns the
   // number of connected providers so the caller can decide whether to
   // ALSO show the dismissible reminder GUI.
+  //
+  // v0.18 REDTEAM FIXES (the "nothing happens" / "chatbot doesn't update"
+  // reports):
+  //   1. KEYS FIRST — /api/keys is a local vault read (instant). The old
+  //      Promise.all gated the unlock on /api/models, which on a cold
+  //      engine does a LIVE 11-provider sync (up to 15s per provider on
+  //      congested mobile data) — one-press felt dead the whole time.
+  //   2. The catalog fetch is capped at 2.5s (race-timeout). A late or
+  //      failed sync no longer blocks the unlock.
+  //   3. Verified FALLBACK model ids — pickAutoModel returning null (empty
+  //      sync) used to leave the gatelock stuck while the reminder GUI
+  //      claimed "chat is ready". Now a known-good model is always picked.
+  var FALLBACK_MODELS = {
+    nvidia: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    privatemodeai: 'privatemodeai/kimi-k2.6',
+    opencode: 'opencode/kimi-k2.6'
+  };
+
+  function withTimeout(promise, ms, fallback) {
+    return Promise.race([
+      promise,
+      new Promise(function (resolve) { setTimeout(function () { resolve(fallback); }, ms); })
+    ]);
+  }
+
   function smartConnect(onPick) {
-    return Promise.all([
-      fetch('/api/keys').then(function (r) { return r.json(); }),
-      fetch('/api/models').then(function (r) { return r.json(); })
-    ]).then(function (results) {
-      var keys = results[0] || {};
-      var catalog = results[1] || {};
-      var connected = [];
-      for (var env in keys) {
-        if (keys[env] && keys[env].has_key && !env.endsWith('_EXTRA')) {
-          connected.push(keys[env].provider || env);
+    return fetch('/api/keys').then(function (r) { return r.json(); })
+      .catch(function () { return {}; })
+      .then(function (keys) {
+        keys = keys || {};
+        var connected = [];
+        for (var env in keys) {
+          if (keys[env] && keys[env].has_key && !env.endsWith('_EXTRA')) {
+            connected.push(keys[env].provider || env);
+          }
         }
-      }
-      if (!connected.length) return { connected: 0, picked: false };
-      var PRIORITY = ['nvidia', 'privatemodeai', 'opencode'];
-      var choice = null;
-      for (var i = 0; i < PRIORITY.length; i++) {
-        if (connected.indexOf(PRIORITY[i]) >= 0) { choice = PRIORITY[i]; break; }
-      }
-      if (!choice) choice = connected[0];
-      var model = pickAutoModel(catalog, choice);
-      if (!model) {
-        var cfg = (catalog.providers && catalog.providers[choice]) || null;
-        if (cfg && cfg.probe_model) model = choice + '/' + cfg.probe_model;
-      }
-      if (model && onPick) onPick(choice, model);
-      return { connected: connected.length, picked: !!model, provider: choice, model: model };
-    }).catch(function () {
-      return { connected: 0, picked: false };
-    });
+        if (!connected.length) return { connected: 0, picked: false };
+        var PRIORITY = ['nvidia', 'privatemodeai', 'opencode'];
+        var choice = null;
+        for (var i = 0; i < PRIORITY.length; i++) {
+          if (connected.indexOf(PRIORITY[i]) >= 0) { choice = PRIORITY[i]; break; }
+        }
+        if (!choice) choice = connected[0];
+
+        var catalogP = fetch('/api/models')
+          .then(function (r) { return r.json(); })
+          .catch(function () { return null; });
+        return withTimeout(catalogP, 2500, null).then(function (catalog) {
+          var model = pickAutoModel(catalog, choice);
+          if (!model && catalog && catalog.providers && catalog.providers[choice]) {
+            var cfg = catalog.providers[choice];
+            if (cfg.probe_model) model = choice + '/' + cfg.probe_model;
+          }
+          if (!model) model = FALLBACK_MODELS[choice] || null;
+          if (model && onPick) onPick(choice, model);
+          return { connected: connected.length, picked: !!model, provider: choice, model: model };
+        });
+      });
   }
 
   function flashSavedHint(providerName, msg) {

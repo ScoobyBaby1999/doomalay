@@ -34,6 +34,15 @@
   var currentSession = null;
   var currentChat = null; // { name } for the header title
   var refreshHooks = [];  // pill badge refreshers
+  var liveCM = null;      // v0.18: the open editor's CodeMirror (resize hook)
+  var liveEditor = null;  // v0.18: { isDirty, guard } of the open editor (back-close)
+
+  // v0.18: split-screen / rotation — a resized WebView leaves CodeMirror
+  // rendering at stale metrics (garbled or clipped lines). One global
+  // listener refreshes whichever editor is open.
+  window.addEventListener('resize', function () {
+    if (liveCM && liveCM.refresh) { try { liveCM.refresh(); } catch (e) {} }
+  });
 
   // ── tiny script/css loader (lazy CodeMirror + Prism langs) ──────
   var loaded = {};
@@ -125,6 +134,8 @@
 
   function closeOverlay() {
     if (!overlayEl) return;
+    liveCM = null;    // drop the resize hook with the editor
+    liveEditor = null; // and the back-close guard
     overlayEl.classList.remove('open');
     var el = overlayEl;
     setTimeout(function () {
@@ -148,9 +159,24 @@
     });
   }
 
+  // v0.18: the Android BACK gesture. Returns:
+  //   false   — nothing open (caller falls through)
+  //   'blocked' — the editor has unsaved changes: the in-DOM discard
+  //              banner is up (back is consumed; closing would lose edits)
+  //   'closed' — the overlay is gone
+  function backClose() {
+    if (!overlayEl || overlayEl.style.display === 'none') return false;
+    if (liveEditor) {
+      if (liveEditor.isDirty()) { liveEditor.guard('close'); return 'blocked'; }
+    }
+    closeOverlay();
+    return 'closed';
+  }
+
   // ── THE DRAWER ──────────────────────────────────────────────────
   function openDrawer(sessionId, chat) {
     if (!sessionId) return;
+    liveCM = null; // drawer replaces the editor — drop its resize hook
     currentSession = sessionId;
     currentChat = chat || null;
 
@@ -287,6 +313,40 @@
     });
   }
 
+  // v0.18 — NO window.confirm / window.prompt ANYWHERE in this file.
+  // Android WebView silently returns false/null for both (no
+  // WebChromeClient) — every exit from the editor was a dead tap after
+  // an edit (the "couldn't X the panel, had to close the app" bug).
+  // Everything is in-DOM now:
+  //   confirmBtn — swaps a button for an inline yes/no chip
+
+  function confirmBtn(btn, label, cb) {
+    var holder = document.createElement('span');
+    holder.className = 'art-confirm';
+    holder.innerHTML = '<span class="art-confirm-label">' + esc(label) + '</span>' +
+      '<button class="art-confirm-yes">yes</button><button class="art-confirm-no">no</button>';
+    btn.replaceWith(holder);
+    // the chip is WIDER than the button it replaces — in horizontally
+    // scrolling strips (.art-ed-actions) it would land half off-screen;
+    // center it so the yes/no buttons are actually tappable.
+    if (holder.scrollIntoView) {
+      try { holder.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {}
+    }
+    var settled = false;
+    var settle = function (v) {
+      if (settled) return;
+      settled = true;
+      if (!v) holder.replaceWith(btn); // put the ORIGINAL button back
+      cb(v);
+    };
+    holder.querySelector('.art-confirm-yes').addEventListener('click', function (e) {
+      e.stopPropagation(); settle(true);
+    });
+    holder.querySelector('.art-confirm-no').addEventListener('click', function (e) {
+      e.stopPropagation(); settle(false);
+    });
+  }
+
   function toast(msg) {
     var t = document.createElement('div');
     t.className = 'art-toast';
@@ -300,6 +360,9 @@
   }
 
   // ── THE EDITOR ─────────────────────────────────────────────────
+  // v0.18: every destructive/exit action is IN-DOM (no window.confirm /
+  // window.prompt — the Android WebView kills native dialogs silently,
+  // which dead-ended every ✕ / ‹ / delete / rename after an edit).
   function openEditor(sessionId, artifactId) {
     if (!sessionId || !artifactId) return;
     currentSession = sessionId;
@@ -320,26 +383,57 @@
           '<button id="ed-del" class="art-ed-btn art-ed-btn-danger">🗑 delete</button>' +
         '</div>' +
         '<div class="art-ed-body" id="ed-body"><div class="art-loading">loading…</div></div>' +
+        // v0.18: unsaved-changes banner (replaces window.confirm)
+        '<div class="art-unsaved" id="ed-unsaved">' +
+          '<span class="art-unsaved-text">unsaved changes</span>' +
+          '<button class="art-unsaved-discard" id="ed-unsaved-discard">discard</button>' +
+          '<button class="art-unsaved-stay" id="ed-unsaved-stay">keep editing</button>' +
+        '</div>' +
       '</div>';
     var root = openOverlay(html);
 
     var dirty = false;
     var cm = null;
     var data = null;
+    var pendingExit = null;        // 'close' | 'back' — what discard should do
     var saveBtn = root.querySelector('#ed-save');
     var nameEl = root.querySelector('#ed-name');
     var metaEl = root.querySelector('#ed-meta');
     var bodyEl = root.querySelector('#ed-body');
+    var unsavedEl = root.querySelector('#ed-unsaved');
 
-    var guard = function () {
+    function hideUnsaved() {
+      pendingExit = null;
+      if (unsavedEl) unsavedEl.classList.remove('show');
+    }
+    // In-DOM unsaved-changes guard. Returns false (blocks the exit) and
+    // pops the discard banner when there are unsaved edits.
+    function guardFor(intent) {
       if (!dirty) return true;
-      return window.confirm('Discard unsaved changes?');
-    };
-    wireClose(root, guard);
+      pendingExit = intent;
+      if (unsavedEl) unsavedEl.classList.add('show');
+      return false;
+    }
+    function runPendingExit() {
+      var intent = pendingExit;
+      hideUnsaved();
+      dirty = false;
+      if (intent === 'back') openDrawer(sessionId, currentChat);
+      else closeOverlay();
+    }
+
+    wireClose(root, function () { return guardFor('close'); });
     root.querySelector('.art-back').addEventListener('click', function () {
       if (isGhostTap()) return; // ghost of the row-tap that opened the editor
-      if (guard()) openDrawer(sessionId, currentChat);
+      if (guardFor('back')) openDrawer(sessionId, currentChat);
     });
+    liveEditor = { isDirty: function () { return dirty; }, guard: guardFor };
+    if (unsavedEl) {
+      unsavedEl.querySelector('#ed-unsaved-stay').addEventListener('click', hideUnsaved);
+      unsavedEl.querySelector('#ed-unsaved-discard').addEventListener('click', function (e) {
+        e.stopPropagation(); runPendingExit();
+      });
+    }
 
     api('/api/sessions/' + sessionId + '/artifacts/' + artifactId).then(function (d) {
       if (!root.isConnected) return;
@@ -351,23 +445,59 @@
         window.open('/api/sessions/' + sessionId + '/artifacts/' + artifactId + '/download', '_blank');
       });
       root.querySelector('#ed-del').addEventListener('click', function () {
-        if (!window.confirm('Delete "' + d.name + '" permanently?')) return;
-        api('/api/sessions/' + sessionId + '/artifacts/' + artifactId, 'DELETE')
-          .then(function () { openDrawer(sessionId, currentChat); refreshPills(); })
-          .catch(function (e) { toast(e.message); });
+        // v0.18: in-DOM confirm chip (window.confirm is dead on Android).
+        // "no" restores the original button — unsaved edits stay intact.
+        confirmBtn(this, 'delete?', function (yes) {
+          if (!yes) return;
+          api('/api/sessions/' + sessionId + '/artifacts/' + artifactId, 'DELETE')
+            .then(function () { openDrawer(sessionId, currentChat); refreshPills(); })
+            .catch(function (e) { toast(e.message); });
+        });
       });
       root.querySelector('#ed-rename').addEventListener('click', function () {
-        var nn = window.prompt('Rename artifact:', d.name);
-        if (!nn || !nn.trim() || nn.trim() === d.name) return;
-        api('/api/sessions/' + sessionId + '/artifacts/' + artifactId, 'PUT', { name: nn.trim() })
-          .then(function (m) {
-            data.name = m.name;
-            nameEl.textContent = m.name;
-            var i2 = FT.info(m.name);
-            metaEl.textContent = i2.label + ' · ' + FT.humanBytes(m.size);
-            toast('renamed');
-          })
-          .catch(function (e) { toast(e.message); });
+        // v0.18: INLINE rename (window.prompt is dead on Android) — the
+        // header title becomes an input; Enter commits, Esc reverts.
+        if (root.querySelector('#ed-rename-input')) return;
+        var span = root.querySelector('#ed-name');
+        if (!span) return;
+        var oldName = d.name;
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.value = oldName;
+        input.id = 'ed-rename-input';
+        input.className = 'art-rename-input';
+        span.replaceWith(input);
+        input.focus();
+        input.setSelectionRange(oldName.length, oldName.length);
+        var done = false;
+        var restore = function (finalName) {
+          if (done) return;
+          done = true;
+          var s = document.createElement('span');
+          s.className = 'art-title'; s.id = 'ed-name';
+          s.textContent = finalName;
+          input.replaceWith(s);
+        };
+        var commit = function () {
+          var nn = input.value.trim();
+          if (!nn || nn === oldName) { restore(oldName); return; }
+          api('/api/sessions/' + sessionId + '/artifacts/' + artifactId, 'PUT', { name: nn })
+            .then(function (m) {
+              d.name = m.name;
+              data.name = m.name;
+              restore(m.name);
+              var i2 = FT.info(m.name);
+              metaEl.textContent = i2.label + ' · ' + FT.humanBytes(m.size);
+              toast('renamed');
+            })
+            .catch(function (e) { restore(oldName); toast(e.message); });
+        };
+        input.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+          if (ev.key === 'Escape') { restore(oldName); }
+        });
+        input.addEventListener('blur', commit);
+        input.addEventListener('click', function (ev) { ev.stopPropagation(); });
       });
 
       if (info.binary) {
@@ -425,9 +555,11 @@
         }
         cm.on('change', function () {
           dirty = true;
+          hideUnsaved();
           saveBtn.disabled = false;
           saveBtn.classList.add('dirty');
         });
+        liveCM = cm;
         setTimeout(function () { if (cm && cm.refresh) cm.refresh(); }, 60);
       }).catch(function (e) {
         bodyEl.innerHTML = '<div class="art-loading">⚠ ' + esc(e.message) + '</div>';
@@ -440,6 +572,7 @@
           content: cm.getValue()
         }).then(function (m) {
           dirty = false;
+          hideUnsaved();
           saveBtn.disabled = true;
           saveBtn.classList.remove('dirty');
           saveBtn.textContent = 'saved ✓';
@@ -503,6 +636,8 @@
   window.Artifacts = {
     openDrawer: openDrawer,
     openEditor: openEditor,
+    closeOverlay: closeOverlay,   // v0.18: the Android back gesture uses this
+    backClose: backClose,        // v0.18: dirty-aware back (banner, not data loss)
     saveFromMessage: saveFromMessage,
     saveCodeBlock: saveCodeBlock,
     list: list,

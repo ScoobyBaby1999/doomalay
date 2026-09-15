@@ -61,6 +61,46 @@ class MainActivity : Activity() {
             webView = WebView(this)
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
+
+            // v0.18: WebChromeClient — WITHOUT it the WebView silently
+            // swallows window.confirm()/window.prompt() (returns false/null,
+            // shows nothing). The web UI is now fully in-DOM for its
+            // dialogs, but this keeps ANY future native dialog functional
+            // instead of a silent dead tap.
+            webView.webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onJsAlert(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult): Boolean {
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setMessage(message ?: "")
+                        .setPositiveButton("OK") { _, _ -> result.confirm() }
+                        .setOnCancelListener { result.cancel() }
+                        .show()
+                    return true
+                }
+                override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult): Boolean {
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setMessage(message ?: "")
+                        .setPositiveButton("OK") { _, _ -> result.confirm() }
+                        .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                        .setOnCancelListener { result.cancel() }
+                        .show()
+                    return true
+                }
+                override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: android.webkit.JsPromptResult): Boolean {
+                    val input = android.widget.EditText(this@MainActivity).apply {
+                        setText(defaultValue ?: "")
+                        setTextIsSelectable(true)
+                    }
+                    android.app.AlertDialog.Builder(this@MainActivity)
+                        .setMessage(message ?: "")
+                        .setView(input)
+                        .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                        .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                        .setOnCancelListener { result.cancel() }
+                        .show()
+                    return true
+                }
+            }
+
             webView.webViewClient = object : WebViewClient() {
                 // Keep the app self-contained: engine URLs (127.0.0.1) load
                 // inside the WebView; ANY external URL (the ↗ "open in browser"
