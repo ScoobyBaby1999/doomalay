@@ -55,6 +55,7 @@ ACTION: json_tool {"mode": "format|validate|minify", "text": "..."} — JSON uti
 ACTION: text_stats {"text": "..."} — chars/words/lines/sentences/bytes + reading time
 ACTION: url_encode {"mode": "encode|decode", "text": "..."} — percent encoding
 ACTION: regex_extract {"pattern": "...", "text": "...", "group": 0} — regex matches
+ACTION: delegate {"prompt": "<question>", "models": ["nvidia/nvidia/nemotron-3.5-lightning-30b-a3b", "privatemodeai/kimi-k2.6"]} — consult up to 3 OTHER models in parallel and weigh their answers (multi-model swarm)
 Use a tool whenever it beats guessing (math, time, encodings, ids, validation). One ACTION per reply.`
 
 // IsLocalTool reports whether name is a local tool.

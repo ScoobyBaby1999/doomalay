@@ -144,6 +144,10 @@ CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_
                 // v0.19: per-chat persona (the editable system prompt /
                 // identity for this chat's bot).
                 {"chat_sessions", "persona", "ALTER TABLE chat_sessions ADD COLUMN persona TEXT"},
+                // v0.21: auto-compact state (summary of the turns folded out
+                // of the model's context + the event seq it covers).
+                {"chat_sessions", "compact_summary", "ALTER TABLE chat_sessions ADD COLUMN compact_summary TEXT"},
+                {"chat_sessions", "compact_seq", "ALTER TABLE chat_sessions ADD COLUMN compact_seq INTEGER DEFAULT 0"},
         }
         for _, m := range migrations {
                 if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {

@@ -511,9 +511,13 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
 	// the last ~40 turns (sliding window, same default as the brain).
 	// v0.16: the sliding memory window is per-session (the 'memory' pill in
 	// the chat header dropdown cycles it). Default 40 (the brain's old default).
-	history := s.buildHistory(sessionID, sess.SlidingWindow)
+	// v0.21 AUTO-COMPACT (ported from the HF space's proactive compression):
+	// summarize older turns when the context nears the model's window.
+	sess = s.maybeCompact(ctx, conn, sess, keys, llmModel, baseURL, apiKey, authStyle)
+
+	history := s.buildHistoryCompacted(sessionID, sess, sess.SlidingWindow)
 	if sess.SlidingWindow <= 0 {
-		history = s.buildHistory(sessionID, 40)
+		history = s.buildHistoryCompacted(sessionID, sess, 40)
 	}
 	history = append(history, llm.Message{Role: "user", Content: userText})
 
@@ -535,6 +539,10 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
 		APIKey:       apiKey,
 		BaseURL:      baseURL,
 		AuthStyle:    authStyle,
+		// v0.21: the swarm fanout delegate (models consult other models).
+		DelegateFn: func(ctx context.Context, prompt string, models []string) []map[string]any {
+			return s.RunDelegate(ctx, prompt, models, keys)
+		},
 	}
 	chunks, errs := llm.Chat(ctx, req)
 

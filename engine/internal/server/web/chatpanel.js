@@ -494,6 +494,22 @@
       });
       mem.appendChild(memBtn);
       utilRow.appendChild(mem);
+
+      // v0.21: USAGE + COST tracker (ported from the HF metrics concept) —
+      // tokens actually used, context fill, and list-price cost per model.
+      var usageBtn = document.createElement('button');
+      usageBtn.textContent = '⧗ usage';
+      usageBtn.style.cssText = utilBtnStyle();
+      usageBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!state.sessionId) { flashUtil(usageBtn, 'no session yet'); return; }
+        usageBtn.textContent = '⧗ …';
+        fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
+          usageBtn.textContent = '⧗ usage';
+          if (window.UsagePanel) window.UsagePanel.open(u, { name: icon.name });
+        }).catch(function () { usageBtn.textContent = '⧗ usage'; flashUtil(usageBtn, 'usage unavailable'); });
+      });
+      utilRow.appendChild(usageBtn);
     }
   }
 
@@ -761,7 +777,7 @@
       }).catch(function (e) { console.error('persist PM event failed', e); });
     };
 
-    var finish = function (errText) {
+    var finish = function (errText, usage) {
       clearHint();
       state.isStreaming = false;
       if (sendBtn) { sendBtn.textContent = 'Send'; sendBtn.onclick = null; }
@@ -780,10 +796,10 @@
           return persist('error', errText).then(function () {
             state.messages.push({ role: 'error', text: errText });
             appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, icon);
-            return persist('status', JSON.stringify({ state: 'error', usage: null }));
+            return persist('status', JSON.stringify({ state: 'error', usage: usage || null }));
           });
         }
-        return persist('status', JSON.stringify({ state: 'idle', usage: null }));
+        return persist('status', JSON.stringify({ state: 'idle', usage: usage || null }));
       });
     };
 
@@ -831,7 +847,7 @@
         if (st === 'running') showHint('establishing PrivateMode secure channel…');
       }
     }).then(function (result) {
-      finish(null);
+      finish(null, result && result.usage);
       return result;
     }).catch(function (e) {
       finish(e && e.message ? e.message : 'PrivateMode turn failed');
@@ -1138,6 +1154,17 @@
         state.messages.push({ role: 'sources', sources: srcs });
         appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
       }
+    } else if (type === 'compact') {
+      // v0.21: auto-compact — older turns were summarized into the
+      // session's compact summary; the full history stays on disk.
+      var cinfo = '';
+      try {
+        var cj = JSON.parse(ev.text || '{}');
+        cinfo = 'older turns summarized (' + (cj.summaryTokens || 0) + ' tok notes' +
+          (cj.contextLimit ? ', window ~' + Math.round(cj.contextLimit / 1000) + 'k' : '') + ')';
+      } catch (e2) { cinfo = 'older turns summarized'; }
+      state.messages.push({ role: 'tool', text: cinfo, compact: true, payload: ev });
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;

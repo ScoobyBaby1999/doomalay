@@ -43,6 +43,11 @@ type ChatRequest struct {
 	APIKey       string    `json:"-"`
 	BaseURL      string    `json:"-"`
 	AuthStyle    string    `json:"-"` // "" (bearer) or "anthropic"
+	// v0.21: SWARM FANOUT DELEGATE (the HF space's panel delegate, ported).
+	// Set by the server (it owns the vault); the ReAct loop exposes it to
+	// the model as the `delegate` ACTION — one prompt, up to 3 other
+	// models answer in parallel, replies return as the OBSERVATION.
+	DelegateFn func(ctx context.Context, prompt string, models []string) []map[string]any `json:"-"`
 }
 
 // Message is one chat message.
@@ -307,6 +312,13 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
 	return usage, nil
 }
 
+// CompleteSync performs ONE non-streaming completion and returns the full
+// text (exported for the server's auto-compact summarizer + the delegate
+// fan-out; the ReAct loop + research steps also use it).
+func CompleteSync(ctx context.Context, req ChatRequest, extraBody map[string]any) (string, error) {
+	return completeSync(ctx, req, extraBody)
+}
+
 // completeSync performs ONE non-streaming completion (ReAct rounds + research
 // steps need the full text before deciding the next move).
 func completeSync(ctx context.Context, req ChatRequest, extraBody map[string]any) (string, error) {
@@ -434,6 +446,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 	copy(history, req.Messages)
 
 	var allSources []SearchResult
+	var totalUsage *Usage // v0.21: accumulate across rounds for cost tracking
 	// v0.20: 16 rounds — the local tool chain can legitimately run
 	// 10+ tools deep (each round is one tool use).
 	for round := 0; round < 16; round++ {
@@ -447,12 +460,13 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 		// outright 503s). A silent empty turn reads as "the new model
 		// doesn't reply". Retry once; if it's still empty, surface a
 		// real error instead of a silent no-op.
-		answer, err := runReActRoundWithRetry(ctx, roundReq, ch)
+		answer, usage, err := runReActRoundWithRetry(ctx, roundReq, ch)
 		if err != nil {
 			ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
-			ch <- ChatChunk{Type: "status", State: "error"}
+			ch <- ChatChunk{Type: "status", State: "error", Usage: usage}
 			return
 		}
+		totalUsage = mergeUsage(totalUsage, usage)
 
 		action, argJSON, ok := parseAction(answer)
 		if !ok {
@@ -460,7 +474,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 			if len(allSources) > 0 {
 				ch <- ChatChunk{Type: "sources", Sources: allSources}
 			}
-			ch <- ChatChunk{Type: "status", State: "idle"}
+			ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
 			return
 		}
 
@@ -470,7 +484,24 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 		// tools instead of erroring. Capability > pedantry.
 		action = canonicalToolName(action)
 		var observation string
-		if IsLocalTool(action) {
+		if action == "delegate" && req.DelegateFn != nil {
+			// v0.21: SWARM FANOUT (the HF panel delegate, ported) —
+			// one prompt, up to 3 other models answer in parallel.
+			var args struct {
+				Prompt string   `json:"prompt"`
+				Models []string `json:"models"`
+			}
+			_ = json.Unmarshal([]byte(argJSON), &args)
+			if args.Prompt == "" {
+				observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
+			} else {
+				ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80)}
+				outs := req.DelegateFn(ctx, args.Prompt, args.Models)
+				b, _ := json.Marshal(outs)
+				observation = "OBSERVATION:\n" + string(b)
+				ch <- ChatChunk{Type: "tool_result", Text: clamp(string(b), 600), Name: "delegate"}
+			}
+		} else if IsLocalTool(action) {
 			// v0.20: local tools — pure Go, zero latency, zero setup.
 			summary := summarizeLocalAction(action, argJSON)
 			ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
@@ -537,17 +568,18 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 	// One extra round to produce the forced final answer (streams live,
 	// with the v0.20 empty-response retry).
 	roundReq.Messages = history
-	answer, err := runReActRoundWithRetry(ctx, roundReq, ch)
+	answer, usage, err := runReActRoundWithRetry(ctx, roundReq, ch)
 	if err != nil {
 		ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
-		ch <- ChatChunk{Type: "status", State: "error"}
+		ch <- ChatChunk{Type: "status", State: "error", Usage: usage}
 		return
 	}
 	_ = answer // forced final — streamed, not emitted as one blob
+	totalUsage = mergeUsage(totalUsage, usage)
 	if len(allSources) > 0 {
 		ch <- ChatChunk{Type: "sources", Sources: allSources}
 	}
-	ch <- ChatChunk{Type: "status", State: "idle"}
+	ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
 }
 
 // runReActRoundStream runs ONE ReAct round with LIVE streaming (v0.19).
@@ -562,10 +594,11 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 // transition — the streaming ACTION decision is subtle enough to need it.
 var debugReact = os.Getenv("DOOMALAY_DEBUG_REACT") == "1"
 
-func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, error) {
+func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, error) {
 	var answer strings.Builder
 	var buf strings.Builder // undecided content (final-answer candidate)
 	mode := 0               // 0 undecided · 1 streaming final · 2 suppressed ACTION
+	var usage *Usage        // v0.21: the round's token usage (set after the stream)
 
 	flush := func() { // decided: final answer — stream what we hold
 		mode = 1
@@ -576,7 +609,8 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
 		}
 	}
 
-	_, err := scanSSE(ctx, req, nil, ch, func(reasoning, content string) {
+	var err error
+	usage, err = scanSSE(ctx, req, nil, ch, func(reasoning, content string) {
 		if reasoning != "" {
 			ch <- ChatChunk{Type: "thinking", Text: reasoning}
 			// v0.20 FIX: DO NOT return — a chunk can carry BOTH
@@ -649,7 +683,7 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
 		}
 	})
 	if err != nil {
-		return answer.String() + buf.String(), err
+		return answer.String() + buf.String(), usage, err
 	}
 	if mode == 0 && buf.Len() > 0 {
 		// stream ended mid-first-line — decide on what we have
@@ -660,7 +694,7 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
 			answer.WriteString(buf.String())
 		}
 	}
-	return answer.String(), nil
+	return answer.String(), usage, nil
 }
 
 func isActionLine(line string) bool {
@@ -674,25 +708,36 @@ func isActionLine(line string) bool {
 // ends with nothing — "the new model doesn't reply"); the retry catches
 // the transient flavor, and a persistently-empty model gets a visible
 // error instead of silence.
-func runReActRoundWithRetry(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, error) {
-	answer, err := runReActRoundStream(ctx, req, ch)
+func runReActRoundWithRetry(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, error) {
+	answer, usage, err := runReActRoundStream(ctx, req, ch)
 	if err != nil {
-		return answer, err
+		return answer, usage, err
 	}
 	if strings.TrimSpace(answer) != "" {
-		return answer, nil
+		return answer, usage, nil
 	}
 	// empty round → one visible retry, then a diagnosable error.
 	ch <- ChatChunk{Type: "status", State: "running", Message: "empty response — retrying"}
-	answer, err = runReActRoundStream(ctx, req, ch)
+	answer, usage, err = runReActRoundStream(ctx, req, ch)
 	if err != nil {
-		return answer, err
+		return answer, usage, err
 	}
 	if strings.TrimSpace(answer) == "" {
 		ch <- ChatChunk{Type: "error", Error: "empty_response", Message: "the model returned an empty response twice — try again or pick a different model"}
-		return answer, errEmptyRound
+		return answer, usage, errEmptyRound
 	}
-	return answer, nil
+	return answer, usage, nil
+}
+
+// mergeUsage sums two usage reports (nil-safe).
+func mergeUsage(a, b *Usage) *Usage {
+	if b == nil {
+		return a
+	}
+	if a == nil {
+		return b
+	}
+	return &Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens}
 }
 
 // errEmptyRound signals a persistently-empty model response (surfaces as

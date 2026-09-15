@@ -78,6 +78,10 @@ func (s *Server) routes() {
         // uuid/hash/json/… — same Go implementations the engine uses).
         s.mux.HandleFunc("GET /api/tools/local", s.handleToolsLocal)
 
+        // v0.21: usage + cost tracking (per chat + fleet-wide).
+        s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
+        s.mux.HandleFunc("GET /api/usage", s.handleUsageGlobal)
+
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
         s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)

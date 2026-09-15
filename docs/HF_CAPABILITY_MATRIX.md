@@ -86,3 +86,82 @@ Recommended port order (each is a self-contained engine module):
 5. **Judge panel fan-out** (engine already has all the plumbing)
 6. **Git/GitHub workspaces via go-git** (biggest lift; token UX identical
    to provider keys)
+
+---
+
+## v0.21 UPDATE — what was ported, and the standing decisions
+
+*"Port everything that is portable... even if it's heavy on the device. So
+port the swarm fanout panel delegate system as well, since the user can use
+cloud models to void the system limitations."*
+
+### Ported into the quick chat button (v0.20 + v0.21, zero user setup)
+
+| Port | Status | Where |
+|------|--------|-------|
+| Calculator + time + text tools | ✅ **DONE** v0.20 | `engine/internal/llm/localtools.go` — 10 local tools (calculator/time_now/uuid/random/base64/hash/json_tool/text_stats/url_encode/regex_extract) ride EVERY turn, engine + PM paths |
+| Web tools (search + fetch) | ✅ **DONE** (existed; hardened v0.20) | DDG retry + lite endpoint; alias/bare-arg/truncated-JSON repair so models can't fail a tool call on formatting |
+| Tool-name aliases + arg repair | ✅ **DONE** v0.20 | `canonicalToolName` + `repairJSON` (Go + PM loops) |
+| **Swarm fanout panel delegate** | ✅ **DONE** v0.21 | `delegate {"prompt", "models"}` ACTION — up to 3 OTHER models consulted in parallel (`server/compact.go RunDelegate`), replies returned as the observation. Cloud models void device limits by design — the fan-out spends tokens, never CPU. PM targets report their E2E constraint honestly. |
+| **Auto-compacting** | ✅ **DONE** v0.21 | `server/compact.go maybeCompact` — at 70% of the model's window, older turns are summarized into the session's compact summary (HF's proactive_compression, in Go); `buildHistoryCompacted` sends summary + recent tail; full history stays on disk; UI shows a compact pill |
+| **Real context tracking** | ✅ **DONE** v0.21 | per-turn usage from providers' own reports → per-session + fleet context fill (`/api/sessions/{id}/usage`, `/api/usage`) + the ⧗ usage panel |
+| **Cost tracking** | ✅ **DONE** v0.21 | `llm/pricing.go` — curated $/M-token list rates, per-model + per-provider + fleet totals; unpriced models never invent dollars; NVIDIA dev tier marked free |
+| Local tool server for PM | ✅ **DONE** v0.20 | `/api/tools/local` — one implementation, engine + WebView both use it |
+| Model identity + personas | ✅ **DONE** v0.20 | `{model}`/`{provider}` live placeholders + the merged HF-style default persona |
+
+### Standing decisions (user directive: "make the decision wisely")
+
+**1. Strands AWS adapter — KEEP as the brain-side option, do NOT put it in
+the APK path.** Strands is a Python SDK (AWS) requiring a Python runtime +
+its dependency tree; the Android APK cannot bundle Python, and the quick
+chat's Go ReAct loop now matches strands' core value for chat (streamed
+tool rounds, sliding-window context with proactive compression, multi-model
+routing). Where strands genuinely wins — the hosted brain tier (desktop /
+HF deploy, where `brain/` already uses it with LiteLLM for the two-tier
+agent + orchestrator + judge panel) — it stays. Verdict: strands is not
+*replaced*, it's *tiered*: quick chat = Go engine, heavy tier = strands.
+
+**2. The HF space — KEEP, as the heavy sandbox tier.** Its bubblewrapped
+Docker genuinely brings what the quick chat cannot: REAL bash, git clone,
+pip/npm installs, package builds, arbitrarily large tool chains (the
+`brain/agent.py` suite: shell, file ops, editor, http_request, git,
+grep/glob, journal…). The Android APK cannot execute real shells without
+Termux, and tool calls that need a live filesystem need a live sandbox.
+Everything ELSE the HF chat does — calculator, web, templates-as-personas,
+judge fan-out (now the delegate tool), memory notes (now the compact
+summary + sliding window), cost/usage (now the ⧗ panel), stocks (Stooq
+keyless, ported next) — is now in or porting to the quick chat. The quick
+chat is the default; the HF space is the heavy tier; Termux is the
+on-device middle tier.
+
+**3. RAG + Graphiti — PORT-NEXT (designed, not yet wired).** The
+sophisticated RAG brain (vector store + retrieval + optional Graphiti
+temporal-knowledge connection) is the largest remaining port. The engine's
+event log + compact summary already give per-chat memory; the next layer
+is a cross-chat vector store (pure-Go embeddings via the cloud providers
+are possible; local embeddings need a small GGML binding — device-heavy
+but the user accepts heavy). Graphiti requires a Neo4j/graph endpoint —
+that stays OPTIONAL and brain-side by design ("optional connection to
+graphiti" per the user spec). It stays on the roadmap as its own work
+package.
+
+**4. Stocks (keyless Stooq)** — ported in the HF matrix as PORT-0; NEXT
+up with RAG (same `delegate`/tool pattern: `stocks {"symbol": "AAPL"}`).
+
+### The tier map today (quick chat button vs Termux vs HF chat)
+
+| Capability | Quick chat (v0.21) | Termux chat | HF chat (brain) |
+|---|---|---|---|
+| Chat + streaming + thinking | ✅ | ✅ (same engine) | ✅ |
+| Model identity + personas | ✅ | ✅ | ✅ |
+| Local tools (calc/time/uuid/hash/json/regex/base64) | ✅ 10 tools | ✅ | ✅ (Python impls) |
+| Web search + fetch | ✅ | ✅ | ✅ |
+| Swarm delegate fan-out | ✅ | ✅ | ✅ (agent_panel + judge) |
+| Auto-compact + usage + cost | ✅ | ✅ | ✅ (strands-side) |
+| Artifacts (files in chat) | ✅ | ✅ | ✅ (workspace files) |
+| REAL bash / shell | ❌ | ✅ | ✅ |
+| git clone / repos / PRs | ❌ | ❌ (manual) | ✅ |
+| pip/npm installs, builds | ❌ | ❌ | ✅ |
+| Huge tool chains (20+ Python tools) | ❌ | partial | ✅ |
+| Orchestrator + templates | ❌ | ❌ | ✅ |
+| RAG + Graphiti | 🚧 next | 🚧 | ✅ (memory + datasets) |

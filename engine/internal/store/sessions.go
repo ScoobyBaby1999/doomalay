@@ -30,8 +30,15 @@ type Session struct {
         WorkspaceID     string
         Persona         string // v0.19: the chat's editable persona (its system prompt)
         ManuallyRenamed bool
-        CreatedAt       float64
-        UpdatedAt       float64
+        // v0.21 AUTO-COMPACT (ported from the HF space's proactive compression):
+        // when the conversation nears the model's context limit, older turns
+        // are summarized into CompactSummary and everything up to event seq
+        // CompactSeq is replaced by it. Full history stays in the event log —
+        // compacting only changes what's sent to the model.
+        CompactSummary string
+        CompactSeq    int
+        CreatedAt      float64
+        UpdatedAt      float64
 }
 
 // CreateSession inserts a new chat session.
@@ -46,13 +53,15 @@ INSERT INTO chat_sessions
   (id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
    web_template, deep_template, deep_mode, judge_count, judge_template,
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
-   workspace_id, persona, manually_renamed, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+   workspace_id, persona, manually_renamed, compact_summary, compact_seq,
+   created_at, updated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
                 s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
-                s.Persona, s.ManuallyRenamed, s.CreatedAt, s.UpdatedAt)
+                s.Persona, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
+                s.CreatedAt, s.UpdatedAt)
         return err
 }
 
@@ -65,12 +74,14 @@ UPDATE chat_sessions SET
   model=?, provider=?, sandbox=?, effort=?, mode=?, web_search=?, deep_research=?,
   web_template=?, deep_template=?, deep_mode=?, judge_count=?, judge_template=?,
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
-  routing=?, workspace_id=?, persona=?, manually_renamed=?, updated_at=?
+  routing=?, workspace_id=?, persona=?, manually_renamed=?,
+  compact_summary=?, compact_seq=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
-                s.Routing, s.WorkspaceID, s.Persona, s.ManuallyRenamed, s.UpdatedAt, s.ID)
+                s.Routing, s.WorkspaceID, s.Persona, s.ManuallyRenamed,
+                s.CompactSummary, s.CompactSeq, s.UpdatedAt, s.ID)
         return err
 }
 
