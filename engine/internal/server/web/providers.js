@@ -47,11 +47,11 @@
     var opened = false;
 
     // Fetch the provider catalog + current keys, then render.
-    // v0.18: the catalog fetch is capped at 6s (a cold engine does a
-    // live multi-provider sync that can take much longer on mobile
-    // data) — the GUI renders with keys first and fills the model lists
-    // in when the sync lands. Keys-first also means the cards + key
-    // inputs are usable immediately.
+    // v0.20: the engine now NEVER blocks /api/models on the network —
+    // cold boots return the STATIC provider cards instantly
+    // (partial:true) while the live model sync runs in the background.
+    // We render immediately and poll until the full lists land, so
+    // "connect cloud provider" is instant and never empty.
     var modelsP = fetch('/api/models')
       .then(function (r) { return r.json(); })
       .catch(function () { return {}; });
@@ -59,12 +59,15 @@
       .then(function (r) { return r.json(); })
       .catch(function () { return {}; });
     var gotLive = false;
-    Promise.all([withTimeout(modelsP, 6000, null), keysP]).then(function (results) {
+    var isPartial = false;
+    Promise.all([withTimeout(modelsP, 4000, null), keysP]).then(function (results) {
       gotLive = results[0] !== null;
       providers = (results[0] && results[0].providers) || {};
       catalogModels = (results[0] && results[0].models) || [];
+      isPartial = !!(results[0] && results[0].partial);
       keys = results[1] || {};
       render();
+      if (isPartial) pollUntilComplete();
       // v0.13: returning users — quietly re-validate saved keys so the
       // Active badges are fresh (stale validations from a past session
       // no longer linger as yellow "unverified").
@@ -73,13 +76,39 @@
       console.error('providers fetch failed', e);
       render();
     });
-    // Late catalog (sync raced past the cap) — fill the cards in.
+    // Late catalog (only possible when the 4s cap fired — belt and
+    // suspenders) — fill the cards in.
     modelsP.then(function (d) {
       if (!d || !d.models || gotLive) return;
       providers = d.providers || providers;
       catalogModels = d.models || catalogModels;
       if (opened) render();
     }).catch(function () {});
+
+    // v0.20: partial (static) catalog — the background sync is running.
+    // Re-fetch every 2s (each hit is an instant cache read once the sync
+    // lands) and re-render until the catalog is complete.
+    function pollUntilComplete() {
+      var tries = 0;
+      (function next() {
+        tries++;
+        fetch('/api/models')
+          .then(function (r) { return r.json(); })
+          .catch(function () { return null; })
+          .then(function (d) {
+            if (!d || !opened) return;
+            providers = d.providers || providers;
+            catalogModels = d.models || catalogModels;
+            if (d.partial && tries < 8) {
+              render();
+              setTimeout(next, 2000);
+            } else {
+              isPartial = false;
+              render();
+            }
+          });
+      })();
+    }
 
     // Re-validate every saved key (once per open, best-effort, staggered
     // so we don't hammer providers that rate-limit validation calls).
@@ -158,6 +187,13 @@
           'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#34d399;line-height:1.5">' +
           '✓ chat is ready — you can tap ✕ and start talking right now. ' +
           '<span style="color:#71717a">This screen is just a reminder you can connect more providers.</span></div>';
+      }
+      // v0.20: the model lists are still syncing in the background —
+      // cards are live, model counts arrive in seconds.
+      if (isPartial) {
+        reminder += '<div style="background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.3);' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#a78bfa;line-height:1.5">' +
+          '⟳ syncing live model lists — provider cards are ready now, models fill in within seconds.</div>';
       }
       return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
         '<h2 style="font-size:18px;font-weight:600;color:#e0e0e8;margin:0">Cloud Providers</h2>' +

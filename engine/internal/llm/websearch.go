@@ -86,13 +86,47 @@ func tavilySearch(ctx context.Context, query string, max int, apiKey string) ([]
 var (
 	ddgResultRe = regexp.MustCompile(`(?s)<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
 	ddgSnipRe   = regexp.MustCompile(`(?s)class="result__snippet"[^>]*>(.*?)</a>`)
-	tagRe       = regexp.MustCompile(`<[^>]+>`)
+	// lite.duckduckgo.com markup (v0.20 fallback endpoint)
+	ddgLiteResultRe = regexp.MustCompile(`(?s)<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	ddgLiteSnipRe   = regexp.MustCompile(`(?s)class="result-snippet"[^>]*>(.*?)</td>`)
+	tagRe           = regexp.MustCompile(`<[^>]+>`)
 )
 
 // duckDuckGoSearch scrapes https://html.duckduckgo.com/html/?q=... —
 // keyless, matches the old backend's regexes exactly.
+// v0.20: retry + alternate endpoints — under parallel swarm load DDG
+// rate-limits (5xx/403) and a single-shot scrape failed whole tutorials.
 func duckDuckGoSearch(ctx context.Context, query string, max int) ([]SearchResult, error) {
-	u := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(query)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 900 * time.Millisecond):
+			}
+		}
+		host := "https://html.duckduckgo.com/html/"
+		if attempt == 1 {
+			host = "https://lite.duckduckgo.com/lite/"
+		}
+		results, err := ddgScrape(ctx, host, query, max)
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+		lastErr = err
+		if err == nil {
+			lastErr = fmt.Errorf("ddg: no results")
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("ddg: no results")
+	}
+	return nil, lastErr
+}
+
+func ddgScrape(ctx context.Context, host, query string, max int) ([]SearchResult, error) {
+	u := host + "?q=" + url.QueryEscape(query)
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -116,6 +150,11 @@ func duckDuckGoSearch(ctx context.Context, query string, max int) ([]SearchResul
 
 	titles := ddgResultRe.FindAllStringSubmatch(page, max)
 	snips := ddgSnipRe.FindAllStringSubmatch(page, max)
+	// v0.20: lite.duckduckgo.com pages use a different markup
+	if len(titles) == 0 {
+		titles = ddgLiteResultRe.FindAllStringSubmatch(page, max)
+		snips = ddgLiteSnipRe.FindAllStringSubmatch(page, max)
+	}
 	out := make([]SearchResult, 0, len(titles))
 	for i, m := range titles {
 		href := decodeDDGRedirect(m[1])

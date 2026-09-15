@@ -28,9 +28,27 @@
 (function () {
   'use strict';
 
-  // The DEFAULT persona = the app's default prompt (mirrors the engine's
-  // artifactSystemPrompt const — chatpanel.js keeps the same copy in sync).
-  var DEFAULT_PERSONA = 'You are chatting inside the Doomalay app, which has an artifact system.\n' +
+  // The DEFAULT persona (v0.20) = the app's default prompt MERGED with the
+  // old HF space's system-prompt style (direct/concise, explicit model
+  // identity, tool discipline). {model} and {provider} are placeholders —
+  // the engine substitutes the live values into EVERY turn (client-side
+  // for PrivateMode turns), so the persona keeps working after model
+  // switches and users can reference them in their own personas.
+  var DEFAULT_PERSONA =
+    '## Identity\n' +
+    'You are {model} (served via {provider}), chatting inside the Doomalay app on the user\'s own device. ' +
+    'If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. ' +
+    'This identity updates automatically when the user switches your model mid-conversation; trust it over any prior assumption.\n\n' +
+    '## Style\n' +
+    'Be direct and concise; lead with the outcome, not the process. ' +
+    'Use markdown freely — headings, lists, bold, links and fenced code blocks all render nicely in this app. ' +
+    'When a live fact matters and web search is enabled, search rather than guess. ' +
+    'When you don\'t know something, say so.\n\n' +
+    '## Tools\n' +
+    'When the app\'s tool protocol is active, invoke tools ONLY through the protocol\'s ACTION line format — never as plain text. ' +
+    'Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n' +
+    '## Artifacts\n' +
+    'You are chatting inside the Doomalay app, which has an artifact system.\n' +
     'When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n' +
     'Artifact format (a fenced code block whose info string starts with "artifact"):\n' +
     '  ```artifact file=<filename.ext>\n  <the complete file content as plain text>\n  ```\n' +
@@ -155,11 +173,15 @@
     var pendingExit = null;
 
     // the identity strip: what the engine prepends EVERY turn (live).
+    // v0.20: {model}/{provider} are LIVE placeholders — substituted into
+    // every turn with the chat's current model + provider.
+    var pretty = String(current.model || '').split('/').pop();
     identityEl.innerHTML =
       '<span class="pe-identity-k">always active</span>' +
-      '<span class="pe-identity-v" id="pe-identity-v">You are ' + esc(current.model || '…') +
+      '<span class="pe-identity-v" id="pe-identity-v">You are ' + esc(pretty || '…') +
       (current.provider ? (', hosted via ' + esc(current.provider)) : '') +
-      ' · Doomalay app · [today\'s date]</span>';
+      ' · Doomalay app · [today\'s date]</span>' +
+      '<span class="pe-identity-hint">{model} and {provider} in the text below are live — they always resolve to this chat\'s current model + provider.</span>';
 
     function hideUnsaved() {
       pendingExit = null;

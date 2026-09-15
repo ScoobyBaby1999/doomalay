@@ -54,11 +54,25 @@
 
   // ── ChatIcon ────────────────────────────────────────────────────
   // A GridIcon representing a chat conversation.
-  let nextId = 1;
+  //
+  // v0.20 FIX (the multi-chat killer): the old `nextId` counter reset to 1
+  // on EVERY page load, but restored icons kept their persisted `chat_N`
+  // ids — a new chat created after a reload got `chat_1` AGAIN, colliding
+  // with an existing chat. Both icons then shared ONE chatStates entry
+  // (history from one chat rendered into the other, sessions got crossed,
+  // "all chats stopped working"). New ids now carry a timestamp + random
+  // suffix so they can never collide across loads, tabs, or devices.
+  let idCounter = 0;
+  function newChatId() {
+    idCounter = (idCounter + 1) % 0xffff;
+    return 'chat_' + Date.now().toString(36) + '_' +
+      ('00' + idCounter.toString(36)).slice(-2) +
+      Math.random().toString(36).slice(2, 6);
+  }
 
   class ChatIcon extends GridIcon {
     constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '', sessionId = '' }) {
-      super({ id: id || ('chat_' + nextId++), type: 'chat', x, y, radius });
+      super({ id: id || newChatId(), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
       this.iconIndex = (typeof iconIndex === 'number') ? iconIndex : -1;
@@ -190,8 +204,8 @@
     }
 
     static deserialize(data) {
-      return new ChatIcon({
-        id: data.id,
+      const icon = new ChatIcon({
+        id: data.id, // v0.20: app.js heals duplicate ids BEFORE construction
         name: data.name,
         family: data.family,
         iconIndex: data.iconIndex,
@@ -203,6 +217,7 @@
         provider: data.provider || '',
         sessionId: data.sessionId || ''
       });
+      return icon;
     }
   }
 

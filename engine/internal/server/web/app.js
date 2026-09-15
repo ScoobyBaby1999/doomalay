@@ -812,6 +812,20 @@
       // Try both 'icons' (new) and 'chatbots' (old v0.7.0/v0.8.0).
       const savedIcons = saved.icons || saved.chatbots;
       if (Array.isArray(savedIcons)) {
+        // v0.20 HEAL: installs saved before the unique-id fix can carry
+        // DUPLICATE ids (the nextId reset bug) — two chats sharing one id
+        // cross-wired their panel states. Rename later duplicates BEFORE
+        // construction so every restored chat gets its own state entry.
+        // The renamed chat keeps its sessionId, so its history stays
+        // attached — only the internal id changes.
+        const seenIds = new Set();
+        for (const c of savedIcons) {
+          if (!c.id) c.id = 'chat_' + Math.random().toString(36).slice(2, 10);
+          while (seenIds.has(c.id)) {
+            c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
+          }
+          seenIds.add(c.id);
+        }
         for (const c of savedIcons) {
           if (!c.type) c.type = 'chat';  // migration from v0.7.0
           const icon = window.GridIcon.create(c);

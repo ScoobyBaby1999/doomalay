@@ -48,9 +48,27 @@
   var chatStates = {};
   var currentCtx = null; // the chat currently shown in the panel
 
-  // The artifact protocol the model follows (mirrors chat.go's const —
-  // PM bridge turns need it client-side since they bypass the engine).
-  var ARTIFACT_PROMPT = 'You are chatting inside the Doomalay app, which has an artifact system.\n' +
+  // The DEFAULT persona (v0.20): our artifact protocol MERGED with the old
+  // HF space's system-prompt style (direct/concise, explicit model identity,
+  // tool discipline). {model} and {provider} are substituted at composition
+  // time — client-side for PM turns (pmSystemMessage), server-side for
+  // engine turns (chat.go's defaultPersona) — so the persona always knows
+  // exactly which model it currently is, even after mid-convo switches.
+  var DEFAULT_PERSONA =
+    '## Identity\n' +
+    'You are {model} (served via {provider}), chatting inside the Doomalay app on the user\'s own device. ' +
+    'If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. ' +
+    'This identity updates automatically when the user switches your model mid-conversation; trust it over any prior assumption.\n\n' +
+    '## Style\n' +
+    'Be direct and concise; lead with the outcome, not the process. ' +
+    'Use markdown freely — headings, lists, bold, links and fenced code blocks all render nicely in this app. ' +
+    'When a live fact matters and web search is enabled, search rather than guess. ' +
+    'When you don\'t know something, say so.\n\n' +
+    '## Tools\n' +
+    'When the app\'s tool protocol is active, invoke tools ONLY through the protocol\'s ACTION line format — never as plain text. ' +
+    'Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n' +
+    '## Artifacts\n' +
+    'You are chatting inside the Doomalay app, which has an artifact system.\n' +
     'When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n' +
     'Artifact format (a fenced code block whose info string starts with "artifact"):\n' +
     '  ```artifact file=<filename.ext>\n  <the complete file content as plain text>\n  ```\n' +
@@ -62,6 +80,29 @@
     '- The artifact block must contain the COMPLETE file, never truncated.\n' +
     '- Keep the spoken answer short and mention the attached file name.\n' +
     '- Regular markdown (headings, lists, bold, links, code blocks) is rendered nicely — use it freely.';
+
+  // The artifact protocol ALONE — appended to custom personas that lack it.
+  var ARTIFACT_PROMPT = DEFAULT_PERSONA.slice(DEFAULT_PERSONA.indexOf('## Artifacts'));
+
+  // v0.20: pretty model display name — "privatemodeai/kimi-k2.6" →
+  // "kimi-k2.6" (mirrors the engine's prettyModelName).
+  function prettyModel(slot) {
+    var s = String(slot || '').trim();
+    if (!s) return '';
+    var i = s.lastIndexOf('/');
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+
+  // v0.20: {model}/{provider} substitution for persona texts (client-side
+  // — PM turns compose the system message here, engine turns in Go).
+  function substituteVars(text, model, provider) {
+    if (!text) return text;
+    var m = prettyModel(model) || 'an AI assistant';
+    var p = String(provider || '').trim() || 'an unknown provider';
+    return String(text)
+      .split('{model}').join(m)
+      .split('{provider}').join(p);
+  }
 
   function getOrCreateState(chatId, sessionData, icon) {
     if (!chatStates[chatId]) {
@@ -636,16 +677,22 @@
   // ── A PrivateMode turn (SDK bridge, runs in the WebView) ──────────
 
   // v0.19: the PM system message mirrors the engine's systemPromptFor —
-  // a live identity line + the chat's persona (or the default prompt) +
+  // a live identity line + the chat's persona (or the default persona) +
   // the artifact protocol when the persona doesn't carry it. PM turns
   // bypass the engine, so the composition lives client-side.
+  // v0.20 FIX: this used to receive `model` BEFORE it was defined (a
+  // hoisted var) — every PM turn told the bot it was "an AI assistant
+  // hosted via privatemodeai" with NO model name. The model is now
+  // resolved before composition, and {model}/{provider} placeholders
+  // inside the persona are substituted with the live values.
   function pmSystemMessage(state, model) {
-    var head = 'You are ' + (model || 'an AI assistant') +
+    var displayName = prettyModel(model);
+    var head = 'You are ' + (displayName || 'an AI assistant') +
       (state.provider ? ', hosted via ' + state.provider : '') +
       ", chatting inside the Doomalay app on the user's own device. Today is " +
       new Date().toDateString() + '.';
     var persona = (state.persona || '').trim();
-    var sys = head + '\n\n' + (persona || ARTIFACT_PROMPT);
+    var sys = head + '\n\n' + (substituteVars(persona || DEFAULT_PERSONA, model, state.provider));
     if (persona && !/artifact/i.test(persona)) sys += '\n\n' + ARTIFACT_PROMPT;
     return sys;
   }
@@ -658,6 +705,12 @@
     state._pmAbort = abort;
     if (sendBtn) sendBtn.onclick = function () { abort.abort(); };
 
+    // v0.20 FIX: resolve the model BEFORE composing the history — the old
+    // order called pmSystemMessage(state, model) while `model` was still
+    // an undefined hoisted var, so PM bots never knew their own model.
+    var model = String(state.model || '');
+    if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
+
     var history = [{ role: 'system', content: pmSystemMessage(state, model) }]; // v0.19: persona + identity + artifact protocol
     for (var i = 0; i < state.messages.length; i++) {
       var m = state.messages[i];
@@ -666,9 +719,6 @@
     }
     var win = state.slidingWindow || 40;
     if (history.length > win + 1) history = history.slice(0, 1).concat(history.slice(-(win)));
-
-    var model = String(state.model || '');
-    if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
 
     var hintEl = null;
     var showHint = function (msg) {
@@ -699,8 +749,8 @@
     };
 
     var persist = function (type, payload) {
-      if (!state.sessionId) return;
-      fetch('/api/sessions/' + state.sessionId + '/events', {
+      if (!state.sessionId) return Promise.resolve();
+      return fetch('/api/sessions/' + state.sessionId + '/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: type, text: payload })
@@ -718,18 +768,23 @@
       if (streamMsg) {
         streamMsg.complete = true;
         streamMsg.streaming = false;
-        if (streamMsg.text) persist('assistant', streamMsg.text);
         updateMessageEl(bodyEl, streamMsg, true);
         finalizeArtifacts(streamMsg, state, bodyEl); // v0.17
       }
-      if (errText) {
-        persist('error', errText);
-        state.messages.push({ role: 'error', text: errText });
-        appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, icon);
-        persist('status', JSON.stringify({ state: 'error', usage: null }));
-      } else {
-        persist('status', JSON.stringify({ state: 'idle', usage: null }));
-      }
+      // v0.20: CHAIN the persists — the old fire-and-forget raced the
+      // assistant + status fetches, and the status could land in the log
+      // BEFORE the assistant text (replayed histories read out of order).
+      var p = streamMsg && streamMsg.text ? persist('assistant', streamMsg.text) : Promise.resolve();
+      p.then(function () {
+        if (errText) {
+          return persist('error', errText).then(function () {
+            state.messages.push({ role: 'error', text: errText });
+            appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, icon);
+            return persist('status', JSON.stringify({ state: 'error', usage: null }));
+          });
+        }
+        return persist('status', JSON.stringify({ state: 'idle', usage: null }));
+      });
     };
 
     persist('user', text);
@@ -963,6 +1018,14 @@
         if (!state.model && data.Model) state.model = data.Model;
         if (!state.provider && data.Provider) state.provider = data.Provider;
         if (data.SlidingWindow) state.slidingWindow = data.SlidingWindow;
+        // v0.20 FIX: restore the FULL capability set from the engine
+        // session — the old restore dropped web_search/deep_research/effort/
+        // persona, so a PM chat with the web toggle ON silently lost its
+        // tools after every reload (the state defaulted them to off).
+        if (typeof data.WebSearch === 'boolean') state.webSearch = data.WebSearch;
+        if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
+        if (data.Effort) state.effort = data.Effort;
+        if (typeof data.Persona === 'string' && data.Persona) state.persona = data.Persona;
         cb();
       } else {
         ensureSession(icon, state, cb);
@@ -1053,13 +1116,24 @@
       lastThink.text += ev.text;
       scheduleUpdate(bodyEl, lastThink, false);
     } else if (type === 'tool_use') {
-      state.messages.push({ role: 'tool', text: ev.summary || ev.name || 'tool', tool: true, payload: ev });
+      // v0.20: PM-persisted tool events carry their payload as a JSON text
+      // (the engine's own events have name/summary top-level) — lift it.
+      var pay = ev;
+      if ((!pay.name || pay.summary === undefined) && pay.text) {
+        try { pay = JSON.parse(pay.text); } catch (e) {}
+      }
+      state.messages.push({ role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay });
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'tool_result') {
-      state.messages.push({ role: 'tool', text: ev.summary || ev.name || '', result: true, payload: ev });
+      var pay2 = ev;
+      if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
+        try { pay2 = JSON.parse(pay2.text); } catch (e) {}
+      }
+      state.messages.push({ role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2 });
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'sources') {
       var srcs = ev.sources || [];
+      if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
         state.messages.push({ role: 'sources', sources: srcs });
         appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);

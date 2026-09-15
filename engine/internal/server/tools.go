@@ -17,9 +17,35 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
+
+// handleToolsLocal is GET /api/tools/local?name=<tool>&args=<json> (v0.20).
+//
+// The PrivateMode bridge chats run in the WebView, so its browser-side
+// ReAct loop needs a way to reach the engine's LOCAL tool set
+// (calculator/time/uuid/hash/…) — same implementations the Go pipeline
+// uses, one source of truth. Pure compute: no network, no FS, no keys,
+// size-capped inputs.
+func (s *Server) handleToolsLocal(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	args := r.URL.Query().Get("args")
+	if !llm.IsLocalTool(name) {
+		// v0.20: unknown tool → a 200 OBSERVATION the model can learn
+		// from. The old HTTP 400 just surfaced as "tool error" and
+		// burned the retry without teaching the model anything.
+		writeJSON(w, 200, map[string]any{
+			"tool":   name,
+			"result": "error: unknown tool \"" + name + "\". Valid local tools: " + strings.Join(llm.LocalToolNames, ", ") + ". Web tools: web_search {\"query\": \"...\"} and web_fetch {\"url\": \"...\"} (when web search is enabled).",
+		})
+		return
+	}
+	obs := llm.RunLocalTool(name, args)
+	text := strings.TrimPrefix(obs, "OBSERVATION:\n")
+	writeJSON(w, 200, map[string]any{"tool": name, "result": text})
+}
 
 // handleToolsWebSearch is GET /api/tools/websearch?q=<query>&max=<n>
 func (s *Server) handleToolsWebSearch(w http.ResponseWriter, r *http.Request) {

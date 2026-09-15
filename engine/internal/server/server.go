@@ -74,6 +74,9 @@ func (s *Server) routes() {
         // calls these same-origin — search + SSRF-guarded page fetch).
         s.mux.HandleFunc("GET /api/tools/websearch", s.handleToolsWebSearch)
         s.mux.HandleFunc("GET /api/tools/webfetch", s.handleToolsWebFetch)
+        // v0.20: local tool server for the PM bridge (calculator/time/
+        // uuid/hash/json/… — same Go implementations the engine uses).
+        s.mux.HandleFunc("GET /api/tools/local", s.handleToolsLocal)
 
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
