@@ -7,7 +7,9 @@
 # Limits (HF free tier): 16GB RAM, 2 CPU, 50GB ephemeral disk, sleeps after 48h.
 # Can't do: UE5/AAA games (needs 32GB+ RAM + GPU), KVM VMs, docker-in-docker.
 
-FROM python:3.11-slim
+# Pin to bookworm: current python:3.11-slim is Debian trixie, which dropped
+# openjdk-17 (and would break the apt package list below).
+FROM python:3.11-slim-bookworm
 
 # ── Full build toolchain ──────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
