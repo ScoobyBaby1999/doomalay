@@ -170,6 +170,15 @@
   // renderInto(el, text, opts) → { artifacts: [...], el }
   // opts: { mode: 'full'|'user'|'thinking'|'plain', streaming: bool,
   //         thinkingMeta: {elapsed, chars} }
+  //
+  // v0.22 STREAMING PERF — two rules that killed the UI before:
+  //   1. A >4KB code block while streaming is COLLAPSED to its head + a
+  //      live byte counter (a streaming .docx base64 fence used to lay
+  //      out a 100KB wall of text on EVERY tick — the RTF-generation
+  //      freeze the user reported). Full text still renders on final.
+  //   2. Prism highlighting is deferred to the final render (highlighting
+  //      a growing code block per tick is pure waste — the highlight
+  //      would be recomputed anyway).
   function renderInto(el, text, opts) {
     opts = opts || {};
     var mode = opts.mode || 'full';
@@ -195,7 +204,14 @@
       // full + thinking: artifact extraction, then markdown
       var ex = extractArtifacts(text);
       artifacts = ex.artifacts;
-      var body = mdToHtml(ex.text);
+      // v0.22: an OPEN artifact fence (```artifact ... no closing ``` yet)
+      // renders as a growing code block of raw base64 — collapse it to a
+      // compact "building…" note while streaming.
+      var bodyText = ex.text;
+      if (opts.streaming) {
+        bodyText = collapseStreamingFences(bodyText);
+      }
+      var body = mdToHtml(bodyText);
       if (mode === 'thinking') {
         // dim the thinking palette via the scope class; markdown still works
         body = body.replace(/<(h[1-6])(\s|>)/g, '<$1 class="fmt-th-h"$2');
@@ -227,7 +243,41 @@
     }
 
     postProcess(el, artifacts, opts);
+    // v0.22 PERF: only the FINAL render pays for Prism + full code layout.
+    if (opts.streaming) {
+      collapseLongCode(el);
+    }
     return { el: el, artifacts: artifacts };
+  }
+
+  // v0.22: while streaming, a ```artifact fence that has not closed yet
+  // is a raw wall of (often base64) text — replace it with a live status
+  // note. Regex mirrors ART_RE's opener.
+  function collapseStreamingFences(text) {
+    return text.replace(/```artifact[ \t]+([^\n]*)\n[\s\S]*$/g, function (_all, infoStr) {
+      var m = String(infoStr).match(/file\s*=\s*"?([^"\s]+)"?/i);
+      var fname = m ? m[1] : 'file';
+      return '\n```text\n⏳ building ' + fname + ' …\n```\n';
+    });
+  }
+
+  // v0.22: while streaming (or for huge code), truncate the displayed
+  // body of code blocks — the layout cost of a 100KB <pre> is a freeze.
+  function collapseLongCode(el) {
+    var pres = el.querySelectorAll('pre');
+    pres.forEach(function (pre) {
+      var codeEl = pre.querySelector('code');
+      if (!codeEl) return;
+      var t = codeEl.textContent || '';
+      if (t.length <= 4000) return;
+      var keep = t.slice(0, 2000);
+      var note = document.createElement('div');
+      note.className = 'fmt-code-trunc';
+      note.style.cssText = 'padding:6px 12px;color:#71717a;font-size:11px;border-top:1px dashed #2a2a35';
+      note.textContent = '… ' + (t.length / 1024).toFixed(1) + ' KB streaming — full text renders when complete';
+      codeEl.textContent = keep + '\n';
+      if (pre.parentNode) pre.parentNode.insertBefore(note, pre.nextSibling);
+    });
   }
 
   function humanChars(n) {
@@ -346,7 +396,8 @@
       card.appendChild(pre);
       pre.classList.add('fmt-pre');
       codeEl.classList.add('fmt-codetext');
-      if (lang) {
+      // v0.22: no Prism while streaming — the final render highlights.
+      if (lang && !opts.streaming) {
         var pl = prismLangOf(lang, '');
         if (pl) {
           highlightWith(codeEl, pl); // lazy-loads the language component

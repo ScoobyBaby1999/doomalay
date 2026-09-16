@@ -809,7 +809,11 @@
       model: model,
       messages: history,
       signal: abort.signal,
+      sessionId: state.sessionId || '', // v0.22: file tools save into this chat
       tools: !!state.webSearch && !state.deepResearch,
+      // v0.22: throttled re-render (the WS path already used scheduleUpdate;
+      // PM fired a FULL markdown+DOMPurify+Prism pass per token — the
+      // "replies outside the thinking box don't stream smoothly" freeze).
       onThinking: function (t) {
         clearHint();
         var last = state.messages[state.messages.length - 1];
@@ -819,13 +823,21 @@
           appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
         }
         last.text += t;
-        updateMessageEl(bodyEl, last, false);
+        scheduleUpdate(bodyEl, last, false);
       },
       onDelta: function (t) {
         clearHint();
         var m2 = getStreamMsg();
         m2.text += t;
-        updateMessageEl(bodyEl, m2, false);
+        scheduleUpdate(bodyEl, m2, false);
+      },
+      onReset: function () {
+        // v0.22: a long preamble streamed, then turned out to be a tool
+        // call — clear it so the tool pills render on a clean slate.
+        if (streamMsg) {
+          streamMsg.text = '';
+          updateMessageEl(bodyEl, streamMsg, false);
+        }
       },
       onTool: function (ev) {
         if (ev.name === 'web_search' && ev.sources) {
@@ -842,6 +854,12 @@
         appendMessage(msgContainer, scrollEl, chip, bodyEl, icon);
         persist(chip.result ? 'tool_result' : 'tool_use',
           JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '' }));
+        // v0.22: file tools saved a binary — card + refresh the drawer count
+        if (ev.artifact && ev.artifact.name) {
+          state.messages.push({ role: 'artifact', artifact: ev.artifact });
+          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
+          refreshArtifactCount(state, bodyEl);
+        }
       },
       onStatus: function (st) {
         if (st === 'running') showHint('establishing PrivateMode secure channel…');
@@ -1055,6 +1073,11 @@
     if (typeof icon.save === 'function') icon.save();
   }
 
+  function container2(bodyEl, mi) {
+    var c = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
+    return c ? c.querySelector('[data-mi="' + mi + '"]') : null;
+  }
+
   // ── Handle a WS event (idempotent replay, streaming, errors) ─────
   function handleEvent(ev, state, msgContainer, scrollEl, bodyEl, _icon, _panel) {
     var type = ev.type;
@@ -1147,12 +1170,33 @@
       }
       state.messages.push({ role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2 });
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      // v0.22: file tools (docx/xlsx/zip) — a real download card follows the pill.
+      if (ev.artifact && ev.artifact.name) {
+        state.messages.push({ role: 'artifact', artifact: ev.artifact });
+        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      }
     } else if (type === 'sources') {
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
         state.messages.push({ role: 'sources', sources: srcs });
         appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      }
+    } else if (type === 'assistant_reset') {
+      // v0.22: a long preamble streamed as if final, then turned out to be
+      // a tool call — wipe the in-progress assistant message (the engine
+      // also drops its persisted copy; the tool pill renders instead).
+      for (var rk = state.messages.length - 1; rk >= 0; rk--) {
+        var rm = state.messages[rk];
+        if (rm.role === 'assistant') {
+          if (!rm.complete && !rm.text) break;
+          if (!rm.complete) {
+            state.messages.splice(rk, 1);
+            var rw = container2(bodyEl, rk);
+            if (rw && rw.parentNode) rw.parentNode.removeChild(rw);
+          }
+          break;
+        }
       }
     } else if (type === 'compact') {
       // v0.21: auto-compact — older turns were summarized into the
@@ -1297,6 +1341,20 @@
       }
       return '<div class="' + cls + '" data-msg-role="tool" data-mi="' + mi + '" data-expanded="' + (expanded ? '1' : '') + '">' +
         head + detail + '</div>';
+    } else if (msg.role === 'artifact') {
+      // v0.22: a file tool saved a binary — render the same card the
+      // formatter builds (the .fmt-artifact click handler opens it).
+      var a = msg.artifact || {};
+      var FTc = window.FileTypes || {};
+      var am = FTc.info ? FTc.info(a.name || '') : {};
+      return '<div class="fmt-artifact" data-artifact-file="' + escAttr(a.name || 'file') + '" data-artifact-encoding="base64">' +
+        '<span class="fmt-artifact-ico" style="color:' + (am.color || 'var(--fmt-a2)') + '">' + (am.icon || '📦') + '</span>' +
+        '<span class="fmt-artifact-meta">' +
+          '<span class="fmt-artifact-name">' + esc(a.name || 'file') + '</span>' +
+          '<span class="fmt-artifact-sub">' + esc(am.label || 'file') + ' · saved · tap to open</span>' +
+        '</span>' +
+        '<button class="fmt-artifact-dl" data-artifact-dl="1">⇩</button>' +
+      '</div>';
     } else if (msg.role === 'sources') {
       var items = '';
       for (var i = 0; i < msg.sources.length; i++) {

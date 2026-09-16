@@ -199,6 +199,86 @@ func (s *Server) handleArtifactsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── CREATE ───────────────────────────────────────────────────────
+// saveArtifactBytes is the shared write path (v0.22): the HTTP handler
+// AND the llm file-tools' ArtifactSink both persist through it.
+func (s *Server) saveArtifactBytes(sessionID, name string, data []byte, source, encoding string) (*ArtifactMeta, error) {
+        name = sanitizeArtifactName(name)
+        if encoding != "base64" {
+                encoding = "utf8"
+        }
+        dir := s.artifactDir(sessionID)
+        if err := os.MkdirAll(dir, 0o700); err != nil {
+                return nil, err
+        }
+        now := float64(time.Now().UnixMilli()) / 1000.0
+        m := &ArtifactMeta{
+                ID:        newArtifactID(),
+                Name:      name,
+                Mime:      guessMime(name),
+                Encoding:  encoding,
+                Size:      int64(len(data)),
+                Source:    source,
+                CreatedAt: now,
+                UpdatedAt: now,
+        }
+        if err := os.WriteFile(filepath.Join(dir, m.ID), data, 0o600); err != nil {
+                return nil, err
+        }
+        if err := writeArtifactMeta(dir, m); err != nil {
+                return nil, err
+        }
+        return m, nil
+}
+
+// findArtifactByName resolves a model-referenced filename to its artifact
+// (zip_extract reads zips the user or an earlier tool call saved).
+func (s *Server) findArtifactByName(sessionID, name string) (*ArtifactMeta, error) {
+        dir := s.artifactDir(sessionID)
+        entries, err := os.ReadDir(dir)
+        if err != nil {
+                return nil, err
+        }
+        for _, e := range entries {
+                if !strings.HasSuffix(e.Name(), ".meta.json") {
+                        continue
+                }
+                aid := strings.TrimSuffix(e.Name(), ".meta.json")
+                if !artifactIDRe.MatchString(aid) {
+                        continue
+                }
+                m, err := readArtifactMeta(dir, aid)
+                if err == nil && m.Name == name {
+                        return m, nil
+                }
+        }
+        return nil, os.ErrNotExist
+}
+
+// sessionArtifactSink adapts the server's artifact store to the llm
+// package's ArtifactSink interface (v0.22 file tools).
+type sessionArtifactSink struct {
+        s      *Server
+        sessID string
+}
+
+func (k *sessionArtifactSink) SaveArtifact(name string, data []byte, source string) (string, int64, error) {
+        m, err := k.s.saveArtifactBytes(k.sessID, name, data, source, "base64")
+        if err != nil {
+                return "", 0, err
+        }
+        return m.ID, m.Size, nil
+}
+
+// ReadArtifact loads a session artifact by its (model-supplied) filename —
+// the engine-path zip_extract uses it.
+func (k *sessionArtifactSink) ReadArtifact(name string) ([]byte, error) {
+        m, err := k.s.findArtifactByName(k.sessID, name)
+        if err != nil {
+                return nil, err
+        }
+        return os.ReadFile(filepath.Join(k.s.artifactDir(k.sessID), m.ID))
+}
+
 func (s *Server) handleArtifactsCreate(w http.ResponseWriter, r *http.Request) {
         id := r.PathValue("id")
         if sess, err := s.db.GetSession(id); err != nil || sess == nil {

@@ -127,7 +127,7 @@ async function streamChat(opts) {
   return runToolLoop(c, opts);
 }
 
-// ── v0.20: the browser-side ReAct loop (mirrors the Go pipeline) ──────
+// ── v0.22: the browser-side ReAct loop (mirrors the Go pipeline) ──────
 //
 // PM chats run in the WebView, so the engine's Go tool loop can't drive
 // them. Instead the ENGINE becomes the tool server (/api/tools/* —
@@ -135,17 +135,31 @@ async function streamChat(opts) {
 // protocol, watch the model's reply for an ACTION line, run the tool,
 // feed back OBSERVATION, repeat (max 16 — deep tool chains are legal).
 //
-// v0.20: the LOCAL tool set (calculator/time/uuid/hash/json/…) rides
-// EVERY PM turn through /api/tools/local — same Go implementations the
-// engine's own loop uses. The web tools still gate on the toggle.
+// v0.22 FIXES (the "chain gets interrupted" bug, from the live CSVs):
+//   1. ACTION DETECTION — the old regex was ^-anchored to the WHOLE
+//      reply, so models writing a prose preamble before their ACTION
+//      line ("Step 1/12: ... ACTION: time_now {...}") were treated as
+//      final answers and the chain died at step 1. Now ANY complete
+//      line can carry the ACTION (last one wins), glued JSON
+//      (time_now{"tz":...}) parses, and a preamble never breaks the loop.
+//   2. LIVE STREAMING — the old loop held EVERY round silent, so final
+//      answers popped as one blob (thinking streamed, the reply didn't:
+//      "replies outside of the thinking box don't stream smoothly").
+//      Rounds now stream live once they're provably not an ACTION
+//      (bounded hold: 700 bytes / 3 non-blank lines, same as the Go
+//      loop), and ACTION rounds stay fully suppressed.
+//   3. NETWORK RETRY — a mid-chain "reading stream chunk: network
+//      error" used to kill the whole turn. Suppressed rounds (nothing
+//      rendered yet) now retry with backoff.
+//   4. FILE TOOLS — docx_create/xlsx_create/zip_create/zip_extract ride
+//      /api/tools/local with the session id so binaries save into the
+//      chat's artifact drawer (real Word/Excel/zip downloads).
 var PM_TOOLS_PROTOCOL = [
-  'You have access to tools. To use one, output EXACTLY ONE line as your ENTIRE reply, then stop:',
+  'You have access to tools. To call one, output a line in this exact shape:',
   'ACTION: <tool> {<json arguments>}',
-  'After each ACTION you will receive:',
-  'OBSERVATION:',
-  '<tool output>',
-  'Use observations to answer. One tool per reply; chain tools across replies when a task needs several steps.',
-  'When you have enough information, write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.',
+  'A short one-line preamble before the ACTION line is allowed, but the ACTION line must be the LAST line of your reply and contain nothing else.',
+  'After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool output) — you never wait for the user for this. IMMEDIATELY issue your next ACTION after reading an observation; you may chain many tool calls (up to 24) in one turn back-to-back without any user message in between.',
+  'ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.',
   '',
   'Local tools (run instantly on the device):',
   'ACTION: calculator {"expr": "2+2*10"} — arithmetic; + - * / % ^ ( ) and sqrt/ln/log/abs/round/floor/ceil/sin/cos/tan/exp, pi, e',
@@ -157,7 +171,14 @@ var PM_TOOLS_PROTOCOL = [
   'ACTION: json_tool {"mode": "format|validate|minify", "text": "..."} — JSON utilities',
   'ACTION: text_stats {"text": "..."} — chars/words/lines/sentences/bytes + reading time',
   'ACTION: url_encode {"mode": "encode|decode", "text": "..."} — percent encoding',
-  'ACTION: regex_extract {"pattern": "...", "text": "...", "group": 0} — regex matches'
+  'ACTION: regex_extract {"pattern": "...", "text": "...", "group": 0} — regex matches',
+  'ACTION: docx_create {"name": "f.docx", "blocks": [{"type": "title|heading|subheading|paragraph|bullet|number|quote", "text": "...", "bold": true, "color": "FFD700", "size": 28, "align": "center", "runs": [{"text": "...", "bold": true}]}]} — build a REAL Word .docx with styled headings, colored/bold/italic/underline/strikethrough runs, fonts, sizes, alignment. Saved as a downloadable artifact.',
+  'ACTION: xlsx_create {"name": "f.xlsx", "sheets": [{"name": "Data", "bold_header": true, "rows": [["h1", "h2"], [1, 2]]}]} — build a REAL Excel .xlsx (multi-sheet, bold headers). Saved as a downloadable artifact.',
+  'ACTION: zip_create {"name": "b.zip", "files": [{"name": "a.txt", "content": "..."}]} — build a real .zip from named text/base64 files. Saved as a downloadable artifact.',
+  'ACTION: zip_extract {"artifact": "b.zip"} or {"b64": "<zip bytes>"} — list a zip archive and extract its files as artifacts.',
+  'ACTION: delegate {"prompt": "<question>", "models": ["..."]} — consult up to 3 OTHER models in parallel (multi-model swarm)',
+  'For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download.',
+  'Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files).'
 ].join('\n');
 
 var PM_WEB_TOOLS_PROTOCOL = [
@@ -192,6 +213,39 @@ function repairJSON(s) {
   return out;
 }
 
+// v0.22: find the LAST complete line that starts with "ACTION:" —
+// preambles are legal, glued JSON is legal, several ACTION lines are
+// legal (the last is operative). Returns null or {name, rest, lineStart}.
+function findActionLine(text) {
+  var lines = String(text || '').split('\n');
+  for (var i = lines.length - 1; i >= 0; i--) {
+    var t = lines[i].replace(/^[ \t]+/, '');
+    if (/^ACTION:/i.test(t)) {
+      var head = t.replace(/^ACTION:\s*/i, '');
+      var m = head.match(/^([a-zA-Z0-9_-]+)([\s\S]*)$/);
+      if (!m) return null;
+      return { name: m[1], rest: m[2].trim(), lineStart: text.lastIndexOf('\n', text.indexOf(lines[i])) + 1 };
+    }
+  }
+  return null;
+}
+
+// v0.22: could the text STILL become an ACTION round? While it could,
+// we hold deltas (bounded — see roundTripOnce). Mirrors the Go loop's
+// preambleHoldBytes/preambleHoldLines.
+function stillMaybePreamble(held) {
+  if (!held) return true;
+  if (held.length >= 700) return false;
+  var complete = held.split('\n');
+  complete.pop(); // last element may still be open
+  var nonBlank = 0;
+  for (var i = 0; i < complete.length; i++) {
+    if (complete[i].trim() !== '') nonBlank++;
+    if (/^[ \t]*ACTION:/i.test(complete[i])) return true; // it IS one
+  }
+  return nonBlank < 3;
+}
+
 async function runToolLoop(c, opts) {
   var toolsOn = !!opts.tools;
   var system = opts.messages[0] && opts.messages[0].role === 'system'
@@ -202,27 +256,25 @@ async function runToolLoop(c, opts) {
   var allSources = [];
   var finalText = '';
   var usage = null;
-  var MAX_ROUNDS = 16;
+  var MAX_ROUNDS = 24; // v0.22: 24 — 10-file generations + zip round-trip fit
 
   for (var round = 0; round < MAX_ROUNDS; round++) {
     if (opts.signal && opts.signal.aborted) {
       return { text: finalText, usage: usage, aborted: true, sources: allSources };
     }
-    // ALL ReAct rounds are silent — an ACTION line must never render as
-    // the assistant's answer. Progress shows via onThinking (live) + the
-    // onTool chips; the final answer streams once it's confirmed clean.
-    var res = await roundTrip(c, opts, messages, 'silent');
+    var res = await roundTrip(c, opts, messages);
     usage = res.usage || usage;
     var reply = (res.text || '').trim();
 
-    var m = reply.match(/^ACTION:\s*([a-z0-9_]+)\s*(\{[\s\S]*\}?|[^\n]*)?\s*$/i);
-    if (!m) {
-      // FINAL answer — stream it now if it was held back, then done.
-      if (res.held && reply) opts.onDelta && opts.onDelta(reply);
+    var act = findActionLine(reply);
+    if (!act) {
       finalText = reply;
       break;
     }
-    var tool = m[1].toLowerCase();
+    // v0.22: a >700-byte preamble streamed before its ACTION line — wipe
+    // the leaked text so the tool pills render on a clean slate.
+    if (res.emitted && opts.onReset) opts.onReset();
+    var tool = act.name.toLowerCase();
     // v0.20 ALIASES: models invent plausible tool names (search, google,
     // fetch, browse, open_url…) — map them onto the real tools instead of
     // erroring. The engine loop does the same.
@@ -238,13 +290,17 @@ async function runToolLoop(c, opts) {
     else if (/^(word_count|count|stats|wc)$/.test(tool)) tool = 'text_stats';
     else if (/^(urldecode|percent_encode|urlencode)$/.test(tool)) tool = 'url_encode';
     else if (/^(regex|grep|findall|match)$/.test(tool)) tool = 'regex_extract';
+    else if (/^(docx|word|word_doc|make_docx)$/.test(tool)) tool = 'docx_create';
+    else if (/^(xlsx|excel|spreadsheet|make_xlsx)$/.test(tool)) tool = 'xlsx_create';
+    else if (/^(zip|make_zip|archive|compress)$/.test(tool)) tool = 'zip_create';
+    else if (/^(unzip|extract|decompress|unarchive)$/.test(tool)) tool = 'zip_extract';
     var arg = {};
-    if (m[2]) {
-      try { arg = JSON.parse(m[2]); }
+    if (act.rest) {
+      try { arg = JSON.parse(act.rest); }
       catch (e) {
         // truncated JSON — repair the missing braces/quotes, then retry
-        var fixed = repairJSON(m[2]);
-        try { arg = JSON.parse(fixed); } catch (e2) { arg = m[2].replace(/^["']|["']$/g, ''); }
+        var fixed = repairJSON(act.rest);
+        try { arg = JSON.parse(fixed); } catch (e2) { arg = act.rest.replace(/^["']|["']$/g, ''); }
       }
     }
     // models sometimes pass the query as a bare string instead of JSON
@@ -288,10 +344,14 @@ async function runToolLoop(c, opts) {
         messages.push({ role: 'assistant', content: reply });
         messages.push({ role: 'user', content: 'OBSERVATION:\n' + ((d2 && d2.text) || '(empty page)') });
       } else {
-        // v0.20: LOCAL tool — the engine computes it (/api/tools/local).
-        var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || '';
+        // LOCAL tool — the engine computes it (/api/tools/local).
+        // v0.22: session-scoped so file tools save artifacts + zip_extract
+        // can re-read what an earlier round saved.
+        var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.name || '';
         opts.onTool && opts.onTool({ name: tool, summary: String(sum).slice(0, 80) });
-        var r3 = await fetch('/api/tools/local?name=' + encodeURIComponent(tool) + '&args=' + encodeURIComponent(JSON.stringify(arg)));
+        var ls = '/api/tools/local?name=' + encodeURIComponent(tool) + '&args=' + encodeURIComponent(JSON.stringify(arg));
+        if (opts.sessionId) ls += '&session=' + encodeURIComponent(opts.sessionId);
+        var r3 = await fetch(ls);
         if (!r3.ok) {
           var errText = 'tool error HTTP ' + r3.status;
           opts.onTool && opts.onTool({ name: tool, result: errText });
@@ -301,7 +361,7 @@ async function runToolLoop(c, opts) {
         }
         var d3 = await r3.json();
         var out3 = (d3 && d3.result) || '';
-        opts.onTool && opts.onTool({ name: tool, result: String(out3).slice(0, 120) });
+        opts.onTool && opts.onTool({ name: tool, result: String(out3).slice(0, 120), artifact: d3 && d3.artifact });
         messages.push({ role: 'assistant', content: reply });
         messages.push({ role: 'user', content: 'OBSERVATION:\n' + out3 });
       }
@@ -314,7 +374,7 @@ async function runToolLoop(c, opts) {
   if (round === MAX_ROUNDS && !finalText) {
     // Budget exhausted without a final answer — force one last plain round.
     messages.push({ role: 'user', content: 'Tool budget exhausted. Give your FINAL answer now from what you have (no ACTION line), citing sources as [n] if any.' });
-    var last = await roundTrip(c, opts, messages, null);
+    var last = await roundTrip(c, opts, messages);
     finalText = (last.text || '').trim();
   }
 
@@ -322,30 +382,80 @@ async function runToolLoop(c, opts) {
   return { text: finalText, usage: usage, sources: allSources };
 }
 
-// One PM streaming round. mode 'silent' holds deltas (ReAct probe rounds
-// that may turn out to be ACTION lines) and returns the assembled text.
-// v0.20: EMPTY-ROUND GUARD — PM (like NIM) sometimes returns a 200 stream
-// with zero tokens. The engine path retries these; now the PM loop does
-// too (once), and a persistently-empty model surfaces a visible error
-// instead of a silent no-op turn.
-async function roundTrip(c, opts, messages, mode) {
-  var res = await roundTripOnce(c, opts, messages, mode);
-  if (!res.aborted && !res.err && (res.text || '').trim() === '' && !res.usage) {
-    // empty + not aborted → one retry
-    res = await roundTripOnce(c, opts, messages, mode);
-    if ((res.text || '').trim() === '' && !res.aborted && !res.err) {
-      res.err = new Error('the model returned an empty response — try again or pick a different model');
+// One PM streaming round (v0.22: LIVE STREAMING + NETWORK RETRY).
+//
+// Round lifecycle:
+//   held      — content accumulates while it could still be an ACTION
+//               (bounded: 700 bytes / 3 non-blank lines — same as Go)
+//   action    — an ACTION line appeared → everything stays suppressed
+//   streaming — provably a final answer → deltas flow live
+//
+// A network error only retries when nothing was rendered yet (every
+// ACTION/undecided round qualifies — those are exactly the rounds that
+// used to kill 12-tool chains with "reading stream chunk: network error").
+async function roundTrip(c, opts, messages) {
+  var lastErr = null;
+  for (var attempt = 0; attempt < 3; attempt++) {
+    var res = await roundTripOnce(c, opts, messages);
+    if (res.aborted || !res.err) {
+      // v0.20 EMPTY-ROUND GUARD — PM sometimes returns a 200 stream with
+      // zero tokens. One retry, then a visible error (not a silent no-op).
+      if (!res.aborted && (res.text || '').trim() === '' && !res.usage) {
+        res = await roundTripOnce(c, opts, messages);
+        if ((res.text || '').trim() === '' && !res.aborted && !res.err) {
+          res.err = new Error('the model returned an empty response — try again or pick a different model');
+        }
+      }
+      if (res.err) throw pmError('PrivateMode: ' + friendlyPMError(res.err.message));
+      return res;
     }
+    // retry only rounds that rendered nothing (ACTION/undecided rounds)
+    var transient = /network|fetch|timeout|stream chunk|HTTP 5|502|503/i.test(res.err.message || '');
+    if (!transient || res.emitted || attempt === 2) {
+      throw pmError('PrivateMode: ' + friendlyPMError(res.err.message));
+    }
+    lastErr = res.err;
+    await new Promise(function (r) { setTimeout(r, 1500 * (attempt + 1)); });
   }
-  if (res.err) throw pmError('PrivateMode: ' + friendlyPMError(res.err.message));
-  return res;
+  throw pmError('PrivateMode: ' + friendlyPMError(lastErr && lastErr.message));
 }
 
-async function roundTripOnce(c, opts, messages, mode) {
+async function roundTripOnce(c, opts, messages) {
   var full = '';
   var usage = null;
-  var held = mode === 'silent';
-  var out = { text: '', usage: null, held: held, aborted: false, err: null };
+  var emitted = false;     // any onDelta fired (retry safety)
+  var decided = null;      // null = undecided · 'action' · 'final'
+
+  // v0.22b SMOOTH PUMP — PM's proxy delivers the entire reply content as
+  // ONE chunk (live probe: 2961 chars in a single delta after 18s of
+  // streamed thinking — the "replies outside the thinking box don't stream
+  // smoothly" root cause, provider-side batching we can't un-batch).
+  // Big chunks are re-streamed at a typewriter cadence instead: small
+  // pieces every ~4ms tick, accelerating for very large payloads so a
+  // 100KB artifact body still completes in a few hundred milliseconds.
+  var pumpQueue = '';
+  var pumping = null;
+  var enqueue = function (text) {
+    if (!text) return;
+    pumpQueue += text;
+    if (!pumping) {
+      pumping = (async function () {
+        while (pumpQueue.length > 0) {
+          var n = pumpQueue.length > 6000 ? Math.ceil(pumpQueue.length / 60)
+            : (pumpQueue.length > 600 ? 96 : 48);
+          var piece = pumpQueue.slice(0, n);
+          pumpQueue = pumpQueue.slice(n);
+          opts.onDelta && opts.onDelta(piece);
+          emitted = true;
+          await new Promise(function (r) { setTimeout(r, 0); });
+        }
+        pumping = null;
+      })();
+    }
+  };
+  var drainPump = function () { return pumping || Promise.resolve(); };
+
+  var out = { text: '', usage: null, emitted: false, aborted: false, err: null };
   var body = {
     model: opts.model,
     messages: messages,
@@ -361,18 +471,39 @@ async function roundTripOnce(c, opts, messages, mode) {
         if (d.reasoning_content) { opts.onThinking && opts.onThinking(d.reasoning_content); }
         if (d.content) {
           full += d.content;
-          if (!held) opts.onDelta && opts.onDelta(d.content);
+          if (decided === 'action') {
+            // suppressed — round is a tool call
+          } else if (decided === 'final') {
+            enqueue(d.content);
+          } else if (findActionLine(full + '\n')) {
+            decided = 'action';
+          } else if (!stillMaybePreamble(full)) {
+            decided = 'final';
+            enqueue(full);
+          }
         }
       }
       if (ch.usage) usage = ch.usage;
     }
+    // round complete — decide the tail if still undecided
+    if (!decided) {
+      if (findActionLine(full)) {
+        decided = 'action';
+      } else {
+        decided = 'final';
+        if (full) enqueue(full);
+      }
+    }
+    await drainPump(); // visual stream finishes BEFORE the round resolves
     opts.onStatus && opts.onStatus('idle');
-    out.text = full; out.usage = usage;
+    out.text = full; out.usage = usage; out.emitted = emitted;
     return out;
   } catch (e) {
     opts.onStatus && opts.onStatus('error');
-    if (e && e.name === 'AbortError') { out.text = full; out.usage = usage; out.aborted = true; return out; }
+    pumpQueue = ''; // failed round — stop the visual stream where it is
+    if (e && e.name === 'AbortError') { out.text = full; out.usage = usage; out.emitted = emitted; out.aborted = true; return out; }
     out.err = e;
+    out.emitted = emitted;
     return out;
   }
 }
