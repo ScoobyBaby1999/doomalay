@@ -338,3 +338,39 @@ func TestBalancedJSON(t *testing.T) {
 		t.Error("open string reported balanced")
 	}
 }
+
+// TestArchiveToolsMultiFormat (v0.23): archive_create/archive_extract work
+// for every packable format through the SAME tool entry the model uses,
+// and zip_create/zip_extract remain as aliases.
+func TestArchiveToolsMultiFormat(t *testing.T) {
+	for _, name := range []string{"b.zip", "b.tar", "b.tar.gz", "b.tgz", "b.tar.bz2", "b.tar.xz", "b.tar.zst", "b.7z"} {
+		t.Run(name, func(t *testing.T) {
+			sink := &memSink{}
+			obs := RunLocalTool("archive_create", fmt.Sprintf(`{"name":%q,"files":[{"name":"a.txt","content":"hello"},{"name":"d/b.txt","content":"world"}]}`, name), sink)
+			if !strings.Contains(obs, "Created") {
+				t.Fatalf("%s observation: %q", name, obs)
+			}
+			if _, ok := sink.saved[name]; !ok {
+				t.Fatalf("%s not saved as artifact (saved: %v)", name, sink.saved)
+			}
+			// round-trip through the extractor: members come back as artifacts
+			obs2 := RunLocalTool("archive_extract", fmt.Sprintf(`{"artifact":%q}`, name), sink)
+			if !strings.Contains(obs2, "a.txt") || !strings.Contains(obs2, "b.txt") {
+				t.Fatalf("%s extract observation: %q", name, obs2)
+			}
+			if string(sink.saved["a.txt"]) != "hello" {
+				t.Fatalf("%s member content wrong: %q", name, sink.saved["a.txt"])
+			}
+		})
+	}
+	// aliases still work
+	if obs := RunLocalTool("zip_create", `{"name":"z.zip","files":[{"name":"q.txt","content":"x"}]}`, &memSink{}); !strings.Contains(obs, "Created") {
+		t.Fatalf("zip_create alias broken: %q", obs)
+	}
+	// rar creation without a rar binary → the helpful licensing error
+	if obs := RunLocalTool("archive_create", `{"name":"r.rar","files":[{"name":"q.txt","content":"x"}]}`, &memSink{}); strings.Contains(obs, "Created") {
+		t.Logf("system has a rar binary (created fine)")
+	} else if !strings.Contains(obs, "error") {
+		t.Fatalf("rar create unexpected observation: %q", obs)
+	}
+}

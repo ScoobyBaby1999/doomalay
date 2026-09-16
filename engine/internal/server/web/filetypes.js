@@ -137,30 +137,41 @@
     diff:  E('diff', 'Diff / Patch', 'doc', 'diff', 'diff'),
     patch: E('patch', 'Diff / Patch', 'doc', 'diff', 'diff'),
 
-    // ── common binaries (download-only; editor falls back to hex/plain warn) ──
+    // ── common binaries — docx/xlsx/archives get VIEWERS (v0.23); the
+    // rest stay download-only (editor falls back to hex/plain warn) ──
     pdf:   E('pdf', 'PDF Document', 'binary', null, null, 'application/pdf', { binary: true }),
-    doc:   E('doc', 'Word Document', 'binary', null, null, 'application/msword', { binary: true }),
-    docx:  E('docx', 'Word Document', 'binary', null, null, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', { binary: true }),
-    xls:   E('xls', 'Excel Sheet', 'sheet', null, null, 'application/vnd.ms-excel', { binary: true }),
-    xlsx:  E('xlsx', 'Excel Sheet', 'sheet', null, null, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { binary: true }),
+    doc:   E('doc', 'Word Document (legacy)', 'binary', null, null, 'application/msword', { binary: true }),
+    docx:  E('docx', 'Word Document', 'binary', null, null, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', { binary: true, viewer: 'docx' }),
+    xls:   E('xls', 'Excel Sheet (legacy)', 'sheet', null, null, 'application/vnd.ms-excel', { binary: true }),
+    xlsx:  E('xlsx', 'Excel Sheet', 'sheet', null, null, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { binary: true, viewer: 'xlsx' }),
+    ods:   E('ods', 'OpenDocument Sheet', 'sheet', null, null, 'application/vnd.oasis.opendocument.spreadsheet', { binary: true, viewer: 'xlsx' }),
     ppt:   E('ppt', 'PowerPoint', 'binary', null, null, 'application/vnd.ms-powerpoint', { binary: true }),
     pptx:  E('pptx', 'PowerPoint', 'binary', null, null, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', { binary: true }),
     odt:   E('odt', 'OpenDocument Text', 'binary', null, null, 'application/vnd.oasis.opendocument.text', { binary: true }),
-    ods:   E('ods', 'OpenDocument Sheet', 'binary', null, null, 'application/vnd.oasis.opendocument.spreadsheet', { binary: true }),
-    epub:  E('epub', 'EPUB eBook', 'binary', null, null, 'application/epub+zip', { binary: true }),
+    epub:  E('epub', 'EPUB eBook', 'binary', null, null, 'application/epub+zip', { binary: true, viewer: 'archive' }),
     png:   E('png', 'PNG Image', 'image', null, null, 'image/png', { binary: true }),
     jpg:   E('jpg', 'JPEG Image', 'image', null, null, 'image/jpeg', { binary: true }),
     jpeg:  E('jpeg', 'JPEG Image', 'image', null, null, 'image/jpeg', { binary: true }),
     gif:   E('gif', 'GIF Image', 'image', null, null, 'image/gif', { binary: true }),
     webp:  E('webp', 'WebP Image', 'image', null, null, 'image/webp', { binary: true }),
     ico:   E('ico', 'Icon', 'image', null, null, 'image/x-icon', { binary: true }),
-    zip:   E('zip', 'ZIP Archive', 'archive', null, null, 'application/zip', { binary: true }),
-    gz:    E('gz', 'Gzip Archive', 'archive', null, null, 'application/gzip', { binary: true }),
-    tar:   E('tar', 'Tar Archive', 'archive', null, null, 'application/x-tar', { binary: true }),
+    zip:   E('zip', 'ZIP Archive', 'archive', null, null, 'application/zip', { binary: true, viewer: 'archive' }),
+    gz:    E('gz', 'Gzip Archive', 'archive', null, null, 'application/gzip', { binary: true, viewer: 'archive' }),
+    tgz:   E('tgz', 'Tar+Gzip Archive', 'archive', null, null, 'application/gzip', { binary: true, viewer: 'archive' }),
+    tbz2:  E('tbz2', 'Tar+Bzip2 Archive', 'archive', null, null, 'application/x-bzip2', { binary: true, viewer: 'archive' }),
+    txz:   E('txz', 'Tar+XZ Archive', 'archive', null, null, 'application/x-xz', { binary: true, viewer: 'archive' }),
+    tzst:  E('tzst', 'Tar+Zstd Archive', 'archive', null, null, 'application/zstd', { binary: true, viewer: 'archive' }),
+    tar:   E('tar', 'Tar Archive', 'archive', null, null, 'application/x-tar', { binary: true, viewer: 'archive' }),
+    '7z':  E('7z', '7-Zip Archive', 'archive', null, null, 'application/x-7z-compressed', { binary: true, viewer: 'archive' }),
+    rar:   E('rar', 'RAR Archive', 'archive', null, null, 'application/vnd.rar', { binary: true, viewer: 'archive' }),
+    bz2:   E('bz2', 'Bzip2 Archive', 'archive', null, null, 'application/x-bzip2', { binary: true, viewer: 'archive' }),
+    xz:    E('xz', 'XZ Archive', 'archive', null, null, 'application/x-xz', { binary: true, viewer: 'archive' }),
+    zst:   E('zst', 'Zstd Archive', 'archive', null, null, 'application/zstd', { binary: true, viewer: 'archive' }),
+    jar:   E('jar', 'Java Archive', 'archive', null, null, 'application/java-archive', { binary: true, viewer: 'archive' }),
     wav:   E('wav', 'WAV Audio', 'binary', null, null, 'audio/wav', { binary: true }),
     mp3:   E('mp3', 'MP3 Audio', 'binary', null, null, 'audio/mpeg', { binary: true }),
     mp4:   E('mp4', 'MP4 Video', 'binary', null, null, 'video/mp4', { binary: true }),
-    apk:   E('apk', 'Android APK', 'binary', null, null, 'application/vnd.android.package-archive', { binary: true })
+    apk:   E('apk', 'Android APK', 'binary', null, null, 'application/vnd.android.package-archive', { binary: true, viewer: 'archive' })
   };
 
   // language-label aliases → prism languages (for ```lang code fences)
@@ -188,6 +199,13 @@
 
   function extOf(name) {
     var n = String(name || '').toLowerCase();
+    // v0.23: multi-dot archive extensions FIRST ("a.tar.gz" is a tarball,
+    // not a gzipped something-else) — mapped onto the synthetic keys that
+    // carry the viewer metadata.
+    if (/\.tar\.gz$|\.tgz$/.test(n)) return 'tgz';
+    if (/\.tar\.bz2$|\.tbz2?$/.test(n)) return 'tbz2';
+    if (/\.tar\.xz$|\.txz$/.test(n)) return 'txz';
+    if (/\.tar\.zst$|\.tzst$/.test(n)) return 'tzst';
     var dot = n.lastIndexOf('.');
     if (dot < 0 || dot === n.length - 1) {
       // extensionless well-known names

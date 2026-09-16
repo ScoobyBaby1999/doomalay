@@ -292,8 +292,8 @@ async function runToolLoop(c, opts) {
     else if (/^(regex|grep|findall|match)$/.test(tool)) tool = 'regex_extract';
     else if (/^(docx|word|word_doc|make_docx)$/.test(tool)) tool = 'docx_create';
     else if (/^(xlsx|excel|spreadsheet|make_xlsx)$/.test(tool)) tool = 'xlsx_create';
-    else if (/^(zip|make_zip|archive|compress)$/.test(tool)) tool = 'zip_create';
-    else if (/^(unzip|extract|decompress|unarchive)$/.test(tool)) tool = 'zip_extract';
+    else if (/^(zip|make_zip|archive|compress|pack|7z|7zip|tar|make_tar|tarball|gzip|create_archive|make_archive|bundle)$/.test(tool)) tool = 'archive_create';
+    else if (/^(unzip|extract|decompress|unarchive|untar|unrar|ungzip|gunzip|open_archive|list_archive|extract_archive)$/.test(tool)) tool = 'archive_extract';
     var arg = {};
     if (act.rest) {
       try { arg = JSON.parse(act.rest); }
@@ -315,6 +315,7 @@ async function runToolLoop(c, opts) {
           messages.push({ role: 'user', content: 'OBSERVATION:\nerror: empty query. Usage: ACTION: web_search {"query": "<search terms>"}' });
           continue;
         }
+        opts.onProgress && opts.onProgress({ text: 'searching the web…' });
         opts.onTool && opts.onTool({ name: 'web_search', summary: q });
         var r = await fetch('/api/tools/websearch?q=' + encodeURIComponent(q) + '&max=8');
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -336,6 +337,7 @@ async function runToolLoop(c, opts) {
           messages.push({ role: 'user', content: 'OBSERVATION:\nerror: empty url. Usage: ACTION: web_fetch {"url": "<https url>"}' });
           continue;
         }
+        opts.onProgress && opts.onProgress({ text: 'reading ' + u.slice(0, 60) + '…' });
         opts.onTool && opts.onTool({ name: 'web_fetch', summary: u });
         var r2 = await fetch('/api/tools/webfetch?url=' + encodeURIComponent(u) + '&max=6000');
         if (!r2.ok) throw new Error('HTTP ' + r2.status);
@@ -347,7 +349,15 @@ async function runToolLoop(c, opts) {
         // LOCAL tool — the engine computes it (/api/tools/local).
         // v0.22: session-scoped so file tools save artifacts + zip_extract
         // can re-read what an earlier round saved.
-        var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.name || '';
+        var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.artifact || arg.name || '';
+        // v0.23: keep the indicator alive across the HTTP round-trip —
+        // "building X…" / "running tool…" instead of a frozen chat.
+        var progText = /^(docx_create|xlsx_create|zip_create|archive_create)$/.test(tool)
+          ? (arg.name ? 'building ' + arg.name + '…' : 'building file…')
+          : /^(zip_extract|archive_extract)$/.test(tool)
+            ? (arg.artifact ? 'unpacking ' + arg.artifact + '…' : 'unpacking archive…')
+            : 'running ' + tool + '…';
+        opts.onProgress && opts.onProgress({ text: progText });
         opts.onTool && opts.onTool({ name: tool, summary: String(sum).slice(0, 80) });
         var ls = '/api/tools/local?name=' + encodeURIComponent(tool) + '&args=' + encodeURIComponent(JSON.stringify(arg));
         if (opts.sessionId) ls += '&session=' + encodeURIComponent(opts.sessionId);
@@ -426,13 +436,59 @@ async function roundTripOnce(c, opts, messages) {
   var emitted = false;     // any onDelta fired (retry safety)
   var decided = null;      // null = undecided · 'action' · 'final'
 
+  // v0.23 NO-SILENCE — the suppressed ACTION stream becomes live progress
+  // ("building bundle.zip · 12.4 KB so far"). A 10-file zip_create ACTION
+  // takes the model 60-80 SECONDS to stream; without this the PM chat sat
+  // completely silent the whole time (the user's "froze for 10 seconds,
+  // then everything arrived at once").
+  var progTool = '', progName = '', progLast = 0;
+  var NAME_RE = /"name"\s*:\s*"([^"\n]{1,80})"/;
+  var ACTION_RE = /^[ \t]*ACTION:\s*([a-zA-Z0-9_-]+)/;
+  function progVerb(bytes) {
+    if (progTool === 'web_search') return 'searching the web…';
+    if (progTool === 'web_fetch') return progName ? 'reading ' + progName + '…' : 'fetching page…';
+    if (/^(docx_create|xlsx_create|zip_create|archive_create)$/.test(progTool)) {
+      if (progName) return bytes > 0
+        ? 'building ' + progName + ' · ' + humanSize(bytes) + ' so far'
+        : 'building ' + progName + '…';
+      return bytes > 0 ? 'building file · ' + humanSize(bytes) + ' so far' : 'building file…';
+    }
+    if (/^(zip_extract|archive_extract)$/.test(progTool)) {
+      return progName ? 'unpacking ' + progName + '…' : 'unpacking archive…';
+    }
+    return bytes > 0 ? 'working · ' + humanSize(bytes) : 'working…';
+  }
+  function humanSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function progEmit(bytes) {
+    if (!opts.onProgress) return;
+    opts.onProgress({ text: progVerb(bytes), bytes: bytes });
+    progLast = Date.now();
+  }
+  function progStart() {
+    var act = findActionLine(full);
+    if (act) progTool = act.name.toLowerCase();
+    progEmit(0);
+  }
+  function progObserve() {
+    if (!opts.onProgress) return;
+    if (!progName) {
+      var m = NAME_RE.exec(full);
+      if (m) { progName = m[1]; progEmit(full.length); return; }
+    }
+    if (Date.now() - progLast >= 1200) progEmit(full.length);
+  }
+
   // v0.22b SMOOTH PUMP — PM's proxy delivers the entire reply content as
   // ONE chunk (live probe: 2961 chars in a single delta after 18s of
   // streamed thinking — the "replies outside the thinking box don't stream
   // smoothly" root cause, provider-side batching we can't un-batch).
-  // Big chunks are re-streamed at a typewriter cadence instead: small
-  // pieces every ~4ms tick, accelerating for very large payloads so a
-  // 100KB artifact body still completes in a few hundred milliseconds.
+  // v0.23: the pump now targets a FIXED DURATION (0.6–3.5s, ~900 chars/s)
+  // instead of a fixed huge chunk size — the old 96-chars/4ms pacing
+  // finished a 3000-char reply in ~130ms, which read as "all at once".
   var pumpQueue = '';
   var pumping = null;
   var enqueue = function (text) {
@@ -441,13 +497,13 @@ async function roundTripOnce(c, opts, messages) {
     if (!pumping) {
       pumping = (async function () {
         while (pumpQueue.length > 0) {
-          var n = pumpQueue.length > 6000 ? Math.ceil(pumpQueue.length / 60)
-            : (pumpQueue.length > 600 ? 96 : 48);
+          var targetSec = Math.min(3.5, Math.max(0.6, pumpQueue.length / 900));
+          var n = Math.max(8, Math.ceil(pumpQueue.length / (targetSec * 100)));
           var piece = pumpQueue.slice(0, n);
           pumpQueue = pumpQueue.slice(n);
           opts.onDelta && opts.onDelta(piece);
           emitted = true;
-          await new Promise(function (r) { setTimeout(r, 0); });
+          await new Promise(function (r) { setTimeout(r, 10); });
         }
         pumping = null;
       })();
@@ -472,11 +528,13 @@ async function roundTripOnce(c, opts, messages) {
         if (d.content) {
           full += d.content;
           if (decided === 'action') {
-            // suppressed — round is a tool call
+            // suppressed — round is a tool call, but progress stays live
+            progObserve();
           } else if (decided === 'final') {
             enqueue(d.content);
           } else if (findActionLine(full + '\n')) {
             decided = 'action';
+            progStart();
           } else if (!stillMaybePreamble(full)) {
             decided = 'final';
             enqueue(full);
@@ -489,6 +547,7 @@ async function roundTripOnce(c, opts, messages) {
     if (!decided) {
       if (findActionLine(full)) {
         decided = 'action';
+        progStart();
       } else {
         decided = 'final';
         if (full) enqueue(full);

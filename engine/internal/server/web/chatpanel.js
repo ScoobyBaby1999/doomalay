@@ -736,23 +736,19 @@
     var win = state.slidingWindow || 40;
     if (history.length > win + 1) history = history.slice(0, 1).concat(history.slice(-(win)));
 
-    var hintEl = null;
     var showHint = function (msg) {
-      if (!hintEl) {
-        var hint = { role: 'tool', text: '· ' + msg, progress: true };
-        state.messages.push(hint);
-        hintEl = appendMessage(msgContainer, scrollEl, hint, bodyEl, icon);
-      }
+      // v0.23: PM phase hints ride the activity indicator (five pulsing
+      // dots) instead of stacking one-off pills into the message list.
+      setActivity(bodyEl, state, msg);
     };
     var clearHint = function () {
-      if (hintEl && hintEl.parentNode) hintEl.parentNode.removeChild(hintEl);
-      for (var j = state.messages.length - 1; j >= 0; j--) {
-        if (state.messages[j].progress) { state.messages.splice(j, 1); break; }
-      }
-      hintEl = null;
+      // drops ONLY the explicit phase text — the watchdog decides whether
+      // the indicator itself stays (silence) or goes (deltas flowing).
+      state._actText = null;
     };
 
     showHint('establishing PrivateMode secure channel…');
+    ensureActivityWatch(bodyEl, state);
 
     var streamMsg = null;
     var getStreamMsg = function () {
@@ -780,6 +776,7 @@
     var finish = function (errText, usage) {
       clearHint();
       state.isStreaming = false;
+      hideActivity(bodyEl, state);
       if (sendBtn) { sendBtn.textContent = 'Send'; sendBtn.onclick = null; }
       if (streamMsg) {
         streamMsg.complete = true;
@@ -816,6 +813,7 @@
       // "replies outside the thinking box don't stream smoothly" freeze).
       onThinking: function (t) {
         clearHint();
+        bumpActivity(state);
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'thinking') {
           last = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
@@ -827,9 +825,16 @@
       },
       onDelta: function (t) {
         clearHint();
+        bumpActivity(state);
         var m2 = getStreamMsg();
         m2.text += t;
         scheduleUpdate(bodyEl, m2, false);
+      },
+      // v0.23 NO-SILENCE (PM path): the suppressed ACTION stream reports
+      // "building X · 12.4 KB so far" from inside roundTripOnce — same
+      // phases the engine emits for its ReAct loop.
+      onProgress: function (p) {
+        setActivity(bodyEl, state, p && p.text);
       },
       onReset: function () {
         // v0.22: a long preamble streamed, then turned out to be a tool
@@ -840,6 +845,7 @@
         }
       },
       onTool: function (ev) {
+        bumpActivity(state);
         if (ev.name === 'web_search' && ev.sources) {
           var srcs = ev.sources.map(function (s) {
             return { title: s.title, url: s.url, snippet: s.snippet };
@@ -1085,7 +1091,14 @@
       if (ev.i <= (state.lastEventI || 0)) return;
       state.lastEventI = ev.i;
     }
+    // v0.23 NO-SILENCE: ephemeral progress events (never persisted, no i)
+    // drive the activity indicator — "building bundle.zip · 12.4 KB…".
+    if (type === 'progress') {
+      setActivity(bodyEl, state, ev.text || ev.message || 'working…');
+      return;
+    }
     if (type === 'user') {
+      bumpActivity(state);
       var last = state.messages[state.messages.length - 1];
       if (last && last.role === 'user' && last.local && last.text === (ev.text || '')) {
         delete last.local;
@@ -1099,6 +1112,7 @@
       return;
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
+      bumpActivity(state);
       if (ev.text) {
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'assistant' || last.complete) {
@@ -1146,6 +1160,7 @@
         }
       }
     } else if (type === 'thinking') {
+      bumpActivity(state);
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
         lastThink = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
@@ -1155,6 +1170,7 @@
       lastThink.text += ev.text;
       scheduleUpdate(bodyEl, lastThink, false);
     } else if (type === 'tool_use') {
+      bumpActivity(state);
       // v0.20: PM-persisted tool events carry their payload as a JSON text
       // (the engine's own events have name/summary top-level) — lift it.
       var pay = ev;
@@ -1164,6 +1180,7 @@
       state.messages.push({ role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay });
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'tool_result') {
+      bumpActivity(state);
       var pay2 = ev;
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
@@ -1212,6 +1229,7 @@
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;
+        hideActivity(bodyEl, state);
         // v0.17 belt-and-suspenders: status idle IS a completion signal —
         // mark any still-streaming message done + finalize artifacts (the
         // trailing 'assistant' event normally does this; some providers
@@ -1234,13 +1252,14 @@
         var btn = document.querySelector('#chat-send');
         if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
       } else if (ev.state === 'running' && (ev.text || ev.message)) {
-        if (msgContainer) {
-          state.messages.push({ role: 'tool', text: ev.message || ev.text, progress: true });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
-        }
+        // v0.23: running-state messages ("network hiccup — retry 1/2",
+        // research stages) now feed the activity indicator instead of
+        // stacking throwaway progress pills into the message list.
+        setActivity(bodyEl, state, ev.message || ev.text);
       }
     } else if (type === 'error') {
       state.isStreaming = false;
+      hideActivity(bodyEl, state);
       var errText = ev.message || ev.error || ev.text || 'Unknown error';
       if (ev.provider) {
         errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
@@ -1267,6 +1286,93 @@
         updateMessageEl(bodyEl, msg, false);
       }, 180);
     }
+  }
+
+  // ── v0.23 THE ACTIVITY INDICATOR (the no-silence guarantee) ──────
+  //
+  // User spec: "whenever we can, let's have building file.. a loading
+  // bar.. or a message five dots ..... that keep animating — ideally NO
+  // time where the chat freezes and does stuff in the background with no
+  // UI feedback." One compact row at the end of the message list: five
+  // pulsing dots + the live phase text ("building bundle.zip · 12.4 KB")
+  // + elapsed seconds + a sweeping progress line. Fed by:
+  //   · engine 'progress' events (ACTION-composition, delegate, tools)
+  //   · PM onProgress callbacks (the same phases, client-side)
+  //   · a silence watchdog — streaming + 1.5s without any visible
+  //     event → "thinking…" fallback (covers round gaps + first token)
+  function bumpActivity(state) {
+    state._lastActAt = Date.now();
+    state._actText = null; // visible movement — drop the stale phase text
+  }
+
+  function setActivity(bodyEl, state, text) {
+    state._actText = String(text || 'working…');
+    state._actAt = Date.now();
+    renderActivity(bodyEl, state, true);
+  }
+
+  function renderActivity(bodyEl, state, scrollTo) {
+    var container = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
+    if (!container) return;
+    var row = container.querySelector('.chat-working');
+    var text = state._actText;
+    var silent = Date.now() - (state._lastActAt || 0);
+    var show = state.isStreaming &&
+      ((text && Date.now() - (state._actAt || 0) < 5000) || silent > 1500);
+    if (!show) {
+      if (row && row.parentNode) row.parentNode.removeChild(row);
+      return;
+    }
+    var phase = text || (silent > 1500 ? 'thinking…' : 'working…');
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'chat-working';
+      row.innerHTML = '<span class="cwd"><i></i><i></i><i></i><i></i><i></i></span>' +
+        '<span class="cwt"></span><span class="cwe"></span><i class="cwk-bar"></i>';
+      container.appendChild(row);
+      scrollTo = true;
+    } else if (row.nextSibling) {
+      container.appendChild(row); // keep it the LAST row
+    }
+    var tEl = row.querySelector('.cwt');
+    if (tEl.textContent !== phase) {
+      tEl.textContent = phase;
+      scrollTo = true;
+    }
+    var elapsed = Math.max(0, Math.round(((state._actAt || state._lastActAt || Date.now()) - (state._turnStartAt || 0)) / 1000));
+    if (elapsed >= 3) {
+      row.querySelector('.cwe').textContent = elapsed + 's';
+    }
+    if (scrollTo) {
+      var sc = bodyEl.querySelector('#chat-scroll');
+      if (sc) sc.scrollTop = sc.scrollHeight;
+    }
+  }
+
+  function hideActivity(bodyEl, state) {
+    state._actText = null;
+    var container = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
+    if (container) {
+      var row = container.querySelector('.chat-working');
+      if (row && row.parentNode) row.parentNode.removeChild(row);
+    }
+  }
+
+  // silence watchdog: while a turn runs, keep the indicator honest.
+  function ensureActivityWatch(bodyEl, state) {
+    state._turnStartAt = Date.now();
+    if (state._actTimer) return;
+    state._actTimer = setInterval(function () {
+      if (!state.isStreaming) {
+        clearInterval(state._actTimer);
+        state._actTimer = null;
+        hideActivity(currentCtx && currentCtx.bodyEl, state);
+        return;
+      }
+      // find THIS chat's live DOM (panel may have re-rendered)
+      var body = (currentCtx && currentCtx.state === state && currentCtx.bodyEl) || bodyEl;
+      if (body && body.isConnected) renderActivity(body, state, false);
+    }, 500);
   }
 
   // ── v0.17: artifact finalize (extract + save + refresh badge) ───
@@ -1567,6 +1673,10 @@
     }
 
     state.isStreaming = true;
+    // v0.23: start the no-silence watch the moment a turn begins (the
+    // indicator covers the pre-first-token gap AND all tool phases).
+    ensureActivityWatch(bodyEl, state);
+    setActivity(bodyEl, state, 'sending…');
     if (sendBtn) {
       sendBtn.textContent = 'Stop';
       sendBtn.onclick = function () { type.stop(state, ctx || {}); };

@@ -363,6 +363,208 @@
   // v0.18: every destructive/exit action is IN-DOM (no window.confirm /
   // window.prompt — the Android WebView kills native dialogs silently,
   // which dead-ended every ✕ / ‹ / delete / rename after an edit).
+  // ── v0.23: COMPLEX-FILE VIEWERS (docx · xlsx · archives) ────────
+  //
+  // User spec: "our editor currently cannot view complex files like word
+  // dox or zip files contents — if we can, let's have it be able to view
+  // these files and contents of zips." The engine parses (GET .../preview,
+  // .../entry, POST .../extract), this side renders. Read-only — editing
+  // stays for text artifacts; download stays one tap away.
+  function renderViewer(bodyEl, sessionId, artifactId, d, info) {
+    bodyEl.innerHTML = '<div class="art-loading">parsing…</div>';
+    api('/api/sessions/' + sessionId + '/artifacts/' + artifactId + '/preview')
+      .then(function (pv) {
+        if (!bodyEl.isConnected) return;
+        if (pv.kind === 'docx') renderDocxView(bodyEl, pv);
+        else if (pv.kind === 'xlsx') renderXlsxView(bodyEl, pv);
+        else if (pv.kind === 'archive') renderArchiveView(bodyEl, sessionId, artifactId, pv, d);
+        else if (pv.kind === 'text') renderTextView(bodyEl, sessionId, d, pv.text || '');
+        else renderBinaryFallback(bodyEl, d, info);
+      })
+      .catch(function (e) {
+        bodyEl.innerHTML = '<div class="art-binary"><div class="art-binary-name">could not parse</div>' +
+          '<div class="art-binary-sub">' + esc(e.message) + '</div></div>';
+      });
+  }
+
+  function renderBinaryFallback(bodyEl, d, info) {
+    bodyEl.innerHTML =
+      '<div class="art-binary">' +
+        '<span style="font-size:34px">' + (info ? info.icon : '📄') + '</span>' +
+        '<div class="art-binary-name">' + esc(d.name) + '</div>' +
+        '<div class="art-binary-sub">' + esc((info && info.label) || 'binary file') + ' · ' + FT.humanBytes(d.size) + '</div>' +
+      '</div>';
+  }
+
+  // docx: styled document view (title/heading/quote/list paragraphs, runs
+  // with bold/italic/underline/strike/color/size/font — everything the
+  // docx_create tool can build).
+  function renderDocxView(bodyEl, pv) {
+    var html = '<div class="vw-doc">';
+    var blocks = pv.blocks || [];
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      var cls = 'vw-p';
+      if (b.type === 'title') cls = 'vw-title';
+      else if (b.type === 'heading') cls = 'vw-h1';
+      else if (b.type === 'subheading') cls = 'vw-h2';
+      else if (b.type === 'quote') cls = 'vw-quote';
+      else if (b.type === 'bullet') cls = 'vw-li vw-li-bullet';
+      else if (b.type === 'number') cls = 'vw-li vw-li-num';
+      var align = b.align === 'center' || b.align === 'right' ? ' style="text-align:' + b.align + '"' : '';
+      var inner = '';
+      if (b.runs && b.runs.length) {
+        for (var j = 0; j < b.runs.length; j++) inner += runHTML(b.runs[j]);
+      } else {
+        inner = esc(b.text || '');
+      }
+      html += '<div class="' + cls + '"' + align + '>' + inner + '</div>';
+    }
+    html += '</div>';
+    bodyEl.innerHTML = html;
+  }
+
+  function runHTML(r) {
+    var st = '';
+    if (r.font) st += 'font-family:' + esc(r.font.replace(/"/g, '')) + ';';
+    if (r.size) st += 'font-size:' + Math.max(8, Math.round(r.size / 2)) + 'pt;';
+    if (r.color) st += 'color:#' + esc(r.color.replace(/[^0-9a-fA-F]/g, '')) + ';';
+    if (r.italic) st += 'font-style:italic;';
+    var deco = '';
+    if (r.underline) deco += ' underline';
+    if (r.strike) deco += ' line-through';
+    if (deco) st += 'text-decoration:' + deco.trim() + ';';
+    return '<span' + (st ? ' style="' + st + '"' : '') + (r.bold ? ' class="vw-b"' : '') + '>' + esc(r.text || '') + '</span>';
+  }
+
+  // xlsx: sheet tabs + table (first row bold, numbers right-aligned).
+  function renderXlsxView(bodyEl, pv) {
+    var sheets = pv.sheets || [];
+    if (!sheets.length) { renderBinaryFallback(bodyEl, pv, null); return; }
+    var html = '<div class="vw-xlsx"><div class="vw-sheets">';
+    for (var s = 0; s < sheets.length; s++) {
+      html += '<button class="vw-tab" data-vw-sheet="' + s + '"' + (s === 0 ? ' data-on="1"' : '') + '>' + esc(sheets[s].name || ('Sheet ' + (s + 1))) + '</button>';
+    }
+    html += '</div><div class="vw-sheet-body" id="vw-sheet-body"></div></div>';
+    bodyEl.innerHTML = html;
+
+    var show = function (idx) {
+      var rows = sheets[idx].rows || [];
+      var t = '<table class="vw-table"><tbody>';
+      for (var r = 0; r < rows.length; r++) {
+        t += '<tr>';
+        for (var c = 0; c < rows[r].length; c++) {
+          var v = String(rows[r][c] == null ? '' : rows[r][c]);
+          var numeric = v !== '' && !isNaN(Number(v)) && /^[\d.,\-+%eE]+$/.test(v);
+          t += '<td' + (r === 0 ? ' class="vw-th"' : '') + (numeric ? ' class="vw-num"' : '') + '>' + esc(v) + '</td>';
+        }
+        t += '</tr>';
+      }
+      t += '</tbody></table>';
+      if (!rows.length) t = '<div class="art-loading">empty sheet</div>';
+      bodyEl.querySelector('#vw-sheet-body').innerHTML = t;
+      var tabs = bodyEl.querySelectorAll('.vw-tab');
+      for (var k = 0; k < tabs.length; k++) {
+        if (tabs[k].getAttribute('data-vw-sheet') === String(idx)) tabs[k].setAttribute('data-on', '1');
+        else tabs[k].removeAttribute('data-on');
+      }
+    };
+    show(0);
+    Array.prototype.forEach.call(bodyEl.querySelectorAll('.vw-tab'), function (tab) {
+      tab.addEventListener('click', function () {
+        show(parseInt(tab.getAttribute('data-vw-sheet'), 10) || 0);
+      });
+    });
+  }
+
+  // archives: member browser — tap a text member to view it inline (the
+  // "view contents of zips" ask), extract-all unpacks every member into
+  // this chat's artifact drawer.
+  function renderArchiveView(bodyEl, sessionId, artifactId, pv, d) {
+    var entries = (pv.entries || []).filter(function (e) { return !e.dir; });
+    var html = '<div class="vw-arch"><div class="vw-arch-head">' +
+      '<span class="vw-arch-fmt">' + esc(pv.format || 'archive') + '</span>' +
+      '<span class="vw-arch-n">' + entries.length + ' file' + (entries.length === 1 ? '' : 's') + '</span>' +
+      '<button class="art-ed-btn" id="vw-extract-all">⇩ extract all</button>' +
+      '</div><div class="vw-arch-list">';
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var mi = FT.info(e.name || '');
+      html += '<div class="vw-arch-row" data-vw-member="' + escAttr2(e.name) + '">' +
+        '<span class="vw-arch-ico" style="color:' + (mi.color || '#71717a') + '">' + (mi.icon || '📄') + '</span>' +
+        '<span class="vw-arch-name">' + esc(e.name) + '</span>' +
+        '<span class="vw-arch-size">' + FT.humanBytes(e.size || 0) + '</span>' +
+        '</div>';
+    }
+    html += '</div><div class="vw-arch-member" id="vw-member" style="display:none"></div></div>';
+    bodyEl.innerHTML = html;
+
+    Array.prototype.forEach.call(bodyEl.querySelectorAll('.vw-arch-row'), function (row) {
+      row.addEventListener('click', function () {
+        var name = row.getAttribute('data-vw-member');
+        var host = bodyEl.querySelector('#vw-member');
+        host.style.display = 'block';
+        host.innerHTML = '<div class="art-loading">reading ' + esc(name) + '…</div>';
+        api('/api/sessions/' + sessionId + '/artifacts/' + artifactId + '/entry?name=' + encodeURIComponent(name))
+          .then(function (en) {
+            if (!host.isConnected) return;
+            if (en.binary) {
+              host.innerHTML = '<div class="vw-member-note">📦 ' + esc(en.name) + ' · binary member (' + FT.humanBytes(en.size || 0) + ') — extract it to use it</div>';
+              return;
+            }
+            var mode = FT.cmMode(en.name);
+            var pre = '<div class="vw-member-title">' + esc(en.name) + (en.truncated ? ' · truncated' : '') + '</div>';
+            if (mode) {
+              pre += '<pre class="vw-member-pre"></pre>';
+              host.innerHTML = pre;
+              host.querySelector('.vw-member-pre').textContent = en.text || '';
+              // best-effort syntax color via the Formatter's prism if loaded
+              if (window.Formatter && window.Formatter.highlight) {
+                try { host.querySelector('.vw-member-pre').innerHTML = window.Formatter.highlight(en.text || '', FT.prismLang(en.name)); } catch (err) {}
+              }
+            } else {
+              pre += '<pre class="vw-member-pre"></pre>';
+              host.innerHTML = pre;
+              host.querySelector('.vw-member-pre').textContent = en.text || '';
+            }
+          })
+          .catch(function (err) {
+            host.innerHTML = '<div class="vw-member-note">could not read member: ' + esc(err.message) + '</div>';
+          });
+      });
+    });
+
+    bodyEl.querySelector('#vw-extract-all').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'extracting…';
+      api('/api/sessions/' + sessionId + '/artifacts/' + artifactId + '/extract', 'POST')
+        .then(function (res) {
+          btn.textContent = '✓ ' + (res.extracted || 0) + ' extracted';
+          toast((res.extracted || 0) + ' files extracted to artifacts');
+          refreshPills();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          btn.textContent = '⇩ extract all';
+          toast(err.message);
+        });
+    });
+  }
+
+  // read-only text view (preview fallback for text-ish files)
+  function renderTextView(bodyEl, sessionId, d, text) {
+    var host = document.createElement('pre');
+    host.className = 'vw-member-pre vw-text-full';
+    host.textContent = text;
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(host);
+  }
+
+  function escAttr2(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
   function openEditor(sessionId, artifactId) {
     if (!sessionId || !artifactId) return;
     currentSession = sessionId;
@@ -500,6 +702,13 @@
         input.addEventListener('click', function (ev) { ev.stopPropagation(); });
       });
 
+      // v0.23: complex files get REAL viewers — docx renders as a styled
+      // document, xlsx as sheet tables, archives as a member browser with
+      // extract. Only the truly opaque stay download-only.
+      if (info.viewer) {
+        renderViewer(bodyEl, sessionId, artifactId, d, info);
+        return;
+      }
       if (info.binary) {
         bodyEl.innerHTML =
           '<div class="art-binary">' +
