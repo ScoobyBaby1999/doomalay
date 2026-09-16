@@ -8,10 +8,13 @@ package llm
 
 import (
         "bytes"
+        "crypto/sha256"
+        "encoding/hex"
         "encoding/json"
         "fmt"
         "io"
         "net/http"
+        "sync"
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
@@ -42,6 +45,39 @@ var providerHTTP = &http.Client{
 var providerStreamHTTP = &http.Client{
         Timeout:   0,
         Transport: netx.Transport(),
+}
+
+// Package-internal provider quirks live here too.
+
+// opencodeSessionID derives a stable per-key session id for OpenCode Zen.
+//
+// v0.25 LIVE-DISCOVERY: zen's FREE models (big-pickle, *-free) reject
+// requests without an `x-session-id` header —
+//   400 MissingSessionID "OpenCode's free tier can only be used in OpenCode"
+// (the upstream "Console" provider gates the free tier on a client session).
+// With ANY session id the free models serve normally (verified live:
+// real completions from big-pickle + nemotron-3.5-lightning-free). Derived
+// from the API key so it is stable across restarts with zero storage —
+// the closest match to how the real OpenCode client identifies a session.
+var opencodeSessionCache sync.Map // apiKey → session id
+
+func opencodeSessionID(apiKey string) string {
+        if id, ok := opencodeSessionCache.Load(apiKey); ok {
+                return id.(string)
+        }
+        sum := sha256.Sum256([]byte("doomalay-zen-session:" + apiKey))
+        id := "doomalay-" + hex.EncodeToString(sum[:8])
+        opencodeSessionCache.Store(apiKey, id)
+        return id
+}
+
+// providerExtraHeaders returns provider-specific request headers beyond
+// auth (v0.25: opencode's free-tier session id).
+func providerExtraHeaders(provider, apiKey string) map[string]string {
+        if provider == "opencode" {
+                return map[string]string{"x-session-id": opencodeSessionID(apiKey)}
+        }
+        return nil
 }
 
 // httpGetJSON fetches a JSON URL. apiKey != "" adds a Bearer header.

@@ -25,7 +25,11 @@
   }
   function rememberedPos(id) {
     var m = readPosMap();
-    return (id && (m[id] === 'full' || m[id] === 'default')) ? m[id] : 'default';
+    if (id && (m[id] === 'full' || m[id] === 'default')) return m[id];
+    // v0.25: SETTINGS opens at FULL height by default — the 62vh sheet
+    // was the "cramped, overlapping" Android complaint (drag down docks
+    // it at 62vh, and the choice is remembered like any chat's).
+    return id === 'settings' ? 'full' : 'default';
   }
   function rememberPos(id, pos) {
     if (!id) return;

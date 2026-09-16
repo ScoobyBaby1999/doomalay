@@ -489,7 +489,9 @@ func chatProbeResult(provider string, cfg ProviderConfig, apiKey, accountID, pro
                 "messages":   []map[string]string{{"role": "user", "content": "hi"}},
                 "max_tokens": 1,
         }
-        status, body, err := httpPostJSON(resolveBaseURL(cfg, accountID)+"/chat/completions", apiKey, payload, nil)
+        // v0.25: provider quirks ride along (opencode needs x-session-id for
+        // its free-tier models — probing big-pickle without it always 400s).
+        status, body, err := httpPostJSON(resolveBaseURL(cfg, accountID)+"/chat/completions", apiKey, payload, providerExtraHeaders(provider, apiKey))
         if err != nil {
                 return ValidateResult{State: "unverified", Reason: "network: " + err.Error()}, false
         }
@@ -558,6 +560,19 @@ func knownGoodProbes(provider string) []string {
                         "openai/gpt-oss-20b",
                         "nvidia/nemotron-3-ultra-550b-a55b",
                         "google/gemma-4-31b-it",
+                }
+        }
+        // v0.25: OpenCode Zen — the FREE models only. kimi-k2.6 (the old probe
+        // model) is PAID on zen: a keyless-of-payment account gets CreditsError
+        // "No payment method …/billing" — the exact message users mistook for
+        // "my key needs billing enabled". big-pickle + the *-free set serve on
+        // any valid key (with the x-session-id header).
+        if provider == "opencode" {
+                return []string{
+                        "big-pickle",
+                        "nemotron-3.5-lightning-free",
+                        "deepseek-v4-flash-free",
+                        "mimo-v2.5-free",
                 }
         }
         return nil

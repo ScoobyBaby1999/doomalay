@@ -35,6 +35,9 @@
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
     --ui-fs: 14px;     /* general text */
     --ui-small-fs: 12px;/* pills, hints, meta, thinking bubbles */
+    /* v0.25: a FLOOR for the tiniest settings text — calc(--ui-small-fs - 3px)
+       could legally render 6.5px ("text overlapping, unreadable" on phones) */
+    --ui-micro-fs: max(9.5px, calc(var(--ui-small-fs) - 2px));
   }
   /* ── Nebula: brighter violet / magenta / cyan ── */
   [data-theme="nebula"] {
@@ -501,98 +504,153 @@
   /* ── Settings UI (inside the panel body) ──────────────────────
      Modular settings: a nav (horizontal tabs) + the active page's
      content. Each page has sections with headings and setting rows
-     (label + control). */
+     (label + control).
+     v0.25 ANDROID REWORK (user report: "settings page too cramped — text
+     overlapping, some options unclickable"). Root causes fixed:
+       1. rows were single-line flex with label flex-shrink:0 — long
+          labels pushed controls off-screen (unclickable). Rows now STACK:
+          label+hint on top, control below, full-width.
+       2. section-body used grid-template-rows 0fr→1fr with MULTIPLE
+          direct children (only row 1 animated; the rest were auto →
+          overlapping content during unfold). Now ONE inner wrapper owns
+          the transition.
+       3. font calcs like calc(var(--ui-small-fs) - 3px) rendered 6.5px
+          at small sizes — floors via --ui-micro-fs.
+       4. touch targets were 32-40px — Android needs 44px+.
+  */
   .settings-nav {
     display: flex;
     gap: 4px;
     overflow-x: auto;
-    padding: 0 0 12px;
+    padding: 2px 0 10px;
     border-bottom: 1px solid var(--surface-2);
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;           /* v0.25: tabs scroll sideways — no scrollbar clutter */
+    overscroll-behavior-x: contain;
   }
+  .settings-nav::-webkit-scrollbar { display: none; }
   .settings-nav .tab {
     background: transparent;
     border: none;
     color: var(--text-3);
-    padding: 8px 14px;
+    padding: 10px 14px;
     font-size: calc(var(--ui-fs) - 1px);
-    font-weight: 500;
-    border-radius: 8px;
+    font-weight: 600;
+    border-radius: 10px;
     cursor: pointer;
     white-space: nowrap;
+    flex-shrink: 0;                  /* v0.25: never squeeze tabs — scroll instead */
     font-family: inherit;
     -webkit-tap-highlight-color: transparent;
+    min-height: 40px;
   }
   .settings-nav .tab.active {
     background: var(--surface-2);
     color: var(--text-1);
   }
   .settings-section {
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     border: 1px solid var(--surface-2);
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
   }
   .settings-section h3 {
     font-size: calc(var(--ui-fs) - 1px);
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text-1);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 12px 14px;
+    padding: 14px 16px;
     margin: 0;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
+    min-height: 48px;               /* v0.25: a real touch target */
     -webkit-tap-highlight-color: transparent;
     background: var(--surface-1);
     transition: background 0.15s;
   }
   .settings-section h3:active { background: var(--surface-2); }
   .settings-section h3 .chevron {
-    font-size: calc(var(--ui-small-fs) - 2px);
+    font-size: var(--ui-micro-fs);
     color: var(--text-3);
     transition: transform 0.2s;
+    flex-shrink: 0;
   }
   .settings-section.expanded h3 .chevron { transform: rotate(90deg); }
-  /* v0.24: smooth expand/collapse — the old display:none→block swap was an
-     instant jump ("hyper"); a grid-rows transition unfolds it softly. */
+  /* v0.24: smooth expand/collapse. v0.25 FIX: the 0fr→1fr grid trick needs
+     exactly ONE child (min-height:0, overflow:hidden) — the old markup put
+     the content's MANY children directly in the grid so only row 1 ever
+     animated (the rest popped/overlapped mid-transition). */
   .settings-section .section-body {
     display: grid;
     grid-template-rows: 0fr;
-    padding: 0 14px 0;
-    transition: grid-template-rows 0.28s cubic-bezier(0.2, 0.7, 0.3, 1),
-                padding 0.28s cubic-bezier(0.2, 0.7, 0.3, 1);
+    transition: grid-template-rows 0.28s cubic-bezier(0.2, 0.7, 0.3, 1);
   }
-  .settings-section .section-body > * { min-height: 0; }
   .settings-section.expanded .section-body {
     grid-template-rows: 1fr;
-    padding: 4px 14px 12px;
   }
+  .settings-section .section-inner {
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 16px;
+  }
+  .settings-section.expanded .section-inner {
+    padding: 2px 16px 14px;
+  }
+  /* v0.25: rows STACK — label (+hint) on its own line, control BELOW it
+     full-width. Nothing gets pushed off-screen; every control is
+     reachable; tapping anywhere in the row area works. */
   .setting-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 0;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 0;
+    min-height: 44px;
+    border-bottom: 1px solid var(--surface-2);
   }
+  .setting-row:last-child { border-bottom: none; }
   .setting-row label {
     font-size: var(--ui-fs);
     color: var(--text-1);
-    flex-shrink: 0;
+    font-weight: 600;
+    line-height: 1.35;
   }
   .setting-row .control {
-    flex: 1;
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
   }
+  .setting-row .control:last-child { justify-content: flex-end; }
   .hint {
     font-size: var(--ui-small-fs);
     color: var(--text-3);
     margin-bottom: 8px;
+    line-height: 1.45;
   }
+  /* v0.25: bigger color inputs + the hex value beside them */
+  .setting-row input[type="color"] {
+    width: 56px; height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    padding: 2px;
+    flex-shrink: 0;
+  }
+  .color-hex {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: var(--ui-micro-fs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  /* v0.25: breathing room under the last row (safe-area friendly) */
+  .settings-page { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
 
   /* Streaming cursor blink animation */
   @keyframes mb-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
@@ -745,13 +803,12 @@
   /* v0.24: live elapsed chip on the thinking summary — ticks while the
      model reasons (visible even when the bubble is collapsed). */
   .th-elapsed {
-    font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3, var(--text-3));
+    font-size: var(--ui-micro-fs); color: var(--text-3, var(--text-3));
     font-variant-numeric: tabular-nums; font-weight: 600;
   }
-  .msg-think-live {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent); animation: blink 1.2s infinite;
-  }
+  /* v0.25: the blinking live dot is GONE (user spec: "remove the
+     flickering circle — the yellow cursor is enough"). The elapsed
+     chip + the streaming cursor carry the aliveness now. */
   .msg-think-body {
     font-size: var(--ui-small-fs); color: var(--text-3); margin-top: 6px;
     max-height: 260px; overflow-y: auto; background: transparent; padding: 0;
@@ -837,7 +894,7 @@
   .tool-pill-head { display: flex; align-items: center; gap: 7px; overflow: hidden; }
   .tool-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tool-pill[data-expanded="1"] .tool-pill-text { white-space: normal; }
-  .tool-pill-chev { font-size: calc(var(--ui-small-fs) - 3px); color: currentColor; opacity: 0.7; flex-shrink: 0; }
+  .tool-pill-chev { font-size: var(--ui-micro-fs); color: currentColor; opacity: 0.7; flex-shrink: 0; }
   .tool-pill-use { color: var(--accent-2); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
@@ -1078,7 +1135,7 @@
     font-size: calc(var(--ui-small-fs) - 1px); flex-shrink: 0; overflow: hidden;
   }
   .pe-identity-k {
-    flex-shrink: 0; font-weight: 700; font-size: calc(var(--ui-small-fs) - 3px); letter-spacing: 0.4px;
+    flex-shrink: 0; font-weight: 700; font-size: var(--ui-micro-fs); letter-spacing: 0.4px;
     text-transform: uppercase; color: var(--accent);
     background: rgba(var(--accent-rgb),0.1); border: 1px solid rgba(var(--accent-rgb),0.3);
     padding: 2px 7px; border-radius: 5px;

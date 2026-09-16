@@ -124,13 +124,21 @@
   // effectiveGrid merges the user's explicit grid picks over the theme's
   // defaults. Stored values that still equal the pre-v0.24 defaults are
   // treated as "never customized" → the theme drives the grid.
+  // v0.25 SANITIZATION: only a REAL #rrggbb hex counts as a custom pick.
+  // The old code passed ANY stored string through — including CSS-var
+  // strings ('var(--bg-app)', written by the old reset button) which are
+  // INVALID canvas fillStyles (silently ignored → the grid showed stale
+  // colors that matched neither the theme nor the settings).
+  function isHexColor(v) {
+    return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+  }
   function effectiveGrid(s) {
     var t = THEMES[THEMES[s.theme] ? s.theme : 'midnight'];
     var g = {
-      bg: (s.bg && s.bg !== LEGACY_GRID.bg) ? s.bg : t.grid.bg,
-      lineColor: (s.lineColor && s.lineColor !== LEGACY_GRID.line) ? s.lineColor : t.grid.line,
-      dotColor: (s.dotColor && s.dotColor !== LEGACY_GRID.dot) ? s.dotColor : t.grid.dot,
-      originColor: (s.originColor && s.originColor !== LEGACY_GRID.origin) ? s.originColor : t.grid.origin
+      bg: (isHexColor(s.bg) && s.bg.toLowerCase() !== LEGACY_GRID.bg) ? s.bg : t.grid.bg,
+      lineColor: (isHexColor(s.lineColor) && s.lineColor.toLowerCase() !== LEGACY_GRID.line) ? s.lineColor : t.grid.line,
+      dotColor: (isHexColor(s.dotColor) && s.dotColor.toLowerCase() !== LEGACY_GRID.dot) ? s.dotColor : t.grid.dot,
+      originColor: (isHexColor(s.originColor) && s.originColor.toLowerCase() !== LEGACY_GRID.origin) ? s.originColor : t.grid.origin
     };
     return g;
   }

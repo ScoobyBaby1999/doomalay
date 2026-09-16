@@ -101,14 +101,18 @@
     const t = (window.DoomTheme && window.DoomTheme.effectiveGrid)
       ? window.DoomTheme.effectiveGrid(window.Settings.getState())
       : window.Settings.getState();
-    ctx.fillStyle = t.bg || '#0a0a0b';
+    // v0.25: canvas fillStyle REJECTS invalid values silently (the grid bug:
+    // a stale color stayed on screen when the value wasn't a real hex).
+    // Validate every grid color before it reaches the canvas.
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    ctx.fillStyle = (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b';
     ctx.fillRect(0, 0, W, H);
 
     const scaledGrid = gridSpacing() * scale;
     const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
     const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
-    ctx.strokeStyle = t.lineColor || '#131318';
+    ctx.strokeStyle = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = startX; x < W; x += scaledGrid) {
@@ -121,7 +125,7 @@
     }
     ctx.stroke();
 
-    ctx.fillStyle = t.dotColor || '#2e2e3a';
+    ctx.fillStyle = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
     const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
     for (let x = startX; x < W; x += scaledGrid) {
       for (let y = startY; y < H; y += scaledGrid) {
@@ -133,7 +137,7 @@
 
     const o = worldToScreen(0, 0);
     if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
-      ctx.fillStyle = t.originColor || '#4a4a5e';
+      ctx.fillStyle = (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e';
       ctx.beginPath();
       ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();

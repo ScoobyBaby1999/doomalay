@@ -606,11 +606,11 @@
         }, 0);
         return '<div class="settings-section expanded">' +
           '<h3 data-section-toggle><span>Cloud Providers</span><span class="chevron">▶</span></h3>' +
-          '<div class="section-body">' +
+          '<div class="section-body"><div class="section-inner">' +
           '<p class="hint" style="margin:0 0 12px">Connect a cloud provider with an API key to chat with models like Kimi, Llama, Claude and GPT. Keys are stored encrypted on this device only.</p>' +
           '<div id="cloud-prov-status" style="font-size: var(--ui-small-fs);margin:0 0 12px"><span style="color:var(--text-3)">Checking…</span></div>' +
-          '<button data-action="connect-cloud" style="background:' + GOLD + ';border:none;color:var(--bg-app);padding:12px 16px;border-radius:10px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;width:100%">Connect Cloud Providers</button>' +
-          '</div>' +
+          '<button data-action="connect-cloud" style="background:' + GOLD + ';border:none;color:var(--bg-app);padding:14px 16px;min-height:48px;border-radius:10px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;width:100%">Connect Cloud Providers</button>' +
+          '</div></div>' +
           '</div>';
       }
     });
@@ -627,7 +627,11 @@
     var KNOWN_GOOD = {
       nvidia: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-super-120b-a12b',
                'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
-               'google/gemma-4-31b-it']
+               'google/gemma-4-31b-it'],
+      // v0.25: opencode auto-pick → FREE models only (big-pickle first —
+      // paid zen models 400 CreditsError on keys without a payment method).
+      opencode: ['big-pickle', 'nemotron-3.5-lightning-free',
+                 'deepseek-v4-flash-free', 'mimo-v2.5-free']
     };
     var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
     var group = null;

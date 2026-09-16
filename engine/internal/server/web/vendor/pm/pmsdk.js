@@ -192,24 +192,33 @@ var PM_WEB_TOOLS_PROTOCOL = [
 // closing brace/quote (observed live: `ACTION: web_search {"query": "cat
 // diaper how to put on guide"` with no closing }). Append what's missing
 // instead of losing the tool call.
+// v0.25: (a) escape RAW newlines/tabs/CR inside string values (models paste
+// multi-line file content into zip_create args — invalid JSON otherwise;
+// the dock-CSV "files is required" bug), (b) close brackets AND braces
+// innermost-first (a truncated "files": [{…} needs ] AND }).
 function repairJSON(s) {
   if (typeof s !== 'string' || !s.trim().startsWith('{')) return s;
-  var inStr = false, esc = false, depth = 0;
+  var out = '';
+  var stack = [];
+  var inStr = false, esc = false;
   for (var i = 0; i < s.length; i++) {
     var ch = s[i];
     if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-    } else {
-      if (ch === '"') inStr = true;
-      else if (ch === '{') depth++;
-      else if (ch === '}') depth--;
-    }
+      if (esc) { esc = false; out += ch; }
+      else if (ch === '\\') { esc = true; out += ch; }
+      else if (ch === '"') { inStr = false; out += ch; }
+      else if (ch === '\n') out += '\\n';
+      else if (ch === '\r') out += '\\r';
+      else if (ch === '\t') out += '\\t';
+      else out += ch;
+    } else if (ch === '"') { inStr = true; out += ch; }
+    else if (ch === '{') { stack.push('}'); out += ch; }
+    else if (ch === '[') { stack.push(']'); out += ch; }
+    else if ((ch === '}' || ch === ']') && stack.length) { stack.pop(); out += ch; }
+    else out += ch;
   }
-  var out = s;
   if (inStr) out += '"';
-  while (depth > 0) { out += '}'; depth--; }
+  for (var j = stack.length - 1; j >= 0; j--) out += stack[j];
   return out;
 }
 
@@ -255,6 +264,90 @@ function findActionLine(text) {
   return null;
 }
 
+// v0.25 findActions — EVERY executable action in the reply (mirrors the Go
+// engine's parseActions):
+//   1. the LAST ACTION line is operative (preambles are legal)
+//   2. its JSON may extend over following lines (pretty-printed args) —
+//      brace-balance extension
+//   3. GLUED actions on one line — `base64 {…} ACTION: hash {…}` (the dock
+//      CSV bug) — split at depth-0 ACTION: markers OUTSIDE strings; every
+//      piece runs, observations are numbered
+function findActions(text) {
+  text = String(text || '');
+  var lines = text.split('\n');
+  var hit = -1;
+  for (var i = lines.length - 1; i >= 0; i--) {
+    if (/^[ \t]*ACTION:/i.test(lines[i])) { hit = i; break; }
+  }
+  if (hit < 0) return [];
+  var head = lines[hit].replace(/^[ \t]*ACTION:\s*/i, '');
+  var m = head.match(/^([a-zA-Z0-9_-]+)([\s\S]*)$/);
+  if (!m) return [];
+  var name = m[1], rest = m[2].trim();
+  if (!rest) rest = '{}';
+  // multi-line extension: JSON braces must balance
+  if (rest.charAt(0) === '{' && !balancedJSONJS(rest)) {
+    for (var j = hit + 1; j < lines.length && j <= hit + 40; j++) {
+      rest += '\n' + lines[j];
+      if (balancedJSONJS(rest)) break;
+    }
+  }
+  return splitGluedJS(name + ' ' + rest);
+}
+
+function balancedJSONJS(s) {
+  var inStr = false, esc = false, depth = 0;
+  for (var i = 0; i < s.length; i++) {
+    var ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return depth === 0 && !inStr;
+}
+
+// splitGluedJS — depth-0 "ACTION:" markers outside strings split the region.
+function splitGluedJS(region) {
+  var out = [], inStr = false, esc = false, depth = 0, start = 0;
+  for (var i = 0; i < region.length; i++) {
+    var ch = region[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    if (!inStr && depth <= 0 && hasActionMarkerJS(region, i)) {
+      var seg = region.slice(start, i).trim();
+      if (seg) out.push(seg);
+      i += 6; start = i + 1; // skip "ACTION:"
+    }
+  }
+  var tail = region.slice(start).trim();
+  if (tail) out.push(tail);
+  if (!out.length) out.push(region);
+  return out.map(function (seg) {
+    var mm = seg.match(/^([a-zA-Z0-9_-]+)([\s\S]*)$/);
+    if (!mm) return null;
+    return { name: mm[1].toLowerCase(), rest: mm[2].trim() || '{}' };
+  }).filter(Boolean);
+}
+
+function hasActionMarkerJS(s, i) {
+  if (i + 7 > s.length) return false;
+  if (s.substr(i, 7).toUpperCase() !== 'ACTION:') return false;
+  if (i > 0) {
+    var p = s[i - 1];
+    if (p !== ' ' && p !== '\t' && p !== '\n' && p !== '\r' && p !== '{' && p !== '}') return false;
+  }
+  return true;
+}
+
 // v0.22: could the text STILL become an ACTION round? While it could,
 // we hold deltas (bounded — see roundTripOnce). Mirrors the Go loop's
 // preambleHoldBytes/preambleHoldLines.
@@ -293,8 +386,8 @@ async function runToolLoop(c, opts) {
     usage = res.usage || usage;
     var reply = (res.text || '').trim();
 
-    var act = findActionLine(reply);
-    if (!act) {
+    var act = findActions(reply);
+    if (!act.length) {
       // v0.24 AUTO-PROCEED NUDGE (same as the engine loop): models that
       // "just say it will start and make me have to tell it go" — when NO
       // tool has run yet, the reply is short, and it reads as intent-to-act,
@@ -313,111 +406,25 @@ async function runToolLoop(c, opts) {
     // v0.22: a >700-byte preamble streamed before its ACTION line — wipe
     // the leaked text so the tool pills render on a clean slate.
     if (res.emitted && opts.onReset) opts.onReset();
-    var tool = act.name.toLowerCase();
-    // v0.20 ALIASES: models invent plausible tool names (search, google,
-    // fetch, browse, open_url…) — map them onto the real tools instead of
-    // erroring. The engine loop does the same.
-    if (/^(search|websearch|google|bing|duckduckgo|find)$/.test(tool)) tool = 'web_search';
-    else if (/^(fetch|open_url|browse|get|visit|read_url|url)$/.test(tool)) tool = 'web_fetch';
-    else if (/^(calc|math|compute|evaluate)$/.test(tool)) tool = 'calculator';
-    else if (/^(time|now|clock|date)$/.test(tool)) tool = 'time_now';
-    else if (/^(guid|uuid4|uuidgen)$/.test(tool)) tool = 'uuid';
-    else if (/^(rand|random_number|dice)$/.test(tool)) tool = 'random';
-    else if (/^(b64|base_64)$/.test(tool)) tool = 'base64';
-    else if (/^(md5|sha|sha1_hash|digest)$/.test(tool)) tool = 'hash';
-    else if (/^(json|json_format|validate_json|jsonlint)$/.test(tool)) tool = 'json_tool';
-    else if (/^(word_count|count|stats|wc)$/.test(tool)) tool = 'text_stats';
-    else if (/^(urldecode|percent_encode|urlencode)$/.test(tool)) tool = 'url_encode';
-    else if (/^(regex|grep|findall|match)$/.test(tool)) tool = 'regex_extract';
-    else if (/^(docx|word|word_doc|make_docx)$/.test(tool)) tool = 'docx_create';
-    else if (/^(xlsx|excel|spreadsheet|make_xlsx)$/.test(tool)) tool = 'xlsx_create';
-    else if (/^(zip|make_zip|archive|compress|pack|7z|7zip|tar|make_tar|tarball|gzip|create_archive|make_archive|bundle)$/.test(tool)) tool = 'archive_create';
-    else if (/^(unzip|extract|decompress|unarchive|untar|unrar|ungzip|gunzip|open_archive|list_archive|extract_archive)$/.test(tool)) tool = 'archive_extract';
-    var arg = {};
-    if (act.rest) {
-      try { arg = JSON.parse(act.rest); }
-      catch (e) {
-        // truncated JSON — repair the missing braces/quotes, then retry
-        var fixed = repairJSON(act.rest);
-        try { arg = JSON.parse(fixed); } catch (e2) { arg = act.rest.replace(/^["']|["']$/g, ''); }
-      }
-    }
-    // models sometimes pass the query as a bare string instead of JSON
-    if (typeof arg === 'string') arg = { query: arg, url: arg, text: arg, expr: arg, pattern: arg };
 
-    try {
-      if (tool === 'web_search') {
-        var q = arg.query || String(arg.q || '');
-        if (!q) {
-          // models sometimes omit the argument — teach, don't 400
-          messages.push({ role: 'assistant', content: reply });
-          messages.push({ role: 'user', content: 'OBSERVATION:\nerror: empty query. Usage: ACTION: web_search {"query": "<search terms>"}' });
-          continue;
-        }
-        opts.onProgress && opts.onProgress({ text: 'searching the web…' });
-        opts.onTool && opts.onTool({ name: 'web_search', summary: q });
-        var r = await fetch('/api/tools/websearch?q=' + encodeURIComponent(q) + '&max=8');
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        var data = await r.json();
-        var results = (data && data.results) || [];
-        for (var i = 0; i < results.length; i++) {
-          allSources.push({ title: results[i].title, url: results[i].url, snippet: results[i].snippet });
-        }
-        var fmt = results.map(function (s, j) {
-          return '[' + (j + 1) + '] ' + s.title + '\n' + s.url + '\n' + (s.snippet || '');
-        }).join('\n\n');
-        opts.onTool && opts.onTool({ name: 'web_search', result: (results.length + ' results') + (results[0] ? ' — ' + results[0].title : ''), sources: results });
-        messages.push({ role: 'assistant', content: reply });
-        messages.push({ role: 'user', content: 'OBSERVATION:\n' + (fmt || '(no results)') });
-      } else if (tool === 'web_fetch') {
-        var u = arg.url || String(arg.u || '');
-        if (!u) {
-          messages.push({ role: 'assistant', content: reply });
-          messages.push({ role: 'user', content: 'OBSERVATION:\nerror: empty url. Usage: ACTION: web_fetch {"url": "<https url>"}' });
-          continue;
-        }
-        opts.onProgress && opts.onProgress({ text: 'reading ' + u.slice(0, 60) + '…' });
-        opts.onTool && opts.onTool({ name: 'web_fetch', summary: u });
-        var r2 = await fetch('/api/tools/webfetch?url=' + encodeURIComponent(u) + '&max=6000');
-        if (!r2.ok) throw new Error('HTTP ' + r2.status);
-        var d2 = await r2.json();
-        opts.onTool && opts.onTool({ name: 'web_fetch', result: ((d2.text || '') + '').slice(0, 120) });
-        messages.push({ role: 'assistant', content: reply });
-        messages.push({ role: 'user', content: 'OBSERVATION:\n' + ((d2 && d2.text) || '(empty page)') });
-      } else {
-        // LOCAL tool — the engine computes it (/api/tools/local).
-        // v0.22: session-scoped so file tools save artifacts + zip_extract
-        // can re-read what an earlier round saved.
-        var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.artifact || arg.name || '';
-        // v0.23: keep the indicator alive across the HTTP round-trip —
-        // "building X…" / "running tool…" instead of a frozen chat.
-        var progText = /^(docx_create|xlsx_create|zip_create|archive_create)$/.test(tool)
-          ? (arg.name ? 'building ' + arg.name + '…' : 'building file…')
-          : /^(zip_extract|archive_extract)$/.test(tool)
-            ? (arg.artifact ? 'unpacking ' + arg.artifact + '…' : 'unpacking archive…')
-            : 'running ' + tool + '…';
-        opts.onProgress && opts.onProgress({ text: progText });
-        opts.onTool && opts.onTool({ name: tool, summary: String(sum).slice(0, 80) });
-        var ls = '/api/tools/local?name=' + encodeURIComponent(tool) + '&args=' + encodeURIComponent(JSON.stringify(arg));
-        if (opts.sessionId) ls += '&session=' + encodeURIComponent(opts.sessionId);
-        var r3 = await fetch(ls);
-        if (!r3.ok) {
-          var errText = 'tool error HTTP ' + r3.status;
-          opts.onTool && opts.onTool({ name: tool, result: errText });
-          messages.push({ role: 'assistant', content: reply });
-          messages.push({ role: 'user', content: 'OBSERVATION:\n(' + errText + ' — try again with valid arguments)' });
-          continue;
-        }
-        var d3 = await r3.json();
-        var out3 = (d3 && d3.result) || '';
-        opts.onTool && opts.onTool({ name: tool, result: String(out3).slice(0, 120), artifact: d3 && d3.artifact });
-        messages.push({ role: 'assistant', content: reply });
-        messages.push({ role: 'user', content: 'OBSERVATION:\n' + out3 });
+    // v0.25 MULTI-ACTION: execute EVERY parsed action (glued lines split —
+    // the dock-CSV bug), observations numbered so the model can attribute
+    // results. Mirrors the Go engine's executeAction loop.
+    var obsParts = [];
+    for (var k = 0; k < act.length; k++) {
+      var obs = 'OBSERVATION:\n(tool error)';
+      try { obs = await execAction(act[k], opts, allSources); }
+      catch (e) {
+        obs = 'OBSERVATION:\n(tool error: ' + (e.message || e) + ' — try a different approach or answer from what you have)';
       }
-    } catch (e) {
-      messages.push({ role: 'assistant', content: reply });
-      messages.push({ role: 'user', content: 'OBSERVATION:\n(tool error: ' + (e.message || e) + ' — try a different approach or answer from what you have)' });
+      if (act.length > 1) {
+        obsParts.push('OBSERVATION (' + (k + 1) + ' of ' + act.length + ' — ' + act[k].name + '):\n' + String(obs).replace(/^OBSERVATION:\n/, ''));
+      } else {
+        obsParts.push(obs);
+      }
     }
+    messages.push({ role: 'assistant', content: reply });
+    messages.push({ role: 'user', content: obsParts.join('\n\n') });
   }
 
   if (round === MAX_ROUNDS && !finalText) {
@@ -429,6 +436,107 @@ async function runToolLoop(c, opts) {
 
   opts.onStatus && opts.onStatus('idle');
   return { text: finalText, usage: usage, sources: allSources };
+}
+
+// execAction — v0.25: ONE parsed tool call → its OBSERVATION string (the
+// old inline dispatch, extracted so the multi-action loop can call it per
+// action). Throws on unexpected errors (the loop catches → observation).
+async function execAction(act, opts, allSources) {
+  var tool = act.name.toLowerCase();
+  // v0.20 ALIASES: models invent plausible tool names (search, google,
+  // fetch, browse, open_url…) — map them onto the real tools instead of
+  // erroring. The engine loop does the same.
+  if (/^(search|websearch|google|bing|duckduckgo|find)$/.test(tool)) tool = 'web_search';
+  else if (/^(fetch|open_url|browse|get|visit|read_url|url)$/.test(tool)) tool = 'web_fetch';
+  else if (/^(calc|math|compute|evaluate)$/.test(tool)) tool = 'calculator';
+  else if (/^(time|now|clock|date)$/.test(tool)) tool = 'time_now';
+  else if (/^(guid|uuid4|uuidgen)$/.test(tool)) tool = 'uuid';
+  else if (/^(rand|random_number|dice)$/.test(tool)) tool = 'random';
+  else if (/^(b64|base_64)$/.test(tool)) tool = 'base64';
+  else if (/^(md5|sha|sha1_hash|digest)$/.test(tool)) tool = 'hash';
+  else if (/^(json|json_format|validate_json|jsonlint)$/.test(tool)) tool = 'json_tool';
+  else if (/^(word_count|count|stats|wc)$/.test(tool)) tool = 'text_stats';
+  else if (/^(urldecode|percent_encode|urlencode)$/.test(tool)) tool = 'url_encode';
+  else if (/^(regex|grep|findall|match)$/.test(tool)) tool = 'regex_extract';
+  else if (/^(docx|word|word_doc|make_docx)$/.test(tool)) tool = 'docx_create';
+  else if (/^(xlsx|excel|spreadsheet|make_xlsx)$/.test(tool)) tool = 'xlsx_create';
+  else if (/^(zip|make_zip|archive|compress|pack|7z|7zip|tar|make_tar|tarball|gzip|create_archive|make_archive|bundle)$/.test(tool)) tool = 'archive_create';
+  else if (/^(unzip|extract|decompress|unarchive|untar|unrar|ungzip|gunzip|open_archive|list_archive|extract_archive)$/.test(tool)) tool = 'archive_extract';
+  var arg = {};
+  if (act.rest) {
+    try { arg = JSON.parse(act.rest); }
+    catch (e) {
+      // truncated JSON — repair the missing braces/quotes, then retry
+      var fixed = repairJSON(act.rest);
+      try { arg = JSON.parse(fixed); } catch (e2) { arg = act.rest.replace(/^["']|["']$/g, ''); }
+    }
+  }
+  // models sometimes pass the query as a bare string instead of JSON
+  if (typeof arg === 'string') arg = { query: arg, url: arg, text: arg, expr: arg, pattern: arg };
+
+  if (tool === 'web_search') {
+    var q = arg.query || String(arg.q || '');
+    if (!q) {
+      // models sometimes omit the argument — teach, don't 400
+      return 'OBSERVATION:\nerror: empty query. Usage: ACTION: web_search {"query": "<search terms>"}';
+    }
+    opts.onProgress && opts.onProgress({ text: 'searching the web…' });
+    opts.onTool && opts.onTool({ name: 'web_search', summary: q });
+    var r = await fetch('/api/tools/websearch?q=' + encodeURIComponent(q) + '&max=8');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    var results = (data && data.results) || [];
+    for (var i = 0; i < results.length; i++) {
+      allSources.push({ title: results[i].title, url: results[i].url, snippet: results[i].snippet });
+    }
+    var fmt = results.map(function (s, j) {
+      return '[' + (j + 1) + '] ' + s.title + '\n' + s.url + '\n' + (s.snippet || '');
+    }).join('\n\n');
+    opts.onTool && opts.onTool({ name: 'web_search', result: (results.length + ' results') + (results[0] ? ' — ' + results[0].title : ''), sources: results });
+    return 'OBSERVATION:\n' + (fmt || '(no results)');
+  }
+  if (tool === 'web_fetch') {
+    var u = arg.url || String(arg.u || '');
+    if (!u) {
+      return 'OBSERVATION:\nerror: empty url. Usage: ACTION: web_fetch {"url": "<https url>"}';
+    }
+    opts.onProgress && opts.onProgress({ text: 'reading ' + u.slice(0, 60) + '…' });
+    opts.onTool && opts.onTool({ name: 'web_fetch', summary: u });
+    var r2 = await fetch('/api/tools/webfetch?url=' + encodeURIComponent(u) + '&max=6000');
+    if (!r2.ok) throw new Error('HTTP ' + r2.status);
+    var d2 = await r2.json();
+    opts.onTool && opts.onTool({ name: 'web_fetch', result: ((d2.text || '') + '').slice(0, 120) });
+    return 'OBSERVATION:\n' + ((d2 && d2.text) || '(empty page)');
+  }
+  // LOCAL tool — the engine computes it (/api/tools/local).
+  // v0.22: session-scoped so file tools save artifacts + zip_extract
+  // can re-read what an earlier round saved.
+  // v0.25: delegate routes to the engine's swarm fanout (was "unknown
+  // tool" — dock CSV event 31).
+  var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.artifact || arg.prompt || arg.name || '';
+  // v0.23: keep the indicator alive across the HTTP round-trip —
+  // "building X…" / "running tool…" instead of a frozen chat.
+  var progText = /^(docx_create|xlsx_create|zip_create|archive_create)$/.test(tool)
+    ? (arg.name ? 'building ' + arg.name + '…' : 'building file…')
+    : /^(zip_extract|archive_extract)$/.test(tool)
+      ? (arg.artifact ? 'unpacking ' + arg.artifact + '…' : 'unpacking archive…')
+      : tool === 'delegate'
+        ? 'consulting other models…'
+        : 'running ' + tool + '…';
+  opts.onProgress && opts.onProgress({ text: progText });
+  opts.onTool && opts.onTool({ name: tool, summary: String(sum).slice(0, 80) });
+  var ls = '/api/tools/local?name=' + encodeURIComponent(tool) + '&args=' + encodeURIComponent(JSON.stringify(arg));
+  if (opts.sessionId) ls += '&session=' + encodeURIComponent(opts.sessionId);
+  var r3 = await fetch(ls);
+  if (!r3.ok) {
+    var errText = 'tool error HTTP ' + r3.status;
+    opts.onTool && opts.onTool({ name: tool, result: errText });
+    return 'OBSERVATION:\n(' + errText + ' — try again with valid arguments)';
+  }
+  var d3 = await r3.json();
+  var out3 = (d3 && d3.result) || '';
+  opts.onTool && opts.onTool({ name: tool, result: String(out3).slice(0, 120), artifact: d3 && d3.artifact });
+  return 'OBSERVATION:\n' + out3;
 }
 
 // One PM streaming round (v0.22: LIVE STREAMING + NETWORK RETRY).

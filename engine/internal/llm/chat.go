@@ -357,6 +357,20 @@ func friendlyHTTPError(status int, body string, provider string) string {
         if status == 404 && strings.Contains(b, "Not found for account") {
                 return "404: this model is no longer available for your " + provider + " account — pick another model"
         }
+        // v0.25 OPENCODE ZEN billing clarifications (live-verified with a
+        // working key): paid models answer 400 CreditsError "No payment
+        // method …/billing" even though the KEY is perfectly valid — free
+        // models (big-pickle, *-free) work on the same key. The raw message
+        // read as "my key needs billing enabled", which is wrong.
+        if strings.Contains(b, "CreditsError") || strings.Contains(b, "No payment method") {
+                return "this model is PAID on OpenCode Zen — your key works, but this model needs a payment method at opencode.ai/settings/billing. Free options: big-pickle, nemotron-3.5-lightning-free, deepseek-v4-flash-free"
+        }
+        if strings.Contains(b, "MissingSessionID") {
+                return "OpenCode Zen wants a client session for this model — try big-pickle or another free model"
+        }
+        if strings.Contains(b, "FreeUsageLimitError") {
+                return "OpenCode Zen free-tier limit for this model right now — wait a moment or switch models"
+        }
         if status == 429 || strings.Contains(b, "rate limit") || strings.Contains(b, "Too Many Requests") {
                 msg := "429: the model is at capacity / rate-limited — wait ~15s and try again, or switch models"
                 if provider == "nvidia" {
@@ -426,6 +440,11 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
                 httpReq.Header.Set("anthropic-version", "2023-06-01")
         } else {
                 httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+        }
+        // v0.25: OpenCode Zen free-tier session id (x-session-id) — without it
+        // big-pickle + *-free models 400 with MissingSessionID.
+        for k, v := range providerExtraHeaders(req.Provider, req.APIKey) {
+                httpReq.Header.Set(k, v)
         }
         httpReq.Header.Set("Accept", "text/event-stream")
         httpReq.Header.Set("HTTP-Referer", "https://doomalay.app")
@@ -576,6 +595,11 @@ func authHeaders(req ChatRequest) map[string]string {
                 h["x-api-key"] = req.APIKey
                 h["anthropic-version"] = "2023-06-01"
         }
+        // v0.25: OpenCode Zen — the free-tier models require a session id
+        // (x-session-id); paid models ignore it. Harmless to always send.
+        for k, v := range providerExtraHeaders(req.Provider, req.APIKey) {
+                h[k] = v
+        }
         return h
 }
 
@@ -661,7 +685,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 }
                 totalUsage = mergeUsage(totalUsage, usage)
 
-                action, argJSON, ok := parseAction(answer)
+                _, _, ok := parseAction(answer)
                 if !ok {
                         // v0.24 AUTO-PROCEED NUDGE — the user report: models that
                         // "just say it will start and make me have to tell it go"
@@ -687,95 +711,23 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 }
                 toolsRun++
 
-                // Execute the tool.
-                // v0.20 ALIASES: models invent plausible tool names (search,
-                // google, fetch, browse, calc…) — map them onto the real
-                // tools instead of erroring. Capability > pedantry.
-                action = canonicalToolName(action)
-                var observation string
-                if action == "delegate" && req.DelegateFn != nil {
-                        // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
-                        // one prompt, up to 3 other models answer in parallel.
-                        var args struct {
-                                Prompt string   `json:"prompt"`
-                                Models []string `json:"models"`
-                        }
-                        _ = json.Unmarshal([]byte(argJSON), &args)
-                        if args.Prompt == "" {
-                                observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
+                // v0.25 MULTI-ACTION: a reply may carry SEVERAL executable
+                // calls (glued "…} ACTION: hash {…" lines — the dock CSV
+                // bug where the first tool ran with the second action's
+                // text glued INSIDE its args). Execute every parsed action
+                // in order; observations are numbered so the model can
+                // attribute results.
+                acts := parseActions(answer)
+                var obsParts []string
+                for ai, act := range acts {
+                        observation := executeAction(ctx, req, ch, act.Name, act.Args, &allSources)
+                        if len(acts) > 1 {
+                                obsParts = append(obsParts, fmt.Sprintf("OBSERVATION (%d of %d — %s):\n%s", ai+1, len(acts), act.Name, strings.TrimPrefix(observation, "OBSERVATION:\n")))
                         } else {
-                                ch <- ChatChunk{Type: "progress", Text: "consulting other models…"}
-                                ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80)}
-                                outs := req.DelegateFn(ctx, args.Prompt, args.Models)
-                                b, _ := json.Marshal(outs)
-                                observation = "OBSERVATION:\n" + string(b)
-                                ch <- ChatChunk{Type: "tool_result", Text: clamp(string(b), 600), Name: "delegate"}
-                        }
-                } else if IsLocalTool(action) {
-                        // v0.20: local tools — pure Go, zero latency, zero setup.
-                        summary := summarizeLocalAction(action, argJSON)
-                        ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
-                        observation = RunLocalTool(action, argJSON, req.ArtifactSink)
-                        obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
-                        res := ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: action}
-                        // v0.22: file tools report the saved artifact so the UI
-                        // can render a real download card right after the pill.
-                        if strings.Contains(obs, "Saved as artifact ") {
-                                var fargs struct {
-                                        Name string `json:"name"`
-                                }
-                                _ = json.Unmarshal([]byte(argJSON), &fargs)
-                                if fargs.Name != "" {
-                                        res.Artifact = map[string]any{"name": fargs.Name}
-                                }
-                        }
-                        ch <- res
-                } else {
-                        switch action {
-                        case "web_search":
-                                var args struct {
-                                        Query string `json:"query"`
-                                }
-                                _ = json.Unmarshal([]byte(argJSON), &args)
-                                if args.Query == "" {
-                                        observation = "OBSERVATION:\nerror: empty query"
-                                        break
-                                }
-                                ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query}
-                                results, err := WebSearch(ctx, args.Query, 5, req.TavilyKey)
-                                if err != nil {
-                                        observation = "OBSERVATION:\nsearch error: " + err.Error()
-                                        break
-                                }
-                                allSources = append(allSources, results...)
-                                ch <- ChatChunk{Type: "sources", Sources: results}
-                                obs := FormatSearchResults(results)
-                                if obs == "" {
-                                        obs = "(no results — try different terms)"
-                                }
-                                observation = "OBSERVATION:\n" + obs
-                                ch <- ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: "web_search"}
-                        case "web_fetch":
-                                var args struct {
-                                        URL string `json:"url"`
-                                }
-                                _ = json.Unmarshal([]byte(argJSON), &args)
-                                if args.URL == "" {
-                                        observation = "OBSERVATION:\nerror: empty url"
-                                        break
-                                }
-                                ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
-                                text, err := WebFetch(ctx, args.URL, 12000)
-                                if err != nil {
-                                        observation = "OBSERVATION:\nfetch error: " + err.Error()
-                                        break
-                                }
-                                observation = "OBSERVATION:\n" + text
-                                ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
-                        default:
-                                observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (web tools when enabled)."
+                                obsParts = append(obsParts, observation)
                         }
                 }
+                observation := strings.Join(obsParts, "\n\n")
 
                 // Append the assistant ACTION + user OBSERVATION to history.
                 history = append(history, Message{Role: "assistant", Content: answer})
@@ -802,6 +754,102 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 ch <- ChatChunk{Type: "sources", Sources: allSources}
         }
         ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
+}
+
+// executeAction runs ONE parsed tool call and returns its observation
+// (v0.25: extracted from runWebSearchTurn's body so the multi-action loop
+// can call it per action). allSources accumulates web-search citations
+// across calls.
+func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) string {
+        // v0.20 ALIASES: models invent plausible tool names (search,
+        // google, fetch, browse, calc…) — map them onto the real tools
+        // instead of erroring. Capability > pedantry.
+        action = canonicalToolName(action)
+        var observation string
+        if action == "delegate" && req.DelegateFn != nil {
+                // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
+                // one prompt, up to 3 other models answer in parallel.
+                var args struct {
+                        Prompt string   `json:"prompt"`
+                        Models []string `json:"models"`
+                }
+                _ = json.Unmarshal([]byte(argJSON), &args)
+                if args.Prompt == "" {
+                        observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
+                } else {
+                        ch <- ChatChunk{Type: "progress", Text: "consulting other models…"}
+                        ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80)}
+                        outs := req.DelegateFn(ctx, args.Prompt, args.Models)
+                        b, _ := json.Marshal(outs)
+                        observation = "OBSERVATION:\n" + string(b)
+                        ch <- ChatChunk{Type: "tool_result", Text: clamp(string(b), 600), Name: "delegate"}
+                }
+        } else if IsLocalTool(action) {
+                // v0.20: local tools — pure Go, zero latency, zero setup.
+                summary := summarizeLocalAction(action, argJSON)
+                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
+                observation = RunLocalTool(action, argJSON, req.ArtifactSink)
+                obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
+                res := ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: action}
+                // v0.22: file tools report the saved artifact so the UI
+                // can render a real download card right after the pill.
+                if strings.Contains(obs, "Saved as artifact ") {
+                        var fargs struct {
+                                Name string `json:"name"`
+                        }
+                        _ = json.Unmarshal([]byte(argJSON), &fargs)
+                        if fargs.Name != "" {
+                                res.Artifact = map[string]any{"name": fargs.Name}
+                        }
+                }
+                ch <- res
+        } else {
+                switch action {
+                case "web_search":
+                        var args struct {
+                                Query string `json:"query"`
+                        }
+                        _ = json.Unmarshal([]byte(argJSON), &args)
+                        if args.Query == "" {
+                                observation = "OBSERVATION:\nerror: empty query"
+                                return observation
+                        }
+                        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query}
+                        results, err := WebSearch(ctx, args.Query, 5, req.TavilyKey)
+                        if err != nil {
+                                observation = "OBSERVATION:\nsearch error: " + err.Error()
+                                return observation
+                        }
+                        *allSources = append(*allSources, results...)
+                        ch <- ChatChunk{Type: "sources", Sources: results}
+                        obs := FormatSearchResults(results)
+                        if obs == "" {
+                                obs = "(no results — try different terms)"
+                        }
+                        observation = "OBSERVATION:\n" + obs
+                        ch <- ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: "web_search"}
+                case "web_fetch":
+                        var args struct {
+                                URL string `json:"url"`
+                        }
+                        _ = json.Unmarshal([]byte(argJSON), &args)
+                        if args.URL == "" {
+                                observation = "OBSERVATION:\nerror: empty url"
+                                return observation
+                        }
+                        ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
+                        text, err := WebFetch(ctx, args.URL, 12000)
+                        if err != nil {
+                                observation = "OBSERVATION:\nfetch error: " + err.Error()
+                                return observation
+                        }
+                        observation = "OBSERVATION:\n" + text
+                        ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
+                default:
+                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (web tools when enabled)."
+                }
+        }
+        return observation
 }
 
 // debugReact (env DOOMALAY_DEBUG_REACT=1) logs every content chunk + mode
@@ -994,7 +1042,7 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         // caller) will still execute it — emit assistant_reset so the UI
         // clears the leaked text instead of showing prose + "ACTION: …".
         if mode == 1 {
-                if a, _, ok := parseAction(answer.String()); ok && a != "" && emitted {
+                if acts := parseActions(answer.String()); len(acts) > 0 && emitted {
                         ch <- ChatChunk{Type: "assistant_reset"}
                         emitted = false
                 }
@@ -1005,7 +1053,7 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         // a final answer, the turn ended idle with NO reply. Flush it now —
         // the user sees the raw text and the model corrects next turn.
         if mode == 2 {
-                if a, _, ok := parseAction(answer.String()); !ok || a == "" {
+                if acts := parseActions(answer.String()); len(acts) == 0 {
                         ch <- ChatChunk{Type: "assistant_delta", Text: answer.String()}
                         emitted = true
                 }
@@ -1238,16 +1286,38 @@ var errEmptyRound = fmt.Errorf("empty model response")
 // v0.20: the argument may be a BARE string (models often skip the JSON —
 // `ACTION: search best cat food`) — it gets wrapped into the right JSON
 // shape by tool kind.
+// v0.25: delegates to parseActions and returns the LAST executable call.
 var actionRe = regexp.MustCompile(`(?m)^ACTION:\s*([a-z0-9_]+)\s*(\{[\s\S]*\}|[^\n]*)\s*$`)
 
 func parseAction(answer string) (action, argJSON string, ok bool) {
+        acts := parseActions(answer)
+        if len(acts) == 0 {
+                return "", "", false
+        }
+        last := acts[len(acts)-1]
+        return last.Name, last.Args, true
+}
+
+// parsedAction is one executable tool call extracted from a model reply.
+type parsedAction struct {
+        Name string
+        Args string
+}
+
+// parseActions extracts EVERY executable ACTION from a reply (v0.25).
+//
+// Handles, in order:
+//   - prose preambles before the ACTION line (protocol-legal)
+//   - several ACTION LINES (the last line is operative)
+//   - pretty-printed JSON spanning following lines (brace-extension)
+//   - GLUED actions on one line — `base64 {...} ACTION: hash {"algo":...}`
+//     (observed live in the dock CSV: the first tool ran with the second
+//     action's text glued INSIDE its arguments). Depth-0 ACTION: markers
+//     outside strings split the region; every piece runs in order.
+//   - truncated JSON (repairJSON) and raw newlines inside strings
+func parseActions(answer string) []parsedAction {
         // Trim leading fences/spaces the model may add.
         trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(answer), "```"))
-        // v0.22: the ACTION line may be preceded by a prose preamble (the
-        // protocol now allows it) and there may be several ACTION lines —
-        // the LAST one is the operative call. Scan per line so a JSON
-        // argument can extend over following lines (pretty-printed args)
-        // without swallowing braces that belong to trailing prose.
         lines := strings.Split(trimmed, "\n")
         hit := -1
         for i := len(lines) - 1; i >= 0; i-- {
@@ -1257,7 +1327,7 @@ func parseAction(answer string) (action, argJSON string, ok bool) {
                 }
         }
         if hit < 0 {
-                return "", "", false
+                return nil
         }
         head := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[hit]), "ACTION:"))
         var name, rest string
@@ -1270,9 +1340,8 @@ func parseAction(answer string) (action, argJSON string, ok bool) {
                 name, rest = head, ""
         }
         if name == "" || !regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name) {
-                return "", "", false
+                return nil
         }
-        action = strings.ToLower(name)
         if rest == "" {
                 rest = "{}"
         }
@@ -1287,39 +1356,121 @@ func parseAction(answer string) (action, argJSON string, ok bool) {
                         }
                 }
         }
-        if !strings.HasPrefix(rest, "{") {
-                // bare argument — wrap it into the JSON shape the tool wants
-                esc, err := json.Marshal(rest)
-                if err != nil {
-                        esc = []byte(`""`)
+        // v0.25 GLUED-ACTION SPLIT: depth-0 "ACTION:" markers OUTSIDE strings
+        // divide the region into separate calls. A marker inside a JSON string
+        // value (text: "use ACTION: syntax") is inStr → never split.
+        segments := splitGluedActions(name + " " + rest)
+        var out []parsedAction
+        for _, seg := range segments {
+                seg = strings.TrimSpace(seg)
+                // segment = "<tool name> <args…>" (the args may be glued on)
+                m := regexp.MustCompile(`^([a-zA-Z0-9_-]+)([\s\S]*)$`).FindStringSubmatch(seg)
+                if m == nil {
+                        continue
                 }
-                switch canonicalToolName(action) {
-                case "web_search":
-                        rest = `{"query":` + string(esc) + `}`
-                case "web_fetch":
-                        rest = `{"url":` + string(esc) + `}`
-                case "calculator":
-                        rest = `{"expr":` + string(esc) + `}`
-                case "time_now":
-                        rest = `{"tz":` + string(esc) + `}`
-                case "regex_extract":
-                        rest = `{"pattern":` + string(esc) + `}`
-                case "archive_create":
-                        rest = `{"name":` + string(esc) + `}`
-                case "archive_extract":
-                        rest = `{"artifact":` + string(esc) + `}`
-                default:
-                        rest = `{"text":` + string(esc) + `}`
+                n := strings.ToLower(m[1])
+                r := strings.TrimSpace(m[2])
+                if r == "" {
+                        r = "{}"
                 }
-        } else if !json.Valid([]byte(rest)) {
-                // v0.20: truncated JSON — models sometimes cut the closing
-                // brace/quote (observed live). Repair instead of losing the
-                // tool call to a parse error.
-                if fixed := repairJSON(rest); json.Valid([]byte(fixed)) {
-                        rest = fixed
+                if !strings.HasPrefix(r, "{") {
+                        // bare argument — wrap it into the JSON shape the tool wants
+                        esc, err := json.Marshal(r)
+                        if err != nil {
+                                esc = []byte(`""`)
+                        }
+                        switch canonicalToolName(n) {
+                        case "web_search":
+                                r = `{"query":` + string(esc) + `}`
+                        case "web_fetch":
+                                r = `{"url":` + string(esc) + `}`
+                        case "calculator":
+                                r = `{"expr":` + string(esc) + `}`
+                        case "time_now":
+                                r = `{"tz":` + string(esc) + `}`
+                        case "regex_extract":
+                                r = `{"pattern":` + string(esc) + `}`
+                        case "archive_create":
+                                r = `{"name":` + string(esc) + `}`
+                        case "archive_extract":
+                                r = `{"artifact":` + string(esc) + `}`
+                        default:
+                                r = `{"text":` + string(esc) + `}`
+                        }
+                } else if !json.Valid([]byte(r)) {
+                        // v0.20: truncated JSON — models sometimes cut the closing
+                        // brace/quote (observed live). Repair instead of losing the
+                        // tool call to a parse error.
+                        if fixed := repairJSON(r); json.Valid([]byte(fixed)) {
+                                r = fixed
+                        }
+                }
+                out = append(out, parsedAction{Name: n, Args: r})
+        }
+        return out
+}
+
+// splitGluedActions splits "name1 {json} ACTION: name2 {json} …" at every
+// depth-0 ACTION: marker that sits OUTSIDE a JSON string. Returns the
+// segments INCLUDING their leading tool names.
+func splitGluedActions(region string) []string {
+        var out []string
+        inStr, esc, depth := false, false, 0
+        start := 0 // segment start
+        for i := 0; i < len(region); i++ {
+                c := region[i]
+                switch {
+                case inStr && esc:
+                        esc = false
+                case inStr && c == '\\':
+                        esc = true
+                case inStr && c == '"':
+                        inStr = false
+                case c == '"':
+                        inStr = true
+                case c == '{':
+                        depth++
+                case c == '}':
+                        depth--
+                }
+                // A marker candidate: "ACTION:" at depth 0 outside strings, at a
+                // word boundary. Byte-level compare is safe (ASCII prefix).
+                if !inStr && depth <= 0 && hasActionMarkerAt(region, i) {
+                        if seg := strings.TrimSpace(region[start:i]); seg != "" {
+                                out = append(out, seg)
+                        }
+                        i += len("ACTION:") - 1
+                        start = i + 1
                 }
         }
-        return action, rest, true
+        if seg := strings.TrimSpace(region[start:]); seg != "" {
+                out = append(out, seg)
+        }
+        if len(out) == 0 {
+                out = append(out, region)
+        }
+        return out
+}
+
+// hasActionMarkerAt reports whether region[i:] starts with "ACTION:"
+// (case-insensitive) at a position that is the START of the marker word.
+func hasActionMarkerAt(region string, i int) bool {
+        const marker = "ACTION:"
+        if i+len(marker) > len(region) {
+                return false
+        }
+        if !strings.EqualFold(region[i:i+len(marker)], marker) {
+                return false
+        }
+        // must be a word START: preceded by whitespace/{/}/start — so a tool
+        // named "raction:" or JSON keys like "xaction:" don't trigger.
+        if i > 0 {
+                prev := region[i-1]
+                if prev != ' ' && prev != '\t' && prev != '\n' && prev != '\r' && prev != '{' && prev != '}' {
+                        return false
+                }
+        }
+        return true
 }
 
 // balancedJSON checks brace/quote balance of a candidate JSON prefix.
@@ -1344,33 +1495,68 @@ func balancedJSON(s string) bool {
         return depth == 0 && !inStr
 }
 
-// repairJSON appends the missing closing quotes/braces of a truncated JSON
-// object (tracks string state + brace depth over the raw text).
+// repairJSON fixes truncated / malformed tool-call JSON:
+//   - closes an unterminated string (v0.20)
+//   - v0.25: escapes RAW control characters inside string values — models
+//     paste multi-line file content into zip_create/docx_create args with
+//     literal newlines, which is invalid JSON. After the old brace-repair
+//     the JSON still failed to parse and the tool saw EMPTY args
+//     ("files is required" — dock CSV event 37). Escaping makes the
+//     content survive verbatim.
+//   - v0.25: closes BOTH braces and brackets, innermost-first (a truncated
+//     "files": [{…} needs "]" AND "}" — the old brace-only repair left the
+//     array open and the JSON stayed invalid).
 func repairJSON(s string) string {
-        inStr, esc, depth := false, false, 0
+        var b strings.Builder
+        // open bracket stack: '{' or '[' for each currently-open container
+        var stack []byte
+        inStr, esc := false, false
         for _, r := range s {
                 switch {
                 case inStr && esc:
                         esc = false
+                        b.WriteRune(r)
                 case inStr && r == '\\':
                         esc = true
+                        b.WriteRune(r)
                 case inStr && r == '"':
                         inStr = false
+                        b.WriteRune(r)
+                case inStr:
+                        switch r {
+                        case '\n':
+                                b.WriteString(`\n`)
+                        case '\r':
+                                b.WriteString(`\r`)
+                        case '\t':
+                                b.WriteString(`\t`)
+                        default:
+                                b.WriteRune(r)
+                        }
                 case r == '"':
                         inStr = true
+                        b.WriteRune(r)
                 case r == '{':
-                        depth++
-                case r == '}':
-                        depth--
+                        stack = append(stack, '}')
+                        b.WriteRune(r)
+                case r == '[':
+                        stack = append(stack, ']')
+                        b.WriteRune(r)
+                case (r == '}' || r == ']') && len(stack) > 0:
+                        stack = stack[:len(stack)-1]
+                        b.WriteRune(r)
+                default:
+                        b.WriteRune(r)
                 }
         }
-        out := s
+        out := b.String()
         if inStr {
                 out += `"`
         }
-        for depth > 0 {
-                out += "}"
-                depth--
+        // close remaining containers innermost-first (stack is already in
+        // open order; appending from the END closes innermost-first)
+        for i := len(stack) - 1; i >= 0; i-- {
+                out += string(stack[i])
         }
         return out
 }

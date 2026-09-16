@@ -45,7 +45,7 @@
           '<i style="flex:1;height:6px;border-radius:3px;background:' + t.accent2 + ';display:inline-block;margin-left:2px"></i>' +
           '<i style="flex:1;height:6px;border-radius:3px;background:' + t.accent3 + ';display:inline-block;margin-left:2px"></i>' +
         '</span>' +
-        (t.light ? '<span style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--text-3);font-weight:600">light</span>' : '') +
+        (t.light ? '<span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:600">light</span>' : '') +
         '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1)">' + t.label + '</span>' +
         '</button>';
     });
@@ -55,10 +55,15 @@
   }
 
   // ── grid colors (theme-driven until the user customizes) ───────
+  // v0.25: stacked two-line rows + a live hex readout so what you set is
+  // what you see (the grid bug report).
   function gridColorRow(key, label, resolved) {
-    return row(label,
-      '<input type="color" data-setting-key="' + key + '" data-setting-event="input" value="' + resolved + '" ' +
-      'style="width:40px;height:32px;border:1px solid var(--border);border-radius:6px;background:transparent;cursor:pointer">');
+    return '<div class="setting-row">' +
+      '<label>' + label + '</label>' +
+      '<div class="control">' +
+      '<input type="color" data-setting-key="' + key + '" data-setting-event="input" value="' + resolved + '">' +
+      '<span class="color-hex" data-color-hex="' + key + '">' + resolved + '</span>' +
+      '</div></div>';
   }
 
   function gridSection() {
@@ -71,7 +76,7 @@
       gridColorRow('lineColor', 'Grid Lines', g.lineColor) +
       gridColorRow('dotColor', 'Dots', g.dotColor) +
       gridColorRow('originColor', 'Origin Marker', g.originColor) +
-      '<button data-action="grid-colors-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">follow theme again</button>'
+      '<button data-action="grid-colors-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;margin-top:8px;width:100%">follow theme again</button>'
     );
   }
 
@@ -103,12 +108,27 @@
     var ov = s.fmtOverrides || {};
     var preset = (window.Formatter && window.Formatter.schemes[s.chatScheme || 'teal']) || {};
     var val = ov[key] || preset[key] || '#22d3ee';
-    return row(label + (hint ? ' <span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">' + hint + '</span>' : ''),
-      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt" value="' + val + '" ' +
-      'style="width:40px;height:32px;border:1px solid var(--border);border-radius:6px;background:transparent;cursor:pointer">');
+    // v0.25: stacked row — the hint sits under the label (not squeezed
+    // beside it), the swatch gets a hex readout.
+    return '<div class="setting-row">' +
+      '<label>' + label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') + '</label>' +
+      '<div class="control">' +
+      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt" value="' + val + '">' +
+      '<span class="color-hex" data-color-hex="fmtA_' + key + '">' + val + '</span>' +
+      '</div></div>';
   }
 
-  // intercept fmt color inputs (they nest under fmtOverrides, not flat)
+  // v0.25: live hex readouts — every color input in the panel updates its
+  // neighboring .color-hex as the user drags in the picker.
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || el.type !== 'color') return;
+    var hex = document.querySelector('[data-color-hex="' + (el.dataset.settingKey || '') + '"]');
+    if (hex) hex.textContent = el.value;
+  }, true);
+
+  // v0.25: intercept fmt color inputs (they nest under fmtOverrides, not
+  // flat) — merged with the hex-readout updater above.
   document.addEventListener('input', function (e) {
     var el = e.target;
     if (!el || el.getAttribute('data-custom') !== 'fmt') return;
@@ -120,7 +140,6 @@
     ov[slot] = el.value;
     Settings.setState({ fmtOverrides: ov });
   }, true);
-
   // ── sizing sliders ─────────────────────────────────────────────
   function sizeSlider(key, label, hint, def) {
     var s = Settings.getState();
@@ -221,19 +240,29 @@
     } else if (d.action === 'chat-colors-reset') {
       Settings.setState({ chatScheme: 'teal', fmtOverrides: {} });
     } else if (d.action === 'grid-colors-reset') {
-      // back to "follow the theme": wipe to the legacy defaults (which
-      // effectiveGrid treats as never-customized)
-      Settings.setState({ bg: 'var(--bg-app)', lineColor: 'var(--surface-2)', dotColor: '#2e2e3a', originColor: 'var(--border-strong)' });
+      // v0.25 FIX: back to "follow the theme" = wipe to the LEGACY default
+      // hexes (the marker effectiveGrid treats as never-customized). The old
+      // reset stored CSS-VAR STRINGS ('var(--bg-app)') which broke everything
+      // downstream: color inputs showed black, effectiveGrid passed the
+      // string through, and ctx.fillStyle='var(--bg-app)' is INVALID on
+      // canvas → silently ignored → the grid kept STALE colors that matched
+      // neither the theme nor the settings (the reported bug).
+      Settings.setState({
+        bg: '#0a0a0b', lineColor: '#131318',
+        dotColor: '#2e2e3a', originColor: '#4a4a5e'
+      });
     }
   });
 
   // ── HTML helpers ──────────────────────────────────────────────
   // Sections are collapsible — collapsed by default. The header has a
   // chevron that rotates when expanded. settings.js wires the toggle.
+  // v0.25: ONE .section-inner wrapper owns the 0fr→1fr grid transition
+  // (multiple direct children broke the animation + overlapped).
   function section(title, inner) {
     return '<div class="settings-section">' +
       '<h3 data-section-toggle><span>' + title + '</span><span class="chevron">▶</span></h3>' +
-      '<div class="section-body">' + inner + '</div>' +
+      '<div class="section-body"><div class="section-inner">' + inner + '</div></div>' +
       '</div>';
   }
   function row(label, control) {
@@ -250,7 +279,7 @@
     }
     return row(label,
       '<select data-setting-key="' + key + '" data-setting-event="change" ' +
-      'style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:6px 10px;border-radius:6px;font-size:calc(var(--ui-fs) - 1px);font-family:inherit">' +
+      'style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;min-height:44px;border-radius:10px;font-size:var(--ui-fs);font-family:inherit;width:100%">' +
       opts + '</select>');
   }
   // rangeRow — a slider with a value display + hint below.

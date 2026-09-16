@@ -777,6 +777,7 @@
       clearHint();
       state.isStreaming = false;
       hideActivity(bodyEl, state);
+      completeAllStreaming(bodyEl, state); // v0.25: every thinking bubble + cursor stops animating
       if (sendBtn) { sendBtn.textContent = 'Send'; sendBtn.onclick = null; }
       if (streamMsg) {
         streamMsg.complete = true;
@@ -1254,23 +1255,17 @@
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;
         hideActivity(bodyEl, state);
+        // v0.25: EVERY still-streaming message completes — thinking bubbles
+        // included (the old loop only handled the last message, leaving
+        // earlier thinking dots + cursors blinking forever after the turn).
+        completeAllStreaming(bodyEl, state);
         // v0.17 belt-and-suspenders: status idle IS a completion signal —
-        // mark any still-streaming message done + finalize artifacts (the
-        // trailing 'assistant' event normally does this; some providers
-        // skip or reorder it).
+        // finalize artifacts for every message the trailing 'assistant'
+        // event may have missed.
         for (var k = state.messages.length - 1; k >= 0; k--) {
           var sm = state.messages[k];
-          if (sm.role === 'assistant' || sm.role === 'thinking') {
-            if (!sm.complete && sm.role === 'assistant') {
-              sm.complete = true;
-              sm.streaming = false;
-              updateMessageEl(bodyEl, sm, true);
-              finalizeArtifacts(sm, state, bodyEl);
-            } else if (sm.role === 'thinking' && sm.streaming) {
-              sm.streaming = false;
-              updateMessageEl(bodyEl, sm, true);
-            }
-            break;
+          if (sm.role === 'assistant' && !state.artifactSaved[state.messages.indexOf(sm)]) {
+            finalizeArtifacts(sm, state, bodyEl);
           }
         }
         var btn = document.querySelector('#chat-send');
@@ -1432,6 +1427,24 @@
     }
   }
 
+  // v0.25 END-OF-TURN CLEANUP (the "flickering circle after the response
+  // ends" report): clear the streaming flag on EVERY message — thinking
+  // bubbles AND assistant text — and re-render each, so no blinking cursor
+  // or live dot survives a finished turn. The old cleanup only handled the
+  // LAST message, so earlier thinking bubbles kept their animated dot
+  // forever.
+  function completeAllStreaming(bodyEl, state) {
+    if (!state || !Array.isArray(state.messages)) return;
+    for (var i = 0; i < state.messages.length; i++) {
+      var m = state.messages[i];
+      if (m && m.streaming) {
+        m.streaming = false;
+        if (m.role === 'assistant') m.complete = true;
+        updateMessageEl(bodyEl, m, false);
+      }
+    }
+  }
+
   // ── v0.17: artifact finalize (extract + save + refresh badge) ───
   function finalizeArtifacts(msg, state, bodyEl) {
     if (!msg || !msg.text || !state.sessionId) return;
@@ -1483,7 +1496,7 @@
       return '<details class="msg-think"' + miAttr + ' ' + (msg.open ? ' open' : '') + '>' +
         '<summary class="msg-think-summary"><span class="msg-think-dot">✻</span> thinking' +
           '<span class="th-elapsed"' + (msg.streaming ? '' : ' style="display:none"') + '></span>' +
-          (msg.streaming ? '<span class="msg-think-live"></span>' : '') + '</summary>' +
+          '</summary>' +
         '<div class="msg-bubble msg-think-body" data-msg-role="thinking"></div>' +
         '</details>';
     } else if (msg.role === 'tool') {
