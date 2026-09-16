@@ -7,7 +7,7 @@
 // Works on ANY element (provider cards, tabs, model rows, provider dots…)
 // by toggling the `dd-active` class. The accent color is passed as a CSS
 // custom property, so the provider's own color tints the ring while the
-// check-dot stays semantic green (#34d399 = connected/active).
+// check-dot stays semantic green (var(--ok) = connected/active).
 //
 // The CSS is injected ONCE (idempotent) — no per-element inline styles to
 // keep in sync, one place to restyle the whole app's active language.
@@ -16,7 +16,7 @@
   'use strict';
 
   var CSS_ID = 'dd-active-styles';
-  var GREEN = '#34d399';
+  var GREEN = 'var(--ok)';
 
   function ensureStyles() {
     if (document.getElementById(CSS_ID)) return;
@@ -28,19 +28,19 @@
       '.dd-active {' +
       '  border-color: var(--dd-accent, ' + GREEN + ') !important;' +
       '  box-shadow: 0 0 0 1px var(--dd-accent, ' + GREEN + '), 0 2px 14px -4px var(--dd-accent, ' + GREEN + ') !important;' +
-      '  background: linear-gradient(180deg, rgba(52,211,153,0.05), rgba(20,20,26,0)) !important;' +
+      '  background: linear-gradient(180deg, rgba(var(--ok-rgb),0.05), rgba(var(--surface-1-rgb),0)) !important;' +
       '}' +
       // The status dot: 9px circle, bottom-… floating at the card's top-right
       // corner ring. Green fill + white check glyph when checked.
       '.dd-active-dot {' +
       '  position:relative; display:inline-flex; align-items:center; justify-content:center;' +
       '  width:18px; height:18px; border-radius:50%; flex-shrink:0;' +
-      '  background:' + GREEN + '; color:#06251a; font-size:11px; font-weight:800;' +
-      '  box-shadow:0 0 0 3px rgba(52,211,153,0.18);' +
+      '  background:' + GREEN + '; color:#06251a; font-size: calc(var(--ui-small-fs) - 1px); font-weight:800;' +
+      '  box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' +
       '  margin-left:6px; line-height:1;' +
       '}' +
       // Tab-style active (segmented controls): underline sweep + label color.
-      '.dd-active-tab { color:#e0e0e8 !important; position:relative; }' +
+      '.dd-active-tab { color:var(--text-1) !important; position:relative; }' +
       '.dd-active-tab::after {' +
       '  content:""; position:absolute; left:12%; right:12%; bottom:-4px; height:2.5px;' +
       '  border-radius:2px; background:var(--dd-accent, ' + GREEN + ');' +
@@ -48,8 +48,8 @@
       '}' +
       '@keyframes dd-tab-sweep { from { left:45%; right:45%; opacity:0 } to { left:12%; right:12%; opacity:1 } }' +
       // Live-sync pulse (model browser provider dot).
-      '.dd-live-dot { width:8px; height:8px; border-radius:50%; background:' + GREEN + '; flex-shrink:0; box-shadow:0 0 6px rgba(52,211,153,0.6); }' +
-      '.dd-live-dot.dd-stale { background:#f59e0b; box-shadow:0 0 6px rgba(245,158,11,0.5); }';
+      '.dd-live-dot { width:8px; height:8px; border-radius:50%; background:' + GREEN + '; flex-shrink:0; box-shadow:0 0 6px rgba(var(--ok-rgb),0.6); }' +
+      '.dd-live-dot.dd-stale { background:var(--warn); box-shadow:0 0 6px rgba(var(--warn-rgb),0.5); }';
     document.head.appendChild(style);
   }
 

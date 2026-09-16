@@ -109,6 +109,20 @@
       if (e && e.cancelable && track.fromAnchor) e.preventDefault();
     }
 
+    // v0.24 SMOOTH DRAG: the sheet used to track the finger 1:1 — twitchy
+    // ("make scrolling feel a tad bit more smooth and less hyper to move",
+    // per the user). A rAF lerp now eases the sheet toward the finger every
+    // frame — it still feels attached, but micro-jitter is smoothed away.
+    // The settle (end) still snaps to the decided position via CSS.
+    var dragRaf = 0, dragTargetPx = 0, dragNowPx = 0;
+    function dragRender() {
+      dragRaf = 0;
+      dragNowPx += (dragTargetPx - dragNowPx) * 0.68;
+      if (Math.abs(dragTargetPx - dragNowPx) < 0.4) dragNowPx = dragTargetPx;
+      panelEl.style.transform = 'translateY(' + Math.round(dragNowPx) + 'px)';
+      if (dragNowPx !== dragTargetPx) dragRaf = requestAnimationFrame(dragRender);
+    }
+
     function move(y) {
       if (!track.active) return;
       var now = performance.now();
@@ -127,12 +141,18 @@
       if (frac > 1) frac = 1 + (frac - 1) * 0.25;       // past full: damp
       var px = Math.round((1 - frac) * h);
       if (px < 0) px = 0;                                // never above full
-      panelEl.style.transform = 'translateY(' + px + 'px)';
+      dragTargetPx = px;                                 // v0.24: eased follow
+      if (!dragRaf) {
+        var cur = parseFloat(panelEl.style.transform.replace(/[^0-9.-]/g, ''));
+        dragNowPx = isNaN(cur) ? 0 : cur;
+        dragRaf = requestAnimationFrame(dragRender);
+      }
     }
 
     function end(closeFn) {
       if (!track.active) return;
       track.active = false;
+      if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
       var dy = track.lastY - track.y0;
       panelEl.style.transform = '';
 
@@ -227,21 +247,32 @@
     // the chat" — fixed by walking the REAL scroll chain below.
     //
     // innerScroller returns the innermost element between `target` and
-    // .panel-body that can scroll vertically — a tool-pill detail, a code
+    // `.panel-body` that can scroll vertically — a tool-pill detail, a code
     // card, or #chat-scroll itself (the conversation). Whatever it
     // returns owns the gesture until it's pinned at its top.
+    //
+    // v0.24 FIX (user report: "trying to scroll in the settings panel when
+    // I expand many collapsed boxes the panel closes and does not scroll"):
+    // settings pages put their content DIRECTLY in .panel-body — there is
+    // no intermediate scroller, and the walk below used to stop at body
+    // WITHOUT ever considering it. innerScroller returned null → every
+    // downward swipe in a tall settings page hijacked the sheet → CLOSE.
+    // The body itself is a legit scroller now (chat mode unaffected: there
+    // #chat-root sits at height:100% inside body, so body never scrolls —
+    // the walk finds #chat-scroll first).
+    function isScrollable(el) {
+      if (el.nodeType !== 1 || el.scrollHeight <= el.clientHeight + 2) return false;
+      var st = window.getComputedStyle(el);
+      return st.overflowY === 'auto' || st.overflowY === 'scroll' ||
+             st.overflow === 'auto' || st.overflow === 'scroll';
+    }
     function innerScroller(target) {
       var el = target && target.closest ? target : null;
       while (el && el !== body && el !== panelEl) {
-        if (el.nodeType === 1 && el.scrollHeight > el.clientHeight + 2) {
-          var st = window.getComputedStyle(el);
-          if (st.overflowY === 'auto' || st.overflowY === 'scroll' ||
-              st.overflow === 'auto' || st.overflow === 'scroll') {
-            return el;
-          }
-        }
+        if (isScrollable(el)) return el;
         el = el.parentElement;
       }
+      if (body && isScrollable(body)) return body; // settings & other body-scrolling pages
       return null;
     }
 

@@ -20,11 +20,16 @@
   // These are available even before the page registers, so the app
   // can read them on init.
   const defaultState = {
-    // ── v0.17: chat formatting (scheme + text size) ────────────
-    chatScheme: 'teal',
+    // ── v0.24: the THEME (drives every UI color via CSS vars) ────
+    theme: 'midnight',
+    // ── v0.17→v0.24: chat formatting (scheme + sizes) ───────────
+    chatScheme: 'teal',            // 'follow-theme' handling lives in theme.js
     fmtOverrides: {},           // per-slot CSS-variable overrides
-    chatTextSize: 50,           // 0–100 (12px–24px, 50 → 16px)
-    // ── Appearance (grid) ─────────────────────────────────────────
+    chatTextSize: 50,           // 0–100 (12px–24px, 50 → 16px) — message text
+    uiTextSize: 50,             // v0.24: 0–100 (12px–17px) — general UI text
+    smallTextSize: 50,          // v0.24: 0–100 (9.5px–15px) — pills, hints, meta
+    // ── Appearance (grid) — LEGACY default hexes; equal values mean
+    //    "never customized" → theme.js swaps in the theme's grid palette
     gridSize: 1,           // 1× = default (48px), up to 5× = 240px
     bg: '#0a0a0b',
     lineColor: '#131318',

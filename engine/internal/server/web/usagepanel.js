@@ -46,60 +46,60 @@
       var m = models[i];
       var cost = fmtCost(m);
       modelRows +=
-        '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#14141a;border:1px solid #1a1a22;border-radius:10px">' +
-          '<span style="flex:1;min-width:0;font-size:11.5px;color:#e0e0e8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(String(m.model || '').split('/').pop()) + '</span>' +
-          '<span style="font-size:10.5px;color:#71717a;flex-shrink:0">' + (m.turns || 0) + ' turns</span>' +
-          '<span style="font-size:10.5px;color:#a1a1aa;flex-shrink:0">↑' + fmtTokens(m.tokensIn) + ' ↓' + fmtTokens(m.tokensOut) + '</span>' +
-          (cost ? '<span style="font-size:10.5px;color:#E8B44A;flex-shrink:0">' + cost + '</span>' : '') +
+        '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px">' +
+          '<span style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 0.5px);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(String(m.model || '').split('/').pop()) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--text-3);flex-shrink:0">' + (m.turns || 0) + ' turns</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--text-2);flex-shrink:0">↑' + fmtTokens(m.tokensIn) + ' ↓' + fmtTokens(m.tokensOut) + '</span>' +
+          (cost ? '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--warn);flex-shrink:0">' + cost + '</span>' : '') +
         '</div>';
     }
 
     var fill = Math.max(0, Math.min(100, ctx.fillPct || 0));
-    var fillColor = fill > 85 ? '#f87171' : fill > 65 ? '#E8B44A' : '#34d399';
+    var fillColor = fill > 85 ? 'var(--err)' : fill > 65 ? 'var(--warn)' : 'var(--ok)';
 
     var html =
       '<div style="position:fixed;inset:0;z-index:3300;background:rgba(0,0,0,0.5);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px">' +
-        '<div style="width:100%;max-width:420px;max-height:80vh;overflow-y:auto;background:#0e0e12;border:1px solid #1a1a22;border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.6);-webkit-overflow-scrolling:touch">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #1a1a22;position:sticky;top:0;background:#0e0e12;z-index:1">' +
-            '<div style="font-size:14px;font-weight:700;color:#e0e0e8">usage · ' + esc(opts.name || 'chat') + '</div>' +
-            '<button id="usage-close" style="background:transparent;border:none;color:#71717a;font-size:20px;cursor:pointer;padding:4px 8px">✕</button>' +
+        '<div style="width:100%;max-width:420px;max-height:80vh;overflow-y:auto;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.6);-webkit-overflow-scrolling:touch">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--surface-2);position:sticky;top:0;background:var(--surface-1);z-index:1">' +
+            '<div style="font-size: var(--ui-fs);font-weight:700;color:var(--text-1)">usage · ' + esc(opts.name || 'chat') + '</div>' +
+            '<button id="usage-close" style="background:transparent;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:4px 8px">✕</button>' +
           '</div>' +
           '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">' +
             // totals
             '<div style="display:flex;gap:8px">' +
-              '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center">' +
-                '<div style="font-size:17px;font-weight:700;color:#e0e0e8">' + fmtTokens(t.tokensIn) + '</div>' +
-                '<div style="font-size:10px;color:#71717a;margin-top:2px">tokens in</div>' +
+              '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center">' +
+                '<div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:var(--text-1)">' + fmtTokens(t.tokensIn) + '</div>' +
+                '<div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);margin-top:2px">tokens in</div>' +
               '</div>' +
-              '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center">' +
-                '<div style="font-size:17px;font-weight:700;color:#e0e0e8">' + fmtTokens(t.tokensOut) + '</div>' +
-                '<div style="font-size:10px;color:#71717a;margin-top:2px">tokens out</div>' +
+              '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center">' +
+                '<div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:var(--text-1)">' + fmtTokens(t.tokensOut) + '</div>' +
+                '<div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);margin-top:2px">tokens out</div>' +
               '</div>' +
-              '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center">' +
-                '<div style="font-size:17px;font-weight:700;color:' + (t.hasCost ? '#E8B44A' : '#71717a') + '">' + (t.hasCost ? fmtCost(t) : '—') + '</div>' +
-                '<div style="font-size:10px;color:#71717a;margin-top:2px">' + (t.hasCost ? 'est. cost' : 'unpriced') + '</div>' +
+              '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center">' +
+                '<div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:' + (t.hasCost ? 'var(--warn)' : 'var(--text-3)') + '">' + (t.hasCost ? fmtCost(t) : '—') + '</div>' +
+                '<div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);margin-top:2px">' + (t.hasCost ? 'est. cost' : 'unpriced') + '</div>' +
               '</div>' +
             '</div>' +
             // context fill
-            '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:12px">' +
+            '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:12px">' +
               '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px">' +
-                '<span style="font-size:11.5px;font-weight:600;color:#e0e0e8">context</span>' +
-                '<span style="font-size:10.5px;color:#71717a">' + esc(String(ctx.model || '').split('/').pop() || '') + ' · ' + fmtTokens(ctx.usedTokens) + ' / ~' + fmtTokens(ctx.limit) + ' tok</span>' +
+                '<span style="font-size: calc(var(--ui-small-fs) - 0.5px);font-weight:600;color:var(--text-1)">context</span>' +
+                '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--text-3)">' + esc(String(ctx.model || '').split('/').pop() || '') + ' · ' + fmtTokens(ctx.usedTokens) + ' / ~' + fmtTokens(ctx.limit) + ' tok</span>' +
               '</div>' +
-              '<div style="height:8px;background:#0a0a0e;border-radius:4px;overflow:hidden">' +
+              '<div style="height:8px;background:var(--bg-app);border-radius:4px;overflow:hidden">' +
                 '<div style="height:100%;width:' + fill + '%;background:' + fillColor + ';border-radius:4px;transition:width 0.4s ease"></div>' +
               '</div>' +
               '<div style="display:flex;justify-content:space-between;margin-top:6px">' +
-                '<span style="font-size:10px;color:#71717a">' + fill + '% used</span>' +
-                '<span style="font-size:10px;color:' + (ctx.compacted ? '#a78bfa' : '#71717a') + '">' + (ctx.compacted ? 'auto-compacted ✓' : 'auto-compact arms at 70%') + '</span>' +
+                '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">' + fill + '% used</span>' +
+                '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + (ctx.compacted ? 'var(--accent)' : 'var(--text-3)') + '">' + (ctx.compacted ? 'auto-compacted ✓' : 'auto-compact arms at 70%') + '</span>' +
               '</div>' +
             '</div>' +
             // per-model
-            (modelRows ? '<div><div style="font-size:11px;font-weight:600;color:#e0e0e8;margin:2px 0 6px">by model</div>' +
+            (modelRows ? '<div><div style="font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1);margin:2px 0 6px">by model</div>' +
               '<div style="display:flex;flex-direction:column;gap:6px">' + modelRows + '</div></div>' : '') +
             // fleet link
-            '<button id="usage-fleet" style="background:transparent;border:1px solid #2a2a35;color:#71717a;padding:8px 12px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;width:100%">⧗ all chats (fleet totals)</button>' +
-            '<div style="font-size:9.5px;color:#52525b;line-height:1.5;text-align:center">tokens are read from each provider\'s usage reports · costs are published list rates (NVIDIA dev tier is free) · estimates never replace real bills</div>' +
+            '<button id="usage-fleet" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 12px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;width:100%">⧗ all chats (fleet totals)</button>' +
+            '<div style="font-size:9.5px;color:var(--text-3-dim);line-height:1.5;text-align:center">tokens are read from each provider\'s usage reports · costs are published list rates (NVIDIA dev tier is free) · estimates never replace real bills</div>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -128,11 +128,11 @@
     Object.keys(provs).sort().forEach(function (k) {
       var p = provs[k];
       rows +=
-        '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#14141a;border:1px solid #1a1a22;border-radius:10px">' +
-          '<span style="flex:1;font-size:11.5px;color:#e0e0e8">' + esc(k) + '</span>' +
-          '<span style="font-size:10.5px;color:#71717a">' + (p.turns || 0) + ' turns</span>' +
-          '<span style="font-size:10.5px;color:#a1a1aa">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
-          (p.hasCost ? '<span style="font-size:10.5px;color:#E8B44A">' + fmtCost(p) + '</span>' : '') +
+        '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px">' +
+          '<span style="flex:1;font-size: calc(var(--ui-small-fs) - 0.5px);color:var(--text-1)">' + esc(k) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--text-3)">' + (p.turns || 0) + ' turns</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--text-2)">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
+          (p.hasCost ? '<span style="font-size: calc(var(--ui-small-fs) - 1.5px);color:var(--warn)">' + fmtCost(p) + '</span>' : '') +
         '</div>';
     });
     if (overlayEl) {
@@ -140,13 +140,13 @@
       if (body) {
         body.innerHTML =
           '<div style="display:flex;gap:8px;margin-bottom:12px">' +
-            '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center"><div style="font-size:17px;font-weight:700;color:#e0e0e8">' + fmtTokens(t.tokensIn) + '</div><div style="font-size:10px;color:#71717a">tokens in · all chats</div></div>' +
-            '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center"><div style="font-size:17px;font-weight:700;color:#e0e0e8">' + fmtTokens(t.tokensOut) + '</div><div style="font-size:10px;color:#71717a">tokens out</div></div>' +
-            '<div style="flex:1;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:10px;text-align:center"><div style="font-size:17px;font-weight:700;color:' + (t.hasCost ? '#E8B44A' : '#71717a') + '">' + (t.hasCost ? fmtCost(t) : '—') + '</div><div style="font-size:10px;color:#71717a">est. cost</div></div>' +
+            '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center"><div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:var(--text-1)">' + fmtTokens(t.tokensIn) + '</div><div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">tokens in · all chats</div></div>' +
+            '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center"><div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:var(--text-1)">' + fmtTokens(t.tokensOut) + '</div><div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">tokens out</div></div>' +
+            '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center"><div style="font-size: calc(var(--ui-fs) + 3px);font-weight:700;color:' + (t.hasCost ? 'var(--warn)' : 'var(--text-3)') + '">' + (t.hasCost ? fmtCost(t) : '—') + '</div><div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">est. cost</div></div>' +
           '</div>' +
-          '<div style="font-size:11px;font-weight:600;color:#e0e0e8;margin:2px 0 6px">' + (fu.sessions || 0) + ' chats · by provider</div>' +
+          '<div style="font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1);margin:2px 0 6px">' + (fu.sessions || 0) + ' chats · by provider</div>' +
           '<div style="display:flex;flex-direction:column;gap:6px">' + rows + '</div>' +
-          '<button id="usage-back" style="margin-top:12px;background:transparent;border:1px solid #2a2a35;color:#71717a;padding:8px 12px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;width:100%">‹ back to this chat</button>';
+          '<button id="usage-back" style="margin-top:12px;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 12px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;width:100%">‹ back to this chat</button>';
         overlayEl.querySelector('#usage-back').addEventListener('click', function () {
           fetch('/api/sessions/' + (opts.sessionId || '') + '/usage').then(function (r) { return r.json(); }).then(function (u) { open(u, opts); }).catch(function () {});
         });

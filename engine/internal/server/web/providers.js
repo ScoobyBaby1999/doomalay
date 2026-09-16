@@ -34,7 +34,7 @@
   var FREE_ORDER = ['opencode', 'privatemodeai', 'nvidia', 'openrouter', 'cloudflare', 'groq', 'together', 'mistral'];
   var PAID_ORDER = ['anthropic', 'openai', 'deepseek'];
 
-  var GOLD = '#E8B44A';
+  var GOLD = 'var(--warn)';
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
   function open(onPick, opts) {
@@ -183,21 +183,21 @@
         // v0.17 one-press connect reminder mode: the chat is ALREADY
         // unlocked behind this overlay — this GUI is just a nudge that
         // more providers can be connected. ✕ or scrim tap dismisses.
-        reminder = '<div style="background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#34d399;line-height:1.5">' +
+        reminder = '<div style="background:rgba(var(--ok-rgb),0.08);border:1px solid rgba(var(--ok-rgb),0.3);' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--ok);line-height:1.5">' +
           '✓ chat is ready — you can tap ✕ and start talking right now. ' +
-          '<span style="color:#71717a">This screen is just a reminder you can connect more providers.</span></div>';
+          '<span style="color:var(--text-3)">This screen is just a reminder you can connect more providers.</span></div>';
       }
       // v0.20: the model lists are still syncing in the background —
       // cards are live, model counts arrive in seconds.
       if (isPartial) {
-        reminder += '<div style="background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size:12px;color:#a78bfa;line-height:1.5">' +
+        reminder += '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--accent);line-height:1.5">' +
           '⟳ syncing live model lists — provider cards are ready now, models fill in within seconds.</div>';
       }
       return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
-        '<h2 style="font-size:18px;font-weight:600;color:#e0e0e8;margin:0">Cloud Providers</h2>' +
-        '<button id="prov-close" style="background:transparent;border:none;color:#71717a;font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
+        '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Cloud Providers</h2>' +
+        '<button id="prov-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
         '</div>';
     }
 
@@ -207,14 +207,14 @@
     function slider() {
       var isFree = activeTab === 'free';
       var thumbLeft = isFree ? '3px' : 'calc(50% + 1px)';
-      var thumbBg = isFree ? 'rgba(52,211,153,0.16)' : 'rgba(232,180,74,0.16)';
-      var thumbBorder = isFree ? 'rgba(52,211,153,0.45)' : 'rgba(232,180,74,0.5)';
-      var freeColor = isFree ? '#34d399' : '#71717a';
-      var paidColor = isFree ? '#71717a' : GOLD;
-      return '<div id="fp-slider" style="position:relative;height:38px;border-radius:19px;background:#14141a;border:1px solid #1a1a22;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:pan-y">' +
+      var thumbBg = isFree ? 'rgba(var(--ok-rgb),0.16)' : 'rgba(var(--warn-rgb),0.16)';
+      var thumbBorder = isFree ? 'rgba(var(--ok-rgb),0.45)' : 'rgba(var(--warn-rgb),0.5)';
+      var freeColor = isFree ? 'var(--ok)' : 'var(--text-3)';
+      var paidColor = isFree ? 'var(--text-3)' : GOLD;
+      return '<div id="fp-slider" style="position:relative;height:38px;border-radius:19px;background:var(--surface-1);border:1px solid var(--surface-2);cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:pan-y">' +
         '<div id="fp-thumb" style="position:absolute;top:3px;left:' + thumbLeft + ';width:calc(50% - 4px);height:calc(100% - 8px);border-radius:16px;background:' + thumbBg + ';border:1px solid ' + thumbBorder + ';box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:left 0.3s ' + EASE + ',background 0.3s ease,border-color 0.3s ease"></div>' +
-        '<span id="fp-label-free" style="position:absolute;left:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:' + freeColor + ';transition:color 0.3s ease;pointer-events:none">Free</span>' +
-        '<span id="fp-label-paid" style="position:absolute;right:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:' + paidColor + ';transition:color 0.3s ease;pointer-events:none">Paid</span>' +
+        '<span id="fp-label-free" style="position:absolute;left:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:' + freeColor + ';transition:color 0.3s ease;pointer-events:none">Free</span>' +
+        '<span id="fp-label-paid" style="position:absolute;right:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:' + paidColor + ';transition:color 0.3s ease;pointer-events:none">Paid</span>' +
         '</div>';
     }
 
@@ -236,7 +236,7 @@
         }
       }
       if (!cards) {
-        cards = '<div style="text-align:center;color:#71717a;padding:40px 20px">No providers in this tab.</div>';
+        cards = '<div style="text-align:center;color:var(--text-3);padding:40px 20px">No providers in this tab.</div>';
       }
       return cards;
     }
@@ -252,13 +252,15 @@
       else badgeReason = short(badgeReason);
       var valHTML = '';
       if (val && val.checking) {
-        valHTML = '<span style="font-size:11px;color:#71717a">⟳ validating…</span>';
+        // v0.24: bright theme accent (was grey var(--text-3) — unreadable against
+        // the dark card; user asked for a color from the selected theme).
+        valHTML = '<span class="dd-validating" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent-2,var(--accent-2))">⟳ validating…</span>';
       } else if (val && val.state === 'valid') {
-        valHTML = '<span style="font-size:11px;color:#34d399">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--ok)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
       } else if (val && val.state === 'invalid') {
-        valHTML = '<span style="font-size:11px;color:#f87171" title="' + escAttr(val.reason || '') + '">✕ invalid' + (val.reason ? ' — ' + short(val.reason) : '') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err)" title="' + escAttr(val.reason || '') + '">✕ invalid' + (val.reason ? ' — ' + short(val.reason) : '') + '</span>';
       } else if (val && val.state === 'unverified') {
-        valHTML = '<span style="font-size:11px;color:#E8B44A" title="' + escAttr(val.reason || '') + '">◦ saved · unverified' + (badgeReason ? ' (' + badgeReason + ')' : '') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--warn)" title="' + escAttr(val.reason || '') + '">◦ saved · unverified' + (badgeReason ? ' (' + badgeReason + ')' : '') + '</span>';
       }
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
@@ -270,47 +272,47 @@
         if (catalogModels[m].provider === name) provModels.push(catalogModels[m]);
       }
       var useHTML = (isActive && onPick && provModels.length)
-        ? '<button data-use="' + name + '" style="margin-top:8px;width:100%;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.4);color:#34d399;padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Use ' + provModels.length + ' models →</button>'
+        ? '<button data-use="' + name + '" style="margin-top:8px;width:100%;background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);color:var(--ok);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Use ' + provModels.length + ' models →</button>'
         : '';
 
       // v0.13 MODULAR ACTIVE INDICATOR: the card gets the shared dd-active
       // ring (tinted with the provider's own color) + a green check-dot
       // next to the name. One mechanism (uiactive.js), used everywhere.
       var activeClass = isActive ? ' dd-active' : '';
-      var activeStyle = isActive ? ' --dd-accent:' + (cfg.color || '#34d399') + ';' : '';
+      var activeStyle = isActive ? ' --dd-accent:' + (cfg.color || 'var(--ok)') + ';' : '';
       var activeDot = isActive ? window.UIActive.dotHTML() : '';
 
-      return '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
+      return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-        '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || '#4a4a5e') + ';display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12px;flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
+        '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || 'var(--border-strong)') + ';display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size: var(--ui-small-fs);flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
         '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-        '<span style="font-size:14px;font-weight:600;color:#e0e0e8">' + (cfg.label || name) + '</span>' +
+        '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1)">' + (cfg.label || name) + '</span>' +
         activeDot +
-        (cfg.free_tier ? '<span style="font-size:10px;color:#34d399;background:rgba(52,211,153,0.15);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size:10px;color:' + GOLD + ';background:rgba(232,180,74,0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
-        (isActive ? '<span style="font-size:10px;color:#34d399;background:rgba(52,211,153,0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(52,211,153,0.3)">Active</span>' : '') +
+        (cfg.free_tier ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--ok);background:rgba(var(--ok-rgb),0.15);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + GOLD + ';background:rgba(var(--warn-rgb),0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
+        (isActive ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--ok);background:rgba(var(--ok-rgb),0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(var(--ok-rgb),0.3)">Active</span>' : '') +
         valHTML +
         '</div>' +
-        '<p style="font-size:11px;color:#71717a;margin:2px 0 0;line-height:1.4">' + (cfg.description || '') + '</p>' +
+        '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:2px 0 0;line-height:1.4">' + (cfg.description || '') + '</p>' +
         '</div>' +
         '</div>' +
         // Key input (disabled once a key is saved — paste new to replace)
         '<div style="display:flex;gap:6px">' +
-        '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:#0a0a0e;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
-        '<button data-save="' + name + '" style="background:#4a4a5e;border:none;color:#e0e0e8;padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
+        '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
+        '<button data-save="' + name + '" style="background:var(--border-strong);border:none;color:var(--text-1);padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
         '</div>' +
         (needAccount
           ? '<div style="display:flex;gap:6px;margin-top:6px">' +
-            '<input type="text" placeholder="' + (cfg.extra_env_var || 'Account ID') + ' (required)" id="acct-' + name + '" style="flex:1;background:#0a0a0e;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
-            '<span style="font-size:10px;color:#71717a;align-self:center;flex-shrink:0">' + (keys[cfg.extra_env_var] && keys[cfg.extra_env_var].has_key ? '✓ saved' : '') + '</span>' +
+            '<input type="text" placeholder="' + (cfg.extra_env_var || 'Account ID') + ' (required)" id="acct-' + name + '" style="flex:1;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);align-self:center;flex-shrink:0">' + (keys[cfg.extra_env_var] && keys[cfg.extra_env_var].has_key ? '✓ saved' : '') + '</span>' +
             '</div>'
           : '') +
         useHTML +
         // Gold "Get API key" link → opens the REAL browser (v0.14: no more
         // in-app embedding). A waiting hint appears on the card — the user
         // copies the key in the browser and pastes it right here.
-        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size:12px;font-weight:600;color:' + GOLD + ';margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size:13px">↗</span></a>' +
-        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size:11px;color:' + GOLD + ';background:rgba(232,180,74,0.08);border:1px solid rgba(232,180,74,0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
+        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:' + GOLD + ';margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
+        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:' + GOLD + ';background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
         '</div>';
     }
 
@@ -397,10 +399,10 @@
         if (!animate) thumb.style.transition = 'none';
         else thumb.style.transition = 'left 0.3s ' + EASE + ',background 0.3s ease,border-color 0.3s ease';
         thumb.style.left = isFree ? '3px' : 'calc(50% + 1px)';
-        thumb.style.background = isFree ? 'rgba(52,211,153,0.16)' : 'rgba(232,180,74,0.16)';
-        thumb.style.borderColor = isFree ? 'rgba(52,211,153,0.45)' : 'rgba(232,180,74,0.5)';
-        labelFree.style.color = isFree ? '#34d399' : '#71717a';
-        labelPaid.style.color = isFree ? '#71717a' : GOLD;
+        thumb.style.background = isFree ? 'rgba(var(--ok-rgb),0.16)' : 'rgba(var(--warn-rgb),0.16)';
+        thumb.style.borderColor = isFree ? 'rgba(var(--ok-rgb),0.45)' : 'rgba(var(--warn-rgb),0.5)';
+        labelFree.style.color = isFree ? 'var(--ok)' : 'var(--text-3)';
+        labelPaid.style.color = isFree ? 'var(--text-3)' : GOLD;
         // Re-render the list after the thumb settles.
         setTimeout(render, 180);
       }
@@ -598,16 +600,16 @@
               }
             }
             el.innerHTML = names.length
-              ? '<span style="color:#34d399">✓ ' + names.length + ' connected: ' + names.join(', ') + '</span>'
-              : '<span style="color:#71717a">No cloud providers connected yet.</span>';
+              ? '<span style="color:var(--ok)">✓ ' + names.length + ' connected: ' + names.join(', ') + '</span>'
+              : '<span style="color:var(--text-3)">No cloud providers connected yet.</span>';
           }).catch(function () {});
         }, 0);
         return '<div class="settings-section expanded">' +
           '<h3 data-section-toggle><span>Cloud Providers</span><span class="chevron">▶</span></h3>' +
           '<div class="section-body">' +
           '<p class="hint" style="margin:0 0 12px">Connect a cloud provider with an API key to chat with models like Kimi, Llama, Claude and GPT. Keys are stored encrypted on this device only.</p>' +
-          '<div id="cloud-prov-status" style="font-size:12px;margin:0 0 12px"><span style="color:#71717a">Checking…</span></div>' +
-          '<button data-action="connect-cloud" style="background:' + GOLD + ';border:none;color:#0a0a0b;padding:12px 16px;border-radius:10px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;width:100%">Connect Cloud Providers</button>' +
+          '<div id="cloud-prov-status" style="font-size: var(--ui-small-fs);margin:0 0 12px"><span style="color:var(--text-3)">Checking…</span></div>' +
+          '<button data-action="connect-cloud" style="background:' + GOLD + ';border:none;color:var(--bg-app);padding:12px 16px;border-radius:10px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;width:100%">Connect Cloud Providers</button>' +
           '</div>' +
           '</div>';
       }
@@ -756,7 +758,7 @@
     if (el) {
       var old = el.textContent;
       el.textContent = msg;
-      el.style.color = '#34d399';
+      el.style.color = 'var(--ok)';
       setTimeout(function () {
         if (el.isConnected) { el.textContent = old; el.style.color = ''; }
       }, 2400);

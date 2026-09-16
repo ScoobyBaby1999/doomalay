@@ -26,7 +26,7 @@
     "Baby", "Boonboon", "Dock", "Faqous", "Lip", "Sky", "Kenny"
   ];
   const DEFAULT_FAMILIES = {
-    default:   { label: "Default",   color: "#4a4a5e", icons: [] },
+    default:   { label: "Default",   color: "#4a4a5e", icons: [] }, // canvas-drawn data hex — theme re-tints at draw time
     anthropic: { label: "Anthropic", color: "#d97757", icons: [] },
     openai:    { label: "OpenAI",    color: "#10a37f", icons: [] },
     google:    { label: "Google",    color: "#4285f4", icons: [] },
@@ -95,7 +95,12 @@
   }
 
   function renderGrid() {
-    const t = theme();
+    // v0.24: grid colors resolve through the THEME (user picks win over
+    // the theme's grid palette; pre-v0.24 default values = never
+    // customized → follow the theme).
+    const t = (window.DoomTheme && window.DoomTheme.effectiveGrid)
+      ? window.DoomTheme.effectiveGrid(window.Settings.getState())
+      : window.Settings.getState();
     ctx.fillStyle = t.bg || '#0a0a0b';
     ctx.fillRect(0, 0, W, H);
 
@@ -146,7 +151,13 @@
       const angle = Math.atan2(s.y - ay, s.x - ax);
 
       const fam = (config.families[bot.family] || config.families.default || {});
-      const color = fam.color || '#4a4a5e';
+      // v0.24: the default family follows the theme — canvas fill needs a
+      // REAL hex, so resolve the CSS var at draw time.
+      let color = fam.color || '#4a4a5e';
+      if (bot.family === 'default' || !fam.color) {
+        color = getComputedStyle(document.documentElement)
+          .getPropertyValue('--border-strong').trim() || color;
+      }
 
       ctx.save();
       ctx.translate(ax, ay);
@@ -347,7 +358,7 @@
       inp.type = 'text';
       inp.value = old;
       inp.maxLength = 48;
-      inp.style.cssText = 'width:100%;font-size:15px;font-weight:600;color:#e0e0e8;background:transparent;border:none;border-bottom:1px solid #34d399;outline:none;font-family:inherit;padding:0;box-sizing:border-box';
+      inp.style.cssText = 'width:100%;font-size:15px;font-weight:600;color:var(--text-1);background:transparent;border:none;border-bottom:1px solid var(--ok);outline:none;font-family:inherit;padding:0;box-sizing:border-box';
       panelNameEl.appendChild(inp);
       inp.focus();
       try { inp.select(); } catch (e) {}

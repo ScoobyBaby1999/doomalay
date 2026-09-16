@@ -130,20 +130,20 @@
     function header() {
       var isProv = view === 'providers';
       return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
-        '<h2 style="font-size:17px;font-weight:600;color:#e0e0e8;margin:0;flex:1">Select a model</h2>' +
+        '<h2 style="font-size: calc(var(--ui-fs) + 3px);font-weight:600;color:var(--text-1);margin:0;flex:1">Select a model</h2>' +
         // View toggle (the two "tabs")
-        '<div style="display:flex;background:#14141a;border:1px solid #1a1a22;border-radius:10px;padding:3px">' +
-          '<button id="mb-view-providers" class="mb-viewtab' + (isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:#34d399;background:transparent;border:none;color:' + (isProv ? '#e0e0e8' : '#71717a') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Providers</button>' +
-          '<button id="mb-view-models" class="mb-viewtab' + (!isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:#a78bfa;background:transparent;border:none;color:' + (!isProv ? '#e0e0e8' : '#71717a') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Models</button>' +
+        '<div style="display:flex;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:3px">' +
+          '<button id="mb-view-providers" class="mb-viewtab' + (isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:var(--ok);background:transparent;border:none;color:' + (isProv ? 'var(--text-1)' : 'var(--text-3)') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Providers</button>' +
+          '<button id="mb-view-models" class="mb-viewtab' + (!isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:var(--accent);background:transparent;border:none;color:' + (!isProv ? 'var(--text-1)' : 'var(--text-3)') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Models</button>' +
         '</div>' +
-        '<button id="mb-close" style="background:transparent;border:none;color:#71717a;font-size:22px;cursor:pointer;padding:2px 6px">✕</button>' +
+        '<button id="mb-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:2px 6px">✕</button>' +
         '</div>' +
         // Sync line + refresh
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-        '<button id="mb-refresh" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid #1a1a22;color:#71717a;font-size:11px;font-family:inherit;padding:5px 10px;border-radius:8px;cursor:pointer;touch-action:manipulation">' +
+        '<button id="mb-refresh" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;font-family:inherit;padding:5px 10px;border-radius:8px;cursor:pointer;touch-action:manipulation">' +
         '<span id="mb-refresh-icon" style="display:inline-block;' + (syncing ? 'animation:mb-spin 0.9s linear infinite' : '') + '">⟳</span>' +
         '<span id="mb-sync-label">' + syncLabel() + '</span></button>' +
-        '<span style="font-size:11px;color:#4a4a5e;flex:1;text-align:right">' + liveCount() + ' providers live · ' + totalModels() + ' models</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);flex:1;text-align:right">' + liveCount() + ' providers live · ' + totalModels() + ' models</span>' +
         '</div>';
     }
 
@@ -170,7 +170,7 @@
 
     function searchBox() {
       return '<div style="margin-bottom:10px">' +
-        '<input id="mb-search" type="text" inputmode="search" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:#0a0a0e;border:1px solid #2a2a35;color:#e0e0e8;padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
+        '<input id="mb-search" type="text" inputmode="search" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
         '</div>';
     }
 
@@ -186,7 +186,7 @@
       for (var c = 0; c < CTX_OPTIONS.length; c++) {
         var co = CTX_OPTIONS[c];
         var onC = ctxMin === co.v;
-        ctxPills += '<button data-ctx="' + co.v + '" style="flex-shrink:0;background:' + (onC ? '#14b8a622' : 'transparent') + ';border:1px solid ' + (onC ? '#14b8a6888' : '#2a2a35') + ';color:' + (onC ? '#14b8a6' : '#71717a') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + co.label + '</button>';
+        ctxPills += '<button data-ctx="' + co.v + '" style="flex-shrink:0;background:' + (onC ? '#14b8a622' : 'transparent') + ';border:1px solid ' + (onC ? '#14b8a6888' : 'var(--border)') + ';color:' + (onC ? '#14b8a6' : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + co.label + '</button>';
       }
       // Pricing pills
       var prPills = '';
@@ -195,7 +195,7 @@
         var onP = pricing === prOpts[pr][0];
         prPills += '<button data-pricing="' + prOpts[pr][0] + '" style="flex-shrink:0;background:' + (onP ? prOpts[pr][1] + '22' : 'transparent') + ';border:1px solid ' + (onP ? prOpts[pr][1] + '88' : '#2a2a35') + ';color:' + (onP ? prOpts[pr][1] : '#71717a') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + (prOpts[pr][0] === 'all' ? 'Any $' : (prOpts[pr][0] === 'free' ? 'Free' : 'Paid')) + '</button>';
       }
-      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search) ? '<button id="mb-clear" style="flex-shrink:0;background:transparent;border:none;color:#f87171;font-size:11px;padding:5px 8px;font-family:inherit;cursor:pointer">clear</button>' : '';
+      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search) ? '<button id="mb-clear" style="flex-shrink:0;background:transparent;border:none;color:var(--err);font-size:11px;padding:5px 8px;font-family:inherit;cursor:pointer">clear</button>' : '';
       return '<div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;margin-bottom:4px">' + pills + ctxPills + prPills + clearHTML + '</div>';
     }
 
@@ -220,7 +220,7 @@
         out += providerBox(groups[i]);
       }
       if (!groups.length) {
-        out = '<div style="text-align:center;color:#71717a;padding:40px 20px;font-size:13px">Syncing providers…</div>';
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing providers…</div>';
       }
       return '<div style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
@@ -243,33 +243,33 @@
         rows += providerModelRow(g, matching[m]);
       }
       if (filteredOut > 0 && expanded) {
-        rows += '<div style="padding:8px 12px;font-size:11px;color:#4a4a5e;opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
+        rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
       }
 
-      return '<div class="mb-provbox' + (expanded ? ' dd-active' : '') + '" data-prov="' + g.name + '" style="background:#14141a;border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : '#1a1a22') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || '#34d399') + '">' +
+      return '<div class="mb-provbox' + (expanded ? ' dd-active' : '') + '" data-prov="' + g.name + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + '">' +
         '<div data-provhead="' + g.name + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
-          '<span style="font-size:10px;color:#71717a;flex-shrink:0">' + chevron + '</span>' +
-          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || '#4a4a5e') + ';flex-shrink:0"></span>' +
-          '<span style="font-size:14px;font-weight:600;color:#e0e0e8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (g.displayName || g.name) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
+          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
+          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (g.displayName || g.name) + '</span>' +
           hasKeyDot +
           liveDot +
-          '<span style="font-size:11px;color:#71717a;flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
         '</div>' +
-        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid #1a1a22">' + (rows || '<div style="padding:16px;font-size:12px;color:#71717a;text-align:center">no models match</div>') + '</div>' : '') +
+        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match</div>') + '</div>' : '') +
         '</div>';
     }
 
     function providerModelRow(g, m) {
       var ctx = fmtCtx(m.contextLength);
       var priceChip = m.isFree
-        ? '<span style="font-size:10px;color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0">free</span>'
-        : '<span style="font-size:10px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
-      var caps = (m.capabilities || []).length ? '<span style="font-size:9px;color:#71717a;flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
+        ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0">free</span>'
+        : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
+      var caps = (m.capabilities || []).length ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3);flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
       return '<div data-slot="' + escAttr(m.id) + '" style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
         '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-        '<span style="font-size:13px;color:#e0e0e8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.displayName || m.rawId) + '</span>' +
+        '<span style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.displayName || m.rawId) + '</span>' +
         caps +
-        '<span style="font-size:10px;color:#71717a;flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
         priceChip +
         '</div>';
     }
@@ -293,10 +293,10 @@
       }
       var hidden = logical.length - matching.length;
       if (hidden > 0) {
-        out += '<div style="padding:10px;font-size:11px;color:#4a4a5e;text-align:center">' + hidden + ' models hidden by filters</div>';
+        out += '<div style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center">' + hidden + ' models hidden by filters</div>';
       }
       if (!logical.length) {
-        out = '<div style="text-align:center;color:#71717a;padding:40px 20px;font-size:13px">Syncing models…</div>';
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing models…</div>';
       }
       return '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
     }
@@ -310,9 +310,9 @@
       var dots = '';
       var shown = Math.min(hosts.length, 5);
       for (var d = 0; d < shown; d++) {
-        dots += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || '#4a4a5e') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + (hosts[d].hasApiKey ? ' (key)' : '') + '"></span>';
+        dots += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || 'var(--border-strong)') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + (hosts[d].hasApiKey ? ' (key)' : '') + '"></span>';
       }
-      if (hosts.length > 5) dots += '<span style="font-size:9px;color:#71717a">+' + (hosts.length - 5) + '</span>';
+      if (hosts.length > 5) dots += '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3)">+' + (hosts.length - 5) + '</span>';
 
       // Capability chips + benchmarks.
       var attrs = lm.attributes || {};
@@ -327,8 +327,8 @@
       }
       if (attrs.effortLevels && attrs.effortLevels.length) chips += capChip('effort');
       var priceChip = lm.isFree
-        ? '<span style="font-size:9px;color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>'
-        : '<span style="font-size:9px;color:#f59e0b;background:rgba(245,158,11,0.1);padding:1px 6px;border-radius:4px">paid</span>';
+        ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>'
+        : '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px">paid</span>';
 
       // Host rank rows (expanded). v0.19: TAPPING a host row selects THAT
       // provider+model directly (selecting + reordering both live here —
@@ -339,14 +339,14 @@
         for (var h = 0; h < hosts.length; h++) {
           var hr = hosts[h];
           hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
-            '<span style="font-size:10px;font-weight:700;color:#0a0a0b;background:' + (hr.color || '#4a4a5e') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
-            '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || '#4a4a5e') + ';flex-shrink:0"></span>' +
-            '<span style="font-size:12px;color:' + (hr.hasApiKey ? '#e0e0e8' : '#71717a') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (hr.providerDisplayName || hr.provider) + '</span>' +
-            '<span style="font-size:10px;color:#4a4a5e;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
-            '<span style="font-size:10px;color:#71717a;flex-shrink:0">' + fmtCtx(hr.contextLength) + '</span>' +
-            '<span style="font-size:9px;font-weight:700;color:' + (hr.hasApiKey ? '#34d399' : '#4a4a5e') + ';flex-shrink:0;padding:2px 6px;border:1px solid ' + (hr.hasApiKey ? 'rgba(52,211,153,0.4)' : '#2a2a35') + ';border-radius:5px">use</span>' +
-            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid #2a2a35;color:#71717a;font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
-            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid #2a2a35;color:#71717a;font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--bg-app);background:' + (hr.color || 'var(--border-strong)') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
+            '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
+            '<span style="font-size: var(--ui-small-fs);color:' + (hr.hasApiKey ? 'var(--text-1)' : 'var(--text-3)') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (hr.providerDisplayName || hr.provider) + '</span>' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + fmtCtx(hr.contextLength) + '</span>' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:' + (hr.hasApiKey ? 'var(--ok)' : 'var(--border-strong)') + ';flex-shrink:0;padding:2px 6px;border:1px solid ' + (hr.hasApiKey ? 'rgba(var(--ok-rgb),0.4)' : 'var(--border)') + ';border-radius:5px">use</span>' +
+            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
+            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
             '</div>';
         }
       }
@@ -354,21 +354,21 @@
       // v0.19: the USE button — one tap selects this logical model on its
       // best host (key-connected, in the user's preferred host order).
       var useBtn = available
-        ? '<button data-use="' + escAttr(lm.logical) + '" style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.45);color:#34d399;font-size:10px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit">use</button>'
+        ? '<button data-use="' + escAttr(lm.logical) + '" style="background:rgba(var(--ok-rgb),0.1);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit">use</button>'
         : '';
 
-      return '<div style="background:#14141a;border:1px solid #1a1a22;border-radius:12px;overflow:hidden;' + (available ? '' : 'opacity:0.75') + '">' +
+      return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;overflow:hidden;' + (available ? '' : 'opacity:0.75') + '">' +
         '<div data-logical="' + escAttr(lm.logical) + '" style="display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;touch-action:manipulation">' +
           '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-          '<span style="font-size:13px;font-weight:600;color:#e0e0e8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (lm.displayName || lm.logical) + '</span>' +
+          '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (lm.displayName || lm.logical) + '</span>' +
           '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">' + dots + '</span>' +
-          '<span style="font-size:10px;color:#71717a;flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
           priceChip +
           useBtn +
-          '<span style="font-size:10px;color:#71717a;flex-shrink:0">' + (expanded ? '▾' : '▸') + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + (expanded ? '▾' : '▸') + '</span>' +
         '</div>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' +
-        (expanded ? '<div style="border-top:1px solid #1a1a22">' + hostRows + '</div>' : '') +
+        (expanded ? '<div style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
         '</div>';
     }
 
@@ -386,15 +386,15 @@
     }
 
     function bmChip(text, score) {
-      var color = score >= 70 ? '#22c55e' : (score >= 40 ? '#f59e0b' : '#71717a');
-      return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text + '</span>';
+      var color = score >= 70 ? '#22c55e' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
+      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text + '</span>';
     }
 
-    var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: '#8b5cf6', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
+    var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: 'var(--accent)', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
     function capChip(cap) {
       var key = String(cap).toLowerCase();
-      var color = CAP_COLORS[key] || '#71717a';
-      return '<span style="font-size:9px;color:' + color + ';background:' + color + '14;padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
+      var color = CAP_COLORS[key] || 'var(--text-3)';
+      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:' + color + '14;padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
     }
 
     // ── Matching / filtering ─────────────────────────────────────────────
@@ -473,7 +473,7 @@
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
-      return '<div style="padding:16px 0 0;font-size:10px;color:#4a4a5e;text-align:center">' +
+      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);text-align:center">' +
         'tap to select · ' + liveCount() + ' providers live · ' + totalModels() + ' models · fully live-synced' +
         '</div>';
     }

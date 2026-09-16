@@ -32,7 +32,7 @@
     contentEl = document.createElement('div');
     contentEl.style.cssText =
       'position:relative;z-index:1;width:100%;max-width:480px;max-height:85vh;' +
-      'overflow-y:auto;background:#0e0e12;border:1px solid #1a1a22;' +
+      'overflow-y:auto;background:var(--surface-1);border:1px solid var(--surface-2);' +
       'border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,0.6);' +
       '-webkit-overflow-scrolling:touch;' +
       'touch-action:pan-y;' +   // native scrolling — do NOT let the document

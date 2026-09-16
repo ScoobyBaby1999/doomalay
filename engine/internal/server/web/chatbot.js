@@ -109,7 +109,7 @@
       const cfg = window.DoomalayConfig;
       const fam = (cfg && cfg.families && cfg.families[this.family]) ||
                   (cfg && cfg.families && cfg.families.default) ||
-                  { color: '#4a4a5e', icons: [] };
+                  { color: 'var(--border-strong)', icons: [] }; // family data — theme.js re-tints 'default'
       const iconSet = fam.icons || [];
 
       this._iconEl.innerHTML = '';
@@ -122,7 +122,13 @@
         img.draggable = false;
         this._iconEl.appendChild(img);
       } else {
-        this._iconEl.style.background = fam.color || '#4a4a5e';
+        // v0.24: the DEFAULT family tint follows the theme (DOM style can
+        // use var() directly); branded families keep their own colors.
+        if (this.family === 'default' || !fam.color) {
+          this._iconEl.style.background = 'var(--border-strong)';
+        } else {
+          this._iconEl.style.background = fam.color;
+        }
         this._iconEl.textContent = (this.name || '?').charAt(0).toUpperCase();
       }
 

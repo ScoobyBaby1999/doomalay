@@ -28,6 +28,8 @@
   // ── COLOR SCHEMES (all values are CSS variables) ────────────────
   // Each scheme = 2–3 adjacent hues + shared neutrals. Users can pick a
   // preset OR customize every slot in Settings.
+  // v0.24: one scheme per app theme (theme.js pairs them) — including
+  // DARK-TEXT schemes for the light themes (paper/frost).
   var SCHEMES = {
     teal: {
       label: 'Teal Nights',
@@ -48,6 +50,36 @@
       label: 'Berry Nebula',
       a1: '#c084fc', a2: '#a78bfa', a3: '#f0abfc',
       bright: '#f6effe', link: '#d8b4fe'
+    },
+    ocean: {
+      label: 'Deep Ocean',
+      a1: '#38bdf8', a2: '#7dd3fc', a3: '#818cf8',
+      bright: '#eaf6ff', link: '#7dd3fc'
+    },
+    rose: {
+      label: 'Rose Quartz',
+      a1: '#f472b6', a2: '#fb7185', a3: '#e879f9',
+      bright: '#fff0f6', link: '#f9a8d4'
+    },
+    mono: {
+      label: 'Silver Screen',
+      a1: '#d4d4d4', a2: '#a8a8a8', a3: '#8a8a8a',
+      bright: '#f5f5f5', link: '#c4c4c4'
+    },
+    solar: {
+      label: 'Solar Flare',
+      a1: '#fbbf24', a2: '#67e8f9', a3: '#a5b4fc',
+      bright: '#fdfdf5', link: '#67e8f9'
+    },
+    paper: {
+      label: 'Ink on Paper',
+      a1: '#b45309', a2: '#0e7490', a3: '#be185d',
+      bright: '#1c1917', link: '#0e7490'
+    },
+    frost: {
+      label: 'Ink on Frost',
+      a1: '#4f6ef7', a2: '#0891b2', a3: '#c026d3',
+      bright: '#111827', link: '#0891b2'
     }
   };
 
@@ -273,7 +305,7 @@
       var keep = t.slice(0, 2000);
       var note = document.createElement('div');
       note.className = 'fmt-code-trunc';
-      note.style.cssText = 'padding:6px 12px;color:#71717a;font-size:11px;border-top:1px dashed #2a2a35';
+      note.style.cssText = 'padding:6px 12px;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);border-top:1px dashed var(--border)';
       note.textContent = '… ' + (t.length / 1024).toFixed(1) + ' KB streaming — full text renders when complete';
       codeEl.textContent = keep + '\n';
       if (pre.parentNode) pre.parentNode.insertBefore(note, pre.nextSibling);
@@ -483,6 +515,21 @@
     esc: esc
   };
 
-  // Boot with the persisted scheme (Settings may override right after).
-  applyScheme('teal');
+  // Boot with the right scheme: theme pairing (theme.js loads earlier and
+  // exposes pendingScheme) → persisted Settings → teal. v0.24 fix: the old
+  // hardcoded applyScheme('teal') stomped the user's persisted scheme on
+  // every reload (appearance.js registers its onChange BEFORE formatter
+  // loads, so the only apply that ran was this one).
+  (function () {
+    var scheme = 'teal', overrides = null;
+    if (window.DoomTheme && window.DoomTheme.pendingScheme) {
+      scheme = window.DoomTheme.pendingScheme();
+    }
+    var s = window.Settings && window.Settings.getState();
+    if (s) {
+      overrides = s.fmtOverrides || null;
+      if (!window.DoomTheme) scheme = s.chatScheme || scheme;
+    }
+    applyScheme(scheme, overrides);
+  })();
 })();

@@ -174,16 +174,16 @@
           '<div id="chat-searchbar" style="display:none;padding:6px 16px"></div>' +
           '<div id="chat-messages" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px">' +
             (state.messages.length === 0
-              ? '<div id="chat-greeting" style="text-align:center;color:#71717a;font-size:13px;padding:32px 20px">' +
+              ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
               : renderMessages(state.messages)) +
           '</div>' +
           // Sticky input bar — stays visible while scrolled.
-          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:#0e0e12;border-top:1px solid #1a1a22;padding:10px 16px 12px;z-index:2">' +
+          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1);border-top:1px solid var(--surface-2);padding:10px 16px 12px;z-index:2">' +
           '<div id="chat-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>' +
           '<div style="display:flex;gap:8px">' +
-            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:#14141a;border:1px solid #2a2a35;color:#e0e0e8;padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;resize:none;outline:none;min-height:40px;max-height:120px;line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
-            '<button id="chat-send" style="background:#4a4a5e;border:none;color:#e0e0e8;padding:0 16px;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;align-self:flex-start;height:40px">Send</button>' +
+            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;resize:none;outline:none;min-height:40px;max-height:120px;line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
+            '<button id="chat-send" style="background:var(--border-strong);border:none;color:var(--text-1);padding:0 16px;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;align-self:flex-start;height:40px">Send</button>' +
           '</div>' +
           '</div>' +
         '</div>'
@@ -317,10 +317,10 @@
     var open = !!state.dropdownOpen;
     var summary = type.summaryLine(state);
     return (
-      '<div id="chat-header" style="flex-shrink:0;background:#0e0e12;border-bottom:1px solid #1a1a22;z-index:3">' +
+      '<div id="chat-header" style="flex-shrink:0;background:var(--surface-1);border-bottom:1px solid var(--surface-2);z-index:3">' +
         '<div id="chat-header-row" style="display:flex;align-items:center;gap:8px;padding:7px 12px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer">' +
-          '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:#71717a;font-size:11px;cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
-          '<div id="chat-header-summary" style="flex:1;min-width:0;font-size:11px;font-weight:600;color:' + (complete ? '#a1a1aa' : '#71717a') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
+          '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
+          '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
         '</div>' +
         '<div id="chat-dropdown" style="' + (open ? '' : 'display:none;') + 'padding:2px 12px 10px;border-bottom:1px solid #13131a">' +
           '<div id="pill-row" style="display:flex;align-items:center;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 0 2px"></div>' +
@@ -334,7 +334,7 @@
     var steps = type.gatelockSteps(ctx);
     var boxes = '';
     var boxStyle = function (filled) {
-      return 'flex:1;background:' + (filled ? '#181820' : '#14141a') + ';border:2px ' + (filled ? 'solid #34344a' : 'dashed #2a2a35') + ';border-radius:16px;padding:22px 14px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:132px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
+      return 'flex:1;background:' + (filled ? 'var(--surface-2)' : 'var(--surface-1)') + ';border:2px ' + (filled ? 'solid var(--border-strong)' : 'dashed var(--border)') + ';border-radius:16px;padding:22px 14px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:132px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
     };
     for (var i = 0; i < steps.length; i++) {
       var s = steps[i];
@@ -342,14 +342,14 @@
       boxes +=
         '<div id="gate-box-' + s.key + '" data-gate-key="' + s.key + '" style="' + boxStyle(filled) + '">' +
           '<span style="font-size:26px">' + s.icon + '</span>' +
-          '<span style="font-size:13px;font-weight:600;color:#e0e0e8">' + esc(s.title) + '</span>' +
-          '<span style="font-size:11px;color:' + (filled ? '#34d399' : '#71717a') + '">' + esc(s.sub) + '</span>' +
+          '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1)">' + esc(s.title) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:' + (filled ? 'var(--ok)' : 'var(--text-3)') + '">' + esc(s.sub) + '</span>' +
         '</div>';
     }
     return (
       '<div id="gatelock" style="padding:18px 16px 10px;flex-shrink:0">' +
-        '<h3 id="gatelock-title" style="font-size:15px;font-weight:700;color:#e0e0e8;margin:0 0 6px">' + esc(type.gatelockTitle(state)) + '</h3>' +
-        '<p id="gatelock-intro" style="font-size:12px;color:#71717a;margin:0 0 14px;line-height:1.5">' + esc(type.gatelockIntro(state)) + '</p>' +
+        '<h3 id="gatelock-title" style="font-size: calc(var(--ui-fs) + 1px);font-weight:700;color:var(--text-1);margin:0 0 6px">' + esc(type.gatelockTitle(state)) + '</h3>' +
+        '<p id="gatelock-intro" style="font-size: var(--ui-small-fs);color:var(--text-3);margin:0 0 14px;line-height:1.5">' + esc(type.gatelockIntro(state)) + '</p>' +
         '<div style="display:flex;gap:14px;width:100%;max-width:420px">' + boxes + '</div>' +
       '</div>');
   }
@@ -383,7 +383,7 @@
           b.id = p.id;
           b.textContent = p.label;
           b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
-            'background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.55);color:#34d399;' +
+            'background:rgba(var(--ok-rgb),0.06);border:1px solid rgba(var(--ok-rgb),0.55);color:var(--ok);' +
             'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
             'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
@@ -399,7 +399,7 @@
       art.className = 'pill-artifacts';
       art.innerHTML = '🗄 <span id="pill-artifacts-count">' + (state.artifactsCount || 0) + '</span>';
       art.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-        'background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.55);color:#38bdf8;' +
+        'background:rgba(var(--accent-2-rgb),0.06);border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2);' +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
         'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
       art.addEventListener('click', function (e) {
@@ -416,7 +416,7 @@
       per.id = 'pill-persona';
       per.innerHTML = '🎭 persona';
       per.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-        'background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.55);color:#a78bfa;' +
+        'background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);' +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
         'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
       per.addEventListener('click', function (e) {
@@ -478,7 +478,7 @@
 
       // Memory — the sliding context window.
       var mem = document.createElement('div');
-      mem.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#71717a;flex-shrink:0';
+      mem.style.cssText = 'display:flex;align-items:center;gap:6px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0';
       var memBtn = document.createElement('button');
       memBtn.textContent = 'memory ' + (state.slidingWindow || 40);
       memBtn.style.cssText = utilBtnStyle();
@@ -523,10 +523,10 @@
     bar.innerHTML =
       '<div style="display:flex;gap:8px;align-items:center">' +
         '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" ' +
-          'style="flex:1;background:#14141a;border:1px solid #2a2a35;color:#e0e0e8;padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
-        '<button id="chat-search-close" style="background:transparent;border:none;color:#71717a;font-size:18px;cursor:pointer;padding:4px 8px">✕</button>' +
+          'style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
+        '<button id="chat-search-close" style="background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-fs) + 4px);cursor:pointer;padding:4px 8px">✕</button>' +
       '</div>' +
-      '<div id="chat-search-info" style="font-size:11px;color:#71717a;margin-top:4px"></div>';
+      '<div id="chat-search-info" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin-top:4px"></div>';
     var inp = bar.querySelector('#chat-search-input');
     var info = bar.querySelector('#chat-search-info');
     var closeBtn = bar.querySelector('#chat-search-close');
@@ -584,14 +584,14 @@
   }
 
   function utilBtnStyle(small) {
-    return 'flex-shrink:0;background:transparent;border:1px solid #2a2a35;color:#71717a;padding:' +
+    return 'flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:' +
       (small ? '4px 8px' : '4px 10px') + ';border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
   function flashUtil(btn, msg) {
     var old = btn.textContent;
     btn.textContent = msg;
-    btn.style.color = '#34d399';
+    btn.style.color = 'var(--ok)';
     setTimeout(function () {
       if (btn.isConnected) { btn.textContent = old; btn.style.color = ''; }
     }, 1600);
@@ -816,7 +816,7 @@
         bumpActivity(state);
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'thinking') {
-          last = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
+          last = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now() };
           state.messages.push(last);
           appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
         }
@@ -874,9 +874,33 @@
       finish(null, result && result.usage);
       return result;
     }).catch(function (e) {
-      finish(e && e.message ? e.message : 'PrivateMode turn failed');
+      finish(friendlyError(e && e.message ? e.message : 'PrivateMode turn failed'));
       return null;
     });
+  }
+
+  // ── v0.24 friendly provider errors (both chat paths) ─────────────
+  // The user's spec: "If the issue is 429, or some issue where the model is
+  // at capacity, or taking too long, let the user know instead of just
+  // displaying thinking... We can suggest a switch of models aswell."
+  function friendlyError(raw) {
+    var t = String(raw || '');
+    if (/\b429\b|rate.?limit|too many requests/i.test(t)) {
+      return 'the model is at capacity (429) — wait ~15s and try again, or switch models (each model has its own limit)';
+    }
+    if (/minimum client version|upgrade the proxy/i.test(t)) {
+      return 'PrivateMode upgraded their encrypted protocol — the app\u2019s secure client needs an update to reach it';
+    }
+    if (/went silent|no data for|context deadline exceeded|timeout/i.test(t)) {
+      return t + ' — the model may be overloaded; try again or switch models';
+    }
+    if (/\b404\b|not found for account/i.test(t)) {
+      return 'this model is no longer available for your account — pick another model';
+    }
+    if (/\b5\d\d\b/.test(t) && !/:\s*5\d\d\s*:\s*5\d\d/.test(t)) {
+      return t + ' — provider error (model may be at capacity); try again or switch models';
+    }
+    return t;
   }
 
   // ── The capability toolbar (effort ladder + web/deep toggles) ────
@@ -934,7 +958,7 @@
 
     var wb = document.createElement('button');
     wb.textContent = '⌕ web';
-    wb.style.cssText = capBtnStyle(state.webSearch, '#38bdf8');
+    wb.style.cssText = capBtnStyle(state.webSearch, 'var(--accent-2)');
     wb.addEventListener('click', function () {
       state.webSearch = !state.webSearch;
       if (state.webSearch) state.deepResearch = false;
@@ -945,7 +969,7 @@
 
     var db = document.createElement('button');
     db.textContent = '⌖ deep research';
-    db.style.cssText = capBtnStyle(state.deepResearch, '#a78bfa');
+    db.style.cssText = capBtnStyle(state.deepResearch, 'var(--accent)');
     db.addEventListener('click', function () {
       state.deepResearch = !state.deepResearch;
       if (state.deepResearch) state.webSearch = false;
@@ -957,7 +981,7 @@
     if (anyActive || (state.effort && state.effort !== 'med')) {
       var clear = document.createElement('button');
       clear.textContent = 'clear';
-      clear.style.cssText = 'background:transparent;border:1px solid #2a2a35;color:#71717a;padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;flex-shrink:0';
+      clear.style.cssText = 'background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;flex-shrink:0';
       clear.addEventListener('click', function () {
         state.effort = 'med';
         state.webSearch = false;
@@ -970,7 +994,7 @@
   }
 
   function effortBtnStyle(active) {
-    return 'flex-shrink:0;background:' + (active ? 'rgba(249,115,22,0.15)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(249,115,22,0.5)' : '#2a2a35') + ';color:' + (active ? '#fb923c' : '#71717a') + ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
+    return 'flex-shrink:0;background:' + (active ? 'rgba(249,115,22,0.15)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(249,115,22,0.5)' : 'var(--border)') + ';color:' + (active ? '#fb923c' : 'var(--text-3)') + ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
   function capBtnStyle(active, color) {
@@ -1163,7 +1187,7 @@
       bumpActivity(state);
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
-        lastThink = { role: 'thinking', text: '', open: true, startedAt: Date.now() };
+        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now() };
         state.messages.push(lastThink);
         appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon);
       }
@@ -1260,7 +1284,7 @@
     } else if (type === 'error') {
       state.isStreaming = false;
       hideActivity(bodyEl, state);
-      var errText = ev.message || ev.error || ev.text || 'Unknown error';
+      var errText = friendlyError(ev.message || ev.error || ev.text || 'Unknown error');
       if (ev.provider) {
         errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
       }
@@ -1371,8 +1395,41 @@
       }
       // find THIS chat's live DOM (panel may have re-rendered)
       var body = (currentCtx && currentCtx.state === state && currentCtx.bodyEl) || bodyEl;
-      if (body && body.isConnected) renderActivity(body, state, false);
+      if (body && body.isConnected) {
+        renderActivity(body, state, false);
+        tickThinkingMeta(body, state); // v0.24: live reasoning stats even between trickles
+      }
     }, 500);
+  }
+
+  // v0.24 — LIVE THINKING STATS. Reasoning models on slow providers
+  // (kimi-k3 via NVIDIA observed: 139-151s between thinking flushes)
+  // used to sit as a static "thinking…" — now the summary chip and the
+  // stats line tick every 500ms (elapsed + chars), so the bubble itself
+  // tells the user the app is alive.
+  function tickThinkingMeta(bodyEl, state) {
+    for (var i = state.messages.length - 1; i >= 0; i--) {
+      var m = state.messages[i];
+      if (m.role !== 'thinking') continue;
+      if (!m.startedAt) break;
+      var wrap = container2(bodyEl, i);
+      if (!wrap) break;
+      var secs = Math.max(0, Math.round((Date.now() - m.startedAt) / 1000));
+      var n = (m.text || '').length;
+      var chars = n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+      var chip = wrap.querySelector('.th-elapsed');
+      if (chip && m.streaming) {
+        chip.style.display = '';
+        var t = ' · ' + (secs >= 90 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
+        if (chip.textContent !== t) chip.textContent = t;
+      }
+      var stats = wrap.querySelector('.fmt-th-stats');
+      if (stats) {
+        var t2 = '✻ reasoning · ' + secs + 's · ' + chars;
+        if (stats.textContent !== t2) stats.textContent = t2;
+      }
+      break;
+    }
   }
 
   // ── v0.17: artifact finalize (extract + save + refresh badge) ───
@@ -1425,6 +1482,7 @@
     } else if (msg.role === 'thinking') {
       return '<details class="msg-think"' + miAttr + ' ' + (msg.open ? ' open' : '') + '>' +
         '<summary class="msg-think-summary"><span class="msg-think-dot">✻</span> thinking' +
+          '<span class="th-elapsed"' + (msg.streaming ? '' : ' style="display:none"') + '></span>' +
           (msg.streaming ? '<span class="msg-think-live"></span>' : '') + '</summary>' +
         '<div class="msg-bubble msg-think-body" data-msg-role="thinking"></div>' +
         '</details>';
@@ -1636,7 +1694,7 @@
     btn.style.display = 'flex';
     btn.innerHTML =
       '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(H.modelDetail(state.model)) + '</span>' +
-      '<span style="color:#71717a;flex-shrink:0">· ' + esc(H.providerLabel(state.provider)) + ' ▾</span>';
+      '<span style="color:var(--text-3);flex-shrink:0">· ' + esc(H.providerLabel(state.provider)) + ' ▾</span>';
     btn.onclick = function () {
       if (!window.ModelBrowser) return;
       window.ModelBrowser.open(function (provider, modelId) {

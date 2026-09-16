@@ -216,6 +216,31 @@ function repairJSON(s) {
 // v0.22: find the LAST complete line that starts with "ACTION:" —
 // preambles are legal, glued JSON is legal, several ACTION lines are
 // legal (the last is operative). Returns null or {name, rest, lineStart}.
+// v0.24 — intent detection for the auto-proceed nudge (mirrors the Go
+// engine's looksLikeIntentOnly). A short no-ACTION reply that announces
+// what it's ABOUT to do ("I'll demonstrate...") gets pushed once instead
+// of ending the turn to wait for the user to say "go".
+var INTENT_PHRASES = [
+  'i will now', "i'll now", 'i will start', "i'll start", 'i will begin', "i'll begin",
+  'i will demonstrate', "i'll demonstrate", 'i will show', "i'll show you",
+  "i'm going to", 'im going to', 'let me start', 'let me begin', 'let me demonstrate',
+  'let me show', 'i will walk', "i'll walk you", 'i will create', "i'll create",
+  'i will use', "i'll use", 'i will run', "i'll run", 'i will call', "i'll call",
+  'i will first', "i'll first", 'starting now', 'shall i proceed', 'should i proceed',
+  'would you like me to', 'want me to', 'ready when you are', 'say go', 'give me the go',
+  'tell me to', 'i am about to', "i'm about to", "here's my plan", 'here is my plan',
+  'my plan is', 'i plan to'
+];
+
+function looksLikeIntentOnly(reply) {
+  var r = String(reply || '').toLowerCase();
+  if (r.length > 900) return false; // a real, substantial answer
+  for (var i = 0; i < INTENT_PHRASES.length; i++) {
+    if (r.indexOf(INTENT_PHRASES[i]) !== -1) return true;
+  }
+  return false;
+}
+
 function findActionLine(text) {
   var lines = String(text || '').split('\n');
   for (var i = lines.length - 1; i >= 0; i--) {
@@ -257,6 +282,8 @@ async function runToolLoop(c, opts) {
   var finalText = '';
   var usage = null;
   var MAX_ROUNDS = 24; // v0.22: 24 — 10-file generations + zip round-trip fit
+  var anyToolRun = false; // v0.24: has a tool executed yet this turn
+  var nudged = false;     // v0.24: the auto-proceed push fired (max once)
 
   for (var round = 0; round < MAX_ROUNDS; round++) {
     if (opts.signal && opts.signal.aborted) {
@@ -268,9 +295,21 @@ async function runToolLoop(c, opts) {
 
     var act = findActionLine(reply);
     if (!act) {
+      // v0.24 AUTO-PROCEED NUDGE (same as the engine loop): models that
+      // "just say it will start and make me have to tell it go" — when NO
+      // tool has run yet, the reply is short, and it reads as intent-to-act,
+      // push once instead of ending the turn.
+      if (!nudged && round === 0 && !anyToolRun && looksLikeIntentOnly(reply)) {
+        nudged = true;
+        opts.onProgress && opts.onProgress({ text: 'model announced a plan — telling it to proceed…' });
+        messages.push({ role: 'assistant', content: reply });
+        messages.push({ role: 'user', content: '(system: proceed now — do not wait for permission and do not ask. Emit your ACTION tool-call lines immediately and carry the task through to the final result.)' });
+        continue;
+      }
       finalText = reply;
       break;
     }
+    anyToolRun = true;
     // v0.22: a >700-byte preamble streamed before its ACTION line — wipe
     // the leaked text so the tool pills render on a clean slate.
     if (res.emitted && opts.onReset) opts.onReset();

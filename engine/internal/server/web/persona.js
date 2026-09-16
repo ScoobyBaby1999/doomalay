@@ -355,8 +355,8 @@
       t = document.createElement('div');
       t.id = 'persona-toast';
       t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
-        'background:#181820;color:#e0e0e8;border:1px solid #2a2a35;padding:8px 16px;' +
-        'border-radius:10px;font-size:12px;z-index:3400;opacity:0;transition:opacity 0.2s;pointer-events:none';
+        'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);padding:8px 16px;' +
+        'border-radius:10px;font-size: var(--ui-small-fs);z-index:3400;opacity:0;transition:opacity 0.2s;pointer-events:none';
       document.body.appendChild(t);
     }
     t.textContent = msg;

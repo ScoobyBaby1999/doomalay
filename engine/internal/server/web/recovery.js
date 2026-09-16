@@ -38,18 +38,18 @@
     overlayShown = true;
     var el = document.createElement('div');
     el.id = 'doomalay-recovery';
-    el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#0a0a0b;color:#e0e0e8;' +
+    el.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:var(--bg-app);color:var(--text-1);' +
       'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;' +
       'align-items:center;justify-content:center;padding:24px;';
     el.innerHTML =
       '<div style="max-width:340px;text-align:center">' +
         '<div style="font-size:34px;margin-bottom:12px">🛟</div>' +
-        '<h2 style="font-size:17px;margin:0 0 6px">Doomalay hit a snag</h2>' +
-        '<p style="font-size:12.5px;color:#71717a;margin:0 0 18px;line-height:1.5">' + reason +
+        '<h2 style="font-size: calc(var(--ui-fs) + 3px);margin:0 0 6px">Doomalay hit a snag</h2>' +
+        '<p style="font-size: calc(var(--ui-small-fs) + 0.5px);color:var(--text-3);margin:0 0 18px;line-height:1.5">' + reason +
         ' Your chats and keys are safe on this device — reload usually fixes it.</p>' +
-        '<button id="rc-reload" style="background:#4a4a5e;border:none;color:#e0e0e8;padding:10px 18px;' +
+        '<button id="rc-reload" style="background:var(--border-strong);border:none;color:var(--text-1);padding:10px 18px;' +
         'border-radius:9px;font-size:13.5px;font-family:inherit;cursor:pointer;margin:0 5px">Reload app</button>' +
-        '<button id="rc-reset" style="background:transparent;border:1px solid #2a2a35;color:#71717a;padding:10px 18px;' +
+        '<button id="rc-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 18px;' +
         'border-radius:9px;font-size:13.5px;font-family:inherit;cursor:pointer;margin:0 5px">Reset app data</button>' +
       '</div>';
     document.body ? document.body.appendChild(el) : document.documentElement.appendChild(el);
