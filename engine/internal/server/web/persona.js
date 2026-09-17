@@ -72,9 +72,13 @@
   var cm = null;          // the open editor's CodeMirror
 
   var MODES = {
-    always:  { label: 'always active',     color: 'var(--ok)',       rgb: 'var(--ok-rgb)' },
-    shuffle: { label: 'shuffle',           color: 'var(--accent-2)', rgb: 'var(--accent-2-rgb)' },
-    trigger: { label: 'active by trigger', color: 'var(--warn)',     rgb: 'var(--warn-rgb)' }
+    always:   { label: 'always active',     color: 'var(--ok)',       rgb: 'var(--ok-rgb)' },
+    shuffle:  { label: 'shuffle',           color: 'var(--accent-2)', rgb: 'var(--accent-2-rgb)' },
+    trigger:  { label: 'active by trigger', color: 'var(--warn)',     rgb: 'var(--warn-rgb)' },
+    // v0.28: a real stored state — the single-active rule demotes the
+    // previous always persona to this; the user can also switch a
+    // persona off on purpose (all-off = the app's default persona).
+    inactive: { label: 'off',               color: 'var(--text-3)',   rgb: 'var(--text-3-rgb)' }
   };
 
   function esc(s) {
@@ -133,6 +137,7 @@
         try { placeholders = JSON.parse(sess.Placeholders) || {}; } catch (e) { placeholders = {}; }
       }
       personas.forEach(normalize);
+      enforceSingleActive(); // v0.28: migrate stored lists to single-active
       return sess;
     });
   }
@@ -140,8 +145,22 @@
   function normalize(p) {
     if (!p.id) p.id = uid();
     if (!p.name) p.name = 'Persona';
-    if (['always', 'shuffle', 'trigger'].indexOf(p.mode) < 0) p.mode = 'always';
+    if (['always', 'shuffle', 'trigger', 'inactive'].indexOf(p.mode) < 0) p.mode = 'always';
     if (p.mode === 'trigger' && !p.trigger) p.mode = 'always';
+  }
+
+  // v0.28 SINGLE-ACTIVE (mirrors the engine's enforceSingleActive): at
+  // most ONE persona is ever "always active". Activating one demotes
+  // the previous; the client keeps the list honest so the UI shows the
+  // same truth the engine resolves from.
+  function enforceSingleActive() {
+    var seen = false;
+    personas.forEach(function (p) {
+      if (p.mode === 'always') {
+        if (seen) p.mode = 'inactive';
+        seen = true;
+      }
+    });
   }
 
   function persist() {
@@ -191,7 +210,9 @@
         var m = modeMeta(p);
         var sub = p.mode === 'trigger' && p.trigger
           ? 'active when {' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value
-          : (p.mode === 'shuffle' ? 'in the random pool' : 'the persona this chat uses');
+          : p.mode === 'shuffle' ? 'in the random pool'
+          : p.mode === 'inactive' ? 'off — switch on from its editor'
+          : 'the persona this chat uses';
         rows +=
           '<button class="pv-row" data-persona="' + escAttr(p.id) + '">' +
             '<span class="pv-row-ico">🎭</span>' +
@@ -205,7 +226,7 @@
       });
       if (!rows) rows = '<div class="art-loading">no personas yet — add one below</div>';
       return (
-        '<p class="pv-hint">Each chat can carry several personas. One is active at a time: a satisfied <b>trigger</b> wins, then <b>always active</b> (the one used), then the <b>shuffle</b> pool (re-rolled when the chat is re-established or the app restarts).</p>' +
+        '<p class="pv-hint">Each chat can carry several personas. A satisfied <b>trigger</b> wins, then the single <b>always active</b> persona (activating one demotes the previous — v0.28 rule), then the <b>shuffle</b> pool. All-off runs the app\'s built-in default.</p>' +
         rows +
         '<div class="pv-section-label">add</div>' +
         '<button class="pv-row" data-new-persona="1">' +
@@ -238,7 +259,9 @@
     });
     var np = el.querySelector('[data-new-persona]');
     if (np) np.addEventListener('click', function () {
-      var p = { id: uid(), name: 'Persona ' + (personas.length + 1), text: '', mode: 'always' };
+      // v0.28: new personas start INACTIVE (matches the engine's
+      // persona_set spec — activate deliberately from the editor).
+      var p = { id: uid(), name: 'Persona ' + (personas.length + 1), text: '', mode: 'inactive' };
       personas.push(p);
       persist().then(function () { PV().pushView(editorView(p)); });
     });
@@ -249,19 +272,36 @@
   }
 
   // ── THE EDITOR VIEW ───────────────────────────────────────────────
+  // v0.28 (user spec): the activation-mode picker is now FOUR compact
+  // pills at the TOP (always / shuffle / trigger / off) instead of a
+  // nested view — one tap switches the mode (trigger still opens its
+  // builder). "always" demotes the previous always persona (single
+  // active), "off" parks this one inactive.
   function editorView(p) {
     return view('persona · ' + p.name, function () {
-      var m = modeMeta(p);
+      function modePill(mode, ico, label) {
+        var on = (p.mode || 'always') === mode;
+        var m = MODES[mode];
+        return '<button class="pe-mode-pill" data-set-mode="' + mode + '"' +
+          (on ? ' data-on="1"' : '') +
+          ' style="background:rgba(' + m.rgb + ',' + (on ? '0.16' : '0.05') + ');' +
+          'border:1px solid rgba(' + m.rgb + ',' + (on ? '0.55' : '0.18') + ');' +
+          'color:' + (on ? m.color : 'var(--text-3)') + '">' + ico + ' ' + label + '</button>';
+      }
       var trigSub = p.mode === 'trigger' && p.trigger
-        ? ' · {' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value : '';
+        ? '{' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value : '';
       return (
-        '<div style="display:flex;gap:7px;margin-bottom:10px">' +
-          '<button id="pe-mode" style="flex:1.2;min-width:0;background:rgba(' + m.rgb + ',0.12);border:1px solid rgba(' + m.rgb + ',0.45);color:' + m.color + ';padding:8px 8px;border-radius:6px;font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:700;font-family:inherit;cursor:pointer;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(m.label) + esc(trigSub) + '</button>' +
-          '<button id="pe-ph" style="flex:1;min-width:0;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:8px 8px;border-radius:6px;font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:600;font-family:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ } list placeholders</button>' +
+        '<div class="pe-mode-row">' +
+          modePill('always', '●', 'always') +
+          modePill('shuffle', '⤨', 'shuffle') +
+          modePill('trigger', '⚡', 'trigger') +
+          modePill('inactive', '○', 'off') +
         '</div>' +
-        '<div style="display:flex;gap:7px;margin-bottom:10px">' +
+        (trigSub ? '<p class="pv-hint" style="margin:0 2px 8px">' + esc(trigSub) + ' — tap ⚡ trigger to edit</p>' : '') +
+        '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center">' +
           '<input id="pe-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="persona name" aria-label="Persona name">' +
           '<button id="pe-rename" class="pv-btn" style="display:none;min-height:40px;padding:8px 12px">save</button>' +
+          '<button id="pe-ph" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">{ } placeholders</button>' +
         '</div>' +
         '<div id="pe-body" style="position:relative;height:42vh;min-height:240px;border:1px solid var(--surface-2);border-radius:10px;overflow:hidden"><div class="art-loading">loading editor…</div></div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
@@ -324,13 +364,31 @@
       });
     });
 
-    // ACTIVATION MODE pill (item 8) — text + color follow the state.
-    var modeBtn = el.querySelector('#pe-mode');
-    if (modeBtn) modeBtn.addEventListener('click', function () {
-      PV().pushView(modePickerView(p));
+    // v0.28: THE FOUR MODE PILLS — direct taps, no nested picker.
+    // "always" demotes the previous always persona (single active),
+    // "trigger" opens the builder, "off" parks this persona inactive.
+    el.querySelectorAll('[data-set-mode]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var mode = b.getAttribute('data-set-mode');
+        p.mode = mode;
+        if (mode === 'trigger') { p.trigger = p.trigger || { key: 'messages', op: '>', value: 10 }; }
+        // v0.28 SINGLE-ACTIVE, persona_activate semantics: promoting
+        // THIS persona to always demotes every other always persona —
+        // the tapped one wins, not whichever happens to sit first in
+        // the list (order-based enforcement would fight the user's tap).
+        if (mode === 'always') {
+          personas.forEach(function (o) {
+            if (o !== p && o.mode === 'always') o.mode = 'inactive';
+          });
+        }
+        persist().then(function () {
+          if (mode === 'trigger') PV().pushView(triggerView(p));
+          else PV().replaceView(editorView(p)); // repaint pill states
+        });
+      });
     });
 
-    // LIST PLACEHOLDERS pill (item 9).
+    // LIST PLACEHOLDERS pill.
     var phBtn = el.querySelector('#pe-ph');
     if (phBtn) phBtn.addEventListener('click', function () {
       PV().pushView(placeholdersView());
@@ -375,45 +433,9 @@
     });
   }
 
-  // ── THE MODE PICKER (item 8) ──────────────────────────────────────
-  function modePickerView(p) {
-    return view('activation', function () {
-      function row(mode, ico, title, sub) {
-        var m = MODES[mode];
-        return '<button class="pv-row" data-mode="' + mode + '">' +
-          '<span class="pv-row-ico">' + ico + '</span>' +
-          '<span class="pv-row-meta"><span class="pv-row-title" style="color:' + m.color + '">' + esc(title) + '</span>' +
-          '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
-          '<span class="pv-row-chev">›</span></button>';
-      }
-      return (
-        '<p class="pv-hint">How this persona becomes the chat\'s active one. The pill in the editor changes its text and color to match.</p>' +
-        row('always', '●', 'Always active', 'this persona is the one used') +
-        row('shuffle', '⤨', 'Shuffle', 'random member of the pool — re-rolled on chat re-establish or app restart') +
-        row('trigger', '⚡', 'Active by trigger', 'activates when your key/value condition is met') +
-        '<p class="pv-hint" style="margin-top:12px">Trigger keys: the built-in live metrics <b>messages</b> / <b>turns</b>, or any custom placeholder holding a number.</p>'
-      );
-    }, function (el) { wireModePicker(el, p); });
-  }
-
-  function wireModePicker(el, p) {
-    el.querySelectorAll('[data-mode]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var mode = b.getAttribute('data-mode');
-        if (mode === 'trigger') {
-          PV().pushView(triggerView(p));
-          return;
-        }
-        p.mode = mode;
-        p.trigger = null;
-        persist().then(function () {
-          toast('activation: ' + MODES[mode].label);
-          PV().popView();
-          PV().replaceView(editorView(p));
-        });
-      });
-    });
-  }
+  // (v0.28: THE MODE PICKER VIEW is GONE — the editor's four compact
+  // mode pills at the top replaced it. The trigger builder below is
+  // still a view; the other modes are one-tap.)
 
   // ── THE TRIGGER BUILDER (item 8) ─────────────────────────────────
   function triggerView(p) {
@@ -546,6 +568,9 @@
     for (var a = 0; a < specs.length; a++) if (specs[a].mode === 'always') return specs[a];
     var pool = specs.filter(function (p) { return p.mode === 'shuffle'; });
     if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
+    // v0.28: an all-inactive list is the user's explicit OFF switch —
+    // run the app default, never a stale persona (mirrors the engine).
+    if (specs[0].mode === 'inactive') return { text: '', mode: 'always', name: '' };
     return specs[0];
   }
   function metricValue(key, metrics) {

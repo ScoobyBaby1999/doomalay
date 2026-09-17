@@ -49,6 +49,19 @@ func (s *Server) handleToolsLocal(w http.ResponseWriter, r *http.Request) {
 		s.handleToolsDelegate(w, r, args)
 		return
 	}
+	// v0.28: PERSONA tools — the bot can inspect and rework its own
+	// persona list (user spec: "the chatbot itself does not have access
+	// or a tool to switch its own persona or create a new one… the bot
+	// should be able to do so easily"). Session-scoped like the file tools.
+	if name == "persona_list" || name == "persona_set" || name == "persona_activate" || name == "placeholder_set" {
+		sessID := r.URL.Query().Get("session")
+		if sessID == "" {
+			writeJSON(w, 200, map[string]any{"tool": name, "result": "OBSERVATION:\nerror: persona tools need a session — pass {\"session\": \"<id>\"}"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"tool": name, "result": strings.TrimPrefix(s.runPersonaTool(sessID, name, args), "OBSERVATION:\n")})
+		return
+	}
 	if !llm.IsLocalTool(name) {
 		// v0.20: unknown tool → a 200 OBSERVATION the model can learn
 		// from. The old HTTP 400 just surfaced as "tool error" and

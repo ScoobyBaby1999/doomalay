@@ -112,6 +112,15 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ctxTokens := llm.EstimateTokens(sess.CompactSummary) + llm.EstimateTokensN(liveChars)
+	// v0.28: REAL tokens beat estimates — the provider's own last-turn
+	// usage.input_tokens is exactly what the model received (system
+	// prompt + persona + history, measured, not guessed from chars).
+	// The char estimate only fills in before the first usage lands
+	// (the ring now climbs with every turn on reporting providers
+	// instead of idling at ~1% and looking dead).
+	if lastIn := lastUsageInput(events); lastIn > ctxTokens {
+		ctxTokens = lastIn
+	}
 	fillPct := 0
 	if limit > 0 {
 		fillPct = ctxTokens * 100 / limit
@@ -136,6 +145,9 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 			"model": sess.Model, "limit": limit, "usedTokens": ctxTokens,
 			"fillPct": fillPct, "compacted": sess.CompactSeq > 0,
 			"compactSeq": sess.CompactSeq,
+			// v0.28: the per-chat controls the mind panel owns.
+			"compactEnabled":   sess.CompactEnabled,
+			"compactThreshold": compactThresholdFor(sess),
 		},
 		"models": models,
 	})

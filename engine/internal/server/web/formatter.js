@@ -452,6 +452,18 @@
       }
     });
 
+    // 3.5) v0.28 MEDIA EMBEDS (user spec: images / YouTube / links that
+    // are clickable, expandable, zoomable, redirectable). Research call:
+    // no third-party lightbox is worth vendoring — the WebView already
+    // has everything. Images render natively (marked → <img>, DOMPurify
+    // keeps them, the engine sends no CSP) and get a pinch-zoom overlay;
+    // YouTube links become 16:9 thumbnail player cards (thumbnail CDN is
+    // keyless) that redirect to the real player; other links keep the
+    // inline + ↗ shape.
+    if (mode === 'full' || mode === 'user') {
+      embedMedia(el, mode);
+    }
+
     // 4) tables get a wrapper for horizontal scroll on narrow screens
     el.querySelectorAll('table').forEach(function (t) {
       if (t.parentNode.classList && t.parentNode.classList.contains('fmt-tablewrap')) return;
@@ -461,6 +473,149 @@
       wrap.appendChild(t);
     });
   }
+
+  // ── v0.28 media embed pass ──────────────────────────────────────
+  var YT_RE = /^(?:https?:)?\/\/(?:www\.|m\.)?youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)([\w-]{6,})|^https?:\/\/youtu\.be\/([\w-]{6,})/i;
+
+  function embedMedia(el, mode) {
+    // images: cap size + wire the zoom overlay
+    el.querySelectorAll('img').forEach(function (img) {
+      if (img.classList.contains('fmt-yt-thumbimg')) return; // YouTube card art
+      img.classList.add('fmt-media-img');
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('decoding', 'async');
+      img.setAttribute('referrerpolicy', 'no-referrer');
+      img.addEventListener('click', function (e) {
+        e.preventDefault();
+        window.MediaZoom.open(img.currentSrc || img.src, img.alt || '');
+      });
+    });
+
+    // YouTube links → thumbnail player cards
+    el.querySelectorAll('a[href]').forEach(function (a) {
+      var href = a.getAttribute('href') || '';
+      var m = href.match(YT_RE);
+      if (!m) return;
+      var vid = m[1] || m[2];
+      if (!vid) return;
+      var card = document.createElement('div');
+      card.className = 'fmt-yt';
+      card.setAttribute('data-href', href);
+      var label = (a.textContent || '').replace(/\s*↗\s*$/, '').trim();
+      card.innerHTML =
+        '<div class="fmt-yt-thumb">' +
+          '<img class="fmt-yt-thumbimg" src="https://i.ytimg.com/vi/' + esc(vid) + '/hqdefault.jpg" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">' +
+          '<span class="fmt-yt-play">▶</span>' +
+        '</div>' +
+        '<div class="fmt-yt-cap">' + esc(label && label !== href ? label : 'YouTube · ' + vid) +
+          '<span class="fmt-yt-open"> ↗</span></div>';
+      card.addEventListener('click', function () {
+        try { window.open(href, '_blank'); } catch (e) { location.href = href; }
+      });
+      // a link sitting alone in its <p> → the card replaces the <p>;
+      // otherwise it slots in right after
+      var p = a.closest('p') || a.parentNode;
+      if (p && p.textContent.trim() === (a.textContent || '').trim() && p.tagName === 'P') {
+        p.parentNode.replaceChild(card, p);
+      } else {
+        a.parentNode.insertBefore(card, a.nextSibling);
+        if (!(a.textContent || '').replace(/↗/, '').trim()) a.remove();
+        else { a.classList.add('fmt-link-kept'); }
+      }
+    });
+  }
+
+  // ── v0.28 MediaZoom — the pinch-zoom image overlay ────────────────
+  // One fullscreen layer per app: scrim + img + open-external ✕ close.
+  // Pointer events: 1 pointer pans, 2 pinch-zoom, double-tap resets.
+  // Zero dependencies; ~90 lines. Attached lazily on first open.
+  var MediaZoom = (function () {
+    var root = null, img = null, tx = 0, ty = 0, scale = 1;
+    var pointers = {}, lastDist = 0, lastTap = 0;
+
+    function ensure() {
+      if (root) return;
+      root = document.createElement('div');
+      root.id = 'media-zoom';
+      root.innerHTML =
+        '<button id="mz-open" aria-label="open externally">↗ open</button>' +
+        '<button id="mz-close" aria-label="close">✕</button>' +
+        '<img id="mz-img" alt="">';
+      document.body.appendChild(root);
+      img = root.querySelector('#mz-img');
+      root.addEventListener('click', function (e) {
+        if (e.target === root || e.target === img) close();
+      });
+      root.querySelector('#mz-close').addEventListener('click', close);
+
+      // pointer bookkeeping
+      root.addEventListener('pointerdown', function (e) {
+        pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if (count() === 1) {
+          var now = Date.now();
+          if (now - lastTap < 300) { tx = 0; ty = 0; scale = 1; apply(); }
+          lastTap = now;
+        } else if (count() === 2) {
+          lastDist = dist();
+        }
+        root.setPointerCapture && root.setPointerCapture(e.pointerId);
+      });
+      root.addEventListener('pointermove', function (e) {
+        if (!pointers[e.pointerId]) return;
+        if (count() === 1) {
+          tx += e.clientX - pointers[e.pointerId].x;
+          ty += e.clientY - pointers[e.pointerId].y;
+          pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+          apply();
+        } else if (count() === 2) {
+          pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+          var d = dist();
+          if (lastDist > 0 && d > 0) {
+            scale = Math.max(0.3, Math.min(12, scale * (d / lastDist)));
+            apply();
+          }
+          lastDist = d;
+        }
+      });
+      function end(e) {
+        delete pointers[e.pointerId];
+        lastDist = 0;
+      }
+      root.addEventListener('pointerup', end);
+      root.addEventListener('pointercancel', end);
+    }
+    function count() { return Object.keys(pointers).length; }
+    function dist() {
+      var ks = Object.keys(pointers);
+      if (ks.length < 2) return 0;
+      var a = pointers[ks[0]], b = pointers[ks[1]];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    function apply() {
+      img.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
+    }
+
+    function open(src, alt) {
+      ensure();
+      tx = 0; ty = 0; scale = 1;
+      img.src = src;
+      img.alt = alt || '';
+      img.style.transform = '';
+      var ob = root.querySelector('#mz-open');
+      ob.style.display = /^https?:/i.test(src) ? '' : 'none';
+      ob.onclick = function () { try { window.open(src, '_blank'); } catch (e) {} };
+      root.classList.add('open');
+      document.addEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    function close() {
+      if (!root) return;
+      root.classList.remove('open');
+      img.src = '';
+      document.removeEventListener('keydown', onKey);
+    }
+    return { open: open, close: close };
+  })();
 
   // ── Artifact card (the "file attached at the end of the message") ─
   function artifactCard(art) {
@@ -514,6 +669,9 @@
     extractArtifacts: extractArtifacts,
     esc: esc
   };
+  // v0.28: media zoom overlay (formatter-internal, but exposed so the
+  // artifacts editor / anywhere else can reuse it).
+  window.MediaZoom = MediaZoom;
 
   // Boot with the right scheme: theme pairing (theme.js loads earlier and
   // exposes pendingScheme) → persisted Settings → teal. v0.24 fix: the old

@@ -139,9 +139,12 @@
         },
         {
           id: 'pill-model',
+          // v0.28 (user spec): the +model pill carries an icon like its
+          // sandbox sibling — 🤖 when a provider is live, ◈ for the
+          // empty "+ Model" state.
           label: ctx.state.provider
-            ? providerLabel(ctx.state.provider)
-            : '+ Model',
+            ? '🤖 ' + providerLabel(ctx.state.provider)
+            : '◈ + Model',
           onTap: function () { ctx.openModelPicker(); }
         }
       ];

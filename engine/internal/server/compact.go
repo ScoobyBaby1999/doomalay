@@ -24,7 +24,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -35,12 +37,33 @@ import (
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-const compactTriggerPct = 70 // of the model's context window
+const compactTriggerPct = 70 // DEFAULT arm point (per-chat override: session.CompactThresholdPct)
 const compactKeepPct = 35    // of the window kept as recent live turns
+
+// compactThresholdFor returns the chat's effective arm point, clamped to a
+// sane 10–95 range (v0.28: the mind panel's slider writes it per chat).
+func compactThresholdFor(sess *store.Session) int {
+	t := sess.CompactThresholdPct
+	if t <= 0 {
+		t = compactTriggerPct
+	}
+	if t < 10 {
+		t = 10
+	}
+	if t > 95 {
+		t = 95
+	}
+	return t
+}
 
 // maybeCompact summarizes older turns when the context nears the limit.
 // Best-effort: every failure path returns the session unchanged.
+// v0.28: honors the per-chat controls — CompactEnabled=false skips it
+// entirely, and the arm point is the chat's own threshold %.
 func (s *Server) maybeCompact(ctx context.Context, conn *websocket.Conn, sess *store.Session, keys map[string]string, llmModel, baseURL, apiKey, authStyle string) *store.Session {
+	if !sess.CompactEnabled {
+		return sess // the user turned auto-compaction off for this chat
+	}
 	limit := llm.ContextLimitFor(sess.Model)
 	if limit <= 0 {
 		return sess
@@ -61,7 +84,18 @@ func (s *Server) maybeCompact(ctx context.Context, conn *websocket.Conn, sess *s
 		}
 	}
 	liveTokens := llm.EstimateTokens(sess.CompactSummary) + llm.EstimateTokensN(liveChars)
-	if liveTokens*100 < limit*compactTriggerPct {
+	// v0.28: REAL tokens beat estimates — the last terminal status event
+	// carries the provider's own usage.input_tokens (what the model
+	// actually received last turn, system prompt + history included).
+	// Char estimates run 2-3x hot/cold by language; this keeps the ring
+	// AND the trigger honest whenever a provider reports usage.
+	if lastIn := lastUsageInput(events); lastIn > 0 {
+		// usage covers the assembled context — scale by what's grown
+		// since (the estimate's delta), so mid-turn growth still counts.
+		liveTokens = lastIn
+	}
+	threshold := compactThresholdFor(sess)
+	if liveTokens*100 < limit*threshold {
 		return sess // plenty of room
 	}
 
@@ -150,9 +184,111 @@ func (s *Server) maybeCompact(ctx context.Context, conn *websocket.Conn, sess *s
 		return sess
 	}
 	s.emit(conn, sess.ID, "compact",
-		fmt.Sprintf(`{"fromSeq":%d,"toSeq":%d,"summaryTokens":%d,"contextLimit":%d}`,
-			sess.CompactSeq, cutSeq, llm.EstimateTokens(summary), limit), "")
+		fmt.Sprintf(`{"fromSeq":%d,"toSeq":%d,"summaryTokens":%d,"contextLimit":%d,"threshold":%d}`,
+			sess.CompactSeq, cutSeq, llm.EstimateTokens(summary), limit, threshold), "")
 	return sess
+}
+
+// lastUsageInput scans the event log newest-first for the last terminal
+// status event carrying usage, returning its input_tokens (0 if none).
+func lastUsageInput(events []*store.Event) int {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.EventType != "status" || ev.Content == "" {
+			continue
+		}
+		var st struct {
+			State string `json:"state"`
+			Usage *struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal([]byte(ev.Content), &st) == nil && st.Usage != nil && st.Usage.InputTokens > 0 {
+			return st.Usage.InputTokens
+		}
+	}
+	return 0
+}
+
+// handleSessionCompact is POST /api/sessions/{id}/compact (v0.28).
+// The PrivateMode path can't run the engine's Go ReAct loop — its turns
+// live in the WebView — so auto-compaction for PM chats is CLIENT-driven:
+// the PM bridge summarizes its own older turns (one PM round) and POSTs
+// the summary here. The engine owns event seqs, so it computes the cut:
+// keep the last `keep_messages` folded user/assistant events live, fold
+// everything older into the session's CompactSummary.
+//
+// Body: {"summary": "...", "keep_messages": 20, "summary_tokens": n?}
+func (s *Server) handleSessionCompact(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, err := s.db.GetSession(id)
+	if err != nil || sess == nil {
+		writeError(w, 404, "session not found")
+		return
+	}
+	var req struct {
+		Summary       string `json:"summary"`
+		KeepMessages  int    `json:"keep_messages"`
+		SummaryTokens int    `json:"summary_tokens"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Summary) == "" {
+		writeError(w, 400, "missing summary")
+		return
+	}
+	keep := req.KeepMessages
+	if keep <= 0 {
+		keep = 20
+	}
+
+	events, err := s.db.ListEvents(id, 0)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	// walk newest-first over the live region, counting folded
+	// user/assistant events; the cut lands right before the Nth one.
+	seen := 0
+	cutSeq := sess.CompactSeq
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Seq <= sess.CompactSeq {
+			break
+		}
+		if ev.EventType == "user" || ev.EventType == "assistant" {
+			seen++
+			if seen >= keep {
+				cutSeq = ev.Seq - 1
+				break
+			}
+		}
+	}
+	if cutSeq <= sess.CompactSeq {
+		writeError(w, 409, "nothing to compact — not enough live messages")
+		return
+	}
+
+	summary := clampServer(req.Summary, 12_000)
+	if sess.CompactSummary != "" {
+		sess.CompactSummary = sess.CompactSummary + "\n\n---\n\n" + summary
+	} else {
+		sess.CompactSummary = summary
+	}
+	sess.CompactSeq = cutSeq
+	if err := s.db.UpdateSession(sess); err != nil {
+		writeError(w, 500, "update: "+err.Error())
+		return
+	}
+	s.emit(nil, id, "compact",
+		fmt.Sprintf(`{"fromSeq":%d,"summaryTokens":%d,"client":true}`,
+			cutSeq, llm.EstimateTokens(summary)), "")
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "compactSeq": cutSeq, "kept": keep,
+	})
 }
 
 // buildHistoryCompacted assembles the model-facing history: the compact
@@ -187,6 +323,9 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
 		}
 	}
 	msgs = append(msgs, live...)
+	if window < 0 {
+		return msgs // -1 = the whole chat — no window (v0.28 mind slider)
+	}
 	if len(msgs) > window {
 		// keep the summary note + the windowed tail
 		if len(msgs) > 0 && strings.HasPrefix(msgs[0].Content, "[conversation so far") {

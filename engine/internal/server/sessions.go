@@ -47,6 +47,9 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
 		ToolAllowlist string `json:"tool_allowlist"`
 		Routing       string `json:"routing"`
 		WorkspaceID   string `json:"workspace_id"`
+		// v0.28: compaction controls (nil = enabled default).
+		CompactEnabled      *bool `json:"compact_enabled"`
+		CompactThresholdPct int   `json:"compact_threshold"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid JSON: "+err.Error())
@@ -76,6 +79,15 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
 	if req.MaxContext == 0 {
 		req.MaxContext = 128000
 	}
+	// v0.28: compaction defaults (the DB column defaults would be
+	// overridden by the explicit zero values in the INSERT otherwise).
+	compactEnabled := true
+	if req.CompactEnabled != nil {
+		compactEnabled = *(req.CompactEnabled)
+	}
+	if req.CompactThresholdPct == 0 {
+		req.CompactThresholdPct = 70
+	}
 	sess := &store.Session{
 		ID:            req.ID,
 		Title:         req.Title,
@@ -96,6 +108,9 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
 		ToolAllowlist: req.ToolAllowlist,
 		Routing:       req.Routing,
 		WorkspaceID:   req.WorkspaceID,
+		// v0.28: per-chat compaction controls.
+		CompactEnabled:      compactEnabled,
+		CompactThresholdPct: req.CompactThresholdPct,
 	}
 	if err := s.db.CreateSession(sess); err != nil {
 		writeError(w, 500, "create: "+err.Error())
@@ -190,8 +205,32 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
 		sess.Placeholders = v
 	}
 	// v0.16: the memory-window pill PATCHes this (sliding context size).
-	if v, ok := req["sliding_window"].(float64); ok && v > 0 {
+	// v0.28: -1 = the WHOLE chat (no window — user spec, the mind
+	// slider's minimum); 0 keeps the default 40.
+	if v, ok := req["sliding_window"].(float64); ok && (v > 0 || v == -1) {
 		sess.SlidingWindow = int(v)
+	}
+	// v0.28: per-chat compaction controls (the mind panel).
+	if v, ok := req["compact_enabled"].(bool); ok {
+		sess.CompactEnabled = v
+	}
+	if v, ok := req["compact_threshold"].(float64); ok {
+		t := int(v)
+		if t < 10 {
+			t = 10
+		}
+		if t > 95 {
+			t = 95
+		}
+		sess.CompactThresholdPct = t
+	}
+	// v0.28: the PM path compacted client-side — it persists the
+	// summary + cut point here (the engine owns event seqs).
+	if v, ok := req["compact_summary"].(string); ok {
+		sess.CompactSummary = v
+	}
+	if v, ok := req["compact_seq"].(float64); ok {
+		sess.CompactSeq = int(v)
 	}
 	if v, ok := req["workspace_id"].(string); ok {
 		sess.WorkspaceID = v

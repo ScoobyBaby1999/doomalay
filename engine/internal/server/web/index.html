@@ -23,7 +23,7 @@
     --border-strong: #34344a;
     --text-1: #e0e0e8;
     --text-2: #a8a8b4;
-    --text-3: #71717a;
+    --text-3: #71717a;      --text-3-rgb: 113,113,122;
     --text-3-dim: #54545e;
     --accent: #a78bfa;      --accent-rgb: 167,139,250;
     --accent-2: #38bdf8;    --accent-2-rgb: 56,189,248;
@@ -734,6 +734,59 @@
     cursor: pointer;
   }
   .fmt-link-cue { color: var(--fmt-link); opacity: 0.75; font-size: 0.85em; }
+  /* ── v0.28 MEDIA EMBEDS (user spec: clickable / expandable / zoom / redirect) ── */
+  .fmt-media-img {
+    display: block; max-width: min(100%, 460px); max-height: 62vh;
+    border-radius: 10px; border: 1px solid var(--surface-3);
+    margin: 0.5em 0; cursor: zoom-in;
+    object-fit: contain; background: var(--bg-app);
+  }
+  .fmt-yt {
+    margin: 0.55em 0; max-width: min(100%, 460px);
+    border: 1px solid var(--surface-3); border-radius: 12px; overflow: hidden;
+    cursor: pointer; background: var(--surface-1);
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .fmt-yt-thumb { position: relative; padding-top: 56.25%; background: #0a0a10; }
+  .fmt-yt-thumbimg {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; display: block;
+  }
+  .fmt-yt-play {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 46px; height: 46px; border-radius: 50%;
+    background: rgba(255,0,0,0.85); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 19px; padding-left: 4px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.55);
+  }
+  .fmt-yt:active .fmt-yt-play { background: #f00; }
+  .fmt-yt-cap {
+    padding: 7px 11px; font-size: calc(var(--ui-small-fs) - 0.5px);
+    color: var(--text-2); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fmt-yt-open { color: var(--fmt-link); opacity: 0.75; font-size: 0.85em; }
+  /* the fullscreen pinch-zoom overlay (MediaZoom in formatter.js) */
+  #media-zoom {
+    position: fixed; inset: 0; z-index: 9999; display: none;
+    background: rgba(8,8,12,0.94); touch-action: none;
+  }
+  #media-zoom.open { display: flex; align-items: center; justify-content: center; }
+  #media-zoom #mz-img {
+    max-width: 96vw; max-height: 92vh; object-fit: contain;
+    user-select: none; -webkit-user-drag: none;
+    transition: transform 0.06s linear;
+  }
+  #media-zoom #mz-close, #media-zoom #mz-open {
+    position: absolute; top: max(10px, env(safe-area-inset-top));
+    background: rgba(20,20,28,0.85); border: 1px solid rgba(255,255,255,0.18);
+    color: #fff; border-radius: 9px; padding: 7px 12px;
+    font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  #media-zoom #mz-close { right: 12px; }
+  #media-zoom #mz-open { left: 12px; }
   .fmt-code-inline {
     background: var(--surface-2); color: var(--fmt-a1);
     padding: 1.5px 6px; border-radius: 6px;
@@ -893,8 +946,14 @@
   }
   .tool-pill[data-expanded="1"] { border-radius: 12px; }
   .tool-pill-head { display: flex; align-items: center; gap: 7px; overflow: hidden; }
-  .tool-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tool-pill[data-expanded="1"] .tool-pill-text { white-space: normal; }
+  .tool-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tool-pill[data-expanded="1"] .tool-pill-text { white-space: normal; overflow-wrap: anywhere; }
+  /* v0.28: long links inside pills WRAP — never overflow the pill box
+     (user spec item 2). Collapsed+expanded, links + detail rows. */
+  .tool-pill { overflow-wrap: anywhere; }
+  .tool-pill-detail { min-width: 0; }
+  .tool-pill-row { min-width: 0; }
+  .tool-pill-row > span { min-width: 0; overflow-wrap: anywhere; }
   .tool-pill-chev { font-size: var(--ui-micro-fs); color: currentColor; opacity: 0.7; flex-shrink: 0; }
   .tool-pill-use { color: var(--accent-2); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
@@ -917,8 +976,9 @@
   }
   .tool-pill-link {
     display: block; color: var(--fmt-link); text-decoration: none;
-    font-size: calc(var(--ui-small-fs) - 1.5px); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; padding: 1px 0;
+    font-size: calc(var(--ui-small-fs) - 1.5px);
+    white-space: normal; overflow-wrap: anywhere; word-break: break-all;
+    padding: 1px 0;
   }
 
   /* ── sources cards (tappable, pretty) ── */
@@ -1217,7 +1277,41 @@
   .pv-row-title { font-size: calc(var(--ui-fs) - 0.5px); font-weight: 600; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pv-row-sub { font-size: calc(var(--ui-small-fs) - 0.5px); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pv-row-chev { color: var(--text-3-dim); flex-shrink: 0; font-size: 14px; }
+  /* v0.28: range sliders for the panel views (mind context window,
+     export latest, compaction threshold). accent-color keeps the native
+     thumb — themed by the engine's palette. */
+  .pv-range {
+    width: 100%; height: 30px; margin: 2px 0 4px;
+    accent-color: var(--accent);
+    background: transparent; cursor: pointer;
+  }
+  .pv-sub-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 8px; margin-top: 10px;
+  }
+  .pv-sub-label {
+    font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 600;
+    color: var(--text-1); flex-shrink: 0;
+  }
+  .pv-sub-value {
+    font-size: var(--ui-micro-fs); font-weight: 700; color: var(--text-3);
+    font-variant-numeric: tabular-nums; text-align: right;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .pv-hint { font-size: calc(var(--ui-small-fs) - 0.5px); color: var(--text-3); line-height: 1.55; margin: 2px 2px 12px; }
+  /* v0.28: the persona editor's four compact mode pills (always /
+     shuffle / trigger / off) — small, at the top, one tap. */
+  .pe-mode-row {
+    display: flex; gap: 6px; margin-bottom: 10px;
+  }
+  .pe-mode-pill {
+    flex: 1 1 0; min-width: 0; padding: 7px 4px; border-radius: 7px;
+    font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.2px;
+    font-family: inherit; cursor: pointer; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
   .pv-section-label {
     font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
     color: var(--text-3); margin: 14px 2px 7px;

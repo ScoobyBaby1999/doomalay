@@ -213,6 +213,30 @@
     ctx.scrollEl = scrollEl;
     ctx.msgContainer = msgContainer;
 
+    // v0.28 SMART SCROLL FREEZE (user spec): while the model generates, an
+    // upward swipe (or a touch/hold on the transcript) freezes auto-scroll —
+    // new text keeps streaming in BELOW the fold, off-screen, and the view
+    // stays exactly where the reader parked it. Scrolling back to the
+    // bottom (or sending the next message) re-engages the follow. The
+    // listener rides this scrollEl node; a re-render replaces the DOM and
+    // wires a fresh one (the flag itself lives on state, so it survives).
+    if (scrollEl) {
+      scrollEl.addEventListener('touchstart', function () {
+        if (state.isStreaming) state._scrollFrozen = true; // touch during a turn = about to read
+      }, { passive: true });
+      scrollEl.addEventListener('touchend', function () {
+        if (!state.isStreaming) return;
+        var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+        if (d < 80) state._scrollFrozen = false; // stayed at the bottom — keep following
+      }, { passive: true });
+      scrollEl.addEventListener('scroll', function () {
+        if (!state.isStreaming) { state._scrollFrozen = false; return; }
+        var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+        if (d < 80) state._scrollFrozen = false; // back at the bottom — follow again
+        else if (d > 160) state._scrollFrozen = true; // reading above — freeze
+      }, { passive: true });
+    }
+
     wireHeader(bodyEl, icon, state, type, ctx);
     wireGatelock(bodyEl, ctx);
     updateHeaderBtn(state, icon, bodyEl, panel);
@@ -429,7 +453,7 @@
       var art = document.createElement('button');
       art.id = 'pill-artifacts';
       art.className = 'pill-artifacts';
-      art.innerHTML = '🗄 <span id="pill-artifacts-count">' + (state.artifactsCount || 0) + '</span>';
+      art.innerHTML = '🌳 <span id="pill-artifacts-count">' + (state.artifactsCount || 0) + '</span>';
       art.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
         'background:rgba(var(--accent-2-rgb),0.06);border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2);' +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
@@ -578,30 +602,31 @@
       return {
         title: 'export / share · ' + icon.name,
         render: function () {
-          function fmtRow(ico, title, sub, attr) {
+          // v0.28 (user spec): one merged subtitle for the whole group, no
+          // per-row subs, no explainer paragraphs; "exported latest" is a
+          // 0–500 SLIDER (0 = full log) instead of the tap-to-cycle
+          // ladder; the CSV glyph reads white (var(--text-1)).
+          function fmtRow(ico, title, attr, icoStyle) {
             return '<button class="pv-row" ' + attr + (noSession ? ' style="opacity:0.5"' : '') + '>' +
-              '<span class="pv-row-ico">' + ico + '</span>' +
-              '<span class="pv-row-meta"><span class="pv-row-title">' + title + '</span>' +
-              '<span class="pv-row-sub">' + sub + '</span></span>' +
+              '<span class="pv-row-ico"' + (icoStyle || '') + '>' + ico + '</span>' +
+              '<span class="pv-row-meta"><span class="pv-row-title">' + title + '</span></span>' +
               '<span class="pv-row-chev">⇩</span></button>';
           }
           var qs = latest > 0 ? '?latest=' + latest : '';
           return (
-            '<p class="pv-hint">The conversation, straight from the engine\'s event log (client-side formats render from the messages on screen). Both can share just the recent tail — see <b>exported latest</b> below.</p>' +
+            '<p class="pv-hint">the transcript as a file — md / csv / json from the engine\'s event log, txt / html from the screen</p>' +
             (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
-            fmtRow('📝', 'Markdown', 'the readable transcript (You / bot blocks)', 'data-x="md" data-url="' + base + '/export.md' + qs + '"') +
-            fmtRow('▦', 'CSV', 'one row per turn — spreadsheets', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"') +
-            fmtRow('🧾', 'JSON', 'the raw session + event log (backup-grade)', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
-            fmtRow('📄', 'Plain text', 'a no-frills .txt transcript', 'data-x="txt"') +
-            fmtRow('🌐', 'HTML', 'a styled single-file transcript', 'data-x="html"')) +
-            '<div class="pv-section-label">scope</div>' +
-            '<button class="pv-row" data-latest="1">' +
-              '<span class="pv-row-ico">✂</span>' +
-              '<span class="pv-row-meta"><span class="pv-row-title">exported latest · ' + (latest > 0 ? latest : 'full log') + '</span>' +
-              '<span class="pv-row-sub">export only the last messages — -1 (default) keeps the full chat log</span></span>' +
-              '<span class="pv-row-chev">' + (latest > 0 ? latest : '-1') + '</span>' +
-            '</button>' +
-            '<p class="pv-hint" style="margin-top:8px">Tap to cycle -1 → 10 → 20 → 40 → 80 → 160. This sizes the EXPORT only — the model\'s memory lives in the 🧠 mind pill.</p>'
+            fmtRow('📝', 'Markdown', 'data-x="md" data-url="' + base + '/export.md' + qs + '"') +
+            fmtRow('▦', 'CSV', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"', ' style="color:var(--text-1)"') +
+            fmtRow('🧾', 'JSON', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
+            fmtRow('📄', 'Plain text', 'data-x="txt"') +
+            fmtRow('🌐', 'HTML', 'data-x="html"')) +
+            '<div class="pv-sub-row">' +
+              '<span class="pv-sub-label">exported latest</span>' +
+              '<span class="pv-sub-value" id="ex-latest-val">' + (latest > 0 ? 'last ' + latest : 'full log') + '</span>' +
+            '</div>' +
+            '<input type="range" class="pv-range" min="0" max="500" step="5" value="' + (latest > 0 ? latest : 0) + '"' +
+              ' aria-label="export the last N messages"' + (noSession ? ' disabled' : '') + '>'
           );
         },
         onMount: function (el) {
@@ -614,13 +639,29 @@
               else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
             });
           });
-          var lat = el.querySelector('[data-latest]');
-          if (lat) lat.addEventListener('click', function () {
-            var ladder = [-1, 10, 20, 40, 80, 160];
-            latest = ladder[(ladder.indexOf(latest) + 1) % ladder.length];
-            setExportLatest(state, latest);
-            panel.replaceView(build()); // re-render with the new number
-          });
+          // v0.28: the scope slider — 0 = full log (persisted as -1), else
+          // the last N. Live label while dragging; the row URLs (and the
+          // persisted value) update on release — no re-render, so the
+          // drag never dies mid-gesture.
+          var sl = el.querySelector('.pv-range');
+          if (sl) {
+            var val = el.querySelector('#ex-latest-val');
+            var t = null;
+            var commit = function () {
+              var v = parseInt(sl.value, 10);
+              latest = v === 0 ? -1 : v;
+              setExportLatest(state, latest);
+              el.querySelectorAll('[data-url]').forEach(function (b) {
+                b.setAttribute('data-url', b.getAttribute('data-url').split('?latest=')[0] + (latest > 0 ? '?latest=' + latest : ''));
+              });
+            };
+            sl.addEventListener('input', function () {
+              var v = parseInt(sl.value, 10);
+              if (val) val.textContent = v === 0 ? 'full log' : 'last ' + v;
+              clearTimeout(t);
+              t = setTimeout(commit, 300);
+            });
+          }
         }
       };
     }
@@ -630,7 +671,14 @@
   // ── v0.27: THE MIND PILL (user spec: the context window / memory gets
   // its own pill + panel — it was buried in export until now). Shows the
   // memory ladder AND the live context fill (same usage endpoint the ring
-  // and the usage view read). ──────────────────────────────────────────
+  // and the usage view read).
+  // v0.28 REWORK (user spec): the fill BAR is GONE (the header ring +
+  // usage view already carry it — one bar per app is plenty); the context
+  // window is a SLIDER (min = whole chat, max 500) instead of the tap
+  // ladder; and auto-compaction gained per-chat controls — an on/off
+  // toggle + the arming threshold % (the engine PATCHes
+  // compact_enabled / compact_threshold; the usage endpoint reports
+  // them back). ───────────────────────────────────────────────────────
   function openMindView(panel, icon, state) {
     if (!panel) return;
     function build(st) {
@@ -639,45 +687,80 @@
         title: 'mind · ' + icon.name,
         render: function () {
           return (
-            '<p class="pv-hint">The model\'s view of the past. The <b>context window</b> sets how many recent messages ride along on every turn; the <b>context fill</b> below is how full the model\'s own window is right now (auto-compact arms at 70%).</p>' +
-            '<button class="pv-row" data-window="1">' +
-              '<span class="pv-row-ico">🧠</span>' +
-              '<span class="pv-row-meta"><span class="pv-row-title">Context window · ' + w + '</span>' +
-              '<span class="pv-row-sub">recent messages sent to the model — tap to cycle 10→160</span></span>' +
-              '<span class="pv-row-chev">' + w + '</span>' +
-            '</button>' +
-            '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:12px;margin-top:4px">' +
-              '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:8px">' +
-                '<span style="font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:600;color:var(--text-1);flex-shrink:0">context fill</span>' +
-                '<span id="mind-fill-note" style="font-size:var(--ui-micro-fs);color:var(--text-3)">…</span>' +
-              '</div>' +
-              '<div style="height:8px;background:var(--bg-app);border-radius:4px;overflow:hidden">' +
-                '<div id="mind-fill-bar" style="height:100%;width:0%;background:var(--ok);border-radius:4px;transition:width 0.4s ease"></div>' +
+            '<div class="pv-sub-row" style="margin-top:0">' +
+              '<span class="pv-sub-label">context window</span>' +
+              '<span class="pv-sub-value" id="mind-w-val">' + (w < 0 ? 'whole chat' : w + ' messages') + '</span>' +
+            '</div>' +
+            '<input type="range" class="pv-range" min="-1" max="500" step="1" value="' + w + '" aria-label="context window messages">' +
+            '<p class="pv-hint" style="margin:0 2px 4px">drag to set the recent messages riding along every turn — the left edge keeps the whole chat.</p>' +
+            '<div class="pv-sub-row">' +
+              '<span class="pv-sub-label">auto-compaction</span>' +
+              '<span class="pv-sub-value" id="mind-compact-state">…</span>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;align-items:center">' +
+              '<button class="pv-btn" id="mind-compact-toggle" style="flex:0 0 92px">…</button>' +
+              '<div style="flex:1;min-width:0">' +
+                '<input type="range" class="pv-range" id="mind-compact-threshold" min="10" max="95" step="5" value="70" aria-label="compaction threshold percent">' +
+                '<div class="pv-sub-value" id="mind-threshold-val" style="text-align:left">arms at 70% full</div>' +
               '</div>' +
             '</div>' +
-            '<p class="pv-hint" style="margin-top:10px">Older turns never vanish — they stay in the log and ride along again when you raise the window. When the fill crosses 70%, auto-compact summarizes them so the chat keeps going.</p>'
+            '<p class="pv-hint" style="margin:6px 2px 0">when the window crosses the threshold, older turns are summarized so the chat keeps going — the log itself never loses a message.</p>'
           );
         },
         onMount: function (el) {
-          var wbtn = el.querySelector('[data-window]');
-          if (wbtn) wbtn.addEventListener('click', function () {
-            var ladder = [10, 20, 40, 80, 160];
-            st.slidingWindow = ladder[(ladder.indexOf(st.slidingWindow || 40) + 1) % ladder.length];
-            updateSession(icon, st, { sliding_window: st.slidingWindow });
-            panel.replaceView(build(st)); // re-render with the new number
+          var slider = el.querySelector('.pv-range[min="-1"]');
+          var wval = el.querySelector('#mind-w-val');
+          var t = null;
+          if (slider) slider.addEventListener('input', function () {
+            var v = parseInt(slider.value, 10);
+            if (v === 0) v = 1; // 0 would mean "default 40" to the engine — skip it
+            if (wval) wval.textContent = v < 0 ? 'whole chat' : v + ' messages';
+            clearTimeout(t);
+            t = setTimeout(function () {
+              st.slidingWindow = v;
+              updateSession(icon, st, { sliding_window: v });
+            }, 250);
           });
-          // live fill (same method as the usage view + the header ring)
+
+          // per-chat compaction controls — read from the usage endpoint
+          // (same source the ring reads), write via session PATCH.
           if (st.sessionId) {
             fetch('/api/sessions/' + st.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
               var c = (u && u.context) || {};
+              var on = c.compactEnabled !== false;
+              var thr = Math.max(10, Math.min(95, c.compactThreshold || 70));
               var fill = Math.max(0, Math.min(100, c.fillPct || 0));
-              var bar = el.querySelector('#mind-fill-bar');
-              var note = el.querySelector('#mind-fill-note');
-              if (bar) {
-                bar.style.width = fill + '%';
-                bar.style.background = fill > 85 ? 'var(--err)' : fill > 65 ? 'var(--warn)' : 'var(--ok)';
+              var tgl = el.querySelector('#mind-compact-toggle');
+              var ths = el.querySelector('#mind-compact-threshold');
+              var stv = el.querySelector('#mind-compact-state');
+              var thv = el.querySelector('#mind-threshold-val');
+              function paint() {
+                if (tgl) {
+                  tgl.textContent = on ? '● on' : '○ off';
+                  tgl.style.color = on ? 'var(--ok)' : 'var(--text-3)';
+                  tgl.style.borderColor = on ? 'rgba(var(--ok-rgb),0.45)' : 'var(--border)';
+                }
+                if (ths) ths.value = thr;
+                if (thv) thv.textContent = 'arms at ' + thr + '% full';
+                if (stv) stv.textContent = on
+                  ? (fill > 0 ? 'fill ' + fill + '% · armed at ' + thr + '%' : 'armed at ' + thr + '%')
+                  : 'off — window grows unbounded';
+                if (ths) ths.disabled = !on;
               }
-              if (note) note.textContent = fill + '% · ' + (c.compacted ? 'auto-compacted ✓' : 'auto-compact arms at 70%');
+              paint();
+              if (tgl) tgl.addEventListener('click', function () {
+                on = !on;
+                paint();
+                updateSession(icon, st, { compact_enabled: on });
+              });
+              if (ths) ths.addEventListener('input', function () {
+                thr = parseInt(ths.value, 10);
+                paint();
+                clearTimeout(t);
+                t = setTimeout(function () {
+                  updateSession(icon, st, { compact_threshold: thr });
+                }, 350);
+              });
             }).catch(function () {});
           }
         }
@@ -1742,7 +1825,9 @@
     }
     if (scrollTo) {
       var sc = bodyEl.querySelector('#chat-scroll');
-      if (sc) sc.scrollTop = sc.scrollHeight;
+      // v0.28 SMART SCROLL FREEZE: the working indicator is exactly the
+      // auto-scroll the reader must be protected from while frozen.
+      if (sc && !(state.isStreaming && state._scrollFrozen)) sc.scrollTop = sc.scrollHeight;
     }
   }
 
@@ -2005,8 +2090,14 @@
 
   function scrollBottom(bodyEl) {
     var sc = (bodyEl && bodyEl.querySelector('#chat-scroll')) || (bodyEl && bodyEl.querySelector('#chat-messages'));
-    if (sc) sc.scrollTop = sc.scrollHeight;
-    else if (bodyEl && bodyEl.querySelector) {
+    // v0.28 SMART SCROLL FREEZE: while a turn streams and the reader has
+    // scrolled up (frozen), every auto-scroll site funnels through here —
+    // new content mounts below the fold, the view never jumps. Sending a
+    // message or returning to the bottom clears the freeze (see the
+    // scroll listener in render).
+    var st = currentCtx && currentCtx.state;
+    if (sc && !(st && st.isStreaming && st._scrollFrozen)) sc.scrollTop = sc.scrollHeight;
+    else if (!sc && bodyEl && bodyEl.querySelector) {
       var c = bodyEl.querySelector('#chat-messages');
       if (c) c.scrollTop = c.scrollHeight;
     }
@@ -2118,6 +2209,9 @@
     var sendBtn = bodyEl.querySelector('#chat-send');
 
     state.messages.push({ role: 'user', text: text, local: true });
+    // v0.28 SMART SCROLL FREEZE: the user's own send re-engages the
+    // follow — their finger is back in the conversation's here-and-now.
+    state._scrollFrozen = false;
     appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon);
     // v0.19: no auto-title on the first message (user spec — the random
     // default name stays until a manual rename).

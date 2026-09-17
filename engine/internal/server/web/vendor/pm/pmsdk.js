@@ -155,11 +155,22 @@ async function streamChat(opts) {
 //      /api/tools/local with the session id so binaries save into the
 //      chat's artifact drawer (real Word/Excel/zip downloads).
 var PM_TOOLS_PROTOCOL = [
-  'You have access to tools. To call one, output a line in this exact shape:',
-  'ACTION: <tool> {<json arguments>}',
-  'A short one-line preamble before the ACTION line is allowed, but the ACTION line must be the LAST line of your reply and contain nothing else.',
-  'After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool output) — you never wait for the user for this. IMMEDIATELY issue your next ACTION after reading an observation; you may chain many tool calls (up to 24) in one turn back-to-back without any user message in between.',
-  'ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.',
+  'You have tools. To call one, put a line in EXACTLY this shape as the LAST line of your reply:',
+  'ACTION: <tool_name> {<json arguments>}',
+  '',
+  'HOW IT WORKS (do this every time a tool would help — never ask permission, never announce a plan, just call it in your very first reply):',
+  'USER: What time is it in Tokyo, and what is 37*14?',
+  'ASSISTANT: ACTION: time_now {"tz": "Asia/Tokyo"}',
+  'SYSTEM (OBSERVATION — automatic, never wait for it): 2026-09-18 09:41 +09:00',
+  'ASSISTANT: ACTION: calculator {"expr": "37*14"}',
+  'SYSTEM: 518',
+  'ASSISTANT: It is 09:41 in Tokyo (UTC+9), and 37*14 = 518.',
+  '',
+  'RULES:',
+  '- One tool call per reply. The ACTION line must be the last line, plain text (no bold, no backticks, no code fence), and contain nothing but the call.',
+  '- After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool\'s output) as a user message — you never wait for the user for this. Read it and IMMEDIATELY issue your next ACTION (up to 24 chained calls per turn).',
+  '- NEVER say you cannot do something (search the web, make a file, calculate, check the time) — you CAN, with these tools. Try the tool first; only report failure after its OBSERVATION says so.',
+  '- ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.',
   '',
   'Local tools (run instantly on the device):',
   'ACTION: calculator {"expr": "2+2*10"} — arithmetic; + - * / % ^ ( ) and sqrt/ln/log/abs/round/floor/ceil/sin/cos/tan/exp, pi, e',
@@ -177,8 +188,12 @@ var PM_TOOLS_PROTOCOL = [
   'ACTION: zip_create {"name": "b.zip", "files": [{"name": "a.txt", "content": "..."}]} — build a real .zip from named text/base64 files. Saved as a downloadable artifact.',
   'ACTION: zip_extract {"artifact": "b.zip"} or {"b64": "<zip bytes>"} — list a zip archive and extract its files as artifacts.',
   'ACTION: delegate {"prompt": "<question>", "models": ["..."]} — consult up to 3 OTHER models in parallel (multi-model swarm)',
+  'ACTION: persona_list {} — list YOUR personas and placeholders in this chat (id, name, mode, preview)',
+  'ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous)',
+  'ACTION: persona_activate {"id": "p_123"} — become a listed persona (deactivates the previous one); {"id": ""} deactivates all (back to the app default)',
+  'ACTION: placeholder_set {"key": "mood", "value": "playful"} — set a {placeholder} usable in personas and triggers',
   'For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download.' + ' After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.',
-  'Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files).'
+  'Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files). You may inspect and rework your own personality with the persona tools whenever the user asks for a change in tone, style, name, or behavior — do it instead of only describing how it would be done.'
 ].join('\n');
 
 var PM_WEB_TOOLS_PROTOCOL = [
@@ -238,7 +253,30 @@ var INTENT_PHRASES = [
   'i will first', "i'll first", 'starting now', 'shall i proceed', 'should i proceed',
   'would you like me to', 'want me to', 'ready when you are', 'say go', 'give me the go',
   'tell me to', 'i am about to', "i'm about to", "here's my plan", 'here is my plan',
-  'my plan is', 'i plan to'
+  'my plan is', 'i plan to',
+  // v0.28: the "proactively search" flavors — models that announce a
+  // search instead of just running it.
+  "i'll search", 'i will search', 'let me search', "i'll look", 'let me look',
+  "i'll check", 'let me check', "i'll fetch", 'let me fetch', "i'll go ahead",
+  'i will go ahead', 'let me try', "i'll try", "i'll find out", 'let me find out'
+];
+
+// v0.28 CAPABILITY-DENIAL phrases — models claiming they have no
+// internet/tools while the protocol is armed (mirrors the Go engine's
+// denialPhrases; the user's "models don't proactively discover tools"
+// report was exactly this, observed with the repo-explain convo).
+var DENIAL_PHRASES = [
+  "i can't search", 'i cannot search', "i can't browse", 'i cannot browse',
+  "i can't access the internet", 'i cannot access the internet',
+  "i don't have internet access", "i don't have access to the internet",
+  'no internet access', "i can't go online", "i can't fetch", 'i cannot fetch',
+  "i can't access the web", 'i cannot access the web', "i can't access external",
+  "i can't visit websites", 'i cannot visit websites', "i can't look that up",
+  "i can't check the time", "i don't have the ability to search",
+  "i don't have the ability to browse", "i'm not able to access",
+  'i am not able to access', "i don't have access to that",
+  "i don't have real-time", "i don't have live", 'as an ai language model, i',
+  'my knowledge cutoff', "i can't verify", 'i cannot verify'
 ];
 
 function looksLikeIntentOnly(reply) {
@@ -250,18 +288,69 @@ function looksLikeIntentOnly(reply) {
   return false;
 }
 
+function looksLikeCapabilityDenial(reply) {
+  var r = String(reply || '').toLowerCase();
+  if (r.length > 1200) return false;
+  for (var i = 0; i < DENIAL_PHRASES.length; i++) {
+    if (r.indexOf(DENIAL_PHRASES[i]) !== -1) return true;
+  }
+  return false;
+}
+
+// v0.28 STUPID-PROOF — the tolerant ACTION-line normalizer (mirrors the
+// Go engine's stripActionDecorations): case-insensitive, optional space
+// before the colon, optional MISSING colon, markdown chrome (**bold**,
+// __italic__, `code`, "> " quotes, "- "/"* " bullets), and a mid-line
+// backtick-wrapped call ("Here's how: `ACTION: …`"). Returns the cleaned
+// line, or "" when it carries no ACTION at all.
+var ACTION_HEAD_RE = /^ACTION[ \t]*(?:\*\*|__|`)?[ \t]*(?::|[ \t])[ \t]*(?:\*\*|__|`)?[ \t]*([a-zA-Z0-9_-]+)/i;
+
+function stripActionDecorations(line) {
+  var s = String(line || '').trim();
+  for (;;) {
+    if (s.startsWith('**') || s.startsWith('__')) s = s.slice(2).trim();
+    else if (s.charAt(0) === '`') { s = s.slice(1).replace(/^`/, '').trim(); }
+    else if (s.startsWith('> ') || s.startsWith('- ') || s.startsWith('* ')) s = s.slice(2).trim();
+    else break;
+  }
+  if (!ACTION_HEAD_RE.test(s)) {
+    // mid-line backtick wrap: "… `ACTION: …" — slice from the last one
+    var m = /`[ \t]*ACTION/i.exec(s);
+    if (m && m.index >= 0) {
+      s = s.slice(m.index + 1).trim();
+      for (;;) {
+        if (s.startsWith('**') || s.startsWith('__')) s = s.slice(2).trim();
+        else if (s.startsWith('> ') || s.startsWith('- ') || s.startsWith('* ')) s = s.slice(2).trim();
+        else break;
+      }
+    }
+  }
+  return s.replace(/[`*_ \t]+$/, ''); // closing inline-code/bold after the args
+}
+
+function isActionLineJS(line) {
+  return ACTION_HEAD_RE.test(stripActionDecorations(line));
+}
+
 function findActionLine(text) {
   var lines = String(text || '').split('\n');
   for (var i = lines.length - 1; i >= 0; i--) {
-    var t = lines[i].replace(/^[ \t]+/, '');
-    if (/^ACTION:/i.test(t)) {
-      var head = t.replace(/^ACTION:\s*/i, '');
-      var m = head.match(/^([a-zA-Z0-9_-]+)([\s\S]*)$/);
-      if (!m) return null;
-      return { name: m[1], rest: m[2].trim(), lineStart: text.lastIndexOf('\n', text.indexOf(lines[i])) + 1 };
+    if (isActionLineJS(lines[i])) {
+      var head = extractActionHeadJS(stripActionDecorations(lines[i]));
+      if (head) return { name: head.name, rest: head.rest, lineStart: text.lastIndexOf('\n', text.indexOf(lines[i])) + 1 };
+      return null;
     }
   }
   return null;
+}
+
+// tolerant head extractor: {name, rest} off a cleaned line ("" rest → "{}").
+function extractActionHeadJS(line) {
+  var m = ACTION_HEAD_RE.exec(line);
+  if (!m) return null;
+  var name = m[1].replace(/[*_`]+$/, ''); // **calculator** → calculator
+  var rest = line.slice(m.index + m[0].length).trim().replace(/^[*_` \t]+/, '').replace(/[*_`]+$/, '');
+  return { name: name, rest: rest || '{}' };
 }
 
 // v0.25 findActions — EVERY executable action in the reply (mirrors the Go
@@ -277,13 +366,13 @@ function findActions(text) {
   var lines = text.split('\n');
   var hit = -1;
   for (var i = lines.length - 1; i >= 0; i--) {
-    if (/^[ \t]*ACTION:/i.test(lines[i])) { hit = i; break; }
+    if (isActionLineJS(lines[i])) { hit = i; break; }
   }
   if (hit < 0) return [];
-  var head = lines[hit].replace(/^[ \t]*ACTION:\s*/i, '');
-  var m = head.match(/^([a-zA-Z0-9_-]+)([\s\S]*)$/);
-  if (!m) return [];
-  var name = m[1], rest = m[2].trim();
+  // v0.28: tolerant extractor — decorations, "Action :", missing colon.
+  var head = extractActionHeadJS(stripActionDecorations(lines[hit]));
+  if (!head) return [];
+  var name = head.name, rest = head.rest;
   if (!rest) rest = '{}';
   // multi-line extension: JSON braces must balance
   if (rest.charAt(0) === '{' && !balancedJSONJS(rest)) {
@@ -359,7 +448,7 @@ function stillMaybePreamble(held) {
   var nonBlank = 0;
   for (var i = 0; i < complete.length; i++) {
     if (complete[i].trim() !== '') nonBlank++;
-    if (/^[ \t]*ACTION:/i.test(complete[i])) return true; // it IS one
+    if (isActionLineJS(complete[i])) return true; // it IS one
   }
   return nonBlank < 3;
 }
@@ -397,6 +486,16 @@ async function runToolLoop(c, opts) {
         opts.onProgress && opts.onProgress({ text: 'model announced a plan — telling it to proceed…' });
         messages.push({ role: 'assistant', content: reply });
         messages.push({ role: 'user', content: '(system: proceed now — do not wait for permission and do not ask. Emit your ACTION tool-call lines immediately and carry the task through to the final result.)' });
+        continue;
+      }
+      // v0.28 CAPABILITY-DENIAL NUDGE — the model claimed it can't (no
+      // internet / no tools / knowledge cutoff) while the tools are armed.
+      // Push once, NAMING them (mirrors the Go engine's denial branch).
+      if (!nudged && round === 0 && !anyToolRun && looksLikeCapabilityDenial(reply)) {
+        nudged = true;
+        opts.onProgress && opts.onProgress({ text: "model said it can't — reminding it about its tools…" });
+        messages.push({ role: 'assistant', content: reply });
+        messages.push({ role: 'user', content: '(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet (when enabled); calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device. Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)' });
         continue;
       }
       finalText = reply;
@@ -459,41 +558,163 @@ async function bridgeToolError(resp) {
   return detail + '.' + hint + ' Do not repeat the exact same call — try a different query/URL, a different tool, or answer from what you already know and tell the user what failed.';
 }
 
+// ── v0.28 stupid-proof tool-name + JSON canonicalizers ───────────────────
+//
+// canonicalToolNameJS — alias table (mirrors the Go engine's
+// canonicalToolName, kept in lockstep) + a Levenshtein ≤2 fuzzy snap for
+// near-miss spellings ("docx_creat", "times_now"). Models invent names;
+// the chain keeps moving instead of erroring.
+var PM_TOOL_ALIASES = {
+  search: 'web_search', websearch: 'web_search', google: 'web_search', bing: 'web_search',
+  duckduckgo: 'web_search', find: 'web_search', web: 'web_search', internet: 'web_search',
+  lookup: 'web_search', search_web: 'web_search', web_lookup: 'web_search',
+  fetch: 'web_fetch', open_url: 'web_fetch', browse: 'web_fetch', get: 'web_fetch',
+  visit: 'web_fetch', read_url: 'web_fetch', url: 'web_fetch', read_page: 'web_fetch',
+  open_page: 'web_fetch', read_website: 'web_fetch',
+  calc: 'calculator', math: 'calculator', compute: 'calculator', evaluate: 'calculator', arithmetic: 'calculator',
+  time: 'time_now', now: 'time_now', clock: 'time_now', date: 'time_now', get_time: 'time_now',
+  timestamp: 'time_now', current_time: 'time_now', datetime: 'time_now',
+  guid: 'uuid', uuid4: 'uuid', uuidgen: 'uuid', generate_uuid: 'uuid', new_uuid: 'uuid', random_uuid: 'uuid',
+  rand: 'random', random_number: 'random', dice: 'random', randomint: 'random',
+  b64: 'base64', base_64: 'base64', base64encode: 'base64', base64decode: 'base64',
+  md5: 'hash', sha: 'hash', sha1_hash: 'hash', digest: 'hash', sha256: 'hash', checksum: 'hash',
+  json: 'json_tool', json_format: 'json_tool', validate_json: 'json_tool', jsonlint: 'json_tool', json_check: 'json_tool',
+  word_count: 'text_stats', count: 'text_stats', stats: 'text_stats', wc: 'text_stats', textstats: 'text_stats', count_words: 'text_stats',
+  urldecode: 'url_encode', percent_encode: 'url_encode', urlencode: 'url_encode', urlcodec: 'url_encode',
+  regex: 'regex_extract', grep: 'regex_extract', findall: 'regex_extract', match: 'regex_extract', regexp: 'regex_extract',
+  docx: 'docx_create', word: 'docx_create', word_doc: 'docx_create', make_docx: 'docx_create', create_docx: 'docx_create', wordfile: 'docx_create', word_file: 'docx_create',
+  xlsx: 'xlsx_create', excel: 'xlsx_create', spreadsheet: 'xlsx_create', make_xlsx: 'xlsx_create', create_xlsx: 'xlsx_create', excel_file: 'xlsx_create', excelfile: 'xlsx_create',
+  make_archive: 'archive_create', create_archive: 'archive_create', '7z': 'archive_create', '7zip': 'archive_create', make_7z: 'archive_create',
+  tar: 'archive_create', make_tar: 'archive_create', tarball: 'archive_create', gzip: 'archive_create',
+  archive: 'archive_create', bundle: 'archive_create', compress: 'archive_create', pack: 'archive_create',
+  unzip: 'archive_extract', extract: 'archive_extract', decompress: 'archive_extract', unarchive: 'archive_extract',
+  untar: 'archive_extract', unrar: 'archive_extract', ungzip: 'archive_extract', gunzip: 'archive_extract',
+  open_archive: 'archive_extract', list_archive: 'archive_extract', extract_archive: 'archive_extract',
+  '7z_extract': 'archive_extract', tar_extract: 'archive_extract', extract_files: 'archive_extract',
+  persona: 'persona_list', personas: 'persona_list', list_personas: 'persona_list', my_personas: 'persona_list', who_am_i: 'persona_list',
+  set_persona: 'persona_set', persona_edit: 'persona_set', edit_persona: 'persona_set', create_persona: 'persona_set',
+  new_persona: 'persona_set', update_persona: 'persona_set',
+  activate_persona: 'persona_activate', switch_persona: 'persona_activate', become: 'persona_activate', use_persona: 'persona_activate',
+  placeholder: 'placeholder_set', set_placeholder: 'placeholder_set', variable: 'placeholder_set', set_variable: 'placeholder_set'
+};
+
+var PM_ALL_TOOLS = ['calculator', 'time_now', 'uuid', 'random', 'base64', 'hash', 'json_tool', 'text_stats', 'url_encode', 'regex_extract', 'docx_create', 'xlsx_create', 'zip_create', 'zip_extract', 'archive_create', 'archive_extract', 'web_search', 'web_fetch', 'delegate', 'persona_list', 'persona_set', 'persona_activate', 'placeholder_set'];
+
+function canonicalToolNameJS(name) {
+  var n = String(name || '').toLowerCase().trim();
+  if (PM_TOOL_ALIASES[n]) return PM_TOOL_ALIASES[n];
+  // fuzzy: typo-level near-miss of a real tool name
+  var best = '', bestD = 3;
+  for (var i = 0; i < PM_ALL_TOOLS.length; i++) {
+    var d = levenshteinJS(n, PM_ALL_TOOLS[i], 2);
+    if (d < bestD) { best = PM_ALL_TOOLS[i]; bestD = d; }
+  }
+  return best || n;
+}
+
+function levenshteinJS(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  var prev = [], cur = [];
+  for (var j = 0; j <= b.length; j++) prev[j] = j;
+  for (var i = 1; i <= a.length; i++) {
+    cur[0] = i;
+    var rowMin = cur[0];
+    for (var k = 1; k <= b.length; k++) {
+      var cost = a[i - 1] === b[k - 1] ? 0 : 1;
+      cur[k] = Math.min(cur[k - 1] + 1, prev[k] + 1, prev[k - 1] + cost);
+      if (cur[k] < rowMin) rowMin = cur[k];
+    }
+    if (rowMin > max) return max + 1;
+    var t = prev; prev = cur; cur = t;
+  }
+  return prev[b.length];
+}
+
+// lenientJSONJS — the non-JSON JSON Python-trained models emit (mirrors the
+// Go engine's lenientJSON): smart quotes → straight, 'single quotes' →
+// "double", trailing commas dropped, bare-word keys quoted.
+function lenientJSONJS(s) {
+  var str = String(s || '');
+  str = str.replace(/[\u201c\u201d]/g, '"').replace(/[\u2018\u2019]/g, "'");
+  var out = '', inD = false, inS = false, esc = false, lastCh = '';
+  for (var i = 0; i < str.length; i++) {
+    var ch = str[i];
+    if (inD) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inD = false;
+      if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') lastCh = ch;
+      continue;
+    }
+    if (inS) {
+      if (ch === "'") { out += '"'; inS = false; lastCh = '"'; }
+      else if (ch === '"') { out += '\\"'; }
+      else { out += ch; if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') lastCh = ch; }
+      continue;
+    }
+    if (ch === '"') { inD = true; out += '"'; lastCh = '"'; continue; }
+    if (ch === "'") { inS = true; out += '"'; lastCh = '"'; continue; }
+    if (ch === ',') {
+      var j = i + 1;
+      while (j < str.length && /[\s]/.test(str[j])) j++;
+      if (str[j] === '}' || str[j] === ']') continue; // trailing comma
+      out += ','; lastCh = ','; continue;
+    }
+    if (/[A-Za-z0-9_]/.test(ch)) {
+      // possible bare key: identifier followed by ':' in key position
+      var m = /^([A-Za-z0-9_]+)\s*:/.exec(str.slice(i));
+      if (m && (lastCh === '{' || lastCh === ',')) {
+        out += '"' + m[1] + '"';
+        i += m[1].length - 1;
+        lastCh = m[1].charAt(m[1].length - 1);
+        continue;
+      }
+      out += ch; lastCh = ch; continue;
+    }
+    out += ch;
+    if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r') lastCh = ch;
+  }
+  return out;
+}
+
 // execAction — v0.25: ONE parsed tool call → its OBSERVATION string (the
 // old inline dispatch, extracted so the multi-action loop can call it per
 // action). Throws on unexpected errors (the loop catches → observation).
 async function execAction(act, opts, allSources) {
-  var tool = act.name.toLowerCase();
-  // v0.20 ALIASES: models invent plausible tool names (search, google,
-  // fetch, browse, open_url…) — map them onto the real tools instead of
-  // erroring. The engine loop does the same.
-  if (/^(search|websearch|google|bing|duckduckgo|find)$/.test(tool)) tool = 'web_search';
-  else if (/^(fetch|open_url|browse|get|visit|read_url|url)$/.test(tool)) tool = 'web_fetch';
-  else if (/^(calc|math|compute|evaluate)$/.test(tool)) tool = 'calculator';
-  else if (/^(time|now|clock|date)$/.test(tool)) tool = 'time_now';
-  else if (/^(guid|uuid4|uuidgen)$/.test(tool)) tool = 'uuid';
-  else if (/^(rand|random_number|dice)$/.test(tool)) tool = 'random';
-  else if (/^(b64|base_64)$/.test(tool)) tool = 'base64';
-  else if (/^(md5|sha|sha1_hash|digest)$/.test(tool)) tool = 'hash';
-  else if (/^(json|json_format|validate_json|jsonlint)$/.test(tool)) tool = 'json_tool';
-  else if (/^(word_count|count|stats|wc)$/.test(tool)) tool = 'text_stats';
-  else if (/^(urldecode|percent_encode|urlencode)$/.test(tool)) tool = 'url_encode';
-  else if (/^(regex|grep|findall|match)$/.test(tool)) tool = 'regex_extract';
-  else if (/^(docx|word|word_doc|make_docx)$/.test(tool)) tool = 'docx_create';
-  else if (/^(xlsx|excel|spreadsheet|make_xlsx)$/.test(tool)) tool = 'xlsx_create';
-  else if (/^(zip|make_zip|archive|compress|pack|7z|7zip|tar|make_tar|tarball|gzip|create_archive|make_archive|bundle)$/.test(tool)) tool = 'archive_create';
-  else if (/^(unzip|extract|decompress|unarchive|untar|unrar|ungzip|gunzip|open_archive|list_archive|extract_archive)$/.test(tool)) tool = 'archive_extract';
+  var tool = canonicalToolNameJS(act.name);
   var arg = {};
   if (act.rest) {
     try { arg = JSON.parse(act.rest); }
     catch (e) {
-      // truncated JSON — repair the missing braces/quotes, then retry
+      // truncated JSON — repair the missing braces/quotes, then retry;
+      // v0.28: then LENIENT — single quotes / trailing commas / smart
+      // quotes / bare keys (both orders — either flaw can mask the other).
       var fixed = repairJSON(act.rest);
-      try { arg = JSON.parse(fixed); } catch (e2) { arg = act.rest.replace(/^["']|["']$/g, ''); }
+      try { arg = JSON.parse(fixed); }
+      catch (e2) {
+        var l1 = lenientJSONJS(repairJSON(act.rest));
+        try { arg = JSON.parse(l1); }
+        catch (e3) {
+          var l2 = repairJSON(lenientJSONJS(act.rest));
+          try { arg = JSON.parse(l2); }
+          catch (e4) {
+            var bare = act.rest.replace(/^["'(`*_-]+/, '').replace(/["')`*_-]+$/, '');
+            arg = bare;
+          }
+        }
+      }
     }
   }
   // models sometimes pass the query as a bare string instead of JSON
-  if (typeof arg === 'string') arg = { query: arg, url: arg, text: arg, expr: arg, pattern: arg };
+  if (typeof arg === 'string') {
+    var wrapped = act.rest.replace(/^[\("'`]+/, '').replace(/[\)"'`]+$/, '');
+    // v0.28: per-tool bare-arg keys (mirrors the Go engine's switch — a
+    // bare 'Asia/Tokyo' becomes EVERY plausible key; each tool reads its own).
+    arg = { query: wrapped, url: wrapped, text: wrapped, expr: wrapped, pattern: wrapped,
+            tz: wrapped, algo: wrapped, name: wrapped, artifact: wrapped,
+            prompt: wrapped, id: wrapped, key: wrapped, value: wrapped, mode: wrapped };
+  }
 
   if (tool === 'web_search') {
     var q = arg.query || String(arg.q || '');

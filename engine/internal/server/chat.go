@@ -545,7 +545,9 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
 	sess = s.maybeCompact(ctx, conn, sess, keys, llmModel, baseURL, apiKey, authStyle)
 
 	history := s.buildHistoryCompacted(sessionID, sess, sess.SlidingWindow)
-	if sess.SlidingWindow <= 0 {
+	if sess.SlidingWindow == 0 {
+		// 0 = the legacy default (40); -1 = the WHOLE chat (v0.28 user
+		// spec — the mind slider's minimum, no window at all).
 		history = s.buildHistoryCompacted(sessionID, sess, 40)
 	}
 	history = append(history, llm.Message{Role: "user", Content: userText})
@@ -577,6 +579,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
 		// v0.22: file tools (docx/xlsx/zip) save into this session's
 		// artifact drawer — the UI gets a download card per tool_result.
 		ArtifactSink: &sessionArtifactSink{s: s, sessID: sessionID},
+		// v0.28: persona tools — the bot's self-management hands
+		// (persona_list/persona_set/persona_activate/placeholder_set),
+		// executed against THIS session by the server's tool runner.
+		PersonaToolFn: func(ctx context.Context, name, argJSON string) string {
+			return s.runPersonaTool(sessionID, name, argJSON)
+		},
 	}
 	chunks, errs := llm.Chat(ctx, req)
 

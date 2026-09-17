@@ -70,8 +70,12 @@ ACTION: zip_extract {"b64": "<zip bytes>"} — list a zip archive's contents and
 ACTION: archive_create {"name": "b.tar.gz", "files": [{"name": "a.txt", "content": "..."}]} — pack files into ANY format: .zip .7z .tar .tar.gz .tgz .tar.bz2 .tar.xz .tar.zst .gz .bz2 .xz .zst. RAR cannot be created (proprietary) — use 7z or zip. Saved as a downloadable artifact.
 ACTION: archive_extract {"artifact": "b.7z"} — unpack ANY archive (zip, 7z, rar, tar, tar.gz, tar.bz2, tar.xz, tar.zst, gz, bz2, xz, zst — detected from the bytes, not the name) and extract its files as artifacts.
 ACTION: delegate {"prompt": "<question>", "models": ["nvidia/nvidia/nemotron-3.5-lightning-30b-a3b", "privatemodeai/kimi-k2.6"]} — consult up to 3 OTHER models in parallel and weigh their answers (multi-model swarm)
+ACTION: persona_list {} — list YOUR personas and placeholders in this chat (id, name, mode, preview)
+ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous)
+ACTION: persona_activate {"id": "p_123"} — become a listed persona (deactivates the previous one); {"id": ""} deactivates all (back to the app default)
+ACTION: placeholder_set {"key": "mood", "value": "playful"} — set a {placeholder} usable in personas and triggers
 For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download. After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.
-Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files).`
+Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files). You may inspect and rework your own personality with the persona tools whenever the user asks for a change in tone, style, name, or behavior — do it instead of only describing how it would be done.`
 
 // IsLocalTool reports whether name is a local tool.
 func IsLocalTool(name string) bool {

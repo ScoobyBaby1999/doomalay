@@ -101,6 +101,9 @@ func (s *Server) routes() {
 	// directly from the WebView — the engine can't speak PM's encrypted
 	// protocol) append their events here so history + replay stay exact.
 	s.mux.HandleFunc("POST /api/sessions/{id}/events", s.handleSessionsAppendEvent)
+	// v0.28: the PM path's client-driven compaction lands here (the
+	// engine owns event seqs; the WebView owns the PM model call).
+	s.mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleSessionCompact)
 
 	// v0.16: chat-log export (the user-reviewable transcript — csv/md/json).
 	s.mux.HandleFunc("GET /api/sessions/{id}/export.csv", s.handleSessionExport)

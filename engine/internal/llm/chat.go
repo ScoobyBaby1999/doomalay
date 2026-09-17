@@ -52,6 +52,11 @@ type ChatRequest struct {
 	// binaries they build here (the session's artifact drawer). Set by the
 	// server; nil = file tools still run but don't persist.
 	ArtifactSink ArtifactSink `json:"-"`
+	// v0.28: PERSONA TOOLS — the bot's hands for its own personality
+	// (persona_list/persona_set/persona_activate/placeholder_set). Set by
+	// the server (it owns the session store); nil = the tools report
+	// "need a session" instead of running.
+	PersonaToolFn func(ctx context.Context, name, argJSON string) string `json:"-"`
 }
 
 // Message is one chat message.
@@ -275,6 +280,32 @@ var intentPhrases = []string{
 	"would you like me to", "want me to", "ready when you are", "say go", "give me the go",
 	"tell me to", "i am about to", "i'm about to", "here's my plan", "here is my plan",
 	"my plan is", "i plan to",
+	// v0.28: the “proactively search” flavors — models that announce
+	// a search instead of just running it.
+	"i'll search", "i will search", "let me search", "i'll look", "let me look",
+	"i'll check", "let me check", "i'll fetch", "let me fetch", "i'll go ahead",
+	"i will go ahead", "let me try", "i'll try", "i'll find out", "let me find out",
+}
+
+// denialPhrases — v0.28 CAPABILITY-DENIAL NUDGE (the user's "models don't
+// proactively discover/use tools" report): models with stale training
+// assert they have no internet/no tools and end the turn; the user then
+// has to manually nudge "you have web_search, use it" — exactly what the
+// nudge exists to automate. Observed live with the repo-explain convo:
+// the model DID have web tools armed but announced it couldn't access
+// the repo, and only a manual push made it try web_fetch.
+var denialPhrases = []string{
+	"i can't search", "i cannot search", "i can't browse", "i cannot browse",
+	"i can't access the internet", "i cannot access the internet",
+	"i don't have internet access", "i don't have access to the internet",
+	"no internet access", "i can't go online", "i can't fetch", "i cannot fetch",
+	"i can't access the web", "i cannot access the web", "i can't access external",
+	"i can't visit websites", "i cannot visit websites", "i can't look that up",
+	"i can't check the time", "i don't have the ability to search",
+	"i don't have the ability to browse", "i'm not able to access",
+	"i am not able to access", "i don't have access to that",
+	"i don't have real-time", "i don't have live", "as an ai language model, i",
+	"my knowledge cutoff", "i can't verify", "i cannot verify",
 }
 
 func looksLikeIntentOnly(reply string) bool {
@@ -283,6 +314,22 @@ func looksLikeIntentOnly(reply string) bool {
 		return false // a real, substantial answer — not an announcement
 	}
 	for _, p := range intentPhrases {
+		if strings.Contains(r, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeCapabilityDenial — the second nudge flavor (v0.28): the model
+// claims it CAN'T do something the tools do. Slightly longer budget
+// than intent (denials can carry an apologetic preamble).
+func looksLikeCapabilityDenial(reply string) bool {
+	r := strings.ToLower(reply)
+	if len(r) > 1200 {
+		return false
+	}
+	for _, p := range denialPhrases {
 		if strings.Contains(r, p) {
 			return true
 		}
@@ -715,13 +762,38 @@ func authHeaders(req ChatRequest) map[string]string {
 //      loop until the model writes a final answer (max 8 rounds — the old
 //      backend's RESEARCH_MAX_STEPS).
 
-// toolsProtocol (v0.20 unified): the local tool set is ALWAYS part of the
-// protocol; the web tools are appended only for web-search turns.
+// toolsProtocol (v0.20 unified, v0.28 stupid-proof rewrite): the local
+// tool set is ALWAYS part of the protocol; the web tools are appended
+// only for web-search turns.
+//
+// v0.28 design goals (the user's "100% stupid-proof" spec):
+//   - a WORKED CHAIN EXAMPLE — weak models imitate the shape they see;
+//     the old prose-only rules still left them guessing the round-trip
+//     format (the OBSERVATION arrives as a USER message — models didn't
+//     realize they were expected to keep going)
+//   - PREFER-ACTING up top — the #1 field complaint was models answering
+//     from stale memory or claiming they can't, instead of calling an
+//     ACTION in their FIRST reply
+//   - an explicit no-markdown rule on the ACTION line (bold/backticks
+//     broke the old parser; both sides now tolerate it anyway, but the
+//     instruction keeps the transcript clean)
 var toolsProtocol = `
-You have access to tools. To call one, output a line in this exact shape:
-ACTION: <tool> {<json arguments>}
-A short one-line preamble before the ACTION line is allowed, but the ACTION line must be the LAST line of your reply and contain nothing else.
-After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool's output) — you never wait for the user for this. IMMEDIATELY issue your next ACTION after reading an observation; you may chain many tool calls (up to 24) in one turn back-to-back without any user message in between. ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.`
+You have tools. To call one, put a line in EXACTLY this shape as the LAST line of your reply:
+ACTION: <tool_name> {<json arguments>}
+
+HOW IT WORKS (do this every time a tool would help — never ask permission, never announce a plan, just call it in your very first reply):
+USER: What time is it in Tokyo, and what is 37*14?
+ASSISTANT: ACTION: time_now {"tz": "Asia/Tokyo"}
+SYSTEM (OBSERVATION — automatic, never wait for it): 2026-09-18 09:41 +09:00
+ASSISTANT: ACTION: calculator {"expr": "37*14"}
+SYSTEM: 518
+ASSISTANT: It is 09:41 in Tokyo (UTC+9), and 37*14 = 518.
+
+RULES:
+- One tool call per reply. The ACTION line must be the last line, plain text (no bold, no backticks, no code fence), and contain nothing but the call.
+- After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool's output) as a user message — you never wait for the user for this. Read it and IMMEDIATELY issue your next ACTION (up to 24 chained calls per turn).
+- NEVER say you cannot do something (search the web, make a file, calculate, check the time) — you CAN, with these tools. Try the tool first; only report failure after its OBSERVATION says so.
+- ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.`
 
 // webToolsProtocol describes the network tools (web-search turns only).
 const webToolsProtocol = `You also have web tools (live internet):
@@ -803,6 +875,18 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 				history = append(history, Message{Role: "user", Content: "(system: proceed now — do not wait for permission and do not ask. Emit your ACTION tool-call lines immediately and carry the task through to the final result.)"})
 				continue
 			}
+			// v0.28 CAPABILITY-DENIAL NUDGE — the model claimed it
+			// can't (no internet / no tools / knowledge cutoff)
+			// while the tools are RIGHT THERE. Push once, naming
+			// them, so the next round uses them instead of
+			// leaving the user to do it manually.
+			if !nudged && round == 0 && toolsRun == 0 && looksLikeCapabilityDenial(answer) {
+				nudged = true
+				ch <- ChatChunk{Type: "progress", Text: "model said it can't — reminding it about its tools…"}
+				history = append(history, Message{Role: "assistant", Content: answer})
+				history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet (when enabled); calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device. Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
+				continue
+			}
 			// Final answer — ALREADY streamed live above.
 			if len(allSources) > 0 {
 				ch <- ChatChunk{Type: "sources", Sources: allSources}
@@ -867,6 +951,31 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 	// instead of erroring. Capability > pedantry.
 	action = canonicalToolName(action)
 	var observation string
+	// v0.28: PERSONA TOOLS — the bot's self-management hands. Routed
+	// through the server callback (it owns the session store); the
+	// pill + observation mirror the local-tool shape so the UI and the
+	// model both see a normal tool round.
+	if action == "persona_list" || action == "persona_set" || action == "persona_activate" || action == "placeholder_set" {
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			if v, ok := args["name"].(string); ok {
+				summary = v
+			} else if v, ok := args["id"].(string); ok {
+				summary = v
+			} else if v, ok := args["key"].(string); ok {
+				summary = v
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
+		if req.PersonaToolFn != nil {
+			observation = req.PersonaToolFn(ctx, action, argJSON)
+		} else {
+			observation = "OBSERVATION:\nerror: persona tools need a live session on this server"
+		}
+		ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: action}
+		return observation
+	}
 	if action == "delegate" && req.DelegateFn != nil {
 		// v0.21: SWARM FANOUT (the HF panel delegate, ported) —
 		// one prompt, up to 3 other models answer in parallel.
@@ -1310,10 +1419,74 @@ func lastLine(s string) string {
 // vanishes: nothing streams, parseAction rejects it, the turn ends
 // idle with no reply at all. Observed live: a 16-tool chain completed
 // and the final summary round was swallowed whole by exactly this).
-var actionNameRe = regexp.MustCompile(`^ACTION:\s*([a-zA-Z0-9_-]+)`)
+//
+// v0.28 STUPID-PROOF: the check is CASE-INSENSITIVE ("Action:",
+// "action:"), tolerates a space before the colon ("ACTION :"), a
+// MISSING colon ("ACTION time_now {…}"), and markdown chrome stupid
+// models wrap the line in — leading ** / __ / backticks / "> " quotes /
+// "- " bullets, and a bold tail after the name. The JS mirror (pmsdk.js)
+// was already case-insensitive; now both sides take the same inputs.
+var actionNameRe = regexp.MustCompile(`(?i)^ACTION[ \t]*(?:\*\*|__|\x60)?[ \t]*(?::|[ \t])[ \t]*(?:\*\*|__|\x60)?[ \t]*([a-zA-Z0-9_-]+)`)
+
+// stripActionDecorations removes markdown chrome from around an ACTION
+// call so the tolerant regex sees the bare call. Two positions:
+//   - LINE START: leading ** / __ / backticks / "> " quotes / "- " bullets
+//   - MID-LINE, backtick-wrapped: "Here's how: `ACTION: time_now {…}`" —
+//     the LAST backtick-preceded ACTION wins (a quote wrapping a call
+//     mid-sentence is the classic stupid-model shape).
+//
+// Trailing ` / * / _ (closing the inline code/bold AFTER the args) are
+// trimmed from the line's end — never from inside the JSON.
+func stripActionDecorations(line string) string {
+	s := strings.TrimSpace(line)
+	for {
+		switch {
+		case strings.HasPrefix(s, "**"), strings.HasPrefix(s, "__"):
+			s = strings.TrimSpace(s[2:])
+		case strings.HasPrefix(s, "\x60"):
+			s = strings.TrimPrefix(s[1:], "\x60") // open backtick — drop its closing twin too
+			s = strings.TrimSpace(s)
+		case strings.HasPrefix(s, "> "), strings.HasPrefix(s, "- "), strings.HasPrefix(s, "* "):
+			s = strings.TrimSpace(s[2:])
+		default:
+			goto midline
+		}
+	}
+midline:
+	// mid-line backtick wrap: "… `ACTION: …" — slice from the last one
+	if !actionNameRe.MatchString(s) {
+		if idx := lastIndexFold(s, "\x60ACTION"); idx >= 0 {
+			s = strings.TrimSpace(s[idx+1:])
+			// re-run the line-start loop on the sliced remainder
+			for {
+				switch {
+				case strings.HasPrefix(s, "**"), strings.HasPrefix(s, "__"):
+					s = strings.TrimSpace(s[2:])
+				case strings.HasPrefix(s, "> "), strings.HasPrefix(s, "- "), strings.HasPrefix(s, "* "):
+					s = strings.TrimSpace(s[2:])
+				default:
+					return strings.TrimRight(s, "\x60*_ \t")
+				}
+			}
+		}
+	}
+	return strings.TrimRight(s, "\x60*_ \t")
+}
+
+// lastIndexFold finds the last case-insensitive occurrence of sub in s
+// (byte-level — the needle is ASCII; a rune split by slicing can never
+// EqualFold "ACTION").
+func lastIndexFold(s, sub string) int {
+	for i := len(s) - len(sub); i >= 0; i-- {
+		if strings.EqualFold(s[i:i+len(sub)], sub) {
+			return i
+		}
+	}
+	return -1
+}
 
 func isValidActionLine(line string) bool {
-	return actionNameRe.MatchString(strings.TrimSpace(line))
+	return actionNameRe.MatchString(stripActionDecorations(line))
 }
 
 // runReActRoundWithRetry (v0.20): one ReAct round with an empty-response
@@ -1434,15 +1607,28 @@ func parseActions(answer string) []parsedAction {
 	if hit < 0 {
 		return nil
 	}
-	head := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[hit]), "ACTION:"))
+	// v0.28 STUPID-PROOF: run the tolerant extractor on the DECORATED
+	// line — it handles "Action :", missing colons, **bold**, backticks,
+	// "> " quotes and "- " bullets (see stripActionDecorations).
+	head := extractActionHead(stripActionDecorations(lines[hit]))
 	var name, rest string
-	// tool name = leading token; the JSON args may be separated by a
-	// space, glued directly to the name ("time_now{"tz":...}" — no
-	// space, observed live), or continue on following lines.
-	if m := regexp.MustCompile(`^([a-zA-Z0-9_-]+)([\s\S]*)$`).FindStringSubmatch(head); m != nil {
-		name, rest = m[1], strings.TrimSpace(m[2])
-	} else {
-		name, rest = head, ""
+	if head != "" {
+		if m := regexp.MustCompile(`^([a-zA-Z0-9_-]+)([\s\S]*)$`).FindStringSubmatch(head); m != nil {
+			name = strings.TrimRight(m[1], "*_`") // **calculator** → calculator
+			rest = strings.TrimSpace(m[2])
+		}
+	}
+	if name == "" {
+		// last-ditch: the old direct slice (kept for safety — the
+		// tolerant extractor is new and must never lose a call the
+		// old code would have caught). Handles the glued no-space
+		// shape ("time_now{"tz":...}" — observed live).
+		head = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[hit]), "ACTION:"))
+		if m := regexp.MustCompile(`^([a-zA-Z0-9_-]+)([\s\S]*)$`).FindStringSubmatch(head); m != nil {
+			name, rest = m[1], strings.TrimSpace(m[2])
+		} else {
+			name, rest = head, ""
+		}
 	}
 	if name == "" || !regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(name) {
 		return nil
@@ -1479,7 +1665,16 @@ func parseActions(answer string) []parsedAction {
 			r = "{}"
 		}
 		if !strings.HasPrefix(r, "{") {
-			// bare argument — wrap it into the JSON shape the tool wants
+			// bare argument — wrap it into the JSON shape the tool wants.
+			// v0.28: first strip a wrapping (...) and/or quotes —
+			// `calculator ("2+2")` / `time_now 'UTC'` are the shapes
+			// function-call-trained models emit reflexively.
+			for len(r) >= 2 && r[0] == '(' && r[len(r)-1] == ')' {
+				r = strings.TrimSpace(r[1 : len(r)-1])
+			}
+			for len(r) >= 2 && ((r[0] == '"' && r[len(r)-1] == '"') || (r[0] == '\'' && r[len(r)-1] == '\'')) {
+				r = strings.TrimSpace(r[1 : len(r)-1])
+			}
 			esc, err := json.Marshal(r)
 			if err != nil {
 				esc = []byte(`""`)
@@ -1506,7 +1701,14 @@ func parseActions(answer string) []parsedAction {
 			// v0.20: truncated JSON — models sometimes cut the closing
 			// brace/quote (observed live). Repair instead of losing the
 			// tool call to a parse error.
+			// v0.28: then LENIENT — single-quoted / trailing-comma /
+			// smart-quote JSON (Python-trained habits) — both orders,
+			// because either flaw can mask the other.
 			if fixed := repairJSON(r); json.Valid([]byte(fixed)) {
+				r = fixed
+			} else if fixed := lenientJSON(repairJSON(r)); json.Valid([]byte(fixed)) {
+				r = fixed
+			} else if fixed := repairJSON(lenientJSON(r)); json.Valid([]byte(fixed)) {
 				r = fixed
 			}
 		}
@@ -1669,38 +1871,265 @@ func repairJSON(s string) string {
 // canonicalToolName maps the plausible names models invent onto the real
 // tools (v0.20) — observed live: gpt-oss called `ACTION: search {…}` instead
 // of web_search. Aliases keep the chain alive instead of erroring.
+//
+// v0.28 STUPID-PROOF additions:
+//   - the FILE-TOOL aliases the JS side already had (docx/word/excel/… —
+//     the Go side errored on them, breaking the exact same chain the PM
+//     path survived)
+//   - PERSONA tool aliases (the bot's self-management tools)
+//   - a LEVENSHTEIN ≤2 fallback — any near-miss spelling of a real tool
+//     name ("websitesearch", "times_now", "docx_creat") snaps to the
+//     real tool instead of the "unknown tool" observation round-trip.
+//     The chain keeps moving; the observation still names the rewrite so
+//     the transcript stays honest.
 func canonicalToolName(name string) string {
 	switch name {
-	case "search", "websearch", "google", "bing", "duckduckgo", "find":
+	case "search", "websearch", "google", "bing", "duckduckgo", "find", "web", "internet", "lookup", "search_web", "web_lookup":
 		return "web_search"
-	case "fetch", "open_url", "browse", "get", "visit", "read_url", "url":
+	case "fetch", "open_url", "browse", "get", "visit", "read_url", "url", "read_page", "open_page", "read_website":
 		return "web_fetch"
-	case "calc", "math", "compute", "evaluate":
+	case "calc", "math", "compute", "evaluate", "arithmetic":
 		return "calculator"
-	case "time", "now", "clock", "date":
+	case "time", "now", "clock", "date", "get_time", "timestamp", "current_time", "datetime":
 		return "time_now"
-	case "guid", "uuid4", "uuidgen":
+	case "guid", "uuid4", "uuidgen", "generate_uuid", "new_uuid", "random_uuid":
 		return "uuid"
-	case "rand", "random_number", "dice":
+	case "rand", "random_number", "dice", "randomint":
 		return "random"
-	case "b64", "base_64":
+	case "b64", "base_64", "base64encode", "base64decode":
 		return "base64"
-	case "md5", "sha", "sha1_hash", "digest":
+	case "md5", "sha", "sha1_hash", "digest", "sha256", "checksum":
 		return "hash"
-	case "json", "json_format", "validate_json", "jsonlint":
+	case "json", "json_format", "validate_json", "jsonlint", "json_check":
 		return "json_tool"
-	case "word_count", "count", "stats", "wc":
+	case "word_count", "count", "stats", "wc", "textstats", "count_words":
 		return "text_stats"
-	case "urldecode", "percent_encode", "urlencode":
+	case "urldecode", "percent_encode", "urlencode", "urlcodec":
 		return "url_encode"
-	case "regex", "grep", "findall", "match":
+	case "regex", "grep", "findall", "match", "regexp":
 		return "regex_extract"
-	case "pack", "compress", "make_archive", "create_archive", "7z", "7zip", "make_7z", "tar", "make_tar", "tarball", "gzip", "make_zip", "zip", "archive", "bundle":
+	case "docx", "word", "word_doc", "make_docx", "create_docx", "wordfile", "word_file":
+		return "docx_create"
+	case "xlsx", "excel", "spreadsheet", "make_xlsx", "create_xlsx", "excel_file", "excelfile":
+		return "xlsx_create"
+	case "make_archive", "create_archive", "7z", "7zip", "make_7z", "tar", "make_tar", "tarball", "gzip", "archive", "bundle", "compress", "pack":
 		return "archive_create"
-	case "unpack", "decompress", "unarchive", "untar", "unrar", "ungzip", "gunzip", "unzip", "extract_archive", "open_archive", "list_archive", "7z_extract", "tar_extract":
+	case "unpack", "decompress", "unarchive", "untar", "unrar", "ungzip", "gunzip", "unzip", "extract_archive", "open_archive", "list_archive", "7z_extract", "tar_extract", "extract_files":
 		return "archive_extract"
+	case "persona", "personas", "list_personas", "my_personas", "who_am_i":
+		return "persona_list"
+	case "set_persona", "persona_edit", "edit_persona", "create_persona", "new_persona", "update_persona":
+		return "persona_set"
+	case "activate_persona", "switch_persona", "become", "use_persona":
+		return "persona_activate"
+	case "placeholder", "set_placeholder", "variable", "set_variable":
+		return "placeholder_set"
+	}
+	// fuzzy: a near-miss of ANY real tool name (typo-level distance)
+	if best, ok := nearestToolName(name); ok {
+		return best
 	}
 	return name
+}
+
+// allCallableTools is the full known-tool universe for fuzzy matching
+// (local + web + persona + delegate — everything the ACTION system runs).
+var allCallableTools = append(append([]string{}, LocalToolNames...),
+	"web_search", "web_fetch", "delegate",
+	"persona_list", "persona_set", "persona_activate", "placeholder_set")
+
+// nearestToolName returns the closest known tool within Levenshtein
+// distance 2 (false when nothing is close enough to bet on).
+func nearestToolName(name string) (string, bool) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return "", false
+	}
+	best, bestD := "", 3
+	for _, t := range allCallableTools {
+		d := levenshtein(n, t, 2)
+		if d < bestD {
+			best, bestD = t, d
+		}
+	}
+	if best != "" {
+		return best, true
+	}
+	return "", false
+}
+
+// levenshtein computes edit distance with an early-out at max (two
+// rows; runes not bytes — model-invented names are ASCII, but their
+// arguments aren't, and this helper is generic on purpose).
+func levenshtein(a, b string, max int) int {
+	ra, rb := []rune(a), []rune(b)
+	if abs(len(ra)-len(rb)) > max {
+		return max + 1
+	}
+	prev := make([]int, len(rb)+1)
+	cur := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur[0] = i
+		rowMin := cur[0]
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+			if cur[j] < rowMin {
+				rowMin = cur[j]
+			}
+		}
+		if rowMin > max {
+			return max + 1 // early-out: already hopeless
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(rb)]
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
+}
+
+// extractActionHead pulls "<name> <rest>" off a (decorated-stripped)
+// ACTION line body: the captured tool name plus everything after it.
+// Returns "" when the line doesn't carry a call. The separator rules
+// live in actionNameRe — "ACTIONS: 1) …" prose must NOT match (the old
+// colon-required regex already guaranteed that; the tolerant one keeps
+// the guarantee with (?::|[ \t])).
+func extractActionHead(line string) string {
+	loc := actionNameRe.FindStringSubmatchIndex(line)
+	if loc == nil {
+		return ""
+	}
+	name := line[loc[2]:loc[3]]
+	rest := strings.TrimSpace(line[loc[1]:])
+	rest = strings.TrimSpace(strings.TrimLeft(rest, "*_\x60 \t")) // **calculator** {…} → {…}
+	if rest == "" {
+		return name
+	}
+	return name + " " + rest
+}
+
+// lenientJSON fixes the non-JSON JSON that Python-trained models emit:
+//   - SMART QUOTES (curly “ ” ‘ ’ → straight)
+//   - SINGLE-QUOTED strings ('x' → "x", doubling inner 'escapes')
+//   - TRAILING COMMAS before } or ]
+//   - unquoted bare-word keys where unambiguous ({name: "f.docx"} —
+//     only when the previous non-space char is { or ,)
+//
+// Repair-by-concatenation (repairJSON) still handles truncation; the
+// two compose in either order.
+func lenientJSON(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '\u201c', '\u201d':
+			return '"'
+		case '\u2018', '\u2019':
+			return '\''
+		}
+		return r
+	}, s)
+	var b strings.Builder
+	inD, inS, esc := false, false, false
+	lastCh := byte(0) // last non-space byte EMITTED (key-position test)
+	runes := []rune(s)
+	emit := func(str string) {
+		b.WriteString(str)
+		for i := 0; i < len(str); i++ {
+			if str[i] != ' ' && str[i] != '\t' && str[i] != '\n' && str[i] != '\r' {
+				lastCh = str[i]
+			}
+		}
+	}
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if inD {
+			emit(string(r))
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '"' {
+				inD = false
+			}
+			continue
+		}
+		if inS {
+			if r == '\'' {
+				// ' → ": escape inner straight doubles
+				emit("\"")
+				inS = false
+			} else if r == '"' {
+				emit("\\\"")
+			} else {
+				emit(string(r))
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inD = true
+			emit("\"")
+		case '\'':
+			inS = true
+			emit("\"")
+		case ',':
+			// drop a trailing comma (next non-space is } or ])
+			j := i + 1
+			for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\n' || runes[j] == '\r') {
+				j++
+			}
+			if j < len(runes) && (runes[j] == '}' || runes[j] == ']') {
+				continue
+			}
+			emit(",")
+		case '}', ']', '{', '[', ':':
+			emit(string(r))
+		default:
+			// bare-word key: an identifier followed by ':' where a
+			// key is expected ({ or , before it)
+			if isIdentRune(r) {
+				j := i
+				for j < len(runes) && isIdentRune(runes[j]) {
+					j++
+				}
+				k := j
+				for k < len(runes) && (runes[k] == ' ' || runes[k] == '\t') {
+					k++
+				}
+				if k < len(runes) && runes[k] == ':' && (lastCh == '{' || lastCh == ',') {
+					emit("\"" + string(runes[i:j]) + "\"")
+					i = j - 1
+					continue
+				}
+			}
+			emit(string(r))
+		}
+	}
+	return b.String()
+}
+
+func isIdentRune(r rune) bool {
+	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // summarizeLocalAction builds a short pill summary for a local tool call

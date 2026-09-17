@@ -184,7 +184,7 @@
       '<div class="art-scrim"></div>' +
       '<div class="art-panel">' +
         '<div class="art-head">' +
-          '<span class="art-title">🗄 artifacts' +
+          '<span class="art-title">🌳 artifacts' +
             (chat && chat.name ? ' · ' + esc(chat.name) : '') + '</span>' +
           '<span class="art-count" id="art-count"></span>' +
           '<button class="art-close">✕</button>' +

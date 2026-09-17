@@ -94,6 +94,7 @@ func parsePersonas(sess *store.Session) []PersonaSpec {
 			for i := range specs {
 				normalizeSpec(&specs[i])
 			}
+			enforceSingleActive(specs) // v0.28: one always-active persona, max
 			return specs
 		}
 	}
@@ -119,13 +120,29 @@ func normalizeSpec(s *PersonaSpec) {
 		s.Name = "Persona"
 	}
 	switch s.Mode {
-	case "always", "shuffle", "trigger":
+	case "always", "shuffle", "trigger", "inactive":
 	default:
 		s.Mode = "always"
 	}
 	if s.Mode == "trigger" && s.Trigger == nil {
 		// a trigger persona without a condition can never fire — treat as always
 		s.Mode = "always"
+	}
+}
+
+// enforceSingleActive keeps the v0.28 user rule — exactly ONE persona is
+// ever "always active": the first always stays, every later one is demoted
+// to inactive (a fresh persona defaults to inactive; activating one demotes
+// the previous). Runs on every parse so stored lists migrate lazily.
+func enforceSingleActive(specs []PersonaSpec) {
+	seen := false
+	for i := range specs {
+		if specs[i].Mode == "always" {
+			if seen {
+				specs[i].Mode = "inactive"
+			}
+			seen = true
+		}
 	}
 }
 
@@ -147,10 +164,12 @@ func parsePlaceholders(sess *store.Session) map[string]string {
 //  1. the FIRST trigger persona whose condition is satisfied (list order
 //     = priority — "when the number is met the persona is activated"),
 //  2. else the first ALWAYS persona ("always active means that persona
-//     is the one that is used" — deterministic beats random),
+//     is the one that is used" — deterministic beats random; v0.28: the
+//     single-active rule guarantees there is at most one),
 //  3. else the session's shuffle roll (one random shuffle persona,
 //     cached per engine process — re-rolled on restart),
-//  4. else nil → the app default persona.
+//  4. else nil → the app default persona (v0.28: an all-inactive list is
+//     the user's explicit way of saying "run on the app default").
 func resolveActivePersona(sess *store.Session, m personaMetrics) *PersonaSpec {
 	specs := parsePersonas(sess)
 	if len(specs) == 0 {
@@ -195,8 +214,173 @@ func resolveActivePersona(sess *store.Session, m personaMetrics) *PersonaSpec {
 		shuffleMu.Unlock()
 		return chosen
 	}
-	// 4. anything at all (all-trigger list with nothing satisfied).
+	// 4. v0.28: all-inactive (or all-trigger with nothing satisfied) —
+	// the app's built-in default persona takes over. Returning an
+	// INACTIVE persona here would silently ignore the user's off switch.
+	if specs[0].Mode == "inactive" {
+		return nil
+	}
 	return &specs[0]
+}
+
+// runPersonaTool executes the persona_* local tools against a session —
+// the bot's hands for its own personality (v0.28 user spec: "the bot
+// should be able to [switch/create/edit its persona] easily").
+// Returns an OBSERVATION-shaped string; errors are observations too.
+func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
+	sess, err := s.db.GetSession(sessID)
+	if err != nil || sess == nil {
+		return "OBSERVATION:\nerror: session not found"
+	}
+	var args map[string]any
+	if strings.TrimSpace(argJSON) != "" {
+		if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
+			return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
+		}
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	getStr := func(k string) string {
+		v, _ := args[k].(string)
+		return strings.TrimSpace(v)
+	}
+
+	switch name {
+	case "persona_list":
+		specs := parsePersonas(sess)
+		out := make([]map[string]any, 0, len(specs))
+		for i := range specs {
+			p := specs[i]
+			entry := map[string]any{"id": p.ID, "name": p.Name, "mode": p.Mode}
+			if p.Trigger != nil {
+				entry["trigger"] = p.Trigger
+			}
+			if p.Text != "" {
+				n := len(p.Text)
+				if n > 80 {
+					entry["text_preview"] = p.Text[:80] + "…"
+				} else {
+					entry["text_preview"] = p.Text
+				}
+				entry["text_chars"] = n
+			}
+			out = append(out, entry)
+		}
+		ph := parsePlaceholders(sess)
+		b, _ := json.Marshal(map[string]any{"personas": out, "placeholders": ph})
+		return "OBSERVATION:\n" + string(b)
+
+	case "persona_set":
+		specs := parsePersonas(sess)
+		id := getStr("id")
+		var target *PersonaSpec
+		if id != "" {
+			for i := range specs {
+				if specs[i].ID == id {
+					target = &specs[i]
+					break
+				}
+			}
+		}
+		isNew := target == nil
+		if isNew {
+			specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive"})
+			target = &specs[len(specs)-1]
+		}
+		if v := getStr("name"); v != "" {
+			target.Name = v
+		}
+		if v, ok := args["text"].(string); ok { // "" clears → app default text
+			target.Text = v
+		}
+		// activate: true promotes it to THE always persona (single-active).
+		if act, _ := args["activate"].(bool); act {
+			for i := range specs {
+				if specs[i].Mode == "always" {
+					specs[i].Mode = "inactive"
+				}
+			}
+			target.Mode = "always"
+		}
+		for i := range specs {
+			normalizeSpec(&specs[i])
+		}
+		enforceSingleActive(specs)
+		raw, _ := json.Marshal(specs)
+		sess.Personas = string(raw)
+		if err := s.db.UpdateSession(sess); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		verb := "updated"
+		if isNew {
+			verb = "created (inactive — pass activate:true to make it the active one)"
+		}
+		return fmt.Sprintf("OBSERVATION:\npersona %s: %s. Current list: %s", target.Name, verb, personaNameList(specs))
+
+	case "persona_activate":
+		id := getStr("id")
+		if id == "" {
+			// no id → deactivate everything (back to the app default)
+			specs := parsePersonas(sess)
+			for i := range specs {
+				specs[i].Mode = "inactive"
+			}
+			raw, _ := json.Marshal(specs)
+			sess.Personas = string(raw)
+			if err := s.db.UpdateSession(sess); err != nil {
+				return "OBSERVATION:\nerror: " + err.Error()
+			}
+			return "OBSERVATION:\nall personas deactivated — the app's default persona is now in effect"
+		}
+		specs := parsePersonas(sess)
+		var target *PersonaSpec
+		for i := range specs {
+			if specs[i].ID == id {
+				target = &specs[i]
+				break
+			}
+		}
+		if target == nil {
+			return "OBSERVATION:\nerror: no persona with id " + id + " — list them with persona_list"
+		}
+		for i := range specs {
+			if specs[i].Mode == "always" {
+				specs[i].Mode = "inactive"
+			}
+		}
+		target.Mode = "always"
+		raw, _ := json.Marshal(specs)
+		sess.Personas = string(raw)
+		if err := s.db.UpdateSession(sess); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		return fmt.Sprintf("OBSERVATION:\n%s is now the always-active persona (any previous one was deactivated). List: %s", target.Name, personaNameList(specs))
+
+	case "placeholder_set":
+		key := getStr("key")
+		if key == "" {
+			return "OBSERVATION:\nerror: placeholder_set needs {\"key\": \"...\", \"value\": \"...\"}"
+		}
+		ph := parsePlaceholders(sess)
+		value, _ := args["value"].(string)
+		ph[key] = value
+		raw, _ := json.Marshal(ph)
+		sess.Placeholders = string(raw)
+		if err := s.db.UpdateSession(sess); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		return "OBSERVATION:\nplaceholder {" + key + "} set — usable in personas and as a trigger key"
+	}
+	return "OBSERVATION:\nerror: unknown persona tool " + name
+}
+
+func personaNameList(specs []PersonaSpec) string {
+	parts := make([]string, 0, len(specs))
+	for i := range specs {
+		parts = append(parts, specs[i].Name+" ("+specs[i].Mode+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // triggerSatisfied evaluates {key op value} against the custom placeholders

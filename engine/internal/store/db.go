@@ -153,6 +153,10 @@ CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_
 		// custom {key} map.
 		{"chat_sessions", "personas", "ALTER TABLE chat_sessions ADD COLUMN personas TEXT"},
 		{"chat_sessions", "placeholders", "ALTER TABLE chat_sessions ADD COLUMN placeholders TEXT"},
+		// v0.28: per-chat compaction controls (the mind panel owns
+		// them) — enabled by default, arms at 70% context fill.
+		{"chat_sessions", "compact_enabled", "ALTER TABLE chat_sessions ADD COLUMN compact_enabled INTEGER DEFAULT 1"},
+		{"chat_sessions", "compact_threshold", "ALTER TABLE chat_sessions ADD COLUMN compact_threshold INTEGER DEFAULT 70"},
 	}
 	for _, m := range migrations {
 		if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
