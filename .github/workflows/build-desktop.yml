@@ -36,6 +36,7 @@ jobs:
           cd engine
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o ../${{ matrix.artifact_name }}${{ matrix.binary_ext }} ./cmd/doomalay
       - uses: actions/upload-artifact@v4
+        continue-on-error: true   # quota is capped; releases carry the binaries
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}${{ matrix.binary_ext }}
