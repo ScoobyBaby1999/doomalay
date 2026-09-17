@@ -113,3 +113,24 @@ func strconvItoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+// v0.27.1: v4 must sort before v6 in the dial order — networks with
+// blackholed IPv6 egress used to burn the full dial timeout on AAAA first.
+func TestPreferIPv4(t *testing.T) {
+	v6a := net.ParseIP("2607:f8b0:4004:c07::71")
+	v6b := net.ParseIP("2a00:1450:4009::1")
+	v4a := net.ParseIP("142.250.0.100")
+	v4b := net.ParseIP("8.8.8.8")
+	got := preferIPv4([]net.IP{v6a, v4a, v6b, v4b})
+	if !got[0].Equal(v4a) || !got[1].Equal(v4b) {
+		t.Errorf("IPv4 addresses must lead, got %v", got)
+	}
+	if !got[2].Equal(v6a) || !got[3].Equal(v6b) {
+		t.Errorf("IPv6 order should be stable after v4, got %v", got)
+	}
+	// all-v6 and all-v4 lists pass through unchanged
+	only6 := preferIPv4([]net.IP{v6a, v6b})
+	if !only6[0].Equal(v6a) || !only6[1].Equal(v6b) {
+		t.Errorf("all-v6 order mangled: %v", only6)
+	}
+}

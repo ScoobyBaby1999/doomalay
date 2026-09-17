@@ -18,6 +18,8 @@ import (
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
 
 //go:embed all:web
@@ -41,6 +43,12 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 	}
 	if br != nil && vault != nil {
 		br.SetEnv(vault.AsEnv())
+	}
+	// v0.27.1: an optional GITHUB_TOKEN in the vault upgrades the
+	// api.github.com metadata fallback past the 60 req/h anonymous
+	// per-IP limit (carrier CGNAT and shared cloud IPs exhaust it).
+	if vault != nil {
+		llm.SetGitHubToken(vault.AsEnv()["GITHUB_TOKEN"])
 	}
 
 	s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux()}

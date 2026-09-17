@@ -1132,6 +1132,10 @@
         last.text += t;
         scheduleUpdate(bodyEl, last, false);
       },
+      // v0.27.1: pmsdk fires this when the thinking phase ends (content
+      // starts or the stream closes) — freeze the bubble's timer there
+      // instead of letting it count tool time as "reasoning".
+      onThinkingEnd: function () { stampThinkEnd(state); },
       onDelta: function (t) {
         clearHint();
         bumpActivity(state);
@@ -1456,6 +1460,18 @@
     if (typeof icon.save === 'function') icon.save();
   }
 
+  // v0.27.1 — freeze the reasoning timer when the thinking phase ends.
+  // The bubble's elapsed used to keep counting from startedAt straight
+  // through tool execution + the rest of the turn (observed: "reasoning ·
+  // 181s" rounds whose actual thinking was ~30s). endedAt is stamped the
+  // moment the stream moves past thinking (content, a tool event, or turn
+  // end) — both the WS engine path and the PM bridge report through here.
+  function stampThinkEnd(state) {
+    if (!state || !Array.isArray(state.messages)) return;
+    var lt = state.messages[state.messages.length - 1];
+    if (lt && lt.role === 'thinking' && !lt.endedAt) lt.endedAt = Date.now();
+  }
+
   function container2(bodyEl, mi) {
     var c = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
     return c ? c.querySelector('[data-mi="' + mi + '"]') : null;
@@ -1490,6 +1506,7 @@
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
       bumpActivity(state);
+      stampThinkEnd(state); // v0.27.1: content follows thinking → timer freezes
       if (ev.text) {
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'assistant' || last.complete) {
@@ -1510,6 +1527,7 @@
         }
       }
     } else if (type === 'assistant') {
+      stampThinkEnd(state); // v0.27.1
       var assembled = '';
       for (var i = 0; i < state.messages.length; i++) {
         if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
@@ -1548,6 +1566,7 @@
       scheduleUpdate(bodyEl, lastThink, false);
     } else if (type === 'tool_use') {
       bumpActivity(state);
+      stampThinkEnd(state); // v0.27.1: the model moved on to tools
       // v0.20: PM-persisted tool events carry their payload as a JSON text
       // (the engine's own events have name/summary top-level) — lift it.
       var pay = ev;
@@ -1558,6 +1577,7 @@
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
     } else if (type === 'tool_result') {
       bumpActivity(state);
+      stampThinkEnd(state); // v0.27.1
       var pay2 = ev;
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
@@ -1573,6 +1593,7 @@
         state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
       }
     } else if (type === 'sources') {
+      stampThinkEnd(state); // v0.27.1
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
@@ -1766,7 +1787,7 @@
       if (!m.startedAt) break;
       var wrap = container2(bodyEl, i);
       if (!wrap) break;
-      var secs = Math.max(0, Math.round((Date.now() - m.startedAt) / 1000));
+      var secs = Math.max(0, Math.round(((m.endedAt || Date.now()) - m.startedAt) / 1000));
       var n = (m.text || '').length;
       var chars = n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
       var chip = wrap.querySelector('.th-elapsed');
@@ -2015,7 +2036,7 @@
         streaming: !!msg.streaming && !final
       });
     } else if (msg.role === 'thinking' && el.classList.contains('msg-think-body')) {
-      var elapsed = msg.startedAt ? Math.max(0, Math.round((Date.now() - msg.startedAt) / 1000)) : 0;
+      var elapsed = msg.startedAt ? Math.max(0, Math.round(((msg.endedAt || Date.now()) - msg.startedAt) / 1000)) : 0;
       window.Formatter.renderInto(el, msg.text, {
         mode: 'thinking',
         streaming: !!msg.streaming && !final,

@@ -925,7 +925,11 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 			ch <- ChatChunk{Type: "sources", Sources: results}
 			obs := FormatSearchResults(results)
 			if obs == "" {
-				obs = "(no results — try different terms)"
+				// v0.27.1: mirrors the PM path — "no results" for a specific
+				// named project usually means private/nonexistent; say that
+				// so the model stops instead of re-searching (it used to see
+				// a fake network error here and retry the same query).
+				obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
 			}
 			observation = "OBSERVATION:\n" + obs
 			ch <- ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: "web_search"}

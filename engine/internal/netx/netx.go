@@ -31,6 +31,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -88,6 +89,18 @@ func noteFallback(host string) {
 	})
 }
 
+// preferIPv4 orders IPv4 addresses before IPv6 (v0.27.1). Many mobile and
+// sandbox networks advertise AAAA records but blackhole v6 egress — dialing
+// v6 first then costs the full dial timeout per connection (observed:
+// html.duckduckgo.com fetches stalling 10s+ while the v4 address worked in
+// <1s). Both families are still tried, v4 just goes first.
+func preferIPv4(ips []net.IP) []net.IP {
+	sort.SliceStable(ips, func(i, j int) bool {
+		return ips[i].To4() != nil && ips[j].To4() == nil
+	})
+	return ips
+}
+
 // LookupIP resolves a hostname to IPs: system resolver first, DoH fallback.
 // Returns nil when both fail (caller dials nothing and reports the error).
 func LookupIP(ctx context.Context, host string) []net.IP {
@@ -109,12 +122,12 @@ func LookupIP(ctx context.Context, host string) []net.IP {
 			for _, a := range addrs {
 				ips = append(ips, a.IP)
 			}
-			cachePut(host, ips)
-			return ips
+			cachePut(host, preferIPv4(ips))
+			return preferIPv4(ips)
 		}
 	}
 
-	ips := dohLookup(ctx, host)
+	ips := preferIPv4(dohLookup(ctx, host))
 	if len(ips) > 0 {
 		if !forceDOH {
 			noteFallback(host)

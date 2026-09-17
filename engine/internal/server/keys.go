@@ -72,6 +72,7 @@ func (s *Server) handleKeysSet(w http.ResponseWriter, r *http.Request) {
 	// Push updated keys to the brain.
 	if s.brain != nil {
 		s.brain.SetEnv(s.vault.AsEnv())
+		llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"]) // v0.27.1
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "provider": req.Provider, "env_var": req.EnvVar})
 }
@@ -97,6 +98,7 @@ func (s *Server) handleKeysDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.brain != nil {
 		s.brain.SetEnv(s.vault.AsEnv())
+		llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"]) // v0.27.1
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

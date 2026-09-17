@@ -438,6 +438,27 @@ async function runToolLoop(c, opts) {
   return { text: finalText, usage: usage, sources: allSources };
 }
 
+// bridgeToolError — v0.27.1: turn a failed /api/tools/* response into an
+// observation-ready error string. The engine returns JSON {"error": "..."}
+// with the REAL cause (which engine 502'd, whether the page was 404/private,
+// timeouts, …); the old path threw 'HTTP <status>' which said nothing.
+// The trailing guidance is what stops the retry-the-identical-call loops.
+async function bridgeToolError(resp) {
+  var detail = '';
+  try {
+    var body = await resp.json();
+    if (body && body.error) detail = String(body.error);
+  } catch (e) { /* non-JSON body — fall through to the status */ }
+  if (!detail) detail = 'HTTP ' + resp.status;
+  var hint = '';
+  if (/HTTP 40[34]/.test(detail)) {
+    hint = ' The page does not exist for anonymous access — it is likely private, deleted, or the URL is wrong.';
+  } else if (/rate|502|503|429|timeout|deadline|unreachable|failed/i.test(detail)) {
+    hint = ' This looks like a network/rate-limit failure, not a missing page.';
+  }
+  return detail + '.' + hint + ' Do not repeat the exact same call — try a different query/URL, a different tool, or answer from what you already know and tell the user what failed.';
+}
+
 // execAction — v0.25: ONE parsed tool call → its OBSERVATION string (the
 // old inline dispatch, extracted so the multi-action loop can call it per
 // action). Throws on unexpected errors (the loop catches → observation).
@@ -483,7 +504,17 @@ async function execAction(act, opts, allSources) {
     opts.onProgress && opts.onProgress({ text: 'searching the web…' });
     opts.onTool && opts.onTool({ name: 'web_search', summary: q });
     var r = await fetch('/api/tools/websearch?q=' + encodeURIComponent(q) + '&max=8');
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) {
+      // v0.27.1: the old throw surfaced a bare "HTTP 502" — the engine
+      // wraps EVERY search failure in that status, and the model had no
+      // idea WHAT failed (observed live: it retried the identical search
+      // three times, then guessed "GitHub blocks bots"). Read the JSON
+      // error body so the observation names the real cause, and pair it
+      // with an explicit do-not-loop instruction.
+      var sErr = await bridgeToolError(r);
+      opts.onTool && opts.onTool({ name: 'web_search', result: 'error: ' + sErr });
+      return 'OBSERVATION:\nerror: ' + sErr;
+    }
     var data = await r.json();
     var results = (data && data.results) || [];
     for (var i = 0; i < results.length; i++) {
@@ -493,7 +524,7 @@ async function execAction(act, opts, allSources) {
       return '[' + (j + 1) + '] ' + s.title + '\n' + s.url + '\n' + (s.snippet || '');
     }).join('\n\n');
     opts.onTool && opts.onTool({ name: 'web_search', result: (results.length + ' results') + (results[0] ? ' — ' + results[0].title : ''), sources: results });
-    return 'OBSERVATION:\n' + (fmt || '(no results)');
+    return 'OBSERVATION:\n' + (fmt || '(no results for this query — if you were looking for a specific named project/account, it may be private or nonexistent; say so instead of retrying)');
   }
   if (tool === 'web_fetch') {
     var u = arg.url || String(arg.u || '');
@@ -503,7 +534,14 @@ async function execAction(act, opts, allSources) {
     opts.onProgress && opts.onProgress({ text: 'reading ' + u.slice(0, 60) + '…' });
     opts.onTool && opts.onTool({ name: 'web_fetch', summary: u });
     var r2 = await fetch('/api/tools/webfetch?url=' + encodeURIComponent(u) + '&max=6000');
-    if (!r2.ok) throw new Error('HTTP ' + r2.status);
+    if (!r2.ok) {
+      // v0.27.1: same as web_search — surface the engine's error detail
+      // (it distinguishes 404/private/deleted from network failures)
+      // instead of a statusless "HTTP 502" the model can only guess at.
+      var fErr = await bridgeToolError(r2);
+      opts.onTool && opts.onTool({ name: 'web_fetch', result: 'error: ' + fErr });
+      return 'OBSERVATION:\nerror: ' + fErr;
+    }
     var d2 = await r2.json();
     opts.onTool && opts.onTool({ name: 'web_fetch', result: ((d2.text || '') + '').slice(0, 120) });
     return 'OBSERVATION:\n' + ((d2 && d2.text) || '(empty page)');
@@ -673,12 +711,22 @@ async function roundTripOnce(c, opts, messages) {
   }
   try {
     var stream = await c.streamChatCompletions(body, { signal: opts.signal || undefined });
+    // v0.27.1: stamp the thinking phase's END so the UI timer freezes at
+    // true thinking duration. Without it the bubble's elapsed kept
+    // growing through tool execution + the whole turn (observed live:
+    // "reasoning · 181s" on a round that thought ~30s and spent the rest
+    // waiting on rate-limited search retries).
+    var thinkOpen = false;
+    var thinkClose = function () {
+      if (thinkOpen) { thinkOpen = false; opts.onThinkingEnd && opts.onThinkingEnd(); }
+    };
     for await (var chunk of stream) {
       var ch = chunk || {};
       if (ch.choices && ch.choices.length) {
         var d = ch.choices[0].delta || {};
-        if (d.reasoning_content) { opts.onThinking && opts.onThinking(d.reasoning_content); }
+        if (d.reasoning_content) { thinkOpen = true; opts.onThinking && opts.onThinking(d.reasoning_content); }
         if (d.content) {
+          thinkClose(); // content follows thinking → the thinking phase is over
           full += d.content;
           if (decided === 'action') {
             // suppressed — round is a tool call, but progress stays live
@@ -696,6 +744,7 @@ async function roundTripOnce(c, opts, messages) {
       }
       if (ch.usage) usage = ch.usage;
     }
+    thinkClose(); // stream ended while still thinking
     // round complete — decide the tail if still undecided
     if (!decided) {
       if (findActionLine(full)) {
@@ -711,6 +760,7 @@ async function roundTripOnce(c, opts, messages) {
     out.text = full; out.usage = usage; out.emitted = emitted;
     return out;
   } catch (e) {
+    thinkClose(); // aborted/failed mid-thinking — freeze the timer anyway
     opts.onStatus && opts.onStatus('error');
     pumpQueue = ''; // failed round — stop the visual stream where it is
     if (e && e.name === 'AbortError') { out.text = full; out.usage = usage; out.emitted = emitted; out.aborted = true; return out; }
