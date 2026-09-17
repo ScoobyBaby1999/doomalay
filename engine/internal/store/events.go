@@ -100,7 +100,7 @@ func (e *Event) ToJSON() ([]byte, error) {
 		Title     string           `json:"title,omitempty"`
 		Sources   []map[string]any `json:"sources,omitempty"`
 		SessionID string           `json:"session_id,omitempty"`
-		Error     string  `json:"error,omitempty"`
+		Error     string           `json:"error,omitempty"`
 	}
 	w := wire{
 		ID:        e.ID,

@@ -156,6 +156,59 @@
       '</div>';
   }
 
+  // ── v0.26: customize the CURRENT theme (user spec: "The user should
+  // be able to not only select a theme, but also customise it to their
+  // liking"). Per-theme overrides live in settings.themeOverrides —
+  // theme.js applies them as inline CSS vars (which beat the
+  // [data-theme] block) and auto-derives the -rgb triplets.
+  function themeCustomizeSection() {
+    var s = Settings.getState();
+    var cur = s.theme || 'midnight';
+    var themes = (window.DoomTheme && window.DoomTheme.themes) || {};
+    var t = themes[cur] || {};
+    var ov = (s.themeOverrides && s.themeOverrides[cur]) || {};
+    var customCount = Object.keys(ov).length;
+    var rows = '';
+    var customizable = (window.DoomTheme && window.DoomTheme.customizable) || [];
+    customizable.forEach(function (c) {
+      var live = ov[c.var] || cssVarLive(c.var) || '#000000';
+      rows += '<div class="setting-row">' +
+        '<label>' + c.label + (ov[c.var] ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') + '</label>' +
+        '<div class="control">' +
+        '<input type="color" data-theme-var="' + c.var + '" value="' + live + '">' +
+        '<span class="color-hex" data-color-hex="tv_' + c.var + '">' + live + '</span>' +
+        '</div></div>';
+    });
+    return section('Customize ' + (t.label || 'Theme'),
+      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — changes ride on top of the palette and persist for this theme only (each theme keeps its own customizations). ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
+      rows +
+      '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
+      '</div>'
+    );
+  }
+
+  function cssVarLive(name) {
+    // the EFFECTIVE var (theme block + any live overrides)
+    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
+  }
+
+  // live wiring for the customize inputs — preview + persist + hex readout
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (!el || !el.getAttribute) return;
+    var v = el.getAttribute('data-theme-var');
+    if (!v) return;
+    var hex = document.querySelector('[data-color-hex="tv_' + v + '"]');
+    if (hex) hex.textContent = el.value;
+    var s = Settings.getState();
+    var cur = s.theme || 'midnight';
+    var all = Object.assign({}, s.themeOverrides || {});
+    all[cur] = Object.assign({}, all[cur] || {});
+    all[cur][v] = el.value;
+    Settings.setState({ themeOverrides: all }); // persists + applies live
+  }, true);
+
   // ── register the three pages ───────────────────────────────────
   Settings.registerPage('appearance', {
     title: 'Colors',
@@ -166,6 +219,7 @@
         section('Theme', '' +
           themeSwatches()
         ) +
+        themeCustomizeSection() +
         gridSection() +
         section('Chat Colors', '' +
           '<p class="hint">The markdown color scheme for messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below (all values are CSS variables).</p>' +
@@ -235,10 +289,23 @@
     var d = e.detail || {};
     if (d.action === 'set-theme' && d.data && d.data.theme) {
       Settings.setState({ theme: d.data.theme });
+      // v0.26 LIVE UPDATE: re-render the page so the swatch selection,
+      // grid inputs and customize rows reflect the NEW theme immediately
+      // (the old UI kept stale values until the panel was reopened).
+      Settings.rerender();
+    } else if (d.action === 'theme-custom-reset') {
+      var s0 = Settings.getState();
+      var cur0 = s0.theme || 'midnight';
+      var all0 = Object.assign({}, s0.themeOverrides || {});
+      delete all0[cur0];
+      Settings.setState({ themeOverrides: all0 });
+      Settings.rerender();
     } else if (d.action === 'chat-scheme' && d.data && d.data.scheme) {
       Settings.setState({ chatScheme: d.data.scheme, fmtOverrides: {} });
+      Settings.rerender();
     } else if (d.action === 'chat-colors-reset') {
       Settings.setState({ chatScheme: 'teal', fmtOverrides: {} });
+      Settings.rerender();
     } else if (d.action === 'grid-colors-reset') {
       // v0.25 FIX: back to "follow the theme" = wipe to the LEGACY default
       // hexes (the marker effectiveGrid treats as never-customized). The old
@@ -251,6 +318,8 @@
         bg: '#0a0a0b', lineColor: '#131318',
         dotColor: '#2e2e3a', originColor: '#4a4a5e'
       });
+      // v0.26: re-render — the inputs must show the theme's palette NOW.
+      Settings.rerender();
     }
   });
 

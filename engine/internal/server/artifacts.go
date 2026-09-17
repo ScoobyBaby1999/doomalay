@@ -61,6 +61,11 @@ func (s *Server) artifactDir(sessionID string) string {
 	return filepath.Join(s.cfg.DataDir, "artifacts", sessionID)
 }
 
+// doubleDocExtRe matches a bogus double document extension — the live
+// bug report: a "Hello_Word.docx.doc" (the model glued a second extension
+// onto the file it named). The FIRST extension is the intended one.
+var doubleDocExtRe = regexp.MustCompile(`(?i)\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)$`)
+
 func sanitizeArtifactName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -75,6 +80,11 @@ func sanitizeArtifactName(name string) string {
 	}, name)
 	if len(name) > 120 {
 		name = name[:120]
+	}
+	// v0.26: collapse "file.docx.doc" → "file.docx" (the model sometimes
+	// names its own output with a glued-on second extension).
+	for doubleDocExtRe.MatchString(name) {
+		name = doubleDocExtRe.ReplaceAllString(name, ".$1")
 	}
 	return name
 }

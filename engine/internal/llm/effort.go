@@ -239,46 +239,44 @@ func DetectEffortLevels(provider, rawModel string) []string {
 	return caps.EffortLevels
 }
 
+// providerDefaultLevels — v0.26: per-PROVIDER effort defaults so the
+// effort bubble ALWAYS appears with the right shape, even for models
+// without a curated entry (the user spec: "We need to programmatically
+// and dynamically view the provider, the model, and then determine its
+// effort modes based on that"):
+//
+//   - NVIDIA NIM:   ~95% of models expose thinking on/off
+//     (chat_template_kwargs); the reasoning_effort models
+//     (deepseek-v4, nemotron-3.x) carry curated entries.
+//   - PrivateMode:  on/off (kimi thinking toggle; verified per docs).
+//   - OpenCode Zen: low/high by default — the models are OpenAI-compatible
+//     proxies; a wrong param is retried without the effort
+//     body once (see the 400-resilience in chat.go) and
+//     blacklisted for the engine's lifetime, so exposing
+//     levels is safe even for unlisted models.
+//   - Cloudflare:   on/off unless curated.
+var providerDefaultLevels = map[string][]string{
+	"nvidia":        {"on", "off"},
+	"privatemodeai": {"on", "off"},
+	"opencode":      {"low", "high"},
+	"opencode-zen":  {"low", "high"},
+	"opencode-go":   {"low", "high"},
+	"cloudflare":    {"on", "off"},
+}
+
 // detectModelCaps computes the full capability roll-up for provider/model.
 func detectModelCaps(provider, rawModel string) ModelCapabilities {
 	caps := ModelCapabilities{EffortLevels: []string{}}
 	logical := lastSegment(rawModel)
 
-	// CONSERVATIVE HOSTS FIRST (the old backend's rule): OpenCode Zen/Go and
-	// GitHub Models have UNKNOWN/absent reasoning params — sending one 400s
-	// and blacklists the slot. Skip live detection entirely; only a CURATED
-	// entry (verified per-host) may expose levels.
-	conservative := provider == "opencode" || provider == "opencode-go" || provider == "github" || provider == "github-models"
+	// PROVIDER-AWARE RESOLUTION (v0.26): providers we KNOW document their
+	// effort surface are resolved curated-first, then the provider default.
+	// Generic OpenRouter/GitHub live detection never overrides a known
+	// provider's own shape (the old code let an OpenRouter family match
+	// hand a 7-level ladder to a NIM model that only takes on/off).
+	knownProvider := providerDefaultLevels[provider] != nil
 
-	if !conservative {
-		// 1. OpenRouter live metadata (public list — indexed by full OR id, but
-		// also matched by logical name since OR ids are "author/logical").
-		orMeta := fetchOpenRouterMeta()
-		if m, ok := orMeta[rawModel]; ok {
-			applyORMeta(&caps, m)
-		} else if m, ok := orMeta[logical]; ok {
-			applyORMeta(&caps, m)
-		} else {
-			// Family-level match: any OR entry whose logical segment matches.
-			for id, m := range orMeta {
-				if lastSegment(id) == logical {
-					applyORMeta(&caps, m)
-					break
-				}
-			}
-		}
-
-		// 2. GitHub Models live catalog.
-		ghMeta := fetchGitHubMeta()
-		if e, ok := ghMeta[rawModel]; ok {
-			applyGHMeta(&caps, e)
-		} else if e, ok := ghMeta[logical]; ok {
-			applyGHMeta(&caps, e)
-		}
-	}
-
-	// 3. Curated catalog (highest priority for effort levels when it has an
-	// explicit entry — the curated shapes are verified per-host).
+	// 1. Curated catalog (the verified per-model shapes win over everything).
 	if entry, ok := resolveReasoningEntry(provider, rawModel); ok && (len(entry.EffortLevels) > 0 || entry.hasBody()) {
 		if len(entry.EffortLevels) > 0 {
 			caps.EffortLevels = entry.EffortLevels
@@ -295,6 +293,36 @@ func detectModelCaps(provider, rawModel string) ModelCapabilities {
 					caps.EffortParam = "reasoning"
 				}
 			}
+		}
+	}
+
+	// 2. Provider default (nvidia on/off, opencode low/high, pm on/off…).
+	if len(caps.EffortLevels) == 0 && knownProvider {
+		caps.EffortLevels = append([]string{}, providerDefaultLevels[provider]...)
+		caps.Effort = true
+	}
+
+	// 3. Live detection — ONLY for providers without a known effort surface
+	//    (OpenRouter's public list + GitHub Models' catalog).
+	if !knownProvider {
+		orMeta := fetchOpenRouterMeta()
+		if m, ok := orMeta[rawModel]; ok {
+			applyORMeta(&caps, m)
+		} else if m, ok := orMeta[logical]; ok {
+			applyORMeta(&caps, m)
+		} else {
+			for id, m := range orMeta {
+				if lastSegment(id) == logical {
+					applyORMeta(&caps, m)
+					break
+				}
+			}
+		}
+		ghMeta := fetchGitHubMeta()
+		if e, ok := ghMeta[rawModel]; ok {
+			applyGHMeta(&caps, e)
+		} else if e, ok := ghMeta[logical]; ok {
+			applyGHMeta(&caps, e)
 		}
 	}
 
@@ -427,9 +455,23 @@ func BuildEffortBodyFor(provider, rawModel, level string) map[string]any {
 		}
 		return map[string]any{"reasoning": map[string]any{"effort": chosen}}
 	}
-	// GitHub Models + OpenCode Zen/Go: conservative — no param.
-	if provider == "github-models" || provider == "opencode" || provider == "opencode-go" {
+	// GitHub Models: conservative — no param.
+	if provider == "github-models" || provider == "github" {
 		return nil
+	}
+	// OpenCode Zen/Go (v0.26): OpenAI-compatible reasoning_effort. The
+	// 400-resilience in chat.go retries without the param once and
+	// blacklists it for the engine's lifetime if a model rejects it.
+	if provider == "opencode" || provider == "opencode-zen" || provider == "opencode-go" {
+		allowed := map[string]bool{"minimal": true, "low": true, "medium": true, "high": true, "max": true}
+		chosen := level
+		if !allowed[level] {
+			chosen = "high"
+			if level == "off" || level == "none" {
+				return nil
+			}
+		}
+		return map[string]any{"reasoning_effort": chosen}
 	}
 
 	entry, ok := resolveReasoningEntry(provider, rawModel)

@@ -22,6 +22,8 @@
   const defaultState = {
     // ── v0.24: the THEME (drives every UI color via CSS vars) ────
     theme: 'midnight',
+    // ── v0.26: per-theme customizations — {themeId: {'--accent': '#…'}}
+    themeOverrides: {},
     // ── v0.17→v0.24: chat formatting (scheme + sizes) ───────────
     chatScheme: 'teal',            // 'follow-theme' handling lives in theme.js
     fmtOverrides: {},           // per-slot CSS-variable overrides
@@ -74,6 +76,34 @@
   }
 
   function onChange(cb) { listeners.push(cb); }
+
+  // v0.26: rerender() — re-render the OPEN settings page, preserving
+  // which sections are expanded and the scroll position. The theme live-
+  // update bug: the grid-color inputs + the selected theme swatch render
+  // ONCE with the old theme's values and went stale until the panel was
+  // closed and reopened. Any action that changes what the page shows
+  // (set-theme, grid reset, chat-scheme pick) now calls this.
+  function rerender() {
+    if (!panelRef || !panelRef.isOpen || !panelRef.isOpen()) return;
+    var body = panelRef.bodyEl;
+    var openTitles = [];
+    body.querySelectorAll('.settings-section.expanded').forEach(function (s) {
+      var h = s.querySelector('h3');
+      if (h) openTitles.push(h.textContent.trim());
+    });
+    var scroll = body.scrollTop;
+    renderSettings();
+    // restore expansion by section title + the scroll position
+    requestAnimationFrame(function () {
+      var nb = panelRef.bodyEl;
+      if (!nb) return;
+      nb.querySelectorAll('.settings-section').forEach(function (s) {
+        var h = s.querySelector('h3');
+        if (h && openTitles.indexOf(h.textContent.trim()) >= 0) s.classList.add('expanded');
+      });
+      nb.scrollTop = scroll;
+    });
+  }
 
   // ── Page registry ─────────────────────────────────────────────
   const pages = {};
@@ -207,6 +237,7 @@
     registerPage: registerPage,
     listPages: listPages,
     openInPanel: openInPanel,
+    rerender: rerender,
     getState: getState,
     setState: setState,
     onChange: onChange

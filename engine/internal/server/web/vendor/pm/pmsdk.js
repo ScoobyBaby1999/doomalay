@@ -177,7 +177,7 @@ var PM_TOOLS_PROTOCOL = [
   'ACTION: zip_create {"name": "b.zip", "files": [{"name": "a.txt", "content": "..."}]} — build a real .zip from named text/base64 files. Saved as a downloadable artifact.',
   'ACTION: zip_extract {"artifact": "b.zip"} or {"b64": "<zip bytes>"} — list a zip archive and extract its files as artifacts.',
   'ACTION: delegate {"prompt": "<question>", "models": ["..."]} — consult up to 3 OTHER models in parallel (multi-model swarm)',
-  'For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download.',
+  'For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download.' + ' After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.',
   'Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files).'
 ].join('\n');
 
@@ -665,6 +665,12 @@ async function roundTripOnce(c, opts, messages) {
     stream: true,
     stream_options: { include_usage: true }
   };
+  // v0.26: effort for the PM path (privatemodeai = on/off per their
+  // docs — kimi's chat_template_kwargs.thinking toggle). 'off' sends
+  // nothing (the provider default); anything else turns thinking ON.
+  if (opts.effort && opts.effort !== 'off' && opts.effort !== '') {
+    body.chat_template_kwargs = { thinking: true };
+  }
   try {
     var stream = await c.streamChatCompletions(body, { signal: opts.signal || undefined });
     for await (var chunk of stream) {

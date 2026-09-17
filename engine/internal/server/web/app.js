@@ -265,6 +265,12 @@
           ? window.Artifacts.backClose() : 'closed';
         if (r !== false) return true;
       }
+      // v0.26: THE REUSABLE SHEET — every list-style overlay (personas,
+      // placeholders, export, usage, activation modes) renders through it;
+      // the back gesture pops its view stack (or closes at the root).
+      if (window.Sheet && window.Sheet.isOpen()) {
+        return window.Sheet.back();
+      }
       // v0.19: the persona editor overlay (same pattern — dirty-aware).
       var peOverlay = document.getElementById('persona-overlay');
       if (peOverlay && peOverlay.style.display !== 'none' && peOverlay.style.display !== '') {

@@ -27,6 +27,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/archive"
@@ -729,11 +730,22 @@ func sanitizeFileToolName(name, def, wantExt string) string {
 	if name == "" {
 		return def
 	}
+	// v0.26: collapse a glued-on second document extension first —
+	// "Hello_Word.docx.doc" + wantExt ".docx" would otherwise pass through
+	// as-is ("already ends with .docx" is FALSE for ".doc" tails... and a
+	// "f.doc.docx" would have grown ".docx.doc.docx").
+	for doubleDocExtRe.MatchString(name) {
+		name = doubleDocExtRe.ReplaceAllString(name, ".$1")
+	}
 	if !strings.HasSuffix(strings.ToLower(name), wantExt) {
 		name += wantExt
 	}
 	return name
 }
+
+// doubleDocExtRe — the bogus double document extension (see the artifacts
+// sanitizer; "Hello_Word.docx.doc" from the live bug report).
+var doubleDocExtRe = regexp.MustCompile(`(?i)\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)$`)
 
 // sanitizeArchiveName is sanitizeFileToolName for EVERY archive format:
 // it only appends the default (.zip) when the name doesn't already carry a

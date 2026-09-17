@@ -453,9 +453,10 @@
     color: var(--text-1);
   }
   #chat-panel .panel-header .meta .sub {
-    font-size: var(--ui-small-fs);
-    color: var(--text-3);
-    margin-top: 2px;
+    font-size: var(--ui-micro-fs);
+    color: var(--text-3-dim);
+    margin-top: 1px;
+    letter-spacing: 0.2px;
   }
   #chat-panel .panel-body {
     flex: 1;
@@ -948,6 +949,7 @@
 
   /* in-chat search highlight */
   mark.chat-search-mark { background: rgba(250,204,21,0.35); color: inherit; border-radius: 3px; }
+  mark.chat-search-mark.chat-search-current { background: rgba(250,204,21,0.85); color: #1a1a0e; font-weight: 700; }
 
   /* ── v0.18: snap-state panel (gesture.js — TWO positions only) ── */
   #chat-panel.panel-full {
@@ -1188,6 +1190,115 @@
   .cm-s-doomalay .cm-link { color: var(--fmt-link); }
   .cm-s-doomalay .cm-error { color: var(--err); }
   .CodeMirror { font-size: calc(var(--ui-fs) - 1px); }
+
+  /* ══ v0.26 — THE REUSABLE SHEET (master UI overlay) ══
+     One panel, a view stack, Android gestures. Every list-style overlay
+     (personas, placeholders, export, usage, activation modes) renders
+     through this. */
+  #sheet-root { position: fixed; inset: 0; z-index: 3350; display: none; }
+  #sheet-root.open .sheet-scrim { opacity: 1; }
+  #sheet-root.open .sheet-panel { transform: translateY(0); }
+  .sheet-scrim {
+    position: absolute; inset: 0; opacity: 0;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    transition: opacity 0.22s;
+  }
+  .sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 86vh; min-height: 34vh;
+    display: flex; flex-direction: column;
+    background: var(--surface-1); border: 1px solid var(--surface-2); border-bottom: none;
+    border-radius: 16px 16px 0 0;
+    transform: translateY(40px);
+    transition: transform 0.24s cubic-bezier(0.32,0.72,0,1);
+    box-shadow: 0 -12px 48px rgba(0,0,0,0.6);
+  }
+  .sheet-handle-zone { padding: 8px 0 2px; flex-shrink: 0; touch-action: none; cursor: grab; }
+  .sheet-handle {
+    width: 44px; height: 5px; border-radius: 3px; margin: 0 auto;
+    background: var(--surface-3);
+  }
+  .sheet-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 12px 10px; flex-shrink: 0;
+    border-bottom: 1px solid var(--surface-2);
+    touch-action: none;
+  }
+  .sheet-title {
+    flex: 1; min-width: 0; text-align: center;
+    font-size: calc(var(--ui-fs) - 0.5px); font-weight: 700; color: var(--text-1);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sheet-back, .sheet-x {
+    background: transparent; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text-2); font-size: 17px; line-height: 1;
+    width: 36px; height: 36px; flex-shrink: 0; cursor: pointer; font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .sheet-back:active, .sheet-x:active { background: var(--surface-2); }
+  .sheet-body {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y;
+    overscroll-behavior: contain;
+    padding: 14px 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+  /* rows inside sheet views */
+  .sheet-row {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 10px;
+    padding: 12px 13px; margin-bottom: 9px; cursor: pointer; text-align: left;
+    font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .sheet-row:active { background: var(--surface-2); }
+  .sheet-row-ico { font-size: 18px; flex-shrink: 0; width: 24px; text-align: center; }
+  .sheet-row-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .sheet-row-title { font-size: calc(var(--ui-fs) - 0.5px); font-weight: 600; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-row-sub { font-size: calc(var(--ui-small-fs) - 0.5px); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-row-chev { color: var(--text-3-dim); flex-shrink: 0; font-size: 14px; }
+  .sheet-hint { font-size: calc(var(--ui-small-fs) - 0.5px); color: var(--text-3); line-height: 1.55; margin: 2px 2px 12px; }
+  .sheet-section-label {
+    font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+    color: var(--text-3); margin: 14px 2px 7px;
+  }
+  .sheet-input, .sheet-select {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-1); padding: 11px 12px; border-radius: 10px;
+    font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit; outline: none; min-height: 44px;
+  }
+  .sheet-input:focus, .sheet-select:focus { border-color: var(--accent); }
+  .sheet-btn {
+    background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-1);
+    border-radius: 10px; padding: 11px 14px; min-height: 44px; font-size: calc(var(--ui-fs) - 0.5px);
+    font-weight: 600; font-family: inherit; cursor: pointer; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sheet-btn:active { background: var(--surface-3); }
+  .sheet-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--accent); }
+
+  /* ══ v0.26 — chat header pills: squared, matte, equal proportions ══
+     Row 1: sandbox · model · artifacts · persona (equal widths).
+     Row 2: the search pill — full width (doubled+), it doubles as the
+     search bar's toggle (the search input drops in right under it). */
+  #pill-row { flex-wrap: wrap; }
+  #pill-row button, .pill-artifacts, #pill-persona {
+    border-radius: 6px !important;                       /* less rounded */
+    flex: 1 1 18%; max-width: none !important;              /* equal proportions */
+    background: var(--surface-2) !important;              /* matte finish */
+    border: 1px solid var(--border) !important;
+    color: var(--text-2) !important;
+    justify-content: center !important;
+    padding: 7px 3px !important;
+    font-size: 10.5px !important;
+    min-width: 0 !important;
+  }
+  #pill-row #pill-search { flex: 1 1 100% !important; }
+  #chat-searchbar .chat-search-nav {
+    background: transparent; border: 1px solid var(--border); color: var(--text-2);
+    border-radius: 6px; padding: 5px 9px; font-size: 13px; font-family: inherit; cursor: pointer;
+    min-width: 30px; touch-action: manipulation;
+  }
+  .chat-search-count { font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); font-variant-numeric: tabular-nums; min-width: 38px; text-align: center; }
+
 </style>
 </head>
 <body>
@@ -1257,6 +1368,7 @@
 <script src="formatter.js"></script>
 <script src="artifacts.js"></script>
 <!-- v0.19: the per-chat persona editor (pill in the chat header). -->
+<script src="sheet.js"></script>
 <script src="persona.js"></script>
   <script src="usagepanel.js"></script>
 <script src="msgactions.js"></script>

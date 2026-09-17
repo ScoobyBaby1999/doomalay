@@ -116,6 +116,10 @@
         webSearch: !!(sessionData && (sessionData.WebSearch || sessionData.web_search)),
         deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
         persona: (sessionData && (sessionData.Persona || sessionData.persona)) || '',
+        // v0.26: multi-persona + placeholders + the chat's name ({name}).
+        personas: null,
+        placeholders: null,
+        chatName: (icon && icon.name) || (sessionData && sessionData.Title) || '',
         slidingWindow: (sessionData && (sessionData.SlidingWindow || sessionData.sliding_window)) || 40,
         messages: [],
         isStreaming: false,
@@ -171,7 +175,6 @@
     // ── The chat (only once the gate is fulfilled) ──
     var chatHTML = complete
       ? '<div id="chat-live" style="flex:1 1 auto;display:flex;flex-direction:column;min-height:55%">' +
-          '<div id="chat-searchbar" style="display:none;padding:6px 16px"></div>' +
           '<div id="chat-messages" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px">' +
             (state.messages.length === 0
               ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px">' +
@@ -322,8 +325,9 @@
           '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
           '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
         '</div>' +
-        '<div id="chat-dropdown" style="' + (open ? '' : 'display:none;') + 'padding:2px 12px 10px;border-bottom:1px solid #13131a">' +
+        '<div id="chat-dropdown" style="' + (open ? '' : 'display:none;') + 'padding:2px 12px 10px;border-bottom:1px solid var(--surface-2)">' +
           '<div id="pill-row" style="display:flex;align-items:center;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 0 2px"></div>' +
+          '<div id="chat-searchbar" style="display:none;padding:6px 0 4px"></div>' +
           '<div id="util-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px"></div>' +
         '</div>' +
       '</div>');
@@ -361,14 +365,18 @@
     var dropdown = bodyEl.querySelector('#chat-dropdown');
     var pillRow = bodyEl.querySelector('#pill-row');
     var utilRow = bodyEl.querySelector('#util-row');
+    var summaryEl = bodyEl.querySelector('#chat-header-summary');
 
     var toggle = function () {
       state.dropdownOpen = !state.dropdownOpen;
       if (dropdown) dropdown.style.display = state.dropdownOpen ? '' : 'none';
       if (chevron) chevron.style.transform = 'rotate(' + (state.dropdownOpen ? '90deg' : '0deg') + ')';
+      // v0.26: the header reads the static expand/collapse metadata line.
+      if (summaryEl) summaryEl.textContent = type.summaryLine(state);
+      if (state.dropdownOpen) renderSearchbar(bodyEl, state, icon, ctx.panel);
     };
     if (row) row.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('#pill-row, #util-row')) return;
+      if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-searchbar')) return;
       toggle();
     });
     if (chevron) chevron.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
@@ -409,9 +417,8 @@
       });
       pillRow.appendChild(art);
 
-      // v0.19: THE PERSONA PILL — opens this chat's persona editor (its
-      // editable system prompt + the live identity line the engine
-      // prepends every turn).
+      // v0.19→v0.26: THE PERSONA PILL — opens the chat's persona LIST
+      // (multi-persona Sheet: add / rename / delete / activation modes).
       var per = document.createElement('button');
       per.id = 'pill-persona';
       per.innerHTML = '🎭 persona';
@@ -428,75 +435,42 @@
         }
       });
       pillRow.appendChild(per);
-    }
 
-    // Host utilities: export + memory window + in-chat search.
-    if (utilRow) {
-      utilRow.innerHTML = '';
-
-      // In-chat search (creative extra) — filter + highlight messages.
+      // v0.26 (user spec): THE SEARCH PILL lives in the TOP row (far
+      // right), doubled in width — tapping it drops the search bar row
+      // under the pills; the bar itself filters live, arrows jump
+      // between matches and the counter shows "current / total".
       var search = document.createElement('button');
-      search.textContent = '⌕ search';
-      search.style.cssText = utilBtnStyle();
+      search.id = 'pill-search';
+      search.innerHTML = '⌕ <span>search</span>';
+      search.style.cssText = 'display:flex;align-items:center;gap:5px;flex:2 1 0;min-width:0;' +
+        'background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);' +
+        'padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
       search.addEventListener('click', function (e) {
         e.stopPropagation();
-        state.search = state.search && state.search.open ? null : { open: true, q: '' };
+        state.search = (state.search && state.search.open) ? null : { open: true, q: '', idx: 0 };
         renderSearchbar(bodyEl, state, icon, ctx.panel);
       });
-      utilRow.appendChild(search);
+      pillRow.appendChild(search);
+    }
+
+    // Host utilities: export (overlay) + usage (overlay).
+    if (utilRow) {
+      utilRow.innerHTML = '';
 
       var exp = document.createElement('button');
       exp.textContent = '⇩ export chat';
       exp.style.cssText = utilBtnStyle();
       exp.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (!state.sessionId) { flashUtil(exp, 'nothing to export yet'); return; }
-        window.open('/api/sessions/' + state.sessionId + '/export.csv', '_blank');
-        flashUtil(exp, 'exported csv · md/json too');
+        openExportSheet(bodyEl, icon, state);
       });
       utilRow.appendChild(exp);
 
-      var expMd = document.createElement('button');
-      expMd.textContent = 'md';
-      expMd.style.cssText = utilBtnStyle(true);
-      expMd.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (!state.sessionId) return;
-        window.open('/api/sessions/' + state.sessionId + '/export.md', '_blank');
-      });
-      utilRow.appendChild(expMd);
-
-      var expJson = document.createElement('button');
-      expJson.textContent = 'json';
-      expJson.style.cssText = utilBtnStyle(true);
-      expJson.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (!state.sessionId) return;
-        window.open('/api/sessions/' + state.sessionId + '/export.json', '_blank');
-      });
-      utilRow.appendChild(expJson);
-
-      // Memory — the sliding context window.
-      var mem = document.createElement('div');
-      mem.style.cssText = 'display:flex;align-items:center;gap:6px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0';
-      var memBtn = document.createElement('button');
-      memBtn.textContent = 'memory ' + (state.slidingWindow || 40);
-      memBtn.style.cssText = utilBtnStyle();
-      memBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var ladder = [10, 20, 40, 80, 160];
-        var cur = state.slidingWindow || 40;
-        var idx = ladder.indexOf(cur);
-        state.slidingWindow = ladder[(idx + 1) % ladder.length];
-        memBtn.textContent = 'memory ' + state.slidingWindow;
-        updateSession(icon, state, { sliding_window: state.slidingWindow });
-        flashUtil(memBtn, 'sends last ' + state.slidingWindow);
-      });
-      mem.appendChild(memBtn);
-      utilRow.appendChild(mem);
-
-      // v0.21: USAGE + COST tracker (ported from the HF metrics concept) —
-      // tokens actually used, context fill, and list-price cost per model.
+      // v0.21→v0.26: USAGE + COST — now through the reusable Sheet
+      // (working ✕, Android gestures, a fleet view that actually opens).
       var usageBtn = document.createElement('button');
       usageBtn.textContent = '⧗ usage';
       usageBtn.style.cssText = utilBtnStyle();
@@ -506,14 +480,107 @@
         usageBtn.textContent = '⧗ …';
         fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
           usageBtn.textContent = '⧗ usage';
-          if (window.UsagePanel) window.UsagePanel.open(u, { name: icon.name });
+          if (window.UsagePanel) window.UsagePanel.open(u, { name: icon.name, sessionId: state.sessionId });
         }).catch(function () { usageBtn.textContent = '⧗ usage'; flashUtil(usageBtn, 'usage unavailable'); });
       });
       utilRow.appendChild(usageBtn);
     }
   }
 
-  // ── the in-chat search bar ─────────────────────────────────────
+  // ── v0.26: THE EXPORT SHEET (user spec: every format we can give,
+  // ordered most→least common; the memory window + .md/.json pills
+  // migrated IN as rows). ──────────────────────────────────────────
+  function openExportSheet(bodyEl, icon, state) {
+    if (!window.Sheet) return;
+    var sid = state.sessionId;
+    var base = '/api/sessions/' + sid;
+    var dl = function (url) { window.open(url, '_blank'); };
+    var clientFile = function (name, mime, text) {
+      var blob = new Blob([text], { type: mime });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
+    };
+    var txtTranscript = function () {
+      var out = ['# ' + icon.name + ' — transcript\n'];
+      state.messages.forEach(function (m) {
+        if (m.role === 'user') out.push('You:\n' + m.text + '\n');
+        else if (m.role === 'assistant') out.push((icon.name || 'Bot') + ':\n' + m.text + '\n');
+        else if (m.role === 'tool') out.push('⚙ ' + m.text + '\n');
+      });
+      return out.join('\n');
+    };
+    var htmlTranscript = function () {
+      var escp = window.Sheet.esc;
+      var rows = state.messages.map(function (m) {
+        if (m.role === 'user') return '<p class="u"><b>You:</b><br>' + escp(m.text) + '</p>';
+        if (m.role === 'assistant') return '<p class="a"><b>' + escp(icon.name) + ':</b><br>' + escp(m.text) + '</p>';
+        if (m.role === 'tool') return '<p class="t">⚙ ' + escp(m.text) + '</p>';
+        return '';
+      }).join('\n');
+      return '<!doctype html><meta charset="utf-8"><title>' + escp(icon.name) + ' — transcript</title>' +
+        '<style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 14px;line-height:1.5}' +
+        'p{border:1px solid #ddd;border-radius:8px;padding:10px 14px;margin:8px 0;white-space:pre-wrap}' +
+        '.u{background:#f4f6ff}.a{background:#f6fff8}.t{background:#faf6ff;font-size:0.9em}</style>' +
+        '<h1>' + escp(icon.name) + ' — transcript</h1>\n' + rows;
+    };
+    var noSession = !sid;
+
+    window.Sheet.open({
+      title: 'export chat',
+      render: function () {
+        function fmtRow(ico, title, sub, attr, disabled) {
+          return '<button class="sheet-row" ' + attr + (disabled ? ' style="opacity:0.5"' : '') + '>' +
+            '<span class="sheet-row-ico">' + ico + '</span>' +
+            '<span class="sheet-row-meta"><span class="sheet-row-title">' + title + '</span>' +
+            '<span class="sheet-row-sub">' + sub + '</span></span>' +
+            '<span class="sheet-row-chev">⇩</span></button>';
+        }
+        return (
+          '<p class="sheet-hint">The full conversation, straight from the engine\'s event log. Client-side formats render from the messages on screen.</p>' +
+          (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
+          fmtRow('📝', 'Markdown', 'the readable transcript (You / bot blocks)', 'data-x="md"') +
+          fmtRow('▦', 'CSV', 'one row per turn — spreadsheets', 'data-x="csv"') +
+          fmtRow('🧾', 'JSON', 'the raw session + event log (backup-grade)', 'data-x="json"') +
+          fmtRow('📄', 'Plain text', 'a no-frills .txt transcript', 'data-x="txt"') +
+          fmtRow('🌐', 'HTML', 'a styled single-file transcript', 'data-x="html"')) +
+          '<div class="sheet-section-label">memory</div>' +
+          '<button class="sheet-row" data-memory="1">' +
+            '<span class="sheet-row-ico">🧠</span>' +
+            '<span class="sheet-row-meta"><span class="sheet-row-title">Context window · ' + (state.slidingWindow || 40) + '</span>' +
+            '<span class="sheet-row-sub">how many recent messages ride along to the model — tap to cycle 10→160</span></span>' +
+            '<span class="sheet-row-chev">' + (state.slidingWindow || 40) + '</span>' +
+          '</button>' +
+          '<p class="sheet-hint" style="margin-top:8px">The memory number moved here from the header pills — it sizes the model\'s view of the past, not the export itself.</p>'
+        );
+      },
+      onMount: function (el) {
+        el.querySelectorAll('[data-x]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var x = b.getAttribute('data-x');
+            if (x === 'md') dl(base + '/export.md');
+            else if (x === 'csv') dl(base + '/export.csv');
+            else if (x === 'json') dl(base + '/export.json');
+            else if (x === 'txt') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.txt', 'text/plain', txtTranscript());
+            else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
+          });
+        });
+        var mem = el.querySelector('[data-memory]');
+        if (mem) mem.addEventListener('click', function () {
+          var ladder = [10, 20, 40, 80, 160];
+          var cur = state.slidingWindow || 40;
+          state.slidingWindow = ladder[(ladder.indexOf(cur) + 1) % ladder.length];
+          updateSession(icon, state, { sliding_window: state.slidingWindow });
+          openExportSheet(bodyEl, icon, state); // re-render with the new number
+        });
+      }
+    });
+  }
+
+  // ── the in-chat search bar (v0.26: lives in the header dropdown, has
+  // jump arrows + a "current / total" match counter per user spec) ──
   function renderSearchbar(bodyEl, state, icon, panel) {
     var bar = bodyEl.querySelector('#chat-searchbar');
     if (!bar) return;
@@ -521,34 +588,70 @@
     if (!search || !search.open) { bar.style.display = 'none'; return; }
     bar.style.display = 'block';
     bar.innerHTML =
-      '<div style="display:flex;gap:8px;align-items:center">' +
+      '<div style="display:flex;gap:6px;align-items:center">' +
         '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" ' +
-          'style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
-        '<button id="chat-search-close" style="background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-fs) + 4px);cursor:pointer;padding:4px 8px">✕</button>' +
-      '</div>' +
-      '<div id="chat-search-info" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin-top:4px"></div>';
+          'style="flex:1;min-width:0;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
+        '<button id="chat-search-prev" class="chat-search-nav" aria-label="Previous match">▲</button>' +
+        '<span class="chat-search-count" id="chat-search-count"></span>' +
+        '<button id="chat-search-next" class="chat-search-nav" aria-label="Next match">▼</button>' +
+        '<button id="chat-search-close" style="background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-fs) + 4px);cursor:pointer;padding:4px 8px;flex-shrink:0">✕</button>' +
+      '</div>';
     var inp = bar.querySelector('#chat-search-input');
-    var info = bar.querySelector('#chat-search-info');
+    var count = bar.querySelector('#chat-search-count');
     var closeBtn = bar.querySelector('#chat-search-close');
+    var prevBtn = bar.querySelector('#chat-search-prev');
+    var nextBtn = bar.querySelector('#chat-search-next');
 
+    function updateCounter() {
+      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
+      var n = marks.length;
+      if (!search.q || n === 0) { count.textContent = search.q ? '0/0' : ''; return; }
+      search.idx = Math.max(0, Math.min(search.idx, n - 1));
+      count.textContent = (search.idx + 1) + '/' + n;
+    }
+    function focusCurrent() {
+      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
+      if (!marks.length) return;
+      search.idx = ((search.idx % marks.length) + marks.length) % marks.length;
+      marks.forEach(function (m, i) { m.classList.toggle('chat-search-current', i === search.idx); });
+      marks[search.idx].scrollIntoView({ block: 'center' });
+      updateCounter();
+    }
     var run = function () {
       search.q = inp.value;
+      search.idx = 0;
       var n = highlightMatches(bodyEl, state, search.q);
-      info.textContent = search.q ? (n ? n + ' match' + (n > 1 ? 'es' : '') : 'no matches') : '';
+      if (n > 0) focusCurrent(); else updateCounter();
     };
     var deb = null;
     inp.addEventListener('input', function () {
       clearTimeout(deb);
       deb = setTimeout(run, 200);
     });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); run(); }
+      if (e.key === 'Escape') closeBtn.click();
+    });
+    prevBtn.addEventListener('click', function () {
+      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
+      if (!marks.length) return;
+      search.idx = ((search.idx - 1) + marks.length) % marks.length;
+      focusCurrent();
+    });
+    nextBtn.addEventListener('click', function () {
+      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
+      if (!marks.length) return;
+      search.idx = (search.idx + 1) % marks.length;
+      focusCurrent();
+    });
     closeBtn.addEventListener('click', function () {
       state.search = null;
       clearHighlights(bodyEl);
       bar.style.display = 'none';
       var msgC = bodyEl.querySelector('#chat-messages');
-      if (msgC) { msgC.innerHTML = renderMessages(state.messages); scrollBottom(bodyEl); }
+      if (msgC) { msgC.innerHTML = renderMessages(state.messages); mountAllFormatting(msgC, state); scrollBottom(bodyEl); }
     });
-    if (search.q) run();
+    if (search.q) run(); else updateCounter();
   }
 
   function highlightMatches(bodyEl, state, q) {
@@ -563,14 +666,13 @@
       var idx = n.nodeValue.toLowerCase().indexOf(q.toLowerCase());
       if (idx < 0) return;
       count++;
-      // wrap the match in a <mark>
+      // wrap the match in a <mark> (scrolling + the current-match
+      // highlight are the search bar's job — focusCurrent)
       var range = document.createRange();
       range.setStart(n, idx); range.setEnd(n, idx + q.length);
       var mark = document.createElement('mark');
       mark.className = 'chat-search-mark';
       try { range.surroundContents(mark); } catch (e) {}
-      var target = mark.closest('.msg-bubble') || mark;
-      if (target.scrollIntoView) target.scrollIntoView({ block: 'center' });
     });
     return count;
   }
@@ -701,15 +803,34 @@
   // hosted via privatemodeai" with NO model name. The model is now
   // resolved before composition, and {model}/{provider} placeholders
   // inside the persona are substituted with the live values.
-  function pmSystemMessage(state, model) {
+  // v0.26: multi-persona resolution + {name}/{skills}/custom keys —
+  // mirrors engine personas.go (trigger > shuffle > always > legacy).
+  function pmSystemMessage(state, model, metrics) {
     var displayName = prettyModel(model);
     var head = 'You are ' + (displayName || 'an AI assistant') +
       (state.provider ? ', hosted via ' + state.provider : '') +
       ", chatting inside the Doomalay app on the user's own device. Today is " +
       new Date().toDateString() + '.';
-    var persona = (state.persona || '').trim();
-    var sys = head + '\n\n' + (substituteVars(persona || DEFAULT_PERSONA, model, state.provider));
-    if (persona && !/artifact/i.test(persona)) sys += '\n\n' + ARTIFACT_PROMPT;
+    var personaText;
+    if (state.personas && state.personas.length && window.Persona && window.Persona.resolveActive) {
+      window.Persona.setData(state.personas, state.persona || '', state.placeholders || {});
+      var active = window.Persona.resolveActive(state.personas, state.persona || '', metrics || {});
+      personaText = active && active.text && active.text.trim() ? active.text : '';
+    } else {
+      personaText = (state.persona || '').trim();
+    }
+    var sys = head + '\n\n';
+    if (personaText) {
+      sys += (window.Persona && window.Persona.substituteAll)
+        ? window.Persona.substituteAll(personaText, state.chatName, model, state.provider)
+        : substituteVars(personaText, model, state.provider);
+    } else {
+      sys += (window.Persona && window.Persona.substituteAll)
+        ? window.Persona.substituteAll(window.Persona.DEFAULT_PERSONA, state.chatName, model, state.provider)
+        : substituteVars(DEFAULT_PERSONA, model, state.provider);
+      return sys; // the default persona carries the artifact protocol
+    }
+    if (!/artifact/i.test(personaText)) sys += '\n\n' + ARTIFACT_PROMPT;
     return sys;
   }
 
@@ -727,7 +848,13 @@
     var model = String(state.model || '');
     if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
 
-    var history = [{ role: 'system', content: pmSystemMessage(state, model) }]; // v0.19: persona + identity + artifact protocol
+    // v0.26: live metrics feed trigger personas (mirrors the engine).
+    var userTurns = 0, msgs = 0;
+    for (var mi = 0; mi < state.messages.length; mi++) {
+      msgs++;
+      if (state.messages[mi].role === 'user') userTurns++;
+    }
+    var history = [{ role: 'system', content: pmSystemMessage(state, model, { messages: msgs, turns: userTurns + 1 }) }]; // v0.19: persona + identity + artifact protocol
     for (var i = 0; i < state.messages.length; i++) {
       var m = state.messages[i];
       if (m.role === 'user') history.push({ role: 'user', content: m.text });
@@ -809,6 +936,8 @@
       signal: abort.signal,
       sessionId: state.sessionId || '', // v0.22: file tools save into this chat
       tools: !!state.webSearch && !state.deepResearch,
+      // v0.26: the PM effort toggle (on/off → chat_template_kwargs.thinking).
+      effort: state.effort || '',
       // v0.22: throttled re-render (the WS path already used scheduleUpdate;
       // PM fired a FULL markdown+DOMPurify+Prism pass per token — the
       // "replies outside the thinking box don't stream smoothly" freeze).
@@ -866,6 +995,11 @@
           state.messages.push({ role: 'artifact', artifact: ev.artifact });
           appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
           refreshArtifactCount(state, bodyEl);
+          // v0.26: remember tool-saved names — the model sometimes ALSO
+          // writes an artifact block for the same file (the double-
+          // attachment report); finalizeArtifacts skips those.
+          if (!state._toolArtifactNames) state._toolArtifactNames = {};
+          state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
         }
       },
       onStatus: function (st) {
@@ -921,9 +1055,17 @@
     var slot = (provider || '') + '/' + detail;
     var groups = catalog.groups || [];
     for (var g = 0; g < groups.length; g++) {
+      // v0.26: scope by the PROVIDER GROUP first — the old code scanned every
+      // group for an exact 'provider/last-segment' slot match, but model ids
+      // carry org segments ("nvidia/moonshotai/kimi-k2.6" ≠ "nvidia/kimi-k2.6")
+      // so most models missed and the effort bubble "rarely showed up".
+      if ((groups[g].name || '') !== (provider || '')) continue;
       var models = groups[g].models || [];
       for (var m = 0; m < models.length; m++) {
-        if (models[m].id === slot) return models[m].effortLevels || null;
+        var idLast = String(models[m].id || '').split('/').pop();
+        if (models[m].id === slot || idLast === detail) {
+          return models[m].effortLevels || null;
+        }
       }
     }
     var logical = catalog.logical || [];
@@ -944,9 +1086,18 @@
     var anyActive = state.webSearch || state.deepResearch;
 
     if (levels && levels.length > 0) {
+      // v0.26: snap the persisted level into THIS model's ladder — the
+      // old code kept a stale level from a previous model (e.g. 'med' from
+      // the default, or 'on' from a toggle model), so the bubble showed
+      // nothing and tapping it "wasn't working as intended".
       var curIdx = levels.indexOf(state.effort);
+      if (curIdx < 0) {
+        state.effort = defaultLevelFor(levels);
+        curIdx = levels.indexOf(state.effort);
+        persistCaps(state, icon);
+      }
       var eb = document.createElement('button');
-      eb.textContent = curIdx >= 0 ? 'effort · ' + state.effort : 'effort';
+      eb.textContent = 'effort · ' + state.effort;
       eb.style.cssText = effortBtnStyle(curIdx >= 0);
       eb.addEventListener('click', function () {
         var idx = levels.indexOf(state.effort);
@@ -984,7 +1135,9 @@
       clear.textContent = 'clear';
       clear.style.cssText = 'background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;flex-shrink:0';
       clear.addEventListener('click', function () {
-        state.effort = 'med';
+        // v0.26: reset to the model's OWN default (first level), not a
+        // hardcoded 'med' that isn't in most ladders.
+        state.effort = (levels && levels.length) ? levels[0] : 'med';
         state.webSearch = false;
         state.deepResearch = false;
         persistCaps(state, icon);
@@ -992,6 +1145,17 @@
       });
       bar.appendChild(clear);
     }
+  }
+
+  // v0.26: the sensible default per ladder shape (nvidia/pm on/off → on;
+  // low..max ladders → the middle; none/high/max → high).
+  function defaultLevelFor(levels) {
+    if (!levels || !levels.length) return 'med';
+    if (levels.indexOf('on') >= 0) return 'on';
+    if (levels.indexOf('medium') >= 0) return 'medium';
+    if (levels.indexOf('med') >= 0) return 'med';
+    if (levels.indexOf('high') >= 0) return 'high';
+    return levels[0];
   }
 
   function effortBtnStyle(active) {
@@ -1091,6 +1255,15 @@
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
         if (data.Effort) state.effort = data.Effort;
         if (typeof data.Persona === 'string' && data.Persona) state.persona = data.Persona;
+        // v0.26: the multi-persona list + custom placeholders (the PM
+        // path composes its system message client-side).
+        if (typeof data.Personas === 'string' && data.Personas) {
+          try { state.personas = JSON.parse(data.Personas) || []; } catch (e) {}
+        }
+        if (typeof data.Placeholders === 'string' && data.Placeholders) {
+          try { state.placeholders = JSON.parse(data.Placeholders) || {}; } catch (e) {}
+        }
+        state.chatName = data.Title || state.chatName;
         cb();
       } else {
         ensureSession(icon, state, cb);
@@ -1216,6 +1389,9 @@
       if (ev.artifact && ev.artifact.name) {
         state.messages.push({ role: 'artifact', artifact: ev.artifact });
         appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+        // v0.26: same dedupe set as the WS path (see above).
+        if (!state._toolArtifactNames) state._toolArtifactNames = {};
+        state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
       }
     } else if (type === 'sources') {
       var srcs = ev.sources || [];
@@ -1454,6 +1630,13 @@
     if (!ex.artifacts.length) { state.artifactSaved[key] = true; return; }
     state.artifactSaved[key] = true;
     ex.artifacts.forEach(function (art) {
+      // v0.26: skip blocks whose file a TOOL already saved this turn (the
+      // model sometimes calls docx_create AND hand-writes an artifact
+      // block for the same file — the double-attachment report, where the
+      // hand-written copy even carried a glued "Hello_Word.docx.doc" name).
+      var norm = String(art.file || '').toLowerCase()
+        .replace(/\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)\.(docx?|xlsx?|pptx?|pdf|rtf|txt|csv|json|md|html?|zip)$/i, '.$1');
+      if (state._toolArtifactNames && state._toolArtifactNames[norm]) return;
       window.Artifacts.saveFromMessage(state.sessionId, art).then(function () {
         refreshArtifactCount(state, bodyEl);
       }).catch(function (e) { console.error('artifact save failed', e); });
@@ -1788,14 +1971,23 @@
     return buildCtx(bodyEl, icon, state, panel, type);
   }
 
-  // ── v0.19: persona edits (the persona editor) land in every open chat's
-  // state so PM turns compose the system message from the LATEST text.
+  // ── v0.19→v0.26: persona edits (the persona Sheet) land in every open
+  // chat's state so PM turns compose the system message from the LATEST
+  // list (personas + placeholders; the legacy single-persona column
+  // stays as the fallback).
   window.addEventListener('doomalay:persona-saved', function (e) {
     var sid = e.detail && e.detail.sessionId;
-    var persona = (e.detail && e.detail.persona) || '';
     if (!sid) return;
+    var list = e.detail.personas || null;
+    var ph = e.detail.placeholders || null;
+    var legacy = (e.detail && e.detail.persona) || '';
     for (var k in chatStates) {
-      if (chatStates[k] && chatStates[k].sessionId === sid) chatStates[k].persona = persona;
+      var st = chatStates[k];
+      if (st && st.sessionId === sid) {
+        st.persona = legacy;
+        if (list) st.personas = list;
+        if (ph) st.placeholders = ph;
+      }
     }
   });
 

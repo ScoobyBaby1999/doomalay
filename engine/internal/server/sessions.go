@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -175,6 +176,18 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
 	// resets to the app's default prompt.
 	if v, ok := req["persona"].(string); ok {
 		sess.Persona = v
+	}
+	// v0.26: the multi-persona list (JSON array of
+	// {id,name,text,mode,trigger}) + the custom placeholder map.
+	if v, ok := req["personas"].(string); ok {
+		if strings.TrimSpace(v) == "" {
+			sess.Personas = ""
+		} else {
+			sess.Personas = v
+		}
+	}
+	if v, ok := req["placeholders"].(string); ok {
+		sess.Placeholders = v
 	}
 	// v0.16: the memory-window pill PATCHes this (sliding context size).
 	if v, ok := req["sliding_window"].(float64); ok && v > 0 {

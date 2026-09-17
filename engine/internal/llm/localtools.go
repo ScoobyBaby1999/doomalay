@@ -70,7 +70,7 @@ ACTION: zip_extract {"b64": "<zip bytes>"} — list a zip archive's contents and
 ACTION: archive_create {"name": "b.tar.gz", "files": [{"name": "a.txt", "content": "..."}]} — pack files into ANY format: .zip .7z .tar .tar.gz .tgz .tar.bz2 .tar.xz .tar.zst .gz .bz2 .xz .zst. RAR cannot be created (proprietary) — use 7z or zip. Saved as a downloadable artifact.
 ACTION: archive_extract {"artifact": "b.7z"} — unpack ANY archive (zip, 7z, rar, tar, tar.gz, tar.bz2, tar.xz, tar.zst, gz, bz2, xz, zst — detected from the bytes, not the name) and extract its files as artifacts.
 ACTION: delegate {"prompt": "<question>", "models": ["nvidia/nvidia/nemotron-3.5-lightning-30b-a3b", "privatemodeai/kimi-k2.6"]} — consult up to 3 OTHER models in parallel and weigh their answers (multi-model swarm)
-For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download.
+For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download. After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.
 Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files).`
 
 // IsLocalTool reports whether name is a local tool.

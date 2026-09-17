@@ -147,11 +147,11 @@
       ];
     }
 
+    // v0.26 (user spec): the collapsed header reads a static
+    // "expand metadata" / "collapse metadata" — the old provider/model
+    // summary moved into the pills themselves.
     summaryLine(state) {
-      var bits = [this.icon + ' ' + this.label];
-      if (state.provider) bits.push(providerLabel(state.provider));
-      if (state.model) bits.push(modelDetail(state.model));
-      return bits.join(' · ');
+      return state && state.dropdownOpen ? 'collapse metadata' : 'expand metadata';
     }
 
     // The capability toolbar (effort ladder + web/deep toggles + export).
@@ -187,14 +187,42 @@
   var providerLabels = {};
   var catalogPromise = null;
   var labelsLoaded = false;   // v0.16: settled — callers can avoid re-render loops
+  // v0.26: the BOOT-TIME catalog trap. The engine loads provider model lists
+  // asynchronously after startup; the FIRST /api/models response can carry
+  // empty groups (0 models). The old code cached that empty catalog FOREVER —
+  // the effort button, model names and capabilities all stayed missing until
+  // a full app restart ("the effort bubble rarely shows up"). Now an EMPTY
+  // catalog is retried (up to 8 times, 1.5s apart) before being accepted.
+  var catalogHasModels = false;
+  var catalogRetries = 0;
+  function catalogModelCount(d) {
+    var n = 0;
+    ((d && d.groups) || []).forEach(function (g) { n += (g.models || []).length; });
+    return n;
+  }
   function ensureCatalog() {
-    if (catalogPromise) return catalogPromise;
+    if (catalogPromise && (catalogHasModels || catalogRetries >= 8)) return catalogPromise;
+    if (catalogPromise && catalogRetries > 0) {
+      // don't hammer: at most one in-flight refresh at a time
+      // (catalogPromise resolves to the latest result either way)
+    }
+    catalogRetries++;
     catalogPromise = fetch('/api/models').then(function (r) { return r.json(); }).then(function (d) {
       var provs = (d && d.providers) || {};
       for (var name in provs) providerLabels[name] = provs[name].label || name;
       labelsLoaded = true;
+      catalogHasModels = catalogModelCount(d) > 0;
+      if (!catalogHasModels && catalogRetries < 8) {
+        setTimeout(function () { ensureCatalog().then(function (fresh) {
+          if (catalogModelCount(fresh) > 0 && window.ChatPanel && window.ChatPanel.current) {
+            var c = window.ChatPanel.current();
+            var ctx = c && (c.ctx || c);
+            if (ctx && ctx.rerender && document.getElementById('chat-toolbar')) ctx.rerender();
+          }
+        }); }, 1500);
+      }
       return d;
-    }).catch(function () { labelsLoaded = true; return {}; });
+    }).catch(function () { labelsLoaded = true; catalogHasModels = false; return {}; });
     return catalogPromise;
   }
   function hasLabels() { return labelsLoaded; }

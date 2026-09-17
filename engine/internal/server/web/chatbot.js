@@ -175,11 +175,15 @@
 
     // ── Panel content (overrides GridIcon) ──────────────────────
     getPanelTitle() { return this.name || 'Chat'; }
+    // v0.26 (user spec): "have it say chat_2 or chat_#•(sandbox method)" —
+    // the family label ("Default") is gone, the id + sandbox stay,
+    // and the whole subtext renders smaller (CSS --ui-micro-fs).
     getPanelSubtitle() {
-      const cfg = window.DoomalayConfig;
-      const fam = (cfg && cfg.families && cfg.families[this.family]) || {};
-      var sub = (fam.label || this.family) + ' · ' + this.id;
-      if (this.sandbox) sub += ' · ' + this.sandbox;
+      var sub = this.id || '';
+      if (this.sandbox) {
+        var labels = { quick: 'quick', hf: 'hugging face', device: 'device', terminal: 'termux' };
+        sub += ' · ' + (labels[this.sandbox] || this.sandbox);
+      }
       return sub;
     }
     getAvatarHTML() {

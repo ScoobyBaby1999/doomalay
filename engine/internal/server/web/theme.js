@@ -81,12 +81,55 @@
     return THEMES[id].scheme;
   }
 
+  // the customizable variables (v0.26 theme customization) and their
+  // -rgb triplet partners (auto-derived when overridden)
+  var RGB_PAIRS = {
+    '--accent': '--accent-rgb', '--accent-2': '--accent-2-rgb', '--accent-3': '--accent-3-rgb',
+    '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb'
+  };
+  var CUSTOMIZABLE = [
+    { var: '--bg-app', label: 'App background', rgb: false },
+    { var: '--bg-panel', label: 'Panel background', rgb: false },
+    { var: '--surface-1', label: 'Surface (cards)', rgb: false },
+    { var: '--surface-2', label: 'Surface raised', rgb: false },
+    { var: '--border', label: 'Borders', rgb: false },
+    { var: '--text-1', label: 'Primary text', rgb: false },
+    { var: '--accent', label: 'Accent 1', rgb: true },
+    { var: '--accent-2', label: 'Accent 2', rgb: true },
+    { var: '--accent-3', label: 'Accent 3', rgb: true }
+  ];
+
   function applyTheme(s) {
     var id = THEMES[s.theme] ? s.theme : 'midnight';
     var t = THEMES[id];
 
     // 1. the variable palette (CSS cascade does the whole UI)
     document.documentElement.setAttribute('data-theme', id);
+
+    // 1b. v0.26: the user's CUSTOMIZATIONS for this theme — inline CSS
+    // vars beat the [data-theme] block. Applied AFTER the data-theme set;
+    // any vars left over from a previous theme's overrides are cleared
+    // first (inline styles never fall back otherwise).
+    var docEl = document.documentElement;
+    var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
+    var prevKeys = docEl._themeOverrideKeys || [];
+    prevKeys.forEach(function (k) { docEl.style.removeProperty(k); });
+    docEl._themeOverrideKeys = [];
+    if (overrides) {
+      Object.keys(overrides).forEach(function (k) {
+        docEl.style.setProperty(k, overrides[k]);
+        docEl._themeOverrideKeys.push(k);
+        // auto-derive the -rgb triplet (rgba() composition needs it)
+        var m = /^#([0-9a-fA-F]{6})$/.exec(String(overrides[k] || ''));
+        var pair = RGB_PAIRS[k];
+        if (m && pair) {
+          var hex = m[1];
+          var rgb = parseInt(hex.slice(0, 2), 16) + ',' + parseInt(hex.slice(2, 4), 16) + ',' + parseInt(hex.slice(4, 6), 16);
+          docEl.style.setProperty(pair, rgb);
+          docEl._themeOverrideKeys.push(pair);
+        }
+      });
+    }
 
     // 2. chat markdown scheme — only when the user hasn't pinned their own
     //    (a non-default scheme OR any per-slot override = pinned)
@@ -155,6 +198,7 @@
     apply: applyTheme,
     effectiveGrid: effectiveGrid,
     pendingScheme: pendingScheme,
-    isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); }
+    isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
+    customizable: CUSTOMIZABLE
   };
 })();
