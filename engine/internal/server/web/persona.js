@@ -1,4 +1,6 @@
-// persona.js — v0.26 the MULTI-PERSONA system, rebuilt on the Sheet.
+// persona.js — v0.26→v0.27 the MULTI-PERSONA system, rebuilt on the
+// MASTER PANEL's view stack (the v0.26 Sheet is deleted — see panel.js
+// for why: it was dead-on-Android, isInsideUI() never knew it).
 //
 // USER SPEC (v0.26):
 //   "Let's have a chat be able to have multiple personas. So a user can
@@ -16,7 +18,7 @@
 //    placeholders {name}, {model}, {provider}, and any custom
 //    placeholders the user creates."
 //
-// VIEWS (all through window.Sheet — one master panel, a view stack):
+// VIEWS (all on the master panel's view stack — panel.js pushView):
 //   list          the chat's personas (+ new / library / placeholders)
 //   editor        CodeMirror markdown editor + the pill row
 //   mode          always active / shuffle / active by trigger picker
@@ -84,13 +86,20 @@
   function uid() { return 'p_' + Math.random().toString(36).slice(2, 10); }
   function modeMeta(p) { return MODES[(p && p.mode) || 'always'] || MODES.always; }
 
-  // view() — one place that builds Sheet views with their onMount wiring.
+  // view() — one place that builds panel views with their onMount wiring.
   function view(title, renderHTML, wire) {
     return {
       title: title,
       render: function () { return renderHTML(); },
       onMount: function (el) { if (wire) wire(el); }
     };
+  }
+
+  // PV() — the live master panel (persona views always ride the panel
+  // that's hosting the chat that opened them).
+  function PV() {
+    var c = window.ChatPanel && window.ChatPanel.current();
+    return (c && c.panel) || null;
   }
 
   // ── data load / save ──────────────────────────────────────────────
@@ -157,16 +166,18 @@
     return null;
   }
 
-  // ── ENTRY: the personas pill ──────────────────────────────────────
+  // ── ENTRY: the personas pill ────────────────────────────────────
   function open(sessionId, opts) {
     if (!sessionId) return;
-    window.Sheet.open(view('personas', function () {
+    var panel = PV();
+    if (!panel) return;
+    panel.pushView(view('personas', function () {
       return '<div class="art-loading">loading personas…</div>';
     }));
     loadSession(sessionId, opts).then(function () {
-      window.Sheet.replace(listView());
+      panel.replaceView(listView());
     }).catch(function (e) {
-      window.Sheet.replace(view('personas', function () {
+      panel.replaceView(view('personas', function () {
         return '<div class="art-loading">could not load the session — ' + esc(String(e.message || e)) + '</div>';
       }));
     });
@@ -182,37 +193,37 @@
           ? 'active when {' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value
           : (p.mode === 'shuffle' ? 'in the random pool' : 'the persona this chat uses');
         rows +=
-          '<button class="sheet-row" data-persona="' + escAttr(p.id) + '">' +
-            '<span class="sheet-row-ico">🎭</span>' +
-            '<span class="sheet-row-meta">' +
-              '<span class="sheet-row-title">' + esc(p.name) + '</span>' +
-              '<span class="sheet-row-sub">' + esc(sub) + '</span>' +
+          '<button class="pv-row" data-persona="' + escAttr(p.id) + '">' +
+            '<span class="pv-row-ico">🎭</span>' +
+            '<span class="pv-row-meta">' +
+              '<span class="pv-row-title">' + esc(p.name) + '</span>' +
+              '<span class="pv-row-sub">' + esc(sub) + '</span>' +
             '</span>' +
             '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;letter-spacing:0.3px;color:' + m.color + ';background:rgba(' + m.rgb + ',0.12);border:1px solid rgba(' + m.rgb + ',0.35);padding:3px 8px;border-radius:5px">' + esc(m.label) + '</span>' +
-            '<span class="sheet-row-chev">›</span>' +
+            '<span class="pv-row-chev">›</span>' +
           '</button>';
       });
       if (!rows) rows = '<div class="art-loading">no personas yet — add one below</div>';
       return (
-        '<p class="sheet-hint">Each chat can carry several personas. One is active at a time: a satisfied <b>trigger</b> wins, then <b>always active</b> (the one used), then the <b>shuffle</b> pool (re-rolled when the chat is re-established or the app restarts).</p>' +
+        '<p class="pv-hint">Each chat can carry several personas. One is active at a time: a satisfied <b>trigger</b> wins, then <b>always active</b> (the one used), then the <b>shuffle</b> pool (re-rolled when the chat is re-established or the app restarts).</p>' +
         rows +
-        '<div class="sheet-section-label">add</div>' +
-        '<button class="sheet-row" data-new-persona="1">' +
-          '<span class="sheet-row-ico">＋</span>' +
-          '<span class="sheet-row-meta"><span class="sheet-row-title">New persona</span>' +
-          '<span class="sheet-row-sub">write one from scratch</span></span>' +
+        '<div class="pv-section-label">add</div>' +
+        '<button class="pv-row" data-new-persona="1">' +
+          '<span class="pv-row-ico">＋</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">New persona</span>' +
+          '<span class="pv-row-sub">write one from scratch</span></span>' +
         '</button>' +
-        '<button class="sheet-row" style="opacity:0.55">' +
-          '<span class="sheet-row-ico">☁</span>' +
-          '<span class="sheet-row-meta"><span class="sheet-row-title">Persona library</span>' +
-          '<span class="sheet-row-sub">coming soon — picking a free home for it</span></span>' +
+        '<button class="pv-row" style="opacity:0.55">' +
+          '<span class="pv-row-ico">☁</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">Persona library</span>' +
+          '<span class="pv-row-sub">coming soon — picking a free home for it</span></span>' +
         '</button>' +
-        '<div class="sheet-section-label">chat data</div>' +
-        '<button class="sheet-row" data-placeholders="1">' +
-          '<span class="sheet-row-ico" style="font-family:monospace">{ }</span>' +
-          '<span class="sheet-row-meta"><span class="sheet-row-title">Placeholders</span>' +
-          '<span class="sheet-row-sub">{name} {model} {provider} {skills} + custom keys</span></span>' +
-          '<span class="sheet-row-chev">›</span>' +
+        '<div class="pv-section-label">chat data</div>' +
+        '<button class="pv-row" data-placeholders="1">' +
+          '<span class="pv-row-ico" style="font-family:monospace">{ }</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">Placeholders</span>' +
+          '<span class="pv-row-sub">{name} {model} {provider} {skills} + custom keys</span></span>' +
+          '<span class="pv-row-chev">›</span>' +
         '</button>'
       );
     }, wireList);
@@ -222,18 +233,18 @@
     el.querySelectorAll('[data-persona]').forEach(function (b) {
       b.addEventListener('click', function () {
         var p = findPersona(b.getAttribute('data-persona'));
-        if (p) window.Sheet.push(editorView(p));
+        if (p) PV().pushView(editorView(p));
       });
     });
     var np = el.querySelector('[data-new-persona]');
     if (np) np.addEventListener('click', function () {
       var p = { id: uid(), name: 'Persona ' + (personas.length + 1), text: '', mode: 'always' };
       personas.push(p);
-      persist().then(function () { window.Sheet.push(editorView(p)); });
+      persist().then(function () { PV().pushView(editorView(p)); });
     });
     var ph = el.querySelector('[data-placeholders]');
     if (ph) ph.addEventListener('click', function () {
-      window.Sheet.push(placeholdersView());
+      PV().pushView(placeholdersView());
     });
   }
 
@@ -249,17 +260,17 @@
           '<button id="pe-ph" style="flex:1;min-width:0;background:transparent;border:1px solid var(--border);color:var(--text-2);padding:8px 8px;border-radius:6px;font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:600;font-family:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ } list placeholders</button>' +
         '</div>' +
         '<div style="display:flex;gap:7px;margin-bottom:10px">' +
-          '<input id="pe-name" class="sheet-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="persona name" aria-label="Persona name">' +
-          '<button id="pe-rename" class="sheet-btn" style="display:none;min-height:40px;padding:8px 12px">save</button>' +
+          '<input id="pe-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="persona name" aria-label="Persona name">' +
+          '<button id="pe-rename" class="pv-btn" style="display:none;min-height:40px;padding:8px 12px">save</button>' +
         '</div>' +
         '<div id="pe-body" style="position:relative;height:42vh;min-height:240px;border:1px solid var(--surface-2);border-radius:10px;overflow:hidden"><div class="art-loading">loading editor…</div></div>' +
         '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
-          '<button id="pe-save" class="sheet-btn sheet-btn-primary" style="flex:2;min-width:110px" disabled>save</button>' +
-          '<button id="pe-default" class="sheet-btn" style="flex:1;min-width:80px">↺ default</button>' +
-          '<button id="pe-dl" class="sheet-btn" style="flex:1;min-width:70px">⇩ .md</button>' +
-          '<button id="pe-del" class="sheet-btn" style="flex:1;min-width:80px;color:var(--err);border-color:rgba(var(--err-rgb),0.4)">delete</button>' +
+          '<button id="pe-save" class="pv-btn pv-btn-primary" style="flex:2;min-width:110px" disabled>save</button>' +
+          '<button id="pe-default" class="pv-btn" style="flex:1;min-width:80px">↺ default</button>' +
+          '<button id="pe-dl" class="pv-btn" style="flex:1;min-width:70px">⇩ .md</button>' +
+          '<button id="pe-del" class="pv-btn" style="flex:1;min-width:80px;color:var(--err);border-color:rgba(var(--err-rgb),0.4)">delete</button>' +
         '</div>' +
-        '<p class="sheet-hint" style="margin-top:10px">{name}, {model}, {provider}, {skills} and custom keys substitute live on every turn — the persona never goes stale when you switch models or rename the chat.</p>'
+        '<p class="pv-hint" style="margin-top:10px">{name}, {model}, {provider}, {skills} and custom keys substitute live on every turn — the persona never goes stale when you switch models or rename the chat.</p>'
       );
     }, function (el) { wireEditor(el, p); });
   }
@@ -309,20 +320,20 @@
       persist().then(function () {
         toast('renamed to ' + v);
         renameBtn.style.display = 'none';
-        window.Sheet.replace(editorView(p)); // refresh title + pills
+        PV().replaceView(editorView(p)); // refresh title + pills
       });
     });
 
     // ACTIVATION MODE pill (item 8) — text + color follow the state.
     var modeBtn = el.querySelector('#pe-mode');
     if (modeBtn) modeBtn.addEventListener('click', function () {
-      window.Sheet.push(modePickerView(p));
+      PV().pushView(modePickerView(p));
     });
 
     // LIST PLACEHOLDERS pill (item 9).
     var phBtn = el.querySelector('#pe-ph');
     if (phBtn) phBtn.addEventListener('click', function () {
-      window.Sheet.push(placeholdersView());
+      PV().pushView(placeholdersView());
     });
 
     if (saveBtn) saveBtn.addEventListener('click', function () {
@@ -355,7 +366,7 @@
       if (personas.length <= 1) { toast('every chat keeps at least one persona'); return; }
       if (delBtn.dataset.armed) {
         personas = personas.filter(function (x) { return x.id !== p.id; });
-        persist().then(function () { toast('persona deleted'); window.Sheet.pop(); });
+        persist().then(function () { toast('persona deleted'); PV().popView(); });
       } else {
         delBtn.dataset.armed = '1';
         delBtn.textContent = 'sure?';
@@ -369,18 +380,18 @@
     return view('activation', function () {
       function row(mode, ico, title, sub) {
         var m = MODES[mode];
-        return '<button class="sheet-row" data-mode="' + mode + '">' +
-          '<span class="sheet-row-ico">' + ico + '</span>' +
-          '<span class="sheet-row-meta"><span class="sheet-row-title" style="color:' + m.color + '">' + esc(title) + '</span>' +
-          '<span class="sheet-row-sub">' + esc(sub) + '</span></span>' +
-          '<span class="sheet-row-chev">›</span></button>';
+        return '<button class="pv-row" data-mode="' + mode + '">' +
+          '<span class="pv-row-ico">' + ico + '</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="color:' + m.color + '">' + esc(title) + '</span>' +
+          '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
+          '<span class="pv-row-chev">›</span></button>';
       }
       return (
-        '<p class="sheet-hint">How this persona becomes the chat\'s active one. The pill in the editor changes its text and color to match.</p>' +
+        '<p class="pv-hint">How this persona becomes the chat\'s active one. The pill in the editor changes its text and color to match.</p>' +
         row('always', '●', 'Always active', 'this persona is the one used') +
         row('shuffle', '⤨', 'Shuffle', 'random member of the pool — re-rolled on chat re-establish or app restart') +
         row('trigger', '⚡', 'Active by trigger', 'activates when your key/value condition is met') +
-        '<p class="sheet-hint" style="margin-top:12px">Trigger keys: the built-in live metrics <b>messages</b> / <b>turns</b>, or any custom placeholder holding a number.</p>'
+        '<p class="pv-hint" style="margin-top:12px">Trigger keys: the built-in live metrics <b>messages</b> / <b>turns</b>, or any custom placeholder holding a number.</p>'
       );
     }, function (el) { wireModePicker(el, p); });
   }
@@ -390,15 +401,15 @@
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-mode');
         if (mode === 'trigger') {
-          window.Sheet.push(triggerView(p));
+          PV().pushView(triggerView(p));
           return;
         }
         p.mode = mode;
         p.trigger = null;
         persist().then(function () {
           toast('activation: ' + MODES[mode].label);
-          window.Sheet.pop();
-          window.Sheet.replace(editorView(p));
+          PV().popView();
+          PV().replaceView(editorView(p));
         });
       });
     });
@@ -409,29 +420,29 @@
     return view('active when…', function () {
       var t = p.trigger || { key: 'messages', op: '>', value: 10 };
       return (
-        '<p class="sheet-hint">When <b>{key}</b> meets the condition, this persona activates — it overrides always-active and shuffle personas for that turn.</p>' +
-        '<div class="sheet-section-label">key</div>' +
-        '<input id="tr-key" class="sheet-input" value="' + escAttr(t.key) + '" placeholder="messages · turns · or a custom key">' +
-        '<div class="sheet-section-label">is</div>' +
-        '<select id="tr-op" class="sheet-select">' +
+        '<p class="pv-hint">When <b>{key}</b> meets the condition, this persona activates — it overrides always-active and shuffle personas for that turn.</p>' +
+        '<div class="pv-section-label">key</div>' +
+        '<input id="tr-key" class="pv-input" value="' + escAttr(t.key) + '" placeholder="messages · turns · or a custom key">' +
+        '<div class="pv-section-label">is</div>' +
+        '<select id="tr-op" class="pv-select">' +
           ['=', '<', '>', '!='].map(function (o) {
             return '<option value="' + o + '"' + (o === t.op ? ' selected' : '') + '>' + o + '</option>';
           }).join('') +
         '</select>' +
-        '<div class="sheet-section-label">value (number)</div>' +
-        '<input id="tr-val" class="sheet-input" type="number" step="any" inputmode="decimal" value="' + escAttr(String(t.value)) + '">' +
+        '<div class="pv-section-label">value (number)</div>' +
+        '<input id="tr-val" class="pv-input" type="number" step="any" inputmode="decimal" value="' + escAttr(String(t.value)) + '">' +
         '<div style="display:flex;gap:8px;margin-top:16px">' +
-          '<button id="tr-save" class="sheet-btn sheet-btn-primary" style="flex:2">set trigger</button>' +
-          '<button id="tr-cancel" class="sheet-btn" style="flex:1">cancel</button>' +
+          '<button id="tr-save" class="pv-btn pv-btn-primary" style="flex:2">set trigger</button>' +
+          '<button id="tr-cancel" class="pv-btn" style="flex:1">cancel</button>' +
         '</div>' +
-        '<p class="sheet-hint" style="margin-top:12px">Custom keys created under Placeholders work here too — the chat can change their values itself later (that\'s the programmable hook).</p>'
+        '<p class="pv-hint" style="margin-top:12px">Custom keys created under Placeholders work here too — the chat can change their values itself later (that\'s the programmable hook).</p>'
       );
     }, function (el) { wireTrigger(el, p); });
   }
 
   function wireTrigger(el, p) {
     var cancel = el.querySelector('#tr-cancel');
-    if (cancel) cancel.addEventListener('click', function () { window.Sheet.pop(); });
+    if (cancel) cancel.addEventListener('click', function () { PV().popView(); });
     var save = el.querySelector('#tr-save');
     if (save) save.addEventListener('click', function () {
       var key = (el.querySelector('#tr-key').value || '').trim().replace(/[{}]/g, '');
@@ -446,9 +457,9 @@
         // off the builder AND the mode picker (the editor sits below both;
         // a single pop left a stale picker in the stack — the back button
         // then needed an extra press to reach the list).
-        window.Sheet.pop();
-        window.Sheet.pop();
-        window.Sheet.replace(editorView(p)); // refresh the editor's pill
+        PV().popView();
+        PV().popView();
+        PV().replaceView(editorView(p)); // refresh the editor's pill
       });
     });
   }
@@ -457,37 +468,37 @@
   function placeholdersView() {
     return view('placeholders', function () {
       function builtin(key, val, sub) {
-        return '<div class="sheet-row" style="cursor:default">' +
-          '<span class="sheet-row-meta"><span class="sheet-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
-          '<span class="sheet-row-sub">' + esc(sub) + '</span></span>' +
+        return '<div class="pv-row" style="cursor:default">' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
+          '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
           '<span style="flex-shrink:0;font-size:var(--ui-small-fs) - 0.5px;color:var(--accent-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
         '</div>';
       }
       var customs = '';
       Object.keys(placeholders).sort().forEach(function (k) {
         customs +=
-          '<div class="sheet-row" style="cursor:default">' +
-            '<span class="sheet-row-meta"><span class="sheet-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
-            '<span class="sheet-row-sub">custom · usable in personas + triggers</span></span>' +
+          '<div class="pv-row" style="cursor:default">' +
+            '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
+            '<span class="pv-row-sub">custom · usable in personas + triggers</span></span>' +
             '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:32%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(placeholders[k]) + '</span>' +
             '<button data-del-key="' + escAttr(k) + '" style="background:transparent;border:none;color:var(--err);font-size:15px;cursor:pointer;padding:6px 8px;flex-shrink:0">✕</button>' +
           '</div>';
       });
       if (!customs) customs = '<div class="art-loading" style="padding:14px">no custom placeholders yet</div>';
       return (
-        '<p class="sheet-hint">These substitute into every persona on every turn. Custom keys also work as trigger values (when they hold numbers).</p>' +
-        '<div class="sheet-section-label">built-in</div>' +
+        '<p class="pv-hint">These substitute into every persona on every turn. Custom keys also work as trigger values (when they hold numbers).</p>' +
+        '<div class="pv-section-label">built-in</div>' +
         builtin('name', cur ? cur.name : '—', 'the chat\'s own name (Scooby, Lippy, Crippy…)') +
         builtin('model', cur ? String(cur.model).split('/').pop() : '—', 'the live model — swaps instantly when you switch') +
         builtin('provider', cur ? (cur.provider || '—') : '—', 'the live provider label') +
         builtin('skills', 'stub', 'inert on purpose for now — will point at skills + MCP servers later') +
-        '<div class="sheet-section-label">custom</div>' +
+        '<div class="pv-section-label">custom</div>' +
         customs +
         '<div style="display:flex;gap:8px;margin-top:4px">' +
-          '<input id="ph-key" class="sheet-input" style="flex:1" placeholder="key (letters, numbers, _)">' +
-          '<input id="ph-val" class="sheet-input" style="flex:1" placeholder="value (text or number)">' +
+          '<input id="ph-key" class="pv-input" style="flex:1" placeholder="key (letters, numbers, _)">' +
+          '<input id="ph-val" class="pv-input" style="flex:1" placeholder="value (text or number)">' +
         '</div>' +
-        '<button id="ph-add" class="sheet-btn sheet-btn-primary" style="width:100%;margin-top:8px">＋ add placeholder</button>'
+        '<button id="ph-add" class="pv-btn pv-btn-primary" style="width:100%;margin-top:8px">＋ add placeholder</button>'
       );
     }, wirePlaceholders);
   }
@@ -502,13 +513,13 @@
       placeholders[k] = v;
       persist().then(function () {
         toast('{' + k + '} added');
-        window.Sheet.replace(placeholdersView());
+        PV().replaceView(placeholdersView());
       });
     });
     el.querySelectorAll('[data-del-key]').forEach(function (b) {
       b.addEventListener('click', function () {
         delete placeholders[b.getAttribute('data-del-key')];
-        persist().then(function () { window.Sheet.replace(placeholdersView()); });
+        persist().then(function () { PV().replaceView(placeholdersView()); });
       });
     });
   }
@@ -606,9 +617,9 @@
   // ── public API ────────────────────────────────────────────────────
   window.Persona = {
     open: open,
-    close: function () { window.Sheet.close(); },
-    backClose: function () { return window.Sheet.back(); },
-    isOpen: function () { return !!(window.Sheet && window.Sheet.isOpen()); },
+    close: function () { var p = PV(); if (p) p.closeViews(); },
+    backClose: function () { var p = PV(); return p ? p.back() : false; },
+    isOpen: function () { var p = PV(); return !!(p && p.viewDepth && p.viewDepth()); },
     DEFAULT_PERSONA: DEFAULT_PERSONA,
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,

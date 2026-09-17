@@ -216,6 +216,12 @@
     wireHeader(bodyEl, icon, state, type, ctx);
     wireGatelock(bodyEl, ctx);
     updateHeaderBtn(state, icon, bodyEl, panel);
+    // v0.27: a re-render while views are stacked would strand them over a
+    // body that no longer holds their chat — discard the stack (the fresh
+    // content below IS the new root; no restore).
+    if (panel && panel.viewDepth && panel.viewDepth()) panel.dropViews();
+    // the search input mounts whenever the dropdown renders open
+    if (state.dropdownOpen) renderSearchbar(bodyEl, state, icon, panel);
 
     // artifacts session binding + badge
     if (state.sessionId) {
@@ -281,6 +287,9 @@
       } else if (!state._wsBinding) {
         state._wsBinding = bindEngineSession(icon, state, function () {
           state._wsBinding = null;
+          // v0.27: the session landed (async) — the header meters can
+          // wake up now even if no status event replays afterwards.
+          refreshHeaderMeters(bodyEl, state);
           if (state.sessionId) {
             window.Artifacts.setSession(state.sessionId, { name: icon.name });
             refreshArtifactCount(state, bodyEl);
@@ -315,7 +324,11 @@
     }
   }
 
-  // ── The pinned collapsible header (arrow + summary + dropdown) ─────
+  // ── The pinned collapsible header (arrow + summary + meters + dropdown) ──
+  // v0.27: the far right of the row carries the METERS — the context
+  // ring (the usage panel's context bar, miniaturized: fills 0→100%, and
+  // shifts primary → warn → err as it climbs to the compaction point) and
+  // the per-chat cost next to it. Both open the usage view on tap.
   function renderHeader(type, state, ctx, complete) {
     var open = !!state.dropdownOpen;
     var summary = type.summaryLine(state);
@@ -324,10 +337,14 @@
         '<div id="chat-header-row" style="display:flex;align-items:center;gap:8px;padding:7px 12px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer">' +
           '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
           '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
+          '<div id="chat-header-meters" style="display:none">' +
+            '<button id="header-ctx-cost" class="ctx-cost" aria-label="Chat cost — open usage">—</button>' +
+            '<button id="header-ctx-ring" class="ctx-ring-btn" aria-label="Context fill — open usage"><span class="ctx-ring"></span></button>' +
+          '</div>' +
         '</div>' +
         '<div id="chat-dropdown" style="' + (open ? '' : 'display:none;') + 'padding:2px 12px 10px;border-bottom:1px solid var(--surface-2)">' +
-          '<div id="pill-row" style="display:flex;align-items:center;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 0 2px"></div>' +
-          '<div id="chat-searchbar" style="display:none;padding:6px 0 4px"></div>' +
+          '<div id="pill-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;-webkit-overflow-scrolling:touch;padding:4px 0 2px"></div>' +
+          '<div id="chat-searchbar"></div>' +
           '<div id="util-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px"></div>' +
         '</div>' +
       '</div>');
@@ -373,13 +390,20 @@
       if (chevron) chevron.style.transform = 'rotate(' + (state.dropdownOpen ? '90deg' : '0deg') + ')';
       // v0.26: the header reads the static expand/collapse metadata line.
       if (summaryEl) summaryEl.textContent = type.summaryLine(state);
+      // v0.27: the search input lives IN the dropdown — mounted once the
+      // dropdown exists, it keeps its query + matches across toggles.
       if (state.dropdownOpen) renderSearchbar(bodyEl, state, icon, ctx.panel);
     };
     if (row) row.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-searchbar')) return;
+      if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-searchbar, #chat-header-meters')) return;
       toggle();
     });
     if (chevron) chevron.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
+
+    // v0.27: THE METERS (context ring + per-chat cost) — same data the
+    // usage view reads, rendered as two tiny front-facing elements on
+    // the far right of the metadata row. Both open the usage view.
+    wireHeaderMeters(bodyEl, icon, state, ctx);
 
     // The type's pills (change method of chat / model anytime).
     if (pillRow) {
@@ -436,64 +460,80 @@
       });
       pillRow.appendChild(per);
 
-      // v0.26 (user spec): THE SEARCH PILL lives in the TOP row (far
-      // right), doubled in width — tapping it drops the search bar row
-      // under the pills; the bar itself filters live, arrows jump
-      // between matches and the counter shows "current / total".
-      var search = document.createElement('button');
-      search.id = 'pill-search';
-      search.innerHTML = '⌕ <span>search</span>';
-      search.style.cssText = 'display:flex;align-items:center;gap:5px;flex:2 1 0;min-width:0;' +
-        'background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);' +
-        'padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
-        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
-        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-      search.addEventListener('click', function (e) {
+      // v0.27 (user spec): THE MIND PILL — the context window / memory
+      // got its own pill + panel (it was buried inside export until now).
+      // It sizes the model's view of the past; export got "exported latest".
+      var mind = document.createElement('button');
+      mind.id = 'pill-mind';
+      mind.innerHTML = '🧠 mind';
+      mind.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
+        'background:rgba(var(--accent-3-rgb),0.06);border:1px solid rgba(var(--accent-3-rgb),0.55);color:var(--accent-3);' +
+        'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+        'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
+      mind.addEventListener('click', function (e) {
         e.stopPropagation();
-        state.search = (state.search && state.search.open) ? null : { open: true, q: '', idx: 0 };
-        renderSearchbar(bodyEl, state, icon, ctx.panel);
+        openMindView(ctx.panel, icon, state);
       });
-      pillRow.appendChild(search);
+      pillRow.appendChild(mind);
     }
 
-    // Host utilities: export (overlay) + usage (overlay).
+    // Host utilities (v0.27: smaller, darker, stylized — same squared
+    // matte language as the pills above, one shade darker): export/share
+    // and usage, both opening views on the master panel.
     if (utilRow) {
       utilRow.innerHTML = '';
 
       var exp = document.createElement('button');
-      exp.textContent = '⇩ export chat';
-      exp.style.cssText = utilBtnStyle();
+      exp.className = 'util-btn';
+      exp.innerHTML = '⤓ export / share';
       exp.addEventListener('click', function (e) {
         e.stopPropagation();
-        openExportSheet(bodyEl, icon, state);
+        openExportView(ctx.panel, icon, state);
       });
       utilRow.appendChild(exp);
 
-      // v0.21→v0.26: USAGE + COST — now through the reusable Sheet
-      // (working ✕, Android gestures, a fleet view that actually opens).
+      // v0.21→v0.27: USAGE + COST — a view on the master panel (working
+      // ‹ back + ✕, Android gestures, a fleet view that actually opens).
       var usageBtn = document.createElement('button');
-      usageBtn.textContent = '⧗ usage';
-      usageBtn.style.cssText = utilBtnStyle();
+      usageBtn.className = 'util-btn';
+      usageBtn.innerHTML = '◔ usage';
       usageBtn.addEventListener('click', function (e) {
         e.stopPropagation();
-        if (!state.sessionId) { flashUtil(usageBtn, 'no session yet'); return; }
-        usageBtn.textContent = '⧗ …';
-        fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
-          usageBtn.textContent = '⧗ usage';
-          if (window.UsagePanel) window.UsagePanel.open(u, { name: icon.name, sessionId: state.sessionId });
-        }).catch(function () { usageBtn.textContent = '⧗ usage'; flashUtil(usageBtn, 'usage unavailable'); });
+        openUsageView(ctx.panel, icon, state, usageBtn);
       });
       utilRow.appendChild(usageBtn);
     }
   }
 
-  // ── v0.26: THE EXPORT SHEET (user spec: every format we can give,
-  // ordered most→least common; the memory window + .md/.json pills
-  // migrated IN as rows). ──────────────────────────────────────────
-  function openExportSheet(bodyEl, icon, state) {
-    if (!window.Sheet) return;
+  // ── v0.27: EXPORTED-LATEST (per-chat, persisted client-side) ─────
+  // "exported latest: N" — export only the last N replies/messages.
+  // The default (-1) means the full chat log. Engine endpoints take
+  // ?latest=N; the client-side txt/html slice state.messages the same way.
+  var EXPORT_LATEST_KEY = 'doomalay.exportlatest.v1';
+  function readLatestMap() {
+    try { return JSON.parse(localStorage.getItem(EXPORT_LATEST_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function exportLatestFor(state) {
+    var m = readLatestMap();
+    var v = state && state.sessionId ? m[state.sessionId] : undefined;
+    return (typeof v === 'number' && v > 0) ? v : -1;
+  }
+  function setExportLatest(state, n) {
+    if (!state || !state.sessionId) return;
+    var m = readLatestMap();
+    if (n > 0) m[state.sessionId] = n; else delete m[state.sessionId];
+    try { localStorage.setItem(EXPORT_LATEST_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+
+  // ── v0.27: THE EXPORT / SHARE VIEW (every format we can give, ordered
+  // most→least common) — now with "exported latest" instead of the memory
+  // window (which moved to its own 🧠 mind pill). ────────────────────
+  function openExportView(panel, icon, state) {
+    if (!panel) return;
     var sid = state.sessionId;
     var base = '/api/sessions/' + sid;
+    var latest = exportLatestFor(state);
     var dl = function (url) { window.open(url, '_blank'); };
     var clientFile = function (name, mime, text) {
       var blob = new Blob([text], { type: mime });
@@ -503,9 +543,16 @@
       document.body.appendChild(a); a.click();
       setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
     };
+    // the visible tail of the conversation (client-side formats render
+    // from the messages on screen — same slice the engine applies)
+    var visibleMessages = function () {
+      var msgs = state.messages || [];
+      if (latest > 0 && msgs.length > latest) msgs = msgs.slice(-latest);
+      return msgs;
+    };
     var txtTranscript = function () {
       var out = ['# ' + icon.name + ' — transcript\n'];
-      state.messages.forEach(function (m) {
+      visibleMessages().forEach(function (m) {
         if (m.role === 'user') out.push('You:\n' + m.text + '\n');
         else if (m.role === 'assistant') out.push((icon.name || 'Bot') + ':\n' + m.text + '\n');
         else if (m.role === 'tool') out.push('⚙ ' + m.text + '\n');
@@ -513,92 +560,231 @@
       return out.join('\n');
     };
     var htmlTranscript = function () {
-      var escp = window.Sheet.esc;
-      var rows = state.messages.map(function (m) {
-        if (m.role === 'user') return '<p class="u"><b>You:</b><br>' + escp(m.text) + '</p>';
-        if (m.role === 'assistant') return '<p class="a"><b>' + escp(icon.name) + ':</b><br>' + escp(m.text) + '</p>';
-        if (m.role === 'tool') return '<p class="t">⚙ ' + escp(m.text) + '</p>';
+      var rows = visibleMessages().map(function (m) {
+        if (m.role === 'user') return '<p class="u"><b>You:</b><br>' + esc(m.text) + '</p>';
+        if (m.role === 'assistant') return '<p class="a"><b>' + esc(icon.name) + ':</b><br>' + esc(m.text) + '</p>';
+        if (m.role === 'tool') return '<p class="t">⚙ ' + esc(m.text) + '</p>';
         return '';
       }).join('\n');
-      return '<!doctype html><meta charset="utf-8"><title>' + escp(icon.name) + ' — transcript</title>' +
+      return '<!doctype html><meta charset="utf-8"><title>' + esc(icon.name) + ' — transcript</title>' +
         '<style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 14px;line-height:1.5}' +
         'p{border:1px solid #ddd;border-radius:8px;padding:10px 14px;margin:8px 0;white-space:pre-wrap}' +
         '.u{background:#f4f6ff}.a{background:#f6fff8}.t{background:#faf6ff;font-size:0.9em}</style>' +
-        '<h1>' + escp(icon.name) + ' — transcript</h1>\n' + rows;
+        '<h1>' + esc(icon.name) + ' — transcript</h1>\n' + rows;
     };
     var noSession = !sid;
 
-    window.Sheet.open({
-      title: 'export chat',
-      render: function () {
-        function fmtRow(ico, title, sub, attr, disabled) {
-          return '<button class="sheet-row" ' + attr + (disabled ? ' style="opacity:0.5"' : '') + '>' +
-            '<span class="sheet-row-ico">' + ico + '</span>' +
-            '<span class="sheet-row-meta"><span class="sheet-row-title">' + title + '</span>' +
-            '<span class="sheet-row-sub">' + sub + '</span></span>' +
-            '<span class="sheet-row-chev">⇩</span></button>';
-        }
-        return (
-          '<p class="sheet-hint">The full conversation, straight from the engine\'s event log. Client-side formats render from the messages on screen.</p>' +
-          (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
-          fmtRow('📝', 'Markdown', 'the readable transcript (You / bot blocks)', 'data-x="md"') +
-          fmtRow('▦', 'CSV', 'one row per turn — spreadsheets', 'data-x="csv"') +
-          fmtRow('🧾', 'JSON', 'the raw session + event log (backup-grade)', 'data-x="json"') +
-          fmtRow('📄', 'Plain text', 'a no-frills .txt transcript', 'data-x="txt"') +
-          fmtRow('🌐', 'HTML', 'a styled single-file transcript', 'data-x="html"')) +
-          '<div class="sheet-section-label">memory</div>' +
-          '<button class="sheet-row" data-memory="1">' +
-            '<span class="sheet-row-ico">🧠</span>' +
-            '<span class="sheet-row-meta"><span class="sheet-row-title">Context window · ' + (state.slidingWindow || 40) + '</span>' +
-            '<span class="sheet-row-sub">how many recent messages ride along to the model — tap to cycle 10→160</span></span>' +
-            '<span class="sheet-row-chev">' + (state.slidingWindow || 40) + '</span>' +
-          '</button>' +
-          '<p class="sheet-hint" style="margin-top:8px">The memory number moved here from the header pills — it sizes the model\'s view of the past, not the export itself.</p>'
-        );
-      },
-      onMount: function (el) {
-        el.querySelectorAll('[data-x]').forEach(function (b) {
-          b.addEventListener('click', function () {
-            var x = b.getAttribute('data-x');
-            if (x === 'md') dl(base + '/export.md');
-            else if (x === 'csv') dl(base + '/export.csv');
-            else if (x === 'json') dl(base + '/export.json');
-            else if (x === 'txt') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.txt', 'text/plain', txtTranscript());
-            else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
+    function build() {
+      return {
+        title: 'export / share · ' + icon.name,
+        render: function () {
+          function fmtRow(ico, title, sub, attr) {
+            return '<button class="pv-row" ' + attr + (noSession ? ' style="opacity:0.5"' : '') + '>' +
+              '<span class="pv-row-ico">' + ico + '</span>' +
+              '<span class="pv-row-meta"><span class="pv-row-title">' + title + '</span>' +
+              '<span class="pv-row-sub">' + sub + '</span></span>' +
+              '<span class="pv-row-chev">⇩</span></button>';
+          }
+          var qs = latest > 0 ? '?latest=' + latest : '';
+          return (
+            '<p class="pv-hint">The conversation, straight from the engine\'s event log (client-side formats render from the messages on screen). Both can share just the recent tail — see <b>exported latest</b> below.</p>' +
+            (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
+            fmtRow('📝', 'Markdown', 'the readable transcript (You / bot blocks)', 'data-x="md" data-url="' + base + '/export.md' + qs + '"') +
+            fmtRow('▦', 'CSV', 'one row per turn — spreadsheets', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"') +
+            fmtRow('🧾', 'JSON', 'the raw session + event log (backup-grade)', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
+            fmtRow('📄', 'Plain text', 'a no-frills .txt transcript', 'data-x="txt"') +
+            fmtRow('🌐', 'HTML', 'a styled single-file transcript', 'data-x="html"')) +
+            '<div class="pv-section-label">scope</div>' +
+            '<button class="pv-row" data-latest="1">' +
+              '<span class="pv-row-ico">✂</span>' +
+              '<span class="pv-row-meta"><span class="pv-row-title">exported latest · ' + (latest > 0 ? latest : 'full log') + '</span>' +
+              '<span class="pv-row-sub">export only the last messages — -1 (default) keeps the full chat log</span></span>' +
+              '<span class="pv-row-chev">' + (latest > 0 ? latest : '-1') + '</span>' +
+            '</button>' +
+            '<p class="pv-hint" style="margin-top:8px">Tap to cycle -1 → 10 → 20 → 40 → 80 → 160. This sizes the EXPORT only — the model\'s memory lives in the 🧠 mind pill.</p>'
+          );
+        },
+        onMount: function (el) {
+          el.querySelectorAll('[data-x]').forEach(function (b) {
+            b.addEventListener('click', function () {
+              if (noSession) return;
+              var x = b.getAttribute('data-x');
+              if (x === 'md' || x === 'csv' || x === 'json') dl(b.getAttribute('data-url'));
+              else if (x === 'txt') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.txt', 'text/plain', txtTranscript());
+              else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
+            });
           });
-        });
-        var mem = el.querySelector('[data-memory]');
-        if (mem) mem.addEventListener('click', function () {
-          var ladder = [10, 20, 40, 80, 160];
-          var cur = state.slidingWindow || 40;
-          state.slidingWindow = ladder[(ladder.indexOf(cur) + 1) % ladder.length];
-          updateSession(icon, state, { sliding_window: state.slidingWindow });
-          openExportSheet(bodyEl, icon, state); // re-render with the new number
-        });
-      }
+          var lat = el.querySelector('[data-latest]');
+          if (lat) lat.addEventListener('click', function () {
+            var ladder = [-1, 10, 20, 40, 80, 160];
+            latest = ladder[(ladder.indexOf(latest) + 1) % ladder.length];
+            setExportLatest(state, latest);
+            panel.replaceView(build()); // re-render with the new number
+          });
+        }
+      };
+    }
+    panel.pushView(build());
+  }
+
+  // ── v0.27: THE MIND PILL (user spec: the context window / memory gets
+  // its own pill + panel — it was buried in export until now). Shows the
+  // memory ladder AND the live context fill (same usage endpoint the ring
+  // and the usage view read). ──────────────────────────────────────────
+  function openMindView(panel, icon, state) {
+    if (!panel) return;
+    function build(st) {
+      var w = st.slidingWindow || 40;
+      return {
+        title: 'mind · ' + icon.name,
+        render: function () {
+          return (
+            '<p class="pv-hint">The model\'s view of the past. The <b>context window</b> sets how many recent messages ride along on every turn; the <b>context fill</b> below is how full the model\'s own window is right now (auto-compact arms at 70%).</p>' +
+            '<button class="pv-row" data-window="1">' +
+              '<span class="pv-row-ico">🧠</span>' +
+              '<span class="pv-row-meta"><span class="pv-row-title">Context window · ' + w + '</span>' +
+              '<span class="pv-row-sub">recent messages sent to the model — tap to cycle 10→160</span></span>' +
+              '<span class="pv-row-chev">' + w + '</span>' +
+            '</button>' +
+            '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:12px;margin-top:4px">' +
+              '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:8px">' +
+                '<span style="font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:600;color:var(--text-1);flex-shrink:0">context fill</span>' +
+                '<span id="mind-fill-note" style="font-size:var(--ui-micro-fs);color:var(--text-3)">…</span>' +
+              '</div>' +
+              '<div style="height:8px;background:var(--bg-app);border-radius:4px;overflow:hidden">' +
+                '<div id="mind-fill-bar" style="height:100%;width:0%;background:var(--ok);border-radius:4px;transition:width 0.4s ease"></div>' +
+              '</div>' +
+            '</div>' +
+            '<p class="pv-hint" style="margin-top:10px">Older turns never vanish — they stay in the log and ride along again when you raise the window. When the fill crosses 70%, auto-compact summarizes them so the chat keeps going.</p>'
+          );
+        },
+        onMount: function (el) {
+          var wbtn = el.querySelector('[data-window]');
+          if (wbtn) wbtn.addEventListener('click', function () {
+            var ladder = [10, 20, 40, 80, 160];
+            st.slidingWindow = ladder[(ladder.indexOf(st.slidingWindow || 40) + 1) % ladder.length];
+            updateSession(icon, st, { sliding_window: st.slidingWindow });
+            panel.replaceView(build(st)); // re-render with the new number
+          });
+          // live fill (same method as the usage view + the header ring)
+          if (st.sessionId) {
+            fetch('/api/sessions/' + st.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
+              var c = (u && u.context) || {};
+              var fill = Math.max(0, Math.min(100, c.fillPct || 0));
+              var bar = el.querySelector('#mind-fill-bar');
+              var note = el.querySelector('#mind-fill-note');
+              if (bar) {
+                bar.style.width = fill + '%';
+                bar.style.background = fill > 85 ? 'var(--err)' : fill > 65 ? 'var(--warn)' : 'var(--ok)';
+              }
+              if (note) note.textContent = fill + '% · ' + (c.compacted ? 'auto-compacted ✓' : 'auto-compact arms at 70%');
+            }).catch(function () {});
+          }
+        }
+      };
+    }
+    panel.pushView(build(state));
+  }
+
+  // ── v0.27: shared USAGE opener (the util pill, the header ring and the
+  // cost badge all land here — one fetch, one view). ──────────────────
+  function openUsageView(panel, icon, state, btn) {
+    if (!panel) return;
+    if (!state.sessionId) { if (btn) flashUtil(btn, 'no session yet'); return; }
+    var old = btn ? btn.innerHTML : '';
+    if (btn) btn.innerHTML = '◔ …';
+    fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
+      if (btn && btn.isConnected) btn.innerHTML = old;
+      state._usage = u; // the header meters read this too
+      if (window.UsagePanel) window.UsagePanel.open(panel, u, { name: icon.name, sessionId: state.sessionId });
+    }).catch(function () {
+      if (btn && btn.isConnected) btn.innerHTML = old;
+      if (btn) flashUtil(btn, 'usage unavailable');
     });
   }
 
-  // ── the in-chat search bar (v0.26: lives in the header dropdown, has
-  // jump arrows + a "current / total" match counter per user spec) ──
+  // ── v0.27: THE HEADER METERS — the context ring + the per-chat cost,
+  // on the far right of the expand/collapse metadata row. Same endpoint,
+  // same numbers as the usage view (two front-facing elements, one
+  // method). The ring fills 0→100% and shifts primary → warn → err as it
+  // climbs toward the compaction point (70%). ─────────────────────────
+  function wireHeaderMeters(bodyEl, icon, state, ctx) {
+    var meters = bodyEl.querySelector('#chat-header-meters');
+    var ring = bodyEl.querySelector('#header-ctx-ring');
+    var cost = bodyEl.querySelector('#header-ctx-cost');
+    if (!meters || !ring || !cost) return;
+    // clicks are wired UNCONDITIONALLY — the session bind is async; the
+    // meters stay hidden until applyMeters() has real numbers, but the
+    // buttons must already work by then.
+    ring.addEventListener('click', function (e) { e.stopPropagation(); openUsageView(ctx.panel, icon, state); });
+    cost.addEventListener('click', function (e) { e.stopPropagation(); openUsageView(ctx.panel, icon, state); });
+    if (state.sessionId) {
+      meters.style.display = 'flex';
+      refreshHeaderMeters(bodyEl, state);
+    } else {
+      meters.style.display = 'none'; // hidden until there's a session
+    }
+  }
+
+  // throttled fetch + paint; call sites: header render, turn end (WS
+  // status idle/error + PM finish), compact events.
+  function refreshHeaderMeters(bodyEl, state) {
+    if (!state || !state.sessionId) return;
+    var now = Date.now();
+    if (state._metersAt && now - state._metersAt < 2500) {
+      if (state._usage) applyMeters(bodyEl, state, state._usage);
+      return;
+    }
+    state._metersAt = now;
+    fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
+      // a re-render may have swapped the DOM under us — re-resolve live
+      state._usage = u;
+      var be = bodyEl.isConnected ? bodyEl : (currentCtx && currentCtx.bodyEl);
+      if (be) applyMeters(be, state, u);
+    }).catch(function () {});
+  }
+
+  function applyMeters(bodyEl, state, u) {
+    var ring = bodyEl.querySelector('#header-ctx-ring .ctx-ring');
+    var cost = bodyEl.querySelector('#header-ctx-cost');
+    var meters = bodyEl.querySelector('#chat-header-meters');
+    if (!ring || !cost || !meters) return;
+    var c = (u && u.context) || {};
+    var t = (u && u.totals) || {};
+    var fill = Math.max(0, Math.min(100, c.fillPct || 0));
+    ring.style.setProperty('--p', String(fill));
+    ring.style.setProperty('--ring', (window.UsagePanel && window.UsagePanel.ringColor)
+      ? window.UsagePanel.ringColor(fill) : (fill >= 70 ? 'var(--err)' : fill >= 50 ? 'var(--warn)' : 'var(--accent)'));
+    var ringBtn = bodyEl.querySelector('#header-ctx-ring');
+    if (ringBtn) ringBtn.title = fill + '% context' + (c.compacted ? ' · auto-compacted' : '');
+    if (t.hasCost) {
+      var cc = Number(t.cost || 0);
+      cost.textContent = (cc < 0.01 && cc > 0) ? '$' + cc.toFixed(4) : '$' + cc.toFixed(2);
+      cost.classList.add('priced');
+      cost.title = 'this chat\'s estimated cost — tap for usage';
+    } else {
+      cost.textContent = 'free';
+      cost.classList.remove('priced');
+      cost.title = 'no priced usage this chat — tap for usage';
+    }
+    meters.style.display = 'flex';
+  }
+
+  // ── the in-chat search (v0.27: the input IS the pill — it fills the
+  // entire row; the ▲▼ jump arrows + the "current / total" counter sit
+  // to its right; typing filters live, no toggle step). ────────────────
   function renderSearchbar(bodyEl, state, icon, panel) {
     var bar = bodyEl.querySelector('#chat-searchbar');
     if (!bar) return;
+    if (!state.search) state.search = { q: '', idx: 0 };
     var search = state.search;
-    if (!search || !search.open) { bar.style.display = 'none'; return; }
-    bar.style.display = 'block';
     bar.innerHTML =
-      '<div style="display:flex;gap:6px;align-items:center">' +
-        '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" ' +
-          'style="flex:1;min-width:0;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:8px;font-size:13px;font-family:inherit;outline:none">' +
-        '<button id="chat-search-prev" class="chat-search-nav" aria-label="Previous match">▲</button>' +
-        '<span class="chat-search-count" id="chat-search-count"></span>' +
-        '<button id="chat-search-next" class="chat-search-nav" aria-label="Next match">▼</button>' +
-        '<button id="chat-search-close" style="background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-fs) + 4px);cursor:pointer;padding:4px 8px;flex-shrink:0">✕</button>' +
-      '</div>';
+      '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" aria-label="Search this conversation">' +
+      '<button id="chat-search-prev" class="chat-search-nav" aria-label="Previous match">▲</button>' +
+      '<button id="chat-search-next" class="chat-search-nav" aria-label="Next match">▼</button>' +
+      '<span class="chat-search-count" id="chat-search-count"></span>';
     var inp = bar.querySelector('#chat-search-input');
     var count = bar.querySelector('#chat-search-count');
-    var closeBtn = bar.querySelector('#chat-search-close');
     var prevBtn = bar.querySelector('#chat-search-prev');
     var nextBtn = bar.querySelector('#chat-search-next');
 
@@ -630,7 +816,10 @@
     });
     inp.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); run(); }
-      if (e.key === 'Escape') closeBtn.click();
+      if (e.key === 'Escape') { // clears the query + the marks, keeps the bar
+        inp.value = ''; search.q = ''; search.idx = 0;
+        clearHighlights(bodyEl); updateCounter();
+      }
     });
     prevBtn.addEventListener('click', function () {
       var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
@@ -643,13 +832,6 @@
       if (!marks.length) return;
       search.idx = (search.idx + 1) % marks.length;
       focusCurrent();
-    });
-    closeBtn.addEventListener('click', function () {
-      state.search = null;
-      clearHighlights(bodyEl);
-      bar.style.display = 'none';
-      var msgC = bodyEl.querySelector('#chat-messages');
-      if (msgC) { msgC.innerHTML = renderMessages(state.messages); mountAllFormatting(msgC, state); scrollBottom(bodyEl); }
     });
     if (search.q) run(); else updateCounter();
   }
@@ -685,17 +867,12 @@
     });
   }
 
-  function utilBtnStyle(small) {
-    return 'flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:' +
-      (small ? '4px 8px' : '4px 10px') + ';border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
-  }
-
   function flashUtil(btn, msg) {
-    var old = btn.textContent;
+    var old = btn.innerHTML;
     btn.textContent = msg;
     btn.style.color = 'var(--ok)';
     setTimeout(function () {
-      if (btn.isConnected) { btn.textContent = old; btn.style.color = ''; }
+      if (btn.isConnected) { btn.innerHTML = old; btn.style.color = ''; }
     }, 1600);
   }
 
@@ -904,6 +1081,8 @@
       clearHint();
       state.isStreaming = false;
       hideActivity(bodyEl, state);
+      // v0.27: turn end — the header meters (ring + cost) refresh.
+      refreshHeaderMeters(bodyEl, state);
       completeAllStreaming(bodyEl, state); // v0.25: every thinking bubble + cursor stops animating
       if (sendBtn) { sendBtn.textContent = 'Send'; sendBtn.onclick = null; }
       if (streamMsg) {
@@ -1431,6 +1610,8 @@
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;
         hideActivity(bodyEl, state);
+        // v0.27: turn end — the header meters (ring + cost) refresh.
+        refreshHeaderMeters(bodyEl, state);
         // v0.25: EVERY still-streaming message completes — thinking bubbles
         // included (the old loop only handled the last message, leaving
         // earlier thinking dots + cursors blinking forever after the turn).

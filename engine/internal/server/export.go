@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,6 +133,13 @@ func slugTitle(s *store.Session) string {
 }
 
 // handleSessionExport is GET /api/sessions/{id}/export.{fmt}.
+//
+// v0.27: ?latest=N — "exported latest": export only the last N folded
+// conversation rows (user/assistant/tool…). The default (-1, or any
+// N<=0) keeps the full chat log. The cutoff lands on a row boundary so
+// a reply is never cut in half; the JSON backup format trims its raw
+// events to the same boundary (everything with seq >= the cutoff row's
+// seq) instead of emitting orphans.
 func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	format := strings.TrimPrefix(r.URL.Path, "/api/sessions/"+id+"/export.")
@@ -146,6 +154,44 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, "events: "+err.Error())
 		return
+	}
+
+	rows := foldEvents(events)
+	latest := 0
+	if l := r.URL.Query().Get("latest"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			latest = n
+		}
+	}
+	if latest > 0 {
+		visible := 0
+		cutoff := -1
+		for i := len(rows) - 1; i >= 0; i-- {
+			if rows[i].Hidden {
+				continue
+			}
+			visible++
+			if visible == latest {
+				cutoff = rows[i].Seq
+				break
+			}
+		}
+		if cutoff > 0 {
+			kept := rows[:0]
+			for _, row := range rows {
+				if row.Seq >= cutoff {
+					kept = append(kept, row)
+				}
+			}
+			rows = kept
+			trimmed := events[:0]
+			for _, ev := range events {
+				if ev.Seq >= cutoff {
+					trimmed = append(trimmed, ev)
+				}
+			}
+			events = trimmed
+		}
 	}
 
 	name := fmt.Sprintf("doomalay-%s-%s", slugTitle(sess), id[:min(8, len(id))])

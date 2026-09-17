@@ -265,26 +265,17 @@
           ? window.Artifacts.backClose() : 'closed';
         if (r !== false) return true;
       }
-      // v0.26: THE REUSABLE SHEET — every list-style overlay (personas,
-      // placeholders, export, usage, activation modes) renders through it;
-      // the back gesture pops its view stack (or closes at the root).
-      if (window.Sheet && window.Sheet.isOpen()) {
-        return window.Sheet.back();
-      }
-      // v0.19: the persona editor overlay (same pattern — dirty-aware).
-      var peOverlay = document.getElementById('persona-overlay');
-      if (peOverlay && peOverlay.style.display !== 'none' && peOverlay.style.display !== '') {
-        var pr = (window.Persona && window.Persona.backClose)
-          ? window.Persona.backClose() : 'closed';
-        if (pr !== false) return true;
-      }
+      // v0.27: THE PANEL VIEW STACK — personas, usage, export, mind all
+      // render as views on the master panel. Back pops one view; when the
+      // stack is empty it closes the panel itself (panel.back()).
       var actionSheet = document.getElementById('msg-action-sheet');
       if (actionSheet && window.MsgActions && window.MsgActions.isOpen && window.MsgActions.isOpen()) {
         window.MsgActions.dismiss();
         return true;
       }
-      // Close the chat panel
+      // Close the chat panel (a view pops first, the root closes after)
       if (panel && panel.isOpen()) {
+        if (panel.back && panel.back()) return true;
         panel.close();
         return true;
       }
@@ -358,6 +349,9 @@
     panelNameEl.addEventListener('click', function () {
       var icon = panel.currentContext;
       if (!icon || icon.type !== 'chat') return;
+      // v0.27: a stacked view owns the header (its title lives here) —
+      // never start a rename while views are open.
+      if (panel.viewDepth && panel.viewDepth()) return;
       // v0.19: a header DRAG that ended on the name still fires this click —
       // ignore it (the drag just moved the panel).
       if (panel.gestures && panel.gestures.justDragged && panel.gestures.justDragged()) return;
@@ -631,11 +625,12 @@
     // exact same reason.
     var artOverlay = document.getElementById('artifacts-overlay');
     if (artOverlay && artOverlay.contains(target)) return true;
-    // v0.19: the persona editor overlay — same reason (appended to body).
-    var peOverlay = document.getElementById('persona-overlay');
-    if (peOverlay && peOverlay.contains(target)) return true;
     var actionSheet = document.getElementById('msg-action-sheet');
     if (actionSheet && actionSheet.contains(target)) return true;
+    // (v0.26's #sheet-root was NEVER in this list — that omission is why
+    // the sheet's buttons were dead on Android while desktop dogfooding
+    // and Playwright both passed. It is deleted now; the master panel and
+    // the connect overlay are the only two panel types left.)
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
