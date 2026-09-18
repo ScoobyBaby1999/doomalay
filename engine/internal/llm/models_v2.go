@@ -783,12 +783,56 @@ func buildCatalogV2Locked(keys map[string]string) *CatalogV2 {
 
 	synced := map[string][]fetchedModel{}
 	syncErrs := map[string]error{}
-	for out := range outCh {
-		if out.err != nil {
-			syncErrs[out.name] = out.err
+	// v0.30.1 (red-team fix): bound the COLLECTION wait. Providers are
+	// fetched in parallel with a 9s HTTP timeout each, but the response
+	// waited for EVERY provider — one region-throttled straggler made
+	// ?refresh=1 sit dead for tens of seconds on-device. Collect for at
+	// most 10s (9s timeout + slack); latecomers get a "timed out this
+	// pass" error entry and arrive on the next refresh. outCh is
+	// buffered to len(catalog), so the late producers never block.
+	budget := time.After(10 * time.Second)
+	seen := 0
+	total := len(catalog)
+collect:
+	for {
+		select {
+		case out, ok := <-outCh:
+			if !ok {
+				break collect
+			}
+			seen++
+			if out.err != nil {
+				syncErrs[out.name] = out.err
+			}
+			if out.models != nil {
+				synced[out.name] = out.models
+			}
+		case <-budget:
+			// Deadline: stop waiting for the stragglers.
+			for {
+				select {
+				case out, ok := <-outCh:
+					if !ok {
+						break collect
+					}
+					seen++
+					if out.err != nil {
+						syncErrs[out.name] = out.err
+					}
+					if out.models != nil {
+						synced[out.name] = out.models
+					}
+				default:
+					break collect
+				}
+			}
 		}
-		if out.models != nil {
-			synced[out.name] = out.models
+	}
+	for name := range catalog {
+		if _, ok := synced[name]; !ok {
+			if _, err := syncErrs[name]; !err && seen < total {
+				syncErrs[name] = fmt.Errorf("timed out this pass (slow network)")
+			}
 		}
 	}
 

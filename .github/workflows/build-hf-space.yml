@@ -18,7 +18,9 @@ jobs:
       - name: Build Go engine (linux/amd64)
         run: |
           cd engine
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../platforms/hf-space/engine/doomalay-engine ./cmd/doomalay
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-X github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo.Version=${GITHUB_REF_NAME}" \
+            -o ../platforms/hf-space/engine/doomalay-engine ./cmd/doomalay
       - name: Build Docker image
         run: docker build -t doomalay-hf-space -f platforms/hf-space/Dockerfile .
       - name: Push to HF Space

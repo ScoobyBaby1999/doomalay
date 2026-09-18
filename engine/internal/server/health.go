@@ -1,12 +1,16 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
+)
 
 // handleHealth is GET /api/health — liveness probe.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"status":  "ok",
-		"version": "0.1.0",
+		"version": buildinfo.Version,
 		"mode":    s.cfg.Mode,
 		"brain":   s.brain != nil && s.brain.Healthy(),
 	})

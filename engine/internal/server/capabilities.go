@@ -1,6 +1,10 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
+)
 
 // handleCapabilities is GET /api/capabilities — advertises what this engine
 // can do. The PWA's routing engine uses this to decide where to send work.
@@ -16,7 +20,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		"hasKVM":     false,
 		"type":       s.cfg.Mode,
 		"brainAlive": s.brain != nil && s.brain.Healthy(),
-		"version":    "0.1.0",
+		"version":    buildinfo.Version,
 	}
 	if s.cfg.Mode == "hf-demo" {
 		caps["note"] = "Capable bubblewrap sandbox (Phase 3). No GPU/KVM. Sleeps after 48h."

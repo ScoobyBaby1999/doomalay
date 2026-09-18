@@ -71,6 +71,12 @@ func main() {
         // Build the HTTP server.
         srv := server.New(cfg, db, br)
 
+        // v0.30.1: warm the expensive first-touch paths (SQLite page cache,
+        // vault decrypt, model catalog background live-sync) so the first
+        // request after boot is fast — the red-team measured 20-60s cold
+        // first hits on /api/sessions + /api/models on-device.
+        go srv.Prewarm()
+
         // Graceful shutdown on SIGINT/SIGTERM.
         ctx, cancel := context.WithCancel(context.Background())
         defer cancel()

@@ -9,12 +9,15 @@ import (
         "encoding/json"
         "io/fs"
         "log"
+        "net"
         "net/http"
+        "net/url"
         "runtime"
         "strconv"
         "strings"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -212,7 +215,16 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
                         next.ServeHTTP(w, r)
                         return
                 }
-                if s.isOriginAllowed(origin) {
+                // v0.30.1: SAME-ORIGIN CORS-MODE requests must pass too. Module
+                // scripts (<script type="module"> — the PrivateMode SDK is one)
+                // are fetched in CORS mode and ALWAYS send Origin, even when the
+                // page is same-origin. Through a reverse proxy or tunnel (the
+                // localhost.run red-team) the page origin is the proxy host,
+                // which the localhost-only allowlist below rejected — 403 on
+                // /vendor/pm/*, a missing PM SDK, and a dead boot (recovery
+                // screen). The page was served BY THIS ENGINE through THAT host,
+                // so origin-host == request-Host means the request IS same-origin.
+                if s.isOriginAllowed(origin) || isSameOrigin(r, origin) {
                         w.Header().Set("Access-Control-Allow-Origin", origin)
                         w.Header().Set("Vary", "Origin")
                         w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
@@ -249,6 +261,75 @@ func (s *Server) isOriginAllowed(origin string) bool {
                 }
         }
         return false
+}
+
+// isSameOrigin reports whether an Origin header matches the Host the client
+// addressed (ignoring scheme, allowing default-port equivalences). A browser
+// only lets a page's Origin equal the origin it FETCHED — so Origin==Host
+// means the requesting page was served from THIS server through THIS host
+// (the reverse-proxy / tunnel case: the localhost.run red-team served the PWA
+// at https://<tunnel>.lhr.life, and every module script / CORS-mode fetch from
+// that page carries Origin: https://<tunnel>.lhr.life with the same Host).
+// A cross-site page cannot make its Origin match a Host it is fetching.
+// (DNS-rebinding pages that re-point their own hostname at 127.0.0.1 are the
+// residual case; modern browsers block public→local requests, the tunnel
+// host is unguessable, and authMiddleware remains the enforcement point for
+// non-localhost connections.)
+func isSameOrigin(r *http.Request, origin string) bool {
+        u, err := url.Parse(origin)
+        if err != nil || u.Host == "" {
+                return false
+        }
+        reqHost := r.Host
+        var reqPort string
+        if h, p, splitErr := net.SplitHostPort(r.Host); splitErr == nil {
+                reqHost, reqPort = h, p
+        }
+        if !strings.EqualFold(u.Hostname(), reqHost) {
+                return false
+        }
+        if u.Port() == reqPort {
+                return true
+        }
+        // Default-port equivalences (Origin omits :443/:80, proxies may add it).
+        def := map[string]string{"https": "443", "http": "80"}
+        if d, ok := def[u.Scheme]; ok {
+                if (u.Port() == "" && reqPort == d) || (reqPort == "" && u.Port() == d) {
+                        return true
+                }
+        }
+        return false
+}
+
+// Prewarm touches the expensive first-hit paths in the background so the
+// FIRST real request after boot is fast (v0.30.1, from the red-team finding
+// that cold first hits on /api/sessions + /api/models could take tens of
+// seconds on-device): the SQLite page cache (sessions list), the vault
+// decrypt path, and the model catalog background live-sync (started at boot
+// instead of on the first /api/models call). Best-effort — failures log only.
+func (s *Server) Prewarm() {
+        defer func() {
+                if rec := recover(); rec != nil {
+                        log.Printf("prewarm: recovered: %v", rec)
+                }
+        }()
+        if s.db != nil {
+                if sessions, err := s.db.ListSessions(); err != nil {
+                        log.Printf("prewarm: sessions: %v", err)
+                } else {
+                        log.Printf("prewarm: %d sessions warm", len(sessions))
+                }
+        }
+        var keys map[string]string
+        if s.vault != nil {
+                _ = s.vault.List()
+                keys = s.vault.AsEnv()
+        }
+        if keys == nil {
+                keys = map[string]string{}
+        }
+        go llm.BuildCatalogV2(keys, false) // cold path: instant static + background live sync
+        log.Printf("prewarm: catalog background sync started (engine %s)", buildinfo.Version)
 }
 
 // authMiddleware enforces the bearer token (when configured). SECURITY:

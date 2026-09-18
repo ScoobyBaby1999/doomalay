@@ -34,7 +34,9 @@ jobs:
       - name: Build Go engine
         run: |
           cd engine
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o ../${{ matrix.artifact_name }}${{ matrix.binary_ext }} ./cmd/doomalay
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build \
+            -ldflags "-X github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo.Version=${GITHUB_REF_NAME}" \
+            -o ../${{ matrix.artifact_name }}${{ matrix.binary_ext }} ./cmd/doomalay
       - uses: actions/upload-artifact@v4
         continue-on-error: true   # quota is capped; releases carry the binaries
         with:
