@@ -103,6 +103,7 @@
   // v0.32.1 B: sort options for the models tab (persisted as .sort).
   var SORTS = [
     { key: 'best',    label: 'Best' },
+    { key: 'recent',  label: 'Recently used' }, // v0.32.4 F1: MRU order
     { key: 'starred', label: '★ Starred first' }, // v0.32.2 A
     { key: 'aa',      label: 'Smartest (AA)' },
     { key: 'agent', label: 'Top agent' },
@@ -147,7 +148,7 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
@@ -161,13 +162,22 @@
       '.mb-star:hover{transform:scale(1.18)}' +
       '.mb-star:active{transform:scale(0.8)}' +
       '.mb-star:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      // v0.32.4 F2: the ℹ detail-toggle button + the drawer's animated
+      // benchmark bars (scaleX keyframe works on innerHTML insert — no JS
+      // post-render hook needed) and the drawer's entrance.
+      '.mb-infobtn{transition:background 140ms,border-color 140ms,color 140ms}' +
+      '.mb-logrow [data-expand]:hover .mb-infobtn{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      '@keyframes mb-bar{from{transform:scaleX(0)}}' +
+      '.mb-barfill{transform-origin:left center;animation:mb-bar 480ms cubic-bezier(0.32,0.72,0,1) both}' +
+      '@keyframes mb-drawer-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}' +
+      '.mb-detail{animation:mb-drawer-in 240ms cubic-bezier(0.32,0.72,0,1)}' +
       // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
       '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
       '.mb-keyform input::placeholder{color:var(--border-strong)}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
       '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
-      '.mb-chevbtn svg,.mb-hint,.mb-countline{transition:none!important;animation:none!important}' +
+      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail{transition:none!important;animation:none!important}' +
       '}';
     document.head.appendChild(s);
   }
@@ -334,6 +344,7 @@
     var providerExpanded = lsGet('providerExpanded', {});
     var hostOrder = lsGet('hostOrder', {});
     var expandedLogical = {};
+    var infoOpen = {}; // v0.32.4 F2: transient per-session detail drawers
     var sortKey = lsGet('sort', 'best');
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
@@ -398,6 +409,7 @@
       // keyboard user on <body>.
       var keepFocus = false, caret = 0;
       var kbRefocusSel = null; // row selector to refocus after the swap
+      var kbRefocusRow = true; // v0.32.4: rows get the roving rewrite; the ℹ button just refocuses
       if (opened) {
         var oldEl = window.ConnectOverlay.getContentEl();
         var oldSi = oldEl && oldEl.querySelector('#mb-search');
@@ -411,6 +423,10 @@
             kbRefocusSel = '.mb-logrow[data-logical-id="' + String(ae.dataset.logicalId).replace(/"/g, '\\"') + '"]';
           } else if (ae.hasAttribute && ae.hasAttribute('data-provhead') && ae.dataset.provhead) {
             kbRefocusSel = '[data-provhead="' + String(ae.dataset.provhead).replace(/"/g, '\\"') + '"]';
+          } else if (ae.hasAttribute && ae.hasAttribute('data-info') && ae.dataset.info) {
+            // v0.32.4 F2: the ℹ toggle keeps focus through the re-render.
+            kbRefocusSel = '[data-info="' + String(ae.dataset.info).replace(/"/g, '\\"') + '"]';
+            kbRefocusRow = false;
           }
         }
       }
@@ -438,11 +454,13 @@
       } else if (kbRefocusSel) {
         var kbRow = window.ConnectOverlay.getContentEl().querySelector(kbRefocusSel);
         if (kbRow) {
-          // keep exactly one tab stop (roving tabindex) and stay focused
-          var kbRows = window.ConnectOverlay.getContentEl().querySelectorAll(
-            view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]');
-          for (var k = 0; k < kbRows.length; k++) kbRows[k].tabIndex = -1;
-          kbRow.tabIndex = 0;
+          if (kbRefocusRow) {
+            // keep exactly one tab stop (roving tabindex) and stay focused
+            var kbRows = window.ConnectOverlay.getContentEl().querySelectorAll(
+              view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]');
+            for (var k = 0; k < kbRows.length; k++) kbRows[k].tabIndex = -1;
+            kbRow.tabIndex = 0;
+          }
           kbRow.focus();
         }
       }
@@ -535,6 +553,13 @@
               refocusAfterRender('.mb-logrow[data-logical-id="' + (lid && lid.replace(/"/g, '\\"')) + '"]');
             }
           }
+        } else if ((e.key === 'i' || e.key === 'I') && view !== 'providers') {
+          // v0.32.4 F2: "i" toggles the detail drawer on the focused row.
+          e.preventDefault();
+          var ilid = row.dataset.logicalId;
+          if (infoOpen[ilid]) delete infoOpen[ilid]; else infoOpen[ilid] = true;
+          render();
+          refocusAfterRender('.mb-logrow[data-logical-id="' + (ilid && ilid.replace(/"/g, '\\"')) + '"]');
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault();
           if (view === 'providers') {
@@ -739,6 +764,32 @@
       }
 
       var dim = g.hasApiKey ? '' : 'opacity:0.6;filter:saturate(0.5);';
+      // v0.32.4 F3: expanded detail strip — the catalog's description of the
+      // provider + free-tier chip + a "get a key ↗" deep link for keyless
+      // boxes (answers WHERE to get a key, right where it matters).
+      var detailStrip = '';
+      if (expanded) {
+        var strip =
+          '<div style="padding:10px 14px;border-top:1px solid var(--surface-2);background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:7px">';
+        if (g.description) {
+          strip += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45">' + escHTML(g.description) + '</div>';
+        }
+        var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
+        if (g.freeTier) {
+          chips += '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;white-space:nowrap">free tier</span>';
+        }
+        if (g.envVar) {
+          chips += '<span title="environment variable for the API key" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);padding:2px 8px;border-radius:5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap">' + escHTML(g.envVar) + '</span>';
+        }
+        if (!g.hasApiKey && g.settingsUrl) {
+          chips += '<a href="' + escAttr(g.settingsUrl) + '" target="_blank" rel="noopener noreferrer" data-nodrag title="open the provider\'s key page" style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--accent-2);background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.4);padding:2px 8px;border-radius:5px;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:4px">get a key ↗</a>';
+        }
+        chips += '</div>';
+        if (g.description || g.freeTier || g.envVar || (!g.hasApiKey && g.settingsUrl)) {
+          strip += chips + '</div>';
+          detailStrip = strip;
+        }
+      }
       // v0.32.1 D: the inline paste-a-key form (opened by the ＋ key button).
       var keyForm = '';
       if (keyAdding === g.name && !g.hasApiKey && g.envVar) {
@@ -760,6 +811,7 @@
           grip +
         '</div>' +
         keyForm +
+        detailStrip +
         (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
         '</div>';
     }
@@ -884,6 +936,15 @@
           var sb = starred.indexOf(b.logical) >= 0 ? 1 : 0;
           return sb - sa || nameOf(a).localeCompare(nameOf(b));
         });
+      } else if (k === 'recent') {
+        // v0.32.4 F1: MRU order (the quick-switch recents list, newest
+        // first); never-used models follow alphabetically.
+        var rec = lsGet('recent', []);
+        list.sort(function (a, b) {
+          var ra = rec.indexOf(a.logical); if (ra < 0) ra = 9999;
+          var rb = rec.indexOf(b.logical); if (rb < 0) rb = 9999;
+          return ra - rb || nameOf(a).localeCompare(nameOf(b));
+        });
       } else if (k === 'aa') {
         list.sort(function (a, b) { return (bmOf(b).intelligence || 0) - (bmOf(a).intelligence || 0) || nameOf(a).localeCompare(nameOf(b)); });
       } else if (k === 'agent') {
@@ -925,6 +986,97 @@
         }
       }
       return false;
+    }
+
+    // v0.32.4 F2: the MODEL DETAIL DRAWER — a per-row expandable card with
+    // full benchmark bars, the prompt/completion pricing split, context,
+    // capabilities, effort levels, usage-rank chips (OpenRouter ranks) and
+    // a hosts summary. Purely informational — selection stays on the row's
+    // left zone, priority stays on the chevron dropdown.
+    function detailDrawer(lm) {
+      var attrs = lm.attributes || {};
+      var bm = attrs.benchmarks || {};
+      var hosts = orderedHosts(lm);
+      var withKeys = 0;
+      for (var h = 0; h < hosts.length; h++) if (hosts[h].hasApiKey) withKeys++;
+
+      var barColor = function (v) {
+        return v >= 70 ? 'var(--ok)' : (v >= 40 ? 'var(--warn)' : 'var(--text-3)');
+      };
+      var barRow = function (label, v, idx) {
+        if (!v) return '';
+        var pct = Math.max(3, Math.min(100, v));
+        return '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);width:74px;flex-shrink:0">' + label + '</span>' +
+          '<span style="flex:1;min-width:0;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden">' +
+            '<span class="mb-barfill" style="display:block;height:100%;width:' + pct + '%;border-radius:3px;background:' + barColor(v) + ';animation-delay:' + (idx * 70) + 'ms"></span>' +
+          '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1);width:34px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums">' + (Math.round(v * 10) / 10) + '</span>' +
+          '</div>';
+      };
+
+      var html = '<div class="mb-detail" data-nodrag style="border-top:1px solid var(--surface-2);padding:12px;display:flex;flex-direction:column;gap:12px;background:rgba(0,0,0,0.14)">';
+
+      // ── Benchmarks (Artificial Analysis) with animated bars ──
+      if (bm.intelligence || bm.agentic || bm.coding) {
+        html += '<div style="display:flex;flex-direction:column;gap:6px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Benchmarks</div>' +
+          barRow('Intelligence', bm.intelligence, 0) +
+          barRow('Agentic', bm.agentic, 1) +
+          barRow('Coding', bm.coding, 2) +
+          '</div>';
+      }
+
+      // ── Pricing split (prompt / completion per M tokens) ──
+      var pm = String(attrs.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)\s*\/\s*\$([0-9]+(?:\.[0-9]+)?)/);
+      if (lm.isFree) {
+        html += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--ok)">free route — no token billing</div>';
+      } else if (pm) {
+        html += '<div style="display:flex;flex-direction:column;gap:3px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Pricing</div>' +
+          '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">prompt <b style="color:var(--warn);font-variant-numeric:tabular-nums">$' + pm[1] + '</b></span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">completion <b style="color:var(--warn);font-variant-numeric:tabular-nums">$' + pm[2] + '</b></span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">per M tokens</span>' +
+          '</div></div>';
+      }
+
+      // ── Usage ranks (№1 fullstack · №1 webapps …) ──
+      var ranks = attrs.ranks || [];
+      if (ranks.length) {
+        var rch = '';
+        for (var r = 0; r < ranks.length && r < 4; r++) {
+          rch += '<span title="ranked #' + ranks[r].rank + ' for ' + escAttr(ranks[r].label) + '" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 8px;border-radius:5px;white-space:nowrap"><b>№' + ranks[r].rank + '</b> ' + escHTML(ranks[r].label) + '</span>';
+        }
+        if (ranks.length > 4) rch += '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);align-self:center">+' + (ranks.length - 4) + '</span>';
+        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' + rch + '</div>';
+      }
+
+      // ── Facts line: context · capabilities · effort levels ──
+      var facts = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)"><b style="color:var(--text-1)">' + fmtCtx(lm.contextLength) + '</b> context</span>';
+      var caps = attrs.capabilities || [];
+      var capStr = '';
+      for (var c = 0; c < caps.length; c++) {
+        capStr += (capStr ? ' · ' : '') + escHTML(caps[c]);
+      }
+      if (capStr) facts += '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + capStr + '</span>';
+      if (attrs.effortLevels && attrs.effortLevels.length) {
+        facts += '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">effort: ' + attrs.effortLevels.length + ' levels</span>';
+      }
+      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + facts + '</div>';
+
+      // ── Hosts summary ──
+      var hd = '';
+      for (var d = 0; d < hosts.length && d < 5; d++) {
+        hd += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || 'var(--border-strong)') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + '"></span>';
+      }
+      html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="display:flex;align-items:center;gap:3px">' + hd + '</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + hosts.length + ' provider' + (hosts.length === 1 ? '' : 's') + ' · <b style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-2)') + '">' + withKeys + ' with keys</b></span>' +
+        '</div>';
+
+      html += '</div>';
+      return html;
     }
 
     function logicalRow(lm, kbFirst) {
@@ -974,6 +1126,13 @@
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (expanded ? '180deg' : '0deg') + ')"><path d="M6 9l6 6 6-6"/></svg>' +
         '</span>';
 
+      // v0.32.4 F2: the ℹ detail toggle — opens the benchmark/pricing
+      // drawer below the row (selection stays left, priority stays chevron).
+      var infoOpenNow = !!infoOpen[lm.logical];
+      var infoBtn = '<button data-info="' + escAttr(lm.logical) + '" data-nodrag class="mb-infobtn" aria-expanded="' + (infoOpenNow ? 'true' : 'false') + '" title="model details — benchmarks, pricing, ranks" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (infoOpenNow ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.2" r="0.4" fill="currentColor" stroke="none"/></svg>' +
+        '</button>';
+
       // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
       // priority dropdown. The 1px separator marks the hotspot boundary.
       // v0.32.1 E: the current model wears a filled radio + green ring.
@@ -991,6 +1150,7 @@
           dotsWrap +
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
           priceChip +
+          infoBtn +
           chevBtn +
         '</div>';
 
@@ -1029,6 +1189,7 @@
       return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">' + leftZone + separator + rightZone + '</div>' +
         (chips ? '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' : '') +
+        (infoOpenNow ? detailDrawer(lm) : '') +
         (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
         '</div>';
     }
@@ -1251,9 +1412,9 @@
 
     function footer() {
       // v0.32.2 (VLM round 3): --text-2 when available — the hint must be
-      // readable, not a whisper.
+      // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ★ stars a favorite · ⠿ drag to re-order · ' + liveCount() + ' providers live' +
+        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ★ stars a favorite · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -1560,12 +1721,25 @@
       });
 
       // Filter pills.
+      // v0.32.4 P0 BUGFIX: activating a scoring pill (Smart/Agent/Code)
+      // auto-aligns the sort to the pill's metric — the pill's documented
+      // contract ("Smart = highest→lowest AA") must hold even when a
+      // different sort (e.g. 'starred') was persisted from an earlier
+      // session. The dropdown visibly updates, so it's discoverable and
+      // reversible. Deactivating never touches the sort.
+      var PILL_SORT = { intelligence: 'aa', code: 'code', agent: 'agent' };
       contentEl.querySelectorAll('[data-pill]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var key = btn.dataset.pill;
           var idx = filters.indexOf(key);
           if (idx >= 0) filters.splice(idx, 1);
-          else filters.push(key);
+          else {
+            filters.push(key);
+            if (PILL_SORT[key] && PILL_SORT[key] !== sortKey) {
+              sortKey = PILL_SORT[key];
+              lsSet('sort', sortKey);
+            }
+          }
           lsSet('filters', filters);
           render();
         });
@@ -1748,6 +1922,20 @@
           var logical = zone.dataset.expand;
           if (expandedLogical[logical]) delete expandedLogical[logical];
           else expandedLogical[logical] = true;
+          render();
+        });
+      });
+
+      // v0.32.4 F2: the ℹ button — toggles the detail drawer. Must NOT
+      // trigger the surrounding data-expand zone (stopPropagation) and must
+      // stay drag-safe (data-nodrag is on the button).
+      contentEl.querySelectorAll('[data-info]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          var logical = btn.dataset.info;
+          if (infoOpen[logical]) delete infoOpen[logical];
+          else infoOpen[logical] = true;
           render();
         });
       });
