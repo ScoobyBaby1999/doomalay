@@ -1,33 +1,38 @@
-// modelbrowser.js — the dynamic model browser (v0.13).
+// modelbrowser.js — the dynamic model browser (v0.32).
 //
 // Port of the HF space's ModelSelectOverlay.tsx (the "tremendous amount of
-// work" — kept faithful, adapted to vanilla JS + the engine's v2 catalog):
+// work"), v0.13 heritage preserved, OVERHAULED per the v0.32 user spec:
 //
-//   TWO VIEWS (header toggle, active tab marked with the shared UIActive
-//   underline sweep):
-//     • PROVIDERS — each provider as a collapsible card (color dot, live-sync
-//       dot, model count), its models as single-line rows ranked in list
-//       format: [radio] name [context] [pricing chip].
-//     • MODELS — ALL providers' models combined, grouped by family into
-//       logical models, listed by capabilities with benchmark scores.
-//       Each row shows the PROVIDER PRIORITY indicator (colored dots, one
-//       per host; dimmed when the host has no key). Expanding reveals the
-//       host rank list — reorder with ▲▼ (persisted per model).
+//   1. FILTERS COLLAPSED behind a "Filters" toggle row (funnel icon +
+//      active-count badge) in BOTH tabs. Collapsed by default, persisted.
+//   2. When expanded the pills are squared, uniform and grid-like — they
+//      lay out in wrapped rows (flex-wrap), never a horizontal scroll.
+//   3. Smart / Agent / Code pills rank by OpenRouter's Artificial Analysis
+//      benchmarks (attributes.benchmarks: intelligence / agentic / coding),
+//      highest → lowest. (The old 'smart' capability match never fired.)
+//   4. New "Available" pill: only models with ≥1 key-backed provider. The
+//      useless "Any $" pill is GONE — Free/Paid are self-cancelling toggles.
+//   5. Providers tab: keyless boxes are dimmed + badged "view only" (keyed
+//      = "ready"). Models tab: logical models with no key-backed host
+//      anywhere (priority position irrelevant) are dimmed hard.
+//   6. Model rows are SPLIT: LEFT (radio + name) selects the model (best
+//      key-backed host, user's host order); RIGHT (after a 1px separator —
+//      the hotspot marker) opens the provider-priority dropdown; the
+//      chevron is now a proper 30px button that rotates when open.
+//   7. Host priority re-ordering: ▲▼ AND drag-and-drop (⠿ handle on each
+//      host row) — the row follows the finger, siblings FLIP around it.
+//   8. Providers tab: HOLD a box (~220ms) or grab its ⠿ grip and drag to
+//      re-order the boxes — iPhone-style reorder, persisted.
+//   9. The "use" pill is GONE — the left-side tap selects; models with no
+//      key anywhere show an inline hint instead of selecting.
 //
-//   SEARCH (200ms debounce) + FILTERS: capability pills (Reason / Smart /
-//   Code / Agent / Tools / Vision), context minimums (32K / 128K / 1M),
-//   Free ⇄ Paid. SORT: intelligence → context → coding → name.
+// 100% RUNTIME DATA: everything comes from GET /api/models. Selection
+// picks the best host and calls onPick(provider, modelId).
 //
-//   100% RUNTIME DATA: everything comes from GET /api/models — the engine
-//   live-syncs every provider's list (no static fallbacks anywhere). The
-//   refresh button re-syncs (?refresh=1) and shows "synced Ns ago".
-//
-//   Selection picks the BEST host automatically (hasApiKey && syncedLive
-//   first) and calls onPick(provider, modelId) with the raw slot id.
-//
-//   PERSISTENCE (localStorage, same keys as the old app):
-//     doomalay.model-select.view / .search / .filters / .ctxMin / .pricing /
-//     .providerOrder / .providerExpanded / .hostOrder (per logical model)
+// PERSISTENCE (localStorage, same keys as the old app):
+//   doomalay.model-select.view / .search / .filters / .filtersOpen /
+//   .ctxMin / .pricing / .providerOrder / .providerExpanded /
+//   .hostOrder (per logical model)
 //
 // Exposes: window.ModelBrowser = { open }
 (function () {
@@ -36,14 +41,15 @@
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
   var LS = 'doomalay.model-select.';
 
-  // Filter pill definitions (label, color, match key) — same set as the old app.
+  // Filter pill definitions (label, color, match key).
   var PILLS = [
     { key: 'reasoning', label: 'Reason', color: '#f97316' },
     { key: 'intelligence', label: 'Smart', color: '#a855f7' },
     { key: 'code', label: 'Code', color: '#3b82f6' },
     { key: 'agent', label: 'Agent', color: '#14b8a6' },
     { key: 'tools', label: 'Tools', color: '#8b5cf6' },
-    { key: 'vision', label: 'Vision', color: '#22c55e' }
+    { key: 'vision', label: 'Vision', color: '#22c55e' },
+    { key: 'available', label: 'Available', color: '#10b981' }
   ];
   var CTX_OPTIONS = [
     { label: 'Any', v: 0 },
@@ -51,6 +57,18 @@
     { label: '128K', v: 128000 },
     { label: '1M', v: 1000000 }
   ];
+  // "Any $" removed (v0.32): Free / Paid are self-cancelling toggles —
+  // neither active == pricing 'all'.
+  var PRICING_OPTIONS = [
+    { key: 'free', label: 'Free', color: '#22c55e' },
+    { key: 'paid', label: 'Paid', color: '#f59e0b' }
+  ];
+
+  // Pills that re-rank the list by a benchmark score.
+  var SCORING_KEYS = ['intelligence', 'code', 'agent'];
+
+  // Shared click suppression after a drag (ms).
+  var suppressClickUntil = 0;
 
   function lsGet(key, dflt) {
     try {
@@ -62,23 +80,47 @@
     try { localStorage.setItem(LS + key, JSON.stringify(v)); } catch (e) {}
   }
 
+  // Self-contained v0.32 styles (injected once).
+  function ensureStyles() {
+    if (document.getElementById('mb-v32-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'mb-v32-styles';
+    s.textContent =
+      '.mb-logrow,[data-provhead],[data-hostslot],[data-select],[data-expand]{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}' +
+      '.mb-logrow [data-select]{border-radius:8px;transition:background 130ms}' +
+      '.mb-logrow [data-select]:hover{background:rgba(128,128,140,0.10)}' +
+      '.mb-logrow [data-expand] .mb-chevbtn{transition:background 140ms,border-color 140ms}' +
+      '.mb-logrow [data-expand]:hover .mb-chevbtn{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      '.mb-chevbtn svg{transition:transform 240ms cubic-bezier(0.32,0.72,0,1)}' +
+      '[data-hostgrip],[data-grip]{user-select:none;-webkit-user-select:none;transition:background 130ms,color 130ms;border-radius:7px}' +
+      '[data-hostgrip]:hover,[data-grip]:hover{background:rgba(128,128,140,0.14);color:var(--text-1)}' +
+      '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(0,0,0,0.55);cursor:grabbing}' +
+      '.mb-dragging *{pointer-events:none}' +
+      'body.mb-noselect,body.mb-noselect *{user-select:none!important;-webkit-user-select:none!important}' +
+      '@keyframes mb-hint-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}' +
+      '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}';
+    document.head.appendChild(s);
+  }
+
   function open(onPick, opts) {
     opts = opts || {};
+    ensureStyles();
 
     // Mutable UI state (persisted where it makes sense).
     var view = lsGet('view', 'providers');
     var search = '';
     var filters = lsGet('filters', []);
+    var filtersOpen = lsGet('filtersOpen', false);
     var ctxMin = lsGet('ctxMin', 0);
     var pricing = lsGet('pricing', 'all');
     var providerOrder = lsGet('providerOrder', null);
     var providerExpanded = lsGet('providerExpanded', {});
     var hostOrder = lsGet('hostOrder', {});
-    var searchOpen = false;
     var expandedLogical = {};
 
     // Catalog data.
     var catalog = null;
+    var famBm = {};      // family → benchmarks (for provider-view pills)
     var syncedAt = 0;
     var syncing = false;
     var opened = false;
@@ -90,6 +132,7 @@
       if (refresh) syncing = true;
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         catalog = d || {};
+        buildFamBm();
         syncedAt = Date.now();
         syncing = false;
         if (done) done();
@@ -101,6 +144,16 @@
       });
     }
 
+    function buildFamBm() {
+      famBm = {};
+      var logical = (catalog && catalog.logical) || [];
+      for (var i = 0; i < logical.length; i++) {
+        var fam = logical[i].family || logical[i].logical;
+        var bm = (logical[i].attributes || {}).benchmarks;
+        if (fam && bm) famBm[fam] = bm;
+      }
+    }
+
     // ── Rendering ───────────────────────────────────────────────────────
 
     function render() {
@@ -108,7 +161,8 @@
         '<div style="padding:16px 16px 24px">' +
         header() +
         searchBox() +
-        filterRow() +
+        filterToggleRow() +
+        (filtersOpen ? filterRow() : '') +
         (view === 'providers' ? providerView() : modelsView()) +
         footer() +
         '</div>';
@@ -174,29 +228,64 @@
         '</div>';
     }
 
+    // ── v0.32: the collapsible filter bar ───────────────────────────────
+
+    function activeFilterCount() {
+      var n = filters.length;
+      if (ctxMin > 0) n++;
+      if (pricing !== 'all') n++;
+      return n;
+    }
+
+    function filterToggleRow() {
+      var n = activeFilterCount();
+      var badge = n
+        ? '<span style="font-size:10px;font-weight:700;color:#10b981;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.45);padding:2px 8px;border-radius:6px;flex-shrink:0">' + n + ' on</span>'
+        : '';
+      var funnel = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 5h18l-7 8.2V19l-4 2v-7.8L3 5z"/></svg>';
+      var toggle = '<button id="mb-filters-toggle" style="flex:1;min-width:0;box-sizing:border-box;display:flex;align-items:center;gap:9px;background:var(--surface-1);border:1px solid ' + (n ? 'rgba(16,185,129,0.5)' : 'var(--surface-2)') + ';color:' + (n ? 'var(--text-1)' : 'var(--text-3)') + ';padding:9px 12px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation;transition:border-color 150ms">' +
+        funnel +
+        '<span style="font-size:12.5px;font-weight:600;flex:1;text-align:left;overflow:hidden;white-space:nowrap">Filters</span>' +
+        badge +
+        '<span style="display:inline-flex;transition:transform 240ms ' + EASE + ';transform:rotate(' + (filtersOpen ? '180deg' : '0deg') + ');color:var(--text-3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>' +
+        '</button>';
+      // The clear control sits BESIDE the toggle (a button can't nest a
+      // button — the parser would break the structure).
+      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search)
+        ? '<button id="mb-clear" title="reset all filters" style="flex:0 0 auto;background:transparent;border:1px solid rgba(var(--err-rgb),0.35);color:var(--err);font-size:11px;padding:0 12px;border-radius:10px;font-family:inherit;cursor:pointer;flex-shrink:0">clear</button>'
+        : '';
+      return '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:' + (filtersOpen ? '8px' : '12px') + '">' + toggle + clearHTML + '</div>';
+    }
+
+    // Squared, uniform, grid-like pills — a real CSS grid: every cell the
+    // same width, rows aligned, wrapping naturally, NO horizontal scroll
+    // (v0.32 spec #2).
+    function squaredPill(attr, label, color, on) {
+      return '<button ' + attr + ' style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;transition:background 130ms,border-color 130ms,color 130ms">' + label + '</button>';
+    }
+
     function filterRow() {
-      var pills = '';
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
+      // Capability + availability pills.
       for (var i = 0; i < PILLS.length; i++) {
         var p = PILLS[i];
         var on = filters.indexOf(p.key) >= 0;
-        pills += '<button data-pill="' + p.key + '" style="flex-shrink:0;background:' + (on ? p.color + '22' : 'transparent') + ';border:1px solid ' + (on ? p.color + '88' : '#2a2a35') + ';color:' + (on ? p.color : '#71717a') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + p.label + '</button>';
+        html += squaredPill('data-pill="' + p.key + '"', p.label, p.color, on);
       }
-      // Context pills
-      var ctxPills = '';
+      // Context pills.
       for (var c = 0; c < CTX_OPTIONS.length; c++) {
         var co = CTX_OPTIONS[c];
         var onC = ctxMin === co.v;
-        ctxPills += '<button data-ctx="' + co.v + '" style="flex-shrink:0;background:' + (onC ? '#14b8a622' : 'transparent') + ';border:1px solid ' + (onC ? '#14b8a6888' : 'var(--border)') + ';color:' + (onC ? '#14b8a6' : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + co.label + '</button>';
+        html += squaredPill('data-ctx="' + co.v + '"', co.label, '#14b8a6', onC);
       }
-      // Pricing pills
-      var prPills = '';
-      var prOpts = [['all', '#71717a'], ['free', '#22c55e'], ['paid', '#f59e0b']];
-      for (var pr = 0; pr < prOpts.length; pr++) {
-        var onP = pricing === prOpts[pr][0];
-        prPills += '<button data-pricing="' + prOpts[pr][0] + '" style="flex-shrink:0;background:' + (onP ? prOpts[pr][1] + '22' : 'transparent') + ';border:1px solid ' + (onP ? prOpts[pr][1] + '88' : '#2a2a35') + ';color:' + (onP ? prOpts[pr][1] : '#71717a') + ';font-size:11px;font-weight:600;padding:5px 11px;border-radius:14px;font-family:inherit;cursor:pointer">' + (prOpts[pr][0] === 'all' ? 'Any $' : (prOpts[pr][0] === 'free' ? 'Free' : 'Paid')) + '</button>';
+      // Pricing pills (self-cancelling toggles — no "Any $").
+      for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
+        var po = PRICING_OPTIONS[pr];
+        var onP = pricing === po.key;
+        html += squaredPill('data-pricing="' + po.key + '"', po.label, po.color, onP);
       }
-      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search) ? '<button id="mb-clear" style="flex-shrink:0;background:transparent;border:none;color:var(--err);font-size:11px;padding:5px 8px;font-family:inherit;cursor:pointer">clear</button>' : '';
-      return '<div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;margin-bottom:4px">' + pills + ctxPills + prPills + clearHTML + '</div>';
+      html += '</div>';
+      return html;
     }
 
     // ── Providers view ──────────────────────────────────────────────────
@@ -215,14 +304,20 @@
 
     function providerView() {
       var groups = orderedGroups();
+      var availOnly = filters.indexOf('available') >= 0;
       var out = '';
       for (var i = 0; i < groups.length; i++) {
+        // "Available" hides keyless providers' boxes entirely (their models
+        // are all filtered out anyway).
+        if (availOnly && !groups[i].hasKey) continue;
         out += providerBox(groups[i]);
       }
       if (!groups.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing providers…</div>';
+      } else if (availOnly && !out) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">No providers with API keys yet — paste a key to unlock them.</div>';
       }
-      return '<div style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
+      return '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
 
     function providerBox(g) {
@@ -231,12 +326,17 @@
       var filteredOut = 0;
       var models = g.models || [];
       for (var i = 0; i < models.length; i++) {
-        if (modelMatches(models[i], g.displayName)) matching.push(models[i]);
+        if (modelMatches(models[i], g)) matching.push(models[i]);
         else filteredOut++;
       }
       var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';
-      var hasKeyDot = g.hasKey ? window.UIActive.dotHTML('API key connected') : '';
+      // v0.32 #5: explicit availability badge + dimming (view-only vs ready).
+      var keyBadge = g.hasApiKey
+        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">ready</span>'
+        : '<span style="font-size:10px;font-weight:600;color:var(--text-3);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
       var chevron = expanded ? '▾' : '▸';
+      // v0.32 #8: grip — instant drag handle on the box.
+      var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
 
       var rows = '';
       for (var m = 0; m < matching.length; m++) {
@@ -246,16 +346,18 @@
         rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
       }
 
-      return '<div class="mb-provbox' + (expanded ? ' dd-active' : '') + '" data-prov="' + g.name + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + '">' +
-        '<div data-provhead="' + g.name + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
+      var dim = g.hasApiKey ? '' : 'opacity:0.55;filter:saturate(0.35);';
+      return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
+        '<div data-provhead="' + escAttr(g.name) + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
           '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (g.displayName || g.name) + '</span>' +
-          hasKeyDot +
+          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
+          keyBadge +
           liveDot +
           '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
+          grip +
         '</div>' +
-        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match</div>') + '</div>' : '') +
+        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
         '</div>';
     }
 
@@ -265,9 +367,9 @@
         ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0">free</span>'
         : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
       var caps = (m.capabilities || []).length ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3);flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
-      return '<div data-slot="' + escAttr(m.id) + '" style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
+      return '<div data-slot="' + escAttr(m.id) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
         '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-        '<span style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.displayName || m.rawId) + '</span>' +
+        '<span style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(m.displayName || m.rawId) + '</span>' +
         caps +
         '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
         priceChip +
@@ -282,9 +384,13 @@
       for (var i = 0; i < logical.length; i++) {
         if (logicalMatches(logical[i])) matching.push(logical[i]);
       }
-      // Sort is server-side (intelligence → ctx → coding → name); when
-      // filters are active, re-rank by filter score first.
-      if (filters.length) {
+      // Re-rank by benchmark when a scoring pill (Smart/Code/Agent) is on —
+      // highest → lowest (v0.32 #3).
+      var hasScoring = false;
+      for (var s = 0; s < SCORING_KEYS.length; s++) {
+        if (filters.indexOf(SCORING_KEYS[s]) >= 0) { hasScoring = true; break; }
+      }
+      if (filters.length && hasScoring) {
         matching.sort(function (a, b) { return filterScore(b) - filterScore(a); });
       }
       var out = '';
@@ -313,6 +419,7 @@
         dots += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || 'var(--border-strong)') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + (hosts[d].hasApiKey ? ' (key)' : '') + '"></span>';
       }
       if (hosts.length > 5) dots += '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3)">+' + (hosts.length - 5) + '</span>';
+      var dotsWrap = '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">' + dots + '</span>';
 
       // Capability chips + benchmarks.
       var attrs = lm.attributes || {};
@@ -330,45 +437,59 @@
         ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>'
         : '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px">paid</span>';
 
-      // Host rank rows (expanded). v0.19: TAPPING a host row selects THAT
-      // provider+model directly (selecting + reordering both live here —
-      // user spec: "Model view should allow re-ordering and selecting
-      // models both"). The ▲▼ buttons still reorder.
+      // v0.32 #6: the big, obvious chevron button (rotates when open) —
+      // the affordance for the provider-priority dropdown.
+      var chevBtn = '<span data-nodrag class="mb-chevbtn" style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-1);flex-shrink:0">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (expanded ? '180deg' : '0deg') + ')"><path d="M6 9l6 6 6-6"/></svg>' +
+        '</span>';
+
+      // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
+      // priority dropdown. The 1px separator marks the hotspot boundary.
+      var leftZone =
+        '<div data-select="' + escAttr(lm.logical) + '" title="select this model" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
+          '<span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
+          '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
+        '</div>';
+      var separator = '<span style="width:1px;height:20px;background:var(--border);flex-shrink:0;opacity:0.9"></span>';
+      var rightZone =
+        '<div data-expand="' + escAttr(lm.logical) + '" title="provider priority" style="display:flex;align-items:center;gap:8px;flex-shrink:0;cursor:pointer;touch-action:manipulation;padding:2px 0 2px 6px">' +
+          dotsWrap +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
+          priceChip +
+          chevBtn +
+        '</div>';
+
+      // Host rank rows (the priority dropdown). Tap = select that
+      // provider+model; ▲▼ or the ⠿ handle re-orders.
       var hostRows = '';
       if (expanded) {
         for (var h = 0; h < hosts.length; h++) {
           var hr = hosts[h];
-          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
+          var keyBadge = hr.hasApiKey
+            ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);padding:2px 6px;border:1px solid rgba(var(--ok-rgb),0.4);border-radius:5px;flex-shrink:0">key ✓</span>'
+            : '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:600;color:var(--border-strong);padding:2px 6px;border:1px solid var(--border);border-radius:5px;flex-shrink:0">no key</span>';
+          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
+            '<span data-hostgrip data-nodrag title="drag to re-order priority" style="cursor:grab;color:var(--text-3);width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:6px;touch-action:none;font-size:12px;line-height:1">⠿</span>' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--bg-app);background:' + (hr.color || 'var(--border-strong)') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
             '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-            '<span style="font-size: var(--ui-small-fs);color:' + (hr.hasApiKey ? 'var(--text-1)' : 'var(--text-3)') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (hr.providerDisplayName || hr.provider) + '</span>' +
+            '<span style="font-size: var(--ui-small-fs);color:' + (hr.hasApiKey ? 'var(--text-1)' : 'var(--text-3)') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.providerDisplayName || hr.provider) + '</span>' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + fmtCtx(hr.contextLength) + '</span>' +
-            '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:' + (hr.hasApiKey ? 'var(--ok)' : 'var(--border-strong)') + ';flex-shrink:0;padding:2px 6px;border:1px solid ' + (hr.hasApiKey ? 'rgba(var(--ok-rgb),0.4)' : 'var(--border)') + ';border-radius:5px">use</span>' +
-            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
-            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
+            keyBadge +
+            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
+            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
             '</div>';
         }
       }
 
-      // v0.19: the USE button — one tap selects this logical model on its
-      // best host (key-connected, in the user's preferred host order).
-      var useBtn = available
-        ? '<button data-use="' + escAttr(lm.logical) + '" style="background:rgba(var(--ok-rgb),0.1);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit">use</button>'
-        : '';
+      // v0.32 #5/#9: no "use" button — dimming carries availability; the
+      // left-side tap selects.
+      var dim = available ? '' : 'opacity:0.5;filter:saturate(0.45);';
 
-      return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;overflow:hidden;' + (available ? '' : 'opacity:0.75') + '">' +
-        '<div data-logical="' + escAttr(lm.logical) + '" style="display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;touch-action:manipulation">' +
-          '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-          '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (lm.displayName || lm.logical) + '</span>' +
-          '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">' + dots + '</span>' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
-          priceChip +
-          useBtn +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + (expanded ? '▾' : '▸') + '</span>' +
-        '</div>' +
+      return '<div class="mb-logrow" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">' + leftZone + separator + rightZone + '</div>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' +
-        (expanded ? '<div style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
+        (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
         '</div>';
     }
 
@@ -399,16 +520,21 @@
 
     // ── Matching / filtering ─────────────────────────────────────────────
 
-    function modelMatches(m, providerName) {
+    function modelMatches(m, g) {
       var q = search.toLowerCase().trim();
       if (q) {
-        var hay = ((m.displayName || '') + ' ' + (m.rawId || '') + ' ' + (m.id || '') + ' ' + (providerName || '')).toLowerCase();
+        var hay = ((m.displayName || '') + ' ' + (m.rawId || '') + ' ' + (m.id || '') + ' ' + (g.displayName || '')).toLowerCase();
         if (hay.indexOf(q) < 0) return false;
       }
       if (ctxMin > 0 && (m.contextLength || 0) < ctxMin) return false;
       if (pricing === 'free' && !m.isFree) return false;
       if (pricing === 'paid' && m.isFree) return false;
-      if (filters.length) return matchesFiltersCaps((m.capabilities || []), m.effortLevels, m.rawId, m.displayName);
+      // v0.32 #4: "available" — the provider must have an API key.
+      if (filters.indexOf('available') >= 0 && !g.hasApiKey) return false;
+      if (filters.length) {
+        var bm = famBm[m.family] || {};
+        return matchesFiltersCaps((m.capabilities || []), m.effortLevels, bm, String(m.rawId || '') + ' ' + String(m.displayName || ''));
+      }
       return true;
     }
 
@@ -423,19 +549,22 @@
       if (ctxMin > 0 && (lm.contextLength || 0) < ctxMin) return false;
       if (pricing === 'free' && !lm.isFree) return false;
       if (pricing === 'paid' && lm.isFree) return false;
+      // v0.32 #4: "available" — ≥1 host with an API key (position in the
+      // priority order is irrelevant).
+      if (filters.indexOf('available') >= 0 && !(lm.hosts || []).some(function (h) { return h.hasApiKey; })) return false;
       if (filters.length) {
         var attrs = lm.attributes || {};
-        return matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, lm.logical, lm.displayName);
+        return matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''));
       }
       return true;
     }
 
-    // The old app's filter semantics: OR across pills; reasoning also true
-    // when effort levels exist; code/tools also via benchmarks.
-    function matchesFiltersCaps(caps, effortLevels, rawId, displayName) {
-      var bm = (catalog && catalog.logical) || [];
-      var name = String(rawId || '') + ' ' + String(displayName || '');
-      var capsLower = caps.map(function (c) { return String(c).toLowerCase(); });
+    // OR across pills; reasoning also true when effort levels exist;
+    // smart/code/agent match the Artificial Analysis benchmarks (v0.32 #3)
+    // with capability fallbacks.
+    function matchesFiltersCaps(caps, effortLevels, bm, name) {
+      bm = bm || {};
+      var capsLower = (caps || []).map(function (c) { return String(c).toLowerCase(); });
       var hasCap = function (frag) {
         for (var i = 0; i < capsLower.length; i++) {
           if (capsLower[i].indexOf(frag) >= 0) return true;
@@ -448,9 +577,10 @@
         if (key === 'reasoning') ok = hasCap('reason') || (effortLevels && effortLevels.length > 0) || /reasoning|thinking/.test(name);
         else if (key === 'tools') ok = hasCap('tool') || hasCap('function') || hasCap('agent');
         else if (key === 'vision') ok = hasCap('vision');
-        else if (key === 'code') ok = hasCap('code') || hasCap('coding');
-        else if (key === 'agent') ok = hasCap('agent') || hasCap('agentic');
-        else if (key === 'intelligence') ok = hasCap('smart');
+        else if (key === 'code') ok = (bm.coding || 0) > 0 || hasCap('code') || hasCap('coding');
+        else if (key === 'agent') ok = (bm.agentic || 0) > 0 || hasCap('agent') || hasCap('agentic');
+        else if (key === 'intelligence') ok = (bm.intelligence || 0) > 0 || hasCap('smart');
+        // 'available' is handled by the callers.
         if (ok) return true; // OR across pills
       }
       return false;
@@ -462,20 +592,310 @@
       var score = 0;
       for (var f = 0; f < filters.length; f++) {
         var key = filters[f];
-        if (key === 'reasoning' && attrs.effortLevels && attrs.effortLevels.length) score += 1;
+        if (key === 'reasoning' && attrs.effortLevels && attrs.effortLevels.length) score += 2;
         if (key === 'intelligence') score += (bm.intelligence || 0);
-        if (key === 'code') score += Math.max(bm.coding || 0, 0);
-        if (key === 'agent' || key === 'tools') score += (bm.agentic || 0);
+        if (key === 'code') score += (bm.coding || 0);
+        if (key === 'agent') score += (bm.agentic || 0);
+        if (key === 'tools') score += (bm.agentic || 0);
       }
       return score;
+    }
+
+    // ── Selection (v0.32 #6: left-side tap) ──────────────────────────────
+
+    function findLogical(logical) {
+      var logicals = (catalog && catalog.logical) || [];
+      for (var i = 0; i < logicals.length; i++) {
+        if (logicals[i].logical === logical) return logicals[i];
+      }
+      return null;
+    }
+
+    function selectLogical(logical) {
+      var lm = findLogical(logical);
+      if (!lm) return;
+      var hosts = orderedHosts(lm);
+      var best = null;
+      for (var h = 0; h < hosts.length; h++) {
+        if (hosts[h].hasApiKey) { best = hosts[h]; break; }
+      }
+      if (!best) {
+        showHint('No API key yet for any provider of ' + escHTML(lm.displayName || lm.logical) + ' — add one in the Providers tab.');
+        return;
+      }
+      window.ConnectOverlay.close();
+      if (onPick) onPick(best.provider, best.modelId);
+    }
+
+    // Inline hint (sticky toast at the bottom of the overlay).
+    function showHint(text) {
+      var contentEl = window.ConnectOverlay.getContentEl();
+      if (!contentEl) return;
+      var old = contentEl.querySelector('.mb-hint');
+      if (old) old.remove();
+      var el = document.createElement('div');
+      el.className = 'mb-hint';
+      el.style.cssText = 'position:sticky;bottom:0;left:0;right:0;display:flex;align-items:center;gap:8px;background:rgba(30,30,38,0.97);border:1px solid rgba(245,158,11,0.5);color:var(--warn);font-size:12px;padding:10px 14px;border-radius:10px;margin-top:10px';
+      el.innerHTML = '<span style="flex-shrink:0">⚠</span><span style="flex:1">' + text + '</span>';
+      contentEl.appendChild(el);
+      setTimeout(function () {
+        el.style.transition = 'opacity 300ms';
+        el.style.opacity = '0';
+        setTimeout(function () { el.remove(); }, 320);
+      }, 2600);
     }
 
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);text-align:center">' +
-        'tap to select · ' + liveCount() + ' providers live · ' + totalModels() + ' models · fully live-synced' +
+        'tap the name to select · the dots open priority · ⠿ drag to re-order · ' + liveCount() + ' providers live' +
         '</div>';
+    }
+
+    // ── Drag & drop (v0.32 #7/#8) — iPhone-style reorder ─────────────────
+    //
+    // The dragged item follows the finger 1:1 (transform, no transition);
+    // siblings FLIP around it (transform transitions). Works for both the
+    // provider boxes (hold 220ms or grab the ⠿ grip) and the host priority
+    // rows (drag from the ⠿ handle). Persists via onOrder(keys).
+
+    function makeSortable(listEl, cfg) {
+      // cfg: { itemSel, startSel (where a drag may begin), handleSel (instant
+      // drag), holdMs (long-press to engage from startSel), keyOf(el),
+      // onOrder(keys) }
+      var drag = null;
+      var holdTimer = null;
+      var down = null;
+      var docMove = null, docUp = null, docCancel = null;
+
+      function scrollParentOf(el) {
+        var p = el.parentElement;
+        while (p && p !== document.body) {
+          var oy = window.getComputedStyle(p).overflowY;
+          if (oy === 'auto' || oy === 'scroll') return p;
+          p = p.parentElement;
+        }
+        return null;
+      }
+
+      function blockTouch(e) {
+        if (drag) e.preventDefault();
+      }
+      function blockCtx(e) {
+        if (drag) e.preventDefault();
+      }
+
+      function detachDoc() {
+        if (docMove) { document.removeEventListener('pointermove', docMove); docMove = null; }
+        if (docUp) { document.removeEventListener('pointerup', docUp); docUp = null; }
+        if (docCancel) { document.removeEventListener('pointercancel', docCancel); docCancel = null; }
+        document.removeEventListener('touchmove', blockTouch);
+        document.removeEventListener('contextmenu', blockCtx);
+      }
+
+      function cleanup() {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (drag) {
+          if (drag.scrollRAF) cancelAnimationFrame(drag.scrollRAF);
+          drag.items.forEach(function (it) {
+            it.style.transition = '';
+            it.style.transform = '';
+            it.classList.remove('mb-dragging');
+          });
+          if (drag.listEl) drag.listEl.style.height = '';
+          document.body.classList.remove('mb-noselect');
+        }
+        detachDoc();
+        down = null;
+        drag = null;
+      }
+
+      function engage(e) {
+        if (drag || !down) return;
+        var item = down.item;
+        // Only DIRECT children of the list are sortable items.
+        var items = Array.prototype.filter.call(
+          listEl.querySelectorAll(cfg.itemSel),
+          function (el) { return el.parentElement === listEl; }
+        );
+        var rects = items.map(function (it) { return it.getBoundingClientRect(); });
+        var scrollEl = scrollParentOf(item);
+        var base = scrollEl ? scrollEl.scrollTop : 0;
+        var tops = rects.map(function (r) { return r.top + base; });
+        var gap = items.length > 1 ? Math.max(0, tops[1] - (tops[0] + rects[0].height)) : 0;
+        drag = {
+          item: item,
+          items: items,
+          keys: items.map(cfg.keyOf),
+          from: items.indexOf(item),
+          to: items.indexOf(item),
+          h: item.getBoundingClientRect().height,
+          gap: gap,
+          tops: tops,
+          heights: rects.map(function (r) { return r.height; }),
+          startY: down.startY,
+          lastY: e.clientY,
+          listEl: listEl,
+          scrollEl: scrollEl,
+          startScroll: base,
+          scrollRAF: null
+        };
+        if (drag.from < 0 || items.length < 2) { drag = null; return; }
+
+        // Freeze the container height so nothing jumps.
+        listEl.style.height = listEl.getBoundingClientRect().height + 'px';
+        item.classList.add('mb-dragging');
+        items.forEach(function (it) { if (it !== item) it.style.transition = 'transform 170ms ' + EASE; });
+        document.body.classList.add('mb-noselect');
+        document.addEventListener('touchmove', blockTouch, { passive: false });
+        document.addEventListener('contextmenu', blockCtx);
+        try { item.setPointerCapture(down.pointerId); } catch (err) {}
+        drag.scrollRAF = requestAnimationFrame(autoTick);
+      }
+
+      function autoTick() {
+        if (!drag) return;
+        var sp = drag.scrollEl;
+        if (sp) {
+          var rect = sp.getBoundingClientRect();
+          var EDGE = 48, y = drag.lastY;
+          if (y < rect.top + EDGE) {
+            sp.scrollTop -= 10 * Math.min(3, 1 + (rect.top + EDGE - y) / EDGE);
+          } else if (y > rect.bottom - EDGE) {
+            sp.scrollTop += 10 * Math.min(3, 1 + (y - (rect.bottom - EDGE)) / EDGE);
+          }
+          applyShifts();
+        }
+        if (drag) drag.scrollRAF = requestAnimationFrame(autoTick);
+      }
+
+      function applyShifts() {
+        if (!drag) return;
+        var scrollAdj = drag.scrollEl ? (drag.scrollEl.scrollTop - drag.startScroll) : 0;
+        var dy = drag.lastY - drag.startY + scrollAdj;
+        var from = drag.from;
+        var count = drag.items.length;
+        // New index: how many other item-centers sit above the dragged center.
+        var dragCenter = drag.tops[from] + drag.heights[from] / 2 + dy;
+        var idx = 0;
+        for (var j = 0; j < count; j++) {
+          if (j === from) continue;
+          if (drag.tops[j] + drag.heights[j] / 2 < dragCenter) idx++;
+        }
+        drag.to = Math.max(0, Math.min(count - 1, idx));
+        // Dragged item follows the finger 1:1 (includes scroll adjustment).
+        drag.item.style.transform = 'translateY(' + dy + 'px) scale(1.02)';
+        // Siblings FLIP out of the way.
+        for (var k = 0; k < count; k++) {
+          if (k === from) continue;
+          var shift = 0;
+          if (from < drag.to && k > from && k <= drag.to) shift = -(drag.h + drag.gap);
+          else if (drag.to < from && k >= drag.to && k < from) shift = (drag.h + drag.gap);
+          drag.items[k].style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        }
+      }
+
+      function settle() {
+        var d = drag;
+        if (!d) return;
+        suppressClickUntil = Date.now() + 400;
+        // Animate the dragged item into its final slot.
+        var slotShift = (d.to - d.from) * (d.h + d.gap);
+        d.item.style.transition = 'transform 190ms ' + EASE;
+        d.item.style.transform = 'translateY(' + slotShift + 'px) scale(1)';
+        var keys = d.keys.slice();
+        var moved = keys.splice(d.from, 1)[0];
+        keys.splice(d.to, 0, moved);
+        var changed = d.from !== d.to;
+        drag = null; // stop autoTick
+        if (d.scrollRAF) cancelAnimationFrame(d.scrollRAF);
+        setTimeout(function () {
+          d.items.forEach(function (it) {
+            it.style.transition = '';
+            it.style.transform = '';
+            it.classList.remove('mb-dragging');
+          });
+          d.listEl.style.height = '';
+          document.body.classList.remove('mb-noselect');
+          detachDoc();
+          down = null;
+          if (changed && cfg.onOrder) cfg.onOrder(keys);
+          else render();
+        }, 200);
+      }
+
+      function finish() {
+        if (drag) { settle(); return; }
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        detachDoc();
+        down = null;
+      }
+
+      listEl.addEventListener('pointerdown', function (e) {
+        if (drag) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        var target = e.target;
+        if (!target.closest) return;
+        var item = target.closest(cfg.itemSel);
+        if (!item || !listEl.contains(item) || item.parentElement !== listEl) return;
+        var onHandle = !!(cfg.handleSel && target.closest(cfg.handleSel));
+        // Drags may only begin in the allowed start zone (provider boxes:
+        // the header; host rows: the ⠿ handle only).
+        var zone = cfg.startSel || cfg.itemSel;
+        if (!onHandle && !target.closest(zone)) return;
+        // Never hijack interactive children (▲▼, buttons, links).
+        if (!onHandle && target.closest('button,input,select,textarea,a,[data-nodrag]')) return;
+
+        down = {
+          item: item,
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          moved: false,
+          handleInstant: onHandle
+        };
+        // Gesture-level document listeners (removed on finish — no leaks
+        // across the panel's innerHTML re-renders).
+        docMove = function (ev) {
+          if (drag) {
+            drag.lastY = ev.clientY;
+            applyShifts();
+            return;
+          }
+          if (!down) return;
+          var dx = ev.clientX - down.startX;
+          var dy = ev.clientY - down.startY;
+          var dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 4) {
+            down.moved = true;
+            if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+            if (down.handleInstant) {
+              engage(ev);
+              if (drag) { drag.lastY = ev.clientY; applyShifts(); }
+            } else if (dist > 8) {
+              // A scroll/tap gesture, not a hold → stand down.
+              down = null;
+            }
+          }
+        };
+        docUp = finish;
+        docCancel = function () {
+          if (drag) { suppressClickUntil = Date.now() + 400; cleanup(); }
+          else finish();
+        };
+        document.addEventListener('pointermove', docMove);
+        document.addEventListener('pointerup', docUp);
+        document.addEventListener('pointercancel', docCancel);
+        document.addEventListener('touchmove', blockTouch, { passive: false });
+        document.addEventListener('contextmenu', blockCtx);
+
+        if (cfg.holdMs && !onHandle) {
+          holdTimer = setTimeout(function () {
+            if (down && !down.moved) engage(e);
+          }, cfg.holdMs);
+        }
+      });
     }
 
     // ── Wiring ───────────────────────────────────────────────────────────
@@ -484,6 +904,7 @@
 
     function wireEvents() {
       var contentEl = window.ConnectOverlay.getContentEl();
+      function clickSuppressed() { return Date.now() < suppressClickUntil; }
 
       var closeBtn = contentEl.querySelector('#mb-close');
       if (closeBtn) closeBtn.addEventListener('click', window.ConnectOverlay.close);
@@ -511,6 +932,14 @@
         });
       }
 
+      // v0.32 #1: the filter toggle.
+      var ft = contentEl.querySelector('#mb-filters-toggle');
+      if (ft) ft.addEventListener('click', function () {
+        filtersOpen = !filtersOpen;
+        lsSet('filtersOpen', filtersOpen);
+        render();
+      });
+
       // Filter pills.
       contentEl.querySelectorAll('[data-pill]').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -532,10 +961,10 @@
         });
       });
 
-      // Pricing pills.
+      // Pricing pills (self-cancelling — no "Any $").
       contentEl.querySelectorAll('[data-pricing]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          pricing = btn.dataset.pricing;
+          pricing = (pricing === btn.dataset.pricing) ? 'all' : btn.dataset.pricing;
           lsSet('pricing', pricing);
           render();
         });
@@ -548,20 +977,41 @@
         render();
       });
 
-      // Provider box expand/collapse.
-      contentEl.querySelectorAll('[data-provhead]').forEach(function (head) {
-        head.addEventListener('click', function (e) {
-          if (e.target.closest && e.target.closest('[data-slot]')) return;
-          var name = head.dataset.provhead;
-          providerExpanded[name] = !providerExpanded[name];
-          lsSet('providerExpanded', providerExpanded);
-          render();
+      // ── Providers tab ──
+      var provList = contentEl.querySelector('#mb-provlist');
+      if (provList) {
+        // Provider box expand/collapse (tap the header).
+        contentEl.querySelectorAll('[data-provhead]').forEach(function (head) {
+          head.addEventListener('click', function (e) {
+            if (clickSuppressed()) return;
+            if (e.target.closest && e.target.closest('[data-slot]')) return;
+            var name = head.dataset.provhead;
+            providerExpanded[name] = !providerExpanded[name];
+            lsSet('providerExpanded', providerExpanded);
+            render();
+          });
         });
-      });
+
+        // v0.32 #8: hold a provider box (or grab its ⠿ grip) and drag to
+        // re-order the boxes.
+        makeSortable(provList, {
+          itemSel: '.mb-provbox',
+          startSel: '[data-provhead]',
+          handleSel: '[data-grip]',
+          holdMs: 220,
+          keyOf: function (el) { return el.dataset.prov; },
+          onOrder: function (keys) {
+            providerOrder = keys;
+            lsSet('providerOrder', providerOrder);
+            render();
+          }
+        });
+      }
 
       // Provider model row → select.
       contentEl.querySelectorAll('[data-slot]').forEach(function (row) {
         row.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
           e.stopPropagation();
           var slot = row.dataset.slot;
           var slash = slot.indexOf('/');
@@ -572,52 +1022,35 @@
         });
       });
 
-      // Logical row → expand (the ▸ chevron side) — the USE button does the
-      // selection now.
-      contentEl.querySelectorAll('[data-logical]').forEach(function (rowEl) {
-        rowEl.addEventListener('click', function (e) {
-          if (e.target.closest && e.target.closest('[data-use]')) return; // the use button handles it
-          var logical = rowEl.dataset.logical;
-          if (expandedLogical[logical]) {
-            // Collapse on second tap; first tap expands.
-            delete expandedLogical[logical];
-            render();
-            return;
-          }
-          expandedLogical[logical] = true;
+      // ── Models tab ──
+      // v0.32 #6: LEFT zone → select the model.
+      contentEl.querySelectorAll('[data-select]').forEach(function (zone) {
+        zone.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          selectLogical(zone.dataset.select);
+        });
+      });
+
+      // v0.32 #6: RIGHT zone (separator, dots, ctx, price, chevron) → open
+      // the provider-priority dropdown.
+      contentEl.querySelectorAll('[data-expand]').forEach(function (zone) {
+        zone.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          var logical = zone.dataset.expand;
+          if (expandedLogical[logical]) delete expandedLogical[logical];
+          else expandedLogical[logical] = true;
           render();
         });
       });
 
-      // v0.19: the USE button on a logical row → pick the best host (a
-      // key-connected one, honoring the user's host order).
-      contentEl.querySelectorAll('[data-use]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var logical = btn.dataset.use;
-          var lm = null;
-          var logicals = (catalog && catalog.logical) || [];
-          for (var i = 0; i < logicals.length; i++) {
-            if (logicals[i].logical === logical) { lm = logicals[i]; break; }
-          }
-          if (!lm) return;
-          var hosts = orderedHosts(lm);
-          var best = null;
-          for (var h = 0; h < hosts.length; h++) {
-            if (hosts[h].hasApiKey) { best = hosts[h]; break; }
-          }
-          if (!best) best = hosts[0];
-          if (!best) return;
-          window.ConnectOverlay.close();
-          if (onPick) onPick(best.provider, best.modelId);
-        });
-      });
-
-      // v0.19: tapping a HOST row (in the expanded rank list) selects that
-      // exact provider+model.
+      // Tapping a HOST row (in the expanded rank list) selects that exact
+      // provider+model.
       contentEl.querySelectorAll('[data-hostslot]').forEach(function (row) {
         row.addEventListener('click', function (e) {
-          if (e.target.closest && e.target.closest('[data-hostup], [data-hostdown]')) return;
+          if (clickSuppressed()) return;
+          if (e.target.closest && e.target.closest('[data-hostup], [data-hostdown], [data-hostgrip]')) return;
           e.stopPropagation();
           var parts = row.dataset.hostslot.split('|');
           var provider = parts.shift();
@@ -627,17 +1060,42 @@
         });
       });
 
-      // Host reorder buttons.
+      // Host reorder: ▲▼ buttons…
       contentEl.querySelectorAll('[data-hostup]').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
           e.stopPropagation();
           moveHost(btn.dataset.hostup, -1);
         });
       });
       contentEl.querySelectorAll('[data-hostdown]').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
           e.stopPropagation();
           moveHost(btn.dataset.hostdown, 1);
+        });
+      });
+
+      // …and v0.32 #7: drag-and-drop per expanded logical model.
+      contentEl.querySelectorAll('[data-hostlist]').forEach(function (hostListEl) {
+        makeSortable(hostListEl, {
+          itemSel: '[data-hostslot]',
+          startSel: '[data-hostgrip]',
+          handleSel: '[data-hostgrip]',
+          holdMs: 0,
+          keyOf: function (el) { return el.dataset.hostslot; },
+          onOrder: function (keys) {
+            var logical = hostListEl.dataset.hostlist;
+            // Persist provider order (hostOrder is provider-keyed).
+            var providers = [];
+            keys.forEach(function (k) {
+              var p = k.split('|')[0];
+              if (providers.indexOf(p) < 0) providers.push(p);
+            });
+            hostOrder[logical] = providers;
+            lsSet('hostOrder', hostOrder);
+            render();
+          }
         });
       });
     }
