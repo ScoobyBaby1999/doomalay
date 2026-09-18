@@ -19,6 +19,12 @@
 //
 // All sections are collapsible (smooth grid-rows unfold) and collapsed by
 // default. All changes apply live and persist to localStorage.
+//
+// v0.30: the row builders are PARAMETERIZED (…UI functions at the bottom)
+// and exported as window.AppearanceUI — the per-chat ✦ tweaks view
+// (tweaks.js) renders the SAME controls over its own store instead of
+// duplicating this markup. The fmt input handler + the doomalay:action
+// handler branch on data-scope="chat" so one handler serves both stores.
 
 (function () {
   'use strict';
@@ -30,12 +36,18 @@
   // colors, so the picker previews the real feel.
   function themeSwatches() {
     var current = Settings.getState().theme || 'midnight';
+    return schemeThemeSwatches(current, '');
+  }
+
+  // v0.30: the swatch grid, PARAMETERIZED — the same builder drives the
+  // settings page (global) and any scoped view that reuses it.
+  function schemeThemeSwatches(current, scope) {
     var themes = (window.DoomTheme && window.DoomTheme.themes) || {};
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:8px 0 4px">';
     Object.keys(themes).forEach(function (id) {
       var t = themes[id];
       var sel = id === current;
-      html += '<button data-action="set-theme" data-theme="' + id + '" ' +
+      html += '<button data-action="set-theme" data-theme="' + id + '"' + (scope ? ' data-scope="' + scope + '"' : '') + ' ' +
         'style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;' +
         'background:var(--surface-2);border:1.5px solid ' + (sel ? 'var(--accent)' : 'var(--border)') + ';' +
         'border-radius:12px;padding:10px;cursor:pointer;font-family:inherit;color:inherit;' +
@@ -82,13 +94,18 @@
 
   // ── chat colors (markdown scheme + advanced slots) ─────────────
   function schemeSwatches() {
-    var current = Settings.getState().chatScheme || 'teal';
+    return schemeChatSwatches(Settings.getState().chatScheme || 'teal', '');
+  }
+
+  // v0.30: the markdown-scheme preset row, PARAMETERIZED (settings page
+  // + the per-chat tweaks view — same markup, different store).
+  function schemeChatSwatches(current, scope) {
     var schemes = (window.Formatter && window.Formatter.schemes) || {};
     var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px">';
     Object.keys(schemes).forEach(function (id) {
       var sc = schemes[id];
       var sel = id === current;
-      html += '<button data-action="chat-scheme" data-scheme="' + id + '" ' +
+      html += '<button data-action="chat-scheme" data-scheme="' + id + '"' + (scope ? ' data-scope="' + scope + '"' : '') + ' ' +
         'style="display:flex;align-items:center;gap:6px;background:' +
         (sel ? 'var(--surface-3)' : 'transparent') + ';border:1px solid ' +
         (sel ? 'var(--border-strong)' : 'var(--border)') + ';border-radius:10px;padding:8px 12px;' +
@@ -108,12 +125,20 @@
     var ov = s.fmtOverrides || {};
     var preset = (window.Formatter && window.Formatter.schemes[s.chatScheme || 'teal']) || {};
     var val = ov[key] || preset[key] || '#22d3ee';
+    return fmtColorRowUI(key, label, hint, val, false, '');
+  }
+
+  // v0.30: the fmt color row, PARAMETERIZED — `customized` shows the
+  // per-slot override marker (the tweaks view passes it for slots THIS
+  // chat owns; the settings page never does — its rows show global values).
+  function fmtColorRowUI(key, label, hint, val, customized, scope) {
     // v0.25: stacked row — the hint sits under the label (not squeezed
     // beside it), the swatch gets a hex readout.
     return '<div class="setting-row">' +
-      '<label>' + label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') + '</label>' +
+      '<label>' + label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
+      (customized ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· this chat</span>' : '') + '</label>' +
       '<div class="control">' +
-      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt" value="' + val + '">' +
+      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt"' + (scope ? ' data-scope="' + scope + '"' : '') + ' value="' + val + '">' +
       '<span class="color-hex" data-color-hex="fmtA_' + key + '">' + val + '</span>' +
       '</div></div>';
   }
@@ -129,12 +154,18 @@
 
   // v0.25: intercept fmt color inputs (they nest under fmtOverrides, not
   // flat) — merged with the hex-readout updater above.
+  // v0.30: data-scope="chat" reroutes the write into the PER-CHAT tweaks
+  // (the tweaks view reuses these exact inputs — one handler, two stores).
   document.addEventListener('input', function (e) {
     var el = e.target;
     if (!el || el.getAttribute('data-custom') !== 'fmt') return;
     var keyMap = { fmtA_a1: 'a1', fmtA_a2: 'a2', fmtA_a3: 'a3', fmtA_bright: 'bright', fmtA_link: 'link' };
     var slot = keyMap[el.getAttribute('data-setting-key')];
     if (!slot) return;
+    if (el.getAttribute('data-scope') === 'chat') {
+      if (window.ChatTweaks) window.ChatTweaks.setFmtSlot(slot, el.value);
+      return;
+    }
     var s = Settings.getState();
     var ov = Object.assign({}, s.fmtOverrides || {});
     ov[slot] = el.value;
@@ -144,6 +175,11 @@
   function sizeSlider(key, label, hint, def) {
     var s = Settings.getState();
     var v = (typeof s[key] === 'number') ? s[key] : (def || 50);
+    return sizeSliderUI(key, label, hint, v, '');
+  }
+
+  // v0.30: the size slider row, PARAMETERIZED (settings page + tweaks view).
+  function sizeSliderUI(key, label, hint, v, scope) {
     return '<div class="setting-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center">' +
       '<label>' + label + '</label>' +
@@ -151,6 +187,7 @@
       '</div>' +
       '<input type="range" class="app-range" data-setting-key="' + key + '" data-setting-event="input" ' +
       'data-setting-transform="number" min="0" max="100" step="1" value="' + v + '" ' +
+      (scope ? 'data-scope="' + scope + '" ' : '') +
       'style="accent-color:var(--accent);height:32px;cursor:pointer">' +
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
       '</div>';
@@ -287,6 +324,14 @@
   // theme + grid actions (dispatched via doomalay:action)
   window.addEventListener('doomalay:action', function (e) {
     var d = e.detail || {};
+    // v0.30: SCOPED actions — anything carrying data-scope="chat" belongs
+    // to the per-chat tweaks view (tweaks.js owns the store + re-render).
+    if (d.data && d.data.scope === 'chat' && window.ChatTweaks) {
+      if (d.action === 'chat-scheme' && d.data.scheme) window.ChatTweaks.setScheme(d.data.scheme);
+      else if (d.action === 'chat-colors-reset') window.ChatTweaks.resetColors();
+      else if (d.action === 'tweaks-sizes-reset') window.ChatTweaks.resetSizes();
+      return;
+    }
     if (d.action === 'set-theme' && d.data && d.data.theme) {
       Settings.setState({ theme: d.data.theme });
       // v0.26 LIVE UPDATE: re-render the page so the swatch selection,
@@ -328,6 +373,8 @@
   // chevron that rotates when expanded. settings.js wires the toggle.
   // v0.25: ONE .section-inner wrapper owns the 0fr→1fr grid transition
   // (multiple direct children broke the animation + overlapped).
+  // v0.30: exported (AppearanceUI.section) — the tweaks view builds the
+  // SAME collapsible sections.
   function section(title, inner) {
     return '<div class="settings-section">' +
       '<h3 data-section-toggle><span>' + title + '</span><span class="chevron">▶</span></h3>' +
@@ -365,4 +412,13 @@
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
       '</div>';
   }
+
+  // v0.30: the shared builders — the tweaks view (tweaks.js) renders the
+  // same controls over the per-chat store: same UI, same method, no copy.
+  window.AppearanceUI = {
+    section: section,
+    schemeChatSwatches: schemeChatSwatches,
+    fmtColorRow: fmtColorRowUI,
+    sizeSlider: sizeSliderUI
+  };
 })();

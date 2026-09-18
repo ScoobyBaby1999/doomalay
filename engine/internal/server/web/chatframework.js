@@ -118,7 +118,9 @@
           key: 'model',
           filled: !!st.model,
           title: st.provider ? providerLabel(st.provider) : '+ Model',
-          sub: st.model ? '+ model' : 'tap to connect',
+          // v0.30 (user spec): after the model method is selected the sub
+          // reads "tap to change" — exactly like its sandbox sibling.
+          sub: st.model ? 'tap to change' : 'tap to connect',
           icon: '🤖',
           onTap: function () { ctx.openModelPicker(); }
         }

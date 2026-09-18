@@ -213,6 +213,16 @@
     ctx.scrollEl = scrollEl;
     ctx.msgContainer = msgContainer;
 
+    // v0.30: THE PER-CHAT TWEAKS — this chat's own colors / text sizes /
+    // background (overriding the global settings for this chat only).
+    // The vars are written INLINE on #chat-root, so the CSS cascade gives
+    // them to the chat subtree while everything else keeps the global
+    // values — and the reference is kept on state because a stacked view
+    // stashes the root DOM in a fragment (querySelector can't see it then,
+    // but the live tweaks view still paints the detached node).
+    state._chatRootEl = bodyEl.querySelector('#chat-root');
+    if (window.ChatTweaks) window.ChatTweaks.attach(state);
+
     // v0.28 SMART SCROLL FREEZE (user spec): while the model generates, an
     // upward swipe (or a touch/hold on the transcript) freezes auto-scroll —
     // new text keeps streaming in BELOW the fold, off-screen, and the view
@@ -314,6 +324,9 @@
           // v0.27: the session landed (async) — the header meters can
           // wake up now even if no status event replays afterwards.
           refreshHeaderMeters(bodyEl, state);
+          // v0.30: the session landed — the per-chat tweaks load now (a
+          // chat opened before its bind showed the provisional global look)
+          if (window.ChatTweaks) window.ChatTweaks.attach(state);
           if (state.sessionId) {
             window.Artifacts.setSession(state.sessionId, { name: icon.name });
             refreshArtifactCount(state, bodyEl);
@@ -516,6 +529,19 @@
       });
       utilRow.appendChild(exp);
 
+      // v0.30 (user spec): THE TWEAKS PILL — the per-chat settings panel
+      // (colors, text size, background) on the same util row as export
+      // + usage. It reuses the settings' own UI builders; the values it
+      // writes override the GLOBAL settings for THIS chat only.
+      var tweakBtn = document.createElement('button');
+      tweakBtn.className = 'util-btn';
+      tweakBtn.innerHTML = '✦ tweaks';
+      tweakBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (window.ChatTweaks) window.ChatTweaks.open(ctx.panel, icon, state);
+      });
+      utilRow.appendChild(tweakBtn);
+
       // v0.21→v0.27: USAGE + COST — a view on the master panel (working
       // ‹ back + ✕, Android gestures, a fleet view that actually opens).
       var usageBtn = document.createElement('button');
@@ -625,7 +651,10 @@
               '<span class="pv-sub-label">exported latest</span>' +
               '<span class="pv-sub-value" id="ex-latest-val">' + (latest > 0 ? 'last ' + latest : 'full log') + '</span>' +
             '</div>' +
-            '<input type="range" class="pv-range" min="0" max="500" step="5" value="' + (latest > 0 ? latest : 0) + '"' +
+            // v0.30 (user spec): the left edge is -1 — "full log", the
+            // exact default — mirroring the mind slider's "whole chat"
+            // semantics instead of 0 doubling as full.
+            '<input type="range" class="pv-range" min="-1" max="500" step="1" value="' + (latest > 0 ? latest : -1) + '"' +
               ' aria-label="export the last N messages"' + (noSession ? ' disabled' : '') + '>'
           );
         },
@@ -639,17 +668,18 @@
               else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
             });
           });
-          // v0.28: the scope slider — 0 = full log (persisted as -1), else
-          // the last N. Live label while dragging; the row URLs (and the
-          // persisted value) update on release — no re-render, so the
-          // drag never dies mid-gesture.
+          // v0.28→v0.30: the scope slider — -1 (the left edge, the
+          // default) = full log, else the last N. Live label while
+          // dragging; the row URLs (and the persisted value) update on
+          // release — no re-render, so the drag never dies mid-gesture.
           var sl = el.querySelector('.pv-range');
           if (sl) {
             var val = el.querySelector('#ex-latest-val');
             var t = null;
             var commit = function () {
               var v = parseInt(sl.value, 10);
-              latest = v === 0 ? -1 : v;
+              if (v <= 0) v = -1; // 0 (a mid-drag position) reads as full
+              latest = v;
               setExportLatest(state, latest);
               el.querySelectorAll('[data-url]').forEach(function (b) {
                 b.setAttribute('data-url', b.getAttribute('data-url').split('?latest=')[0] + (latest > 0 ? '?latest=' + latest : ''));
@@ -657,7 +687,7 @@
             };
             sl.addEventListener('input', function () {
               var v = parseInt(sl.value, 10);
-              if (val) val.textContent = v === 0 ? 'full log' : 'last ' + v;
+              if (val) val.textContent = v <= 0 ? 'full log' : 'last ' + v;
               clearTimeout(t);
               t = setTimeout(commit, 300);
             });
@@ -765,6 +795,7 @@
                 on = !on;
                 paint();
                 updateSession(icon, st, { compact_enabled: on });
+                refreshMetersSoon(st);
               });
               if (ths) ths.addEventListener('input', function () {
                 thr = parseInt(ths.value, 10);
@@ -772,6 +803,7 @@
                 clearTimeout(t);
                 t = setTimeout(function () {
                   updateSession(icon, st, { compact_threshold: thr });
+                  refreshMetersSoon(st);
                 }, 350);
               });
             }).catch(function () {});
@@ -797,6 +829,18 @@
       if (btn && btn.isConnected) btn.innerHTML = old;
       if (btn) flashUtil(btn, 'usage unavailable');
     });
+  }
+
+  // v0.30: the compaction controls changed — the header ring + every
+  // front-facing meter follow (one method, UsagePanel.ctxColor). The
+  // refresh rides a short delay so the session PATCH lands first; the
+  // throttle is bypassed so the ring repaints NOW.
+  function refreshMetersSoon(state) {
+    setTimeout(function () {
+      if (!state || !state.sessionId) return;
+      state._metersAt = 0;
+      refreshHeaderMeters((currentCtx && currentCtx.bodyEl) || document.body, state);
+    }, 450);
   }
 
   // ── v0.27: THE HEADER METERS — the context ring + the per-chat cost,
@@ -844,15 +888,33 @@
     var ring = bodyEl.querySelector('#header-ctx-ring .ctx-ring');
     var cost = bodyEl.querySelector('#header-ctx-cost');
     var meters = bodyEl.querySelector('#chat-header-meters');
+    // v0.30: while a view is stacked (mind / usage / tweaks…), the whole
+    // chat root — ring included — sits stashed in a detached fragment.
+    // state._chatRootEl still references that node and painting a detached
+    // element works: its inline styles are exactly what shows the moment
+    // the view pops and the chat is restored.
+    if ((!ring || !cost || !meters) && state && state._chatRootEl) {
+      var alt = state._chatRootEl;
+      if (!ring) ring = alt.querySelector('#header-ctx-ring .ctx-ring');
+      if (!cost) cost = alt.querySelector('#header-ctx-cost');
+      if (!meters) meters = alt.querySelector('#chat-header-meters');
+    }
     if (!ring || !cost || !meters) return;
     var c = (u && u.context) || {};
     var t = (u && u.totals) || {};
     var fill = Math.max(0, Math.min(100, c.fillPct || 0));
     ring.style.setProperty('--p', String(fill));
+    // v0.30: the ring asks the ONE ladder (UsagePanel.ctxColor) and hands
+    // it the chat's OWN compaction settings — the same values the mind
+    // panel PATCHes — so a moved threshold or a turned-off compaction is
+    // reflected here the moment the meters refresh.
     ring.style.setProperty('--ring', (window.UsagePanel && window.UsagePanel.ringColor)
-      ? window.UsagePanel.ringColor(fill) : (fill >= 70 ? 'var(--err)' : fill >= 50 ? 'var(--warn)' : 'var(--accent)'));
-    var ringBtn = bodyEl.querySelector('#header-ctx-ring');
-    if (ringBtn) ringBtn.title = fill + '% context' + (c.compacted ? ' · auto-compacted' : '');
+      ? window.UsagePanel.ringColor(fill, c) : 'var(--accent)');
+    var ringBtn = bodyEl.querySelector('#header-ctx-ring') ||
+      (state && state._chatRootEl ? state._chatRootEl.querySelector('#header-ctx-ring') : null);
+    if (ringBtn) ringBtn.title = fill + '% context' +
+      (c.compactEnabled === false ? ' · compaction off' : '') +
+      (c.compacted ? ' · auto-compacted' : '');
     if (t.hasCost) {
       var cc = Number(t.cost || 0);
       cost.textContent = (cc < 0.01 && cc > 0) ? '$' + cc.toFixed(4) : '$' + cc.toFixed(2);
@@ -2371,6 +2433,15 @@
   window.ChatPanel = {
     render: render,
     getState: function (id) { return chatStates[id]; },
-    current: function () { return currentCtx; }
+    current: function () { return currentCtx; },
+    // v0.30: exposed for the tweaks view — a tweak saved before the first
+    // message (no session yet) creates the session so the chat's own
+    // look persists from the very first customization (same creator the
+    // send path uses — one session per chat, ever).
+    ensureSession: function (state, cb) {
+      var icon = state && state._icon;
+      if (!icon || !state) return cb && cb();
+      ensureSession(icon, state, cb || function () {});
+    }
   };
 })();

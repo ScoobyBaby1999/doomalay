@@ -173,19 +173,26 @@
     });
 
     // Wire up any inputs the page rendered (data-setting-key).
-    wirePageInputs(active);
+    wireInputs(panelRef.bodyEl, setState);
   }
 
-  // Generic input wiring: any element with data-setting-key gets a
-  // change listener that updates state. Supports:
-  //   - color, text, number, checkbox inputs (value)
-  //   - textarea with data-setting-transform="lines" (splits by newline)
-  //   - custom event via data-setting-event (default: 'input')
-  function wirePageInputs(page) {
-    if (!page || !panelRef) return;
-    const els = panelRef.bodyEl.querySelectorAll('[data-setting-key]');
+  // v0.30: wireInputs — the generic settings-input wiring, EXTRACTED so the
+  // per-chat tweaks view (tweaks.js) drives the SAME controls with its own
+  // store (the user spec: "try to show the same UI and use the same method
+  // we have for the settings without duplication"). Contract:
+  //   · [data-setting-key] inputs → apply({key: value}) (color/text/number/
+  //     checkbox; data-setting-transform="lines|number" honored) — inputs
+  //     carrying data-custom are left to their page module (the fmt colors)
+  //   · the neighboring [data-range-display] updates live
+  //   · [data-section-toggle] headers fold/unfold their section
+  //   · [data-action] buttons dispatch doomalay:action with the button's
+  //     whole dataset — data-scope="chat" rides along for the scoped
+  //     handlers in appearance.js to pick up
+  function wireInputs(rootEl, apply) {
+    if (!rootEl || typeof apply !== 'function') return;
+    const els = rootEl.querySelectorAll('[data-setting-key]');
     els.forEach(function (el) {
-      if (el.dataset.custom) return; // v0.17: page-module-managed inputs (fmt colors)
+      if (el.dataset.custom) return; // page-module-managed inputs (fmt colors)
       const key = el.dataset.settingKey;
       const ev = el.dataset.settingEvent || 'input';
       el.addEventListener(ev, function () {
@@ -199,9 +206,9 @@
         }
         const patch = {};
         patch[key] = val;
-        setState(patch);
+        apply(patch);
         // Live-update the range display next to the slider.
-        const display = panelRef.bodyEl.querySelector('[data-range-display="' + key + '"]');
+        const display = rootEl.querySelector('[data-range-display="' + key + '"]');
         if (display) {
           const suffix = display.dataset.suffix !== undefined ? display.dataset.suffix : '×';
           display.textContent = val + suffix;
@@ -210,7 +217,7 @@
     });
 
     // Wire up collapsible section headers (tap to toggle).
-    const sectionHeaders = panelRef.bodyEl.querySelectorAll('[data-section-toggle]');
+    const sectionHeaders = rootEl.querySelectorAll('[data-section-toggle]');
     sectionHeaders.forEach(function (h) {
       h.addEventListener('click', function () {
         const section = h.parentElement;
@@ -219,13 +226,15 @@
     });
 
     // Wire up buttons with data-action (for things like "reset view").
-    const btns = panelRef.bodyEl.querySelectorAll('[data-action]');
+    const btns = rootEl.querySelectorAll('[data-action]');
     btns.forEach(function (btn) {
       btn.addEventListener('click', function () {
         const action = btn.dataset.action;
         // Dispatch a custom event so app.js or other modules can handle it.
         // v0.17: include the button's dataset + node so page modules can
         // carry custom payloads (e.g. which color scheme was picked).
+        // v0.30: data-scope="chat" rides along in the dataset — the scoped
+        // handlers branch on it (per-chat tweaks vs global settings).
         window.dispatchEvent(new CustomEvent('doomalay:action', {
           detail: { action: action, data: btn.dataset, btn: btn }
         }));
@@ -238,6 +247,7 @@
     listPages: listPages,
     openInPanel: openInPanel,
     rerender: rerender,
+    wireInputs: wireInputs,
     getState: getState,
     setState: setState,
     onChange: onChange

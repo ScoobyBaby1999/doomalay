@@ -49,15 +49,29 @@
       '</div>';
   }
 
-  // the context-fill color ladder — shared by the bar here AND the header
-  // ring (same method, two UI elements; the ring shifts one band earlier
-  // so it warns as it CLIMBS toward the compaction point at 70%).
-  function barColor(fill) {
-    return fill > 85 ? 'var(--err)' : fill > 65 ? 'var(--warn)' : 'var(--ok)';
+  // THE ONE CONTEXT-COLOR LADDER (v0.30 user spec) — every front-facing
+  // element that shows the compaction progress asks THIS function: the
+  // context bar here, the header RING (chatpanel.js applyMeters), the
+  // ring's tooltip. It reads the chat's OWN compaction settings (the same
+  // values the mind panel PATCHes — compactThreshold / compactEnabled from
+  // the usage endpoint), so a threshold moved to 80% or compaction turned
+  // off shows up everywhere at once, from one method.
+  //
+  // When auto-compaction is OFF there is no "about to compact" point —
+  // the top band softens from the bright red --err to the ADJACENT
+  // --notice (theme-owned) so the user still sees "the context is 100%"
+  // without the alarm-red glare.
+  function ctxColor(fill, ctx) {
+    var thr = (ctx && typeof ctx.compactThreshold === 'number')
+      ? Math.max(10, Math.min(95, ctx.compactThreshold)) : 70;
+    if (ctx && ctx.compactEnabled === false) {
+      return fill >= 85 ? 'var(--notice)' : fill >= 50 ? 'var(--warn)' : 'var(--accent)';
+    }
+    return fill >= thr ? 'var(--err)'
+      : fill >= Math.max(20, thr - 20) ? 'var(--warn)'
+      : 'var(--accent)';
   }
-  function ringColor(fill) {
-    return fill >= 70 ? 'var(--err)' : fill >= 50 ? 'var(--warn)' : 'var(--accent)';
-  }
+  function ringColor(fill, ctx) { return ctxColor(fill, ctx); }
 
   function open(panel, u, opts) {
     if (!panel) return;
@@ -69,7 +83,12 @@
     var modelRows = models.map(modelRow).join('');
 
     var fill = Math.max(0, Math.min(100, ctx.fillPct || 0));
-    var fillColor = barColor(fill);
+    var fillColor = ctxColor(fill, ctx);
+    // v0.30: the compaction line mirrors the chat's OWN settings (the
+    // mind panel's toggle + threshold) — same endpoint, same numbers.
+    var compactOff = ctx.compactEnabled === false;
+    var compactThr = (typeof ctx.compactThreshold === 'number')
+      ? Math.max(10, Math.min(95, ctx.compactThreshold)) : 70;
 
     panel.pushView({
       title: 'usage · ' + (opts.name || 'chat'),
@@ -90,7 +109,11 @@
             '</div>' +
             '<div style="display:flex;justify-content:space-between;margin-top:6px">' +
               '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + fill + '% used</span>' +
-              '<span style="font-size:var(--ui-micro-fs);color:' + (ctx.compacted ? 'var(--accent)' : 'var(--text-3)') + '">' + (ctx.compacted ? 'auto-compacted ✓' : 'auto-compact arms at 70%') + '</span>' +
+              '<span style="font-size:var(--ui-micro-fs);color:' + (ctx.compacted ? 'var(--accent)' : compactOff ? 'var(--notice)' : 'var(--text-3)') + '">' +
+                (ctx.compacted ? 'auto-compacted ✓' :
+                 compactOff ? 'auto-compact off — context fills unchecked' :
+                 'auto-compact arms at ' + compactThr + '%') +
+              '</span>' +
             '</div>' +
           '</div>' +
           (modelRows ? '<div class="pv-section-label">by model</div>' +
@@ -142,10 +165,12 @@
     });
   }
 
-  // ringColor is exported for the header meters (chatpanel.js) so the
-  // ring and the bar always agree on the ladder.
+  // ringColor/ctxColor are exported for the header meters (chatpanel.js)
+  // so the ring and the bar always agree on the ladder — one method,
+  // every front-facing compaction element.
   window.UsagePanel = {
     open: open,
+    ctxColor: ctxColor,
     ringColor: ringColor,
     close: function () {
       var c = window.ChatPanel && window.ChatPanel.current();

@@ -182,8 +182,11 @@ with sync_playwright() as p:
     ok("23" in str(csv_color) or csv_color.startswith("rgb(2"), f"CSV glyph renders white-ish ({csv_color})")
     sl = pg.locator("input.pv-range").first
     ok(sl.count() == 1, "exported-latest slider present")
-    ok(sl.get_attribute("min") == "0" and sl.get_attribute("max") == "500", "slider range 0-500")
-    ok("full log" in pg.locator("#ex-latest-val").inner_text(), "0 = full log label")
+    # v0.30 (user spec): the default is -1 / "full log" at the left edge —
+    # mirroring the mind slider's "whole chat" — instead of 0 doubling as full.
+    ok(sl.get_attribute("min") == "-1" and sl.get_attribute("max") == "500", "slider range -1 to 500")
+    ok(sl.input_value() == "-1", "slider default position = -1")
+    ok("full log" in pg.locator("#ex-latest-val").inner_text(), "-1 = full log label")
     pg.evaluate("el => { el.value = 100; el.dispatchEvent(new Event('input')); }", sl.element_handle())
     pg.wait_for_timeout(500)
     ok("last 100" in pg.locator("#ex-latest-val").inner_text(), "slider drag updates the label to last 100")

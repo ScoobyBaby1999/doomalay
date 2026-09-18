@@ -31,6 +31,10 @@
     --ok: #34d399;         --ok-rgb: 52,211,153;
     --warn: #fbbf24;       --warn-rgb: 251,191,36;
     --err: #f87171;        --err-rgb: 248,113,113;
+    /* v0.30: the soft ADJACENT warning — the context meters' top band when
+       auto-compaction is OFF (the user knows it's 100% full, without the
+       bright alarm-red glare). Sits between warn-amber and err-red. */
+    --notice: #fb923c;     --notice-rgb: 251,146,60;
     /* text sizes (v0.24 sizing page) */
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
     --ui-fs: 14px;     /* general text */
@@ -136,6 +140,7 @@
     --ok: #047857; --ok-rgb: 4,120,87;
     --warn: #b45309; --warn-rgb: 180,83,9;
     --err: #b91c1c; --err-rgb: 185,28,28;
+    --notice: #c2410c; --notice-rgb: 194,65,12;
   }
   /* ── Frost: cool light ── */
   [data-theme="frost"] {
@@ -151,6 +156,7 @@
     --ok: #059669; --ok-rgb: 5,150,105;
     --warn: #d97706; --warn-rgb: 217,119,6;
     --err: #dc2626; --err-rgb: 220,38,38;
+    --notice: #ea580c; --notice-rgb: 234,88,12;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1656,6 +1662,7 @@
      the grid behind it). -->
 <script src="persona.js"></script>
 <script src="usagepanel.js"></script>
+<script src="tweaks.js"></script>
 <script src="msgactions.js"></script>
 <script src="gesture.js"></script>
 <script src="chatpanel.js"></script>
