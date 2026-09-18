@@ -2289,7 +2289,7 @@
         }
         updateSession(icon, state, { model: state.model, provider: provider });
         renderHost(bodyEl, icon, state, panel);
-      });
+      }, { current: { provider: state.provider, modelId: state.model } }); // v0.32.1 E: mark the chat's current model in the browser
     };
   }
 

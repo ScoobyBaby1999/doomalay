@@ -582,9 +582,10 @@ func fetchOpenAICompatible(name string, cfg ProviderConfig, apiKey string) []fet
 // save can all request ?refresh=1 at once — N parallel full syncs of 11
 // providers made the app feel dead on mobile networks).
 var (
-	catalogV2Mu  sync.Mutex
-	catalogV2Ent *CatalogV2
-	catalogV2At  time.Time
+	catalogV2Mu   sync.Mutex
+	catalogV2Ent  *CatalogV2
+	catalogV2At   time.Time
+	catalogV2Keys string // v0.32.1: keysHash the entry was built with — key changes must not serve a fresh-but-wrong cache
 
 	sfMu   sync.Mutex
 	sfPend map[string]*sfWaiter
@@ -615,9 +616,15 @@ const catalogV2TTL = 10 * time.Minute
 //	force        → blocking full sync (explicit ?refresh=1 — the user
 //	               saved a key and wants the live lists NOW)
 func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
+	kh := keysHash(keys)
 	catalogV2Mu.Lock()
 	ent := catalogV2Ent
-	fresh := catalogV2Ent != nil && time.Since(catalogV2At) < catalogV2TTL
+	// v0.32.1: a cached entry is only fresh if it was built from the SAME
+	// key set. After POST/DELETE /api/keys the vault changes — the old code
+	// kept serving the previous availability (hasApiKey) for up to the
+	// 10-minute TTL. Now a key change degrades the entry to "stale": served
+	// instantly (never block), with a background re-sync on the new keys.
+	fresh := catalogV2Ent != nil && time.Since(catalogV2At) < catalogV2TTL && catalogV2Keys == kh
 	catalogV2Mu.Unlock()
 	if !force && fresh {
 		return ent
@@ -635,7 +642,7 @@ func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
 
 	// force → singleflight on a keys-hash (one live sync for identical keys;
 	// different key sets — e.g. right after a key save — get their own flight).
-	kh := keysHash(keys)
+	// (kh computed at the top of the function.)
 	sfMu.Lock()
 	if sfPend == nil {
 		sfPend = map[string]*sfWaiter{}
@@ -1009,6 +1016,7 @@ collect:
 	catalogV2Mu.Lock()
 	catalogV2Ent = resp
 	catalogV2At = time.Now()
+	catalogV2Keys = keysHash(keys)
 	catalogV2Mu.Unlock()
 	return resp
 }

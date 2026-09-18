@@ -26,6 +26,22 @@
 //   9. The "use" pill is GONE — the left-side tap selects; models with no
 //      key anywhere show an inline hint instead of selecting.
 //
+// v0.32.1 (QA round 2):
+//   A. BUGFIX: "Available" as the ONLY filter hid EVERYTHING in both tabs
+//      (the caps matcher has no branch for it, and providerView read a
+//      non-existent `hasKey` field). Both fixed — Available alone now shows
+//      the 148 key-backed models / the ready provider boxes.
+//   B. SORT control (models tab): Best / Smartest / Top agent / Top code /
+//      Cheapest / Biggest ctx / A→Z — persisted.
+//   C. Live counts line (both tabs): "X of Y models · Z with your keys".
+//   D. Inline ADD-KEY form on view-only provider boxes (＋ key) — POSTs
+//      /api/keys, re-syncs, box flips to "ready" without leaving the panel.
+//   E. Current-model indicator: filled radio + green ring + "current" chip
+//      on the row the chat is actually using (chatpanel passes opts.current).
+//   F. Esc closes the overlay. Pills get hover/press/focus polish +
+//      aria-pressed; rows/boxes get hover borders + aria-expanded.
+//   G. Benchmark chips grow score mini-bars.
+//
 // 100% RUNTIME DATA: everything comes from GET /api/models. Selection
 // picks the best host and calls onPick(provider, modelId).
 //
@@ -67,6 +83,17 @@
   // Pills that re-rank the list by a benchmark score.
   var SCORING_KEYS = ['intelligence', 'code', 'agent'];
 
+  // v0.32.1 B: sort options for the models tab (persisted as .sort).
+  var SORTS = [
+    { key: 'best',  label: 'Best' },
+    { key: 'aa',    label: 'Smartest (AA)' },
+    { key: 'agent', label: 'Top agent' },
+    { key: 'code',  label: 'Top code' },
+    { key: 'price', label: 'Cheapest' },
+    { key: 'ctx',   label: 'Biggest context' },
+    { key: 'name',  label: 'A → Z' }
+  ];
+
   // Shared click suppression after a drag (ms).
   var suppressClickUntil = 0;
 
@@ -97,14 +124,40 @@
       '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(0,0,0,0.55);cursor:grabbing}' +
       '.mb-dragging *{pointer-events:none}' +
       'body.mb-noselect,body.mb-noselect *{user-select:none!important;-webkit-user-select:none!important}' +
+      // v0.32.1 F/G: interaction polish — pills feel pressable, boxes/rows
+      // brighten on hover, current row wears a green ring.
+      '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
+      '.mb-pill:hover{transform:scale(1.05)}' +
+      '.mb-pill:active{transform:scale(0.95)}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
+      '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
+      '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
+      '.mb-logrow:not(.mb-dragging):not(.mb-cur):hover{border-color:rgba(255,255,255,0.16)!important}' +
+      '.mb-logrow.mb-cur{border-color:rgba(var(--ok-rgb),0.55)!important}' +
       '@keyframes mb-hint-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}' +
-      '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}';
+      '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
+      '.mb-countline{animation:mb-hint-in 160ms cubic-bezier(0.32,0.72,0,1)}' +
+      '.mb-keyform input::placeholder{color:var(--border-strong)}';
     document.head.appendChild(s);
+  }
+
+  // v0.32.1 F: Esc closes the overlay (bound once per page).
+  var escBound = false;
+  function bindEscOnce() {
+    if (escBound) return;
+    escBound = true;
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
+        window.ConnectOverlay.close();
+      }
+    });
   }
 
   function open(onPick, opts) {
     opts = opts || {};
     ensureStyles();
+    bindEscOnce();
 
     // Mutable UI state (persisted where it makes sense).
     var view = lsGet('view', 'providers');
@@ -117,6 +170,9 @@
     var providerExpanded = lsGet('providerExpanded', {});
     var hostOrder = lsGet('hostOrder', {});
     var expandedLogical = {};
+    var sortKey = lsGet('sort', 'best');
+    var currentModel = (opts && opts.current) || null; // {provider, modelId}
+    var keyAdding = null; // provider name whose inline key form is open
 
     // Catalog data.
     var catalog = null;
@@ -261,7 +317,7 @@
     // same width, rows aligned, wrapping naturally, NO horizontal scroll
     // (v0.32 spec #2).
     function squaredPill(attr, label, color, on) {
-      return '<button ' + attr + ' style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;transition:background 130ms,border-color 130ms,color 130ms">' + label + '</button>';
+      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
     }
 
     function filterRow() {
@@ -306,18 +362,28 @@
       var groups = orderedGroups();
       var availOnly = filters.indexOf('available') >= 0;
       var out = '';
+      var shown = 0, ready = 0;
       for (var i = 0; i < groups.length; i++) {
+        if (groups[i].hasApiKey) ready++;
         // "Available" hides keyless providers' boxes entirely (their models
         // are all filtered out anyway).
-        if (availOnly && !groups[i].hasKey) continue;
+        // v0.32.1 A BUGFIX: the API field is hasApiKey — `hasKey` is
+        // undefined, so this check used to skip EVERY box when the filter
+        // was on ("No providers with API keys yet" with 2 keys set).
+        if (availOnly && !groups[i].hasApiKey) continue;
         out += providerBox(groups[i]);
+        shown++;
       }
       if (!groups.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing providers…</div>';
       } else if (availOnly && !out) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">No providers with API keys yet — paste a key to unlock them.</div>';
       }
-      return '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
+      // v0.32.1 C: live counts line.
+      var counts = groups.length
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
+        : '';
+      return counts + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
 
     function providerBox(g) {
@@ -331,12 +397,18 @@
       }
       var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';
       // v0.32 #5: explicit availability badge + dimming (view-only vs ready).
+      // v0.32.1 (VLM review): view-only gets a bg fill so it reads as a badge,
+      // not disabled text.
       var keyBadge = g.hasApiKey
         ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">ready</span>'
-        : '<span style="font-size:10px;font-weight:600;color:var(--text-3);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
+        : '<span style="font-size:10px;font-weight:600;color:var(--text-2,var(--text-3));background:rgba(128,128,140,0.12);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
       var chevron = expanded ? '▾' : '▸';
       // v0.32 #8: grip — instant drag handle on the box.
       var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
+      // v0.32.1 D: one-tap key unlock on view-only boxes.
+      var addKeyBtn = (!g.hasApiKey && g.envVar)
+        ? '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;flex-shrink:0;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">＋ key</button>'
+        : '';
 
       var rows = '';
       for (var m = 0; m < matching.length; m++) {
@@ -346,17 +418,28 @@
         rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
       }
 
-      var dim = g.hasApiKey ? '' : 'opacity:0.55;filter:saturate(0.35);';
+      var dim = g.hasApiKey ? '' : 'opacity:0.6;filter:saturate(0.5);';
+      // v0.32.1 D: the inline paste-a-key form (opened by the ＋ key button).
+      var keyForm = '';
+      if (keyAdding === g.name && !g.hasApiKey && g.envVar) {
+        keyForm = '<div class="mb-keyform" data-keyform data-nodrag style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--surface-2);background:rgba(var(--ok-rgb),0.04)">' +
+          '<input data-keyinput type="password" placeholder="' + escAttr(g.envVar) + '" autocomplete="off" spellcheck="false" style="flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--surface-2);color:var(--text-1);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px 10px;border-radius:8px;outline:none" />' +
+          '<button data-keysave="' + escAttr(g.name) + '" data-nodrag style="background:var(--ok);border:none;color:#08240f;font-size:11px;font-weight:700;padding:8px 12px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap">Save</button>' +
+          '<button data-keycancel data-nodrag title="cancel" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;padding:8px 10px;border-radius:8px;cursor:pointer;font-family:inherit">✕</button>' +
+          '</div>';
+      }
       return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
-        '<div data-provhead="' + escAttr(g.name) + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
+        '<div data-provhead="' + escAttr(g.name) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
           '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
           '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
           keyBadge +
+          addKeyBtn +
           liveDot +
           '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
           grip +
         '</div>' +
+        keyForm +
         (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
         '</div>';
     }
@@ -384,33 +467,109 @@
       for (var i = 0; i < logical.length; i++) {
         if (logicalMatches(logical[i])) matching.push(logical[i]);
       }
-      // Re-rank by benchmark when a scoring pill (Smart/Code/Agent) is on —
-      // highest → lowest (v0.32 #3).
-      var hasScoring = false;
-      for (var s = 0; s < SCORING_KEYS.length; s++) {
-        if (filters.indexOf(SCORING_KEYS[s]) >= 0) { hasScoring = true; break; }
-      }
-      if (filters.length && hasScoring) {
-        matching.sort(function (a, b) { return filterScore(b) - filterScore(a); });
-      }
+      // v0.32.1 B: explicit sort (pills still re-rank under 'best').
+      applySort(matching);
       var out = '';
       for (var l = 0; l < matching.length; l++) {
         out += logicalRow(matching[l]);
       }
       var hidden = logical.length - matching.length;
       if (hidden > 0) {
-        out += '<div style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center">' + hidden + ' models hidden by filters</div>';
+        out += '<div data-clearall title="clear all filters" style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center;cursor:pointer">' + hidden + ' models hidden by filters · <span style="color:var(--accent);text-decoration:underline">clear</span></div>';
       }
       if (!logical.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing models…</div>';
       }
-      return '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
+      // v0.32.1 C: live counts — "X of Y models · Z with your keys".
+      var withKeys = 0;
+      for (var wk = 0; wk < matching.length; wk++) {
+        var wkHosts = matching[wk].hosts || [];
+        for (var hh = 0; hh < wkHosts.length; hh++) {
+          if (wkHosts[hh].hasApiKey) { withKeys++; break; }
+        }
+      }
+      var counts = logical.length
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></div>'
+        : '';
+      return sortControl() + counts + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
+    }
+
+    // v0.32.1 B: the sort control — a compact native select (mobile-friendly,
+    // accessible, no custom dropdown to maintain). Persisted as .sort.
+    function sortControl() {
+      var opts = '';
+      for (var i = 0; i < SORTS.length; i++) {
+        opts += '<option value="' + SORTS[i].key + '"' + (sortKey === SORTS[i].key ? ' selected' : '') + '>' + SORTS[i].label + '</option>';
+      }
+      return '<div style="display:flex;align-items:center;gap:8px;margin:0 0 8px">' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">Sort</span>' +
+        '<select id="mb-sort" aria-label="sort models" style="flex:1;min-width:0;background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-1);font-size: calc(var(--ui-small-fs) - 1px);font-family:inherit;padding:6px 8px;border-radius:8px;cursor:pointer">' + opts + '</select>' +
+        '</div>';
+    }
+
+    // v0.32.1 B: sort implementations. 'best' keeps the pill-scoring rank
+    // (filterScore); the rest are explicit. Ties break alphabetically.
+    function applySort(list) {
+      var k = sortKey;
+      if (k === 'best') {
+        var hasScoring = false;
+        for (var s = 0; s < SCORING_KEYS.length; s++) {
+          if (filters.indexOf(SCORING_KEYS[s]) >= 0) { hasScoring = true; break; }
+        }
+        if (filters.length && hasScoring) {
+          list.sort(function (a, b) { return filterScore(b) - filterScore(a); });
+        }
+        return;
+      }
+      var nameOf = function (m) { return String(m.displayName || m.logical || ''); };
+      if (k === 'aa') {
+        list.sort(function (a, b) { return (bmOf(b).intelligence || 0) - (bmOf(a).intelligence || 0) || nameOf(a).localeCompare(nameOf(b)); });
+      } else if (k === 'agent') {
+        list.sort(function (a, b) { return (bmOf(b).agentic || 0) - (bmOf(a).agentic || 0) || nameOf(a).localeCompare(nameOf(b)); });
+      } else if (k === 'code') {
+        list.sort(function (a, b) { return (bmOf(b).coding || 0) - (bmOf(a).coding || 0) || nameOf(a).localeCompare(nameOf(b)); });
+      } else if (k === 'price') {
+        list.sort(function (a, b) { return promptPrice(a) - promptPrice(b) || nameOf(a).localeCompare(nameOf(b)); });
+      } else if (k === 'ctx') {
+        list.sort(function (a, b) { return (b.contextLength || 0) - (a.contextLength || 0) || nameOf(a).localeCompare(nameOf(b)); });
+      } else if (k === 'name') {
+        list.sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b)); });
+      }
+    }
+
+    function bmOf(lm) { return ((lm.attributes || {}).benchmarks) || {}; }
+
+    // Cheapest-first: free models (isFree) count as 0; otherwise parse the
+    // first dollar figure in the display pricing string (prompt price per
+    // M). Unparseable → Infinity (sinks to the bottom).
+    function promptPrice(lm) {
+      if (lm.isFree) return 0;
+      var p = ((lm.attributes || {}).pricing) || '';
+      var m = String(p).match(/\$([0-9]+(?:\.[0-9]+)?)/);
+      return m ? parseFloat(m[1]) : Infinity;
+    }
+
+    // v0.32.1 E: is this logical the chat's current model?
+    function isCurrentModel(lm) {
+      if (!currentModel || !currentModel.modelId) return false;
+      var cm = String(currentModel.modelId);
+      var cp = currentModel.provider;
+      var hosts = lm.hosts || [];
+      for (var i = 0; i < hosts.length; i++) {
+        if (hosts[i].provider === cp) {
+          if (hosts[i].modelId === cm ||
+              (hosts[i].provider + '/' + hosts[i].modelId) === cm ||
+              lm.logical === cm) return true;
+        }
+      }
+      return false;
     }
 
     function logicalRow(lm) {
       var expanded = !!expandedLogical[lm.logical];
       var hosts = orderedHosts(lm);
       var available = hosts.some(function (h) { return h.hasApiKey; });
+      var isCur = isCurrentModel(lm); // v0.32.1 E
 
       // Provider priority indicator: up to 5 colored dots (dim when no key).
       var dots = '';
@@ -428,6 +587,8 @@
       if (bm.intelligence) chips += bmChip('AA ' + Math.round(bm.intelligence), bm.intelligence);
       if (bm.coding) chips += bmChip('code ' + Math.round(bm.coding), bm.coding);
       if (bm.agentic) chips += bmChip('agent ' + Math.round(bm.agentic), bm.agentic);
+      // v0.32.1 E: the "current" chip — the model this chat is using.
+      if (isCur) chips = '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 7px;border-radius:4px">current</span>' + chips;
       var caps = attrs.capabilities || [];
       for (var c = 0; c < caps.length && c < 5; c++) {
         chips += capChip(caps[c]);
@@ -445,14 +606,15 @@
 
       // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
       // priority dropdown. The 1px separator marks the hotspot boundary.
+      // v0.32.1 E: the current model wears a filled radio + green ring.
       var leftZone =
-        '<div data-select="' + escAttr(lm.logical) + '" title="select this model" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
-          '<span style="width:7px;height:7px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
+        '<div data-select="' + escAttr(lm.logical) + '" role="button" title="' + (isCur ? 'current model — tap to keep' : 'select this model') + '" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
+          '<span style="width:8px;height:8px;border-radius:50%;border:1.5px solid ' + (isCur ? 'var(--ok)' : '#a855f7') + ';' + (isCur ? 'background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' : '') + 'flex-shrink:0"></span>' +
           '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
         '</div>';
       var separator = '<span style="width:1px;height:20px;background:var(--border);flex-shrink:0;opacity:0.9"></span>';
       var rightZone =
-        '<div data-expand="' + escAttr(lm.logical) + '" title="provider priority" style="display:flex;align-items:center;gap:8px;flex-shrink:0;cursor:pointer;touch-action:manipulation;padding:2px 0 2px 6px">' +
+        '<div data-expand="' + escAttr(lm.logical) + '" role="button" aria-expanded="' + (expanded ? 'true' : 'false') + '" title="provider priority" style="display:flex;align-items:center;gap:8px;flex-shrink:0;cursor:pointer;touch-action:manipulation;padding:2px 0 2px 6px">' +
           dotsWrap +
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
           priceChip +
@@ -483,10 +645,12 @@
       }
 
       // v0.32 #5/#9: no "use" button — dimming carries availability; the
-      // left-side tap selects.
-      var dim = available ? '' : 'opacity:0.5;filter:saturate(0.45);';
+      // left-side tap selects. (v0.32.1 VLM review: 0.5→0.55 + saturation
+      // 0.45→0.6 keeps dimmed rows clearly dimmed but their chips legible.)
+      var dim = available ? '' : 'opacity:0.55;filter:saturate(0.6);';
 
-      return '<div class="mb-logrow" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
+      // v0.32.1 E: the current row wears the mb-cur ring (see styles).
+      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">' + leftZone + separator + rightZone + '</div>' +
         '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' +
         (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
@@ -508,7 +672,12 @@
 
     function bmChip(text, score) {
       var color = score >= 70 ? '#22c55e' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
-      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text + '</span>';
+      // v0.32.1 G: a 32×3px score mini-bar next to the number — the score
+      // becomes readable at a glance (green ≥70, amber ≥40).
+      var pct = Math.max(5, Math.min(100, Math.round(score)));
+      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text +
+        '<span style="width:32px;height:3px;border-radius:2px;background:rgba(128,128,140,0.22);overflow:hidden;flex-shrink:0" title="score ' + Math.round(score) + '/100"><i style="display:block;height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.85"></i></span>' +
+        '</span>';
     }
 
     var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: 'var(--accent)', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
@@ -531,7 +700,11 @@
       if (pricing === 'paid' && m.isFree) return false;
       // v0.32 #4: "available" — the provider must have an API key.
       if (filters.indexOf('available') >= 0 && !g.hasApiKey) return false;
-      if (filters.length) {
+      // v0.32.1 A BUGFIX: 'available' alone must NOT route into the caps
+      // matcher (no capability branch matches it → every model hidden).
+      var capFiltersM = [];
+      for (var fmi = 0; fmi < filters.length; fmi++) if (filters[fmi] !== 'available') capFiltersM.push(filters[fmi]);
+      if (capFiltersM.length) {
         var bm = famBm[m.family] || {};
         return matchesFiltersCaps((m.capabilities || []), m.effortLevels, bm, String(m.rawId || '') + ' ' + String(m.displayName || ''));
       }
@@ -552,7 +725,13 @@
       // v0.32 #4: "available" — ≥1 host with an API key (position in the
       // priority order is irrelevant).
       if (filters.indexOf('available') >= 0 && !(lm.hosts || []).some(function (h) { return h.hasApiKey; })) return false;
-      if (filters.length) {
+      // v0.32.1 A BUGFIX: same as modelMatches — 'available' as the ONLY
+      // filter must not fall through into the capability matcher (none of
+      // its branches match 'available', so the list used to go empty:
+      // "503 models hidden by filters" while 148 were key-backed).
+      var capFiltersL = [];
+      for (var fli = 0; fli < filters.length; fli++) if (filters[fli] !== 'available') capFiltersL.push(filters[fli]);
+      if (capFiltersL.length) {
         var attrs = lm.attributes || {};
         return matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''));
       }
@@ -627,6 +806,42 @@
       if (onPick) onPick(best.provider, best.modelId);
     }
 
+    // v0.32.1 D: POST the pasted key for the view-only provider, then
+    // re-sync the catalog — the box flips to "ready" in place.
+    function saveProviderKey() {
+      var contentEl = window.ConnectOverlay.getContentEl();
+      var inp = contentEl && contentEl.querySelector('[data-keyinput]');
+      if (!inp) return;
+      var key = (inp.value || '').trim();
+      var name = keyAdding;
+      var g = null;
+      var groups = (catalog && catalog.groups) || [];
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].name === name) { g = groups[i]; break; }
+      }
+      if (!g || !g.envVar) { keyAdding = null; render(); return; }
+      if (!key) { inp.focus(); return; }
+      var saveBtn = contentEl.querySelector('[data-keysave]');
+      if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
+      fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env_var: g.envVar, provider: g.name, key: key })
+      }).then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (body) { throw new Error(body || ('HTTP ' + r.status)); });
+        }
+        keyAdding = null;
+        showHint('Key saved — syncing ' + escHTML(g.displayName || g.name) + '…');
+        syncing = true;
+        render();
+        fetchCatalog(true, function () { render(); });
+      }).catch(function (err) {
+        if (saveBtn) { saveBtn.textContent = 'Save'; saveBtn.disabled = false; }
+        showHint('Key rejected — ' + String(err.message || err).slice(0, 140));
+      });
+    }
+
     // Inline hint (sticky toast at the bottom of the overlay).
     function showHint(text) {
       var contentEl = window.ConnectOverlay.getContentEl();
@@ -648,7 +863,7 @@
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
-      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);text-align:center">' +
+      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);text-align:center">' +
         'tap the name to select · the dots open priority · ⠿ drag to re-order · ' + liveCount() + ' providers live' +
         '</div>';
     }
@@ -977,6 +1192,53 @@
         render();
       });
 
+      // v0.32.1 C: the tappable "N hidden · clear" line under the list.
+      var clearAll = contentEl.querySelector('[data-clearall]');
+      if (clearAll) clearAll.addEventListener('click', function () {
+        filters = []; ctxMin = 0; pricing = 'all'; search = '';
+        lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
+        render();
+      });
+
+      // v0.32.1 B: the sort select.
+      var sortSel = contentEl.querySelector('#mb-sort');
+      if (sortSel) sortSel.addEventListener('change', function () {
+        sortKey = sortSel.value;
+        lsSet('sort', sortKey);
+        render();
+      });
+
+      // v0.32.1 D: inline add-key flow on view-only provider boxes.
+      contentEl.querySelectorAll('[data-addkey]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (clickSuppressed()) return;
+          keyAdding = btn.dataset.addkey;
+          render();
+          var inp = contentEl.querySelector('[data-keyinput]');
+          if (inp) inp.focus();
+        });
+      });
+      var keyInput = contentEl.querySelector('[data-keyinput]');
+      if (keyInput) {
+        keyInput.addEventListener('keydown', function (e) {
+          e.stopPropagation();
+          if (e.key === 'Enter') saveProviderKey();
+          else if (e.key === 'Escape') { keyAdding = null; render(); }
+        });
+      }
+      var keySave = contentEl.querySelector('[data-keysave]');
+      if (keySave) keySave.addEventListener('click', function (e) {
+        e.stopPropagation();
+        saveProviderKey();
+      });
+      var keyCancel = contentEl.querySelector('[data-keycancel]');
+      if (keyCancel) keyCancel.addEventListener('click', function (e) {
+        e.stopPropagation();
+        keyAdding = null;
+        render();
+      });
+
       // ── Providers tab ──
       var provList = contentEl.querySelector('#mb-provlist');
       if (provList) {
@@ -984,7 +1246,7 @@
         contentEl.querySelectorAll('[data-provhead]').forEach(function (head) {
           head.addEventListener('click', function (e) {
             if (clickSuppressed()) return;
-            if (e.target.closest && e.target.closest('[data-slot]')) return;
+            if (e.target.closest && e.target.closest('[data-slot],[data-addkey],[data-keyform],[data-grip]')) return;
             var name = head.dataset.provhead;
             providerExpanded[name] = !providerExpanded[name];
             lsSet('providerExpanded', providerExpanded);
