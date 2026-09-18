@@ -69,6 +69,10 @@ type HostRoute struct {
 	SyncedLive          bool   `json:"syncedLive"`
 	DefaultPriority     int    `json:"defaultPriority"`
 	IsFree              bool   `json:"isFree"`
+	// v0.32.5: route-level pricing ("$X / $Y" prompt/completion per M
+	// tokens, same format as the logical attributes) — the same model
+	// can cost differently per provider.
+	Pricing string `json:"pricing,omitempty"`
 }
 
 // LogicalModel groups provider models by family (the "model view" row).
@@ -937,6 +941,7 @@ collect:
 				SyncedLive:          true,
 				DefaultPriority:     providerPriorityIndex(name),
 				IsFree:              m.IsFree,
+				Pricing:             m.Pricing,
 			})
 			if m.ContextLength > lm.ContextLength {
 				lm.ContextLength = m.ContextLength

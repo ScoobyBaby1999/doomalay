@@ -148,7 +148,7 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
@@ -345,6 +345,7 @@
     var hostOrder = lsGet('hostOrder', {});
     var expandedLogical = {};
     var infoOpen = {}; // v0.32.4 F2: transient per-session detail drawers
+    var comparePair = []; // v0.32.5 F2: 0–2 logical ids pinned for compare
     var sortKey = lsGet('sort', 'best');
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
@@ -426,6 +427,10 @@
           } else if (ae.hasAttribute && ae.hasAttribute('data-info') && ae.dataset.info) {
             // v0.32.4 F2: the ℹ toggle keeps focus through the re-render.
             kbRefocusSel = '[data-info="' + String(ae.dataset.info).replace(/"/g, '\\"') + '"]';
+            kbRefocusRow = false;
+          } else if (ae.hasAttribute && ae.hasAttribute('data-compare') && ae.dataset.compare) {
+            // v0.32.5 F2: the ⚖ toggle keeps focus through the re-render.
+            kbRefocusSel = '[data-compare="' + String(ae.dataset.compare).replace(/"/g, '\\"') + '"]';
             kbRefocusRow = false;
           }
         }
@@ -560,6 +565,13 @@
           if (infoOpen[ilid]) delete infoOpen[ilid]; else infoOpen[ilid] = true;
           render();
           refocusAfterRender('.mb-logrow[data-logical-id="' + (ilid && ilid.replace(/"/g, '\\"')) + '"]');
+        } else if ((e.key === 'c' || e.key === 'C') && view !== 'providers') {
+          // v0.32.5 F2: "c" toggles the compare pin on the focused row.
+          e.preventDefault();
+          var cl2 = row.dataset.logicalId;
+          toggleComparePin(cl2);
+          render();
+          refocusAfterRender('.mb-logrow[data-logical-id="' + (cl2 && cl2.replace(/"/g, '\\"')) + '"]');
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault();
           if (view === 'providers') {
@@ -818,9 +830,17 @@
 
     function providerModelRow(g, m) {
       var ctx = fmtCtx(m.contextLength);
-      var priceChip = m.isFree
-        ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0">free</span>'
-        : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
+      // v0.32.5 F3: real price chip — parse the provider's own pricing
+      // string (prompt price per M tokens); bare "paid" only as fallback.
+      var priceChip;
+      if (m.isFree) {
+        priceChip = '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">free</span>';
+      } else {
+        var ppm = String(m.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+        priceChip = ppm
+          ? '<span title="' + escAttr(m.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">$' + ppm[1] + '/M</span>'
+          : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
+      }
       var caps = (m.capabilities || []).length ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3);flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
       // v0.32.2 A: star the FAMILY (logical id) — same list as models view.
       var star = m.family ? starBtnHtml(m.family) : '';
@@ -898,7 +918,25 @@
       var counts = logical.length
         ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></div>'
         : '';
-      return sortControl() + counts + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
+      // v0.32.5 F2: compare drawer (pair complete) or the pin hint (one
+      // pinned, waiting for the second). Rendered above the list.
+      var cmp = '';
+      if (comparePair.length === 2) {
+        cmp = compareDrawer(comparePair[0], comparePair[1]);
+      } else if (comparePair.length === 1) {
+        var pl = null;
+        for (var pc = 0; pc < logical.length; pc++) {
+          if (logical[pc].logical === comparePair[0]) { pl = logical[pc]; break; }
+        }
+        if (pl) {
+          cmp = '<div data-nodrag style="display:flex;align-items:center;gap:8px;border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:rgba(var(--accent-rgb),0.05)">' +
+            '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--text-1)">' + escHTML(pl.displayName || pl.logical) + '</b> pinned — tap ⚖ on another model</span>' +
+            '<button data-cmpclose data-nodrag title="unpin" aria-label="unpin compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:10px;width:20px;height:20px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
+            '</div>';
+        }
+      }
+      return sortControl() + counts + cmp + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
     }
 
     // v0.32.1 B: the sort control — a compact native select (mobile-friendly,
@@ -1079,6 +1117,169 @@
       return html;
     }
 
+    // v0.32.5 F2: the COMPARE DRAWER — two pinned models side by side.
+    // LiteLLM-style side-by-side (capped at 2 for phone widths): benchmark
+    // bars with winner highlighting + delta chips, route pricing (cheaper
+    // wins), context (bigger wins), capability diff, usage ranks and route
+    // availability. Transient — never persisted, closes via ✕ / re-tap ⚖ / 'c'.
+    function compareDrawer(a, b) {
+      var resolve = function (id) {
+        var list = (catalog && catalog.logical) || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].logical === id) return list[i];
+        }
+        return null;
+      };
+      var la = resolve(a), lb = resolve(b);
+      if (!la || !lb) return '';
+      var ba = bmOf(la), bb = bmOf(lb);
+      var ca = (la.attributes || {}).capabilities || [];
+      var cb = (lb.attributes || {}).capabilities || [];
+
+      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:12px">';
+
+      // ── Header: names + provider dots, ✕ closes (unpins both) ──
+      var hostsOf = function (lm) {
+        var hs = orderedHosts(lm), out = '', keys = 0;
+        for (var i = 0; i < hs.length && i < 5; i++) {
+          out += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hs[i].color || 'var(--border-strong)') + ';opacity:' + (hs[i].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hs[i].providerDisplayName || hs[i].provider) + '"></span>';
+          if (hs[i].hasApiKey) keys++;
+        }
+        return { dots: out, keys: keys, n: hs.length };
+      };
+      var ha = hostsOf(la), hb = hostsOf(lb);
+      var nameCol = function (lm, h) {
+        return '<div style="min-width:0;display:flex;flex-direction:column;gap:3px">' +
+          '<span title="' + escAttr(lm.displayName || lm.logical) + '" style="font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
+          '<span style="display:flex;align-items:center;gap:5px">' + h.dots + '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">' + h.n + ' route' + (h.n === 1 ? '' : 's') + '</span></span>' +
+          '</div>';
+      };
+      html += '<div style="display:flex;align-items:flex-start;gap:8px">' +
+        '<span style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);flex-shrink:0;padding-top:2px">⚖ Compare</span>' +
+        '<span style="flex:1"></span>' +
+        '<button data-cmpclose data-nodrag title="close compare" aria-label="close compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;width:22px;height:22px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">' + nameCol(la, ha) + nameCol(lb, hb) + '</div>';
+
+      // ── Benchmark rows: dual bars, winner value green + "+Δ" chip ──
+      var metricRow = function (label, va, vb) {
+        if (!va && !vb) return '';
+        var win = 0, d = 0;
+        if (va && vb) { d = Math.round((va - vb) * 10) / 10; win = d > 0 ? -1 : (d < 0 ? 1 : 0); d = Math.abs(d); }
+        var side = function (v, isWin) {
+          if (!v) return '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">—</span></div>';
+          var pct = Math.max(3, Math.min(100, v));
+          var delta = isWin ? '<span style="font-size:calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.14);padding:1px 5px;border-radius:4px;flex-shrink:0">+' + d + '</span>' : '';
+          return '<div style="display:flex;flex-direction:column;gap:3px;min-width:0">' +
+            '<div style="display:flex;align-items:center;gap:5px"><span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:' + (isWin ? 'var(--ok)' : 'var(--text-1)') + ';font-variant-numeric:tabular-nums">' + (Math.round(v * 10) / 10) + '</span>' + delta + '</div>' +
+            '<span style="height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden"><span class="mb-barfill" style="display:block;height:100%;width:' + pct + '%;border-radius:3px;background:' + (isWin ? 'var(--ok)' : 'var(--text-3)') + '"></span></span>' +
+            '</div>';
+        };
+        return '<div style="display:flex;flex-direction:column;gap:5px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">' + label + '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">' + side(va, win === -1) + side(vb, win === 1) + '</div>' +
+          '</div>';
+      };
+      html += metricRow('Intelligence', ba.intelligence, bb.intelligence);
+      html += metricRow('Agentic', ba.agentic, bb.agentic);
+      html += metricRow('Coding', ba.coding, bb.coding);
+
+      // ── Route pricing: cheaper prompt price wins (free = 0) ──
+      var priceOf = function (lm) {
+        if (lm.isFree) return 0;
+        var p = ((lm.attributes || {}).pricing) || '';
+        var m = String(p).match(/\$([0-9]+(?:\.[0-9]+)?)/);
+        return m ? parseFloat(m[1]) : Infinity;
+      };
+      var priceLabel = function (lm, isWin) {
+        if (lm.isFree) return '<b style="color:' + (isWin ? 'var(--ok)' : '#22c55e') + '">free</b>';
+        var pm = String(((lm.attributes || {}).pricing) || '').match(/\$([0-9]+(?:\.[0-9]+)?)\s*\/\s*\$([0-9]+(?:\.[0-9]+)?)/);
+        if (!pm) return '<span style="color:var(--text-3)">—</span>';
+        return '<b style="color:' + (isWin ? 'var(--ok)' : 'var(--text-1)') + ';font-variant-numeric:tabular-nums">$' + pm[1] + '</b><span style="color:var(--text-3)"> / $' + pm[2] + '</span>';
+      };
+      var pa = priceOf(la), pb = priceOf(lb);
+      var pWin = (pa === pb) ? 0 : (pa < pb ? -1 : 1);
+      html += '<div style="display:flex;flex-direction:column;gap:5px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Pricing <span style="font-weight:400;letter-spacing:0;text-transform:none">· prompt / completion per M</span></div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + priceLabel(la, pWin === -1) + '</span>' +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + priceLabel(lb, pWin === 1) + '</span>' +
+        '</div></div>';
+
+      // ── Context: bigger wins ──
+      var ctxWin = la.contextLength === lb.contextLength ? 0 : (la.contextLength > lb.contextLength ? -1 : 1);
+      html += '<div style="display:flex;flex-direction:column;gap:5px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Context</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (ctxWin === -1 ? 'var(--ok)' : 'var(--text-1)') + '">' + fmtCtx(la.contextLength) + '</span>' +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (ctxWin === 1 ? 'var(--ok)' : 'var(--text-1)') + '">' + fmtCtx(lb.contextLength) + '</span>' +
+        '</div></div>';
+
+      // ── Capability diff: shared chips centered; unique chips per side ──
+      var onlyA = [], onlyB = [], shared = [];
+      for (var i = 0; i < ca.length; i++) (cb.indexOf(ca[i]) >= 0 ? shared : onlyA).push(ca[i]);
+      for (var j = 0; j < cb.length; j++) {
+        if (ca.indexOf(cb[j]) >= 0) { if (shared.indexOf(cb[j]) < 0) shared.push(cb[j]); } // dedupe — both loops can hit the same cap
+        else onlyB.push(cb[j]);
+      }
+      if (ca.length || cb.length) {
+        var chip = function (c, unique) {
+          return '<span style="font-size:calc(var(--ui-small-fs) - 3px);color:' + (unique ? 'var(--accent)' : 'var(--text-2)') + ';background:' + (unique ? 'rgba(var(--accent-rgb),0.10)' : 'var(--surface-2)') + ';border:1.5px solid ' + (unique ? 'rgba(var(--accent-rgb),0.60)' : 'transparent') + ';padding:2px 7px;border-radius:5px;white-space:nowrap">' + escHTML(c) + '</span>';
+        };
+        var col = function (list) {
+          if (!list.length) return '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">—</span>';
+          var s = '';
+          for (var k = 0; k < list.length; k++) s += chip(list[k], true);
+          return '<div style="display:flex;gap:4px;flex-wrap:wrap">' + s + '</div>';
+        };
+        var sh = '';
+        for (var s2 = 0; s2 < shared.length; s2++) sh += chip(shared[s2], false);
+        html += '<div style="display:flex;flex-direction:column;gap:5px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Capabilities <span style="font-weight:400;letter-spacing:0;text-transform:none">· accent = unique</span></div>' +
+          (sh ? '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center">' + sh + '</div>' : '') +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + col(onlyA) + col(onlyB) + '</div>' +
+          '</div>';
+      }
+
+      // ── Usage ranks: up to 3 chips per side ──
+      var ranksOf = function (lm) { return ((lm.attributes || {}).ranks) || []; };
+      var ra = ranksOf(la), rb = ranksOf(lb);
+      if (ra.length || rb.length) {
+        var rcol = function (list) {
+          if (!list.length) return '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">—</span>';
+          var s = '';
+          for (var k = 0; k < list.length && k < 3; k++) s += '<span title="ranked #' + list[k].rank + ' for ' + escAttr(list[k].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>№' + list[k].rank + '</b> ' + escHTML(list[k].label) + '</span>';
+          return '<div style="display:flex;gap:4px;flex-wrap:wrap">' + s + '</div>';
+        };
+        html += '<div style="display:flex;flex-direction:column;gap:5px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Usage ranks</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + rcol(ra) + rcol(rb) + '</div>' +
+          '</div>';
+      }
+
+      // ── Availability: routes with keys ── (title = hover explanation)
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+        '<span title="how many of this model\u2019s provider routes have your API key" style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)"><b style="color:' + (ha.keys ? 'var(--ok)' : 'var(--text-2)') + '">' + ha.keys + '/' + ha.n + '</b> routes keyed</span>' +
+        '<span title="how many of this model\u2019s provider routes have your API key" style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)"><b style="color:' + (hb.keys ? 'var(--ok)' : 'var(--text-2)') + '">' + hb.keys + '/' + hb.n + '</b> routes keyed</span>' +
+        '</div>';
+
+      html += '</div>';
+      return html;
+    }
+
+    // v0.32.5 F2: pin-state toggle used by the ⚖ button and the 'c' key.
+    function toggleComparePin(logical) {
+      var idx = comparePair.indexOf(logical);
+      if (idx >= 0) {
+        comparePair.splice(idx, 1);
+      } else if (comparePair.length < 2) {
+        comparePair.push(logical);
+      } else {
+        // pair full and a third model tapped → start a fresh pin
+        comparePair = [logical];
+      }
+    }
+
     function logicalRow(lm, kbFirst) {
       var expanded = !!expandedLogical[lm.logical];
       var hosts = orderedHosts(lm);
@@ -1129,8 +1330,17 @@
       // v0.32.4 F2: the ℹ detail toggle — opens the benchmark/pricing
       // drawer below the row (selection stays left, priority stays chevron).
       var infoOpenNow = !!infoOpen[lm.logical];
+      // v0.32.5 F2: compare pin state for this row.
+      var cmpIdx = comparePair.indexOf(lm.logical);
+      var cmpPinned = cmpIdx >= 0;
       var infoBtn = '<button data-info="' + escAttr(lm.logical) + '" data-nodrag class="mb-infobtn" aria-expanded="' + (infoOpenNow ? 'true' : 'false') + '" title="model details — benchmarks, pricing, ranks" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (infoOpenNow ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.2" r="0.4" fill="currentColor" stroke="none"/></svg>' +
+        '</button>';
+
+      // v0.32.5 F2: the ⚖ compare pin — tap to pin, tap another row's ⚖ to
+      // open the side-by-side compare drawer. Pinned = accent state.
+      var cmpBtn = '<button data-compare="' + escAttr(lm.logical) + '" data-nodrag class="mb-cmpbtn" aria-pressed="' + (cmpPinned ? 'true' : 'false') + '" title="' + (cmpPinned ? (comparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another model') + '" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (cmpPinned ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (cmpPinned ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (cmpPinned ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>' +
         '</button>';
 
       // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
@@ -1151,6 +1361,7 @@
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
           priceChip +
           infoBtn +
+          cmpBtn +
           chevBtn +
         '</div>';
 
@@ -1160,18 +1371,34 @@
       if (expanded) {
         for (var h = 0; h < hosts.length; h++) {
           var hr = hosts[h];
+          // v0.32.5 F1: route-level price chip — the same model can cost
+          // differently per provider. free routes stay green; paid routes
+          // show the prompt price per M tokens (tooltip = full pricing).
+          // VLM review: FIXED-WIDTH column (min-width + centered) so the
+          // ctx / key / arrows stay vertically aligned across rows — an
+          // invisible spacer keeps the column when a route has no pricing.
+          var routePrice = '<span style="min-width:54px;flex-shrink:0"></span>';
+          if (hr.isFree) {
+            routePrice = '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0;min-width:54px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums">free</span>';
+          } else {
+            var rpm = String(hr.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+            if (rpm) {
+              routePrice = '<span title="' + escAttr(hr.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.10);padding:2px 7px;border-radius:4px;flex-shrink:0;min-width:54px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums">$' + rpm[1] + '/M</span>';
+            }
+          }
           var keyBadge = hr.hasApiKey
-            ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);padding:2px 6px;border:1px solid rgba(var(--ok-rgb),0.4);border-radius:5px;flex-shrink:0">key ✓</span>'
-            : '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:600;color:var(--border-strong);padding:2px 6px;border:1px solid var(--border);border-radius:5px;flex-shrink:0">no key</span>';
-          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
+            ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);padding:2px 6px;border:1px solid rgba(var(--ok-rgb),0.4);border-radius:5px;flex-shrink:0;min-width:47px;text-align:center;box-sizing:border-box">key ✓</span>'
+            : '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:600;color:var(--border-strong);padding:2px 6px;border:1px solid var(--border);border-radius:5px;flex-shrink:0;min-width:47px;text-align:center;box-sizing:border-box">no key</span>';
+          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" data-nodrag style="display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
             '<span data-hostgrip data-nodrag title="drag to re-order priority" style="cursor:grab;color:var(--text-3);width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:6px;touch-action:none;font-size:12px;line-height:1">⠿</span>' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--bg-app);background:' + (hr.color || 'var(--border-strong)') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
             '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
             '<span style="font-size: var(--ui-small-fs);color:' + (hr.hasApiKey ? 'var(--text-1)' : 'var(--text-3)') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.providerDisplayName || hr.provider) + '</span>' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
-            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + fmtCtx(hr.contextLength) + '</span>' +
+            routePrice +
+            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:30px;text-align:right">' + fmtCtx(hr.contextLength) + '</span>' +
             keyBadge +
-            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="raise priority">▲</button>' +
+            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit;margin-left:2px" title="raise priority">▲</button>' +
             '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
             '</div>';
         }
@@ -1413,8 +1640,9 @@
     function footer() {
       // v0.32.2 (VLM round 3): --text-2 when available — the hint must be
       // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
+      // v0.32.5: mentions ⚖ compare + per-route prices.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ★ stars a favorite · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
+        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models · ★ stars a favorite · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -1936,6 +2164,28 @@
           var logical = btn.dataset.info;
           if (infoOpen[logical]) delete infoOpen[logical];
           else infoOpen[logical] = true;
+          render();
+        });
+      });
+
+      // v0.32.5 F2: the ⚖ compare pin — same guards as the ℹ button
+      // (stopPropagation keeps the data-expand zone quiet; data-nodrag
+      // keeps the long-press reorder disarmed).
+      contentEl.querySelectorAll('[data-compare]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          toggleComparePin(btn.dataset.compare);
+          render();
+        });
+      });
+
+      // v0.32.5 F2: ✕ on the compare drawer / pin hint — unpins everything.
+      contentEl.querySelectorAll('[data-cmpclose]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          comparePair = [];
           render();
         });
       });
