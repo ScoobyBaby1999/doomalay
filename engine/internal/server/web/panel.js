@@ -184,6 +184,14 @@
       this._renderTopView();
     }
 
+    // The view currently on top (null while the root content shows) —
+    // lets a view's ASYNC logic (fetches, debounced searches) check it is
+    // still the visible view before re-rendering, so a covered view's
+    // late callback never clobbers whatever the user is looking at now.
+    topView() {
+      return this.viewStack.length ? this.viewStack[this.viewStack.length - 1] : null;
+    }
+
     // Back one view. The LAST pop restores the stashed root content.
     // Returns true when a view was popped (Android back eats it).
     popView() {

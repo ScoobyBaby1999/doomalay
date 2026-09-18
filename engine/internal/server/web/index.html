@@ -1581,6 +1581,271 @@
   }
   .ctx-cost.priced { color: var(--warn); }
 
+  /* ══ v0.31 — THE HUB (the modular library system) ══════════════════
+     hub.js (library panel), hubitem.js (item detail), hubpublish.js
+     (publish + HF connect) — all views on the master panel's stack.
+     Every text size derives from --ui-fs / --ui-small-fs so the
+     settings' text-size sliders resize the whole hub; the card grid
+     sizes from --hub-cols (set inline by JS, clamped to the viewport
+     so a column never drops under ~150px) — nothing hardcoded. */
+  .hub-root { display: flex; flex-direction: column; gap: 10px; }
+  .hub-status {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    font-size: var(--ui-micro-fs); color: var(--text-3);
+    background: rgba(var(--ok-rgb), 0.07); border: 1px solid rgba(var(--ok-rgb), 0.25);
+    padding: 5px 10px; border-radius: 8px;
+  }
+  .hub-status b { color: var(--ok); font-weight: 700; }
+  .hub-status button {
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    color: var(--accent-2); font-size: var(--ui-micro-fs); padding: 0;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .hub-tabs { display: flex; gap: 6px; }
+  .hub-tab {
+    flex: 1 1 0; min-width: 0; padding: 8px 4px; border-radius: 9px;
+    background: var(--surface-2); border: 1px solid var(--surface-3);
+    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px);
+    font-weight: 700; letter-spacing: 0.3px; font-family: inherit; cursor: pointer;
+    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .hub-tab[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.15);
+    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--accent-2);
+  }
+  .hub-tab-ghost { cursor: default; }
+  .hub-search {
+    width: 100%; box-sizing: border-box; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--text-1);
+    padding: 10px 12px; border-radius: 10px; outline: none; min-height: 40px;
+    font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit;
+  }
+  .hub-search:focus { border-color: var(--accent); }
+  .hub-pillrow {
+    display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px; scrollbar-width: none;
+  }
+  .hub-pill {
+    flex-shrink: 0; background: transparent; border: 1px solid var(--surface-3);
+    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
+    padding: 4px 11px; border-radius: 999px; font-family: inherit; cursor: pointer;
+    white-space: nowrap; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-pill[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.16);
+    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--accent-2);
+  }
+  .hub-ctlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hub-ctl {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); font-weight: 600;
+  }
+  .hub-step {
+    width: 24px; height: 24px; border-radius: 7px; background: var(--surface-2);
+    border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
+    font-family: inherit; cursor: pointer; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-step:disabled { opacity: 0.35; cursor: default; }
+  .hub-step-val {
+    min-width: 16px; text-align: center; color: var(--text-1);
+    font-variant-numeric: tabular-nums; font-weight: 700;
+  }
+  .hub-publish {
+    margin-left: auto; background: rgba(var(--accent-rgb), 0.14);
+    border: 1px solid rgba(var(--accent-rgb), 0.45); color: var(--accent);
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    padding: 5px 12px; border-radius: 999px; font-family: inherit; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--hub-cols, 2), minmax(0, 1fr));
+    gap: 10px;
+  }
+  .hub-card {
+    position: relative; display: flex; flex-direction: column; justify-content: flex-end;
+    overflow: hidden; min-height: 138px; padding: 0; border-radius: 12px;
+    background: var(--surface-1); border: 1px solid var(--surface-2);
+    cursor: pointer; text-align: left; font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-card:active { background: var(--surface-2); }
+  .hub-card-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
+  .hub-card-body {
+    position: relative; display: flex; flex-direction: column; gap: 2px; padding: 9px 10px;
+  }
+  .hub-card-name {
+    font-size: var(--ui-fs); font-weight: 700; color: var(--text-1); line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.45);
+  }
+  .hub-card-desc {
+    font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .hub-card-author {
+    font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-card-foot {
+    display: flex; gap: 12px; margin-top: 3px; color: var(--text-3);
+    font-size: var(--ui-small-fs); font-variant-numeric: tabular-nums;
+  }
+  .hub-empty {
+    padding: 34px 18px; text-align: center; color: var(--text-3);
+    font-size: var(--ui-small-fs); line-height: 1.6;
+    border: 1px dashed var(--surface-3); border-radius: 12px;
+  }
+  .hub-pager {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .hub-nav {
+    width: 34px; height: 28px; border-radius: 8px; background: var(--surface-2);
+    border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
+    font-family: inherit; cursor: pointer; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-nav:disabled { opacity: 0.35; cursor: default; }
+
+  /* ── the item detail (hubitem.js) ─────────────────────────────────── */
+  .hi-root { display: flex; flex-direction: column; min-height: 100%; gap: 12px; }
+  .hi-head {
+    position: relative; border-radius: 12px; overflow: hidden; flex-shrink: 0;
+    border: 1px solid var(--surface-2); cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hi-head-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
+  .hi-head-body {
+    position: relative; display: flex; flex-direction: column; gap: 3px;
+    padding: 16px 14px 12px; min-height: 132px;
+  }
+  .hi-title {
+    font-size: calc(var(--ui-fs) + 4px); font-weight: 800; color: var(--text-1);
+    line-height: 1.2; text-shadow: 0 1px 8px rgba(0,0,0,0.5);
+  }
+  .hi-desc { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.45; }
+  .hi-meta { font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); }
+  .hi-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .hi-chip {
+    background: rgba(var(--accent-2-rgb), 0.13); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
+    color: var(--accent-2); border-radius: 999px; padding: 2px 9px;
+    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 600;
+  }
+  .hi-counts {
+    display: flex; gap: 14px; margin-top: 4px; color: var(--text-3);
+    font-size: var(--ui-small-fs); font-variant-numeric: tabular-nums;
+  }
+  .hi-fold-ico {
+    position: absolute; top: 8px; right: 10px; color: var(--text-2);
+    font-size: var(--ui-small-fs); text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  /* the collapsible header — folded hides the description/tags and
+     dims the background to a compact bar */
+  .hi-head.folded .hi-head-bg { opacity: 0.25; }
+  .hi-head.folded .hi-head-body { min-height: 0; padding: 10px 14px 8px; }
+  .hi-head.folded .hi-desc, .hi-head.folded .hi-chips,
+  .hi-head.folded .hi-meta { display: none; }
+  .hi-body { flex: 1 1 auto; min-height: 0; }
+  .hi-body .fmt { font-size: var(--ui-fs); }
+  .hi-fabs {
+    position: sticky; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    margin-top: auto; display: flex; justify-content: flex-end; gap: 10px;
+  }
+  .hi-fab {
+    width: 42px; height: 42px; border-radius: 12px; background: var(--surface-2);
+    border: 1px solid var(--border-strong); color: var(--text-1); font-size: 17px;
+    cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-family: inherit; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .hi-fab:active { background: var(--surface-3); }
+  .hi-fab:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hi-fab.on {
+    color: var(--err); border-color: rgba(var(--err-rgb), 0.5);
+    background: rgba(var(--err-rgb), 0.12);
+  }
+
+  /* ── publish + the HF connect flow (hubpublish.js) ───────────────── */
+  .hp-root { display: flex; flex-direction: column; gap: 8px; }
+  .hp-textarea {
+    width: 100%; box-sizing: border-box; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--text-1); padding: 10px 12px;
+    border-radius: 10px; font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit;
+    outline: none; resize: vertical; min-height: 44px; line-height: 1.5;
+  }
+  .hp-textarea:focus { border-color: var(--accent); }
+  .hp-payload { min-height: 170px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .hp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .hp-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(var(--accent-2-rgb), 0.12); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
+    color: var(--accent-2); border-radius: 999px; padding: 3px 9px;
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
+  }
+  .hp-chip button {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: inherit; padding: 0; font-family: inherit; line-height: 1;
+  }
+  .hp-seg {
+    display: flex; border: 1px solid var(--surface-2); border-radius: 10px;
+    overflow: hidden; background: var(--surface-1);
+  }
+  .hp-seg button {
+    flex: 1 1 0; background: transparent; border: none; color: var(--text-3);
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700; padding: 8px 4px;
+    cursor: pointer; font-family: inherit; white-space: nowrap;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hp-seg button[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.16); color: var(--accent-2);
+  }
+  .hp-design { display: flex; flex-direction: column; gap: 8px; }
+  .hp-colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hp-color {
+    width: 46px; height: 36px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface-2); cursor: pointer; padding: 2px;
+  }
+  .hp-mini {
+    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    border-radius: 8px; padding: 6px 10px; font-size: calc(var(--ui-small-fs) - 1px);
+    font-family: inherit; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hp-imgrow { display: flex; }
+  .hp-pick {
+    flex: 1; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-1); padding: 11px 14px; min-height: 44px; border-radius: 10px;
+    font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit; cursor: pointer;
+  }
+  .hp-imgmeta {
+    font-size: calc(var(--ui-small-fs) - 1px); color: var(--ok);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hp-preview {
+    height: 64px; border-radius: 10px; border: 1px solid var(--surface-2);
+    background-size: cover; background-position: center; flex-shrink: 0;
+  }
+  .hp-err { font-size: var(--ui-small-fs); color: var(--err); line-height: 1.5; min-height: 4px; }
+
+  /* ── the persona picker's heart badges (persona.js) ───────────────── */
+  .pp-heart {
+    position: absolute; right: 9px; bottom: 7px; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(var(--surface-3-rgb), 0.75);
+    color: var(--text-3-dim); font-size: calc(var(--ui-small-fs) - 1px);
+    cursor: pointer; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .pp-heart.on { color: var(--err); }
+
 </style>
 </head>
 <body>
@@ -1661,6 +1926,15 @@
      never knew it, so document touch handlers ate its clicks and panned
      the grid behind it). -->
 <script src="persona.js"></script>
+<!-- v0.31: THE HUB — the modular library system (personas, templates, …):
+     hub.js = the library panel (tabs/search/sort/tag pills/the resizable
+     card grid), hubitem.js = the item detail (payload + the floating
+     download/endorse buttons), hubpublish.js = publish + the Hugging
+     Face connect flow. All views on the master panel's stack; persona.js
+     links into them (library pill + publish pill) at click time. -->
+<script src="hub.js"></script>
+<script src="hubitem.js"></script>
+<script src="hubpublish.js"></script>
 <script src="usagepanel.js"></script>
 <script src="tweaks.js"></script>
 <script src="msgactions.js"></script>

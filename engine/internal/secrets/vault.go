@@ -84,8 +84,12 @@ var PROVIDER_KEY_ALLOWLIST = map[string]string{
 	"COHERE_API_KEY":        "cohere",
 	"PERPLEXITY_API_KEY":    "perplexity",
 	"HUGGING_FACE_TOKEN":    "huggingface",
-	"GITHUB_PAT":            "github", // for workspace cloning
-	"GITEA_TOKEN":           "gitea",
+	// v0.31: the hub's own token. HUGGING_FACE_TOKEN is the INFERENCE token
+	// (fine-grained, often read-only); the hub needs repo.write scope — a
+	// separate entry keeps a read-only inference token from breaking publish.
+	"DOOMALAY_HF_TOKEN": "huggingface",
+	"GITHUB_PAT":        "github", // for workspace cloning
+	"GITEA_TOKEN":       "gitea",
 }
 
 // IsAllowed checks if an env var is in the allowlist.

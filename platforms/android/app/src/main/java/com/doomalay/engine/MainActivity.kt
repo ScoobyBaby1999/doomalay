@@ -21,6 +21,14 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val REQUEST_NOTIF = 1001
 
+    // v0.31: the WebView FILE CHOOSER (a real v0.30 bug — <input type=file>
+    // was dead in the APK: onShowFileChooser was never implemented, so the
+    // tweaks background picker AND the hub's card-image picker did
+    // nothing). The system picker (ACTION_GET_CONTENT) needs NO storage
+    // permission.
+    private val REQUEST_FILECHOOSER = 1002
+    private var filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,6 +106,31 @@ class MainActivity : Activity() {
                         .setOnCancelListener { result.cancel() }
                         .show()
                     return true
+                }
+                // v0.31: THE FILE CHOOSER — hands <input type=file> to the
+                // system picker (image/* for the hub card art + the tweaks
+                // backgrounds). The callback MUST be answered exactly once,
+                // so a second pick while one is pending cancels the first
+                // (WebView refuses to fire a new chooser otherwise).
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    params: android.webkit.FileChooserParams
+                ): Boolean {
+                    filePathCallback?.onReceiveValue(null)
+                    filePathCallback = null
+                    return try {
+                        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "image/*"
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                        }
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(intent, REQUEST_FILECHOOSER)
+                        true
+                    } catch (e: Exception) {
+                        AppLog.error("file chooser failed", e)
+                        false
+                    }
                 }
             }
 
@@ -277,6 +310,19 @@ class MainActivity : Activity() {
             setTextIsSelectable(true)
         }
         setContentView(tv)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        // v0.31: answer the pending file chooser (null it out first so a
+        // cancel leaves no stale callback — a second pick works right away).
+        if (requestCode == REQUEST_FILECHOOSER) {
+            val cb = filePathCallback
+            filePathCallback = null
+            cb?.onReceiveValue(android.webkit.WebChromeClient.FileChooserParams.parseResult(resultCode, data))
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     @Deprecated("Deprecated in Java")

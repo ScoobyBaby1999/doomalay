@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,6 +37,16 @@ type Config struct {
 	AuthToken      string   `yaml:"auth_token"`      // bearer token (REQUIRED for non-localhost access)
 	AllowedOrigins []string `yaml:"allowed_origins"` // CORS + WS origin allowlist (e.g. ["https://doomalay.mydomain.com"])
 	Bind           string   `yaml:"bind"`            // bind address (default: 127.0.0.1 — localhost only; set to 0.0.0.0 for LAN)
+
+	// v0.31: the Hub (modular library system). HFBase is the Hugging Face
+	// instance the hub talks to (default https://huggingface.co; override
+	// via DOOMALAY_HUB_HF_BASE — mock-server tests + self-hosted HF later).
+	Hub Hub `yaml:"hub"`
+}
+
+// Hub is the hub (library system) configuration.
+type Hub struct {
+	HFBase string `yaml:"hf_base"` // huggingface.co-compatible base URL
 }
 
 // Overrides carries CLI flag values into Load. Zero values mean "no override";
@@ -84,6 +95,10 @@ func Load(path string, ov Overrides) (*Config, error) {
 	}
 	if m := os.Getenv("MODE"); m != "" {
 		cfg.Mode = m
+	}
+	// v0.31: the hub's Hugging Face base URL (mock-server tests + self-hosted).
+	if b := os.Getenv("DOOMALAY_HUB_HF_BASE"); b != "" {
+		cfg.Hub.HFBase = b
 	}
 
 	// Apply CLI overrides (highest priority, wins over YAML + env).
@@ -136,6 +151,15 @@ func Load(path string, ov Overrides) (*Config, error) {
 	// bind: 0.0.0.0 in config to expose to LAN — and then MUST set auth_token.
 	if cfg.Bind == "" {
 		cfg.Bind = "127.0.0.1"
+	}
+
+	// v0.31: hub HF base default + trailing-slash hygiene (every client path
+	// joins with "/" — a stray slash would double up).
+	if cfg.Hub.HFBase == "" {
+		cfg.Hub.HFBase = "https://huggingface.co"
+	}
+	for strings.HasSuffix(cfg.Hub.HFBase, "/") {
+		cfg.Hub.HFBase = cfg.Hub.HFBase[:len(cfg.Hub.HFBase)-1]
 	}
 
 	// SECURITY: data dir is 0o700 (owner-only). secrets.json + master.key

@@ -71,6 +71,10 @@
   var globalPlaceholders = {}; // v0.29: engine-wide customs (every chatbot)
   var legacyPersona = ''; // v0.19 single-persona column (fallback)
   var cm = null;          // the open editor's CodeMirror
+  // v0.31: the picker's heart badges + hearted-first sort read the
+  // engine's local heart list (GET /api/hub/personas/hearted — hub hearts
+  // AND non-hub local hearts, newest first).
+  var hearted = {};
 
   // v0.29: the GLOBAL custom placeholders live server-side
   // (GET/PUT/DELETE /api/placeholders — app_settings). Cached here; the
@@ -199,6 +203,18 @@
     return null;
   }
 
+  // v0.31: load the hearted-persona ids (best-effort — an older engine
+  // without the hub just leaves the map empty).
+  function loadHearted() {
+    return fetch('/api/hub/personas/hearted')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        hearted = {};
+        ((d && d.personas) || []).forEach(function (p) { hearted[p.id] = true; });
+      })
+      .catch(function () {});
+  }
+
   // ── ENTRY: the personas pill ────────────────────────────────────
   function open(sessionId, opts) {
     if (!sessionId) return;
@@ -209,6 +225,8 @@
     }));
     loadSession(sessionId, opts).then(function () {
       return loadGlobals(); // v0.29: trigger keys + substitution need the globals
+    }).then(function () {
+      return loadHearted(); // v0.31: badges + hearted-first sort
     }).then(function () {
       panel.replaceView(listView());
     }).catch(function (e) {
@@ -222,7 +240,12 @@
   function listView() {
     return view('personas · ' + cur.name, function () {
       var rows = '';
-      personas.forEach(function (p) {
+      // v0.31: HEARTED PERSONAS SORT TO TOP (the user spec) — a stable
+      // partition on the hearted map keeps the existing order otherwise.
+      var ordered = personas.slice().sort(function (a, b) {
+        return (hearted[b.id] ? 1 : 0) - (hearted[a.id] ? 1 : 0);
+      });
+      ordered.forEach(function (p) {
         var m = modeMeta(p);
         var sub = p.mode === 'trigger' && p.trigger
           ? 'active when {' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value
@@ -230,7 +253,7 @@
           : p.mode === 'inactive' ? 'off — switch on from its editor'
           : 'the persona this chat uses';
         rows +=
-          '<button class="pv-row" data-persona="' + escAttr(p.id) + '">' +
+          '<button class="pv-row" style="position:relative" data-persona="' + escAttr(p.id) + '">' +
             '<span class="pv-row-ico">🎭</span>' +
             '<span class="pv-row-meta">' +
               '<span class="pv-row-title">' + esc(p.name) + '</span>' +
@@ -238,6 +261,7 @@
             '</span>' +
             '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;letter-spacing:0.3px;color:' + m.color + ';background:rgba(' + m.rgb + ',0.12);border:1px solid rgba(' + m.rgb + ',0.35);padding:3px 8px;border-radius:5px">' + esc(m.label) + '</span>' +
             '<span class="pv-row-chev">›</span>' +
+            '<span class="pp-heart' + (hearted[p.id] ? ' on' : '') + '" data-heart="' + escAttr(p.id) + '" title="endorse this persona">♥</span>' +
           '</button>';
       });
       if (!rows) rows = '<div class="art-loading">no personas yet — add one below</div>';
@@ -250,10 +274,11 @@
           '<span class="pv-row-meta"><span class="pv-row-title">New persona</span>' +
           '<span class="pv-row-sub">write one from scratch</span></span>' +
         '</button>' +
-        '<button class="pv-row" style="opacity:0.55">' +
-          '<span class="pv-row-ico">☁</span>' +
+        '<button class="pv-row" data-hub-library="1">' +
+          '<span class="pv-row-ico">◈</span>' +
           '<span class="pv-row-meta"><span class="pv-row-title">Persona library</span>' +
-          '<span class="pv-row-sub">coming soon — picking a free home for it</span></span>' +
+          '<span class="pv-row-sub">the community hub — browse, install, publish</span></span>' +
+          '<span class="pv-row-chev">›</span>' +
         '</button>' +
         '<div class="pv-section-label">chat data</div>' +
         '<button class="pv-row" data-placeholders="1">' +
@@ -272,6 +297,32 @@
         var p = findPersona(b.getAttribute('data-persona'));
         if (p) PV().pushView(editorView(p));
       });
+    });
+    // v0.31: the heart badges — a tap endorses locally (stopPropagation so
+    // the card itself doesn't open the editor); the list re-renders with
+    // the hearted persona sorted to the top.
+    el.querySelectorAll('[data-heart]').forEach(function (h) {
+      h.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var id = h.getAttribute('data-heart');
+        var p = findPersona(id);
+        var on = !hearted[id];
+        fetch('/api/hub/persona/' + (on ? 'heart' : 'unheart'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id, name: p ? p.name : '' })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          if (!d || d.ok === false) throw new Error((d && d.error) || 'could not reach the hub');
+          if (on) hearted[id] = true; else delete hearted[id];
+          PV().replaceView(listView());
+        }).catch(function (err) { toast(err.message || 'could not reach the hub'); });
+      });
+    });
+    // v0.31: the persona library pill — the hub on its persona tab.
+    var hl = el.querySelector('[data-hub-library]');
+    if (hl) hl.addEventListener('click', function () {
+      if (window.Hub) window.Hub.open('persona');
+      else toast('the hub is not available');
     });
     var np = el.querySelector('[data-new-persona]');
     if (np) np.addEventListener('click', function () {
@@ -326,6 +377,7 @@
           actionPill('pe-save', 'save', 'disabled') +
           actionPill('pe-default', '↺ default') +
           actionPill('pe-dl', '⇩ .md') +
+          actionPill('pe-publish', '⇧ publish') +
           actionPill('pe-del', 'delete', 'style="color:var(--err);border-color:rgba(var(--err-rgb),0.4)"') +
         '</div>' +
         '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center;flex:none">' +
@@ -442,6 +494,15 @@
       a.href = url; a.download = safe + '.md';
       document.body.appendChild(a); a.click();
       setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
+    });
+
+    // v0.31: THE PUBLISH PILL — hands the persona (name + current text)
+    // to the hub publisher; the unsaved editor text is what gets shared.
+    var pubBtn = el.querySelector('#pe-publish');
+    if (pubBtn) pubBtn.addEventListener('click', function () {
+      if (!window.HubPublish) { toast('the hub is not available'); return; }
+      var text = cm ? cm.getValue() : (p.text || '');
+      window.HubPublish.open('persona', { name: p.name, payload: text });
     });
 
     var delBtn = el.querySelector('#pe-del');

@@ -193,7 +193,9 @@ with sync_playwright() as p:
     # ── 4. the tweaks pill + per-chat settings view ────────────────
     print("tweaks pill + per-chat view")
     utils = pg.locator(".util-btn")
-    ok(utils.count() == 3, "util row: export + tweaks + usage (3 pills)")
+    # v0.31 update: the util row gained the 4th pill (◈ hub) after usage —
+    # export + tweaks + usage + hub.
+    ok(utils.count() == 4, "util row: export + tweaks + usage + hub (4 pills)")
     ok("tweaks" in utils.nth(1).inner_text().lower(), "the tweaks pill sits between export and usage")
     utils.nth(1).click(); pg.wait_for_timeout(700)
     ok("tweaks" in pg.locator("#panel-name").inner_text().lower(), "the tweaks view opens")

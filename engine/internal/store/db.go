@@ -141,6 +141,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value      TEXT NOT NULL,
   updated_at REAL NOT NULL
 );
+
+-- v0.31: the Hub (modular library system) — items downloaded from (or
+-- published to) HF dataset repos, plus the heart state. One row per
+-- (type, id). Non-hub local hearts (the persona picker) are rows with
+-- repo='' and payload='' — they carry only type/id/name/hearted.
+CREATE TABLE IF NOT EXISTS hub_items (
+  type          TEXT NOT NULL,
+  id            TEXT NOT NULL,
+  repo          TEXT NOT NULL DEFAULT '',
+  name          TEXT NOT NULL DEFAULT '',
+  meta          TEXT NOT NULL DEFAULT '{}',  -- the full item JSON
+  payload       TEXT,
+  hearted       INTEGER NOT NULL DEFAULT 0,
+  hearted_at    TEXT,
+  downloaded_at TEXT,
+  PRIMARY KEY (type, id)
+);
 `
 	_, err := db.Exec(schema)
 	if err != nil {
