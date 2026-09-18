@@ -107,6 +107,7 @@
       this._backBtn = this.panelEl.querySelector('#panel-view-back');
       this._xBtn = this.panelEl.querySelector('#panel-view-x');
       this._modelBtn = this.panelEl.querySelector('#panel-model-btn');
+      this._starBtn = this.panelEl.querySelector('#panel-star-btn'); // v0.32.3
       if (this._backBtn) this._backBtn.addEventListener('click', function () { self.popView(); });
       if (this._xBtn) this._xBtn.addEventListener('click', function () { self.closeViews(); });
       // desktop nicety: Escape pops a view (the panel itself stays for
@@ -243,12 +244,14 @@
       while (this.bodyEl.firstChild) this._rootFrag.appendChild(this.bodyEl.firstChild);
       this._rootScroll = this.bodyEl.scrollTop;
       var mb = this._modelBtn;
+      var sb = this._starBtn;
       this._rootHeader = {
         name: this.nameEl.textContent,
         sub: this.subEl.textContent,
         avatar: this.avatarEl.innerHTML,
         modelDisplay: mb ? mb.style.display : '',
-        modelHTML: mb ? mb.innerHTML : ''
+        modelHTML: mb ? mb.innerHTML : '',
+        starDisplay: sb ? sb.style.display : '' // v0.32.3
       };
     }
 
@@ -269,6 +272,7 @@
           if (rh.modelHTML) this._modelBtn.innerHTML = rh.modelHTML;
           this._modelBtn.style.display = rh.modelDisplay || '';
         }
+        if (this._starBtn) this._starBtn.style.display = rh.starDisplay || ''; // v0.32.3
         this.bodyEl.scrollTop = this._rootScroll;
       }
       this._rootHeader = null;
@@ -296,6 +300,7 @@
       if (this._backBtn) this._backBtn.style.display = on ? 'flex' : 'none';
       if (this._xBtn) this._xBtn.style.display = on ? 'flex' : 'none';
       if (this._modelBtn && on) this._modelBtn.style.display = 'none';
+      if (this._starBtn && on) this._starBtn.style.display = 'none'; // v0.32.3
       if (on) {
         this.nameEl.textContent = title;
         this.nameEl.style.cursor = 'default';

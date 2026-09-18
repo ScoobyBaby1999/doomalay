@@ -543,6 +543,9 @@
           // is hidden until ChatPanel shows it (chat icons with a model).
           var modelBtn = document.getElementById('panel-model-btn');
           if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+          // v0.32.3: same reset for the ★ quick-switch button.
+          var starBtn = document.getElementById('panel-star-btn');
+          if (starBtn) { starBtn.style.display = 'none'; starBtn.onclick = null; }
           // v0.14: the chat UI is full-bleed (its own padding); other panel
           // types keep the default 20px from the stylesheet.
           panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';

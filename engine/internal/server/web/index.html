@@ -1436,6 +1436,21 @@
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   #panel-view-back:active, #panel-view-x:active { background: var(--surface-2); }
+  /* v0.32.3 F3: the ★ quick-switch — recent + starred models, one tap.
+     Amber kin to the model pill; 34px like the other header buttons. */
+  #panel-star-btn {
+    flex-shrink: 0; width: 34px; height: 34px;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.35);
+    border-radius: 8px; color: #eab308; font-size: 15px; line-height: 1;
+    cursor: pointer; font-family: inherit; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s, transform 0.12s cubic-bezier(0.32,0.72,0,1);
+  }
+  #panel-star-btn:hover { background: rgba(234,179,8,0.16); }
+  #panel-star-btn:active { transform: scale(0.9); background: rgba(234,179,8,0.2); }
+  #panel-star-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  @media (prefers-reduced-motion: reduce) { #panel-star-btn { transition: none; } }
   .panel-body.pv-mode {
     padding: 12px 14px calc(18px + env(safe-area-inset-bottom, 0px));
   }
@@ -1979,6 +1994,7 @@
          ✕ on the far right drops every view but keeps the panel open. -->
     <button id="panel-view-back" aria-label="Back" style="display:none">‹</button>
     <button id="panel-model-btn" aria-label="Change model"></button>
+    <button id="panel-star-btn" aria-label="Quick switch model" title="Quick switch — recent & starred" style="display:none">★</button>
     <div class="avatar" id="panel-avatar"></div>
     <div class="meta">
       <!-- v0.19: tap the name to rename. data-nodrag exempts it from the

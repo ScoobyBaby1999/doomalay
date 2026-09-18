@@ -161,8 +161,142 @@
       '.mb-star:hover{transform:scale(1.18)}' +
       '.mb-star:active{transform:scale(0.8)}' +
       '.mb-star:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
-      '.mb-keyform input::placeholder{color:var(--border-strong)}';
+      // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
+      '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
+      '.mb-keyform input::placeholder{color:var(--border-strong)}' +
+      // v0.32.3 F5: reduced-motion users get no transform theatrics.
+      '@media (prefers-reduced-motion: reduce){' +
+      '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
+      '.mb-chevbtn svg,.mb-hint,.mb-countline{transition:none!important;animation:none!important}' +
+      '}';
     document.head.appendChild(s);
+  }
+
+  // ── v0.32.3 F1/F2: module-level QUICK-SWITCH API ─────────────────────
+  //
+  // The chat panel's ★ button needs model resolution WITHOUT opening the
+  // overlay. These live at module scope (outside open()) and keep their
+  // own small catalog cache (2-min TTL — selection never wants stale
+  // key state for longer than that).
+  var quickCat = null;
+  var quickCatAt = 0;
+  var QUICK_TTL = 120000;
+
+  function fetchQuickCatalog(done) {
+    if (quickCat && Date.now() - quickCatAt < QUICK_TTL) { done(quickCat); return; }
+    fetch('/api/models').then(function (r) { return r.json(); }).then(function (d) {
+      quickCat = d || {};
+      quickCatAt = Date.now();
+      done(quickCat);
+    }).catch(function () { done(quickCat || {}); });
+  }
+
+  function findLogicalIn(cat, id) {
+    var L = (cat && cat.logical) || [];
+    for (var i = 0; i < L.length; i++) if (L[i].logical === id) return L[i];
+    return null;
+  }
+
+  // Hosts sorted by the user's priority order (same rule as open()).
+  function quickOrderedHosts(lm) {
+    var hosts = (lm.hosts || []).slice();
+    var order = (lsGet('hostOrder', {}))[lm.logical];
+    if (order && order.length) {
+      hosts.sort(function (a, b) {
+        var ia = order.indexOf(a.provider); var ib = order.indexOf(b.provider);
+        if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+        return ia - ib;
+      });
+    }
+    return hosts;
+  }
+
+  // F1: MRU recents (max 6 logical ids, newest first).
+  function rememberRecent(id) {
+    if (!id) return;
+    var rec = lsGet('recent', []);
+    rec = rec.filter(function (x) { return x !== id; });
+    rec.unshift(id);
+    if (rec.length > 6) rec.length = 6;
+    lsSet('recent', rec);
+  }
+
+  // Reverse lookup: which logical model does this provider+modelId belong
+  // to? (Used so host-slot and provider-view picks also feed recents.)
+  function logicalFor(provider, modelId) {
+    var L = (quickCat && quickCat.logical) || [];
+    for (var i = 0; i < L.length; i++) {
+      var hh = L[i].hosts || [];
+      for (var j = 0; j < hh.length; j++) {
+        if (hh[j].provider === provider && hh[j].modelId === modelId) return L[i].logical;
+      }
+    }
+    return null;
+  }
+
+  // F2: pick a logical model's best KEY-BACKED host (user priority order)
+  // without opening the overlay. onFail('nokey', lm) when nothing has a
+  // key; onFail('unknown') when the id left the catalog.
+  function quickPick(id, onPick, onFail) {
+    fetchQuickCatalog(function (cat) {
+      var lm = findLogicalIn(cat, id);
+      if (!lm) { if (onFail) onFail('unknown'); return; }
+      var hosts = quickOrderedHosts(lm);
+      var best = null;
+      for (var h = 0; h < hosts.length; h++) {
+        if (hosts[h].hasApiKey) { best = hosts[h]; break; }
+      }
+      if (!best) { if (onFail) onFail('nokey', lm); return; }
+      rememberRecent(id);
+      if (onPick) onPick(best.provider, best.modelId, lm);
+    });
+  }
+
+  // F2: resolve the recent + starred id lists into display rows:
+  //   {id, name, providerLabel, hasKey, isCurrent}
+  // opts.current = {provider, modelId} marks the chat's current model.
+  function quickEntries(opts, cb) {
+    opts = opts || {};
+    fetchQuickCatalog(function (cat) {
+      var hostOrder = lsGet('hostOrder', {});
+      function entry(id) {
+        var lm = findLogicalIn(cat, id);
+        if (!lm) return null; // left the catalog — drop silently
+        var hosts = (lm.hosts || []).slice();
+        var order = hostOrder[id];
+        if (order && order.length) {
+          hosts.sort(function (a, b) {
+            var ia = order.indexOf(a.provider); var ib = order.indexOf(b.provider);
+            if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+            return ia - ib;
+          });
+        }
+        var best = null, cur = false;
+        // v0.32.3: state.model is canonical (provider/modelId); the
+        // catalog's host modelId may lack that prefix — accept either
+        // (same rule as open()'s isCurrentModel).
+        var wanted = opts.current && opts.current.modelId ? String(opts.current.modelId) : '';
+        for (var i = 0; i < hosts.length; i++) {
+          if (!best && hosts[i].hasApiKey) best = hosts[i];
+          if (opts.current && hosts[i].provider === opts.current.provider &&
+              (hosts[i].modelId === wanted ||
+               (hosts[i].provider + '/' + hosts[i].modelId) === wanted ||
+               lm.logical === wanted)) cur = true;
+        }
+        return {
+          id: id,
+          name: lm.displayName || lm.logical,
+          provider: best ? best.provider : null,
+          providerLabel: best ? (best.providerDisplayName || best.provider) : 'no key',
+          hasKey: !!best,
+          isCurrent: cur
+        };
+      }
+      cb({
+        recent: lsGet('recent', []).map(entry).filter(Boolean),
+        starred: lsGet('starred', []).map(entry).filter(Boolean)
+      });
+    });
   }
 
   // v0.32.1 F: Esc closes the overlay. v0.32.2 C: "/" focuses search.
@@ -219,6 +353,8 @@
       if (refresh) syncing = true;
       fetch(url).then(function (r) { return r.json(); }).then(function (d) {
         catalog = d || {};
+        quickCat = catalog; // v0.32.3: keep the module-level quick cache warm
+        quickCatAt = Date.now();
         buildFamBm();
         syncedAt = Date.now();
         syncing = false;
@@ -257,7 +393,11 @@
       // v0.32.2 C: the debounced re-render replaces the search input —
       // remember focus + caret and restore them after the swap, so typing
       // through a 200ms pause doesn't lose the caret (the old behaviour).
+      // v0.32.3 F4: ALSO remember a focused keyboard row — a background
+      // re-render (search debounce, catalog sync) must not strand a
+      // keyboard user on <body>.
       var keepFocus = false, caret = 0;
+      var kbRefocusSel = null; // row selector to refocus after the swap
       if (opened) {
         var oldEl = window.ConnectOverlay.getContentEl();
         var oldSi = oldEl && oldEl.querySelector('#mb-search');
@@ -265,6 +405,13 @@
           keepFocus = true;
           caret = oldSi.selectionStart;
           if (typeof caret !== 'number') caret = oldSi.value.length;
+        } else if (oldEl && document.activeElement) {
+          var ae = document.activeElement;
+          if (ae.classList && ae.classList.contains('mb-logrow') && ae.dataset.logicalId) {
+            kbRefocusSel = '.mb-logrow[data-logical-id="' + String(ae.dataset.logicalId).replace(/"/g, '\\"') + '"]';
+          } else if (ae.hasAttribute && ae.hasAttribute('data-provhead') && ae.dataset.provhead) {
+            kbRefocusSel = '[data-provhead="' + String(ae.dataset.provhead).replace(/"/g, '\\"') + '"]';
+          }
         }
       }
 
@@ -275,6 +422,7 @@
           window.ConnectOverlay.open(html, { onSwap: wireEvents });
         }
         opened = true;
+        bindKeyboardNav(); // v0.32.3 F4: one keydown binding per open()
       } else {
         var contentEl = window.ConnectOverlay.getContentEl();
         contentEl.innerHTML = html;
@@ -287,7 +435,126 @@
           newSi.focus();
           try { newSi.setSelectionRange(caret, caret); } catch (e) {}
         }
+      } else if (kbRefocusSel) {
+        var kbRow = window.ConnectOverlay.getContentEl().querySelector(kbRefocusSel);
+        if (kbRow) {
+          // keep exactly one tab stop (roving tabindex) and stay focused
+          var kbRows = window.ConnectOverlay.getContentEl().querySelectorAll(
+            view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]');
+          for (var k = 0; k < kbRows.length; k++) kbRows[k].tabIndex = -1;
+          kbRow.tabIndex = 0;
+          kbRow.focus();
+        }
       }
+    }
+
+    // v0.32.3 F4: keyboard navigation (roving tabindex, WAI-APG).
+    // Arrows move focus among the logical rows (models view) or provider
+    // box headers (providers view); Enter/Space selects or toggles;
+    // ArrowRight/Left expand/collapse; Home/End jump to the ends; the
+    // search box's ArrowDown drops into the list. el.focus() scrolls the
+    // newly focused row into view — the APG's roving-tabindex benefit.
+    var kbBound = false;
+    function bindKeyboardNav() {
+      if (kbBound) return;
+      kbBound = true;
+      var contentEl = window.ConnectOverlay.getContentEl();
+      function visibleKbRows() {
+        var sel = view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]';
+        var els = contentEl.querySelectorAll(sel);
+        var out = [];
+        for (var i = 0; i < els.length; i++) {
+          if (els[i].offsetParent !== null) out.push(els[i]);
+        }
+        return out;
+      }
+      function focusKbRow(el) {
+        if (!el || !el.offsetParent) return;
+        var rows = visibleKbRows();
+        for (var i = 0; i < rows.length; i++) rows[i].tabIndex = -1;
+        el.tabIndex = 0; // the roving tab stop follows the keyboard focus
+        el.focus();
+      }
+      function refocusAfterRender(selector) {
+        var again = contentEl.querySelector(selector);
+        if (again) focusKbRow(again);
+      }
+      contentEl.addEventListener('keydown', function (e) {
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) {
+          if (t.id === 'mb-search' && e.key === 'ArrowDown') {
+            var r0 = visibleKbRows()[0];
+            if (r0) { e.preventDefault(); focusKbRow(r0); }
+          }
+          return; // typing in the search box owns every other key
+        }
+        var rows = visibleKbRows();
+        if (!rows.length) return;
+        var row = (t && t.classList && (t.classList.contains('mb-logrow') || t.hasAttribute('data-provhead'))) ? t : null;
+        if (!row) return; // inner controls (stars, ▲▼, pills) keep their keys
+        var idx = rows.indexOf(row);
+        if (idx < 0) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          var next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+          if (next < 0) next = rows.length - 1;
+          if (next >= rows.length) next = 0;
+          focusKbRow(rows[next]);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          focusKbRow(rows[0]);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          focusKbRow(rows[rows.length - 1]);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var name = row.dataset.provhead;
+            providerExpanded[name] = !providerExpanded[name];
+            lsSet('providerExpanded', providerExpanded);
+            render();
+            refocusAfterRender('[data-provhead="' + (name && name.replace(/"/g, '\\"')) + '"]');
+          } else {
+            selectLogical(row.dataset.logicalId);
+          }
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var pn = row.dataset.provhead;
+            if (!providerExpanded[pn]) {
+              providerExpanded[pn] = true;
+              lsSet('providerExpanded', providerExpanded);
+              render();
+              refocusAfterRender('[data-provhead="' + (pn && pn.replace(/"/g, '\\"')) + '"]');
+            }
+          } else {
+            var lid = row.dataset.logicalId;
+            if (!expandedLogical[lid]) {
+              expandedLogical[lid] = true;
+              render();
+              refocusAfterRender('.mb-logrow[data-logical-id="' + (lid && lid.replace(/"/g, '\\"')) + '"]');
+            }
+          }
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var cn = row.dataset.provhead;
+            if (providerExpanded[cn]) {
+              delete providerExpanded[cn];
+              lsSet('providerExpanded', providerExpanded);
+              render();
+              refocusAfterRender('[data-provhead="' + (cn && cn.replace(/"/g, '\\"')) + '"]');
+            }
+          } else {
+            var clid = row.dataset.logicalId;
+            if (expandedLogical[clid]) {
+              delete expandedLogical[clid];
+              render();
+              refocusAfterRender('.mb-logrow[data-logical-id="' + (clid && clid.replace(/"/g, '\\"')) + '"]');
+            }
+          }
+        }
+      });
     }
 
     function header() {
@@ -333,7 +600,7 @@
 
     function searchBox() {
       return '<div style="margin-bottom:10px">' +
-        '<input id="mb-search" type="text" inputmode="search" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
+        '<input id="mb-search" type="text" inputmode="search" autocomplete="off" spellcheck="false" aria-label="Search models" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
         '</div>';
     }
 
@@ -424,7 +691,7 @@
         // undefined, so this check used to skip EVERY box when the filter
         // was on ("No providers with API keys yet" with 2 keys set).
         if (availOnly && !groups[i].hasApiKey) continue;
-        out += providerBox(groups[i]);
+        out += providerBox(groups[i], shown === 0);
         shown++;
       }
       if (!groups.length) {
@@ -439,7 +706,7 @@
       return counts + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
 
-    function providerBox(g) {
+    function providerBox(g, kbFirst) {
       var expanded = !!providerExpanded[g.name];
       var matching = [];
       var filteredOut = 0;
@@ -482,7 +749,7 @@
           '</div>';
       }
       return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
-        '<div data-provhead="' + escAttr(g.name) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
+        '<div data-provhead="' + escAttr(g.name) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
           '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
           '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
           '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
@@ -507,7 +774,7 @@
       var star = m.family ? starBtnHtml(m.family) : '';
       return '<div data-slot="' + escAttr(m.id) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
         '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-        '<span style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(m.displayName || m.rawId) + '</span>' +
+        '<span title="' + escAttr(m.displayName || m.rawId) + '" style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(m.displayName || m.rawId) + '</span>' +
         star +
         caps +
         '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
@@ -522,6 +789,22 @@
     }
 
     // ── Models view (logical, all providers combined) ────────────────────
+
+    // v0.32.3 F5: friendly zero-result state (search or filters).
+    function emptyStateHtml() {
+      var hasSearch = !!search;
+      var hasFilters = filters.length > 0 || pricing !== 'all' || ctxMin > 0;
+      var h = '<div style="text-align:center;padding:36px 20px">' +
+        '<div style="font-size:26px;color:var(--text-3);margin-bottom:8px">⌕</div>' +
+        '<div style="font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);margin-bottom:4px">No models match</div>' +
+        '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin-bottom:14px">' +
+        (hasSearch && hasFilters ? 'the search and filters together hide everything' : (hasSearch ? 'nothing matches the search' : 'the filters hide everything')) +
+        '</div>';
+      if (hasSearch) h += '<button data-emptyclear="search" style="background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);font-family:inherit;font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;margin:0 3px">Clear search</button>';
+      if (hasFilters) h += '<button data-emptyclear="filters" style="background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);font-family:inherit;font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;margin:0 3px">Clear filters</button>';
+      h += '</div>';
+      return h;
+    }
 
     function modelsView() {
       var logical = ((catalog && catalog.logical) || []).slice();
@@ -538,9 +821,12 @@
       var starredEmpty = filters.indexOf('starred') >= 0 && !starred.length;
       if (starredEmpty) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">No starred models yet — tap the <span style="color:#eab308">★</span> on a model to pin it here.</div>';
+      } else if (!matching.length) {
+        // v0.32.3 F5: friendly zero-result state (search or filters)
+        out = emptyStateHtml();
       }
       for (var l = 0; l < matching.length; l++) {
-        out += logicalRow(matching[l]);
+        out += logicalRow(matching[l], l === 0);
       }
       var hidden = logical.length - matching.length;
       if (hidden > 0 && !starredEmpty) {
@@ -641,7 +927,7 @@
       return false;
     }
 
-    function logicalRow(lm) {
+    function logicalRow(lm, kbFirst) {
       var expanded = !!expandedLogical[lm.logical];
       var hosts = orderedHosts(lm);
       var available = hosts.some(function (h) { return h.hasApiKey; });
@@ -696,7 +982,7 @@
       var leftZone =
         '<div data-select="' + escAttr(lm.logical) + '" role="button" title="' + (isCur ? 'current model — tap to keep' : 'select this model') + '" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
           '<span style="width:8px;height:8px;border-radius:50%;border:1.5px solid ' + (isCur ? 'var(--ok)' : '#a855f7') + ';' + (isCur ? 'background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' : '') + 'flex-shrink:0"></span>' +
-          '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
+          '<span title="' + escAttr(lm.displayName || lm.logical) + '" style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
           starBtnHtml(lm.logical) +
         '</div>';
       var separator = '<span style="width:1px;height:20px;background:var(--border);flex-shrink:0;opacity:0.9"></span>';
@@ -737,9 +1023,12 @@
       var dim = available ? '' : 'opacity:0.55;filter:saturate(0.6);';
 
       // v0.32.1 E: the current row wears the mb-cur ring (see styles).
-      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
+      // v0.32.3 F4: roving tabindex — the first row is tabbable, the rest
+      // are arrow-reachable (WAI-APG pattern); data-logical-id serves the
+      // Enter-to-select keyboard path.
+      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
         '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">' + leftZone + separator + rightZone + '</div>' +
-        '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' +
+        (chips ? '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' : '') +
         (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
         '</div>';
     }
@@ -899,6 +1188,7 @@
         showHint('No API key yet for any provider of ' + escHTML(lm.displayName || lm.logical) + ' — add one in the Providers tab.');
         return;
       }
+      rememberRecent(logical); // v0.32.3 F1: recents feed the ★ quick-switch
       window.ConnectOverlay.close();
       if (onPick) onPick(best.provider, best.modelId);
     }
@@ -1314,6 +1604,21 @@
         render();
       });
 
+      // v0.32.3 F5: the zero-result empty state's clear buttons.
+      contentEl.querySelectorAll('[data-emptyclear]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          if (b.dataset.emptyclear === 'search') {
+            search = '';
+            var si = contentEl.querySelector('#mb-search');
+            if (si) si.value = '';
+          } else {
+            filters = []; ctxMin = 0; pricing = 'all';
+            lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
+          }
+          render();
+        });
+      });
+
       // v0.32.1 B: the sort select.
       var sortSel = contentEl.querySelector('#mb-sort');
       if (sortSel) sortSel.addEventListener('change', function () {
@@ -1417,6 +1722,8 @@
           var slash = slot.indexOf('/');
           var provider = slot.slice(0, slash);
           var modelId = slot.slice(slash + 1);
+          var lg = logicalFor(provider, modelId); // v0.32.3 F1
+          if (lg) rememberRecent(lg);
           window.ConnectOverlay.close();
           if (onPick) onPick(provider, modelId);
         });
@@ -1455,6 +1762,8 @@
           var parts = row.dataset.hostslot.split('|');
           var provider = parts.shift();
           var modelId = parts.join('|');
+          var lg = logicalFor(provider, modelId); // v0.32.3 F1
+          if (lg) rememberRecent(lg);
           window.ConnectOverlay.close();
           if (onPick) onPick(provider, modelId);
         });
@@ -1544,5 +1853,5 @@
     function escHTML(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   }
 
-  window.ModelBrowser = { open: open };
+  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries };
 })();
