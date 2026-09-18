@@ -42,6 +42,22 @@
 //      aria-pressed; rows/boxes get hover borders + aria-expanded.
 //   G. Benchmark chips grow score mini-bars.
 //
+// v0.32.2 (QA round 3):
+//   A. STARRED favorites: ★ button on every model row (models view +
+//      provider view rows), "Starred" filter pill, "★ Starred first"
+//      sort, persisted (.starred). Starring updates in place — no
+//      re-render, so scroll position survives.
+//   B. REAL PRICE chips: paid rows show "$0.91/M" (parsed from
+//      attributes.pricing) instead of a bare "paid" — tooltip carries the
+//      full pricing string.
+//   C. SEARCH UX FIX: the 200ms-debounced re-render used to replace the
+//      input mid-typing (focus + caret lost after any pause > 200ms).
+//      render() now preserves focus + caret across re-renders. "/" focuses
+//      search; Esc inside a non-empty search clears it (instead of closing
+//      the whole overlay); empty search + Esc blurs.
+//   D. Friendly empty state when the Starred pill is on but nothing is
+//      starred yet.
+//
 // 100% RUNTIME DATA: everything comes from GET /api/models. Selection
 // picks the best host and calls onPick(provider, modelId).
 //
@@ -65,7 +81,8 @@
     { key: 'agent', label: 'Agent', color: '#14b8a6' },
     { key: 'tools', label: 'Tools', color: '#8b5cf6' },
     { key: 'vision', label: 'Vision', color: '#22c55e' },
-    { key: 'available', label: 'Available', color: '#10b981' }
+    { key: 'available', label: 'Available', color: '#10b981' },
+    { key: 'starred', label: 'Starred', color: '#eab308' } // v0.32.2 A
   ];
   var CTX_OPTIONS = [
     { label: 'Any', v: 0 },
@@ -85,8 +102,9 @@
 
   // v0.32.1 B: sort options for the models tab (persisted as .sort).
   var SORTS = [
-    { key: 'best',  label: 'Best' },
-    { key: 'aa',    label: 'Smartest (AA)' },
+    { key: 'best',    label: 'Best' },
+    { key: 'starred', label: '★ Starred first' }, // v0.32.2 A
+    { key: 'aa',      label: 'Smartest (AA)' },
     { key: 'agent', label: 'Top agent' },
     { key: 'code',  label: 'Top code' },
     { key: 'price', label: 'Cheapest' },
@@ -138,18 +156,30 @@
       '@keyframes mb-hint-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}' +
       '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
       '.mb-countline{animation:mb-hint-in 160ms cubic-bezier(0.32,0.72,0,1)}' +
+      // v0.32.2 A: the star button — pressable, amber when on.
+      '.mb-star{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),color 130ms,background 130ms,border-color 130ms}' +
+      '.mb-star:hover{transform:scale(1.18)}' +
+      '.mb-star:active{transform:scale(0.8)}' +
+      '.mb-star:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-keyform input::placeholder{color:var(--border-strong)}';
     document.head.appendChild(s);
   }
 
-  // v0.32.1 F: Esc closes the overlay (bound once per page).
+  // v0.32.1 F: Esc closes the overlay. v0.32.2 C: "/" focuses search.
+  // (Bound once per page.)
   var escBound = false;
   function bindEscOnce() {
     if (escBound) return;
     escBound = true;
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
+      if (!window.ConnectOverlay || !window.ConnectOverlay.isOpen()) return;
+      if (e.key === 'Escape') {
         window.ConnectOverlay.close();
+      } else if (e.key === '/') {
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+        var si = window.ConnectOverlay.getContentEl().querySelector('#mb-search');
+        if (si) { e.preventDefault(); si.focus(); }
       }
     });
   }
@@ -173,6 +203,7 @@
     var sortKey = lsGet('sort', 'best');
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
+    var starred = lsGet('starred', []); // v0.32.2 A: logical/family ids
 
     // Catalog data.
     var catalog = null;
@@ -223,6 +254,20 @@
         footer() +
         '</div>';
 
+      // v0.32.2 C: the debounced re-render replaces the search input —
+      // remember focus + caret and restore them after the swap, so typing
+      // through a 200ms pause doesn't lose the caret (the old behaviour).
+      var keepFocus = false, caret = 0;
+      if (opened) {
+        var oldEl = window.ConnectOverlay.getContentEl();
+        var oldSi = oldEl && oldEl.querySelector('#mb-search');
+        if (oldSi && oldSi === document.activeElement) {
+          keepFocus = true;
+          caret = oldSi.selectionStart;
+          if (typeof caret !== 'number') caret = oldSi.value.length;
+        }
+      }
+
       if (!opened) {
         if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
           window.ConnectOverlay.replaceContent(html, { onSwap: wireEvents });
@@ -234,6 +279,14 @@
         var contentEl = window.ConnectOverlay.getContentEl();
         contentEl.innerHTML = html;
         wireEvents();
+      }
+
+      if (keepFocus) {
+        var newSi = window.ConnectOverlay.getContentEl().querySelector('#mb-search');
+        if (newSi) {
+          newSi.focus();
+          try { newSi.setSelectionRange(caret, caret); } catch (e) {}
+        }
       }
     }
 
@@ -450,13 +503,22 @@
         ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0">free</span>'
         : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
       var caps = (m.capabilities || []).length ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3);flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
+      // v0.32.2 A: star the FAMILY (logical id) — same list as models view.
+      var star = m.family ? starBtnHtml(m.family) : '';
       return '<div data-slot="' + escAttr(m.id) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
         '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
         '<span style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(m.displayName || m.rawId) + '</span>' +
+        star +
         caps +
         '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
         priceChip +
         '</div>';
+    }
+
+    // v0.32.2 A: the star toggle button (rendered per row).
+    function starBtnHtml(key) {
+      var on = starred.indexOf(key) >= 0;
+      return '<button data-star="' + escAttr(key) + '" data-nodrag class="mb-star" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + (on ? 'unstar this model' : 'star this model') + '" style="background:' + (on ? 'rgba(234,179,8,0.12)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(234,179,8,0.45)' : 'transparent') + ';color:' + (on ? '#eab308' : 'var(--border-strong)') + ';width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:7px;flex-shrink:0;cursor:pointer;font-size:13px;padding:0;line-height:1;font-family:inherit;touch-action:manipulation">★</button>';
     }
 
     // ── Models view (logical, all providers combined) ────────────────────
@@ -470,11 +532,18 @@
       // v0.32.1 B: explicit sort (pills still re-rank under 'best').
       applySort(matching);
       var out = '';
+      // v0.32.2 D: friendly empty state when Starred is on but nothing is
+      // starred yet. (The starred filter empties the list anyway; this
+      // replaces it with an actionable hint instead of just "N hidden".)
+      var starredEmpty = filters.indexOf('starred') >= 0 && !starred.length;
+      if (starredEmpty) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">No starred models yet — tap the <span style="color:#eab308">★</span> on a model to pin it here.</div>';
+      }
       for (var l = 0; l < matching.length; l++) {
         out += logicalRow(matching[l]);
       }
       var hidden = logical.length - matching.length;
-      if (hidden > 0) {
+      if (hidden > 0 && !starredEmpty) {
         out += '<div data-clearall title="clear all filters" style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center;cursor:pointer">' + hidden + ' models hidden by filters · <span style="color:var(--accent);text-decoration:underline">clear</span></div>';
       }
       if (!logical.length) {
@@ -522,7 +591,14 @@
         return;
       }
       var nameOf = function (m) { return String(m.displayName || m.logical || ''); };
-      if (k === 'aa') {
+      // v0.32.2 A: starred models float to the top, ties alphabetical.
+      if (k === 'starred') {
+        list.sort(function (a, b) {
+          var sa = starred.indexOf(a.logical) >= 0 ? 1 : 0;
+          var sb = starred.indexOf(b.logical) >= 0 ? 1 : 0;
+          return sb - sa || nameOf(a).localeCompare(nameOf(b));
+        });
+      } else if (k === 'aa') {
         list.sort(function (a, b) { return (bmOf(b).intelligence || 0) - (bmOf(a).intelligence || 0) || nameOf(a).localeCompare(nameOf(b)); });
       } else if (k === 'agent') {
         list.sort(function (a, b) { return (bmOf(b).agentic || 0) - (bmOf(a).agentic || 0) || nameOf(a).localeCompare(nameOf(b)); });
@@ -594,9 +670,17 @@
         chips += capChip(caps[c]);
       }
       if (attrs.effortLevels && attrs.effortLevels.length) chips += capChip('effort');
-      var priceChip = lm.isFree
-        ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>'
-        : '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px">paid</span>';
+      // v0.32.2 B: real price — "$0.91/M" parsed from attributes.pricing
+      // (tooltip = full string); falls back to bare "paid".
+      var priceChip;
+      if (lm.isFree) {
+        priceChip = '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>';
+      } else {
+        var pMatch = String(attrs.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+        priceChip = pMatch
+          ? '<span title="' + escAttr(attrs.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px;white-space:nowrap">$' + pMatch[1] + '/M</span>'
+          : '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px">paid</span>';
+      }
 
       // v0.32 #6: the big, obvious chevron button (rotates when open) —
       // the affordance for the provider-priority dropdown.
@@ -607,10 +691,13 @@
       // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
       // priority dropdown. The 1px separator marks the hotspot boundary.
       // v0.32.1 E: the current model wears a filled radio + green ring.
+      // v0.32.2 A: the star toggle rides at the end of the left zone
+      // (stopPropagation — tapping it must NOT select the model).
       var leftZone =
         '<div data-select="' + escAttr(lm.logical) + '" role="button" title="' + (isCur ? 'current model — tap to keep' : 'select this model') + '" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
           '<span style="width:8px;height:8px;border-radius:50%;border:1.5px solid ' + (isCur ? 'var(--ok)' : '#a855f7') + ';' + (isCur ? 'background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' : '') + 'flex-shrink:0"></span>' +
           '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
+          starBtnHtml(lm.logical) +
         '</div>';
       var separator = '<span style="width:1px;height:20px;background:var(--border);flex-shrink:0;opacity:0.9"></span>';
       var rightZone =
@@ -700,10 +787,15 @@
       if (pricing === 'paid' && m.isFree) return false;
       // v0.32 #4: "available" — the provider must have an API key.
       if (filters.indexOf('available') >= 0 && !g.hasApiKey) return false;
+      // v0.32.2 A: "starred" — the model's family must be starred.
+      if (filters.indexOf('starred') >= 0 && starred.indexOf(m.family || '') < 0) return false;
       // v0.32.1 A BUGFIX: 'available' alone must NOT route into the caps
       // matcher (no capability branch matches it → every model hidden).
+      // v0.32.2: same for 'starred'.
       var capFiltersM = [];
-      for (var fmi = 0; fmi < filters.length; fmi++) if (filters[fmi] !== 'available') capFiltersM.push(filters[fmi]);
+      for (var fmi = 0; fmi < filters.length; fmi++) {
+        if (filters[fmi] !== 'available' && filters[fmi] !== 'starred') capFiltersM.push(filters[fmi]);
+      }
       if (capFiltersM.length) {
         var bm = famBm[m.family] || {};
         return matchesFiltersCaps((m.capabilities || []), m.effortLevels, bm, String(m.rawId || '') + ' ' + String(m.displayName || ''));
@@ -725,12 +817,17 @@
       // v0.32 #4: "available" — ≥1 host with an API key (position in the
       // priority order is irrelevant).
       if (filters.indexOf('available') >= 0 && !(lm.hosts || []).some(function (h) { return h.hasApiKey; })) return false;
+      // v0.32.2 A: "starred" — this logical model must be starred.
+      if (filters.indexOf('starred') >= 0 && starred.indexOf(lm.logical) < 0) return false;
       // v0.32.1 A BUGFIX: same as modelMatches — 'available' as the ONLY
       // filter must not fall through into the capability matcher (none of
       // its branches match 'available', so the list used to go empty:
       // "503 models hidden by filters" while 148 were key-backed).
+      // v0.32.2: same exclusion for 'starred'.
       var capFiltersL = [];
-      for (var fli = 0; fli < filters.length; fli++) if (filters[fli] !== 'available') capFiltersL.push(filters[fli]);
+      for (var fli = 0; fli < filters.length; fli++) {
+        if (filters[fli] !== 'available' && filters[fli] !== 'starred') capFiltersL.push(filters[fli]);
+      }
       if (capFiltersL.length) {
         var attrs = lm.attributes || {};
         return matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''));
@@ -863,8 +960,10 @@
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
-      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);text-align:center">' +
-        'tap the name to select · the dots open priority · ⠿ drag to re-order · ' + liveCount() + ' providers live' +
+      // v0.32.2 (VLM round 3): --text-2 when available — the hint must be
+      // readable, not a whisper.
+      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
+        'tap the name to select · the dots open priority · ★ stars a favorite · ⠿ drag to re-order · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -1138,6 +1237,21 @@
 
       var searchInput = contentEl.querySelector('#mb-search');
       if (searchInput) {
+        // v0.32.2 C: Esc inside a non-empty search clears it (instead of
+        // closing the whole overlay); empty + Esc blurs. stopPropagation so
+        // the document-level Esc-close doesn't also fire.
+        searchInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            if (searchInput.value) {
+              searchInput.value = '';
+              search = '';
+              render(); // focus+caret are restored by render()
+            } else {
+              searchInput.blur();
+            }
+          }
+        });
         searchInput.addEventListener('input', function () {
           if (searchTimer) clearTimeout(searchTimer);
           searchTimer = setTimeout(function () {
@@ -1206,6 +1320,30 @@
         sortKey = sortSel.value;
         lsSet('sort', sortKey);
         render();
+      });
+
+      // v0.32.2 A: star toggles. In-place restyle (no re-render) so the
+      // scroll position survives — EXCEPT when the Starred pill is active
+      // (then the row must leave/enter the list).
+      contentEl.querySelectorAll('[data-star]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (clickSuppressed()) return;
+          var key = btn.dataset.star;
+          var wasOn = starred.indexOf(key) >= 0;
+          if (wasOn) {
+            starred.splice(starred.indexOf(key), 1);
+          } else {
+            starred.push(key);
+          }
+          lsSet('starred', starred);
+          if (filters.indexOf('starred') >= 0) { render(); return; }
+          btn.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+          btn.title = wasOn ? 'star this model' : 'unstar this model';
+          btn.style.color = wasOn ? 'var(--border-strong)' : '#eab308';
+          btn.style.background = wasOn ? 'transparent' : 'rgba(234,179,8,0.12)';
+          btn.style.borderColor = wasOn ? 'transparent' : 'rgba(234,179,8,0.45)';
+        });
       });
 
       // v0.32.1 D: inline add-key flow on view-only provider boxes.
