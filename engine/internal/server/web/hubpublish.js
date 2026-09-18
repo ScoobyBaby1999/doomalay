@@ -391,6 +391,12 @@
   }
 
   // ── the HF connect flow (stacked OVER the intact publish form) ─────
+  // v0.31.2 (user spec): the step headers are BRIGHTER (accent via the
+  // formatter's own --fmt-bright / --fmt-link slots) and the step
+  // subtexts are LARGER, in a primary theme color, with DETAILED
+  // instructions that mirror the real HF token page (pick WRITE — not
+  // Fine-grained/CI-CD/Full Access; the link pre-selects Write). Flow
+  // logic is unchanged: 401 → inline error, success → auto-resume.
   function openConnect() {
     if (!cur) return;
     var panel = cur.panel;
@@ -398,10 +404,11 @@
       return (
         '<div class="hp-root">' +
         '<p class="pv-hint">Publishing runs through <b>your own Hugging Face account</b> — a free token with the <b>repo.write</b> scope is all it takes. The engine keeps it in its secrets vault; this page never sees it.</p>' +
-        '<div class="pv-section-label">step 1 · create a token</div>' +
-        '<p class="pv-hint" style="margin:0 2px 8px">Open Hugging Face (you are probably already logged in), create the token, copy it.</p>' +
+        '<div class="hc-step"><span class="hc-num">step 1</span>Open Hugging Face and create a token</div>' +
+        '<p class="hc-sub">After logging in, scroll down to the ‘New token’ section. Under ‘Create new Access Token’, pick a name (e.g. doomalay), then select a Token type: choose WRITE. Write tokens let Doomalay push to the Hub: it can create your library datasets, read repository contents, and upload your published items. You do NOT need Fine-grained, CI/CD, or Full Access. (The link below opens the page with Write already selected.)</p>' +
         '<button id="hc-open" class="pv-btn" style="width:100%">Open Hugging Face ↗</button>' +
-        '<div class="pv-section-label">step 2 · paste it here</div>' +
+        '<div class="hc-step"><span class="hc-num">step 2</span>Paste your new token here</div>' +
+        '<p class="hc-sub">On the Hugging Face page, click ‘Create token’ and copy the token it shows you (it starts with hf_ and is shown only once). Paste it below — Doomalay verifies it and remembers it in your device’s secret vault. You never leave the app.</p>' +
         '<input id="hc-token" class="pv-input" type="text" placeholder="hf_…" autocomplete="off">' +
         '<button id="hc-connect" class="pv-btn pv-btn-primary" style="width:100%;margin-top:8px">connect</button>' +
         '<div class="hp-err" id="hc-err"></div>' +

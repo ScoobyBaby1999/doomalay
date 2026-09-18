@@ -193,9 +193,10 @@ with sync_playwright() as p:
     # ── 4. the tweaks pill + per-chat settings view ────────────────
     print("tweaks pill + per-chat view")
     utils = pg.locator(".util-btn")
-    # v0.31 update: the util row gained the 4th pill (◈ hub) after usage —
-    # export + tweaks + usage + hub.
-    ok(utils.count() == 4, "util row: export + tweaks + usage + hub (4 pills)")
+    # v0.31.2 update: the util row is back to 3 pills — the ◈ hub pill
+    # (added v0.31.0) moved to the CANVAS DOCK (the library glyph in the
+    # strip left of the settings gear). export + tweaks + usage.
+    ok(utils.count() == 3, "util row: export + tweaks + usage (3 pills — hub moved to the canvas dock)")
     ok("tweaks" in utils.nth(1).inner_text().lower(), "the tweaks pill sits between export and usage")
     utils.nth(1).click(); pg.wait_for_timeout(700)
     ok("tweaks" in pg.locator("#panel-name").inner_text().lower(), "the tweaks view opens")

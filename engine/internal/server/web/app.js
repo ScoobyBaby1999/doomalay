@@ -607,6 +607,9 @@
 
   // ── Event listeners ───────────────────────────────────────────
   const settingsBtnEl = document.getElementById('settings-btn');
+  // v0.31.2: the canvas dock — the › arrow + its strip, left of the gear.
+  const dockToggleEl = document.getElementById('dock-toggle');
+  const dockStripEl = document.getElementById('dock-strip');
 
   function isInsideUI(target) {
     if (!target) return false;
@@ -631,6 +634,10 @@
     // the sheet's buttons were dead on Android while desktop dogfooding
     // and Playwright both passed. It is deleted now; the master panel and
     // the connect overlay are the only two panel types left.)
+    // v0.31.2: the canvas dock joins its gear sibling — without these
+    // checks the strip's buttons die the same death on Android.
+    if (dockStripEl && dockStripEl.contains(target)) return true;
+    if (dockToggleEl && dockToggleEl.contains(target)) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
@@ -733,12 +740,90 @@
     if (e.detail.action === 'reset-view') {
       window.doomalay.resetView();
     }
-    if (e.detail.action === 'connect-cloud') {
-      // Settings → Cloud → "Connect Cloud Providers": pop up the provider
-      // screen over the settings panel (no chat to configure — key mgmt).
-      window.ProvidersScreen.open(null, {});
-    }
   });
+
+  // ── v0.31.2: THE CANVAS DOCK ──────────────────────────────────
+  // A › arrow sits left of the settings gear. Tapping it flips to ‹ and
+  // expands a vertical strip holding the two relocated entries: the
+  // cloud provider screen (was Settings → Cloud) and the hub library
+  // (was the chat util row's ◈ pill). The collapsed/expanded state
+  // persists (doomalay.dock.v1) and is re-applied on every boot.
+  const DOCK_KEY = 'doomalay.dock.v1';
+
+  function dockApply(expanded) {
+    if (dockToggleEl) {
+      dockToggleEl.textContent = expanded ? '‹' : '›';
+      dockToggleEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      dockToggleEl.setAttribute('aria-label', expanded ? 'Collapse dock' : 'Expand dock');
+    }
+    if (dockStripEl) dockStripEl.classList.toggle('hidden', !expanded);
+  }
+  function dockIsExpanded() {
+    return !!(dockStripEl && !dockStripEl.classList.contains('hidden'));
+  }
+
+  if (dockToggleEl && dockStripEl) {
+    let savedDock = null;
+    try { savedDock = JSON.parse(localStorage.getItem(DOCK_KEY)); } catch (e) {}
+    dockApply(!!(savedDock && savedDock.expanded));   // default: collapsed
+
+    dockToggleEl.addEventListener('click', function () {
+      dockApply(!dockIsExpanded());
+      try {
+        localStorage.setItem(DOCK_KEY, JSON.stringify({ expanded: dockIsExpanded() }));
+      } catch (e) {}
+    });
+
+    // Open a chat panel exactly the way a chatbot tap does — so a
+    // canvas-side view (the hub) has the master panel to ride on.
+    function openChatPanelFor(icon) {
+      // v0.14: reset per-open header state — the far-left model button
+      // is hidden until ChatPanel shows it (chat icons with a model).
+      var modelBtn = document.getElementById('panel-model-btn');
+      if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+      // v0.14: the chat UI is full-bleed (its own padding).
+      panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
+      panel.open({
+        title: icon.getPanelTitle(),
+        subtitle: icon.getPanelSubtitle(),
+        avatarHTML: icon.getAvatarHTML(),
+        bodyHTML: icon.getPanelBodyHTML(),
+        context: icon
+      });
+      if (icon.type === 'chat' && window.ChatPanel) {
+        window.ChatPanel.render(panel.bodyEl, icon, panel);
+      }
+    }
+
+    // Cloud glyph → the provider screen, relocated from Settings → Cloud.
+    // Same panel, same wiring (the overlay works from anywhere).
+    const dockCloudBtn = dockStripEl.querySelector('#dock-cloud');
+    if (dockCloudBtn) dockCloudBtn.addEventListener('click', function () {
+      if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
+    });
+
+    // Library glyph → the hub library, relocated from the chat util
+    // row's ◈ pill — the SAME open path the pill had: the hub view
+    // rides the master panel's view stack (panel.js pushView + the
+    // slide-up animation).
+    const dockLibraryBtn = dockStripEl.querySelector('#dock-library');
+    if (dockLibraryBtn) dockLibraryBtn.addEventListener('click', function () {
+      if (!window.Hub) return;
+      // A chat panel is already up → the pill's exact path applies.
+      var cur = window.ChatPanel && window.ChatPanel.current();
+      if (cur && cur.panel && cur.panel.isOpen()) { window.Hub.open(); return; }
+      // From the bare canvas (the dock sits under an open panel's scrim,
+      // so this is the only other case) — open the current chat's panel
+      // first, then push the hub view on top of it.
+      var icon = (cur && cur.icon) || null;
+      if (!icon) {
+        for (const e of world.entities) { if (e.type === 'chat') { icon = e; break; } }
+      }
+      if (!icon) { window.Hub.open(); return; }  // toasts "open a chat first"
+      openChatPanelFor(icon);
+      window.Hub.open();
+    });
+  }
 
   // Re-render on settings change (live color updates).
   window.Settings.onChange(function () {
