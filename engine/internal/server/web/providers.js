@@ -21,8 +21,11 @@
 // "unverified" and only calls a key invalid when the provider itself
 // rejected it. Cards show the reason when we couldn't verify.
 //
-// Also registers the "Cloud" settings page (Settings → Cloud → Connect
-// Cloud Providers) so keys can be managed outside a chat.
+// v0.31.2: the entry point RELOCATED — this screen used to also register
+// a "Cloud" page inside the settings panel (Settings → Cloud → Connect
+// Cloud Providers); it now opens from the CANVAS DOCK's cloud glyph (the
+// strip left of the settings gear, app.js). The screen itself — cards,
+// slider, key inputs, validation, the smart-connect flow — is unchanged.
 //
 // Exposes: window.ProvidersScreen
 
@@ -580,41 +583,10 @@
     document.body.removeChild(a);
   }
 
-  // ── Settings page: Cloud ────────────────────────────────────────
-  // Registered with the Settings system so the user can connect cloud
-  // providers from Settings → Cloud without opening a chat first.
-  if (window.Settings) {
-    window.Settings.registerPage('cloud', {
-      title: 'Cloud',
-      icon: '☁️',
-      render: function (getState, setState) {
-        // Async status fill-in (the div exists by the time this resolves).
-        setTimeout(function () {
-          fetch('/api/keys').then(function (r) { return r.json(); }).then(function (keys) {
-            var el = document.getElementById('cloud-prov-status');
-            if (!el) return;
-            var names = [];
-            for (var env in keys) {
-              if (keys[env] && keys[env].has_key && !env.endsWith('_EXTRA')) {
-                names.push(keys[env].provider || env);
-              }
-            }
-            el.innerHTML = names.length
-              ? '<span style="color:var(--ok)">✓ ' + names.length + ' connected: ' + names.join(', ') + '</span>'
-              : '<span style="color:var(--text-3)">No cloud providers connected yet.</span>';
-          }).catch(function () {});
-        }, 0);
-        return '<div class="settings-section expanded">' +
-          '<h3 data-section-toggle><span>Cloud Providers</span><span class="chevron">▶</span></h3>' +
-          '<div class="section-body"><div class="section-inner">' +
-          '<p class="hint" style="margin:0 0 12px">Connect a cloud provider with an API key to chat with models like Kimi, Llama, Claude and GPT. Keys are stored encrypted on this device only.</p>' +
-          '<div id="cloud-prov-status" style="font-size: var(--ui-small-fs);margin:0 0 12px"><span style="color:var(--text-3)">Checking…</span></div>' +
-          '<button data-action="connect-cloud" style="background:' + GOLD + ';border:none;color:var(--bg-app);padding:14px 16px;min-height:48px;border-radius:10px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;width:100%">Connect Cloud Providers</button>' +
-          '</div></div>' +
-          '</div>';
-      }
-    });
-  }
+  // v0.31.2: the Settings → Cloud page registration is REMOVED — the
+  // provider screen's entry point is now the canvas dock's cloud glyph
+  // (app.js wires #dock-cloud → ProvidersScreen.open). The screen itself
+  // below is untouched.
 
   // v0.15: best auto-pick model for a provider — a FREE one (works on any
   // account), scored by family popularity so users land on a capable

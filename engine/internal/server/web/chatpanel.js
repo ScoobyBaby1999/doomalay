@@ -552,20 +552,9 @@
         openUsageView(ctx.panel, icon, state, usageBtn);
       });
       utilRow.appendChild(usageBtn);
-
-      // v0.31 (user spec): THE HUB PILL — the modular library system
-      // (personas, templates, …) as a view on the master panel's stack.
-      // Tabs, search, sort + tag pills, the resizable card grid, and the
-      // publish flow all live in hub.js/hubitem.js/hubpublish.js.
-      var hubBtn = document.createElement('button');
-      hubBtn.className = 'util-btn';
-      hubBtn.innerHTML = '◈ hub';
-      hubBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (window.Hub) window.Hub.open();
-        else if (window.Artifacts) window.Artifacts.toast('the hub is not available');
-      });
-      utilRow.appendChild(hubBtn);
+      // v0.31.2: the ◈ hub pill MOVED OUT of the util row — the hub now
+      // opens from the canvas dock's library glyph (see app.js: the dock
+      // strip left of the settings gear). Export + tweaks + usage remain.
     }
   }
 

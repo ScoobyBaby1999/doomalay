@@ -5,7 +5,12 @@
 # (python http.server, the v301-tunnel-e2e Forwarder pattern) via
 # DOOMALAY_HUB_HF_BASE, then drives the real PWA with Playwright:
 #
-#   1.  the ◈ hub util pill → the library view (tabs dynamic from the
+#   0.  the v0.31.2 CANVAS DOCK — the › arrow left of the settings gear
+#       expands a vertical strip (cloud + library glyphs); state persists
+#       across reloads; the cloud glyph opens the provider screen (moved
+#       out of Settings → Cloud); the library glyph opens the hub (moved
+#       out of the chat util row — the ◈ pill is gone, 3 pills remain).
+#   1.  the hub library view (tabs dynamic from the
 #       engine's registry: personas + templates).
 #   2.  the card grid — default 2 cols (computed gridTemplateColumns),
 #       paging math, steppers 1–5 × 3–10, localStorage persistence across
@@ -434,13 +439,81 @@ with sync_playwright() as p:
                         "provider": "nvidia", "sessionId": SID}], "savedAt": time.time() * 1000}
     pg.evaluate("s => localStorage.setItem('doomalay.state.v2', JSON.stringify(s))", state)
     pg.reload(); pg.wait_for_timeout(700)
+
+    # ── 0. the v0.31.2 CANVAS DOCK (panel still closed — the dock lives
+    #       on the canvas chrome, left of the settings gear) ─────────
+    print("canvas dock (v0.31.2)")
+    ok(pg.locator("#dock-toggle").count() == 1, "the › dock toggle exists next to the settings gear")
+    ok(pg.locator("#dock-toggle").inner_text().strip() == "›", "the collapsed arrow reads ›")
+    ok(pg.locator("#dock-strip").is_hidden(), "the strip starts collapsed (hidden)")
+    gear_box = pg.locator("#settings-btn").bounding_box()
+    tog_box = pg.locator("#dock-toggle").bounding_box()
+    ok(tog_box and gear_box and tog_box["x"] + tog_box["width"] <= gear_box["x"] + 2,
+       "the toggle sits LEFT of the settings gear")
+    ok(tog_box["width"] >= 40 and tog_box["height"] >= 40, "the toggle is a ≥40px touch target")
+    # the settings panel lost its Cloud page (relocated into the dock)
+    pages = pg.evaluate("() => window.Settings.listPages().map(p => p.id)")
+    ok("cloud" not in pages, f"the settings registry no longer carries the Cloud provider page ({pages})")
+    ok("appearance" in pages and "sizing" in pages and "general" in pages,
+       "the other settings pages are untouched")
+    pg.locator("#settings-btn").click(); pg.wait_for_timeout(900)
+    tabs = [t.strip().lower() for t in pg.locator(".settings-nav .tab").all_inner_texts()]
+    ok("cloud" not in tabs, f"the settings panel UI shows no Cloud tab ({tabs})")
+    pg.evaluate("() => document.getElementById('chat-scrim').click()")
+    pg.wait_for_timeout(500)   # back to the bare canvas
+    # expand: the arrow flips to ‹, the strip shows 2 icons
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
+    ok(pg.locator("#dock-toggle").inner_text().strip() == "‹", "tapping flips the arrow to ‹")
+    ok(pg.locator("#dock-toggle").get_attribute("aria-expanded") == "true", "aria-expanded flips true")
+    ok(pg.locator("#dock-strip").is_visible(), "the strip is visible")
+    dock_btns = pg.locator("#dock-strip .dock-btn")
+    ok(dock_btns.count() == 2, "the strip holds 2 icons (cloud + library)")
+    ok(pg.locator("#dock-cloud").get_attribute("aria-label") == "Cloud providers" and
+       pg.locator("#dock-library").get_attribute("aria-label") == "Hub library",
+       "the icons carry their aria-labels")
+    for i in range(2):
+        b = dock_btns.nth(i).bounding_box()
+        ok(b and b["width"] >= 40 and b["height"] >= 40, f"dock icon {i + 1} is a ≥40px touch target")
+    ok(pg.locator("#dock-strip .dock-btn svg").count() == 2, "both dock icons are SVG glyphs (chrome style)")
+    dock_pref = pg.evaluate("() => JSON.parse(localStorage.getItem('doomalay.dock.v1'))")
+    ok(dock_pref == {"expanded": True}, f"the expanded state persists to localStorage ({dock_pref})")
+    # the cloud glyph opens the RELOCATED provider screen
+    pg.locator("#dock-cloud").click(); pg.wait_for_timeout(2500)
+    ok(pg.evaluate("() => window.ConnectOverlay.isOpen()"), "the cloud glyph opens the provider screen (ConnectOverlay)")
+    ok("Cloud Providers" in pg.locator("#connect-overlay").inner_text(),
+       "…the overlay carries the provider screen's heading")
+    pg.locator("#prov-close").click(); pg.wait_for_timeout(600)
+    ok(not pg.evaluate("() => window.ConnectOverlay.isOpen()"), "✕ closes the provider screen")
+    # collapse + expand again
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
+    ok(pg.locator("#dock-toggle").inner_text().strip() == "›", "tapping again flips the arrow back to ›")
+    ok(pg.locator("#dock-strip").is_hidden(), "the strip collapses (hidden)")
+    ok(pg.evaluate("() => JSON.parse(localStorage.getItem('doomalay.dock.v1'))") == {"expanded": False},
+       "the collapsed state persists to localStorage")
+    # state survives a reload
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
+    pg.reload(); pg.wait_for_timeout(700)
+    ok(pg.locator("#dock-strip").is_visible() and
+       pg.locator("#dock-toggle").inner_text().strip() == "‹",
+       "the expanded dock state survives a reload (localStorage)")
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)   # collapse for the flow below
+
     pg.mouse.click(120, 200)          # tap the chatbot → panel opens
     pg.wait_for_timeout(1000)
     pg.locator("#chat-header-row").click(); pg.wait_for_timeout(300)   # reveal the pills
 
     def open_hub():
-        pg.locator("#util-row .util-btn").nth(3).click()
-        pg.wait_for_timeout(1300)    # libraries + items fetch (discovery)
+        # v0.31.2: the hub opens from the CANVAS DOCK (the ◈ util pill is
+        # gone). The dock sits under the open panel's scrim — close the
+        # panel first, then the arrow (if collapsed) + the library glyph
+        # re-opens the chat's panel with the hub view pushed on it.
+        if pg.evaluate("() => document.getElementById('chat-panel').classList.contains('open')"):
+            pg.evaluate("() => document.getElementById('chat-scrim').click()")
+            pg.wait_for_timeout(600)
+        if pg.locator("#dock-strip").is_hidden():
+            pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
+        pg.locator("#dock-library").click()
+        pg.wait_for_timeout(1300)    # panel slide + libraries + items fetch
 
     def card_names():
         return [t.strip() for t in pg.locator(".hub-card-name").all_inner_texts()]
@@ -453,13 +526,17 @@ with sync_playwright() as p:
         pg.locator(f'[data-sort="{key}"]').click()
         pg.wait_for_timeout(900)
 
-    # ── 1. the hub pill → the library view ─────────────────────────
-    print("hub pill + library view")
+    # ── 1. the util row lost the hub pill; the dock's library glyph ──
+    #       opens the same hub view on the master panel ──────────────
+    print("hub via the dock's library glyph")
     utils = pg.locator("#util-row .util-btn")
-    ok(utils.count() == 4, "util row: export + tweaks + usage + hub (4 pills)")
-    ok("hub" in utils.nth(3).inner_text().lower(), "the hub pill is the 4th util pill")
+    ok(utils.count() == 3, "util row: export + tweaks + usage (3 pills — the ◈ hub pill moved to the dock)")
+    ok(not any("hub" in t.lower() for t in utils.all_inner_texts()),
+       "the hub pill is ABSENT from the util row")
     open_hub()
-    ok(pg.locator("#panel-name").inner_text().strip() == "hub", "the hub view opens on the panel stack")
+    ok(pg.locator("#panel-name").inner_text().strip() == "hub", "the library glyph opens the hub view on the panel stack")
+    ok(pg.locator("#chat-panel").evaluate("el => el.classList.contains('open')"),
+       "…the dock re-opened the chat's panel to carry it (the pill's path)")
     ok(pg.locator("#panel-view-back").is_visible(), "the ‹ back bar is present (panel conventions)")
     tabs = [t.strip().lower() for t in pg.locator(".hub-tab").all_inner_texts()]
     ok(len(tabs) == 2, f"tabs are dynamic from the registry (2: {tabs})")
@@ -666,6 +743,51 @@ with sync_playwright() as p:
     pg.locator("#hp-publish").click(); pg.wait_for_timeout(1200)
     ok(pg.locator("#hc-token").count() == 1, "a 401 swaps to the connect flow (the form survives beneath)")
     ok(pg.locator("#hc-open").count() == 1, "the connect view offers the 'Open Hugging Face' button")
+    # v0.31.2: the reworked connect texts — brighter step headers +
+    # larger, detailed step subtexts (the HF token page, step by step)
+    steps = [t.strip().lower() for t in pg.locator(".hc-step").all_inner_texts()]
+    ok(len(steps) == 2, f"the connect view carries the 2 step headers ({steps})")
+    ok(steps[0].endswith("open hugging face and create a token"),
+       f"step 1's title reads 'Open Hugging Face and create a token' ({steps[0]})")
+    ok(steps[1].endswith("paste your new token here"),
+       f"step 2's title reads 'Paste your new token here' ({steps[1]})")
+    subs = pg.locator(".hc-sub").all_inner_texts()
+    ok(len(subs) == 2, "both steps carry a subtext")
+    ok(all(k in subs[0] for k in ["New token", "WRITE", "Fine-grained", "CI/CD", "Full Access"]),
+       "step 1's subtext walks the real HF token page (New token / WRITE / not Fine-grained)")
+    ok("hf_" in subs[1] and "shown only once" in subs[1],
+       "step 2's subtext explains the hf_ token + shown-only-once")
+    # brighter headers: the step titles ride --fmt-bright; the step
+    # numbers ride --fmt-link (the formatter's accent slots)
+    cols = pg.evaluate("""() => {
+      const s = getComputedStyle(document.querySelector('.hc-step'));
+      const n = getComputedStyle(document.querySelector('.hc-num'));
+      return { step: s.color, num: n.color };
+    }""")
+    fmt_bright = pg.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--fmt-bright').trim()")
+    fmt_link = pg.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--fmt-link').trim()")
+    def _rgb_of(css):
+        css = (css or "").strip()
+        if css.startswith("#") and len(css) >= 7:
+            return tuple(int(css[i:i + 2], 16) for i in (1, 3, 5))
+        m = re.findall(r'\d+', css)
+        return tuple(int(x) for x in m[:3]) if len(m) >= 3 else None
+    ok(_rgb_of(cols["step"]) == _rgb_of(fmt_bright),
+       f"the step headers are BRIGHT (--fmt-bright: {cols['step']} vs {fmt_bright})")
+    ok(_rgb_of(cols["num"]) == _rgb_of(fmt_link),
+       f"the step numbers carry the accent (--fmt-link: {cols['num']} vs {fmt_link})")
+    # larger subtexts: --ui-small-fs + 1px (13.3px default) vs the old
+    # pv-hint's calc(--ui-small-fs - 0.5px), in a primary theme color
+    sub_style = pg.evaluate("""() => {
+      const s = getComputedStyle(document.querySelector('.hc-sub'));
+      return { fs: s.fontSize, col: s.color };
+    }""")
+    hint_fs = pg.evaluate("() => getComputedStyle(document.querySelector('.pv-hint')).fontSize")
+    small_fs = pg.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--ui-small-fs')")
+    ok(float(sub_style["fs"].replace("px", "")) > float(hint_fs.replace("px", "")),
+       f"the step subtexts are LARGER than a pv-hint ({sub_style['fs']} > {hint_fs})")
+    ok(abs(float(sub_style["fs"].replace("px", "")) - (float(small_fs.replace("px", "")) + 1)) < 0.01,
+       f"the subtext rides --ui-small-fs + 1px ({small_fs} + 1, got {sub_style['fs']})")
     pg.fill("#hc-token", "definitely-wrong-token")
     pg.locator("#hc-connect").click(); pg.wait_for_timeout(1200)
     ok(pg.locator("#hc-err").inner_text().strip() != "", "a bad token shows an inline error and stays")
@@ -754,7 +876,7 @@ with sync_playwright() as p:
     pg.mouse.click(120, 200); pg.wait_for_timeout(1200)
     # the dropdown remembers its open state across panel close/reopen —
     # only toggle the header when the pills are actually hidden.
-    if not pg.locator("#util-row .util-btn").nth(3).is_visible():
+    if not pg.locator("#util-row .util-btn").first.is_visible():
         pg.locator("#chat-header-row").click(); pg.wait_for_timeout(300)
     open_hub()
     final = pg.evaluate("() => getComputedStyle(document.querySelector('.hub-card-name')).fontSize")

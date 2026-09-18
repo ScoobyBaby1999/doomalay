@@ -345,6 +345,82 @@
     transform: rotate(180deg);
   }
 
+  /* ── v0.31.2: THE CANVAS DOCK ─────────────────────────────────
+     A › arrow sits 8px left of the settings gear; tapping it flips
+     to ‹ and expands a vertical strip with the two relocated entries:
+     the cloud provider screen (was Settings → Cloud) and the hub
+     library (was the chat util row's ◈ hub pill — same master-panel
+     open path). Collapsed/expanded persists in localStorage
+     (doomalay.dock.v1, applied by app.js on boot). Same chrome
+     language as the gear: 44px hit targets, 22px glyphs, matte glass
+     tile, safe-area aware. The arrow is a text glyph so it rides the
+     settings text-size system (--ui-fs). */
+  #dock-toggle {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: calc(max(16px, env(safe-area-inset-right)) + 52px); /* gear 44px + 8px gap */
+    width: 44px;
+    height: 44px;
+    background: rgba(20, 20, 24, 0.8);
+    border: 1px solid var(--surface-3);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: calc(var(--ui-fs) + 6px); /* rides the text-size slider */
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 500;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.15s, transform 0.1s;
+    font-family: inherit;
+    touch-action: manipulation;
+  }
+  #dock-toggle:active {
+    background: rgba(40, 40, 48, 0.9);
+    transform: scale(0.92);
+  }
+  #dock-strip {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    /* gear 44 + gap 8 + toggle 44 + gap 8 from the right edge */
+    right: calc(max(16px, env(safe-area-inset-right)) + 104px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 500;
+  }
+  #dock-strip.hidden { display: none; }
+  .dock-btn {
+    width: 44px;
+    height: 44px;
+    background: rgba(20, 20, 24, 0.8);
+    border: 1px solid var(--surface-3);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.15s, transform 0.1s;
+    touch-action: manipulation;
+  }
+  .dock-btn:active {
+    background: rgba(40, 40, 48, 0.9);
+    transform: scale(0.92);
+  }
+  .dock-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: var(--text-3);
+  }
+
   /* ── Slide-up chat panel ───────────────────────────────────────
      Slides from the bottom of the screen to near the top when a chatbot
      icon is tapped. Has a drag handle bar at the top — drag it down
@@ -1834,6 +1910,24 @@
   }
   .hp-err { font-size: var(--ui-small-fs); color: var(--err); line-height: 1.5; min-height: 4px; }
 
+  /* v0.31.2: the HF connect flow's step headers + subtexts — BRIGHTER,
+     accent-tinted headers (--fmt-bright text + the step number in
+     --fmt-link, the formatter's own accent slots) with LARGER step
+     instructions in the theme's primary secondary color. The old
+     micro-label + dim hint were too quiet for a two-step guide. */
+  .hc-step {
+    font-size: calc(var(--ui-fs) - 0.5px); font-weight: 700; letter-spacing: 0.2px;
+    color: var(--fmt-bright); margin: 16px 2px 6px;
+  }
+  .hc-step .hc-num {
+    font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--fmt-link); margin-right: 5px;
+  }
+  .hc-sub {
+    font-size: calc(var(--ui-small-fs) + 1px); color: var(--text-2);
+    line-height: 1.6; margin: 0 2px 10px;
+  }
+
   /* ── the persona picker's heart badges (persona.js) ───────────────── */
   .pp-heart {
     position: absolute; right: 9px; bottom: 7px; z-index: 1;
@@ -1857,6 +1951,21 @@
 <button id="settings-btn" aria-label="Reset view">
   <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
 </button>
+<!-- v0.31.2: THE CANVAS DOCK — the › arrow left of the settings gear.
+     Tapping it flips to ‹ and expands the vertical strip: the cloud
+     glyph opens the provider screen (relocated from Settings → Cloud)
+     and the library glyph opens the hub library (relocated from the
+     chat util row's ◈ pill). The collapsed/expanded state persists in
+     localStorage (doomalay.dock.v1). Wired in app.js. -->
+<button id="dock-toggle" aria-label="Expand dock" aria-expanded="false">›</button>
+<div id="dock-strip" class="hidden">
+  <button class="dock-btn" id="dock-cloud" title="Cloud providers" aria-label="Cloud providers">
+    <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+  </button>
+  <button class="dock-btn" id="dock-library" title="Hub library" aria-label="Hub library">
+    <svg viewBox="0 0 24 24"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg>
+  </button>
+</div>
 
 <!-- Slide-up chat panel (hidden by default, opened by tapping a chatbot) -->
 <div id="chat-scrim"></div>
