@@ -149,9 +149,9 @@
       '<label>' + label + '</label>' +
       '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);font-variant-numeric:tabular-nums" data-range-display="' + key + '" data-suffix="">' + v + '</span>' +
       '</div>' +
-      '<input type="range" data-setting-key="' + key + '" data-setting-event="input" ' +
+      '<input type="range" class="app-range" data-setting-key="' + key + '" data-setting-event="input" ' +
       'data-setting-transform="number" min="0" max="100" step="1" value="' + v + '" ' +
-      'style="width:100%;accent-color:var(--accent);height:32px;cursor:pointer">' +
+      'style="accent-color:var(--accent);height:32px;cursor:pointer">' +
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
       '</div>';
   }
@@ -359,9 +359,9 @@
       '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);font-variant-numeric:tabular-nums" ' +
       'data-range-display="' + key + '">' + value + '×</span>' +
       '</div>' +
-      '<input type="range" data-setting-key="' + key + '" data-setting-event="input" ' +
+      '<input type="range" class="app-range" data-setting-key="' + key + '" data-setting-event="input" ' +
       'data-setting-transform="number" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '" ' +
-      'style="width:100%;accent-color:var(--accent);height:32px;cursor:pointer">' +
+      'style="accent-color:var(--accent);height:32px;cursor:pointer">' +
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
       '</div>';
   }

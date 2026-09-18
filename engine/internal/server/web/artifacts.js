@@ -173,7 +173,23 @@
     return 'closed';
   }
 
-  // ── THE DRAWER ──────────────────────────────────────────────────
+  // ── THE DRAWER (v0.29: a REAL FILE TREE) ─────────────────────────
+  // User spec: "support nested files and an actual tree... like an
+  // ancestral lineage or actual file tree. Where root folders are not
+  // indented, sub files and folders are indented, and the more nested
+  // the folders the more indentations. Nested files and folders are
+  // also collapsible... a sophisticated file explorer as the artifact
+  // drawer that can smoothly and efficiently render whole massive
+  // monorepos."
+  //
+  // Implementation: Wunderbaum (vendored MIT, dist/wunderbaum.*) — the
+  // designated successor of Fancytree, zero deps, VIRTUAL SCROLLING (only
+  // the visible rows ever exist in the DOM — a 100k-node monorepo stays
+  // smooth). We build the tree from the artifacts' names (paths), skin it
+  // to the app theme (CSS overrides in index.html), and keep the flat
+  // actions (rename / download / delete) in a bottom action sheet (⋯).
+  var treeExpandState = {}; // sessionId → { "path/": true } expanded folder keys
+
   function openDrawer(sessionId, chat) {
     if (!sessionId) return;
     liveCM = null; // drawer replaces the editor — drop its resize hook
@@ -189,7 +205,9 @@
           '<span class="art-count" id="art-count"></span>' +
           '<button class="art-close">✕</button>' +
         '</div>' +
-        '<div class="art-body" id="art-list"><div class="art-loading">loading…</div></div>' +
+        '<div class="art-body" id="art-list" style="overflow:hidden;padding:8px 2px 0">' +
+          '<div class="art-loading">loading…</div>' +
+        '</div>' +
       '</div>';
     var root = openOverlay(html);
     wireClose(root, null);
@@ -197,89 +215,288 @@
     var listEl = root.querySelector('#art-list');
     list(sessionId).then(function (items) {
       if (!root.isConnected || currentSession !== sessionId) return;
-      renderList(listEl, items, sessionId);
+      renderTree(listEl, items, sessionId);
     }).catch(function (e) {
       listEl.innerHTML = '<div class="art-loading">⚠ ' + esc(e.message) + '</div>';
     });
     refreshPills();
   }
 
-  function renderList(listEl, items, sessionId) {
+  // wunderbaum marks folders by type:'folder' (no isFolder() method in
+  // v0.14) — one helper so the checks read the same everywhere.
+  function isFolderNode(node) {
+    return !!(node && (node.type === 'folder' || (node.children && node.children.length)));
+  }
+
+  // -- tree model from flat artifact paths ---------------------------
+  function ciSort(a, b) {
+    var x = a.seg.toLowerCase(), y = b.seg.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+
+  function buildTreeModel(items) {
+    var root = { folders: new Map(), files: [] };
+    items.forEach(function (m) {
+      var name = String(m.name || '').replace(/\\/g, '/').replace(/^\.?\//, '');
+      var parts = name.split('/').filter(function (p) { return p.length > 0; });
+      if (!parts.length) return;
+      if (parts.length === 1) { root.files.push({ seg: parts[0], meta: m }); return; }
+      var dir = root;
+      for (var i = 0; i < parts.length - 1; i++) {
+        var seg = parts[i];
+        if (!dir.folders.has(seg)) dir.folders.set(seg, { folders: new Map(), files: [] });
+        dir = dir.folders.get(seg);
+      }
+      dir.files.push({ seg: parts[parts.length - 1], meta: m });
+    });
+    return root;
+  }
+
+  // -- model → wunderbaum source (folders first, alphabetical) -------
+  function folderSource(seg, node, path, expandedSet) {
+    var children = [];
+    var folderKeys = Array.from(node.folders.keys()).sort(function (a, b) {
+      return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0;
+    });
+    folderKeys.forEach(function (k) {
+      children.push(folderSource(k, node.folders.get(k), path + k + '/', expandedSet));
+    });
+    node.files.sort(ciSort).forEach(function (f) { children.push(fileSource(f)); });
+
+    // aggregates for the folder row: total files + summed size + newest mtime
+    var count = 0, size = 0, newest = 0;
+    (function walk(n) {
+      n.files.forEach(function (f) {
+        count++; size += f.meta.size || 0;
+        if ((f.meta.updated_at || 0) > newest) newest = f.meta.updated_at || 0;
+      });
+      n.folders.forEach(function (child) { walk(child); });
+    })(node);
+
+    return {
+      title: seg, key: path, type: 'folder', children: children,
+      expanded: !!(expandedSet && expandedSet[path]),
+      size: count + ' file' + (count === 1 ? '' : 's'),
+      date: fmtDate(newest)
+    };
+  }
+
+  function fileSource(f) {
+    return {
+      title: f.seg, key: f.meta.id, // the artifact id — openEditor's key
+      size: FT.humanBytes(f.meta.size),
+      date: fmtDate(f.meta.updated_at),
+      art: f.meta // the full artifact row, stashed on the node
+    };
+  }
+
+  // -- mount the tree ------------------------------------------------
+  function renderTree(listEl, items, sessionId) {
     var cEl = document.getElementById('art-count');
     if (cEl) cEl.textContent = items.length ? items.length + ' file' + (items.length > 1 ? 's' : '') : '';
 
     if (!items.length) {
+      listEl.style.overflow = 'auto';
+      listEl.style.padding = '12px 14px';
       listEl.innerHTML =
         '<div class="art-empty">No artifacts yet.</div>' +
         '<div class="art-empty-sub">Ask the bot for a file — "write me a markdown report", "give me the data as JSON" — it lands here.</div>';
       return;
     }
 
-    listEl.innerHTML = '';
-    items.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
-    items.forEach(function (m) {
-      var info = FT.info(m.name);
-      var row = document.createElement('div');
-      row.className = 'art-row';
-      row.innerHTML =
-        '<span class="art-row-ico" style="color:' + info.color + '">' + info.icon + '</span>' +
-        '<span class="art-row-meta">' +
-          '<span class="art-row-name">' + esc(m.name) + '</span>' +
-          '<span class="art-row-sub">' + esc(info.label) + ' · ' + FT.humanBytes(m.size) +
-            ' · ' + fmtDate(m.updated_at) + '</span>' +
-        '</span>' +
-        '<button class="art-row-btn" data-act="rename" aria-label="Rename">✎</button>' +
-        '<button class="art-row-btn" data-act="download" aria-label="Download">⇩</button>' +
-        '<button class="art-row-btn art-row-btn-danger" data-act="delete" aria-label="Delete">🗑</button>';
+    // lazy-load the vendored library + its stylesheet, then mount
+    ensureCSS('/vendor/wunderbaum/wunderbaum.css')
+      .then(function () { return ensureScript('/vendor/wunderbaum/wunderbaum.umd.min.js'); })
+      .then(function () {
+        if (!listEl.isConnected || !window.mar10 || !window.mar10.Wunderbaum) {
+          throw new Error('tree library failed to load');
+        }
 
-      row.addEventListener('click', function (e) {
-        if (e.target.closest('.art-row-btn')) return;
-        openEditor(sessionId, m.id);
-      });
-      row.querySelector('[data-act="download"]').addEventListener('click', function (e) {
-        e.stopPropagation();
-        window.open('/api/sessions/' + sessionId + '/artifacts/' + m.id + '/download', '_blank');
-      });
-      row.querySelector('[data-act="delete"]').addEventListener('click', function (e) {
-        e.stopPropagation();
-        confirmInline(this, 'delete forever?', function (yes) {
-          if (!yes) return;
-          api('/api/sessions/' + sessionId + '/artifacts/' + m.id, 'DELETE')
-            .then(function () { openDrawer(sessionId, currentChat); refreshPills(); })
-            .catch(function (err) { toast(err.message); });
-        });
-      });
-      // inline rename: ✎ turns the name into an input + ✓
-      row.querySelector('[data-act="rename"]').addEventListener('click', function (e) {
-        e.stopPropagation();
-        var nameEl = row.querySelector('.art-row-name');
-        var old = m.name;
-        var input = document.createElement('input');
-        input.type = 'text';
-        input.value = old;
-        input.className = 'art-rename-input';
-        nameEl.replaceWith(input);
-        input.focus();
-        input.setSelectionRange(old.length, old.length);
-        var done = false;
-        var commit = function () {
-          if (done) return;
-          done = true;
-          var nn = input.value.trim();
-          if (!nn || nn === old) { openDrawer(sessionId, currentChat); return; }
-          api('/api/sessions/' + sessionId + '/artifacts/' + m.id, 'PUT', { name: nn })
-            .then(function () { openDrawer(sessionId, currentChat); })
-            .catch(function (err) { toast(err.message); openDrawer(sessionId, currentChat); });
-        };
-        input.addEventListener('keydown', function (ev) {
-          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-          if (ev.key === 'Escape') { done = true; openDrawer(sessionId, currentChat); }
-        });
-        input.addEventListener('blur', commit);
-        input.addEventListener('click', function (ev) { ev.stopPropagation(); });
-      });
+        // expansion memory: root folders expanded for small trees,
+        // everything collapsed once it gets big (a monorepo must not
+        // flash-open thousands of rows on open).
+        var expandedSet = treeExpandState[sessionId];
+        if (!expandedSet) {
+          expandedSet = {};
+          if (items.length <= 120) {
+            buildTreeModel(items).folders.forEach(function (_v, k) { expandedSet[k + '/'] = true; });
+          }
+          treeExpandState[sessionId] = expandedSet;
+        }
 
-      listEl.appendChild(row);
+        var model = buildTreeModel(items);
+        var source = [];
+        var folderKeys = Array.from(model.folders.keys()).sort(function (a, b) {
+          return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0;
+        });
+        folderKeys.forEach(function (k) { source.push(folderSource(k, model.folders.get(k), k + '/', expandedSet)); });
+        model.files.sort(ciSort).forEach(function (f) { source.push(fileSource(f)); });
+
+        listEl.innerHTML = '';
+        var host = document.createElement('div');
+        host.className = 'art-tree';
+        host.style.cssText = 'height:100%;min-height:0';
+        listEl.appendChild(host);
+
+        var tree = new window.mar10.Wunderbaum({
+          element: host,
+          source: source,
+          header: false,
+          checkbox: false,
+          icon: false,
+          rowHeightPx: 34,
+          minExpandLevel: 0,
+          sortFoldersFirst: true,
+          columns: [
+            { id: '*', title: 'name', width: '*' },
+            { id: 'size', title: 'size', width: '84px' },
+            { id: 'date', title: 'date', width: '58px' },
+            { id: 'act', title: '', width: '30px' }
+          ],
+          render: function (e) {
+            var node = e.node;
+            // our own file/folder emoji icon before the title (wunderbaum's
+            // icon spans are disabled — they want a web font we don't ship)
+            if (e.isNew) {
+              var col0 = e.allColInfosById && e.allColInfosById['*'];
+              var titleSpan = col0 && col0.elem ? col0.elem.querySelector('.wb-title') : null;
+              if (titleSpan) {
+                var prev = titleSpan.previousElementSibling;
+                if (!prev || !prev.classList || !prev.classList.contains('ft-ico')) {
+                  var ico = document.createElement('span');
+                  var fold = isFolderNode(node);
+                  ico.className = 'ft-ico' + (fold ? ' ft-folder' : '');
+                  ico.textContent = fold ? '📁' : (node.data.art ? FT.info(node.data.art.name).icon : '📄');
+                  titleSpan.parentNode.insertBefore(ico, titleSpan);
+                }
+              }
+            }
+            for (var colId in e.renderColInfosById) {
+              var col = e.renderColInfosById[colId];
+              if (col.elem && !col.elem.classList.contains('ftc-' + col.id)) {
+                col.elem.classList.add('ftc-' + col.id); // themed per-column CSS hook
+              }
+              if (col.id === 'size' || col.id === 'date') {
+                col.elem.textContent = node.data[col.id] || '';
+              } else if (col.id === 'act' && !isFolderNode(node) && node.data.art) {
+                col.elem.textContent = '';
+                var btn = document.createElement('button');
+                btn.className = 'art-act-btn';
+                btn.setAttribute('data-aid', node.data.art.id);
+                btn.textContent = '⋯';
+                col.elem.appendChild(btn);
+              }
+            }
+          },
+          activate: function (e) {
+            var node = e.node;
+            if (isFolderNode(node)) {
+              node.setExpanded(!node.expanded);
+              return;
+            }
+            if (node.data.art) openEditor(sessionId, node.data.art.id);
+          },
+          expand: function (e) {
+            if (e.node && e.node.key) {
+              try { treeExpandState[sessionId][e.node.key] = true; } catch (err) {}
+            }
+          },
+          collapse: function (e) {
+            if (e.node && e.node.key) {
+              try { delete treeExpandState[sessionId][e.node.key]; } catch (err) {}
+            }
+          }
+        });
+
+        // the ⋯ row buttons — capture-phase so the tree never sees the
+        // tap (it would activate the node underneath).
+        listEl.addEventListener('click', function (ev) {
+          var btn = ev.target && ev.target.closest ? ev.target.closest('.art-act-btn') : null;
+          if (!btn) return;
+          ev.stopPropagation();
+          ev.preventDefault();
+          var id = btn.getAttribute('data-aid');
+          var meta = null;
+          items.forEach(function (m) { if (m.id === id) meta = m; });
+          if (meta) openActionSheet(listEl.closest('.art-panel'), sessionId, meta);
+        }, true);
+      })
+      .catch(function (e) {
+        listEl.style.overflow = 'auto';
+        listEl.style.padding = '12px 14px';
+        listEl.innerHTML = '<div class="art-loading">⚠ ' + esc(e.message) + '</div>';
+      });
+  }
+
+  // -- the ⋯ action sheet (rename / download / delete) ───────────────
+  function openActionSheet(panelEl, sessionId, meta) {
+    var old = panelEl.querySelector('.art-sheet');
+    if (old) old.remove();
+    var sheet = document.createElement('div');
+    sheet.className = 'art-sheet';
+    sheet.innerHTML =
+      '<div class="art-sheet-name">' + esc(meta.name) + '</div>' +
+      '<button class="art-sheet-btn" data-sheet="rename"><span class="art-sheet-ico">✎</span> rename</button>' +
+      '<button class="art-sheet-btn" data-sheet="download"><span class="art-sheet-ico">⇩</span> download</button>' +
+      '<button class="art-sheet-btn danger" data-sheet="delete"><span class="art-sheet-ico">🗑</span> delete</button>' +
+      '<button class="art-sheet-btn art-sheet-cancel" data-sheet="cancel">cancel</button>';
+    panelEl.appendChild(sheet);
+    requestAnimationFrame(function () { sheet.classList.add('open'); });
+
+    function close() {
+      sheet.classList.remove('open');
+      setTimeout(function () { sheet.remove(); }, 240);
+    }
+    function commitDelete(btn) {
+      if (btn.dataset.armed) {
+        api('/api/sessions/' + sessionId + '/artifacts/' + meta.id, 'DELETE')
+          .then(function () { close(); openDrawer(sessionId, currentChat); refreshPills(); })
+          .catch(function (err) { toast(err.message); });
+        return;
+      }
+      btn.dataset.armed = '1';
+      btn.innerHTML = '<span class="art-sheet-ico">🗑</span> delete forever?';
+      setTimeout(function () {
+        if (!btn.isConnected) return;
+        delete btn.dataset.armed;
+        btn.innerHTML = '<span class="art-sheet-ico">🗑</span> delete';
+      }, 2600);
+    }
+    function beginRename() {
+      var info = FT.info(meta.name);
+      sheet.innerHTML =
+        '<div class="art-sheet-name">rename — ' + esc(info.label) + '</div>' +
+        '<input class="art-sheet-input" id="sheet-rename-input" value="' + escAttr2(meta.name) + '" autocapitalize="off" spellcheck="false">' +
+        '<div style="display:flex;gap:8px">' +
+          '<button class="art-sheet-btn" data-sheet="do-rename" style="flex:1;margin-bottom:0;justify-content:center">save</button>' +
+          '<button class="art-sheet-btn art-sheet-cancel" data-sheet="cancel" style="flex:1;margin-bottom:0">cancel</button>' +
+        '</div>';
+      var input = sheet.querySelector('#sheet-rename-input');
+      input.focus();
+      input.setSelectionRange(meta.name.length, meta.name.length);
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); sheet.querySelector('[data-sheet="do-rename"]').click(); }
+        if (ev.key === 'Escape') close();
+      });
+      sheet.querySelector('[data-sheet="do-rename"]').addEventListener('click', function () {
+        var nn = input.value.trim();
+        if (!nn || nn === meta.name) { close(); return; }
+        api('/api/sessions/' + sessionId + '/artifacts/' + meta.id, 'PUT', { name: nn })
+          .then(function () { close(); openDrawer(sessionId, currentChat); })
+          .catch(function (err) { toast(err.message); });
+      });
+      sheet.querySelector('[data-sheet="cancel"]').addEventListener('click', close);
+    }
+
+    sheet.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('[data-sheet]') : null;
+      if (!b) return;
+      var act = b.getAttribute('data-sheet');
+      if (act === 'cancel') close();
+      else if (act === 'rename') beginRename();
+      else if (act === 'download') {
+        window.open('/api/sessions/' + sessionId + '/artifacts/' + meta.id + '/download', '_blank');
+      } else if (act === 'delete') commitDelete(b);
     });
   }
 
@@ -293,32 +510,6 @@
     }
     return (d.getMonth() + 1) + '/' + d.getDate();
   }
-
-  // small inline confirm chip on a button
-  function confirmInline(btn, label, cb) {
-    var row = btn.closest('.art-row');
-    var holder = document.createElement('span');
-    holder.className = 'art-confirm';
-    holder.innerHTML = '<span class="art-confirm-label">' + esc(label) + '</span>' +
-      '<button class="art-confirm-yes">yes</button><button class="art-confirm-no">no</button>';
-    btn.replaceWith(holder);
-    holder.querySelector('.art-confirm-yes').addEventListener('click', function (e) {
-      e.stopPropagation(); cb(true);
-    });
-    holder.querySelector('.art-confirm-no').addEventListener('click', function (e) {
-      e.stopPropagation(); cb(false);
-    });
-    if (row) row.addEventListener('click', function no() {
-      cb(false); row.removeEventListener('click', no);
-    });
-  }
-
-  // v0.18 — NO window.confirm / window.prompt ANYWHERE in this file.
-  // Android WebView silently returns false/null for both (no
-  // WebChromeClient) — every exit from the editor was a dead tap after
-  // an edit (the "couldn't X the panel, had to close the app" bug).
-  // Everything is in-DOM now:
-  //   confirmBtn — swaps a button for an inline yes/no chip
 
   function confirmBtn(btn, label, cb) {
     var holder = document.createElement('span');

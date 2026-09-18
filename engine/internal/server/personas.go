@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,10 +43,44 @@ import (
 )
 
 // PersonaTrigger is the active-by-trigger condition.
+//
+// v0.29 (user spec): the KEY comes from a fixed list (the built-in globals
+// {name} {model} {provider}, the live metrics messages/turns, plus every
+// custom placeholder — global or local) and the VALUE may be a string
+// ("anthropic") or a number (10). Older sessions stored numeric JSON
+// values; UnmarshalJSON below converts them so nothing breaks.
 type PersonaTrigger struct {
-	Key   string  `json:"key"`   // metric / custom placeholder key
-	Op    string  `json:"op"`    // "=" | "<" | ">" | "!="
-	Value float64 `json:"value"` // numeric threshold
+	Key   string `json:"key"`   // built-in / global / local placeholder key
+	Op    string `json:"op"`    // "=" | "<" | ">" | "!=" (<=, >= tolerated)
+	Value string `json:"value"` // string or numeric threshold
+}
+
+// UnmarshalJSON accepts value as string OR number (legacy personas stored
+// {"value": 10}); numbers become their shortest decimal string.
+func (t *PersonaTrigger) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Key   string `json:"key"`
+		Op    string `json:"op"`
+		Value any    `json:"value"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	t.Key = raw.Key
+	t.Op = raw.Op
+	switch v := raw.Value.(type) {
+	case nil:
+		t.Value = ""
+	case string:
+		t.Value = v
+	case float64:
+		t.Value = strconv.FormatFloat(v, 'g', -1, 64)
+	case bool:
+		t.Value = strconv.FormatBool(v)
+	default:
+		t.Value = fmt.Sprintf("%v", v)
+	}
+	return nil
 }
 
 // PersonaSpec is ONE persona of a chat (stored as a JSON array on the
@@ -146,7 +181,7 @@ func enforceSingleActive(specs []PersonaSpec) {
 	}
 }
 
-// parsePlaceholders decodes the chat's custom placeholder map
+// parsePlaceholders decodes the chat's LOCAL custom placeholder map
 // ({"mood":"playful","level":"7"}). Malformed → empty map.
 func parsePlaceholders(sess *store.Session) map[string]string {
 	raw := strings.TrimSpace(sess.Placeholders)
@@ -160,6 +195,63 @@ func parsePlaceholders(sess *store.Session) map[string]string {
 	return m
 }
 
+// globalPlaceholderKey is the app_settings row that holds the GLOBAL
+// custom placeholders (the ones every chatbot recognizes) as one JSON map.
+const globalPlaceholderKey = "global_placeholders"
+
+// globalPlaceholders reads the engine-wide custom placeholder map.
+// Nil-DB safe (unit tests construct Servers without one).
+func (s *Server) globalPlaceholders() map[string]string {
+	if s == nil || s.db == nil {
+		return map[string]string{}
+	}
+	raw, err := s.db.GetSetting(globalPlaceholderKey)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return map[string]string{}
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+// setGlobalPlaceholder upserts one global placeholder (persisted).
+func (s *Server) setGlobalPlaceholder(key, value string) error {
+	ph := s.globalPlaceholders()
+	ph[key] = value
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	return s.db.SetSetting(globalPlaceholderKey, string(raw))
+}
+
+// deleteGlobalPlaceholder removes one global placeholder (idempotent).
+func (s *Server) deleteGlobalPlaceholder(key string) error {
+	ph := s.globalPlaceholders()
+	if _, ok := ph[key]; !ok {
+		return nil
+	}
+	delete(ph, key)
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	return s.db.SetSetting(globalPlaceholderKey, string(raw))
+}
+
+// mergedPlaceholders = the GLOBAL customs + this chat's LOCAL customs,
+// local winning on key collisions (the chat is the more specific scope).
+// This is the map that substitutes into personas AND feeds trigger keys.
+func (s *Server) mergedPlaceholders(sess *store.Session) map[string]string {
+	ph := s.globalPlaceholders()
+	for k, v := range parsePlaceholders(sess) {
+		ph[k] = v
+	}
+	return ph
+}
+
 // resolveActivePersona picks THE persona in effect for this turn:
 //  1. the FIRST trigger persona whose condition is satisfied (list order
 //     = priority — "when the number is met the persona is activated"),
@@ -171,15 +263,20 @@ func parsePlaceholders(sess *store.Session) map[string]string {
 //  4. else nil → the app default persona (v0.28: an all-inactive list is
 //     the user's explicit way of saying "run on the app default").
 func resolveActivePersona(sess *store.Session, m personaMetrics) *PersonaSpec {
-	specs := parsePersonas(sess)
+	return currentServer.resolveActivePersonaMerged(parsePersonas(sess), sess, m)
+}
+
+// resolveActivePersonaMerged — v0.29: needs the Server for the GLOBAL
+// custom placeholders (trigger keys may live there).
+func (s *Server) resolveActivePersonaMerged(specs []PersonaSpec, sess *store.Session, m personaMetrics) *PersonaSpec {
 	if len(specs) == 0 {
 		return nil
 	}
-	ph := parsePlaceholders(sess)
+	ph := s.mergedPlaceholders(sess)
 
 	// 1. trigger personas (in order).
 	for i := range specs {
-		if specs[i].Mode == "trigger" && triggerSatisfied(specs[i].Trigger, ph, m) {
+		if specs[i].Mode == "trigger" && s.triggerSatisfied(sess, specs[i].Trigger, ph, m) {
 			return &specs[i]
 		}
 	}
@@ -222,6 +319,11 @@ func resolveActivePersona(sess *store.Session, m personaMetrics) *PersonaSpec {
 	}
 	return &specs[0]
 }
+
+// currentServer is set by New() so the package-level resolveActivePersona
+// (kept for the tests + older call shapes) can reach the DB-backed GLOBAL
+// placeholders. Single-server process — as everywhere else in the engine.
+var currentServer *Server
 
 // runPersonaTool executes the persona_* local tools against a session —
 // the bot's hands for its own personality (v0.28 user spec: "the bot
@@ -268,7 +370,11 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
 			out = append(out, entry)
 		}
 		ph := parsePlaceholders(sess)
-		b, _ := json.Marshal(map[string]any{"personas": out, "placeholders": ph})
+		b, _ := json.Marshal(map[string]any{
+			"personas":            out,
+			"placeholders":        ph,                     // this chat's local customs
+			"global_placeholders": s.globalPlaceholders(), // engine-wide customs
+		})
 		return "OBSERVATION:\n" + string(b)
 
 	case "persona_set":
@@ -362,17 +468,42 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
 		if key == "" {
 			return "OBSERVATION:\nerror: placeholder_set needs {\"key\": \"...\", \"value\": \"...\"}"
 		}
-		ph := parsePlaceholders(sess)
 		value, _ := args["value"].(string)
-		ph[key] = value
-		raw, _ := json.Marshal(ph)
-		sess.Placeholders = string(raw)
-		if err := s.db.UpdateSession(sess); err != nil {
+		// v0.29: scope — "local" (this chat only, the default) or
+		// "global" (recognized by every chatbot).
+		scope := getStr("scope")
+		if scope == "" {
+			scope = "local"
+		}
+		if scope != "local" && scope != "global" {
+			return "OBSERVATION:\nerror: scope must be \"local\" or \"global\""
+		}
+		if err := s.setPlaceholder(sess, key, value, scope); err != nil {
 			return "OBSERVATION:\nerror: " + err.Error()
 		}
-		return "OBSERVATION:\nplaceholder {" + key + "} set — usable in personas and as a trigger key"
+		where := "this chat"
+		if scope == "global" {
+			where = "every chat (global)"
+		}
+		return "OBSERVATION:\nplaceholder {" + key + "} set for " + where + " — usable in personas and as a trigger key"
 	}
 	return "OBSERVATION:\nerror: unknown persona tool " + name
+}
+
+// setPlaceholder writes one custom placeholder, local (the session's map)
+// or global (the engine-wide map).
+func (s *Server) setPlaceholder(sess *store.Session, key, value, scope string) error {
+	if scope == "global" {
+		return s.setGlobalPlaceholder(key, value)
+	}
+	ph := parsePlaceholders(sess)
+	ph[key] = value
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	sess.Placeholders = string(raw)
+	return s.db.UpdateSession(sess)
 }
 
 func personaNameList(specs []PersonaSpec) string {
@@ -383,45 +514,80 @@ func personaNameList(specs []PersonaSpec) string {
 	return strings.Join(parts, ", ")
 }
 
-// triggerSatisfied evaluates {key op value} against the custom placeholders
-// (numeric values) + the built-in metrics.
-func triggerSatisfied(t *PersonaTrigger, ph map[string]string, m personaMetrics) bool {
+// triggerSatisfied evaluates {key op value}. v0.29 keys:
+//   - the built-in GLOBALS  {name} {model} {provider} (string compares,
+//     case-insensitive equality)
+//   - the live METRICS      messages / turns (numeric)
+//   - any custom placeholder (global or local; numeric when both sides
+//     parse as numbers, else string)
+//
+// Ordering ops on non-numeric values are false — never an error, the
+// persona simply doesn't fire.
+func (s *Server) triggerSatisfied(sess *store.Session, t *PersonaTrigger, ph map[string]string, m personaMetrics) bool {
 	if t == nil || strings.TrimSpace(t.Key) == "" {
 		return false
 	}
-	var cur float64
-	switch strings.TrimSpace(t.Key) {
+	key := strings.TrimSpace(t.Key)
+	cur, isStr := "", false
+	switch key {
 	case "messages", "message_count":
-		cur = float64(m.Messages)
+		cur = strconv.Itoa(m.Messages)
 	case "turns", "turn_count":
-		cur = float64(m.Turns)
+		cur = strconv.Itoa(m.Turns)
+	case "name":
+		cur = strings.TrimSpace(sess.Title)
+		isStr = true
+	case "model":
+		cur = prettyModelName(sess.Model)
+		isStr = true
+	case "provider":
+		cur = providerLabel(sess.Provider)
+		isStr = true
 	default:
-		v, ok := ph[strings.TrimSpace(t.Key)]
+		v, ok := ph[key]
 		if !ok {
 			return false
 		}
-		n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil {
-			return false
+		cur = strings.TrimSpace(v)
+		if _, err := strconv.ParseFloat(cur, 64); err != nil {
+			isStr = true // a text-valued custom placeholder
 		}
-		cur = n
 	}
+	want := strings.TrimSpace(t.Value)
+	// Numeric comparison when BOTH sides are numbers.
+	if !isStr {
+		if cn, err1 := strconv.ParseFloat(cur, 64); err1 == nil {
+			if wn, err2 := strconv.ParseFloat(want, 64); err2 == nil {
+				return cmpNum(cn, t.Op, wn)
+			}
+		}
+	}
+	// String comparison: = / != are case-insensitive; ordering is false.
 	switch t.Op {
 	case "=", "==":
-		return cur == t.Value
-	case "<":
-		return cur < t.Value
-	case ">":
-		return cur > t.Value
+		return strings.EqualFold(cur, want)
 	case "!=", "<>":
-		return cur != t.Value
-	case "<=":
-		return cur <= t.Value
-	case ">=":
-		return cur >= t.Value
-	default:
-		return false
+		return !strings.EqualFold(cur, want)
 	}
+	return false
+}
+
+func cmpNum(cur float64, op string, want float64) bool {
+	switch op {
+	case "=", "==":
+		return cur == want
+	case "<":
+		return cur < want
+	case ">":
+		return cur > want
+	case "!=", "<>":
+		return cur != want
+	case "<=":
+		return cur <= want
+	case ">=":
+		return cur >= want
+	}
+	return false
 }
 
 // substituteAllVars replaces every placeholder in a persona text:
@@ -461,4 +627,72 @@ func substituteAllVars(text, chatName, model, provider string, ph map[string]str
 		out = strings.ReplaceAll(out, "{"+k+"}", ph[k])
 	}
 	return out
+}
+
+// ── v0.29: the GLOBAL placeholders API ──────────────────────────────
+//
+//   GET    /api/placeholders           {"placeholders": {k: v, …}}
+//   PUT    /api/placeholders           {"key": "k", "value": "v"} → upsert
+//   DELETE /api/placeholders/{key}     remove
+//
+// The UI merges these with the chat's LOCAL map (session PATCH, unchanged);
+// the engine does the same on every turn (mergedPlaceholders).
+
+func (s *Server) handlePlaceholdersGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{
+		"placeholders": s.globalPlaceholders(),
+		"builtin":      []string{"name", "model", "provider", "skills", "messages", "turns"},
+	})
+}
+
+func (s *Server) handlePlaceholdersSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad JSON: "+err.Error())
+		return
+	}
+	req.Key = strings.TrimSpace(strings.Trim(req.Key, "{}"))
+	if req.Key == "" || !validPlaceholderKey(req.Key) {
+		writeError(w, 400, "key must be letters, numbers and _ (built-ins are reserved)")
+		return
+	}
+	switch req.Key {
+	case "name", "model", "provider", "skills", "messages", "turns":
+		writeError(w, 400, req.Key+" is built-in — pick another key")
+		return
+	}
+	if err := s.setGlobalPlaceholder(req.Key, req.Value); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "key": req.Key, "value": req.Value})
+}
+
+func (s *Server) handlePlaceholdersDelete(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(strings.Trim(r.PathValue("key"), "{}"))
+	if key == "" {
+		writeError(w, 400, "key is required")
+		return
+	}
+	if err := s.deleteGlobalPlaceholder(key); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// validPlaceholderKey: [A-Za-z0-9_]+ (mirrors the web UI's add box).
+func validPlaceholderKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	for _, c := range k {
+		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
 }

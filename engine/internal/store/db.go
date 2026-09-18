@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -131,6 +132,15 @@ CREATE TABLE IF NOT EXISTS chat_artifacts (
   created_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_id);
+
+-- v0.29: engine-wide key/value settings (currently home of the GLOBAL
+-- custom placeholders — the ones every chatbot recognizes, stored as one
+-- JSON blob under the 'global_placeholders' key).
+CREATE TABLE IF NOT EXISTS app_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at REAL NOT NULL
+);
 `
 	_, err := db.Exec(schema)
 	if err != nil {
@@ -164,6 +174,31 @@ CREATE INDEX IF NOT EXISTS idx_chat_artifacts_session ON chat_artifacts(session_
 		}
 	}
 	return nil
+}
+
+// GetSetting reads one app_settings value ("" when absent).
+func (db *DB) GetSetting(key string) (string, error) {
+	var v string
+	err := db.QueryRow("SELECT value FROM app_settings WHERE key = ?", key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSetting upserts one app_settings value.
+func (db *DB) SetSetting(key, value string) error {
+	_, err := db.Exec(`INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value, float64(time.Now().UnixMilli())/1000.0)
+	return err
+}
+
+// DeleteSetting removes one app_settings row (idempotent).
+func (db *DB) DeleteSetting(key string) error {
+	_, err := db.Exec("DELETE FROM app_settings WHERE key = ?", key)
+	return err
 }
 
 // ensureColumn adds a column to a table if it doesn't exist yet (SQLite has

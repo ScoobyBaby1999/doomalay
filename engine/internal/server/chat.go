@@ -269,8 +269,8 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
 	b.WriteString(", chatting inside the Doomalay app on the user's own device. ")
 	b.WriteString("Today is " + time.Now().Format("Monday, 2 January 2006") + ".")
 
-	ph := parsePlaceholders(sess)
-	if spec := resolveActivePersona(sess, m); spec != nil {
+	ph := s.mergedPlaceholders(sess) // v0.29: global customs + this chat's local customs
+	if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
 		persona := strings.TrimSpace(spec.Text)
 		if persona == "" {
 			persona = defaultPersona

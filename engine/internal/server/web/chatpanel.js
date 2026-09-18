@@ -686,25 +686,34 @@
       return {
         title: 'mind · ' + icon.name,
         render: function () {
+          // v0.29 (user spec): more breathing room between the groups
+          // (roomy rows + taller hints), a warning when auto-compaction
+          // is OFF, and the description that spells out the mechanism —
+          // "a new chat is started with the generated summary of the key
+          // points in the chat".
           return (
-            '<div class="pv-sub-row" style="margin-top:0">' +
+            '<div class="pv-sub-row roomy" style="margin-top:4px">' +
               '<span class="pv-sub-label">context window</span>' +
               '<span class="pv-sub-value" id="mind-w-val">' + (w < 0 ? 'whole chat' : w + ' messages') + '</span>' +
             '</div>' +
             '<input type="range" class="pv-range" min="-1" max="500" step="1" value="' + w + '" aria-label="context window messages">' +
-            '<p class="pv-hint" style="margin:0 2px 4px">drag to set the recent messages riding along every turn — the left edge keeps the whole chat.</p>' +
-            '<div class="pv-sub-row">' +
+            '<p class="pv-hint" style="margin:4px 2px 6px">drag to set the recent messages riding along every turn — the left edge keeps the whole chat.</p>' +
+            '<div class="pv-sub-row roomy">' +
               '<span class="pv-sub-label">auto-compaction</span>' +
               '<span class="pv-sub-value" id="mind-compact-state">…</span>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;align-items:center">' +
+            '<div style="display:flex;gap:8px;align-items:center;margin-top:2px">' +
               '<button class="pv-btn" id="mind-compact-toggle" style="flex:0 0 92px">…</button>' +
               '<div style="flex:1;min-width:0">' +
                 '<input type="range" class="pv-range" id="mind-compact-threshold" min="10" max="95" step="5" value="70" aria-label="compaction threshold percent">' +
                 '<div class="pv-sub-value" id="mind-threshold-val" style="text-align:left">arms at 70% full</div>' +
               '</div>' +
             '</div>' +
-            '<p class="pv-hint" style="margin:6px 2px 0">when the window crosses the threshold, older turns are summarized so the chat keeps going — the log itself never loses a message.</p>'
+            '<p class="pv-hint" id="mind-compact-desc" style="margin:8px 2px 6px">when the window crosses the threshold, the key points of the chat are summarized and a new chat is started from that summary — nothing overflows, and the original log keeps every message.</p>' +
+            '<div id="mind-compact-warn" style="display:none;background:rgba(var(--warn-rgb),0.10);border:1px solid rgba(var(--warn-rgb),0.4);border-radius:10px;padding:10px 12px;margin:2px 2px 4px">' +
+              '<span style="color:var(--warn);font-weight:700;font-size:var(--ui-small-fs)">⚠ compaction is off</span>' +
+              '<span style="display:block;color:var(--text-2);font-size:calc(var(--ui-small-fs) - 0.5px);line-height:1.55;margin-top:4px">the sliding window still drops the oldest messages as new ones arrive — old context is silently overwritten by new data and no summary is kept. Only turn this off for short, throwaway chats.</span>' +
+            '</div>'
           );
         },
         onMount: function (el) {
@@ -744,7 +753,11 @@
                 if (thv) thv.textContent = 'arms at ' + thr + '% full';
                 if (stv) stv.textContent = on
                   ? (fill > 0 ? 'fill ' + fill + '% · armed at ' + thr + '%' : 'armed at ' + thr + '%')
-                  : 'off — window grows unbounded';
+                  : 'off';
+                var warn = el.querySelector('#mind-compact-warn');
+                if (warn) warn.style.display = on ? 'none' : 'block';
+                var desc = el.querySelector('#mind-compact-desc');
+                if (desc) desc.style.opacity = on ? '1' : '0.45';
                 if (ths) ths.disabled = !on;
               }
               paint();
@@ -1074,7 +1087,11 @@
     var personaText;
     if (state.personas && state.personas.length && window.Persona && window.Persona.resolveActive) {
       window.Persona.setData(state.personas, state.persona || '', state.placeholders || {});
-      var active = window.Persona.resolveActive(state.personas, state.persona || '', metrics || {});
+      // v0.29: live name/model/provider — {name}/{model}/{provider} are
+      // trigger keys now, same as the engine's extended evaluation.
+      var active = window.Persona.resolveActive(state.personas, state.persona || '', metrics || {}, {
+        name: state.chatName, model: model, provider: state.provider
+      });
       personaText = active && active.text && active.text.trim() ? active.text : '';
     } else {
       personaText = (state.persona || '').trim();

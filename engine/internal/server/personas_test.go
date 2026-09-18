@@ -98,13 +98,15 @@ func TestSystemPromptForUsesActivePersona(t *testing.T) {
 
 func TestSanitizeArtifactNameDoubleExt(t *testing.T) {
 	cases := map[string]string{
-		"Hello_Word.docx.doc": "Hello_Word.docx",
-		"report.doc.docx":     "report.doc",
-		"data.csv.txt":        "data.csv",
-		"b.tar.gz":            "b.tar.gz",
-		"plain.md":            "plain.md",
-		"a/b\\c.docx.doc":     "abc.docx",
-		"weird.docx.doc.docx": "weird.docx",
+		"Hello_Word.docx.doc":            "Hello_Word.docx",
+		"report.doc.docx":                "report.doc",
+		"data.csv.txt":                   "data.csv",
+		"b.tar.gz":                       "b.tar.gz",
+		"plain.md":                       "plain.md",
+		"a/b\\c.docx.doc":                "a/b/c.docx", // v0.29: paths are KEPT (the file tree nests them)
+		"../escape/../../etc/passwd.txt": "escape/etc/passwd.txt",
+		"/leading/slash.txt":             "leading/slash.txt",
+		"weird.docx.doc.docx":            "weird.docx",
 	}
 	for in, want := range cases {
 		if got := sanitizeArtifactName(in); got != want {

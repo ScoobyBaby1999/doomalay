@@ -71,20 +71,46 @@ func sanitizeArtifactName(name string) string {
 	if name == "" {
 		return "artifact.txt"
 	}
-	// strip path separators + control chars; keep it a single filename
+	// v0.29: the FILE TREE needs real paths — names may carry folders
+	// ("src/lib/util.go"). The name is only a LABEL: content lives on
+	// disk under the artifact ID, so nesting costs nothing. We still
+	// normalize: strip control chars, drop dot-dot segments, collapse
+	// duplicate slashes, and trim leading/trailing separators.
 	name = strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r < 32 {
+		if r < 32 {
 			return -1
 		}
 		return r
-	}, name)
-	if len(name) > 120 {
-		name = name[:120]
+	}, strings.ReplaceAll(name, "\\", "/"))
+	segs := strings.Split(name, "/")
+	kept := make([]string, 0, len(segs))
+	for _, s := range segs {
+		s = strings.TrimSpace(s)
+		if s == "" || s == "." || s == ".." {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	name = strings.Join(kept, "/")
+	if name == "" {
+		return "artifact.txt"
+	}
+	if len(name) > 240 {
+		// trim WHOLE segments from the front — a cut-in-half segment
+		// would corrupt the tree's nesting for that file
+		all := strings.Split(name, "/")
+		total := len(all[len(all)-1])
+		i := len(all) - 2
+		for i > 0 && total+1+len(all[i]) <= 240 {
+			total += 1 + len(all[i])
+			i--
+		}
+		name = strings.Join(all[i+1:], "/")
 	}
 	// v0.26: collapse "file.docx.doc" → "file.docx" (the model sometimes
 	// names its own output with a glued-on second extension).
 	for doubleDocExtRe.MatchString(name) {
-		name = doubleDocExtRe.ReplaceAllString(name, ".$1")
+		name = doubleDocExtRe.ReplaceAllString(name, "."+"$1")
 	}
 	return name
 }
@@ -480,7 +506,7 @@ func (s *Server) handleArtifactDownload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", m.Mime)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", m.Name))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(m.Name))) // v0.29: names carry paths — the header wants the file part
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(raw)))
 	_, _ = w.Write(raw)
 }

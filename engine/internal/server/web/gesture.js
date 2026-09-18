@@ -47,6 +47,16 @@
   var FULL_CLOSE_FRAC = 0.55; // from full: > 55% slow drag closes (was 45)
   var CLOSE_FRAC = 0.32;      // from default: > 32% deliberate drag closes (was 10)
 
+  // v0.29: elements that OWN their touch gestures — the sheet must never
+  // hijack a drag meant for them. Range sliders are the case that bit:
+  // sliding a thumb left/right arcs the finger slightly DOWN; the arc beat
+  // the 24px slop and the sheet started following mid-slider-drag (the
+  // "slider slides the panel" bug).
+  function ownsGesture(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest('input[type="range"], textarea, .no-sheet-drag');
+  }
+
   function attach(panel, opts) {
     panelEl = panel;
     onStateChange = (opts && opts.onStateChange) || null;
@@ -286,13 +296,15 @@
         track.bodyStart = {
           y: e.touches[0].clientY,
           t: performance.now(),
-          sc: innerScroller(e.target)   // may be null → nothing to scroll
+          sc: innerScroller(e.target),   // may be null → nothing to scroll
+          noSheet: ownsGesture(e.target) // v0.29: sliders own their drags
         };
         track.active = false;
       }, { passive: true });
       body.addEventListener('touchmove', function (e) {
         var bs = track.bodyStart;
         if (!bs || e.touches.length !== 1) return;
+        if (bs.noSheet) return; // v0.29: a slider drag — hands off, always
         if (track.active && !track.hijacked) return; // anchor drag in progress
         var y = e.touches[0].clientY;
         var dy = y - bs.y;

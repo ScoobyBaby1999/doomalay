@@ -1113,6 +1113,99 @@
   .art-cm-host { position: absolute; inset: 0; }
   .art-cm-host .CodeMirror { height: 100%; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
 
+  /* ── v0.29 THE FILE TREE (wunderbaum, vendored MIT — dist/wunderbaum.css
+     is loaded lazily; these overrides re-skin it to the app's dark theme,
+     VS-Code-style: root folders flush-left, one indent per nesting level,
+     collapsible, VIRTUAL SCROLLING so a whole monorepo (100k+ nodes) stays
+     smooth — only the visible rows ever exist in the DOM). ───────────── */
+  .art-tree {
+    height: 100%;
+    --wb-font-stack: inherit;
+    --wb-row-outer-height: 34px;
+    --wb-row-inner-height: 32px;
+    --wb-node-text-color: var(--text-1);
+    --wb-border-color: var(--surface-2);
+    --wb-background-color: transparent;
+    --wb-background-color-dark: transparent;
+    --wb-alternate-row-color: transparent;
+    --wb-hover-color: rgba(var(--accent-2-rgb), 0.07);
+    --wb-active-color: rgba(var(--accent-2-rgb), 0.14);
+    --wb-active-cell-color: transparent;
+    --wb-active-border-color: transparent;
+    --wb-focus-border-color: transparent;
+    --wb-grid-color: transparent;
+    --wb-header-color: transparent;
+    --wb-error-color: var(--err);
+    font-size: var(--ui-fs);
+  }
+  .art-tree.wb-tree { background: transparent; }
+  /* wunderbaum rows are position:absolute with only `top` set inline —
+     `left` falls back to the ambiguous static position, which can shift
+     an activated row leftward under some event orders. Pin it. */
+  .art-tree .wb-row { left: 0; }
+  .art-tree .wb-row {
+    border-radius: 8px; cursor: pointer; margin: 0 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .art-tree .wb-row.wb-active .wb-col,
+  .art-tree .wb-row.wb-active { background: transparent; }
+  .art-tree .wb-row.wb-active > .wb-col span.wb-node { background: transparent; }
+  .art-tree .wb-row:active { background: rgba(var(--accent-2-rgb), 0.10); }
+  .art-tree .wb-col-span-title, .art-tree .wb-node span.wb-title {
+    color: var(--text-1); font-weight: 500;
+  }
+  .art-tree .wb-node span.wb-icon { display: none; } /* we draw our own emoji icons */
+  .art-tree .ft-ico {
+    display: inline-block; width: 22px; text-align: center;
+    margin-right: 6px; font-size: 15px; flex-shrink: 0;
+  }
+  .art-tree .wb-folder-closed .ft-ico, .art-tree span.ft-folder { opacity: 0.92; }
+  .art-tree .wb-node.wb-folder .ft-ico, .art-tree .wb-row[data-wb-folder] .ft-ico { opacity: 0.92; }
+  .art-tree .wb-col.ftc-size, .art-tree .wb-col.ftc-date {
+    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1px);
+    font-variant-numeric: tabular-nums; text-align: right; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0;
+  }
+  .art-tree .wb-col.ftc-act { flex-shrink: 0; text-align: center; }
+  .art-tree .wb-expander { color: var(--text-3); }
+  .art-tree .art-act-btn {
+    background: transparent; border: none; color: var(--text-3);
+    font-size: 15px; line-height: 1; padding: 4px 7px; cursor: pointer;
+    border-radius: 6px; font-family: inherit; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .art-tree .art-act-btn:active { background: var(--surface-2); color: var(--text-1); }
+  /* the ⋯ action strip (mobile action sheet at the bottom of the drawer) */
+  .art-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
+    background: var(--surface-1); border-top: 1px solid var(--surface-2);
+    border-radius: 16px 16px 0 0; padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+    transform: translateY(110%); transition: transform 0.22s cubic-bezier(0.32,0.72,0,1);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+  }
+  .art-sheet.open { transform: translateY(0); }
+  .art-sheet-name {
+    color: var(--text-1); font-weight: 700; font-size: var(--ui-fs);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 2px 2px 10px;
+  }
+  .art-sheet-btn {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    background: var(--surface-2); border: 1px solid var(--surface-2); border-radius: 10px;
+    color: var(--text-1); font-size: var(--ui-fs); font-weight: 600;
+    padding: 13px 14px; margin-bottom: 7px; cursor: pointer; font-family: inherit;
+    text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .art-sheet-btn:active { background: var(--surface-1); }
+  .art-sheet-btn.danger { color: var(--err); border-color: rgba(var(--err-rgb),0.3); }
+  .art-sheet-cancel { justify-content: center; opacity: 0.75; margin-bottom: 0; }
+  .art-sheet-ico { width: 22px; text-align: center; flex-shrink: 0; }
+  .art-sheet-input {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--fmt-a1);
+    border-radius: 8px; color: var(--text-1); font-size: var(--ui-fs);
+    padding: 12px 12px; font-family: inherit; outline: none; margin-bottom: 8px;
+  }
+
   /* ── v0.23 VIEWERS (docx · xlsx · archives) ── */
   .vw-xlsx, .vw-arch { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   .vw-doc { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -1279,16 +1372,37 @@
   .pv-row-chev { color: var(--text-3-dim); flex-shrink: 0; font-size: 14px; }
   /* v0.28: range sliders for the panel views (mind context window,
      export latest, compaction threshold). accent-color keeps the native
-     thumb — themed by the engine's palette. */
+     thumb — themed by the engine's palette.
+     v0.29 (user spec): ~14% NARROWER, taken evenly from both sides, and
+     touch-action:none so a thumb drag NEVER scrolls the sheet under it
+     (paired with gesture.js's ownsGesture guard). */
   .pv-range {
-    width: 100%; height: 30px; margin: 2px 0 4px;
+    display: block; width: 86%; margin: 2px auto 4px;
+    height: 30px;
     accent-color: var(--accent);
     background: transparent; cursor: pointer;
+    touch-action: none;
+  }
+  /* v0.29: EVERY range input inside the master panel claims its own
+     gesture — the sheet's scroll chain must not eat thumb drags. Covers
+     the appearance/theme sizing sliders too (their inline width:100%
+     is gone — they inherit the same 86% centering). */
+  .panel-body input[type="range"] {
+    touch-action: none;
+  }
+  /* v0.29: the settings/appearance sliders — same 86% centered rule as
+     .pv-range (their inline width:100% was removed so this applies). */
+  .panel-body input.app-range {
+    display: block; width: 86%; margin: 0 auto;
   }
   .pv-sub-row {
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 8px; margin-top: 10px;
   }
+  /* v0.29: the mind panel asked for breathing room — its rows use this
+     roomier variant (labels up top, more space between groups). */
+  .pv-sub-row.roomy { margin-top: 18px; }
+  .pv-sub-row.roomy + .pv-range { margin-top: 4px; }
   .pv-sub-label {
     font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 600;
     color: var(--text-1); flex-shrink: 0;
@@ -1311,6 +1425,45 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, border-color 0.15s;
+  }
+  /* v0.29 (user spec): the persona editor's action pills (save / ↺ default
+     / ⇩ .md / delete) moved from BELOW the editor to the TOP, under the mode
+     pills, MATCHING their size — one compact two-row pill block. The MD
+     editor then fills the rest of the panel (pe-root column + flex). */
+  .pe-action-row {
+    display: flex; gap: 6px; margin: 6px 0 10px;
+  }
+  .pe-action-row .pe-mode-pill { flex: 1 1 0; }
+  .pe-root {
+    display: flex; flex-direction: column;
+    height: 100%;            /* .panel-body has definite height (flex item) */
+    min-height: 0;
+  }
+  .pe-root .pe-body-fill {
+    flex: 1 1 auto; min-height: 140px; position: relative;
+    border: 1px solid var(--surface-2); border-radius: 10px;
+    overflow: hidden; margin-bottom: 2px;
+  }
+  .pe-body-fill .art-cm-host { position: absolute; inset: 0; }
+  .pe-body-fill .art-cm-host .CodeMirror { height: 100%; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  /* placeholder scope pill (global ⇄ local) in the placeholders view */
+  .ph-scope-pill {
+    display: flex; align-items: stretch; border: 1px solid var(--surface-2);
+    border-radius: 10px; overflow: hidden; flex-shrink: 0;
+    font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .ph-scope-pill button {
+    background: transparent; border: none; color: var(--text-3);
+    font-size: var(--ui-micro-fs); font-weight: 700; padding: 10px 12px;
+    cursor: pointer; font-family: inherit; letter-spacing: 0.2px;
+  }
+  .ph-scope-pill button[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.16); color: var(--accent-2);
+  }
+  /* trigger builder: three boxes on one row + an example hint */
+  .tr-grid {
+    display: grid; grid-template-columns: 1fr 64px 1fr; gap: 8px;
+    align-items: center; margin-top: 6px;
   }
   .pv-section-label {
     font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;

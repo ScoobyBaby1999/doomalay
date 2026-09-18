@@ -67,9 +67,23 @@
   // ── state for the open chat ───────────────────────────────────────
   var cur = null;         // { sessionId, name, model, provider }
   var personas = [];      // [{id,name,text,mode,trigger}]
-  var placeholders = {};  // {key: value}
+  var placeholders = {};  // {key: value} — this chat's LOCAL customs
+  var globalPlaceholders = {}; // v0.29: engine-wide customs (every chatbot)
   var legacyPersona = ''; // v0.19 single-persona column (fallback)
   var cm = null;          // the open editor's CodeMirror
+
+  // v0.29: the GLOBAL custom placeholders live server-side
+  // (GET/PUT/DELETE /api/placeholders — app_settings). Cached here; the
+  // PM path reads the same cache so both paths agree on {key} values.
+  var globalsFresh = false;
+  function loadGlobals() {
+    return fetch('/api/placeholders').then(function (r) { return r.json(); }).then(function (d) {
+      globalPlaceholders = (d && d.placeholders) || {};
+      globalsFresh = true;
+      return globalPlaceholders;
+    }).catch(function () { return globalPlaceholders; });
+  }
+  loadGlobals(); // module-load warm (localhost fetch — instant)
 
   var MODES = {
     always:   { label: 'always active',     color: 'var(--ok)',       rgb: 'var(--ok-rgb)' },
@@ -194,6 +208,8 @@
       return '<div class="art-loading">loading personas…</div>';
     }));
     loadSession(sessionId, opts).then(function () {
+      return loadGlobals(); // v0.29: trigger keys + substitution need the globals
+    }).then(function () {
       panel.replaceView(listView());
     }).catch(function (e) {
       panel.replaceView(view('personas', function () {
@@ -272,11 +288,15 @@
   }
 
   // ── THE EDITOR VIEW ───────────────────────────────────────────────
-  // v0.28 (user spec): the activation-mode picker is now FOUR compact
-  // pills at the TOP (always / shuffle / trigger / off) instead of a
-  // nested view — one tap switches the mode (trigger still opens its
+  // v0.28: four compact mode pills at the top (always / shuffle /
+  // trigger / off) — one tap switches the mode (trigger still opens its
   // builder). "always" demotes the previous always persona (single
   // active), "off" parks this one inactive.
+  // v0.29 (user spec): the ACTION pills (save / ↺ default / ⇩ .md /
+  // delete) moved from BELOW the editor to the top too — a second pill
+  // row matching the mode pills' size — and the MD editor fills the
+  // rest of the panel (pe-root column, flex-fill body). No more
+  // "pills, text block, more pills" sandwich.
   function editorView(p) {
     return view('persona · ' + p.name, function () {
       function modePill(mode, ico, label) {
@@ -288,29 +308,34 @@
           'border:1px solid rgba(' + m.rgb + ',' + (on ? '0.55' : '0.18') + ');' +
           'color:' + (on ? m.color : 'var(--text-3)') + '">' + ico + ' ' + label + '</button>';
       }
+      function actionPill(id, label, extra) {
+        return '<button id="' + id + '" class="pe-mode-pill" ' + (extra || '') + ' style="' +
+          'background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">' + label + '</button>';
+      }
       var trigSub = p.mode === 'trigger' && p.trigger
         ? '{' + p.trigger.key + '} ' + p.trigger.op + ' ' + p.trigger.value : '';
       return (
+        '<div class="pe-root">' +
         '<div class="pe-mode-row">' +
           modePill('always', '●', 'always') +
           modePill('shuffle', '⤨', 'shuffle') +
           modePill('trigger', '⚡', 'trigger') +
           modePill('inactive', '○', 'off') +
         '</div>' +
-        (trigSub ? '<p class="pv-hint" style="margin:0 2px 8px">' + esc(trigSub) + ' — tap ⚡ trigger to edit</p>' : '') +
-        '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center">' +
+        '<div class="pe-action-row">' +
+          actionPill('pe-save', 'save', 'disabled') +
+          actionPill('pe-default', '↺ default') +
+          actionPill('pe-dl', '⇩ .md') +
+          actionPill('pe-del', 'delete', 'style="color:var(--err);border-color:rgba(var(--err-rgb),0.4)"') +
+        '</div>' +
+        '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center;flex:none">' +
           '<input id="pe-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="persona name" aria-label="Persona name">' +
           '<button id="pe-rename" class="pv-btn" style="display:none;min-height:40px;padding:8px 12px">save</button>' +
           '<button id="pe-ph" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">{ } placeholders</button>' +
         '</div>' +
-        '<div id="pe-body" style="position:relative;height:42vh;min-height:240px;border:1px solid var(--surface-2);border-radius:10px;overflow:hidden"><div class="art-loading">loading editor…</div></div>' +
-        '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
-          '<button id="pe-save" class="pv-btn pv-btn-primary" style="flex:2;min-width:110px" disabled>save</button>' +
-          '<button id="pe-default" class="pv-btn" style="flex:1;min-width:80px">↺ default</button>' +
-          '<button id="pe-dl" class="pv-btn" style="flex:1;min-width:70px">⇩ .md</button>' +
-          '<button id="pe-del" class="pv-btn" style="flex:1;min-width:80px;color:var(--err);border-color:rgba(var(--err-rgb),0.4)">delete</button>' +
-        '</div>' +
-        '<p class="pv-hint" style="margin-top:10px">{name}, {model}, {provider}, {skills} and custom keys substitute live on every turn — the persona never goes stale when you switch models or rename the chat.</p>'
+        (trigSub ? '<p class="pv-hint" style="margin:0 2px 8px;flex:none">' + esc(trigSub) + ' — tap ⚡ trigger to edit</p>' : '') +
+        '<div class="pe-body-fill" id="pe-body"><div class="art-loading">loading editor…</div></div>' +
+        '</div>'
       );
     }, function (el) { wireEditor(el, p); });
   }
@@ -371,7 +396,7 @@
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-set-mode');
         p.mode = mode;
-        if (mode === 'trigger') { p.trigger = p.trigger || { key: 'messages', op: '>', value: 10 }; }
+        if (mode === 'trigger') { p.trigger = p.trigger || { key: 'messages', op: '>', value: '10' }; }
         // v0.28 SINGLE-ACTIVE, persona_activate semantics: promoting
         // THIS persona to always demotes every other always persona —
         // the tapped one wins, not whichever happens to sit first in
@@ -437,27 +462,75 @@
   // mode pills at the top replaced it. The trigger builder below is
   // still a view; the other modes are one-tap.)
 
-  // ── THE TRIGGER BUILDER (item 8) ─────────────────────────────────
+  // ── THE TRIGGER BUILDER (v0.29: fixed key list, not free text) ──
+  // User spec: "the key should be a set of the available placeholders,
+  // all global placeholders (name, provider, model) + any of the chat's
+  // local placeholders" — plus the live metrics (messages / turns) that
+  // power the classic "activate after N messages" pattern. The value may
+  // be a number or text (the engine compares numerically when both
+  // sides parse, else case-insensitive string equality).
+  function triggerKeys() {
+    var groups = [];
+    groups.push({ label: 'built-in globals', keys: [
+      { key: 'name', sub: 'the chat\'s own name' },
+      { key: 'model', sub: 'the live model' },
+      { key: 'provider', sub: 'the live provider label' }
+    ]});
+    groups.push({ label: 'live metrics', keys: [
+      { key: 'messages', sub: 'messages in the model-visible history' },
+      { key: 'turns', sub: 'user turns so far' }
+    ]});
+    var gk = Object.keys(globalPlaceholders).sort();
+    if (gk.length) {
+      groups.push({ label: 'global placeholders 🌐', keys: gk.map(function (k) {
+        return { key: k, sub: 'global · = ' + globalPlaceholders[k] };
+      })});
+    }
+    var lk = Object.keys(placeholders).sort();
+    if (lk.length) {
+      groups.push({ label: 'this chat\'s placeholders 📍', keys: lk.map(function (k) {
+        return { key: k, sub: 'local · = ' + placeholders[k] };
+      })});
+    }
+    return groups;
+  }
+
   function triggerView(p) {
     return view('active when…', function () {
-      var t = p.trigger || { key: 'messages', op: '>', value: 10 };
+      var t = p.trigger || { key: 'messages', op: '>', value: '10' };
+      var groups = triggerKeys();
+      var keyOpts = '';
+      var known = false;
+      groups.forEach(function (g) {
+        keyOpts += '<optgroup label="' + escAttr(g.label) + '">';
+        g.keys.forEach(function (k) {
+          var sel = k.key === t.key;
+          if (sel) known = true;
+          keyOpts += '<option value="' + escAttr(k.key) + '"' + (sel ? ' selected' : '') + '>' +
+            esc(k.key) + ' — ' + esc(k.sub) + '</option>';
+        });
+        keyOpts += '</optgroup>';
+      });
+      if (!known && t.key) {
+        keyOpts += '<optgroup label="stored key"><option selected value="' + escAttr(t.key) + '">' +
+          esc(t.key) + ' (stored)</option></optgroup>';
+      }
       return (
-        '<p class="pv-hint">When <b>{key}</b> meets the condition, this persona activates — it overrides always-active and shuffle personas for that turn.</p>' +
-        '<div class="pv-section-label">key</div>' +
-        '<input id="tr-key" class="pv-input" value="' + escAttr(t.key) + '" placeholder="messages · turns · or a custom key">' +
-        '<div class="pv-section-label">is</div>' +
-        '<select id="tr-op" class="pv-select">' +
-          ['=', '<', '>', '!='].map(function (o) {
-            return '<option value="' + o + '"' + (o === t.op ? ' selected' : '') + '>' + o + '</option>';
-          }).join('') +
-        '</select>' +
-        '<div class="pv-section-label">value (number)</div>' +
-        '<input id="tr-val" class="pv-input" type="number" step="any" inputmode="decimal" value="' + escAttr(String(t.value)) + '">' +
+        '<p class="pv-hint">When <b>{key}</b> meets the condition, this persona activates — it overrides always-active and shuffle personas for that turn, and its text can use that placeholder\'s value.</p>' +
+        '<div class="tr-grid">' +
+          '<select id="tr-key" class="pv-select" aria-label="trigger key">' + keyOpts + '</select>' +
+          '<select id="tr-op" class="pv-select" aria-label="operator">' +
+            ['=', '<', '>', '!='].map(function (o) {
+              return '<option value="' + o + '"' + (o === t.op ? ' selected' : '') + '>' + o + '</option>';
+            }).join('') +
+          '</select>' +
+          '<input id="tr-val" class="pv-input" type="text" inputmode="text" value="' + escAttr(String(t.value)) + '" placeholder="number or text">' +
+        '</div>' +
+        '<p class="pv-hint" style="margin:8px 2px 0">numbers compare numerically (<b>messages &gt; 10</b>); text compares as-is (<b>provider = anthropic</b>). Create more keys under <b>{ } placeholders</b> — global ones work in every chatbot, local ones only here.</p>' +
         '<div style="display:flex;gap:8px;margin-top:16px">' +
           '<button id="tr-save" class="pv-btn pv-btn-primary" style="flex:2">set trigger</button>' +
           '<button id="tr-cancel" class="pv-btn" style="flex:1">cancel</button>' +
-        '</div>' +
-        '<p class="pv-hint" style="margin-top:12px">Custom keys created under Placeholders work here too — the chat can change their values itself later (that\'s the programmable hook).</p>'
+        '</div>'
       );
     }, function (el) { wireTrigger(el, p); });
   }
@@ -469,78 +542,128 @@
     if (save) save.addEventListener('click', function () {
       var key = (el.querySelector('#tr-key').value || '').trim().replace(/[{}]/g, '');
       var op = el.querySelector('#tr-op').value;
-      var val = parseFloat(el.querySelector('#tr-val').value);
-      if (!key) { toast('give the trigger a key'); return; }
-      if (isNaN(val)) { toast('the value must be a number'); return; }
+      var val = (el.querySelector('#tr-val').value || '').trim();
+      if (!key) { toast('pick a key'); return; }
+      if (val === '') { toast('give the trigger a value'); return; }
       p.mode = 'trigger';
-      p.trigger = { key: key, op: op, value: val };
+      p.trigger = { key: key, op: op, value: val }; // v0.29: strings allowed
       persist().then(function () {
         toast('active when {' + key + '} ' + op + ' ' + val);
-        // off the builder AND the mode picker (the editor sits below both;
-        // a single pop left a stale picker in the stack — the back button
-        // then needed an extra press to reach the list).
         PV().popView();
-        PV().popView();
-        PV().replaceView(editorView(p)); // refresh the editor's pill
+        PV().replaceView(editorView(p)); // refresh the editor's pills
       });
     });
   }
 
-  // ── THE PLACEHOLDERS VIEW (item 9) ───────────────────────────────
+  // ── THE PLACEHOLDERS VIEW (v0.29: global ⇄ local scopes) ────────
+  // User spec: "the user goes to placeholders, puts a key and a value
+  // and presses add placeholder... They have a new pill next to the add
+  // placeholder box that switches between global or local, this
+  // determines if this new placeholder is global and works for all
+  // chatbots, or local and is only recognised by this one chatbot."
+  // Globals persist via /api/placeholders; locals via the session PATCH.
   function placeholdersView() {
     return view('placeholders', function () {
       function builtin(key, val, sub) {
         return '<div class="pv-row" style="cursor:default">' +
           '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
           '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
-          '<span style="flex-shrink:0;font-size:var(--ui-small-fs) - 0.5px;color:var(--accent-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
+          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--accent-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
         '</div>';
       }
+      function customRow(k, v, scope) {
+        var badge = scope === 'global'
+          ? '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--accent-2);letter-spacing:0.3px">🌐 global</span>'
+          : '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--text-3);letter-spacing:0.3px">📍 this chat</span>';
+        return '<div class="pv-row" style="cursor:default">' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
+          '<span class="pv-row-sub">' + badge + ' · usable in personas + triggers</span></span>' +
+          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:28%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v) + '</span>' +
+          '<button data-del-key="' + escAttr(k) + '" data-del-scope="' + scope + '" style="background:transparent;border:none;color:var(--err);font-size:15px;cursor:pointer;padding:6px 8px;flex-shrink:0">✕</button>' +
+        '</div>';
+      }
+      var globals = '';
+      Object.keys(globalPlaceholders).sort().forEach(function (k) {
+        globals += customRow(k, globalPlaceholders[k], 'global');
+      });
+      if (!globals) globals = '<div class="art-loading" style="padding:14px">no global placeholders yet</div>';
       var customs = '';
       Object.keys(placeholders).sort().forEach(function (k) {
-        customs +=
-          '<div class="pv-row" style="cursor:default">' +
-            '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
-            '<span class="pv-row-sub">custom · usable in personas + triggers</span></span>' +
-            '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:32%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(placeholders[k]) + '</span>' +
-            '<button data-del-key="' + escAttr(k) + '" style="background:transparent;border:none;color:var(--err);font-size:15px;cursor:pointer;padding:6px 8px;flex-shrink:0">✕</button>' +
-          '</div>';
+        customs += customRow(k, placeholders[k], 'local');
       });
-      if (!customs) customs = '<div class="art-loading" style="padding:14px">no custom placeholders yet</div>';
+      if (!customs) customs = '<div class="art-loading" style="padding:14px">no local placeholders yet</div>';
       return (
-        '<p class="pv-hint">These substitute into every persona on every turn. Custom keys also work as trigger values (when they hold numbers).</p>' +
+        '<p class="pv-hint">These substitute into every persona on every turn. <b>🌐 global</b> keys work for ALL chatbots; <b>📍 local</b> keys only this one. Both feed trigger conditions.</p>' +
         '<div class="pv-section-label">built-in</div>' +
         builtin('name', cur ? cur.name : '—', 'the chat\'s own name (Scooby, Lippy, Crippy…)') +
         builtin('model', cur ? String(cur.model).split('/').pop() : '—', 'the live model — swaps instantly when you switch') +
         builtin('provider', cur ? (cur.provider || '—') : '—', 'the live provider label') +
         builtin('skills', 'stub', 'inert on purpose for now — will point at skills + MCP servers later') +
-        '<div class="pv-section-label">custom</div>' +
+        '<div class="pv-section-label">global 🌐</div>' +
+        globals +
+        '<div class="pv-section-label">this chat 📍</div>' +
         customs +
-        '<div style="display:flex;gap:8px;margin-top:4px">' +
+        '<div class="pv-section-label">add</div>' +
+        '<div style="display:flex;gap:8px;margin-top:2px">' +
           '<input id="ph-key" class="pv-input" style="flex:1" placeholder="key (letters, numbers, _)">' +
           '<input id="ph-val" class="pv-input" style="flex:1" placeholder="value (text or number)">' +
         '</div>' +
-        '<button id="ph-add" class="pv-btn pv-btn-primary" style="width:100%;margin-top:8px">＋ add placeholder</button>'
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '<div class="ph-scope-pill" id="ph-scope">' +
+            '<button data-scope="global" data-on="0">🌐 global</button>' +
+            '<button data-scope="local" data-on="1">📍 this chat</button>' +
+          '</div>' +
+          '<button id="ph-add" class="pv-btn pv-btn-primary" style="flex:1">＋ add placeholder</button>' +
+        '</div>'
       );
     }, wirePlaceholders);
   }
 
   function wirePlaceholders(el) {
+    // the scope pill (v0.29): global ⇄ local for the NEW key being added
+    var scope = 'local';
+    el.querySelectorAll('#ph-scope button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        scope = b.getAttribute('data-scope');
+        el.querySelectorAll('#ph-scope button').forEach(function (o) {
+          o.setAttribute('data-on', o === b ? '1' : '0');
+        });
+      });
+    });
     var add = el.querySelector('#ph-add');
     if (add) add.addEventListener('click', function () {
       var k = (el.querySelector('#ph-key').value || '').trim().replace(/[{}]/g, '');
       var v = el.querySelector('#ph-val').value;
       if (!k || !/^[A-Za-z0-9_]+$/.test(k)) { toast('keys are letters, numbers and _ only'); return; }
-      if (['name', 'model', 'provider', 'skills'].indexOf(k) >= 0) { toast(k + ' is built-in — pick another key'); return; }
+      if (['name', 'model', 'provider', 'skills', 'messages', 'turns'].indexOf(k) >= 0) { toast(k + ' is built-in — pick another key'); return; }
+      var done = function () {
+        toast('{' + k + '} added — ' + (scope === 'global' ? 'every chatbot' : 'this chat'));
+        loadGlobals().then(function () { PV().replaceView(placeholdersView()); });
+      };
+      if (scope === 'global') {
+        fetch('/api/placeholders', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: k, value: v })
+        }).then(function (r) {
+          if (!r.ok) return r.json().then(function (d) { throw new Error((d && d.error) || ('HTTP ' + r.status)); });
+          done();
+        }).catch(function (e) { toast(e.message || 'could not save'); });
+        return;
+      }
       placeholders[k] = v;
-      persist().then(function () {
-        toast('{' + k + '} added');
-        PV().replaceView(placeholdersView());
-      });
+      persist().then(done);
     });
     el.querySelectorAll('[data-del-key]').forEach(function (b) {
       b.addEventListener('click', function () {
-        delete placeholders[b.getAttribute('data-del-key')];
+        var k = b.getAttribute('data-del-key');
+        if (b.getAttribute('data-del-scope') === 'global') {
+          fetch('/api/placeholders/' + encodeURIComponent(k), { method: 'DELETE' })
+            .then(function () { return loadGlobals(); })
+            .then(function () { PV().replaceView(placeholdersView()); });
+          return;
+        }
+        delete placeholders[k];
         persist().then(function () { PV().replaceView(placeholdersView()); });
       });
     });
@@ -548,21 +671,18 @@
 
   // ── PM (client-side) activation resolution — mirrors personas.go ──
   // Order: satisfied trigger > always (deterministic) > shuffle pool.
-  function resolveActive(list, legacyText, metrics) {
+  // v0.29: trigger values are strings; keys resolve from the built-in
+  // globals (name/model/provider), the live metrics (messages/turns) and
+  // the merged custom placeholders (local wins on collisions). Numbers
+  // compare numerically; text compares case-insensitively (= / != only).
+  function resolveActive(list, legacyText, metrics, live) {
     var specs = (list || []).slice();
     if (!specs.length) return { text: legacyText || '', mode: 'always', name: '' };
+    live = live || {};
     for (var i = 0; i < specs.length; i++) {
       var p = specs[i];
       if (p.mode === 'trigger' && p.trigger) {
-        var curv = metricValue(p.trigger.key, metrics);
-        if (curv !== null) {
-          var v = Number(p.trigger.value);
-          var ok = p.trigger.op === '=' ? curv === v :
-            p.trigger.op === '<' ? curv < v :
-            p.trigger.op === '>' ? curv > v :
-            p.trigger.op === '!=' ? curv !== v : false;
-          if (ok) return p;
-        }
+        if (triggerMet(p.trigger, metrics, live)) return p;
       }
     }
     for (var a = 0; a < specs.length; a++) if (specs[a].mode === 'always') return specs[a];
@@ -573,24 +693,55 @@
     if (specs[0].mode === 'inactive') return { text: '', mode: 'always', name: '' };
     return specs[0];
   }
-  function metricValue(key, metrics) {
-    metrics = metrics || {};
-    if (key === 'messages' || key === 'message_count') return metrics.messages || 0;
-    if (key === 'turns' || key === 'turn_count') return metrics.turns || 0;
-    var v = parseFloat(placeholders[key]);
-    return isNaN(v) ? null : v;
+
+  // the CURRENT value of a trigger key (string) — null when unknown.
+  function valueFor(key, metrics, live) {
+    metrics = metrics || {}; live = live || {};
+    key = String(key || '').trim();
+    if (key === 'messages' || key === 'message_count') return String(metrics.messages || 0);
+    if (key === 'turns' || key === 'turn_count') return String(metrics.turns || 0);
+    if (key === 'name') return live.name || '';
+    if (key === 'model') return String(live.model || '').split('/').pop() || '';
+    if (key === 'provider') return live.provider || '';
+    // custom: local wins over global (mirrors mergedPlaceholders)
+    if (Object.prototype.hasOwnProperty.call(placeholders, key)) return String(placeholders[key]);
+    if (Object.prototype.hasOwnProperty.call(globalPlaceholders, key)) return String(globalPlaceholders[key]);
+    return null;
+  }
+
+  function triggerMet(t, metrics, live) {
+    var curv = valueFor(t.key, metrics, live);
+    if (curv === null || curv === '') return false;
+    var want = String(t.value == null ? '' : t.value).trim();
+    var cn = parseFloat(curv), wn = parseFloat(want);
+    var op = t.op;
+    if (!isNaN(cn) && !isNaN(wn) && /^\s*-?[\d.]+\s*$/.test(curv) && /^\s*-?[\d.]+\s*$/.test(want)) {
+      if (op === '=' || op === '==') return cn === wn;
+      if (op === '<') return cn < wn;
+      if (op === '>') return cn > wn;
+      if (op === '!=') return cn !== wn;
+      if (op === '<=') return cn <= wn;
+      if (op === '>=') return cn >= wn;
+      return false;
+    }
+    if (op === '=' || op === '==') return curv.toLowerCase() === want.toLowerCase();
+    if (op === '!=') return curv.toLowerCase() !== want.toLowerCase();
+    return false; // ordering on text never fires
   }
 
   function substituteAll(text, chatName, model, provider) {
     if (!text || text.indexOf('{') < 0) return text || '';
     var m = String(model || '').split('/').pop() || 'an AI assistant';
+    var merged = {};
+    for (var g in globalPlaceholders) merged[g] = globalPlaceholders[g]; // global first
+    for (var l in placeholders) merged[l] = placeholders[l];            // local wins
     var out = String(text)
       .split('{name}').join(chatName || '')
       .split('{model}').join(m)
       .split('{provider}').join(provider || '')
       .split('{skills}').join('(no skills attached yet)');
-    Object.keys(placeholders).sort(function (a, b) { return b.length - a.length; }).forEach(function (k) {
-      out = out.split('{' + k + '}').join(placeholders[k]);
+    Object.keys(merged).sort(function (a, b) { return b.length - a.length; }).forEach(function (k) {
+      out = out.split('{' + k + '}').join(merged[k]);
     });
     return out;
   }
@@ -649,11 +800,14 @@
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,
     substituteAll: substituteAll,
-    setData: function (list, legacyText, ph) {
+    setData: function (list, legacyText, ph, globals) {
       personas = list || [];
       legacyPersona = legacyText || '';
       placeholders = ph || {};
+      if (globals) globalPlaceholders = globals; // v0.29 PM mirror
+      if (!globalsFresh) loadGlobals();
       personas.forEach(normalize);
-    }
+    },
+    loadGlobals: loadGlobals
   };
 })();

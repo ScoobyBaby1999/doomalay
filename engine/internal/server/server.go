@@ -52,6 +52,9 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 	}
 
 	s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux()}
+	// v0.29: the persona resolver needs DB access for the GLOBAL custom
+	// placeholders (app_settings). Single server per process — as everywhere.
+	currentServer = s
 	s.routes()
 	return s
 }
@@ -89,6 +92,12 @@ func (s *Server) routes() {
 	// v0.21: usage + cost tracking (per chat + fleet-wide).
 	s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
 	s.mux.HandleFunc("GET /api/usage", s.handleUsageGlobal)
+
+	// v0.29: the GLOBAL custom placeholders (every chatbot recognizes
+	// them; scope switch lives in the personas → placeholders view).
+	s.mux.HandleFunc("GET /api/placeholders", s.handlePlaceholdersGet)
+	s.mux.HandleFunc("PUT /api/placeholders", s.handlePlaceholdersSet)
+	s.mux.HandleFunc("DELETE /api/placeholders/{key}", s.handlePlaceholdersDelete)
 
 	// Chat session CRUD.
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
