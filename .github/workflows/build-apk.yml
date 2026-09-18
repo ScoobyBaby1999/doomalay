@@ -42,13 +42,29 @@ jobs:
           # (stuck at 0.10.1 / 19). Stamp both from the release tag so
           # Settings → About and Android's app info agree with the engine's
           # /api/health version (also ldflags-stamped above).
+          #
+          # v0.30.2 FIX: build.gradle.kts is KOTLIN DSL — the assignments are
+          # `versionCode = 19` (with '='). The first stamping attempt used the
+          # Groovy shape `versionCode 19`, so its sed matched only the word +
+          # space, turning line 13 into `versionCode 300101= 19` and failing
+          # the whole APK build with ScriptCompilationException. The patterns
+          # below accept BOTH shapes and the guard after them hard-fails if
+          # the stamped lines are not exactly `key = value` Kotlin.
           TAG="${GITHUB_REF_NAME}"
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"
             CODE=$(( MAJOR*10000 + MINOR*100 + PATCH ))
-            sed -i "s/versionCode [0-9]*/versionCode ${CODE}/" app/build.gradle.kts
-            sed -i "s/versionName \"[^\"]*\"/versionName \"${TAG#v}\"/" app/build.gradle.kts
+            sed -i -E "s/versionCode( =)? [0-9]+/versionCode = ${CODE}/" app/build.gradle.kts
+            sed -i -E "s/versionName( =)? \"[^\"]*\"/versionName = \"${TAG#v}\"/" app/build.gradle.kts
             echo "APK stamped: ${TAG#v} (${CODE})"
+            # Guard: the stamped lines must be valid Kotlin DSL assignments,
+            # or the build dies HERE with a readable message instead of inside
+            # gradle with a cryptic ScriptCompilationException.
+            grep -Eq "versionCode = [0-9]+" app/build.gradle.kts \
+              || { echo "::error::versionCode stamp failed"; sed -n '9,16p' app/build.gradle.kts; exit 1; }
+            grep -Eq "versionName = \"[^\"]+\"" app/build.gradle.kts \
+              || { echo "::error::versionName stamp failed"; sed -n '9,16p' app/build.gradle.kts; exit 1; }
+            sed -n '13,14p' app/build.gradle.kts
           else
             echo "ref '$TAG' is not a semver tag — leaving gradle defaults"
           fi
