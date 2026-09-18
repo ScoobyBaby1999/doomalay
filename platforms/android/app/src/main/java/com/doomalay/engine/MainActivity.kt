@@ -112,12 +112,18 @@ class MainActivity : Activity() {
                 // backgrounds). The callback MUST be answered exactly once,
                 // so a second pick while one is pending cancels the first
                 // (WebView refuses to fire a new chooser otherwise).
+                // SIGNATURE: the framework's is 3-arg — (WebView,
+                // ValueCallback<Uri[]>, FileChooserParams) — and the params
+                // class is NESTED: WebChromeClient.FileChooserParams, not a
+                // top-level android.webkit.FileChooserParams (that was the
+                // v0.31.0 CI failure: 'overrides nothing').
                 override fun onShowFileChooser(
-                    webView: WebView?,
-                    params: android.webkit.FileChooserParams
+                    view: WebView?,
+                    callback: android.webkit.ValueCallback<Array<android.net.Uri>>?,
+                    params: android.webkit.WebChromeClient.FileChooserParams?
                 ): Boolean {
                     filePathCallback?.onReceiveValue(null)
-                    filePathCallback = null
+                    filePathCallback = callback
                     return try {
                         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                             addCategory(Intent.CATEGORY_OPENABLE)
@@ -129,6 +135,9 @@ class MainActivity : Activity() {
                         true
                     } catch (e: Exception) {
                         AppLog.error("file chooser failed", e)
+                        // returning false lets WebView cancel the chooser
+                        // itself — drop our copy so it is never answered twice
+                        filePathCallback = null
                         false
                     }
                 }
