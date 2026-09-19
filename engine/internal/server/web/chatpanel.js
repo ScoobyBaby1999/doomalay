@@ -2422,7 +2422,9 @@
   // button + the star button as siblings — buttons can't nest (the HTML
   // parser breaks them apart), so the pick stays a real <button>.
   // starredSet: {id:true} map for the star state of every visible entry.
-  function qsRowHtml(en, starredSet) {
+  // v0.32.8 F2: `cheapest` marks the cheapest PAID row (green tag) when
+  // every visible row is priced — free rows keep their "free" chip.
+  function qsRowHtml(en, starredSet, cheapest) {
     var curChip = en.isCurrent
       ? '<span style="font-size:9px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 6px;border-radius:4px;flex-shrink:0">current</span>'
       : '';
@@ -2437,6 +2439,11 @@
         ? '<span style="font-size:9px;font-weight:700;color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">free</span>'
         : '<span style="font-size:9px;font-weight:600;color:var(--warn);background:rgba(var(--warn-rgb),0.10);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">' + esc(en.price) + '</span>';
     }
+    // v0.32.8 F2: the cheapest paid route gets a green tag so the price
+    // decision is one glance, not mental math across rows.
+    var cheapChip = (cheapest && en.hasKey && en.price && en.price !== 'free')
+      ? '<span title="cheapest route among your recents & starred" style="font-size:9px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 6px;border-radius:4px;flex-shrink:0">cheapest</span>'
+      : '';
     var glyph = starredSet[en.id]
       ? '<span style="color:#eab308;font-size:12px;flex-shrink:0;line-height:1">★</span>'
       : '<span style="color:var(--text-3);font-size:11px;flex-shrink:0;line-height:1">🕘</span>';
@@ -2448,7 +2455,7 @@
       'touch-action:manipulation;text-align:left;transition:background 120ms">' +
       glyph +
       '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(en.name) + '</span>' +
-      curChip + prov + priceChip +
+      curChip + prov + priceChip + cheapChip +
       '</button>' +
       starBtn +
       '</div>';
@@ -2463,13 +2470,41 @@
     // starred too — the ★ button on their right is filled then).
     var starredSet = {};
     for (var s0 = 0; s0 < entries.starred.length; s0++) starredSet[entries.starred[s0].id] = true;
+    // v0.32.8 F2: cheapest PAID route across every visible row (recents +
+    // starred, one pool — the decision is cross-section). Free rows keep
+    // their "free" chip and never wear the tag (free is trivially
+    // cheapest). The tag only shows when there's a real choice: ≥2 paid
+    // routes, otherwise a lone paid row labeled "cheapest" is noise.
+    var qsAll = entries.recent.concat(entries.starred);
+    var qsPaidMin = Infinity, qsPaidCount = 0;
+    for (var c0 = 0; c0 < qsAll.length; c0++) {
+      var en0 = qsAll[c0];
+      if (en0.hasKey && en0.price && en0.price !== 'free') {
+        var pm0 = String(en0.price).match(/\$([0-9]+(?:\.[0-9]+)?)/);
+        if (pm0) {
+          var pv0 = parseFloat(pm0[1]);
+          if (pv0 < qsPaidMin) qsPaidMin = pv0;
+          qsPaidCount++;
+        }
+      }
+    }
+    var qsCheapSet = {};
+    if (qsPaidCount >= 2) {
+      for (var c1 = 0; c1 < qsAll.length; c1++) {
+        var en1 = qsAll[c1];
+        if (en1.hasKey && en1.price && en1.price !== 'free') {
+          var pm1 = String(en1.price).match(/\$([0-9]+(?:\.[0-9]+)?)/);
+          if (pm1 && Math.abs(parseFloat(pm1[1]) - qsPaidMin) < 1e-9) qsCheapSet[en1.id] = true;
+        }
+      }
+    }
     if (entries.recent.length) {
       html += qsSectionHeader('Recent', '🕘', 'var(--text-3)');
-      for (var i = 0; i < entries.recent.length; i++) html += qsRowHtml(entries.recent[i], starredSet);
+      for (var i = 0; i < entries.recent.length; i++) html += qsRowHtml(entries.recent[i], starredSet, !!qsCheapSet[entries.recent[i].id]);
     }
     if (entries.starred.length) {
       html += qsSectionHeader('Starred', '★', '#eab308');
-      for (var j = 0; j < entries.starred.length; j++) html += qsRowHtml(entries.starred[j], starredSet);
+      for (var j = 0; j < entries.starred.length; j++) html += qsRowHtml(entries.starred[j], starredSet, !!qsCheapSet[entries.starred[j].id]);
     }
     if (!html) {
       // friendly empty state

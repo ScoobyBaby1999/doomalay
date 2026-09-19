@@ -148,7 +148,7 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-cmpcheapest]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-cmpcheapest]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible,[data-pcmp]:focus-visible,[data-pcmpclose]:focus-visible,[data-pcmpbrowse]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-ufchip:active{transform:scale(0.95)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
@@ -178,13 +178,29 @@
       // v0.32.7 F3: star-pop — the tap lands with a little bounce.
       '@keyframes mb-star-pop{0%{transform:scale(1)}45%{transform:scale(1.4)}100%{transform:scale(1)}}' +
       '.mb-star-pop{animation:mb-star-pop 240ms cubic-bezier(0.32,0.72,0,1)!important}' +
+      // v0.32.8 F5: provider-compare polish — ⚖ pin micro-interactions,
+      // metric-row hover scan tint, browse-button lift.
+      '.mb-pcmpbtn{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
+      '.mb-pcmpbtn:hover{transform:scale(1.12)}' +
+      '.mb-pcmpbtn:active{transform:scale(0.9)}' +
+      '.mb-pcmprow{border-radius:6px;transition:background 120ms}' +
+      '.mb-pcmprow:hover{background:rgba(128,128,140,0.08)}' +
+      '[data-pcmpbrowse]{transition:background 130ms,transform 120ms cubic-bezier(0.32,0.72,0,1),border-color 130ms}' +
+      '[data-pcmpbrowse]:hover{background:rgba(var(--accent-rgb),0.18);transform:translateY(-1px)}' +
+      '[data-pcmpbrowse]:active{transform:translateY(0)}' +
+      // v0.32.8 F3: the counts-line ★ total pops on change — same bounce
+      // language as the ★ buttons (inline-block so the transform lands).
+      '@keyframes mb-starcount-pop{0%{transform:scale(1)}45%{transform:scale(1.35)}100%{transform:scale(1)}}' +
+      '.mb-starcount-pop{display:inline-block;animation:mb-starcount-pop 260ms cubic-bezier(0.32,0.72,0,1)!important}' +
       // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
       '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
       '.mb-keyform input::placeholder{color:var(--border-strong)}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
       '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
-      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail,.mb-compare,.mb-star-pop{transition:none!important;animation:none!important}' +
+      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail,.mb-compare,.mb-star-pop,' +
+      '.mb-pcmpbtn,.mb-pcmpbtn:hover,.mb-pcmpbtn:active,.mb-pcmprow,[data-pcmpbrowse],' +
+      '[data-pcmpbrowse]:hover,.mb-starcount-pop{transition:none!important;animation:none!important}' +
       '}';
     document.head.appendChild(s);
   }
@@ -364,6 +380,7 @@
     var expandedLogical = {};
     var infoOpen = {}; // v0.32.4 F2: transient per-session detail drawers
     var comparePair = []; // v0.32.5 F2: 0–2 logical ids pinned for compare
+    var provComparePair = []; // v0.32.8 F1: 0–2 provider names pinned for compare
     var sortKey = lsGet('sort', 'best');
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
@@ -592,13 +609,23 @@
           if (infoOpen[ilid]) delete infoOpen[ilid]; else infoOpen[ilid] = true;
           render();
           refocusAfterRender('.mb-logrow[data-logical-id="' + (ilid && ilid.replace(/"/g, '\\"')) + '"]');
-        } else if ((e.key === 'c' || e.key === 'C') && view !== 'providers') {
-          // v0.32.5 F2: "c" toggles the compare pin on the focused row.
+        } else if (e.key === 'c' || e.key === 'C') {
           e.preventDefault();
-          var cl2 = row.dataset.logicalId;
-          toggleComparePin(cl2);
-          render();
-          refocusAfterRender('.mb-logrow[data-logical-id="' + (cl2 && cl2.replace(/"/g, '\\"')) + '"]');
+          if (view === 'providers') {
+            // v0.32.8 F6: 'c' pins the focused provider box for ⚖ compare —
+            // keyboard parity with the models view (v0.32.5 F2).
+            var cpn = row.dataset.provhead;
+            if (cpn) {
+              toggleProvComparePin(cpn);
+              render();
+              refocusAfterRender('[data-provhead="' + (cpn && cpn.replace(/"/g, '\\"')) + '"]');
+            }
+          } else {
+            var cl2 = row.dataset.logicalId;
+            toggleComparePin(cl2);
+            render();
+            refocusAfterRender('.mb-logrow[data-logical-id="' + (cl2 && cl2.replace(/"/g, '\\"')) + '"]');
+          }
         } else if ((e.key === 's' || e.key === 'S') && view !== 'providers') {
           // v0.32.7 F4: "s" stars/unstars the focused row — same logic as
           // the row's ★ button (mutate, persist, badge, pop; re-render
@@ -610,6 +637,7 @@
           else starred.push(slid);
           lsSet('starred', starred);
           updateStarBadge();
+          updateStarCountLine(); // v0.32.8 F3: counts-line ★ total, in place
           if (filters.indexOf('starred') >= 0) {
             render();
             refocusAfterRender('.mb-logrow[data-logical-id="' + (slid && slid.replace(/"/g, '\\"')) + '"]');
@@ -761,32 +789,101 @@
     // Squared, uniform, grid-like pills — a real CSS grid: every cell the
     // same width, rows aligned, wrapping naturally, NO horizontal scroll
     // (v0.32 spec #2).
-    function squaredPill(attr, label, color, on) {
-      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
+    // v0.32.8 F4: an ACTIVE pill wears its live match count — "Smart 134"
+    // is the number of catalog models the pill's OWN predicate matches
+    // (search/other pills excluded: the count you'd see tapping it on a
+    // clean slate). "Any" ctx never counts (it is the unfiltered state).
+    // The grid min widens from 70→84px while any pill carries a count so
+    // the badge never clips; cells stay uniform.
+    function squaredPill(attr, label, color, on, count) {
+      var cnt = (on && typeof count === 'number')
+        ? ' <span style="font-size:9px;opacity:0.78;font-weight:700;font-variant-numeric:tabular-nums">' + count + '</span>'
+        : '';
+      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + cnt + '</button>';
     }
 
     function filterRow() {
-      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
+      // v0.32.8 F4: lazy per-pill match counts — only computed for pills
+      // that are ON (the only ones that show a count). 8 pills × ~500
+      // models of cheap checks, and in practice 1–2 pills active.
+      var logical = (catalog && catalog.logical) || [];
+      var pillCount = function (key) {
+        var n = 0;
+        for (var i = 0; i < logical.length; i++) {
+          var lm = logical[i];
+          if (key === 'available') {
+            if ((lm.hosts || []).some(function (h) { return h.hasApiKey; })) n++;
+          } else if (key === 'starred') {
+            if (starred.indexOf(lm.logical) >= 0) n++;
+          } else {
+            var attrs = lm.attributes || {};
+            if (matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''), [key])) n++;
+          }
+        }
+        return n;
+      };
+      var ctxCount = function (v) {
+        var n = 0;
+        for (var i = 0; i < logical.length; i++) {
+          if ((logical[i].contextLength || 0) >= v) n++;
+        }
+        return n;
+      };
+      var priceCount = function (wantFree) {
+        var n = 0;
+        for (var i = 0; i < logical.length; i++) {
+          if (!!logical[i].isFree === wantFree) n++;
+        }
+        return n;
+      };
+      var anyCount = false;
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(PLACEHOLDER,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
       // Capability + availability pills.
       for (var i = 0; i < PILLS.length; i++) {
         var p = PILLS[i];
         var on = filters.indexOf(p.key) >= 0;
-        html += squaredPill('data-pill="' + p.key + '"', p.label, p.color, on);
+        var cnt = on ? pillCount(p.key) : null;
+        if (on) anyCount = true;
+        html += squaredPill('data-pill="' + p.key + '"', p.label, p.color, on, cnt);
       }
       // Context pills.
       for (var c = 0; c < CTX_OPTIONS.length; c++) {
         var co = CTX_OPTIONS[c];
         var onC = ctxMin === co.v;
-        html += squaredPill('data-ctx="' + co.v + '"', co.label, '#14b8a6', onC);
+        var cntC = (onC && co.v > 0) ? ctxCount(co.v) : null;
+        if (cntC !== null) anyCount = true;
+        html += squaredPill('data-ctx="' + co.v + '"', co.label, '#14b8a6', onC, cntC);
       }
       // Pricing pills (self-cancelling toggles — no "Any $").
       for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
         var po = PRICING_OPTIONS[pr];
         var onP = pricing === po.key;
-        html += squaredPill('data-pricing="' + po.key + '"', po.label, po.color, onP);
+        if (onP) anyCount = true;
+        html += squaredPill('data-pricing="' + po.key + '"', po.label, po.color, onP, priceCount(po.key === 'free'));
       }
-      html += '</div>';
+      html = html.replace('PLACEHOLDER', anyCount ? '84px' : '70px') + '</div>';
       return html;
+    }
+
+    // v0.32.8 F3: surgical ★-count update for the models-tab counts line —
+    // star toggles restyle rows in place (no re-render, scroll survives),
+    // so the "· ★ N" chunk needs the same in-place treatment. Reads the
+    // closure `starred` array the toggles just mutated. Harmless after a
+    // full re-render (sets the same values it just rendered). Pops on a
+    // real CHANGE (F5) — the same bounce language as the ★ buttons; the
+    // span's OWN previous text is the baseline, so re-renders never pop.
+    function updateStarCountLine() {
+      var el = window.ConnectOverlay.getContentEl();
+      var sp = el && el.querySelector('[data-starcount]');
+      if (!sp) return;
+      var prev = sp.textContent;
+      var next = '· ★ ' + starred.length;
+      if (prev === next) return; // nothing changed (post-render no-op)
+      sp.textContent = next;
+      sp.style.display = starred.length > 0 ? '' : 'none';
+      sp.classList.remove('mb-starcount-pop');
+      void sp.offsetWidth; // restart the keyframe on rapid toggles
+      sp.classList.add('mb-starcount-pop');
     }
 
     // ── Providers view ──────────────────────────────────────────────────
@@ -828,7 +925,25 @@
       var counts = groups.length
         ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
         : '';
-      return counts + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
+      // v0.32.8 F1: provider compare drawer (pair complete) or the pin
+      // hint (one pinned, waiting for the second) — above the list, the
+      // same placement the model compare uses.
+      var pcmp = '';
+      if (provComparePair.length === 2) {
+        var ga = null, gb = null;
+        for (var pcg = 0; pcg < groups.length; pcg++) {
+          if (groups[pcg].name === provComparePair[0]) ga = groups[pcg];
+          if (groups[pcg].name === provComparePair[1]) gb = groups[pcg];
+        }
+        if (ga && gb) pcmp = provCompareDrawer(ga, gb);
+      } else if (provComparePair.length === 1) {
+        var gp = null;
+        for (var pch = 0; pch < groups.length; pch++) {
+          if (groups[pch].name === provComparePair[0]) { gp = groups[pch]; break; }
+        }
+        if (gp) pcmp = provCompareHint(gp);
+      }
+      return counts + pcmp + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
 
     function providerBox(g, kbFirst) {
@@ -850,6 +965,11 @@
       var chevron = expanded ? '▾' : '▸';
       // v0.32 #8: grip — instant drag handle on the box.
       var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
+      // v0.32.8 F1: the ⚖ provider-compare pin — same guards as the models
+      // view's ⚖ (data-nodrag disarms the long-press reorder; the click
+      // handler stopPropagation()s so the box header never toggles).
+      var cmpPinned = provComparePair.indexOf(g.name) >= 0;
+      var provCmpBtn = '<button data-pcmp="' + escAttr(g.name) + '" data-nodrag class="mb-pcmpbtn" aria-pressed="' + (cmpPinned ? 'true' : 'false') + '" title="' + (cmpPinned ? (provComparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another provider') + '" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (cmpPinned ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (cmpPinned ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (cmpPinned ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0;font-size:12px;line-height:1">⚖</button>';
       // v0.32.1 D: one-tap key unlock on view-only boxes.
       var addKeyBtn = (!g.hasApiKey && g.envVar)
         ? '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;flex-shrink:0;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">＋ key</button>'
@@ -908,6 +1028,7 @@
           addKeyBtn +
           liveDot +
           '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
+          provCmpBtn +
           grip +
         '</div>' +
         keyForm +
@@ -946,6 +1067,119 @@
     function starBtnHtml(key) {
       var on = starred.indexOf(key) >= 0;
       return '<button data-star="' + escAttr(key) + '" data-nodrag class="mb-star" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + (on ? 'unstar this model' : 'star this model') + '" style="background:' + (on ? 'rgba(234,179,8,0.12)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(234,179,8,0.45)' : 'transparent') + ';color:' + (on ? '#eab308' : 'var(--border-strong)') + ';width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:7px;flex-shrink:0;cursor:pointer;font-size:13px;padding:0;line-height:1;font-family:inherit;touch-action:manipulation">★</button>';
+    }
+
+    // v0.32.8 F1: PROVIDER COMPARE — the ⚖ pin on provider boxes. Two
+    // pinned providers get a side-by-side strip above the list: physical
+    // stats (models, free models, cheapest prompt price, biggest context,
+    // key status) with the winner highlighted, and a per-side "browse N
+    // models →" that deep-links into the Models tab (search = provider
+    // display name — logicalMatches already matches host names).
+    // Transient: like the model compare, never persisted.
+    function toggleProvComparePin(name) {
+      var idx = provComparePair.indexOf(name);
+      if (idx >= 0) {
+        provComparePair.splice(idx, 1);
+      } else if (provComparePair.length < 2) {
+        provComparePair.push(name);
+      } else {
+        provComparePair.shift(); // v0.32.5 behavior: oldest pin drops off
+        provComparePair.push(name);
+      }
+    }
+
+    function provStats(g) {
+      var models = g.models || [];
+      var free = 0, minPrompt = Infinity, maxCtx = 0;
+      for (var i = 0; i < models.length; i++) {
+        var m = models[i];
+        if (m.isFree) {
+          free++;
+          // v0.32.8 F1: a free model IS the cheapest route ($0) — an
+          // all-free provider must win "cheapest" over any paid price,
+          // not render "—" and forfeit (fmtP prints 0 as "free").
+          if (minPrompt > 0) minPrompt = 0;
+        } else if (m.pricing) {
+          var pm = String(m.pricing).match(/\$([0-9]+(?:\.[0-9]+)?)/);
+          if (pm) {
+            var v = parseFloat(pm[1]);
+            if (v < minPrompt) minPrompt = v;
+          }
+        }
+        if ((m.contextLength || 0) > maxCtx) maxCtx = m.contextLength;
+      }
+      return { n: models.length, free: free, minPrompt: (minPrompt === Infinity ? null : minPrompt), maxCtx: maxCtx, keyed: !!g.hasApiKey };
+    }
+
+    function provCompareDrawer(gA, gB) {
+      var a = provStats(gA), b = provStats(gB);
+      var lbl = function (g, s) {
+        return '<div style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
+          '<div style="display:flex;align-items:center;gap:6px;min-width:0">' +
+          '<span style="width:9px;height:9px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
+          '<span style="font-size:calc(var(--ui-small-fs));font-weight:700;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
+          '</div>' +
+          '<span style="font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;color:' + (s.keyed ? 'var(--ok)' : 'var(--text-3)') + '">' + (s.keyed ? 'ready' : 'view only') + '</span>' +
+          '</div>';
+      };
+      // metric row: winner side gets ▲ + var(--ok) + a faint ok tint; ties
+      // get neither. v0.32.8 F5 (VLM round): justification is FIXED per
+      // side (left cells always right-aligned toward the center label,
+      // right cells always left-aligned) — the win state must not MOVE a
+      // value, only color it; label contrast bumped to text-2; row
+      // min-height 26 + line-height so nothing clips.
+      var row = function (label, va, vb, fmt, better) {
+        // v0.32.8 F1 BUGFIX: null ("—", e.g. no paid models on that side)
+        // must NEVER win — `null < price` coerces null→0 and would crown
+        // the empty side as "cheapest". Guard both sides.
+        var hasA = va !== null && va !== undefined;
+        var hasB = vb !== null && vb !== undefined;
+        var winA = hasA && (better === 'more' ? va > vb : (better === 'less' ? va < vb : false));
+        var winB = hasB && (better === 'more' ? vb > va : (better === 'less' ? vb < va : false));
+        var cell = function (v, win, side) {
+          // v0.32.8 F5 (VLM round 2): no badge padding — it pushed values
+          // off the column line. The ▲ hugs the CENTER on both sides
+          // ("82 ▲" | "▲ 71") so the numbers sit on mirrored, straight
+          // lines; win state colors + emboldens, never moves.
+          var arrow = win ? '<span style="font-size:8px;line-height:1">▲</span>' : '';
+          return '<span style="display:inline-flex;align-items:center;gap:3px;font-size:calc(var(--ui-small-fs) - 1px);font-variant-numeric:tabular-nums;line-height:1.3;color:' + (win ? 'var(--ok)' : 'var(--text-2)') + ';font-weight:' + (win ? '700' : '500') + ';justify-self:' + (side === 'L' ? 'end' : 'start') + '">' + (side === 'L' ? (fmt(v) + arrow) : (arrow + fmt(v))) + '</span>';
+        };
+        return '<div class="mb-pcmprow" style="display:grid;grid-template-columns:1fr 84px 1fr;align-items:center;gap:6px;min-height:26px">' +
+          cell(va, winA, 'L') +
+          '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);text-align:center;text-transform:uppercase;letter-spacing:0.06em;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + label + '</span>' +
+          cell(vb, winB, 'R') +
+          '</div>';
+      };
+      var fmtP = function (v) { return v === null ? '—' : (v === 0 ? 'free' : '$' + v + '/M'); };
+      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:10px">' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-1);flex:1">Provider compare</span>' +
+        '<button data-pcmpclose data-nodrag title="unpin both" aria-label="close provider compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;width:22px;height:22px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 84px 1fr;gap:6px">' + lbl(gA, a) + '<span></span>' + lbl(gB, b) + '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--surface-2);padding-top:8px">' +
+        row('models', a.n, b.n, function (v) { return String(v); }, 'more') +
+        row('free', a.free, b.free, function (v) { return String(v); }, 'more') +
+        row('cheapest', a.minPrompt, b.minPrompt, fmtP, 'less') +
+        row('context', a.maxCtx, b.maxCtx, function (v) { return fmtCtx(v); }, 'more') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+        // v0.32.8 F1: no browse button for a 0-model side (nothing to
+        // deep-link — the grid cell just stays empty).
+        (a.n > 0 ? '<button data-pcmpbrowse="' + escAttr(gA.displayName || gA.name) + '" data-nodrag title="browse ' + escAttr(gA.displayName || gA.name) + ' models in the Models tab" style="background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);font-size:10.5px;font-weight:700;padding:6px 10px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">browse ' + a.n + ' models →</button>' : '<span></span>') +
+        (b.n > 0 ? '<button data-pcmpbrowse="' + escAttr(gB.displayName || gB.name) + '" data-nodrag title="browse ' + escAttr(gB.displayName || gB.name) + ' models in the Models tab" style="background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);font-size:10.5px;font-weight:700;padding:6px 10px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">browse ' + b.n + ' models →</button>' : '<span></span>') +
+        '</div>' +
+        '</div>';
+      return html;
+    }
+
+    function provCompareHint(g) {
+      return '<div data-nodrag style="display:flex;align-items:center;gap:8px;border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:rgba(var(--accent-rgb),0.05)">' +
+        '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--text-1)">' + escHTML(g.displayName || g.name) + '</b> pinned — tap ⚖ on another provider</span>' +
+        '<button data-pcmpclose data-nodrag title="unpin" aria-label="unpin provider compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:10px;width:20px;height:20px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
+        '</div>';
     }
 
     // ── Models view (logical, all providers combined) ────────────────────
@@ -996,6 +1230,9 @@
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing models…</div>';
       }
       // v0.32.1 C: live counts — "X of Y models · Z with your keys".
+      // v0.32.8 F3: "· ★ N" (starred total) rides in the right span —
+      // amber like the ★ buttons, surgically updated on star toggles
+      // (data-starcount; hidden at 0 so the default line stays clean).
       var withKeys = 0;
       for (var wk = 0; wk < matching.length; wk++) {
         var wkHosts = matching[wk].hosts || [];
@@ -1003,8 +1240,9 @@
           if (wkHosts[hh].hasApiKey) { withKeys++; break; }
         }
       }
+      var starChunk = '<span data-starcount style="color:#eab308;font-weight:600' + (starred.length ? '' : ';display:none') + '">· ★ ' + starred.length + '</span>';
       var counts = logical.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></div>'
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys ' + starChunk + '</span></div>'
         : '';
       // v0.32.5 F2: compare drawer (pair complete) or the pin hint (one
       // pinned, waiting for the second). Rendered above the list.
@@ -1619,7 +1857,10 @@
     // OR across pills; reasoning also true when effort levels exist;
     // smart/code/agent match the Artificial Analysis benchmarks (v0.32 #3)
     // with capability fallbacks.
-    function matchesFiltersCaps(caps, effortLevels, bm, name) {
+    // v0.32.8 F4: optional `keys` overrides the global filter list — the
+    // pill-count badges count one pill's predicate at a time.
+    function matchesFiltersCaps(caps, effortLevels, bm, name, keys) {
+      keys = keys || filters;
       bm = bm || {};
       var capsLower = (caps || []).map(function (c) { return String(c).toLowerCase(); });
       var hasCap = function (frag) {
@@ -1628,8 +1869,8 @@
         }
         return false;
       };
-      for (var f = 0; f < filters.length; f++) {
-        var key = filters[f];
+      for (var f = 0; f < keys.length; f++) {
+        var key = keys[f];
         var ok = false;
         if (key === 'reasoning') ok = hasCap('reason') || (effortLevels && effortLevels.length > 0) || /reasoning|thinking/.test(name);
         else if (key === 'tools') ok = hasCap('tool') || hasCap('function') || hasCap('agent');
@@ -1746,7 +1987,7 @@
       // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
       // v0.32.5: mentions ⚖ compare + per-route prices.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
+        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models or providers (press c) · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -2149,6 +2390,7 @@
           }
           lsSet('starred', starred);
           updateStarBadge();
+          updateStarCountLine(); // v0.32.8 F3: counts-line ★ total, in place
           // v0.32.7 F3: a quick pop so the tap lands visibly.
           btn.classList.remove('mb-star-pop');
           void btn.offsetWidth;
@@ -2171,6 +2413,51 @@
           render();
           var inp = contentEl.querySelector('[data-keyinput]');
           if (inp) inp.focus();
+        });
+      });
+      // v0.32.8 F1: the ⚖ provider-compare pin — same guards as the models
+      // view's compare button.
+      contentEl.querySelectorAll('[data-pcmp]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          toggleProvComparePin(btn.dataset.pcmp);
+          render();
+        });
+      });
+      // v0.32.8 F1: ✕ on the provider compare drawer / hint — unpins all.
+      contentEl.querySelectorAll('[data-pcmpclose]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          provComparePair = [];
+          render();
+        });
+      });
+      // v0.32.8 F1: "browse N models →" — deep-link into the Models tab
+      // with the provider's name as the search (logicalMatches matches
+      // host display names), pins cleared so the strip doesn't linger.
+      // v0.32.8 F1 FIX: also reset pills/ctx/pricing — the button says
+      // "browse N models" and must DELIVER N rows; with a stray filter
+      // on (e.g. Smart) it used to show Smart∩provider (10 of 82) and
+      // break its own promise. A scoped browse starts clean.
+      contentEl.querySelectorAll('[data-pcmpbrowse]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          provComparePair = [];
+          search = String(btn.dataset.pcmpbrowse || '');
+          filters = [];
+          ctxMin = 0;
+          pricing = 'all';
+          lsSet('filters', filters);
+          lsSet('ctxMin', ctxMin);
+          lsSet('pricing', pricing);
+          view = 'models';
+          lsSet('view', 'models');
+          render();
+          var si = contentEl.querySelector('#mb-search');
+          if (si) si.focus();
         });
       });
       var keyInput = contentEl.querySelector('[data-keyinput]');
