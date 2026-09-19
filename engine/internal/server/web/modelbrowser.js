@@ -150,6 +150,10 @@
       '.mb-pill:active{transform:scale(0.95)}' +
       '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-cmpcheapest]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible,[data-pcmp]:focus-visible,[data-pcmpclose]:focus-visible,[data-pcmpbrowse]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-ufchip:active{transform:scale(0.95)}' +
+      // v0.32.9 F4: removable chips feel pressable too — a hover lift +
+      // brightness nudge (filter beats inline background/border styles).
+      '.mb-ufchip{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),filter 130ms}' +
+      '.mb-ufchip:hover{transform:translateY(-1px);filter:brightness(1.2)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
@@ -200,7 +204,7 @@
       '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
       '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail,.mb-compare,.mb-star-pop,' +
       '.mb-pcmpbtn,.mb-pcmpbtn:hover,.mb-pcmpbtn:active,.mb-pcmprow,[data-pcmpbrowse],' +
-      '[data-pcmpbrowse]:hover,.mb-starcount-pop{transition:none!important;animation:none!important}' +
+      '[data-pcmpbrowse]:hover,.mb-starcount-pop,.mb-ufchip,.mb-ufchip:hover{transition:none!important;animation:none!important;filter:none!important}' +
       '}';
     document.head.appendChild(s);
   }
@@ -344,7 +348,10 @@
   }
 
   // v0.32.1 F: Esc closes the overlay. v0.32.2 C: "/" focuses search.
-  // (Bound once per page.)
+  // v0.32.9 F3: "x" clears every filter + search — document-level so it
+  // works wherever focus sits (a row, the empty state, body after a tap);
+  // typing contexts (INPUT/TEXTAREA/SELECT) and BUTTON targets keep their
+  // keys. (Bound once per page; the reset hook is re-exposed on open().)
   var escBound = false;
   function bindEscOnce() {
     if (escBound) return;
@@ -358,6 +365,13 @@
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
         var si = window.ConnectOverlay.getContentEl().querySelector('#mb-search');
         if (si) { e.preventDefault(); si.focus(); }
+      } else if (e.key === 'x' || e.key === 'X') {
+        var tx = e.target;
+        if (tx && (tx.tagName === 'INPUT' || tx.tagName === 'TEXTAREA' || tx.tagName === 'SELECT' || tx.tagName === 'BUTTON')) return;
+        if (window.ModelBrowser && typeof window.ModelBrowser.resetFilters === 'function') {
+          e.preventDefault();
+          window.ModelBrowser.resetFilters();
+        }
       }
     });
   }
@@ -385,6 +399,20 @@
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
     var starred = lsGet('starred', []); // v0.32.2 A: logical/family ids
+
+    // v0.32.9 F3: one reset path — the clear button, the hidden-count
+    // line, and the 'x' keyboard shortcut all reset the same state.
+    // (open()-scope so BOTH bindKeyboardNav and the click-binding section
+    // can see it — it originally lived inside bindKeyboardNav and the
+    // click bindings threw ReferenceError.)
+    function resetAllFilters() {
+      filters = []; ctxMin = 0; pricing = 'all'; search = '';
+      lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
+      render();
+    }
+    // v0.32.9 F3: the document-level 'x' handler (bindEscOnce) reaches in
+    // through this hook — re-exposed every open, inert while closed.
+    window.ModelBrowser.resetFilters = resetAllFilters;
 
     // Catalog data.
     var catalog = null;
@@ -555,6 +583,9 @@
           }
           return; // typing in the search box owns every other key
         }
+        // v0.32.9 F3: 'x' is handled at document level (bindEscOnce) — see
+        // the note there; this row-scoped branch was removed to avoid a
+        // double fire (contentEl handler + bubbling document handler).
         var rows = visibleKbRows();
         if (!rows.length) return;
         var row = (t && t.classList && (t.classList.contains('mb-logrow') || t.hasAttribute('data-provhead'))) ? t : null;
@@ -759,27 +790,35 @@
     }
 
     // v0.32.6 F3: one removable chip per active filter (collapsed state).
+    // v0.32.9 F2: chips wear the SAME live match count as the expanded
+    // pills ("Smart 134 ✕") — the collapsed state (the DEFAULT) tells
+    // you how restrictive each filter is without expanding anything.
+    // tabular-nums so the numbers don't jitter as counts change.
     function collapsedFilterChips() {
       if (!activeFilterCount()) return '';
-      var chip = function (label, color, attrVal) {
+      var chip = function (label, color, attrVal, count) {
+        var cnt = (typeof count === 'number')
+          ? '<span style="font-size:9.5px;font-weight:700;opacity:0.8;font-variant-numeric:tabular-nums">' + count + '</span>'
+          : '';
         return '<button data-unfilter="' + escAttr(attrVal) + '" class="mb-ufchip" title="remove this filter" style="display:inline-flex;align-items:center;gap:5px;background:' + color + '1c;border:1px solid ' + color + '80;color:' + color + ';font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;flex-shrink:0">' +
           escHTML(label) +
+          cnt +
           '<span style="font-size:9px;opacity:0.85;line-height:1">✕</span></button>';
       };
       var chips = '';
       for (var i = 0; i < filters.length; i++) {
         var def = null;
         for (var p = 0; p < PILLS.length; p++) if (PILLS[p].key === filters[i]) { def = PILLS[p]; break; }
-        if (def) chips += chip(def.label, def.color, 'pill:' + def.key);
+        if (def) chips += chip(def.label, def.color, 'pill:' + def.key, pillCount(def.key));
       }
       if (ctxMin > 0) {
         for (var c = 0; c < CTX_OPTIONS.length; c++) {
-          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin); break; }
+          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin, ctxCount(ctxMin)); break; }
         }
       }
       if (pricing !== 'all') {
         for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
-          if (PRICING_OPTIONS[pr].key === pricing) { chips += chip(PRICING_OPTIONS[pr].label, PRICING_OPTIONS[pr].color, 'pricing:' + pricing); break; }
+          if (PRICING_OPTIONS[pr].key === pricing) { chips += chip(PRICING_OPTIONS[pr].label, PRICING_OPTIONS[pr].color, 'pricing:' + pricing, priceCount(pricing === 'free')); break; }
         }
       }
       if (!chips) return '';
@@ -802,40 +841,46 @@
       return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + cnt + '</button>';
     }
 
-    function filterRow() {
-      // v0.32.8 F4: lazy per-pill match counts — only computed for pills
-      // that are ON (the only ones that show a count). 8 pills × ~500
-      // models of cheap checks, and in practice 1–2 pills active.
+    // v0.32.8 F4 → v0.32.9 F2 (hoisted): per-pill match counts — the
+    // pill's OWN predicate against the whole catalog (search/other pills
+    // excluded: the count you'd see tapping it on a clean slate). Shared
+    // by the expanded pill grid AND the collapsed removable chips so both
+    // states tell the same story. Cheap: ~500 logical models of in-memory
+    // checks, and only ON filters compute.
+    function pillCount(key) {
       var logical = (catalog && catalog.logical) || [];
-      var pillCount = function (key) {
-        var n = 0;
-        for (var i = 0; i < logical.length; i++) {
-          var lm = logical[i];
-          if (key === 'available') {
-            if ((lm.hosts || []).some(function (h) { return h.hasApiKey; })) n++;
-          } else if (key === 'starred') {
-            if (starred.indexOf(lm.logical) >= 0) n++;
-          } else {
-            var attrs = lm.attributes || {};
-            if (matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''), [key])) n++;
-          }
+      var n = 0;
+      for (var i = 0; i < logical.length; i++) {
+        var lm = logical[i];
+        if (key === 'available') {
+          if ((lm.hosts || []).some(function (h) { return h.hasApiKey; })) n++;
+        } else if (key === 'starred') {
+          if (starred.indexOf(lm.logical) >= 0) n++;
+        } else {
+          var attrs = lm.attributes || {};
+          if (matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''), [key])) n++;
         }
-        return n;
-      };
-      var ctxCount = function (v) {
-        var n = 0;
-        for (var i = 0; i < logical.length; i++) {
-          if ((logical[i].contextLength || 0) >= v) n++;
-        }
-        return n;
-      };
-      var priceCount = function (wantFree) {
-        var n = 0;
-        for (var i = 0; i < logical.length; i++) {
-          if (!!logical[i].isFree === wantFree) n++;
-        }
-        return n;
-      };
+      }
+      return n;
+    }
+    function ctxCount(v) {
+      var logical = (catalog && catalog.logical) || [];
+      var n = 0;
+      for (var i = 0; i < logical.length; i++) {
+        if ((logical[i].contextLength || 0) >= v) n++;
+      }
+      return n;
+    }
+    function priceCount(wantFree) {
+      var logical = (catalog && catalog.logical) || [];
+      var n = 0;
+      for (var i = 0; i < logical.length; i++) {
+        if (!!logical[i].isFree === wantFree) n++;
+      }
+      return n;
+    }
+
+    function filterRow() {
       var anyCount = false;
       var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(PLACEHOLDER,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
       // Capability + availability pills.
@@ -1987,7 +2032,7 @@
       // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
       // v0.32.5: mentions ⚖ compare + per-route prices.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models or providers (press c) · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
+        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models or providers (press c) · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · x clears all filters · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -2337,19 +2382,11 @@
       });
 
       var clearBtn = contentEl.querySelector('#mb-clear');
-      if (clearBtn) clearBtn.addEventListener('click', function () {
-        filters = []; ctxMin = 0; pricing = 'all'; search = '';
-        lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
-        render();
-      });
+      if (clearBtn) clearBtn.addEventListener('click', resetAllFilters);
 
       // v0.32.1 C: the tappable "N hidden · clear" line under the list.
       var clearAll = contentEl.querySelector('[data-clearall]');
-      if (clearAll) clearAll.addEventListener('click', function () {
-        filters = []; ctxMin = 0; pricing = 'all'; search = '';
-        lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
-        render();
-      });
+      if (clearAll) clearAll.addEventListener('click', resetAllFilters);
 
       // v0.32.3 F5: the zero-result empty state's clear buttons.
       contentEl.querySelectorAll('[data-emptyclear]').forEach(function (b) {

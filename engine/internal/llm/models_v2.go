@@ -931,20 +931,44 @@ collect:
 			}
 			// Host route.
 			cfg := catalog[name]
+			// v0.32.9 F1: sparse fetchers (OpenCode Zen's list
+			// carries no pricing/context) get the FAMILY's
+			// registry values — the same enrichment the
+			// provider view already applies (line ~897), so
+			// host routes stop shipping empty and the frontend
+			// quick-switch price chips / model-compare route
+			// pricing get real data. Guards: PAID models only
+			// (a free host keeps its free semantics), never
+			// copy the "$0 / $0 (free)" string onto a paid
+			// route (first-wins registry merge can pick a
+			// family's :free variant), and context only when
+			// the fetcher reported 0.
+			hostPricing := m.Pricing
+			if hostPricing == "" && !m.IsFree {
+				if meta, ok := registry[fam]; ok && meta.Pricing != "" && meta.Pricing != "$0 / $0 (free)" {
+					hostPricing = meta.Pricing
+				}
+			}
+			hostCtx := m.ContextLength
+			if hostCtx == 0 {
+				if meta, ok := registry[fam]; ok {
+					hostCtx = meta.Context
+				}
+			}
 			lm.Hosts = append(lm.Hosts, HostRoute{
 				Provider:            name,
 				ProviderDisplayName: cfg.Label,
 				Color:               cfg.Color,
 				ModelID:             m.RawID,
-				ContextLength:       m.ContextLength,
+				ContextLength:       hostCtx,
 				HasAPIKey:           keys[cfg.EnvVar] != "",
 				SyncedLive:          true,
 				DefaultPriority:     providerPriorityIndex(name),
 				IsFree:              m.IsFree,
-				Pricing:             m.Pricing,
+				Pricing:             hostPricing,
 			})
-			if m.ContextLength > lm.ContextLength {
-				lm.ContextLength = m.ContextLength
+			if hostCtx > lm.ContextLength {
+				lm.ContextLength = hostCtx
 			}
 			if m.IsFree {
 				lm.IsFree = true
