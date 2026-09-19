@@ -148,7 +148,8 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-ufchip:active{transform:scale(0.95)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
@@ -293,13 +294,24 @@
                (hosts[i].provider + '/' + hosts[i].modelId) === wanted ||
                lm.logical === wanted)) cur = true;
         }
+        // v0.32.6 F1: price chip for the BEST key-backed route — free /
+        // "$X.XX/M" (prompt price) / null when the provider hides pricing.
+        var price = null;
+        if (best) {
+          if (best.isFree) price = 'free';
+          else {
+            var ppm = String(best.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+            if (ppm) price = '$' + ppm[1] + '/M';
+          }
+        }
         return {
           id: id,
           name: lm.displayName || lm.logical,
           provider: best ? best.provider : null,
           providerLabel: best ? (best.providerDisplayName || best.provider) : 'no key',
           hasKey: !!best,
-          isCurrent: cur
+          isCurrent: cur,
+          price: price
         };
       }
       cb({
@@ -392,11 +404,20 @@
     // ── Rendering ───────────────────────────────────────────────────────
 
     function render() {
+      // v0.32.6 F4: the search + filter toggle (+ collapsed active-filter
+      // chips) ride in a STICKY bar — they stay reachable while the user
+      // scrolls a 500-row list (web-researched best practice: sticky
+      // filters beat scroll-away headers; only a minority of products do
+      // it). The expanded pill grid deliberately does NOT stick (it would
+      // eat half a phone screen). z-index 30: above the rows, BELOW the
+      // DnD ghost (z 40) so a dragged row still tracks the finger over it.
       var html =
         '<div style="padding:16px 16px 24px">' +
         header() +
+        '<div class="mb-stickybar" style="position:sticky;top:0;z-index:30;margin:0 -16px;padding:10px 16px 8px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
         searchBox() +
         filterToggleRow() +
+        '</div>' +
         (filtersOpen ? filterRow() : '') +
         (view === 'providers' ? providerView() : modelsView()) +
         footer() +
@@ -667,7 +688,41 @@
       var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search)
         ? '<button id="mb-clear" title="reset all filters" style="flex:0 0 auto;background:transparent;border:1px solid rgba(var(--err-rgb),0.35);color:var(--err);font-size:11px;padding:0 12px;border-radius:10px;font-family:inherit;cursor:pointer;flex-shrink:0">clear</button>'
         : '';
-      return '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:' + (filtersOpen ? '8px' : '12px') + '">' + toggle + clearHTML + '</div>';
+      var out = '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:' + (filtersOpen ? '8px' : '0') + '">' + toggle + clearHTML + '</div>';
+      // v0.32.6 F3: with the pills collapsed but filters ACTIVE, show the
+      // active ones as removable chips — the user sees WHAT is filtering
+      // the list without expanding, and can drop a single filter with one
+      // tap (the standard applied-filters pattern; web-researched).
+      if (!filtersOpen) out += collapsedFilterChips();
+      return out;
+    }
+
+    // v0.32.6 F3: one removable chip per active filter (collapsed state).
+    function collapsedFilterChips() {
+      if (!activeFilterCount()) return '';
+      var chip = function (label, color, attrVal) {
+        return '<button data-unfilter="' + escAttr(attrVal) + '" class="mb-ufchip" title="remove this filter" style="display:inline-flex;align-items:center;gap:5px;background:' + color + '1c;border:1px solid ' + color + '80;color:' + color + ';font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;flex-shrink:0">' +
+          escHTML(label) +
+          '<span style="font-size:9px;opacity:0.85;line-height:1">✕</span></button>';
+      };
+      var chips = '';
+      for (var i = 0; i < filters.length; i++) {
+        var def = null;
+        for (var p = 0; p < PILLS.length; p++) if (PILLS[p].key === filters[i]) { def = PILLS[p]; break; }
+        if (def) chips += chip(def.label, def.color, 'pill:' + def.key);
+      }
+      if (ctxMin > 0) {
+        for (var c = 0; c < CTX_OPTIONS.length; c++) {
+          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin); break; }
+        }
+      }
+      if (pricing !== 'all') {
+        for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
+          if (PRICING_OPTIONS[pr].key === pricing) { chips += chip(PRICING_OPTIONS[pr].label, PRICING_OPTIONS[pr].color, 'pricing:' + pricing); break; }
+        }
+      }
+      if (!chips) return '';
+      return '<div style="display:flex;flex-wrap:wrap;gap:5px;padding:7px 0 2px">' + chips + '</div>';
     }
 
     // Squared, uniform, grid-like pills — a real CSS grid: every cell the
@@ -1148,10 +1203,15 @@
         return { dots: out, keys: keys, n: hs.length };
       };
       var ha = hostsOf(la), hb = hostsOf(lb);
+      // v0.32.6 F2: a "use this model" action under each column — the
+      // compare flow ends in a DECISION, so let the user act on it right
+      // in the drawer. Keyless side renders muted (tap still explains).
       var nameCol = function (lm, h) {
+        var usable = h.keys > 0;
         return '<div style="min-width:0;display:flex;flex-direction:column;gap:3px">' +
           '<span title="' + escAttr(lm.displayName || lm.logical) + '" style="font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
           '<span style="display:flex;align-items:center;gap:5px">' + h.dots + '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">' + h.n + ' route' + (h.n === 1 ? '' : 's') + '</span></span>' +
+          '<button data-cmpuse="' + escAttr(lm.logical) + '" data-nodrag title="' + (usable ? 'switch the chat to this model' : 'no key-backed route yet — tap for details') + '" style="display:inline-flex;align-items:center;gap:5px;align-self:flex-start;background:' + (usable ? 'rgba(var(--accent-rgb),0.10)' : 'transparent') + ';border:1px solid ' + (usable ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';color:' + (usable ? 'var(--accent)' : 'var(--text-3)') + ';font-size:10.5px;font-weight:700;padding:4px 10px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;margin-top:2px">use this model <span style="font-size:9px">→</span></button>' +
           '</div>';
       };
       html += '<div style="display:flex;align-items:flex-start;gap:8px">' +
@@ -2190,6 +2250,41 @@
         });
       });
 
+      // v0.32.6 F2: "use this model" straight from the compare drawer —
+      // same path as the row's left-zone select (best key-backed route;
+      // keyless → the inline hint explains, overlay stays open).
+      contentEl.querySelectorAll('[data-cmpuse]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          selectLogical(btn.dataset.cmpuse);
+        });
+      });
+
+      // v0.32.6 F3: remove ONE filter via its collapsed chip. The chip's
+      // data-unfilter encodes type:value so each kind resets precisely.
+      contentEl.querySelectorAll('[data-unfilter]').forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          if (clickSuppressed()) return;
+          var spec = String(chip.dataset.unfilter || '');
+          var cut = spec.indexOf(':');
+          if (cut < 0) return;
+          var kind = spec.slice(0, cut), val = spec.slice(cut + 1);
+          if (kind === 'pill') {
+            var idx = filters.indexOf(val);
+            if (idx >= 0) filters.splice(idx, 1);
+            lsSet('filters', filters);
+          } else if (kind === 'ctx') {
+            ctxMin = 0;
+            lsSet('ctxMin', 0);
+          } else if (kind === 'pricing') {
+            pricing = 'all';
+            lsSet('pricing', 'all');
+          }
+          render();
+        });
+      });
+
       // Tapping a HOST row (in the expanded rank list) selects that exact
       // provider+model.
       contentEl.querySelectorAll('[data-hostslot]').forEach(function (row) {
@@ -2291,5 +2386,20 @@
     function escHTML(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   }
 
-  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries };
+  // v0.32.6 F1: star/unstar from outside the overlay (the ★ quick-switch
+  // rows). Returns the NEW state (true = starred). NOTE: deliberately does
+  // NOT touch the open()-scoped `starred` copy — the overlay re-reads it
+  // from localStorage on every open(), and the quick-switch popup only
+  // ever runs while the overlay is closed, so the two never diverge.
+  function toggleStar(id) {
+    if (!id) return false;
+    var list = lsGet('starred', []);
+    var idx = list.indexOf(id);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(id);
+    lsSet('starred', list);
+    return idx < 0;
+  }
+
+  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries, toggleStar: toggleStar };
 })();

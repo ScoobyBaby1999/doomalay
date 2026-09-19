@@ -2383,30 +2383,48 @@
   function qsSectionHeader(label, glyph, color) {
     // v0.32.3 (VLM round 4): generous breathing room around section
     // headers — cramped sections read as clutter.
-    return '<div style="display:flex;align-items:center;gap:6px;padding:12px 14px 6px;font-size:10px;font-weight:700;' +
+    // v0.32.6: data-qs-section lets the ★ toggle drop a section header
+    // when its last row goes away.
+    return '<div data-qs-section="' + escAttr(label.toLowerCase()) + '" style="display:flex;align-items:center;gap:6px;padding:12px 14px 6px;font-size:10px;font-weight:700;' +
       'letter-spacing:0.08em;text-transform:uppercase;color:' + color + '">' +
       '<span style="font-size:12px">' + glyph + '</span>' + label + '</div>';
   }
 
-  function qsRowHtml(en, isStarred) {
+  // v0.32.6 F1: rows carry a PRICE chip (best key-backed route) + a ★
+  // toggle on the right. The row is a wrapper DIV holding the pick
+  // button + the star button as siblings — buttons can't nest (the HTML
+  // parser breaks them apart), so the pick stays a real <button>.
+  // starredSet: {id:true} map for the star state of every visible entry.
+  function qsRowHtml(en, starredSet) {
     var curChip = en.isCurrent
       ? '<span style="font-size:9px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 6px;border-radius:4px;flex-shrink:0">current</span>'
       : '';
     var prov = en.hasKey
       ? '<span style="font-size:10px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1">' + esc(en.providerLabel) + '</span>'
       : '<span style="font-size:10px;color:var(--warn);flex-shrink:0">no key</span>';
-    var star = isStarred
+    // price chip: free (green) or "$X.XX/M" (amber, tabular) — only for
+    // key-backed routes whose provider exposes pricing.
+    var priceChip = '';
+    if (en.hasKey && en.price) {
+      priceChip = en.price === 'free'
+        ? '<span style="font-size:9px;font-weight:700;color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">free</span>'
+        : '<span style="font-size:9px;font-weight:600;color:var(--warn);background:rgba(var(--warn-rgb),0.10);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">' + esc(en.price) + '</span>';
+    }
+    var glyph = starredSet[en.id]
       ? '<span style="color:#eab308;font-size:12px;flex-shrink:0;line-height:1">★</span>'
       : '<span style="color:var(--text-3);font-size:11px;flex-shrink:0;line-height:1">🕘</span>';
-    return '<button data-qs="' + escAttr(en.id) + '" role="menuitem" title="' + escAttr(en.name) + '"' +
-      ' style="display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;background:transparent;border:none;' +
-      'border-left:2px solid ' + (en.isCurrent ? 'rgba(var(--ok-rgb),0.6)' : 'transparent') + ';' +
-      'color:var(--text-1);font-family:inherit;font-size:calc(var(--ui-fs) - 1px);font-weight:600;padding:10px 12px;cursor:pointer;' +
-      'touch-action:manipulation;text-align:left;transition:background 120ms' + (en.hasKey ? '' : ';opacity:0.65') + '">' +
-      star +
+    var starBtn = '<button data-qs-star="' + escAttr(en.id) + '" aria-pressed="' + (starredSet[en.id] ? 'true' : 'false') + '" title="' + (starredSet[en.id] ? 'unstar this model' : 'star this model') + '" style="background:' + (starredSet[en.id] ? 'rgba(234,179,8,0.12)' : 'transparent') + ';border:1px solid ' + (starredSet[en.id] ? 'rgba(234,179,8,0.45)' : 'transparent') + ';color:' + (starredSet[en.id] ? '#eab308' : 'var(--border-strong)') + ';width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;flex-shrink:0;cursor:pointer;font-size:13px;padding:0;line-height:1;font-family:inherit;touch-action:manipulation;margin:0 8px 0 2px">★</button>';
+    return '<div style="display:flex;align-items:center;gap:2px;border-left:2px solid ' + (en.isCurrent ? 'rgba(var(--ok-rgb),0.6)' : 'transparent') + (en.hasKey ? '' : ';opacity:0.65') + '">' +
+      '<button data-qs="' + escAttr(en.id) + '" role="menuitem" title="' + escAttr(en.name) + '"' +
+      ' style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;box-sizing:border-box;background:transparent;border:none;' +
+      'color:var(--text-1);font-family:inherit;font-size:calc(var(--ui-fs) - 1px);font-weight:600;padding:10px 4px 10px 10px;cursor:pointer;' +
+      'touch-action:manipulation;text-align:left;transition:background 120ms">' +
+      glyph +
       '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(en.name) + '</span>' +
-      curChip + prov +
-      '</button>';
+      curChip + prov + priceChip +
+      '</button>' +
+      starBtn +
+      '</div>';
   }
 
   function renderQuickEntries(wrap, entries, state, icon, bodyEl, panel) {
@@ -2414,13 +2432,17 @@
     var MB = window.ModelBrowser;
 
     var html = '';
+    // v0.32.6 F1: star state of every visible entry (recents can be
+    // starred too — the ★ button on their right is filled then).
+    var starredSet = {};
+    for (var s0 = 0; s0 < entries.starred.length; s0++) starredSet[entries.starred[s0].id] = true;
     if (entries.recent.length) {
       html += qsSectionHeader('Recent', '🕘', 'var(--text-3)');
-      for (var i = 0; i < entries.recent.length; i++) html += qsRowHtml(entries.recent[i], false);
+      for (var i = 0; i < entries.recent.length; i++) html += qsRowHtml(entries.recent[i], starredSet);
     }
     if (entries.starred.length) {
       html += qsSectionHeader('Starred', '★', '#eab308');
-      for (var j = 0; j < entries.starred.length; j++) html += qsRowHtml(entries.starred[j], true);
+      for (var j = 0; j < entries.starred.length; j++) html += qsRowHtml(entries.starred[j], starredSet);
     }
     if (!html) {
       // friendly empty state
@@ -2475,6 +2497,26 @@
           } else {
             qsHint('That model is no longer in the catalog.', true);
           }
+        });
+      });
+    });
+
+    // v0.32.6 F1: the ★ toggles. One id can appear in BOTH sections —
+    // (Recent + Starred) — so an in-place restyle would leave the twin
+    // row stale. The popup is tiny and the catalog is cached, so the
+    // correct-and-simple move is: toggle, re-render both sections from
+    // the fresh lists, then surface a hint on the re-rendered popup.
+    wrap.querySelectorAll('[data-qs-star]').forEach(function (sbtn) {
+      sbtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var id = sbtn.dataset.qsStar;
+        var nowOn = MB.toggleStar ? MB.toggleStar(id) : false;
+        MB.quickEntries({ current: { provider: state.provider, modelId: state.model } }, function (ent2) {
+          if (document.getElementById('qs-popup') !== wrap) return; // closed meanwhile
+          renderQuickEntries(wrap, ent2, state, icon, bodyEl, panel);
+          qsHint(nowOn
+            ? 'Starred ' + id + ' — pinned in the ★ Starred section.'
+            : 'Unstarred ' + id + ' — it stays in Recent until it ages out.');
         });
       });
     });
