@@ -148,7 +148,7 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-cmpcheapest]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-ufchip:active{transform:scale(0.95)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
@@ -172,13 +172,19 @@
       '.mb-barfill{transform-origin:left center;animation:mb-bar 480ms cubic-bezier(0.32,0.72,0,1) both}' +
       '@keyframes mb-drawer-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}' +
       '.mb-detail{animation:mb-drawer-in 240ms cubic-bezier(0.32,0.72,0,1)}' +
+      // v0.32.7 F3: the compare drawer gets the same entrance as the
+      // detail drawer — the ⚖ decision slides in, it doesn't just appear.
+      '.mb-compare{animation:mb-drawer-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
+      // v0.32.7 F3: star-pop — the tap lands with a little bounce.
+      '@keyframes mb-star-pop{0%{transform:scale(1)}45%{transform:scale(1.4)}100%{transform:scale(1)}}' +
+      '.mb-star-pop{animation:mb-star-pop 240ms cubic-bezier(0.32,0.72,0,1)!important}' +
       // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
       '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
       '.mb-keyform input::placeholder{color:var(--border-strong)}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
       '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
-      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail{transition:none!important;animation:none!important}' +
+      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail,.mb-compare,.mb-star-pop{transition:none!important;animation:none!important}' +
       '}';
     document.head.appendChild(s);
   }
@@ -593,6 +599,33 @@
           toggleComparePin(cl2);
           render();
           refocusAfterRender('.mb-logrow[data-logical-id="' + (cl2 && cl2.replace(/"/g, '\\"')) + '"]');
+        } else if ((e.key === 's' || e.key === 'S') && view !== 'providers') {
+          // v0.32.7 F4: "s" stars/unstars the focused row — same logic as
+          // the row's ★ button (mutate, persist, badge, pop; re-render
+          // only when the Starred pill would change the list).
+          e.preventDefault();
+          var slid = row.dataset.logicalId;
+          var wasOn2 = starred.indexOf(slid) >= 0;
+          if (wasOn2) starred.splice(starred.indexOf(slid), 1);
+          else starred.push(slid);
+          lsSet('starred', starred);
+          updateStarBadge();
+          if (filters.indexOf('starred') >= 0) {
+            render();
+            refocusAfterRender('.mb-logrow[data-logical-id="' + (slid && slid.replace(/"/g, '\\"')) + '"]');
+          } else {
+            var sbtn = row.querySelector('[data-star]');
+            if (sbtn) {
+              sbtn.classList.remove('mb-star-pop');
+              void sbtn.offsetWidth;
+              sbtn.classList.add('mb-star-pop');
+              sbtn.setAttribute('aria-pressed', wasOn2 ? 'false' : 'true');
+              sbtn.title = wasOn2 ? 'star this model' : 'unstar this model';
+              sbtn.style.color = wasOn2 ? 'var(--border-strong)' : '#eab308';
+              sbtn.style.background = wasOn2 ? 'transparent' : 'rgba(234,179,8,0.12)';
+              sbtn.style.borderColor = wasOn2 ? 'transparent' : 'rgba(234,179,8,0.45)';
+            }
+          }
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault();
           if (view === 'providers') {
@@ -1266,6 +1299,17 @@
         '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + priceLabel(lb, pWin === 1) + '</span>' +
         '</div></div>';
 
+      // v0.32.7 F2: a strict winner gets a one-tap decision — "use the
+      // cheapest route" switches the chat straight to that side. Keyless
+      // winner renders muted (tap still explains via the inline hint),
+      // matching the per-column "use this model" behavior.
+      if (pWin !== 0) {
+        var cheapLm = (pWin === -1) ? la : lb;
+        var cheapKeys = (pWin === -1) ? ha.keys : hb.keys;
+        var cheapUsable = cheapKeys > 0;
+        html += '<button data-cmpcheapest="' + escAttr(cheapLm.logical) + '" data-nodrag title="' + (cheapUsable ? 'switch the chat to ' + escAttr(cheapLm.displayName || cheapLm.logical) + ' — the cheaper route' : 'the cheaper side has no key-backed route yet — tap for details') + '" style="display:flex;align-items:center;gap:6px;align-self:flex-start;background:' + (cheapUsable ? 'rgba(var(--ok-rgb),0.10)' : 'transparent') + ';border:1px solid ' + (cheapUsable ? 'rgba(var(--ok-rgb),0.55)' : 'var(--surface-2)') + ';color:' + (cheapUsable ? 'var(--ok)' : 'var(--text-3)') + ';font-size:10.5px;font-weight:700;padding:5px 11px;border-radius:8px;font-family:inherit;cursor:pointer;touch-action:manipulation">✓ use cheapest route <span style="font-size:9px">→</span></button>';
+      }
+
       // ── Context: bigger wins ──
       var ctxWin = la.contextLength === lb.contextLength ? 0 : (la.contextLength > lb.contextLength ? -1 : 1);
       html += '<div style="display:flex;flex-direction:column;gap:5px">' +
@@ -1702,7 +1746,7 @@
       // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
       // v0.32.5: mentions ⚖ compare + per-route prices.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models · ★ stars a favorite · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
+        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
@@ -2104,6 +2148,11 @@
             starred.push(key);
           }
           lsSet('starred', starred);
+          updateStarBadge();
+          // v0.32.7 F3: a quick pop so the tap lands visibly.
+          btn.classList.remove('mb-star-pop');
+          void btn.offsetWidth;
+          btn.classList.add('mb-star-pop');
           if (filters.indexOf('starred') >= 0) { render(); return; }
           btn.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
           btn.title = wasOn ? 'star this model' : 'unstar this model';
@@ -2261,6 +2310,17 @@
         });
       });
 
+      // v0.32.7 F2: the compare drawer's "use cheapest route" — same
+      // decision path as the per-column buttons (selectLogical handles
+      // the keyless case with the inline hint).
+      contentEl.querySelectorAll('[data-cmpcheapest]').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          if (clickSuppressed()) return;
+          e.stopPropagation();
+          selectLogical(btn.dataset.cmpcheapest);
+        });
+      });
+
       // v0.32.6 F3: remove ONE filter via its collapsed chip. The chip's
       // data-unfilter encodes type:value so each kind resets precisely.
       contentEl.querySelectorAll('[data-unfilter]').forEach(function (chip) {
@@ -2398,8 +2458,30 @@
     if (idx >= 0) list.splice(idx, 1);
     else list.push(id);
     lsSet('starred', list);
+    updateStarBadge();
     return idx < 0;
   }
 
-  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries, toggleStar: toggleStar };
+  // v0.32.7 F1: starred-count badge on the chat panel's ★ button. Reads
+  // the persisted list, so every path (overlay rows, quick-switch rows,
+  // ModelBrowser.toggleStar) lands in the same place. Pops on a count
+  // CHANGE; silent when the panel is closed (badge hidden anyway).
+  var lastBadgeCount = -1;
+  function updateStarBadge() {
+    var el = document.getElementById('panel-star-badge');
+    if (!el) return;
+    var n = lsGet('starred', []).length;
+    if (n > 99) n = '99+'; // cap — a 3-digit pill would crowd the button
+    var changed = (n !== lastBadgeCount);
+    lastBadgeCount = n;
+    el.textContent = (n === 0 || n === '0') ? '' : String(n);
+    el.classList.toggle('ps-on', n !== 0 && n !== '0');
+    if (changed && n !== 0 && n !== '0' && lastBadgeCount !== -1) {
+      el.classList.remove('ps-pop');
+      void el.offsetWidth; // restart the keyframe on rapid toggles
+      el.classList.add('ps-pop');
+    }
+  }
+
+  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries, toggleStar: toggleStar, updateStarBadge: updateStarBadge };
 })();

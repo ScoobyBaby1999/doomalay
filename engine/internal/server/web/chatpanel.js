@@ -2322,6 +2322,9 @@
       starBtn.onclick = function () {
         openQuickSwitch(starBtn, state, icon, bodyEl, panel);
       };
+      // v0.32.7 F1: keep the starred-count badge honest on every header
+      // render (the count can change while the panel is closed).
+      if (window.ModelBrowser && window.ModelBrowser.updateStarBadge) window.ModelBrowser.updateStarBadge();
     }
   }
 
@@ -2535,9 +2538,18 @@
         e.stopPropagation();
         var id = sbtn.dataset.qsStar;
         var nowOn = MB.toggleStar ? MB.toggleStar(id) : false;
+        // v0.32.7 F1: toggleStar already refreshed the ★ badge.
         MB.quickEntries({ current: { provider: state.provider, modelId: state.model } }, function (ent2) {
           if (document.getElementById('qs-popup') !== wrap) return; // closed meanwhile
           renderQuickEntries(wrap, ent2, state, icon, bodyEl, panel);
+          // v0.32.7 F3: pop the FRESH star button for the toggled row —
+          // the re-render replaced the one that was tapped.
+          var fresh = wrap.querySelector('[data-qs-star="' + String(id).replace(/"/g, '&quot;') + '"]');
+          if (fresh) {
+            fresh.classList.remove('mb-star-pop');
+            void fresh.offsetWidth;
+            fresh.classList.add('mb-star-pop');
+          }
           qsHint(nowOn
             ? 'Starred ' + id + ' — pinned in the ★ Starred section.'
             : 'Unstarred ' + id + ' — it stays in Recent until it ages out.');
