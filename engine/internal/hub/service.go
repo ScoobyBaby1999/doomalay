@@ -881,13 +881,41 @@ func isPNG(b []byte) bool {
 	return len(b) >= 4 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47
 }
 
-// normalizeDesign caps the gradient stops at 3.
+// isHexColor accepts the CSS hex forms we allow as gradient stops:
+// #rgb, #rrggbb and #rrggbbaa (case-insensitive).
+func isHexColor(s string) bool {
+	if len(s) != 4 && len(s) != 7 && len(s) != 9 {
+		return false
+	}
+	if s[0] != '#' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeDesign keeps up to 10 gradient stops, dropping any stop that
+// is not a strict hex color (the stops are re-emitted into CSS gradients
+// client-side — they must be colors, not arbitrary strings). An empty
+// result degrades to "none".
 func normalizeDesign(d Design) Design {
 	switch d.Kind {
 	case "gradient":
-		if len(d.Colors) > 3 {
-			d.Colors = d.Colors[:3]
+		kept := d.Colors[:0]
+		for _, c := range d.Colors {
+			if isHexColor(c) {
+				kept = append(kept, c)
+			}
+			if len(kept) == 10 {
+				break
+			}
 		}
+		d.Colors = kept
 		if len(d.Colors) == 0 {
 			d.Kind = "none"
 		}

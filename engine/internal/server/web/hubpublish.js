@@ -1,12 +1,24 @@
-// hubpublish.js — v0.31 THE HUB: publish + the Hugging Face connect flow.
+// hubpublish.js — v0.31→v0.33 THE HUB: publish + the Hugging Face connect flow.
 //
-// USER SPEC: the user only ever logs into HF — the app does everything
-// else in the background and the user never leaves the app. Publish
-// settings: name (REQUIRED), description, tags (≤15 × 24 chars,
-// sanitized), and the card design — a gradient of 2–3 picked colors, an
-// uploaded PNG (canvas-downscaled ≤512px client-side, the tweaks.js
-// pipeline pattern), or "none" (= the app picks a random pair NOW and
-// sends it, so the card is still deterministic).
+// USER SPEC (Batch 10): "The publish page should be scrollable or act
+// more like the editor pages… the user should be able to scroll or
+// collapse all the previous options and have most of the screen display
+// the contents of the file itself… Please make the * next to the Name
+// box a primary color, and also make sure to use the updated gradient
+// from before when setting the background, this applies to the random
+// as well, which should use a random gradient and not strictly 2 or 3
+// colors."
+//
+// So the form became three COLLAPSIBLE sections (the essentials · card
+// design · payload) with the payload carrying a FOCUS toggle — ⤢ grows
+// it to own the whole panel (the other sections collapse away and come
+// back with one tap), exactly like the editor pages treat their body.
+// The card design rides the shared GradientUI (1–10 colors, per-color
+// remove, ＋ add, ⤨ shuffle, ↻ random — and "random" now picks a RANDOM
+// stop count, not strictly 2 or 3). The image picker rides CropUI —
+// drag the image under the card's frame; the crop is taken from the
+// ORIGINAL pixels, so resolution and clarity are kept (≤1024px long
+// edge, never stretched).
 //
 // If the engine answers 401 (no HF token), the FORM IS NOT LOST: a
 // CONNECT view stacks on top — step 1 opens the HF token page
@@ -16,17 +28,13 @@
 // whoami; a bad token shows inline and stays). On success the pending
 // publish auto-resumes; on publish OK the new item's detail opens.
 //
-// Entry points: the hub panel's "＋ publish" button (standalone — the
-// payload textarea starts EMPTY and is required), and the persona
-// editor's publish pill (prefills name + payload from the persona).
-//
 // Exposes: window.HubPublish = { open }
 (function () {
   'use strict';
 
   var MAX_TAGS = 15, MAX_TAG_LEN = 24; // the engine's caps — mirrored UI-side
 
-  var cur = null; // { panel, type, name, desc, tags, design, pngBase64, payload }
+  var cur = null; // { panel, type, name, desc, tags, design, pngBase64, payload, folds, focus }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -83,27 +91,6 @@
     });
   }
 
-  // ── colors ────────────────────────────────────────────────────────
-  function hslToHex(h, s, l) {
-    s /= 100; l /= 100;
-    var k = function (n) { return (n + h / 30) % 12; };
-    var a = s * Math.min(l, 1 - l);
-    var f = function (n) {
-      var v = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-      return Math.round(255 * v).toString(16).padStart(2, '0');
-    };
-    return '#' + f(0) + f(8) + f(4);
-  }
-  // 2 hues in the readable S/L bands (60–80% / 45–65%) — the same recipe
-  // hub.js's deterministic id-gradient uses.
-  function randomPair() {
-    var h1 = Math.floor(Math.random() * 360);
-    var h2 = (h1 + 40 + Math.floor(Math.random() * 80)) % 360;
-    var s1 = 60 + Math.floor(Math.random() * 21);
-    var l1 = 45 + Math.floor(Math.random() * 21);
-    return [hslToHex(h1, s1, l1), hslToHex(h2, s1, Math.min(65, l1 + 8))];
-  }
-
   // mirror the engine's SanitizeTags (client-side prevalidation)
   function sanitizeTag(raw) {
     var t = String(raw || '').toLowerCase()
@@ -115,44 +102,23 @@
     return t;
   }
 
-  // ── the PNG pipeline (canvas downscale ≤512px, PNG re-encode) ────
-  function pngFromFile(file, maxEdge) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-      img.onload = function () {
-        try {
-          var w = img.naturalWidth, h = img.naturalHeight;
-          var scale = Math.min(1, maxEdge / Math.max(w, h));
-          var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
-          var cv = document.createElement('canvas');
-          cv.width = cw; cv.height = ch;
-          cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
-          URL.revokeObjectURL(url);
-          var dataURL = cv.toDataURL('image/png');
-          if (!dataURL || dataURL.indexOf('base64,') < 0) throw new Error('encode failed');
-          resolve(dataURL);
-        } catch (e) { URL.revokeObjectURL(url); reject(e); }
-      };
-      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('not readable')); };
-      img.src = url;
-    });
-  }
-
   // ── entry ────────────────────────────────────────────────────────
   function open(type, prefill) {
     var panel = PV();
     if (!panel) { toast('open a chat first'); return; }
     prefill = prefill || {};
+    var GU = window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } };
     cur = {
       panel: panel,
       type: type || 'persona',
       name: prefill.name || '',
       desc: '',
       tags: [],
-      design: { kind: 'none', colors: randomPair() }, // "none" still sends a picked pair
+      design: { kind: 'none', colors: GU.random() }, // "none" still sends a picked gradient
       pngBase64: '',
-      payload: prefill.payload || ''
+      payload: prefill.payload || '',
+      folds: { details: false, design: false },       // sections start open
+      focus: false                                    // payload focus mode
     };
     panel.pushView(buildView());
   }
@@ -168,62 +134,92 @@
     var c = cur;
 
     var chips = c.tags.map(function (t, i) {
-      return '<span class="hp-chip">#' + esc(t) +
-        '<button data-untag="' + i + '" title="remove" aria-label="remove tag">✕</button></span>';
+      return (window.UIPills ? window.UIPills.chip('#' + t, { rm: 'data-untag="' + i + '"' })
+        : '<span class="dx-chip">#' + esc(t) +
+          '<button data-untag="' + i + '" title="remove" aria-label="remove tag">✕</button></span>');
     }).join('');
 
     var desg = c.design.kind;
     var designHTML = '';
     if (desg === 'gradient') {
-      var cols = '';
-      for (var i = 0; i < c.design.colors.length && i < 3; i++) {
-        cols += '<input type="color" class="hp-color" data-color="' + i + '" value="' +
-          escAttr(c.design.colors[i]) + '" aria-label="gradient color ' + (i + 1) + '">';
-      }
       designHTML =
-        '<div class="hp-colors">' + cols +
-          (c.design.colors.length < 3 ? '<button class="hp-mini" id="hp-add-color" title="add a third color">＋</button>' : '') +
-          '<button class="hp-mini" id="hp-shuffle" title="shuffle the colors">⤨ shuffle</button>' +
+        '<div class="hp-design">' +
+          (window.GradientUI ? window.GradientUI.editor('hp', c.design.colors) : '') +
         '</div>';
     } else if (desg === 'image') {
       designHTML =
-        '<div class="hp-imgrow">' +
-          '<button class="hp-pick" id="hp-pick">🖼 choose an image</button>' +
-          '<input type="file" id="hp-file" accept="image/*" style="display:none">' +
-        '</div>' +
-        (c.pngBase64 ? '<div class="hp-imgmeta">image ready — downscaled to ≤512px PNG' +
-          ' <button class="hp-mini" id="hp-rm-img">✕ remove</button></div>' : '');
+        '<div class="hp-design">' +
+          '<div class="hp-imgrow">' +
+            '<button class="hp-pick" id="hp-pick">🖼 choose an image</button>' +
+            '<input type="file" id="hp-file" accept="image/*" style="display:none">' +
+          '</div>' +
+          (c.pngBase64 ? '<div class="hp-imgmeta">image ready — cropped from the original at full clarity' +
+            ' <button class="hp-mini" id="hp-rm-img">✕ remove</button></div>' : '') +
+        '</div>';
     } else {
       designHTML =
-        '<p class="pv-hint" style="margin:0">a random gradient pair is generated for the card' +
-        ' — <button class="hp-mini" id="hp-reroll">↻ regenerate</button> or pick your own.</p>';
+        '<div class="hp-design">' +
+          '<p class="pv-hint" style="margin:0">a random gradient is generated for the card —' +
+            ' any number of colors, not just two or three.' +
+            ' <button class="hp-mini" id="hp-reroll">↻ regenerate</button> or pick your own.</p>' +
+        '</div>';
     }
 
     var previewBg = previewBackground();
 
+    // the essentials + card design collapse; the payload has the FOCUS
+    // toggle that grows it to own the panel (the editor-page behavior)
     return (
-      '<div class="hp-root">' +
+      '<div class="hp-root' + (c.focus ? ' hp-focus' : '') + '" id="hp-root">' +
         '<p class="pv-hint">share with the community — this publishes to <b>your own Hugging Face dataset</b> (' +
           esc(c.type) + ' library). The engine creates the repo, uploads the item and updates the index.</p>' +
-        '<div class="pv-section-label">name *</div>' +
-        '<input id="hp-name" class="pv-input" placeholder="the visible name" value="' + escAttr(c.name) + '">' +
-        '<div class="pv-section-label">description</div>' +
-        '<textarea id="hp-desc" class="hp-textarea" rows="2" placeholder="what is it for? (optional)">' + esc(c.desc) + '</textarea>' +
-        '<div class="pv-section-label">tags</div>' +
-        (chips ? '<div class="hp-chips">' + chips + '</div>' : '') +
-        '<input id="hp-tag-in" class="pv-input" placeholder="type a tag + enter (max ' + MAX_TAGS + ' × ' + MAX_TAG_LEN + ' chars)">' +
-        '<div class="pv-section-label">card design</div>' +
-        '<div class="hp-seg">' +
-          '<button data-desg="none"' + (desg === 'none' ? ' data-on="1"' : '') + '>random</button>' +
-          '<button data-desg="gradient"' + (desg === 'gradient' ? ' data-on="1"' : '') + '>gradient</button>' +
-          '<button data-desg="image"' + (desg === 'image' ? ' data-on="1"' : '') + '>image</button>' +
+
+        '<div class="hp-sec' + (c.folds.details ? ' folded' : '') + '" id="hp-sec-details">' +
+          '<div class="hp-sec-bar" data-fold="details" role="button" tabindex="0">' +
+            '<span class="hp-sec-title">the essentials</span>' +
+            '<span class="hp-sec-chev">' + (c.folds.details ? '▸' : '▾') + '</span>' +
+          '</div>' +
+          '<div class="hp-sec-body">' +
+            '<div class="pv-section-label">name <span class="hp-star">*</span></div>' +
+            '<input id="hp-name" class="pv-input" placeholder="the visible name" value="' + escAttr(c.name) + '">' +
+            '<div class="pv-section-label">description</div>' +
+            '<textarea id="hp-desc" class="hp-textarea" rows="2" placeholder="what is it for? (optional)">' + esc(c.desc) + '</textarea>' +
+            '<div class="pv-section-label">tags</div>' +
+            (chips ? '<div class="hp-chips">' + chips + '</div>' : '') +
+            '<input id="hp-tag-in" class="pv-input" placeholder="type a tag + enter (max ' + MAX_TAGS + ' × ' + MAX_TAG_LEN + ' chars)">' +
+          '</div>' +
         '</div>' +
-        '<div class="hp-design">' + designHTML + '</div>' +
-        '<div class="hp-preview" id="hp-preview" style="' + previewBg + '"></div>' +
-        '<div class="pv-section-label">payload' + (c.type === 'persona' ? ' (.md)' : ' (.json)') + ' *</div>' +
-        '<textarea id="hp-payload" class="hp-textarea hp-payload" placeholder="' +
-          (c.type === 'persona' ? 'the persona markdown — the text the model receives' : 'the template JSON') + '">' +
-          esc(c.payload) + '</textarea>' +
+
+        '<div class="hp-sec' + (c.folds.design ? ' folded' : '') + '" id="hp-sec-design">' +
+          '<div class="hp-sec-bar" data-fold="design" role="button" tabindex="0">' +
+            '<span class="hp-sec-title">card design</span>' +
+            '<span class="hp-sec-chev">' + (c.folds.design ? '▸' : '▾') + '</span>' +
+          '</div>' +
+          '<div class="hp-sec-body">' +
+            '<div class="hp-seg">' +
+              '<button data-desg="none"' + (desg === 'none' ? ' data-on="1"' : '') + '>random</button>' +
+              '<button data-desg="gradient"' + (desg === 'gradient' ? ' data-on="1"' : '') + '>gradient</button>' +
+              '<button data-desg="image"' + (desg === 'image' ? ' data-on="1"' : '') + '>image</button>' +
+            '</div>' +
+            designHTML +
+            '<div class="hp-preview" id="hp-preview" style="' + previewBg + '"></div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="hp-sec hp-payload-sec" id="hp-sec-payload">' +
+          '<div class="hp-sec-bar">' +
+            '<span class="hp-sec-title">payload' + (c.type === 'persona' ? ' (.md)' : ' (.json)') +
+              ' <span class="hp-star">*</span></span>' +
+            '<button type="button" class="hp-focus-btn" id="hp-focus" title="grow the payload to own the screen">' +
+              (c.focus ? '⤡ collapse' : '⤢ focus') + '</button>' +
+          '</div>' +
+          '<div class="hp-sec-body">' +
+            '<textarea id="hp-payload" class="hp-textarea hp-payload" placeholder="' +
+              (c.type === 'persona' ? 'the persona markdown — the text the model receives' : 'the template JSON') + '">' +
+              esc(c.payload) + '</textarea>' +
+          '</div>' +
+        '</div>' +
+
         '<button id="hp-publish" class="pv-btn pv-btn-primary" style="width:100%">⤴ publish to the hub</button>' +
         '<div class="hp-err" id="hp-err"></div>' +
       '</div>'
@@ -235,8 +231,12 @@
     if (c.design.kind === 'image' && c.pngBase64) {
       return 'background-image:url(data:image/png;base64,' + c.pngBase64 + ')';
     }
-    var colors = (c.design.colors && c.design.colors.length >= 2)
+    var colors = (c.design.colors && c.design.colors.length)
       ? c.design.colors : ['#38bdf8', '#a78bfa'];
+    if (window.GradientUI) {
+      var css = window.GradientUI.css(colors);
+      return colors.length === 1 ? ('background-color:' + css) : ('background-image:' + css);
+    }
     return 'background-image:linear-gradient(135deg,' + colors.join(',') + ')';
   }
 
@@ -253,6 +253,38 @@
     if (desc) desc.addEventListener('input', function () { c.desc = desc.value; });
     var payload = el.querySelector('#hp-payload');
     if (payload) payload.addEventListener('input', function () { c.payload = payload.value; });
+
+    // collapsible sections — a class toggle + chev swap, no re-render
+    el.querySelectorAll('[data-fold]').forEach(function (bar) {
+      var toggle = function () {
+        var key = bar.getAttribute('data-fold');
+        c.folds[key] = !c.folds[key];
+        var sec = bar.closest('.hp-sec');
+        if (sec) {
+          sec.classList.toggle('folded', c.folds[key]);
+          var chev = sec.querySelector('.hp-sec-chev');
+          if (chev) chev.textContent = c.folds[key] ? '▸' : '▾';
+        }
+      };
+      bar.addEventListener('click', toggle);
+      bar.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      });
+    });
+
+    // the payload FOCUS toggle — the payload owns the screen and back
+    var focus = el.querySelector('#hp-focus');
+    if (focus) focus.addEventListener('click', function (e) {
+      e.stopPropagation();
+      c.focus = !c.focus;
+      var root = el.querySelector('#hp-root');
+      if (root) root.classList.toggle('hp-focus', c.focus);
+      focus.textContent = c.focus ? '⤡ collapse' : '⤢ focus';
+      if (!c.focus && payload && c.payload) {
+        // returning from focus — re-center the scroll on the payload
+        try { payload.scrollIntoView({ block: 'nearest' }); } catch (err) {}
+      }
+    });
 
     // tags — Enter adds a chip (sanitized, capped, deduped)
     var tagIn = el.querySelector('#hp-tag-in');
@@ -274,39 +306,38 @@
       b.addEventListener('click', function () {
         var k = b.getAttribute('data-desg');
         if (k === c.design.kind) return;
-        if (k === 'gradient' && c.design.colors.length < 2) c.design.colors = randomPair();
+        if (k === 'gradient') {
+          // the editor starts from the familiar pair — the ↻ random
+          // button (and the "random" segment) are what vary the count
+          c.design.colors = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+        }
         if (k !== 'image') c.pngBase64 = '';
         c.design.kind = k;
         c.panel.replaceView(buildView());
       });
     });
 
-    // gradient pickers / shuffle / third color
-    el.querySelectorAll('[data-color]').forEach(function (inp) {
-      inp.addEventListener('input', function () {
-        c.design.colors[parseInt(inp.getAttribute('data-color'), 10) || 0] = inp.value;
-        var pv = el.querySelector('#hp-preview');
-        if (pv) pv.setAttribute('style', previewBackground());
+    // the shared gradient editor (1–10 colors · remove · add · shuffle · random)
+    if (window.GradientUI) {
+      var gr = el.querySelector('#hp-gr');
+      if (gr) window.GradientUI.wire(gr, {
+        colors: c.design.colors,
+        live: function () {
+          var pv = el.querySelector('#hp-preview');
+          if (pv) pv.setAttribute('style', previewBackground());
+        },
+        rebuild: function () { c.panel.replaceView(buildView()); }
       });
-    });
-    var shuffle = el.querySelector('#hp-shuffle');
-    if (shuffle) shuffle.addEventListener('click', function () {
-      c.design.colors = randomPair();
-      c.panel.replaceView(buildView());
-    });
-    var addColor = el.querySelector('#hp-add-color');
-    if (addColor) addColor.addEventListener('click', function () {
-      var pair = randomPair();
-      c.design.colors.push(pair[0]);
-      c.panel.replaceView(buildView());
-    });
+    }
+
+    // random — a NEW random gradient (any count, not just 2–3)
     var reroll = el.querySelector('#hp-reroll');
     if (reroll) reroll.addEventListener('click', function () {
-      c.design.colors = randomPair();
+      c.design.colors = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
       c.panel.replaceView(buildView());
     });
 
-    // the image picker — canvas downscale ≤512px → PNG base64
+    // the image picker — CropUI (drag to crop, original-pixel output)
     var pick = el.querySelector('#hp-pick');
     var file = el.querySelector('#hp-file');
     if (pick && file) {
@@ -314,14 +345,27 @@
       file.addEventListener('change', function () {
         var f = file.files && file.files[0];
         if (!f) return;
-        pick.textContent = 'downscaling…';
-        pngFromFile(f, 512).then(function (dataURL) {
-          c.pngBase64 = dataURL.slice(dataURL.indexOf('base64,') + 7);
-          c.panel.replaceView(buildView());
-        }).catch(function (e) {
-          toast(e.message || 'could not read that image');
-          pick.textContent = '🖼 choose an image';
+        if (!window.CropUI) {
+          toast('the cropper is not available');
+          return;
+        }
+        pick.textContent = 'opening the cropper…';
+        window.CropUI.open({
+          file: f,
+          aspect: 1.5,       // the card/detail header's landscape frame
+          maxEdge: 1024,      // clarity kept — never stretched to fit
+          onDone: function (b64, meta) {
+            c.pngBase64 = b64;
+            c.panel.replaceView(buildView());
+            toast('cropped ' + meta.width + '×' + meta.height + ' at full clarity');
+          },
+          onErr: function (msg) {
+            toast(msg || 'could not read that image');
+            pick.textContent = '🖼 choose an image';
+          }
         });
+        pick.textContent = '🖼 choose an image';
+        file.value = '';      // allow re-picking the same file
       });
     }
     var rmImg = el.querySelector('#hp-rm-img');
@@ -344,12 +388,14 @@
     cur.panel.replaceView(buildView());
   }
 
-  // what the engine receives: "none" sends the generated pair (the card
-  // stays deterministic); "image" rides the pngBase64 field.
+  // what the engine receives: "none" sends the generated gradient (the
+  // card stays deterministic); "image" rides the pngBase64 field; the
+  // gradient carries 1–10 stops.
   function designOut() {
     if (cur.design.kind === 'image') return { kind: 'png', colors: [] };
-    var colors = (cur.design.colors && cur.design.colors.length >= 2)
-      ? cur.design.colors.slice(0, 3) : randomPair();
+    var colors = (cur.design.colors && cur.design.colors.length >= 1)
+      ? cur.design.colors.slice(0, (window.GradientUI && window.GradientUI.MAX) || 10)
+      : (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
     return { kind: 'gradient', colors: colors };
   }
 

@@ -243,8 +243,17 @@ with sync_playwright() as p:
     png_path = make_png("/tmp/v30-bg.png")
     pg.locator("#tweaks-bg-file").set_input_files(png_path)
     pg.wait_for_timeout(1500)
-    # the rebuild collapsed the sections again — reopen Background
-    pg.locator(".settings-section h3", has_text="Background").first.click(); pg.wait_for_timeout(300)
+    # v0.33: the tweaks rebuild now PRESERVES which sections are expanded
+    # (the gradient editor rebuilds on every add/remove — sections can't
+    # fold up mid-edit), so the old "reopen Background" workaround is GONE
+    ok(pg.evaluate("""() => {
+      const secs = document.querySelectorAll('.settings-section');
+      for (const s of secs) {
+        const h = s.querySelector('h3');
+        if (h && h.textContent.includes('Background')) return s.classList.contains('expanded');
+      }
+      return false;
+    }"""), "the Background section stays expanded across the upload rebuild (v0.33)")
     bgimg = pg.evaluate("() => window.ChatPanel.getState('c30')._chatRootEl.style.backgroundImage")
     ok("background?v=1" in bgimg and "/api/sessions/" in bgimg, f"image set → rev-1 cache-busted URL ({bgimg!r})")
     ok("an image is set" in pg.locator("#tweaks-bg-status").inner_text(), "the status line confirms the image")

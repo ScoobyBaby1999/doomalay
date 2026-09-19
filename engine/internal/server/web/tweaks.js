@@ -113,7 +113,8 @@
       }
     });
 
-    // background — a color, or the engine-stored image (cache-busted by rev)
+    // background — a color, a 1–10-stop gradient, or the engine-stored
+    // image (cache-busted by rev)
     root.style.backgroundColor = '';
     root.style.backgroundImage = '';
     root.style.backgroundSize = '';
@@ -121,6 +122,11 @@
     var bg = t.bg;
     if (bg && bg.type === 'color' && bg.color) {
       root.style.backgroundColor = bg.color;
+    } else if (bg && bg.type === 'gradient' && bg.colors && bg.colors.length) {
+      // v0.33 (user spec): the chat background can be a gradient — up
+      // to 10 colors, minimum 1 (one stop renders as a solid fill)
+      if (bg.colors.length === 1) root.style.backgroundColor = bg.colors[0];
+      else root.style.backgroundImage = 'linear-gradient(135deg,' + bg.colors.join(',') + ')';
     } else if (bg && bg.type === 'image' && state.sessionId) {
       root.style.backgroundImage = 'url("/api/sessions/' + state.sessionId +
         '/background?v=' + (bg.rev || 1) + '")';
@@ -242,9 +248,22 @@
     persist(state);
   }
 
+  // v0.33: the chat background GRADIENT — 1–10 colors (the shared
+  // GradientUI owns the editor; this just persists + applies).
+  function setBgGradient(state, colors) {
+    touch(state);
+    var stops = [];
+    (colors || []).forEach(function (c) { if (c) stops.push(c); });
+    if (!stops.length) return;
+    state._tweaks.bg = { type: 'gradient', colors: stops.slice(0, 10) };
+    apply(state);
+    persist(state);
+  }
+
   function clearBg(state) {
     touch(state);
     delete state._tweaks.bg;
+    bgMode = 'color';   // back to the default segment
     if (state.sessionId) {
       fetch('/api/sessions/' + state.sessionId + '/background', { method: 'DELETE' })
         .catch(function () {});
@@ -292,6 +311,7 @@
     }).then(function (d) {
       touch(state);
       state._tweaks.bg = { type: 'image', rev: (d && d.rev) || 1 };
+      bgMode = 'image';   // the segment follows the fresh upload
       apply(state);
       persist(state);
     });
@@ -304,11 +324,15 @@
   }
 
   // ── THE VIEW ──────────────────────────────────────────────────────
-  var cur = null; // { panel, icon, state } while the view is open
+  var cur = null;      // { panel, icon, state } while the view is open
+  var bgMode = null;   // the Background segment's pick (color/gradient/image)
+  var gradDraft = null; // the gradient editor's live colors (pre-apply)
 
   function open(panel, icon, state) {
     if (!panel || !state) return;
     cur = { panel: panel, icon: icon, state: state };
+    bgMode = null;     // re-derived from the stored blob on each open
+    gradDraft = null;
     load(state).then(function () {
       if (cur && cur.state === state && panel.viewDepth && panel.viewDepth() >= 0) {
         panel.pushView(buildView());
@@ -316,8 +340,57 @@
     });
   }
 
+  // the gradient editor's colors: the stored gradient, else a fresh
+  // pair draft (the familiar 2 — the ↻ random button varies the count)
+  function gradColorsFor(t) {
+    if (t.bg && t.bg.type === 'gradient' && t.bg.colors && t.bg.colors.length) {
+      return t.bg.colors;
+    }
+    if (!gradDraft) {
+      gradDraft = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+    }
+    return gradDraft;
+  }
+  function gradPreviewStyle(t) {
+    var c = gradColorsFor(t);
+    if (window.GradientUI) {
+      var css = window.GradientUI.css(c);
+      return c.length === 1 ? ('background-color:' + css) : ('background-image:' + css);
+    }
+    return 'background-image:linear-gradient(135deg,' + c.join(',') + ')';
+  }
+  function bgSegPill(mode, label) {
+    var on = (bgMode === mode);
+    return '<button type="button" class="dx-pill dx-pill--sm" data-bgmode="' + mode + '"' +
+      (on ? ' data-on="1"' : '') + '>' + label + '</button>';
+  }
+
+  // rebuild() — re-render the view, PRESERVING which sections are
+  // expanded + the scroll position (settings.js's rerender pattern; the
+  // v0.33 gradient editor rebuilds on every add/remove — the sections
+  // must not fold up under the user's thumbs mid-edit).
   function rebuild() {
-    if (cur && cur.panel && cur.panel.replaceView) cur.panel.replaceView(buildView());
+    if (!cur || !cur.panel || !cur.panel.replaceView) return;
+    var body = cur.panel.bodyEl;
+    var openTitles = [];
+    if (body) {
+      body.querySelectorAll('.settings-section.expanded').forEach(function (s) {
+        var h = s.querySelector('h3');
+        if (h) openTitles.push(h.textContent.trim());
+      });
+    }
+    var scroll = body ? body.scrollTop : 0;
+    cur.panel.replaceView(buildView());
+    requestAnimationFrame(function () {
+      if (!cur || !cur.panel) return;
+      var nb = cur.panel.bodyEl;
+      if (!nb) return;
+      nb.querySelectorAll('.settings-section').forEach(function (s) {
+        var h = s.querySelector('h3');
+        if (h && openTitles.indexOf(h.textContent.trim()) >= 0) s.classList.add('expanded');
+      });
+      nb.scrollTop = scroll;
+    });
   }
 
   function buildView() {
@@ -332,6 +405,8 @@
         var own = t.fmtOverrides || {};
         var bgSet = !!t.bg;
         var bgIsImage = !!(t.bg && t.bg.type === 'image');
+        var bgIsGradient = !!(t.bg && t.bg.type === 'gradient');
+        if (!bgMode) bgMode = (t.bg && t.bg.type) || 'color';
         var curBgColor = (t.bg && t.bg.type === 'color' && t.bg.color) ||
           ((state._chatRootEl && rgbToHex(state._chatRootEl, 'background-color')) || '#0a0a0b');
         return (
@@ -358,20 +433,39 @@
             '<button data-action="tweaks-sizes-reset" data-scope="chat" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px;width:100%">inherit the global sizes again</button>'
           ) +
           sec('Background',
-            '<p class="hint">The surface behind this chat — an image from your library or a color. More per-UI options land with the coming terminal + voice chat faces.</p>' +
-            '<div class="setting-row">' +
-              '<label>Background color</label>' +
-              '<div class="control">' +
-                '<input type="color" data-bg-color value="' + curBgColor + '">' +
-                '<span class="color-hex" data-color-hex="bgColor">' + curBgColor + '</span>' +
+            '<p class="hint">The surface behind this chat — a color, a gradient (1–10 colors), or an image from your library.</p>' +
+            '<div class="tw-bgseg">' +
+              bgSegPill('color', '● color') +
+              bgSegPill('gradient', '◨ gradient') +
+              bgSegPill('image', '🖼 image') +
+            '</div>' +
+            '<div data-bgzone="color"' + (bgMode !== 'color' ? ' style="display:none"' : '') + '>' +
+              '<div class="setting-row">' +
+                '<label>Background color</label>' +
+                '<div class="control">' +
+                  '<input type="color" data-bg-color value="' + curBgColor + '">' +
+                  '<span class="color-hex" data-color-hex="bgColor">' + curBgColor + '</span>' +
+                '</div>' +
               '</div>' +
             '</div>' +
-            '<button id="tweaks-bg-pick" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">🖼 choose an image from the library</button>' +
-            '<input type="file" id="tweaks-bg-file" accept="image/*" style="display:none">' +
+            '<div data-bgzone="gradient"' + (bgMode !== 'gradient' ? ' style="display:none"' : '') + '>' +
+              (window.GradientUI
+                ? window.GradientUI.editor('tw', gradColorsFor(t)) +
+                  '<div class="gr-preview" id="tw-grad-preview" style="' + gradPreviewStyle(t) + '"></div>'
+                : '<p class="hint">the gradient editor is not available</p>') +
+            '</div>' +
+            '<div data-bgzone="image"' + (bgMode !== 'image' ? ' style="display:none"' : '') + '>' +
+              '<button id="tweaks-bg-pick" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">🖼 choose an image from the library</button>' +
+              '<input type="file" id="tweaks-bg-file" accept="image/*" style="display:none">' +
+            '</div>' +
             (bgSet ? '<button id="tweaks-bg-remove" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">' +
-              (bgIsImage ? '✕ remove the background image' : '✕ remove the background color') + '</button>' : '') +
+              (bgIsImage ? '✕ remove the background image' :
+               bgIsGradient ? '✕ remove the background gradient' :
+               '✕ remove the background color') + '</button>' : '') +
             '<p class="hint" id="tweaks-bg-status" style="margin:8px 0 0">' +
               (bgIsImage ? 'an image is set — it fills the panel behind the messages.' :
+               bgIsGradient ? 'a gradient is set — ' + t.bg.colors.length +
+                 (t.bg.colors.length === 1 ? ' color.' : ' colors.') :
                bgSet ? 'a color is set.' :
                'nothing set — this chat follows the app background.') + '</p>'
           )
@@ -386,6 +480,48 @@
             for (var k in patch) setSize(state, k, patch[k]);
           });
         }
+        var t0 = state._tweaks || {};
+
+        // v0.33: the Background segment — color / gradient / image.
+        // The zones all exist in the DOM (the v30 pipeline drives them
+        // headlessly); the segment just shows one at a time.
+        el.querySelectorAll('[data-bgmode]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var mode = b.getAttribute('data-bgmode');
+            bgMode = mode;
+            el.querySelectorAll('[data-bgmode]').forEach(function (x) {
+              if (x.getAttribute('data-bgmode') === mode) x.setAttribute('data-on', '1');
+              else x.removeAttribute('data-on');
+            });
+            el.querySelectorAll('[data-bgzone]').forEach(function (z) {
+              z.style.display = (z.getAttribute('data-bgzone') === mode) ? '' : 'none';
+            });
+          });
+        });
+
+        // the gradient editor — live preview updates in place; shape
+        // changes (add/remove/shuffle/random) rebuild + PERSIST
+        var gr = el.querySelector('#tw-gr');
+        if (gr && window.GradientUI) {
+          var colors = gradColorsFor(t0);
+          window.GradientUI.wire(gr, {
+            colors: colors,
+            live: function () {
+              setBgGradient(state, colors);
+              var pv = el.querySelector('#tw-grad-preview');
+              if (pv) {
+                var css = window.GradientUI.css(colors);
+                pv.setAttribute('style', colors.length === 1
+                  ? ('background-color:' + css) : ('background-image:' + css));
+              }
+            },
+            rebuild: function () {
+              setBgGradient(state, colors);
+              rebuild();
+            }
+          });
+        }
+
         var bgc = el.querySelector('[data-bg-color]');
         if (bgc) bgc.addEventListener('input', function () {
           setBgColor(state, bgc.value);
@@ -460,6 +596,7 @@
     resetColors: withState(resetColors),
     resetSizes: withState(resetSizes),
     setBgColor: withState(setBgColor),
+    setBgGradient: withState(setBgGradient),
     clearBg: withState(clearBg),
     effective: effective,
     apply: apply

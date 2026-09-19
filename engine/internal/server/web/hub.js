@@ -1,42 +1,47 @@
-// hub.js — v0.31 THE HUB: the modular library panel.
+// hub.js — v0.31→v0.33 THE PUBLIC LIBRARY (the modular hub panel).
 //
-// USER SPEC (Batch 9): one library per item type (personas, templates,
-// future: icons, models, skills…), registry-driven — the TABS come from
-// GET /api/hub/libraries, so a new engine library appears here with
-// ZERO web changes. The panel rides the master panel's view stack
-// (panel.js pushView — back bar + ✕ for free, Android back for free):
+// USER SPEC (Batch 10): "In the hub panel, let's rename it to Public
+// Library, let's put everything that isn't the grid itself as the
+// header, except the search bar, which we move under the header. As per
+// usual, the header should be collapsible and expandable… the filters
+// (recent, downloads, etc) should also be disclosed from the header and
+// placed under the search bar… to the right of a new filter icon and
+// filter by subtext… displayed in columns instead of pills like so
+// Recent | Downloads | Endorsements… Above the persona and template
+// pills, we should have a subtext description that says Browse the
+// community for: the pills themselves should change to another style of
+// pill, one that engulfs its entire row… they should have emojis or
+// icons next to them as well, and when selected, the personas should be
+// purplish and the templates should be greenish (depending on theme)."
 //
-//   ┌ tabs (one per registered library type)
-//   ├ search (200ms debounce, the model-browser pattern)
-//   ├ sort pills — recent / downloads / endorsed / relevant
-//   ├ tag pills (built from the tags present in the CURRENT results)
-//   ├ grid size steppers — cols 1–5 × rows 3–10, persisted to
-//   │ localStorage doomalay.hubgrid.v1 (default 2×5)
-//   └ THE GRID — repeat(var(--hub-cols), minmax(0,1fr)), clamped by
-//     the viewport so columns never drop under ~150px; items per page
-//     = cols × rows with prev/next paging.
+// And the keyboard rule: "the search results update with every key
+// without making the keyboard go down" — the view is rendered ONCE and
+// every interaction (search / sort / tag / tab / steppers / paging)
+// updates the DOM surgically (only the grid zone, or the filter states,
+// or the library pills). The search input is NEVER re-rendered while
+// the hub is on top, so focus — and the mobile keyboard — survive.
 //
-// ITEM CARDS: background = the item's gradient design, its PNG
-// (probed; fades 100→0 alpha into the card surface), or a deterministic
-// client-side gradient hashed from the item id. Name / description /
-// author / ♥ endorsements / ⤓ downloads — every text sized from
-// --ui-fs / --ui-small-fs so the settings' size sliders resize it all.
-//
-// Data: GET /api/hub/{type}/items?q=&sort=&tag= (&refresh=1 after a
-// publish). Errors surface as toasts (the persona.js pattern).
+// The panel still rides the master panel's view stack (panel.js
+// pushView — back bar + ✕ + Android back for free).
 //
 // Exposes: window.Hub = { open, markStale, refreshItem, isDownloaded,
-//                         markDownloaded, setHearted }
+//                         markDownloaded, setHearted, isHearted }
 (function () {
   'use strict';
 
   var GRID_KEY = 'doomalay.hubgrid.v1';
   var SORTS = [
-    { key: 'recent',    label: 'recent' },
-    { key: 'downloads', label: 'downloads' },
-    { key: 'hearts',    label: 'endorsed' },
-    { key: 'relevant',  label: 'relevant' }
+    { key: 'recent',    label: 'recent',       sub: 'newest updates first' },
+    { key: 'downloads', label: 'downloads',    sub: 'most downloaded first' },
+    { key: 'hearts',    label: 'endorsements', sub: 'most endorsed first' },
+    { key: 'relevant',  label: 'relevant',     sub: 'the best matches first' }
   ];
+  var SORT_SUB = {};
+  SORTS.forEach(function (s) { SORT_SUB[s.key] = s.sub; });
+
+  // the library pills' glyphs — future registry types fall back to 📚
+  var LIB_ICONS = { persona: '🎭', template: '🧩' };
+  function libIcon(type) { return LIB_ICONS[type] || '📚'; }
 
   // The served Item carries no local-state flags — the web tracks what
   // THIS session downloaded / hearted so the item detail can enable the
@@ -151,14 +156,18 @@
     return api('GET', '/api/hub/libraries').then(function (d) {
       if (!cur) return;
       cur.libraries = (d && d.libraries) || [];
+      var hadType = !!cur.type;
+      if (!cur.type && cur.libraries.length) cur.type = cur.libraries[0].type;
       // repaint ONLY when the hub view is still the one on top — a view
-      // stacked over it (item detail, publish) owns the body meanwhile,
-      // and the hub re-renders from live state when it next shows.
-      if (isTop()) cur.panel.replaceView(buildView());
+      // stacked over it (item detail, publish) owns the body meanwhile.
+      if (isTop()) {
+        updateLibs();
+        if (!hadType && cur.type) loadItems();
+      }
     }).catch(function (e) {
       if (!cur) return;
       cur.libErr = e.message || 'libraries unavailable';
-      if (isTop()) cur.panel.replaceView(buildView());
+      if (isTop()) updateLibs();
     });
   }
 
@@ -166,7 +175,7 @@
     return api('GET', '/api/hub/auth/status').then(function (d) {
       if (!cur) return;
       cur.auth = d || {};
-      if (isTop()) cur.panel.replaceView(buildView());
+      if (isTop()) updateStatus();
     }).catch(function () {});
   }
 
@@ -174,6 +183,7 @@
     if (!cur || !cur.type) return;
     var seq = cur.seq = (cur.seq || 0) + 1;
     cur.loading = true;
+    if (isTop()) updateBody();     // the loading state paints immediately
     var qs = [];
     if (cur.q) qs.push('q=' + encodeURIComponent(cur.q));
     qs.push('sort=' + encodeURIComponent(cur.sort));
@@ -188,7 +198,7 @@
         cur.page = 1;
         cur.stale = false;
         cur.tags = collectTags(cur.items);
-        if (isTop()) cur.panel.replaceView(buildView());
+        if (isTop()) { updateLibs(); updateTags(); updateBody(); }
       })
       .catch(function (e) {
         if (!cur || cur.seq !== seq) return;
@@ -196,7 +206,7 @@
         cur.items = [];
         cur.err = e.message || 'the library could not be reached';
         cur.page = 1;
-        if (isTop()) { toast(cur.err); cur.panel.replaceView(buildView()); }
+        if (isTop()) { toast(cur.err); updateTags(); updateBody(); }
       });
   }
 
@@ -213,20 +223,26 @@
   // ── rendering ────────────────────────────────────────────────────
   // isTop(): is the hub view the one currently shown? Async callbacks
   // (search debounce, tab switches, the post-publish refresh) may resolve
-  // AFTER another view was stacked over the hub — replacing then would
-  // clobber the user's current view, so they update the state and leave
-  // the repaint to the hub's next render.
+  // AFTER another view was stacked over the hub — updating then would
+  // clobber the user's current view, so they no-op instead.
   function isTop() {
     return !!(cur && cur.panel && cur.viewObj &&
       typeof cur.panel.topView === 'function' && cur.panel.topView() === cur.viewObj);
   }
+
+  // the live-DOM accessors — every update is SURGICAL (the search input
+  // is never re-rendered, so the keyboard stays up while results stream)
+  function q(sel) {
+    return (cur && cur.panel && cur.panel.bodyEl) ? cur.panel.bodyEl.querySelector(sel) : null;
+  }
+  function zone() { return q('#hub-bodyzone'); }
 
   function shortLabel(lib) {
     return String(lib.label || lib.type || '').replace(/\s*library\s*$/i, '');
   }
 
   function buildView() {
-    var v = view('hub', function () { return renderHTML(); },
+    var v = view('public library', function () { return renderHTML(); },
       function (el) { wire(el); },
       function () { onClosed(); });
     if (cur) cur.viewObj = v; // isTop()'s identity check
@@ -235,74 +251,136 @@
 
   function renderHTML() {
     if (!cur) return '';
+    return (
+      '<div class="hub-root">' +
+        headHTML() +
+        '<div class="hub-sticky">' +
+          '<input id="hub-search" class="hub-search" type="text" inputmode="search"' +
+            ' placeholder="search name, description, tags…" value="' + escAttr(cur.q) + '"' +
+            ' aria-label="search the library">' +
+          filtersHTML() +
+        '</div>' +
+        '<div class="hub-bodyzone" id="hub-bodyzone">' + bodyHTML() + '</div>' +
+      '</div>'
+    );
+  }
+
+  // the COLLAPSIBLE header — everything that isn't the grid (or the
+  // search bar) lives here: title + HF status + "Browse the community
+  // for:" + the full-row library pills + the grid steppers + publish +
+  // the tag pills.
+  function headHTML() {
     var c = cur;
-    var tabs = '';
+    var status = '<span class="pub-status" id="pub-status">' + statusHTML() + '</span>';
+    return (
+      '<div class="pub-head' + (c.folded ? ' folded' : '') + '" id="pub-head">' +
+        // a div, NOT a button: the bar carries the status's own disconnect
+        // button — the HTML parser drops nested <button>s silently
+        '<div class="pub-head-bar" id="pub-head-toggle" role="button" tabindex="0"' +
+          ' aria-expanded="' + (!c.folded) + '">' +
+          '<span class="pub-title">Public Library</span>' +
+          status +
+          '<span class="pub-chev" aria-hidden="true">' + (c.folded ? '▸' : '▾') + '</span>' +
+        '</div>' +
+        '<div class="pub-head-body">' +
+          '<div class="pub-sub">Browse the community for:</div>' +
+          '<div class="hub-librow" id="hub-libs">' + libsHTML() + '</div>' +
+          '<div class="hub-ctlrow">' +
+            stepper('cols', c.grid.cols, 1, 5) +
+            stepper('rows', c.grid.rows, 3, 10) +
+            '<button class="hub-publish" id="hub-publish">＋ publish</button>' +
+          '</div>' +
+          '<div class="hub-pillrow" id="hub-tags">' + tagsHTML() + '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function libsHTML() {
+    var c = cur;
+    var out = '';
     c.libraries.forEach(function (lib) {
-      tabs += '<button class="hub-tab" data-tab="' + escAttr(lib.type) + '"' +
-        (lib.type === c.type ? ' data-on="1"' : '') + ' title="' + escAttr(lib.desc || '') + '">' +
-        esc(shortLabel(lib)) + '</button>';
+      var active = lib.type === c.type;
+      var label = shortLabel(lib) + 's';
+      out += '<button type="button" class="hub-libpill" data-lib="' + escAttr(lib.type) + '"' +
+        ' data-tone="' + escAttr(lib.type) + '"' +
+        (active ? ' data-on="1"' : '') +
+        ' title="' + escAttr(lib.desc || '') + '">' +
+        '<span class="dx-pill-ico">' + libIcon(lib.type) + '</span>' +
+        '<span class="dx-pill-label">' + esc(label) + '</span>' +
+        (active && c.items && !c.loading && c.items.length
+          ? '<span class="hub-libpill-count">' + c.items.length + '</span>' : '') +
+        '</button>';
     });
-    if (!tabs) tabs = '<span class="hub-tab hub-tab-ghost">' + esc(c.libErr || 'no libraries registered') + '</span>';
+    if (!out) {
+      out = '<span class="hub-libpill hub-libpill-ghost">' +
+        esc(c.libErr || 'no libraries registered') + '</span>';
+    }
+    return out;
+  }
 
-    var sorts = '';
+  function statusHTML() {
+    var a = cur.auth;
+    if (!a || !a.connected) return '';
+    return 'HF: <b>' + esc(a.username || '?') + '</b>' +
+      ' <button type="button" data-disconnect="1" title="disconnect the Hugging Face token">disconnect</button>';
+  }
+
+  function filtersHTML() {
+    var c = cur;
+    var cols = '';
     SORTS.forEach(function (s) {
-      sorts += '<button class="hub-pill" data-sort="' + escAttr(s.key) + '"' +
-        (s.key === c.sort ? ' data-on="1"' : '') + '>' + esc(s.label) + '</button>';
+      cols += '<button type="button" class="hub-fcol" data-sort="' + escAttr(s.key) + '"' +
+        (s.key === c.sort ? ' data-on="1"' : '') + ' title="' + escAttr(s.sub) + '">' +
+        esc(s.label) + '</button>';
     });
+    return (
+      '<div class="hub-filters">' +
+        '<span class="hub-funnel" aria-hidden="true">' +
+          '<svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>' +
+        '</span>' +
+        '<div class="hub-fcols" id="hub-fcols">' + cols + '</div>' +
+      '</div>' +
+      '<div class="hub-fsub" id="hub-fsub">' + esc(SORT_SUB[c.sort] || '') + '</div>'
+    );
+  }
 
-    var tagpills = '';
+  function tagsHTML() {
+    var c = cur;
+    var out = '';
     c.tags.forEach(function (t) {
-      tagpills += '<button class="hub-pill" data-tag="' + escAttr(t) + '"' +
+      out += '<button type="button" class="dx-pill dx-pill--sm" data-tag="' + escAttr(t) + '"' +
         (t === c.tag ? ' data-on="1"' : '') + '>#' + esc(t) + '</button>';
     });
+    return out;
+  }
 
+  function bodyHTML() {
+    var c = cur;
     var eff = clampCols(c.grid, c.width);
+    c.eff = eff;
     var per = eff * c.grid.rows;
     var items = c.items || [];
     var pages = Math.max(1, Math.ceil(items.length / per));
     var page = Math.min(Math.max(1, c.page), pages);
-    var slice = items.slice((page - 1) * per, page * per);
+    c.page = page;
 
-    var status = (c.auth && c.auth.connected)
-      ? '<div class="hub-status">HF: connected as <b>' + esc(c.auth.username || '?') + '</b>' +
-        '<button data-disconnect="1" title="disconnect the Hugging Face token">disconnect</button></div>'
-      : '';
-
-    var body = '';
-    if (c.loading) {
-      body = '<div class="art-loading">loading the library…</div>';
-    } else if (!items.length) {
-      body = '<div class="hub-empty">' +
+    if (c.loading && !c.items) return '<div class="art-loading">loading the library…</div>';
+    if (!items.length) {
+      return '<div class="hub-empty">' +
         (c.err ? esc(c.err) :
           'nothing here' + (c.q ? ' for “' + esc(c.q) + '”' : '') +
           ' — try another search, another tag, or publish something below') +
         '</div>';
-    } else {
-      body =
-        '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
-          slice.map(cardHTML).join('') +
-        '</div>' +
-        '<div class="hub-pager">' +
-          '<button class="hub-nav" data-page="prev"' + (page <= 1 ? ' disabled' : '') + ' aria-label="previous page">‹</button>' +
-          '<span class="hub-page-line">page ' + page + '/' + pages + '</span>' +
-          '<button class="hub-nav" data-page="next"' + (page >= pages ? ' disabled' : '') + ' aria-label="next page">›</button>' +
-        '</div>';
     }
-
     return (
-      '<div class="hub-root">' +
-        status +
-        '<div class="hub-tabs">' + tabs + '</div>' +
-        '<input id="hub-search" class="hub-search" type="text" inputmode="search"' +
-          ' placeholder="search name, description, tags…" value="' + escAttr(c.q) + '" aria-label="search the library">' +
-        '<div class="hub-pillrow">' + sorts + '</div>' +
-        (tagpills ? '<div class="hub-pillrow">' + tagpills + '</div>' : '') +
-        '<div class="hub-ctlrow">' +
-          stepper('cols', c.grid.cols, 1, 5) +
-          stepper('rows', c.grid.rows, 3, 10) +
-          '<button class="hub-publish" id="hub-publish">＋ publish</button>' +
-        '</div>' +
-        body +
+      '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
+          items.slice((page - 1) * per, page * per).map(cardHTML).join('') +
+      '</div>' +
+      '<div class="hub-pager">' +
+        '<button class="hub-nav" data-page="prev"' + (page <= 1 ? ' disabled' : '') + ' aria-label="previous page">‹</button>' +
+        '<span class="hub-page-line">page ' + page + '/' + pages + '</span>' +
+        '<button class="hub-nav" data-page="next"' + (page >= pages ? ' disabled' : '') + ' aria-label="next page">›</button>' +
       '</div>'
     );
   }
@@ -313,7 +391,7 @@
         ' aria-label="fewer ' + esc(kind) + '">−</button>' +
       '<span class="hub-step-val" id="hub-' + escAttr(kind) + '-val">' + val + '</span>' +
       '<button class="hub-step" data-step="' + escAttr(kind) + ':1"' + (val >= hi ? ' disabled' : '') +
-        ' aria-label="more ' + escAttr(kind) + '">＋</button>' +
+        ' aria-label="more ' + esc(kind) + '">＋</button>' +
     '</span>';
   }
 
@@ -337,12 +415,17 @@
     );
   }
 
-  // The card's background layer: design gradient → PNG (probed, fading
-  // 100→0 alpha into the card surface) → deterministic id gradient.
+  // The card's background layer: design gradient (1–10 stops — one
+  // stop renders solid) → PNG (probed, fading 100→0 alpha into the card
+  // surface) → deterministic id gradient.
   function paintCardBg(bgEl, it) {
     var d = it.design || {};
-    if (d.kind === 'gradient' && d.colors && d.colors.length >= 2) {
-      bgEl.style.backgroundImage = 'linear-gradient(135deg, ' + d.colors.join(', ') + ')';
+    if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
+      if (d.colors.length === 1) {
+        bgEl.style.backgroundColor = d.colors[0]; // one stop = a solid
+      } else {
+        bgEl.style.backgroundImage = 'linear-gradient(135deg, ' + d.colors.join(', ') + ')';
+      }
       return;
     }
     if (d.kind === 'png') {
@@ -361,34 +444,88 @@
     bgEl.style.backgroundImage = idGradient(it.id);
   }
 
+  // ── SURGICAL updates (the keyboard-safe replacement for replaceView) ──
+  function updateLibs() {
+    var el = q('#hub-libs');
+    if (!el) return;
+    el.innerHTML = libsHTML();
+    wireLibs(el);
+  }
+  function updateTags() {
+    var el = q('#hub-tags');
+    if (!el) return;
+    el.innerHTML = tagsHTML();
+    wireTags(el);
+  }
+  function updateStatus() {
+    var el = q('#pub-status');
+    if (!el) return;
+    el.innerHTML = statusHTML();
+    var dc = el.querySelector('[data-disconnect]');
+    if (dc) dc.addEventListener('click', function () {
+      api('POST', '/api/hub/auth/disconnect').then(function () {
+        toast('disconnected from Hugging Face');
+        if (cur) { cur.auth = null; loadAuth(); }
+      }).catch(function (e) { toast(e.message || 'could not disconnect'); });
+    });
+  }
+  function updateFilters() {
+    var c = cur;
+    var cols = q('#hub-fcols');
+    if (cols) {
+      cols.querySelectorAll('[data-sort]').forEach(function (b) {
+        if (b.getAttribute('data-sort') === c.sort) b.setAttribute('data-on', '1');
+        else b.removeAttribute('data-on');
+      });
+    }
+    var sub = q('#hub-fsub');
+    if (sub) sub.textContent = SORT_SUB[c.sort] || '';
+  }
+  function updateBody() {
+    var z = zone();
+    if (!z) return;
+    z.innerHTML = bodyHTML();
+    wireBody(z);
+  }
+
   // ── wiring ───────────────────────────────────────────────────────
   function wire(el) {
     if (!cur) return;
     var c = cur;
 
-    // measure now that the view is in the DOM — re-render when the
-    // viewport clamp disagrees with what the render assumed.
+    // measure now that the view is in the DOM — the clamp may disagree
+    // with what the render assumed; a surgical body update fixes it.
     var gridEl = el.querySelector('#hub-grid');
     c.width = (gridEl && gridEl.clientWidth) || el.clientWidth || 320;
-    var renderedEff = gridEl ? (gridEl.style.getPropertyValue('--hub-cols') | 0) : 0;
-    if (gridEl && renderedEff !== clampCols(c.grid, c.width)) {
-      c.panel.replaceView(buildView());
-      return; // the fresh view re-wires itself
+    if (gridEl && (gridEl.style.getPropertyValue('--hub-cols') | 0) !== clampCols(c.grid, c.width)) {
+      updateBody();
     }
 
-    // search (200ms debounce — the model-browser pattern). The re-render
-    // rebuilds the input, so a search mid-typing refocuses it (caret at
-    // the end) — without this the mobile keyboard would close after the
-    // first debounce fired.
+    // the collapsible header — a class toggle, no re-render (the bar is
+    // a div: the disconnect button inside forbids a nested <button>)
+    var toggle = el.querySelector('#pub-head-toggle');
+    if (toggle) {
+      var fold = function () {
+        var head = q('#pub-head');
+        if (!head) return;
+        c.folded = !c.folded;
+        head.classList.toggle('folded', c.folded);
+        var chev = head.querySelector('.pub-chev');
+        if (chev) chev.textContent = c.folded ? '▸' : '▾';
+        toggle.setAttribute('aria-expanded', String(!c.folded));
+      };
+      toggle.addEventListener('click', fold);
+      toggle.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fold(); }
+      });
+    }
+
+    // search (200ms debounce — the model-browser pattern). The input
+    // is NEVER replaced: only the body zone re-renders, so focus and
+    // the mobile keyboard survive every keystroke.
     var searchTimer = null;
     var searchInput = el.querySelector('#hub-search');
     if (searchInput) {
-      if (c.typing) {
-        searchInput.focus();
-        try { searchInput.setSelectionRange(9999, 9999); } catch (e) {}
-      }
-      searchInput.addEventListener('focus', function () { c.typing = true; });
-      searchInput.addEventListener('blur', function () { c.typing = false; });
       searchInput.addEventListener('input', function () {
         if (searchTimer) clearTimeout(searchTimer);
         searchTimer = setTimeout(function () {
@@ -399,90 +536,26 @@
       });
     }
 
-    // library tabs — switching reloads the items for that type
-    el.querySelectorAll('[data-tab]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        if (!cur || b.getAttribute('data-on') === '1') return;
-        cur.type = b.getAttribute('data-tab');
-        cur.items = null;
-        cur.tag = '';
-        cur.q = '';
-        cur.page = 1;
-        loadItems();
-      });
-    });
-
-    // sort pills
+    // the filter columns (funnel row) — sort + subtext, surgical
     el.querySelectorAll('[data-sort]').forEach(function (b) {
       b.addEventListener('click', function () {
         if (!cur) return;
         cur.sort = b.getAttribute('data-sort');
+        updateFilters();
         loadItems();
       });
     });
 
-    // tag pills (tap toggles)
-    el.querySelectorAll('[data-tag]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        if (!cur) return;
-        var t = b.getAttribute('data-tag');
-        cur.tag = (cur.tag === t) ? '' : t;
-        loadItems();
-      });
-    });
+    // library pills + tags + the body zone (cards / pager / publish /
+    // steppers all live inside the zones these wire)
+    wireLibs(el);
+    wireTags(el);
+    wireBody(el);
 
-    // grid steppers
-    el.querySelectorAll('[data-step]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        if (!cur) return;
-        var parts = b.getAttribute('data-step').split(':');
-        var kind = parts[0], dir = parseInt(parts[1], 10) || 0;
-        if (kind === 'cols') cur.grid.cols = Math.max(1, Math.min(5, cur.grid.cols + dir));
-        else cur.grid.rows = Math.max(3, Math.min(10, cur.grid.rows + dir));
-        saveGrid(cur.grid);
-        cur.page = 1;
-        cur.panel.replaceView(buildView());
-      });
-    });
-
-    // pager
-    el.querySelectorAll('[data-page]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        if (!cur || b.disabled) return;
-        cur.page += (b.getAttribute('data-page') === 'next') ? 1 : -1;
-        cur.page = Math.max(1, cur.page);
-        cur.panel.replaceView(buildView());
-      });
-    });
-
-    // publish
     var pub = el.querySelector('#hub-publish');
     if (pub) pub.addEventListener('click', function () {
       if (window.HubPublish && cur) window.HubPublish.open(cur.type);
       else toast('the publisher is not available');
-    });
-
-    // disconnect
-    var dc = el.querySelector('[data-disconnect]');
-    if (dc) dc.addEventListener('click', function () {
-      api('POST', '/api/hub/auth/disconnect').then(function () {
-        toast('disconnected from Hugging Face');
-        if (cur) { cur.auth = null; loadAuth(); }
-      }).catch(function (e) { toast(e.message || 'could not disconnect'); });
-    });
-
-    // cards → item detail
-    var items = c.items || [];
-    el.querySelectorAll('[data-item]').forEach(function (b) {
-      var id = b.getAttribute('data-item');
-      var it = null;
-      for (var i = 0; i < items.length; i++) if (items[i].id === id) { it = items[i]; break; }
-      if (!it) return;
-      b.addEventListener('click', function () {
-        if (window.HubItem) window.HubItem.open(cur.type, it);
-      });
-      var bg = b.querySelector('[data-bgcard]');
-      if (bg) paintCardBg(bg, it);
     });
 
     // the resize clamp — only while this view is open
@@ -493,12 +566,12 @@
         if (t) clearTimeout(t);
         t = setTimeout(function () {
           if (!cur) return;
-          var g = cur.panel.bodyEl && cur.panel.bodyEl.querySelector('#hub-grid');
+          var g = zone() && zone().querySelector('#hub-grid');
           var w = (g && g.clientWidth) || (cur.panel.bodyEl && cur.panel.bodyEl.clientWidth) || 320;
           cur.width = w;
-          var eff = clampCols(cur.grid, w);
-          var rendered = g ? (g.style.getPropertyValue('--hub-cols') | 0) : eff;
-          if (g && rendered !== eff) cur.panel.replaceView(buildView());
+          if (g && (g.style.getPropertyValue('--hub-cols') | 0) !== clampCols(cur.grid, w)) {
+            updateBody();
+          }
         }, 120);
       };
       window.addEventListener('resize', c._onResize);
@@ -507,6 +580,97 @@
     // first load / stale refresh (loadAuth repaints itself, guarded)
     if (!c.items || c.stale) loadItems(!!c.stale);
     if (!c.auth) loadAuth();
+  }
+
+  // library pills — switching reloads the items for that type
+  function wireLibs(root) {
+    (root || (cur && cur.panel ? cur.panel.bodyEl : document)).querySelectorAll('[data-lib]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur || b.getAttribute('data-on') === '1') return;
+        cur.type = b.getAttribute('data-lib');
+        cur.items = null;
+        cur.tag = '';
+        cur.q = '';
+        cur.page = 1;
+        var si = q('#hub-search');
+        if (si) si.value = '';
+        updateLibs();
+        updateTags();
+        updateBody();
+        loadItems();
+      });
+    });
+  }
+
+  // tag pills (tap toggles — inside the collapsible header)
+  function wireTags(root) {
+    (root || (cur && cur.panel ? cur.panel.bodyEl : document)).querySelectorAll('[data-tag]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        var t = b.getAttribute('data-tag');
+        cur.tag = (cur.tag === t) ? '' : t;
+        updateTags();
+        loadItems();
+      });
+    });
+  }
+
+  // the body zone: cards → item detail, pager, steppers
+  function wireBody(root) {
+    if (!cur) return;
+    var c = cur;
+    var host = root || zone();
+    if (!host) return;
+
+    // grid steppers (surgical: the val spans + the button states + the
+    // body zone — the header itself never re-renders)
+    host.querySelectorAll('[data-step]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        var parts = b.getAttribute('data-step').split(':');
+        var kind = parts[0], dir = parseInt(parts[1], 10) || 0;
+        var lo = kind === 'cols' ? 1 : 3, hi = kind === 'cols' ? 5 : 10;
+        if (kind === 'cols') cur.grid.cols = Math.max(lo, Math.min(hi, cur.grid.cols + dir));
+        else cur.grid.rows = Math.max(lo, Math.min(hi, cur.grid.rows + dir));
+        saveGrid(cur.grid);
+        cur.page = 1;
+        var cv = q('#hub-cols-val'), rv = q('#hub-rows-val');
+        if (cv) cv.textContent = cur.grid.cols;
+        if (rv) rv.textContent = cur.grid.rows;
+        var ctl = b.closest('.hub-ctl');
+        if (ctl) {
+          var minus = ctl.querySelector('[data-step="' + kind + ':-1"]');
+          var plus = ctl.querySelector('[data-step="' + kind + ':1"]');
+          if (minus) minus.disabled = cur.grid[kind] <= lo;
+          if (plus) plus.disabled = cur.grid[kind] >= hi;
+        }
+        updateBody();
+      });
+    });
+
+    // pager
+    host.querySelectorAll('[data-page]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur || b.disabled) return;
+        cur.page += (b.getAttribute('data-page') === 'next') ? 1 : -1;
+        cur.page = Math.max(1, cur.page);
+        updateBody();
+      });
+    });
+
+    // cards → item detail
+    var items = c.items || [];
+    host.querySelectorAll('[data-item]').forEach(function (b) {
+      var id = b.getAttribute('data-item');
+      var it = null;
+      for (var i = 0; i < items.length; i++) if (items[i].id === id) { it = items[i]; break; }
+      if (!it) return;
+      b.addEventListener('click', function () {
+        if (window.HubItem) window.HubItem.open(cur.type, it);
+      });
+      var bg = b.querySelector('[data-bgcard]');
+      if (bg) paintCardBg(bg, it);
+    });
   }
 
   function onClosed() {
@@ -538,14 +702,22 @@
       err: '',
       auth: null,
       width: 0,
+      folded: false,
+      eff: 0,
       _onResize: null
     };
     panel.pushView(buildView());
-    fetchLibraries().then(function () {
-      if (!cur) return;
-      if (!cur.type && cur.libraries.length) cur.type = cur.libraries[0].type;
-      if (isTop()) cur.panel.replaceView(buildView());
-    });
+    // safety net: the chat root's async label repaint can still race a
+    // freshly pushed view (it would write bodyEl directly) — one delayed
+    // self-heal repaints the hub if its DOM vanished. The race itself
+    // is fixed in chatpanel.js (the repaint defers while views are
+    // stacked); this is the belt under the suspenders.
+    setTimeout(function () {
+      if (cur && cur.panel && isTop() && !q('#pub-head')) {
+        cur.panel.replaceView(buildView());
+      }
+    }, 650);
+    fetchLibraries();
   }
 
   // ── cross-module state (hubitem / hubpublish call these) ─────────
@@ -560,7 +732,10 @@
   // force the next render of {type}'s list to refetch (after publish) +
   // re-read the auth state (the connect flow may have just changed it).
   function markStale(type) {
-    if (cur && (!type || cur.type === type)) { cur.stale = true; cur.auth = null; }
+    if (cur && (!type || cur.type === type)) {
+      cur.stale = true; cur.auth = null;
+      if (isTop()) { loadItems(true); loadAuth(); }
+    }
   }
 
   // update the in-place copy so back-navigation shows fresh counters

@@ -35,6 +35,11 @@
        auto-compaction is OFF (the user knows it's 100% full, without the
        bright alarm-red glare). Sits between warn-amber and err-red. */
     --notice: #fb923c;     --notice-rgb: 251,146,60;
+    /* v0.33: the PILL TONES — the library pills read personas PURPLE and
+       templates GREEN, whatever the theme (dark-theme values; the light
+       themes override with deeper mixes for contrast on pale surfaces) */
+    --persona-tint: #a78bfa;  --persona-rgb: 167,139,250;
+    --template-tint: #4ade80; --template-rgb: 74,222,128;
     /* text sizes (v0.24 sizing page) */
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
     --ui-fs: 14px;     /* general text */
@@ -141,6 +146,8 @@
     --warn: #b45309; --warn-rgb: 180,83,9;
     --err: #b91c1c; --err-rgb: 185,28,28;
     --notice: #c2410c; --notice-rgb: 194,65,12;
+    --persona-tint: #7c3aed;  --persona-rgb: 124,58,237;
+    --template-tint: #059669; --template-rgb: 5,150,105;
   }
   /* ── Frost: cool light ── */
   [data-theme="frost"] {
@@ -157,6 +164,8 @@
     --warn: #d97706; --warn-rgb: 217,119,6;
     --err: #dc2626; --err-rgb: 220,38,38;
     --notice: #ea580c; --notice-rgb: 234,88,12;
+    --persona-tint: #7c3aed;  --persona-rgb: 124,58,237;
+    --template-tint: #059669; --template-rgb: 5,150,105;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1516,7 +1525,9 @@
     display: flex; gap: 6px; margin-bottom: 10px;
   }
   .pe-mode-pill {
-    flex: 1 1 0; min-width: 0; padding: 7px 4px; border-radius: 7px;
+    flex: 1 1 0; min-width: 0; padding: 7px 4px;
+    border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.85);
     font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.2px;
     font-family: inherit; cursor: pointer; text-align: center;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1581,25 +1592,37 @@
   .pv-btn:active { background: var(--surface-3); }
   .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--accent); }
 
-  /* ══ v0.27 — chat header pills: squared, matte, equal proportions ══
+  /* ══ v0.27→v0.33 — chat header pills: squared, matte, equal proportions ══
      One row of peers: sandbox · model · artifacts · persona · mind —
      every pill flexes the same basis (18%), wraps when the container is
-     narrow. NO dedicated search pill anymore: the search input below IS
-     the search pill (fills the whole row; the jump arrows + n/m counter
-     sit to its right — nothing hardcoded, all container-relative). */
+     narrow. v0.33: the pills join the shared hand-drawn language (organic
+     corner sets + the offset sketch stroke) — matte, theme-following. */
   #pill-row { flex-wrap: wrap; }
   #pill-row button, .pill-artifacts, #pill-persona, #pill-mind {
-    border-radius: 6px !important;                       /* less rounded */
+    border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px !important;   /* less rounded, drawn */
     flex: 1 1 18%; max-width: none !important;              /* equal proportions */
     background: var(--surface-2) !important;              /* matte finish */
     border: 1px solid var(--border) !important;
     color: var(--text-2) !important;
+    box-shadow: 1px 1.5px 0 rgba(var(--surface-3-rgb), 0.9) !important;
     justify-content: center !important;
     padding: 7px 3px !important;
     font-size: 10.5px !important;
     min-width: 0 !important;
     line-height: 1.2 !important;      /* one baseline for type/artifacts/persona/mind pills */
     align-items: center !important;
+  }
+  #pill-row > button:nth-child(4n+2), #pill-row .pill-artifacts:nth-child(4n+2),
+  #pill-row #pill-persona:nth-child(4n+2), #pill-row #pill-mind:nth-child(4n+2) {
+    border-radius: 7px 10px 8px 9px / 10px 8px 9px 7px !important;
+  }
+  #pill-row > button:nth-child(4n+3), #pill-row .pill-artifacts:nth-child(4n+3),
+  #pill-row #pill-persona:nth-child(4n+3), #pill-row #pill-mind:nth-child(4n+3) {
+    border-radius: 10px 8px 9px 7px / 7px 9px 10px 8px !important;
+  }
+  #pill-row > button:nth-child(4n), #pill-row .pill-artifacts:nth-child(4n),
+  #pill-row #pill-persona:nth-child(4n), #pill-row #pill-mind:nth-child(4n) {
+    border-radius: 8px 9px 7px 10px / 9px 7px 10px 8px !important;
   }
   /* the search row: input takes ALL remaining width, arrows + counter
      pack to the right — on any screen width */
@@ -1633,7 +1656,9 @@
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; justify-content: center; gap: 5px;
     background: var(--bg-panel); border: 1px solid var(--surface-3);
-    color: var(--text-3); padding: 5px 8px; border-radius: 6px;
+    color: var(--text-3); padding: 5px 8px;
+    border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
+    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.85);
     font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
     font-family: inherit; cursor: pointer; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent; line-height: 1.25;
@@ -1672,69 +1697,139 @@
   }
   .ctx-cost.priced { color: var(--warn); }
 
-  /* ══ v0.31 — THE HUB (the modular library system) ══════════════════
+  /* ══ v0.31→v0.33 — THE PUBLIC LIBRARY (the modular hub) ════════════
      hub.js (library panel), hubitem.js (item detail), hubpublish.js
      (publish + HF connect) — all views on the master panel's stack.
-     Every text size derives from --ui-fs / --ui-small-fs so the
-     settings' text-size sliders resize the whole hub; the card grid
-     sizes from --hub-cols (set inline by JS, clamped to the viewport
-     so a column never drops under ~150px) — nothing hardcoded. */
+     v0.33 (user spec): everything that isn't the grid rides a
+     COLLAPSIBLE header; the search bar sits UNDER it, sticky together
+     with the filter row (funnel + Recent|Downloads|Endorsements columns
+     + the subtext) — the grid owns the rest of the screen. Every text
+     size derives from --ui-fs / --ui-small-fs; the card grid sizes
+     from --hub-cols (clamped so a column never drops under ~150px). */
   .hub-root { display: flex; flex-direction: column; gap: 10px; }
-  .hub-status {
-    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
-    font-size: var(--ui-micro-fs); color: var(--text-3);
-    background: rgba(var(--ok-rgb), 0.07); border: 1px solid rgba(var(--ok-rgb), 0.25);
-    padding: 5px 10px; border-radius: 8px;
+
+  /* the collapsible header (title bar + everything-but-the-grid) */
+  .pub-head {
+    border: 1px solid var(--surface-2); border-radius: 14px 11px 13px 12px / 12px 13px 11px 14px;
+    background: var(--surface-1); overflow: hidden;
+    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.55);
   }
-  .hub-status b { color: var(--ok); font-weight: 700; }
-  .hub-status button {
+  .pub-head-bar {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 13px; background: transparent; border: none;
+    font-family: inherit; cursor: pointer; text-align: left;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .pub-title {
+    font-size: calc(var(--ui-fs) + 1px); font-weight: 800; letter-spacing: 0.4px;
+    color: var(--text-1);
+  }
+  .pub-status {
+    margin-left: auto; display: flex; align-items: center; gap: 6px;
+    font-size: var(--ui-micro-fs); color: var(--text-3); min-width: 0;
+  }
+  .pub-status b { color: var(--ok); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pub-status button {
     background: none; border: none; cursor: pointer; font-family: inherit;
-    color: var(--accent-2); font-size: var(--ui-micro-fs); padding: 0;
+    color: var(--accent-2); font-size: var(--ui-micro-fs); padding: 0; flex-shrink: 0;
     text-decoration: underline; text-underline-offset: 2px;
   }
-  .hub-tabs { display: flex; gap: 6px; }
-  .hub-tab {
-    flex: 1 1 0; min-width: 0; padding: 8px 4px; border-radius: 9px;
-    background: var(--surface-2); border: 1px solid var(--surface-3);
-    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px);
-    font-weight: 700; letter-spacing: 0.3px; font-family: inherit; cursor: pointer;
-    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .pub-chev { color: var(--text-3); font-size: var(--ui-small-fs); flex-shrink: 0;
+    transition: transform 0.18s ease; }
+  .pub-head.folded .pub-chev { transform: rotate(-90deg); }
+  .pub-head-body { display: flex; flex-direction: column; gap: 10px; padding: 0 13px 13px; }
+  .pub-head.folded .pub-head-body { display: none; }
+
+  /* "Browse the community for:" + the full-row library pills */
+  .pub-sub {
+    font-size: var(--ui-small-fs); color: var(--text-3); letter-spacing: 0.2px;
+  }
+  .hub-librow { display: flex; flex-direction: column; gap: 8px; }
+  .hub-libpill {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    min-height: 48px; padding: 9px 13px;
+    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
+    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
+    font-size: calc(var(--ui-fs) - 0.5px); font-weight: 700; text-align: left;
+    font-family: inherit; cursor: pointer; white-space: nowrap;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
-  .hub-tab[data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.15);
+  .hub-libpill .dx-pill-ico { font-size: calc(var(--ui-fs) + 2px); flex-shrink: 0; }
+  .hub-libpill-count {
+    margin-left: auto; font-size: var(--ui-small-fs); color: var(--text-3);
+    font-variant-numeric: tabular-nums; font-weight: 600; flex-shrink: 0;
+  }
+  .hub-libpill[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.10);
     border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--accent-2);
   }
-  .hub-tab-ghost { cursor: default; }
+  .hub-libpill[data-tone="persona"][data-on="1"] {
+    background: rgba(var(--persona-rgb), 0.13);
+    border-color: rgba(var(--persona-rgb), 0.55); color: var(--persona-tint);
+  }
+  .hub-libpill[data-tone="template"][data-on="1"] {
+    background: rgba(var(--template-rgb), 0.12);
+    border-color: rgba(var(--template-rgb), 0.55); color: var(--template-tint);
+  }
+  .hub-libpill-ghost { cursor: default; }
+
+  /* the sticky zone under the header: search + the filter columns */
+  .hub-sticky {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; flex-direction: column; gap: 7px;
+    margin: 0 -14px; padding: 8px 14px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--surface-2);
+  }
   .hub-search {
     width: 100%; box-sizing: border-box; background: var(--surface-2);
     border: 1px solid var(--border); color: var(--text-1);
-    padding: 10px 12px; border-radius: 10px; outline: none; min-height: 40px;
+    padding: 10px 12px; border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
+    outline: none; min-height: 40px;
     font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit;
   }
   .hub-search:focus { border-color: var(--accent); }
-  .hub-pillrow {
-    display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px; scrollbar-width: none;
+  .hub-filters { display: flex; align-items: stretch; }
+  .hub-funnel {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; flex-shrink: 0; color: var(--text-3);
   }
-  .hub-pill {
-    flex-shrink: 0; background: transparent; border: 1px solid var(--surface-3);
-    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
-    padding: 4px 11px; border-radius: 999px; font-family: inherit; cursor: pointer;
-    white-space: nowrap; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  .hub-funnel svg { width: 16px; height: 16px; fill: currentColor; }
+  .hub-fcols { display: flex; flex: 1 1 auto; min-width: 0; }
+  .hub-fcol {
+    flex: 1 1 0; min-width: 0; padding: 7px 2px;
+    background: transparent; border: none; border-left: 1px solid var(--surface-3);
+    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 700;
+    letter-spacing: 0.2px; text-align: center; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    font-family: inherit; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, color 0.15s;
   }
-  .hub-pill[data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.16);
-    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--accent-2);
+  .hub-fcol:first-child { border-left: none; }
+  .hub-fcol[data-on="1"] {
+    color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.10);
+    box-shadow: inset 0 2px 0 rgba(var(--accent-2-rgb), 0.65);
   }
+  .hub-fsub {
+    font-size: var(--ui-micro-fs); color: var(--text-3);
+    padding: 0 2px 1px 30px; min-height: 14px;
+  }
+
+  /* tag pills (inside the collapsible header) — the shared .dx-pill */
+  .hub-pillrow { display: flex; gap: 6px; flex-wrap: wrap; }
+
   .hub-ctlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .hub-ctl {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); font-weight: 600;
   }
   .hub-step {
-    width: 24px; height: 24px; border-radius: 7px; background: var(--surface-2);
+    width: 24px; height: 24px; border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
+    background: var(--surface-2);
     border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
     font-family: inherit; cursor: pointer; line-height: 1;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -1748,7 +1843,9 @@
     margin-left: auto; background: rgba(var(--accent-rgb), 0.14);
     border: 1px solid rgba(var(--accent-rgb), 0.45); color: var(--accent);
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
-    padding: 5px 12px; border-radius: 999px; font-family: inherit; cursor: pointer;
+    padding: 5px 12px; border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
+    box-shadow: 1px 1.5px 0 rgba(var(--accent-rgb), 0.30);
+    font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hub-grid {
@@ -1825,7 +1922,8 @@
   .hi-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
   .hi-chip {
     background: rgba(var(--accent-2-rgb), 0.13); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
-    color: var(--accent-2); border-radius: 999px; padding: 2px 9px;
+    color: var(--accent-2); border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    padding: 2px 9px;
     font-size: calc(var(--ui-small-fs) - 2px); font-weight: 600;
   }
   .hi-counts {
@@ -1885,7 +1983,8 @@
     font-size: inherit; padding: 0; font-family: inherit; line-height: 1;
   }
   .hp-seg {
-    display: flex; border: 1px solid var(--surface-2); border-radius: 10px;
+    display: flex; gap: 6px; border: 1px solid var(--surface-2);
+    border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
     overflow: hidden; background: var(--surface-1);
   }
   .hp-seg button {
@@ -1943,7 +2042,187 @@
     line-height: 1.6; margin: 0 2px 10px;
   }
 
-  /* ── the persona picker's heart badges (persona.js) ───────────────── */
+  /* ══ v0.33 — THE SHARED UI KIT (uikit.js) ═══════════════════════════
+     UIPills / GradientUI / CropUI. The pill system: ONE look for every
+     pill in the app — matte surfaces, ORGANIC hand-drawn corner radii
+     (each pill in a group gets its own corner set — drawn, not stamped),
+     a 1px offset sketch stroke, theme-driven tints (accent by default,
+     --persona-rgb / --template-rgb for the library tones). Compact by
+     design: "as little as possible without compromising any visuals". */
+  .dx-pill {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 6px 12px; min-height: 32px;
+    background: var(--surface-2); color: var(--text-2);
+    border: 1px solid var(--surface-3);
+    font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 700; letter-spacing: 0.25px;
+    font-family: inherit; cursor: pointer; white-space: nowrap;
+    box-shadow: 1px 1.5px 0 rgba(var(--surface-3-rgb), 0.9);   /* the sketch stroke */
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  /* the hand-drawn corner sets — position-cycled so neighbors differ */
+  .dx-pill:nth-child(4n+1) { border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px; }
+  .dx-pill:nth-child(4n+2) { border-radius: 8px 11px 9px 10px / 11px 8px 10px 9px; }
+  .dx-pill:nth-child(4n+3) { border-radius: 11px 9px 8px 10px / 8px 10px 11px 9px; }
+  .dx-pill:nth-child(4n)   { border-radius: 9px 10px 10px 8px / 10px 9px 8px 11px; }
+  .dx-pill:active { background: var(--surface-3); }
+  .dx-pill[data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.14);
+    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--accent-2);
+  }
+  .dx-pill[data-tone="persona"][data-on="1"] {
+    background: rgba(var(--persona-rgb), 0.14);
+    border-color: rgba(var(--persona-rgb), 0.55); color: var(--persona-tint);
+  }
+  .dx-pill[data-tone="template"][data-on="1"] {
+    background: rgba(var(--template-rgb), 0.13);
+    border-color: rgba(var(--template-rgb), 0.55); color: var(--template-tint);
+  }
+  .dx-pill--sm { padding: 3px 9px; min-height: 26px;
+    font-size: calc(var(--ui-small-fs) - 1.5px); }
+  .dx-pill--sm .dx-pill-ico { font-size: calc(var(--ui-small-fs) - 0.5px); }
+  .dx-pill-ico { font-size: calc(var(--ui-small-fs) + 1px); line-height: 1; flex-shrink: 0; }
+  .dx-pill-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+  /* the tag chips (publish chips, item-detail tags) — same language */
+  .dx-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(var(--accent-2-rgb), 0.12); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
+    color: var(--accent-2); border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    padding: 3px 9px; font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
+    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.8);
+  }
+  .dx-chip button {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: inherit; padding: 0; font-family: inherit; line-height: 1;
+  }
+
+  /* GradientUI — the 1–10 color gradient editor */
+  .gr-editor { display: flex; flex-direction: column; gap: 8px; }
+  /* top padding gives the floating ✕ remove buttons room INSIDE the
+     collapsible section box (overflow:hidden would clip them) */
+  .gr-swatches { display: flex; flex-wrap: wrap; gap: 10px 8px; padding: 8px 2px 2px; }
+  .gr-swatch { position: relative; display: inline-flex; }
+  .gr-color {
+    width: 46px; height: 36px; padding: 2px;
+    border: 1px solid var(--border); border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
+    background: var(--surface-2); cursor: pointer;
+  }
+  .gr-rm {
+    position: absolute; top: -7px; right: -7px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--surface-3); color: var(--text-2);
+    border: 1px solid var(--border-strong);
+    font-size: 10px; line-height: 1; font-family: inherit; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .gr-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .gr-mini {
+    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.9);
+    padding: 6px 10px; font-size: calc(var(--ui-small-fs) - 1px);
+    font-family: inherit; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .gr-mini:disabled { opacity: 0.35; cursor: default; }
+  .gr-count { margin-left: auto; font-size: var(--ui-micro-fs); color: var(--text-3);
+    font-variant-numeric: tabular-nums; font-weight: 700; }
+  .gr-cap { font-size: var(--ui-micro-fs); color: var(--text-3); }
+  .gr-preview {
+    height: 56px; border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
+    border: 1px solid var(--surface-2); flex-shrink: 0;
+  }
+
+  /* CropUI — the drag-to-crop overlay (full-screen, above the panel) */
+  .crop-ui {
+    position: fixed; inset: 0; z-index: 9500;
+    display: flex; flex-direction: column;
+    background: rgba(6,6,10,0.97);
+  }
+  .crop-top {
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  }
+  .crop-title { flex: 1; text-align: center; color: var(--text-1);
+    font-size: var(--ui-fs); font-weight: 700; }
+  .crop-btn {
+    min-width: 44px; min-height: 40px; padding: 6px 12px;
+    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-1);
+    border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
+    font-family: inherit; font-size: var(--ui-small-fs); font-weight: 700; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .crop-ok { color: var(--ok); border-color: rgba(var(--ok-rgb), 0.5);
+    background: rgba(var(--ok-rgb), 0.12); }
+  .crop-stage {
+    flex: 1 1 auto; min-height: 0; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none; overflow: hidden; cursor: grab;
+  }
+  .crop-stage.grabbing { cursor: grabbing; }
+  .crop-fit { position: relative; }
+  .crop-img { position: absolute; top: 0; left: 0;
+    user-select: none; -webkit-user-drag: none; will-change: transform; }
+  .crop-frame {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    border: 1.5px solid rgba(255,255,255,0.85);
+    box-shadow: 0 0 0 9999px rgba(6,6,10,0.78);
+  }
+  .crop-ctl {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .crop-zoom { flex: 1; accent-color: var(--accent); touch-action: none; }
+  .crop-hint { color: var(--text-3); font-size: var(--ui-micro-fs); flex-shrink: 0; }
+
+  /* v0.33 — the publish form: collapsible sections + the payload FOCUS
+     mode (the payload can own the screen; the other sections collapse
+     away and come back with one tap). The * rides the theme's primary. */
+  .hp-root { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
+  .hp-sec {
+    border: 1px solid var(--surface-2); border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
+    background: var(--surface-1); overflow: hidden;
+    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
+  }
+  .hp-sec-bar {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 10px 12px; background: transparent; border: none;
+    color: var(--text-2); font-family: inherit; cursor: pointer; text-align: left;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hp-sec-title {
+    font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase;
+  }
+  .hp-sec-chev { margin-left: auto; color: var(--text-3); font-size: var(--ui-small-fs);
+    transition: transform 0.18s ease; }
+  .hp-sec.folded .hp-sec-chev { transform: rotate(-90deg); }
+  .hp-sec-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+  .hp-sec.folded .hp-sec-body { display: none; }
+  .hp-star { color: var(--accent); }
+  .hp-focus-btn {
+    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
+    font-family: inherit; font-size: var(--ui-micro-fs); font-weight: 700;
+    padding: 4px 9px; cursor: pointer; flex-shrink: 0;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  /* FOCUS MODE — the payload owns the screen */
+  .hp-root.hp-focus { height: 100%; min-height: 0; }
+  .hp-root.hp-focus > .pv-hint { display: none; }
+  .hp-root.hp-focus .hp-sec { display: none; }
+  .hp-root.hp-focus .hp-payload-sec { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .hp-root.hp-focus .hp-payload { flex: 1 1 auto; min-height: 0; height: auto; resize: none; }
+  .hp-payload-sec .hp-sec-bar { align-items: center; }
+  .hp-payload-sec .hp-sec-body { flex: 1 1 auto; min-height: 0; }
+
+  /* v0.33 — the tweaks Background segment (color / gradient / image) */
+  .tw-bgseg { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .tw-bgzone { display: flex; flex-direction: column; gap: 8px; }
+
+  /* the persona picker's heart badges (persona.js) ───────────────── */
   .pp-heart {
     position: absolute; right: 9px; bottom: 7px; z-index: 1;
     display: flex; align-items: center; justify-content: center;
@@ -2044,6 +2323,10 @@
      message long-press actions + snap-point panel gestures. -->
 <script src="filetypes.js"></script>
 <script src="formatter.js"></script>
+<!-- v0.33: THE SHARED UI KIT — the modular pill system (UIPills), the
+     1-10 color gradient editor (GradientUI) and the drag-to-crop
+     overlay (CropUI). One kit, reused by the hub / publish / tweaks. -->
+<script src="uikit.js"></script>
 <script src="artifacts.js"></script>
 <!-- v0.19→v0.27: the multi-persona system + usage/cost panel — every view
      now renders on the MASTER PANEL's view stack (panel.js pushView); the

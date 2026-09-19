@@ -303,8 +303,11 @@ class MockHF(http.server.BaseHTTPRequestHandler):
             self._json({"files": files})
             return
 
-        if path.endswith("/.git/info/lfs/objects/batch") and path.startswith("/datasets/"):
-            repo = path[len("/datasets/"):-len(".git/info/lfs/objects/batch")]
+        # NOTE: the repo name abuts ".git" directly (no slash), so a
+        # plain endswith("/.git/…") NEVER matches — match the full shape
+        m = re.match(r"^/datasets/(.+)\.git/info/lfs/objects/batch$", path)
+        if m:
+            repo = m.group(1)
             try:
                 req = json.loads(body.decode() or "{}")
             except Exception:
@@ -534,13 +537,13 @@ with sync_playwright() as p:
     ok(not any("hub" in t.lower() for t in utils.all_inner_texts()),
        "the hub pill is ABSENT from the util row")
     open_hub()
-    ok(pg.locator("#panel-name").inner_text().strip() == "hub", "the library glyph opens the hub view on the panel stack")
+    ok(pg.locator("#panel-name").inner_text().strip() == "public library", "the library glyph opens the PUBLIC LIBRARY view on the panel stack (v0.33 rename)")
     ok(pg.locator("#chat-panel").evaluate("el => el.classList.contains('open')"),
        "…the dock re-opened the chat's panel to carry it (the pill's path)")
     ok(pg.locator("#panel-view-back").is_visible(), "the ‹ back bar is present (panel conventions)")
-    tabs = [t.strip().lower() for t in pg.locator(".hub-tab").all_inner_texts()]
-    ok(len(tabs) == 2, f"tabs are dynamic from the registry (2: {tabs})")
-    ok("persona" in tabs[0] and "template" in tabs[1], "persona + template tabs")
+    tabs = [t.strip().lower() for t in pg.locator(".hub-libpill[data-lib]").all_inner_texts()]  # v0.33: full-row library pills
+    ok(len(tabs) == 2, f"library pills are dynamic from the registry (2: {tabs})")
+    ok("personas" in tabs[0] and "templates" in tabs[1], "persona + template library pills")
     ok(len(card_names()) == 4, "the persona library lists the 4 seeded items")
 
     # ── 2. the grid — cols + rows + paging ──────────────────────────
@@ -630,7 +633,7 @@ with sync_playwright() as p:
 
     # ── 7. tag pills ─────────────────────────────────────────────────
     print("tag pills")
-    tags = sorted(t.strip().lstrip("#") for t in pg.locator(".hub-pill[data-tag]").all_inner_texts())
+    tags = sorted(t.strip().lstrip("#") for t in pg.locator(".dx-pill[data-tag]").all_inner_texts())  # v0.33: the shared pill
     ok(len(tags) == 7, f"tag pills built from the results ({tags})")
     pg.locator('[data-tag="space"]').click(); pg.wait_for_timeout(900)
     ok(sorted(card_names()) == ["Cosmic Chef", "Star Captain"], "tag pill filters to the space pair")
@@ -641,14 +644,14 @@ with sync_playwright() as p:
 
     # ── 7b. the template tab (modular: switching reloads per type) ──
     print("template tab")
-    pg.locator('.hub-tab[data-tab="template"]').click(); pg.wait_for_timeout(1200)
+    pg.locator('.hub-libpill[data-lib="template"]').click(); pg.wait_for_timeout(1200)  # v0.33
     ok(card_names() == ["Report Outline"], "switching tabs reloads the template library")
     pg.locator(".hub-card", has_text="Report Outline").click(); pg.wait_for_timeout(1300)
     ok(pg.locator(".hi-title").inner_text().strip() == "Report Outline", "template detail opens")
     ok("sections" in pg.locator("#hi-body").inner_text(), "the JSON payload renders (formatted code block)")
     ok(pg.locator("#hi-body pre").count() >= 1, "templates render as a highlighted code block")
     pg.locator("#panel-view-back").click(); pg.wait_for_timeout(500)
-    pg.locator('.hub-tab[data-tab="persona"]').click(); pg.wait_for_timeout(1200)
+    pg.locator('.hub-libpill[data-lib="persona"]').click(); pg.wait_for_timeout(1200)  # v0.33
     ok(len(card_names()) == 4, "back on the persona tab")
 
     # ── 8. the item detail ───────────────────────────────────────────
@@ -728,14 +731,14 @@ with sync_playwright() as p:
         pg.fill("#hp-tag-in", f"tag{i:02d}")
         pg.press("#hp-tag-in", "Enter")
         pg.wait_for_timeout(120)
-    ok(pg.locator(".hp-chip").count() == 15, f"the tag input caps at 15 chips ({pg.locator('.hp-chip').count()})")
+    ok(pg.locator(".dx-chip").count() == 15, f"the tag input caps at 15 chips ({pg.locator('.dx-chip').count()})")  # v0.33
     pg.locator('[data-untag="14"]').click(); pg.wait_for_timeout(300)
-    ok(pg.locator(".hp-chip").count() == 14, "a chip's ✕ removes it")
+    ok(pg.locator(".dx-chip").count() == 14, "a chip's ✕ removes it")  # v0.33
     # gradient design: pickers + live preview
     pg.locator('[data-desg="gradient"]').click(); pg.wait_for_timeout(400)
-    ok(pg.locator(".hp-color").count() == 2, "the gradient segment shows 2 color inputs")
-    pg.locator('[data-color="0"]').evaluate("el => { el.value = '#667eea'; el.dispatchEvent(new Event('input', {bubbles:true})) }")
-    pg.locator('[data-color="1"]').evaluate("el => { el.value = '#764ba2'; el.dispatchEvent(new Event('input', {bubbles:true})) }")
+    ok(pg.locator(".gr-color").count() == 2, "the gradient segment shows 2 color inputs (v0.33: the shared GradientUI)")
+    pg.locator('.gr-color[data-gr="0"]').evaluate("el => { el.value = '#667eea'; el.dispatchEvent(new Event('input', {bubbles:true})) }")
+    pg.locator('.gr-color[data-gr="1"]').evaluate("el => { el.value = '#764ba2'; el.dispatchEvent(new Event('input', {bubbles:true})) }")
     prev = pg.locator("#hp-preview").get_attribute("style") or ""
     ok("#667eea" in prev and "#764ba2" in prev, "the color pickers drive the live preview")
     pg.fill("#hp-payload", "# Nebula Pilot\n\nYou are **Nebula Pilot** — calm among the stars.\n")
@@ -831,8 +834,9 @@ with sync_playwright() as p:
        "the committed item meta carries the author + name")
     # back → the hub list refreshed (stale) with the status line + the new card
     pg.locator("#panel-view-back").click(); pg.wait_for_timeout(1600)
-    status = " ".join(pg.locator(".hub-status").inner_text().split())
-    ok("connected as tester" in status, f"the hub shows 'HF: connected as tester' ({status.strip()})")
+    status = " ".join(pg.locator("#pub-status").inner_text().split())  # v0.33: the status rides the pub-head bar
+    ok("tester" in status and "disconnect" in status,
+       f"the pub-head bar shows the HF user + disconnect ({status.strip()})")  # v0.33: the compact header status
     search("nebula")
     ok(card_names() == ["Nebula Pilot"], "the published item appears in the library (refresh)")
     np_card = pg.locator(".hub-card", has_text="Nebula Pilot")

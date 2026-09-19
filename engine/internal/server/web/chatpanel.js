@@ -144,6 +144,22 @@
     renderHost(bodyEl, icon, state, panel);
   }
 
+  // v0.33: the deferred labels re-render — panel.js pokes this event
+  // when the last view pops and the stashed root becomes visible again,
+  // so the one-shot label repaint finally runs (it had to wait: it
+  // can't clobber an open view by writing bodyEl directly).
+  document.addEventListener('doomalay:root-restored', function () {
+    var c = currentCtx;
+    if (c && c.state && c.state._labelsPending && !c.state._labelsDone &&
+        window.H && window.H.hasLabels && window.H.hasLabels()) {
+      c.state._labelsPending = false;
+      c.state._labelsDone = true;
+      if (c.bodyEl && c.bodyEl.isConnected) {
+        renderHost(c.bodyEl, c.icon, c.state, c.panel);
+      }
+    }
+  });
+
   function renderHost(bodyEl, icon, state, panel) {
     var type = window.ChatTypes.get(state.sandbox || 'quick');
     currentCtx = { bodyEl: bodyEl, icon: icon, state: state, panel: panel, type: type };
@@ -153,6 +169,14 @@
       H.ensureCatalog().then(function () {
         if (bodyEl.isConnected && !state._labelsDone && currentCtx &&
             currentCtx.state === state) {
+          // v0.33: a VIEW is stacked over the root (hub / publish /
+          // tweaks…) — renderHost writes bodyEl directly and would
+          // clobber the open view. Defer until the root is visible
+          // again (panel.js pokes 'doomalay:root-restored').
+          if (panel && typeof panel.viewDepth === 'function' && panel.viewDepth() > 0) {
+            state._labelsPending = true;
+            return;
+          }
           state._labelsDone = true;
           renderHost(bodyEl, icon, state, panel);
         }

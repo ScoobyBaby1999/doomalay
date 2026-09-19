@@ -100,6 +100,49 @@ func TestSanitizeTags(t *testing.T) {
 
 // ── local store ───────────────────────────────────────────────────────────
 
+// v0.33: normalizeDesign keeps up to TEN gradient stops (the web's gradient
+// editor grew from 3) and drops anything that is not a strict hex color —
+// the stops are re-emitted into CSS gradients client-side.
+func TestNormalizeDesign(t *testing.T) {
+	// 12 valid stops → capped at the first 10
+	var twelve []string
+	for i := 0; i < 12; i++ {
+		twelve = append(twelve, fmt.Sprintf("#%02x0000", i+1))
+	}
+	got := normalizeDesign(Design{Kind: "gradient", Colors: twelve})
+	if len(got.Colors) != 10 || got.Kind != "gradient" {
+		t.Fatalf("12 stops → cap 10, got %d (%s)", len(got.Colors), got.Kind)
+	}
+	if got.Colors[0] != "#010000" {
+		t.Fatalf("cap keeps the FIRST stops, got %v", got.Colors[0])
+	}
+
+	// junk entries are dropped, valid ones kept in order
+	mixed := normalizeDesign(Design{Kind: "gradient",
+		Colors: []string{"#ff0055", "url(evil)", "#0055ff", "red", "#abc"}})
+	if fmt.Sprint(mixed.Colors) != fmt.Sprint([]string{"#ff0055", "#0055ff", "#abc"}) {
+		t.Fatalf("junk stops dropped in order, got %v", mixed.Colors)
+	}
+
+	// all-junk (or empty) → degrades to none
+	none := normalizeDesign(Design{Kind: "gradient", Colors: []string{"nope", "still nope"}})
+	if none.Kind != "none" || none.Colors != nil {
+		t.Fatalf("all-junk gradient → none, got %+v", none)
+	}
+
+	// a single valid stop stays a gradient (the editor's 1-color minimum)
+	one := normalizeDesign(Design{Kind: "gradient", Colors: []string{"#38bdf8"}})
+	if one.Kind != "gradient" || len(one.Colors) != 1 {
+		t.Fatalf("1 stop stays a gradient, got %+v", one)
+	}
+
+	// non-gradient kinds still drop their colors
+	png := normalizeDesign(Design{Kind: "png", Colors: twelve})
+	if png.Kind != "png" || png.Colors != nil {
+		t.Fatalf("png drops colors, got %+v", png)
+	}
+}
+
 func openTestDB(t *testing.T) *store.DB {
 	t.Helper()
 	db, err := store.Open(t.TempDir())

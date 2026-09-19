@@ -276,6 +276,11 @@
         this.bodyEl.scrollTop = this._rootScroll;
       }
       this._rootHeader = null;
+      // v0.33: a stacked view may have deferred the chat root's one-shot
+      // async repaint (it can't write bodyEl while a view is open) —
+      // poke the document; chatpanel.js listens and paints now that the
+      // root is visible again.
+      try { document.dispatchEvent(new CustomEvent('doomalay:root-restored')); } catch (e) {}
     }
 
     // fire onClose hooks + clear the stack + view chrome. KEEPS the

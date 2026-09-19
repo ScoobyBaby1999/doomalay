@@ -138,8 +138,12 @@
     // keeps the text readable), or the deterministic id gradient.
     var bgStyle = '';
     var d = it.design || {};
-    if (d.kind === 'gradient' && d.colors && d.colors.length >= 2) {
-      bgStyle = 'background-image:' + headFade() + ',linear-gradient(135deg,' + d.colors.join(',') + ');';
+    if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
+      // 1–10 stops: one stop renders solid (a gradient needs ≥2)
+      var grad = (d.colors.length === 1)
+        ? 'background-color:' + d.colors[0] + ';'
+        : 'background-image:' + headFade() + ',linear-gradient(135deg,' + d.colors.join(',') + ');';
+      bgStyle = grad;
     } else if (d.kind !== 'png') {
       bgStyle = 'background-image:' + (window.Hub && window.Hub.idGradient
         ? window.Hub.idGradient(it.id) : 'none') + ';';
