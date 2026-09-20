@@ -543,9 +543,7 @@
           // is hidden until ChatPanel shows it (chat icons with a model).
           var modelBtn = document.getElementById('panel-model-btn');
           if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
-          // v0.32.3: same reset for the ★ quick-switch button.
-          var starBtn = document.getElementById('panel-star-btn');
-          if (starBtn) { starBtn.style.display = 'none'; starBtn.onclick = null; }
+          // v0.34: the ★ quick-switch reset is gone with the button itself.
           // v0.14: the chat UI is full-bleed (its own padding); other panel
           // types keep the default 20px from the stylesheet.
           panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
@@ -633,6 +631,16 @@
     if (artOverlay && artOverlay.contains(target)) return true;
     var actionSheet = document.getElementById('msg-action-sheet');
     if (actionSheet && actionSheet.contains(target)) return true;
+    // v0.34: the crop overlay (uikit.js CropUI) + the fullscreen media zoom
+    // (formatter.js MediaZoom) both append themselves to document.body —
+    // WITHOUT these checks their touches fell through to the canvas pan
+    // handlers (the grid moved behind the cropper!) and the document-level
+    // preventDefault() killed the zoom slider's native touch drag — the
+    // exact #sheet-root class of bug, phone-only (mouse clicks fire
+    // regardless of touchstart preventDefault, so Playwright never saw it).
+    if (target.closest && target.closest('.crop-ui')) return true;
+    var mediaZoom = document.getElementById('media-zoom');
+    if (mediaZoom && mediaZoom.contains(target)) return true;
     // (v0.26's #sheet-root was NEVER in this list — that omission is why
     // the sheet's buttons were dead on Android while desktop dogfooding
     // and Playwright both passed. It is deleted now; the master panel and

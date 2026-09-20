@@ -42,6 +42,8 @@
     --template-tint: #4ade80; --template-rgb: 74,222,128;
     /* text sizes (v0.24 sizing page) */
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
+    --chat-scale: 1;   /* v0.34: chat-fs ÷ 16px — everything in the message
+                          scope multiplies its px by this (one look, one lever) */
     --ui-fs: 14px;     /* general text */
     --ui-small-fs: 12px;/* pills, hints, meta, thinking bubbles */
     /* v0.25: a FLOOR for the tiniest settings text — calc(--ui-small-fs - 3px)
@@ -761,9 +763,13 @@
     --fmt-bright: var(--text-1);    /* bright text (bold, headings) */
     --fmt-link: var(--accent-2);      /* links */
     --chat-fs: 16px;          /* chat text size (Settings slider 0–100) */
+    --chat-scale: 1;         /* v0.34: chat-fs ÷ 16 — the message-scope scale */
   }
 
-  /* message bubbles — selectable text (user spec #6) */
+  /* message bubbles — selectable text (user spec #6).
+     v0.34: every px in the message scope rides --chat-scale (chat-fs ÷ 16)
+     so bubbles, code, thinking strips, artifacts and spacing grow TOGETHER
+     with the chat text — the "text huge, chrome tiny" wonk is gone. */
   .msg-bubble {
     -webkit-user-select: text; user-select: text;
     -webkit-touch-callout: default;
@@ -775,18 +781,18 @@
   .msg-user {
     align-self: flex-end;
     background: var(--border-strong); color: var(--text-1);
-    padding: 10px 14px; border-radius: 14px 14px 4px 14px;
+    padding: calc(10px * var(--chat-scale)) calc(14px * var(--chat-scale)); border-radius: 14px 14px 4px 14px;
     max-width: 86%;
   }
   .msg-assistant {
     align-self: flex-start;
     background: var(--surface-1); color: var(--text-1);
-    padding: 10px 14px; border-radius: 14px 14px 14px 4px;
+    padding: calc(10px * var(--chat-scale)) calc(14px * var(--chat-scale)); border-radius: 14px 14px 14px 4px;
     max-width: 88%;
   }
   .msg-error {
-    align-self: center; color: var(--err); font-size: var(--ui-small-fs);
-    padding: 8px 12px; background: rgba(var(--err-rgb),0.1);
+    align-self: center; color: var(--err); font-size: calc(var(--chat-fs) - 3px);
+    padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale)); background: rgba(var(--err-rgb),0.1);
     border-radius: 8px; border: 1px solid rgba(var(--err-rgb),0.2);
     max-width: 90%;
   }
@@ -845,15 +851,15 @@
   }
   .fmt-yt-play {
     position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: 46px; height: 46px; border-radius: 50%;
+    width: calc(46px * var(--chat-scale)); height: calc(46px * var(--chat-scale)); border-radius: 50%;
     background: rgba(255,0,0,0.85); color: #fff;
     display: flex; align-items: center; justify-content: center;
-    font-size: 19px; padding-left: 4px;
+    font-size: calc(19px * var(--chat-scale)); padding-left: 4px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.55);
   }
   .fmt-yt:active .fmt-yt-play { background: #f00; }
   .fmt-yt-cap {
-    padding: 7px 11px; font-size: calc(var(--ui-small-fs) - 0.5px);
+    padding: calc(7px * var(--chat-scale)) calc(11px * var(--chat-scale)); font-size: calc(var(--chat-fs) * 0.74);
     color: var(--text-2); font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -880,46 +886,48 @@
   #media-zoom #mz-open { left: 12px; }
   .fmt-code-inline {
     background: var(--surface-2); color: var(--fmt-a1);
-    padding: 1.5px 6px; border-radius: 6px;
+    padding: calc(1.5px * var(--chat-scale)) calc(6px * var(--chat-scale)); border-radius: 6px;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 0.88em; border: 1px solid var(--surface-3);
     overflow-wrap: break-word; word-break: break-word;
   }
-  /* code CARD: header (lang + copy + save) + scrollable body */
+  /* code CARD: header (lang + copy + save) + scrollable body —
+     v0.34: the whole card rides --chat-scale (was fixed to the ui sizes;
+     code stayed tiny under a big chat font = the misalignment complaint) */
   .fmt-codecard {
     margin: 0.55em 0; border: 1px solid var(--surface-3); border-radius: 10px;
     background: var(--surface-1); overflow: hidden; max-width: 100%;
   }
   .fmt-codehead {
-    display: flex; align-items: center; gap: 8px;
-    background: #17171f; padding: 5px 10px;
+    display: flex; align-items: center; gap: calc(8px * var(--chat-scale));
+    background: #17171f; padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
     border-bottom: 1px solid var(--surface-3);
   }
   .fmt-codelang {
-    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 700; letter-spacing: 0.6px;
+    font-size: calc(var(--chat-fs) * 0.62); font-weight: 700; letter-spacing: 0.6px;
     text-transform: uppercase; color: var(--fmt-a2);
     font-family: ui-monospace, Menlo, monospace;
   }
   .fmt-cbtn {
     background: transparent; border: 1px solid var(--border); color: var(--text-3);
-    padding: 3px 9px; border-radius: 6px; font-size: calc(var(--ui-small-fs) - 1.5px);
+    padding: calc(3px * var(--chat-scale)) calc(9px * var(--chat-scale)); border-radius: 6px; font-size: calc(var(--chat-fs) * 0.68);
     font-family: inherit; font-weight: 600; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     flex-shrink: 0;
   }
   .fmt-cbtn:active { background: var(--border); color: var(--fmt-bright); }
   .fmt-cbtn-save { color: var(--fmt-a3); border-color: color-mix(in srgb, var(--fmt-a3) 40%, var(--border)); }
-  .fmt-codecard .fmt-pre { margin: 0; padding: 10px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .fmt-codecard pre { margin: 0; padding: 10px 12px; overflow-x: auto; background: transparent; }
+  .fmt-codecard .fmt-pre { margin: 0; padding: calc(10px * var(--chat-scale)) calc(12px * var(--chat-scale)); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .fmt-codecard pre { margin: 0; padding: calc(10px * var(--chat-scale)) calc(12px * var(--chat-scale)); overflow-x: auto; background: transparent; }
   .fmt-codetext {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: calc(var(--ui-small-fs) + 0.5px); line-height: 1.5; color: var(--text-1);
+    font-size: calc(var(--chat-fs) * 0.8); line-height: 1.5; color: var(--text-1);
     tab-size: 2; white-space: pre;
   }
   .fmt table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.92em; width: 100%; }
   .fmt-tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
   .fmt th { color: var(--fmt-a2); font-weight: 700; }
-  .fmt th, .fmt td { border: 1px solid var(--surface-3); padding: 5px 9px; text-align: left; }
+  .fmt th, .fmt td { border: 1px solid var(--surface-3); padding: calc(5px * var(--chat-scale)) calc(9px * var(--chat-scale)); text-align: left; }
   .fmt tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
   .fmt-cursor {
     display: inline-block; width: 7px; height: 1.05em;
@@ -938,45 +946,45 @@
     align-self: stretch; max-width: 95%;
     background: rgba(var(--accent-rgb),0.06);
     border: 1px solid rgba(var(--accent-rgb),0.2);
-    border-radius: 10px; padding: 8px 12px;
+    border-radius: 10px; padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale));
   }
   .msg-think-summary {
-    font-size: calc(var(--ui-small-fs) - 1px); color: var(--accent); cursor: pointer;
+    font-size: calc(var(--chat-fs) * 0.75); color: var(--accent); cursor: pointer;
     user-select: none; -webkit-user-select: none;
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: calc(6px * var(--chat-scale));
   }
   /* v0.24: live elapsed chip on the thinking summary — ticks while the
      model reasons (visible even when the bubble is collapsed). */
   .th-elapsed {
-    font-size: var(--ui-micro-fs); color: var(--text-3, var(--text-3));
+    font-size: calc(var(--chat-fs) * 0.62); color: var(--text-3, var(--text-3));
     font-variant-numeric: tabular-nums; font-weight: 600;
   }
   /* v0.25: the blinking live dot is GONE (user spec: "remove the
      flickering circle — the yellow cursor is enough"). The elapsed
      chip + the streaming cursor carry the aliveness now. */
   .msg-think-body {
-    font-size: var(--ui-small-fs); color: var(--text-3); margin-top: 6px;
-    max-height: 260px; overflow-y: auto; background: transparent; padding: 0;
+    font-size: calc(var(--chat-fs) * 0.77); color: var(--text-3); margin-top: calc(6px * var(--chat-scale));
+    max-height: calc(260px * var(--chat-scale)); overflow-y: auto; background: transparent; padding: 0;
     max-width: 100%;
   }
 
   /* ── artifact card (in-message) ── */
   .fmt-artifact {
-    display: flex; align-items: center; gap: 10px;
-    margin: 0.6em 0; padding: 10px 12px;
+    display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
+    margin: 0.6em 0; padding: calc(10px * var(--chat-scale)) calc(12px * var(--chat-scale));
     background: linear-gradient(135deg, rgba(var(--accent-2-rgb),0.08), rgba(var(--accent-2-rgb),0.04));
     border: 1px solid color-mix(in srgb, var(--fmt-a3) 45%, var(--surface-3));
     border-radius: 12px; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .fmt-artifact-ico { font-size: 20px; flex-shrink: 0; }
+  .fmt-artifact-ico { font-size: calc(20px * var(--chat-scale)); flex-shrink: 0; }
   .fmt-artifact-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .fmt-artifact-name { color: var(--fmt-bright); font-weight: 700; font-size: calc(var(--ui-fs) - 1px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fmt-artifact-sub { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1.5px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmt-artifact-name { color: var(--fmt-bright); font-weight: 700; font-size: calc(var(--chat-fs) - 1px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmt-artifact-sub { color: var(--text-3); font-size: calc(var(--chat-fs) * 0.66); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fmt-artifact-dl {
     background: rgba(var(--accent-2-rgb),0.12); border: 1px solid rgba(var(--accent-2-rgb),0.4);
-    color: var(--accent-2); border-radius: 8px; padding: 5px 10px;
-    font-size: calc(var(--ui-fs) - 1px); cursor: pointer; flex-shrink: 0;
+    color: var(--accent-2); border-radius: 8px; padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
+    font-size: calc(var(--chat-fs) - 1px); cursor: pointer; flex-shrink: 0;
     touch-action: manipulation; font-family: inherit;
   }
 
@@ -987,12 +995,12 @@
      sit frozen with hidden background work. */
   .chat-working {
     align-self: flex-start;
-    display: flex; align-items: center; gap: 9px;
-    padding: 8px 12px 9px;
+    display: flex; align-items: center; gap: calc(9px * var(--chat-scale));
+    padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale)) calc(9px * var(--chat-scale));
     border-radius: 12px;
     background: rgba(var(--accent-rgb),0.05);
     border: 1px solid rgba(var(--accent-rgb),0.18);
-    font-size: calc(var(--ui-small-fs) - 0.5px); color: var(--text-2);
+    font-size: calc(var(--chat-fs) * 0.7); color: var(--text-2);
     position: relative; overflow: hidden;
     max-width: 92%;
     animation: cwk-in 0.18s ease-out;
@@ -1026,17 +1034,17 @@
     100% { background-position: 145% 0; }
   }
 
-  /* ── tool pills (center-aligned, tappable → expand) ── */
+  /* ── tool pills (center-aligned, tappable → expand) — v0.34: chat-scaled ── */
   .tool-pill {
     align-self: center; max-width: 92%;
-    border-radius: 999px; padding: 6px 12px;
-    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
+    border-radius: 999px; padding: calc(6px * var(--chat-scale)) calc(12px * var(--chat-scale));
+    font-size: calc(var(--chat-fs) * 0.72); font-weight: 600;
     cursor: pointer; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition: border-radius 0.18s, background 0.18s;
   }
   .tool-pill[data-expanded="1"] { border-radius: 12px; }
-  .tool-pill-head { display: flex; align-items: center; gap: 7px; overflow: hidden; }
+  .tool-pill-head { display: flex; align-items: center; gap: calc(7px * var(--chat-scale)); overflow: hidden; }
   .tool-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tool-pill[data-expanded="1"] .tool-pill-text { white-space: normal; overflow-wrap: anywhere; }
   /* v0.28: long links inside pills WRAP — never overflow the pill box
@@ -1045,58 +1053,58 @@
   .tool-pill-detail { min-width: 0; }
   .tool-pill-row { min-width: 0; }
   .tool-pill-row > span { min-width: 0; overflow-wrap: anywhere; }
-  .tool-pill-chev { font-size: var(--ui-micro-fs); color: currentColor; opacity: 0.7; flex-shrink: 0; }
+  .tool-pill-chev { font-size: calc(var(--chat-fs) * 0.6); color: currentColor; opacity: 0.7; flex-shrink: 0; }
   .tool-pill-use { color: var(--accent-2); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
   .tool-pill-detail {
-    margin-top: 8px; padding-top: 8px;
+    margin-top: calc(8px * var(--chat-scale)); padding-top: calc(8px * var(--chat-scale));
     border-top: 1px solid rgba(255,255,255,0.07);
-    display: flex; flex-direction: column; gap: 6px;
-    font-size: calc(var(--ui-small-fs) - 1px); text-align: left;
+    display: flex; flex-direction: column; gap: calc(6px * var(--chat-scale));
+    font-size: calc(var(--chat-fs) * 0.72); text-align: left;
   }
-  .tool-pill-row { display: flex; gap: 8px; align-items: baseline; }
+  .tool-pill-row { display: flex; gap: calc(8px * var(--chat-scale)); align-items: baseline; }
   .tool-pill-k {
-    color: var(--text-3); font-size: 9.5px; font-weight: 700;
+    color: var(--text-3); font-size: calc(9.5px * var(--chat-scale)); font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
   }
   .tool-pill-pre {
-    font-family: ui-monospace, Menlo, monospace; font-size: 10.5px;
+    font-family: ui-monospace, Menlo, monospace; font-size: calc(10.5px * var(--chat-scale));
     white-space: pre-wrap; word-break: break-word; color: var(--text-2);
-    max-height: 220px; overflow-y: auto; max-width: 100%;
+    max-height: calc(220px * var(--chat-scale)); overflow-y: auto; max-width: 100%;
   }
   .tool-pill-link {
     display: block; color: var(--fmt-link); text-decoration: none;
-    font-size: calc(var(--ui-small-fs) - 1.5px);
+    font-size: calc(var(--chat-fs) * 0.62);
     white-space: normal; overflow-wrap: anywhere; word-break: break-all;
     padding: 1px 0;
   }
 
-  /* ── sources cards (tappable, pretty) ── */
+  /* ── sources cards (tappable, pretty) — v0.34: chat-scaled ── */
   .src-wrap {
     align-self: stretch; max-width: 95%;
     background: var(--bg-app); border: 1px solid var(--surface-2);
-    border-radius: 12px; padding: 8px 10px;
+    border-radius: 12px; padding: calc(8px * var(--chat-scale)) calc(10px * var(--chat-scale));
   }
-  .src-wrap-label { font-size: 9.5px; color: var(--text-3); margin-bottom: 6px; letter-spacing: 0.8px; }
+  .src-wrap-label { font-size: calc(9.5px * var(--chat-scale)); color: var(--text-3); margin-bottom: calc(6px * var(--chat-scale)); letter-spacing: 0.8px; }
   .src-card {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 8px; border-radius: 10px; text-decoration: none;
+    display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
+    padding: calc(7px * var(--chat-scale)) calc(8px * var(--chat-scale)); border-radius: 10px; text-decoration: none;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .src-card:active { background: #14141c; }
   .src-card-dom {
-    width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+    width: calc(26px * var(--chat-scale)); height: calc(26px * var(--chat-scale)); border-radius: 7px; flex-shrink: 0;
     background: rgba(var(--accent-2-rgb),0.1); border: 1px solid rgba(var(--accent-2-rgb),0.3);
-    color: var(--fmt-a1); font-weight: 700; font-size: var(--ui-small-fs);
+    color: var(--fmt-a1); font-weight: 700; font-size: calc(var(--chat-fs) * 0.77);
     display: flex; align-items: center; justify-content: center;
   }
   .src-card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .src-card-title {
-    color: var(--text-2); font-size: var(--ui-small-fs); font-weight: 600;
+    color: var(--text-2); font-size: calc(var(--chat-fs) * 0.77); font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .src-card-sub { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 2px); }
+  .src-card-sub { color: var(--text-3); font-size: calc(var(--chat-fs) * 0.64); }
 
   /* in-chat search highlight */
   mark.chat-search-mark { background: rgba(250,204,21,0.35); color: inherit; border-radius: 3px; }
@@ -1445,44 +1453,8 @@
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   #panel-view-back:active, #panel-view-x:active { background: var(--surface-2); }
-  /* v0.32.3 F3: the ★ quick-switch — recent + starred models, one tap.
-     Amber kin to the model pill; 34px like the other header buttons. */
-  #panel-star-btn {
-    flex-shrink: 0; width: 34px; height: 34px;
-    display: none; align-items: center; justify-content: center;
-    background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.35);
-    border-radius: 8px; color: #eab308; font-size: 15px; line-height: 1;
-    cursor: pointer; font-family: inherit; touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s, border-color 0.15s, transform 0.12s cubic-bezier(0.32,0.72,0,1);
-  }
-  #panel-star-btn:hover { background: rgba(234,179,8,0.16); }
-  #panel-star-btn:active { transform: scale(0.9); background: rgba(234,179,8,0.2); }
-  #panel-star-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  @media (prefers-reduced-motion: reduce) { #panel-star-btn { transition: none; } }
-  /* v0.32.7 F1: starred-count badge — a small amber pill pinned to the
-     ★ button's top-right. Hidden when zero; pops on change. The 1.5px
-     surface border separates it from whatever sits behind the button. */
-  #panel-star-btn { position: relative; }
-  #panel-star-badge {
-    position: absolute; top: -6px; right: -6px;
-    min-width: 15px; height: 15px; padding: 0 4px;
-    display: none; align-items: center; justify-content: center;
-    background: #eab308; color: #231f09;
-    border: 1.5px solid var(--surface-1);
-    border-radius: 8px;
-    font-size: 9.5px; font-weight: 800; line-height: 1;
-    font-variant-numeric: tabular-nums;
-    pointer-events: none; box-sizing: border-box;
-  }
-  #panel-star-badge.ps-on { display: flex; }
-  @keyframes ps-badge-pop {
-    0% { transform: scale(0.6); }
-    55% { transform: scale(1.25); }
-    100% { transform: scale(1); }
-  }
-  #panel-star-badge.ps-pop { animation: ps-badge-pop 260ms cubic-bezier(0.32,0.72,0,1); }
-  @media (prefers-reduced-motion: reduce) { #panel-star-badge.ps-pop { animation: none; } }
+  /* v0.34: #panel-star-btn (the ★ quick-switch) REMOVED — favorites now
+     live in the model browser's own ★ tab; the button + this CSS are gone. */
   .panel-body.pv-mode {
     padding: 12px 14px calc(18px + env(safe-area-inset-bottom, 0px));
   }
@@ -2197,7 +2169,11 @@
     display: flex; align-items: center; gap: 12px;
     padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
   }
-  .crop-zoom { flex: 1; accent-color: var(--accent); touch-action: none; }
+  .crop-zoom { flex: 1; accent-color: var(--accent); }
+  /* v0.34: touch-action REMOVED — `none` disabled the range input's native
+     touch dragging (the slider ignored finger moves); the default lets the
+     OS own the thumb, and the .crop-ui isInsideUI registration stops the
+     document touchstart preventDefault that also killed it. */
   .crop-hint { color: var(--text-3); font-size: var(--ui-micro-fs); flex-shrink: 0; }
 
   /* v0.33 — the publish form: collapsible sections + the payload FOCUS
@@ -2296,7 +2272,6 @@
          ✕ on the far right drops every view but keeps the panel open. -->
     <button id="panel-view-back" aria-label="Back" style="display:none">‹</button>
     <button id="panel-model-btn" aria-label="Change model"></button>
-    <button id="panel-star-btn" aria-label="Quick switch model" title="Quick switch — recent & starred" style="display:none">★<span id="panel-star-badge" aria-hidden="true"></span></button>
     <div class="avatar" id="panel-avatar"></div>
     <div class="meta">
       <!-- v0.19: tap the name to rename. data-nodrag exempts it from the

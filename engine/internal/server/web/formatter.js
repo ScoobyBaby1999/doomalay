@@ -323,7 +323,10 @@
   function highlightWith(codeEl, pl) {
     if (!window.Prism) return;
     var go = function () {
-      codeEl.className = 'language-' + pl;
+      // v0.34: KEEP .fmt-codetext — the plain assignment wiped the class,
+      // so Prism-highlighted code dropped out of the chat-size scaling
+      // (the .fmt-codetext CSS only reached un-highlighted blocks).
+      codeEl.className = 'fmt-codetext language-' + pl;
       try { Prism.highlightElement(codeEl); } catch (e) {}
     };
     if (Prism.languages[pl]) { go(); return; }

@@ -1,88 +1,65 @@
-// modelbrowser.js — the dynamic model browser (v0.32).
+// modelbrowser.js — the dynamic model browser (v0.32 → v0.34).
 //
 // Port of the HF space's ModelSelectOverlay.tsx (the "tremendous amount of
-// work"), v0.13 heritage preserved, OVERHAULED per the v0.32 user spec:
+// work"), v0.13 heritage preserved, OVERHAULED per the v0.32 user spec,
+// polished through v0.32.6, then REWORKED for v0.34:
 //
-//   1. FILTERS COLLAPSED behind a "Filters" toggle row (funnel icon +
-//      active-count badge) in BOTH tabs. Collapsed by default, persisted.
-//   2. When expanded the pills are squared, uniform and grid-like — they
-//      lay out in wrapped rows (flex-wrap), never a horizontal scroll.
-//   3. Smart / Agent / Code pills rank by OpenRouter's Artificial Analysis
-//      benchmarks (attributes.benchmarks: intelligence / agentic / coding),
-//      highest → lowest. (The old 'smart' capability match never fired.)
-//   4. New "Available" pill: only models with ≥1 key-backed provider. The
-//      useless "Any $" pill is GONE — Free/Paid are self-cancelling toggles.
-//   5. Providers tab: keyless boxes are dimmed + badged "view only" (keyed
-//      = "ready"). Models tab: logical models with no key-backed host
-//      anywhere (priority position irrelevant) are dimmed hard.
-//   6. Model rows are SPLIT: LEFT (radio + name) selects the model (best
-//      key-backed host, user's host order); RIGHT (after a 1px separator —
-//      the hotspot marker) opens the provider-priority dropdown; the
-//      chevron is now a proper 30px button that rotates when open.
-//   7. Host priority re-ordering: ▲▼ AND drag-and-drop (⠿ handle on each
-//      host row) — the row follows the finger, siblings FLIP around it.
-//   8. Providers tab: HOLD a box (~220ms) or grab its ⠿ grip and drag to
-//      re-order the boxes — iPhone-style reorder, persisted.
-//   9. The "use" pill is GONE — the left-side tap selects; models with no
-//      key anywhere show an inline hint instead of selecting.
+//   1. THREE TABS: ★ favorites | Providers | Models (the chat header's ★
+//      quick-switch button is GONE — favorites live here now). The last
+//      tab is remembered across closes (persisted 'view', like before).
+//   2. THE 6-COLUMN ROW (user spec): name (biggest, wraps — never cut
+//      off), ★ star, ℹ info (uncollapses the benchmarks beneath the
+//      row), ⚖ compare, context, pricing. The MODELS + FAVORITES rows
+//      add the subtext line: stat sliders + capability pills + the
+//      provider dots (moved OFF the top row) right-aligned with the ➜
+//      arrow that opens the provider-priority dropdown. Tapping the top
+//      row anywhere except ★/ℹ/⚖/dots/arrow selects the model.
+//   3. THE DROP-DOWN (host priority rows) dropped its ⠿ grip + key pill
+//      for a 🔑 key/no-key ICON column; drag by holding the row ANYWHERE
+//      (except the ▲▼ arrows — taps on those move the row directly).
+//   4. "Available" / "All" pills in the filter box (exclusive pair):
+//      Available = only models with a key-backed provider; All = the
+//      default catalogue. The old 'available' capability pill and the
+//      'starred' pill (superseded by the ★ tab) are gone.
+//   5. PERFORMANCE (the 1-3s lag): the catalogue re-rendered its ENTIRE
+//      ~500-row DOM + re-wired ~4k listeners on EVERY tap. Now: ONE
+//      delegated click handler per open (no per-node wiring), surgical
+//      zone updates (header / sticky bar / list — the search input node
+//      is NEVER replaced), row-level refresh (ℹ/➜ swap ONE row), and the
+//      list renders in pages of 100 rows ("show more" + auto-load on
+//      scroll) — a filter tap repaints ≤100 rows, not 500+.
 //
-// v0.32.1 (QA round 2):
-//   A. BUGFIX: "Available" as the ONLY filter hid EVERYTHING in both tabs
-//      (the caps matcher has no branch for it, and providerView read a
-//      non-existent `hasKey` field). Both fixed — Available alone now shows
-//      the 148 key-backed models / the ready provider boxes.
-//   B. SORT control (models tab): Best / Smartest / Top agent / Top code /
-//      Cheapest / Biggest ctx / A→Z — persisted.
-//   C. Live counts line (both tabs): "X of Y models · Z with your keys".
-//   D. Inline ADD-KEY form on view-only provider boxes (＋ key) — POSTs
-//      /api/keys, re-syncs, box flips to "ready" without leaving the panel.
-//   E. Current-model indicator: filled radio + green ring + "current" chip
-//      on the row the chat is actually using (chatpanel passes opts.current).
-//   F. Esc closes the overlay. Pills get hover/press/focus polish +
-//      aria-pressed; rows/boxes get hover borders + aria-expanded.
-//   G. Benchmark chips grow score mini-bars.
-//
-// v0.32.2 (QA round 3):
-//   A. STARRED favorites: ★ button on every model row (models view +
-//      provider view rows), "Starred" filter pill, "★ Starred first"
-//      sort, persisted (.starred). Starring updates in place — no
-//      re-render, so scroll position survives.
-//   B. REAL PRICE chips: paid rows show "$0.91/M" (parsed from
-//      attributes.pricing) instead of a bare "paid" — tooltip carries the
-//      full pricing string.
-//   C. SEARCH UX FIX: the 200ms-debounced re-render used to replace the
-//      input mid-typing (focus + caret lost after any pause > 200ms).
-//      render() now preserves focus + caret across re-renders. "/" focuses
-//      search; Esc inside a non-empty search clears it (instead of closing
-//      the whole overlay); empty search + Esc blurs.
-//   D. Friendly empty state when the Starred pill is on but nothing is
-//      starred yet.
+// Retained from v0.32.x: AA benchmark ranking, sort control, inline
+// add-key, live provider dots, current-model ring, compare drawer,
+// detail drawers, keyboard navigation, drag reordering, sticky filter
+// bar + removable chips, "/" search focus, Esc close.
 //
 // 100% RUNTIME DATA: everything comes from GET /api/models. Selection
 // picks the best host and calls onPick(provider, modelId).
 //
 // PERSISTENCE (localStorage, same keys as the old app):
 //   doomalay.model-select.view / .search / .filters / .filtersOpen /
-//   .ctxMin / .pricing / .providerOrder / .providerExpanded /
-//   .hostOrder (per logical model)
+//   .ctxMin / .pricing / .avail / .providerOrder / .providerExpanded /
+//   .hostOrder (per logical model) / .sort / .starred / .recent
 //
-// Exposes: window.ModelBrowser = { open }
+// Exposes: window.ModelBrowser = { open, quickPick, quickEntries, toggleStar }
 (function () {
   'use strict';
 
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
   var LS = 'doomalay.model-select.';
+  var PAGE = 100; // rows per list page (the perf cap)
 
   // Filter pill definitions (label, color, match key).
+  // v0.34: 'available' moved to its own exclusive pair; 'starred' moved
+  // to the ★ tab — both gone from the OR-pills.
   var PILLS = [
     { key: 'reasoning', label: 'Reason', color: '#f97316' },
     { key: 'intelligence', label: 'Smart', color: '#a855f7' },
     { key: 'code', label: 'Code', color: '#3b82f6' },
     { key: 'agent', label: 'Agent', color: '#14b8a6' },
     { key: 'tools', label: 'Tools', color: '#8b5cf6' },
-    { key: 'vision', label: 'Vision', color: '#22c55e' },
-    { key: 'available', label: 'Available', color: '#10b981' },
-    { key: 'starred', label: 'Starred', color: '#eab308' } // v0.32.2 A
+    { key: 'vision', label: 'Vision', color: '#22c55e' }
   ];
   var CTX_OPTIONS = [
     { label: 'Any', v: 0 },
@@ -95,6 +72,12 @@
   var PRICING_OPTIONS = [
     { key: 'free', label: 'Free', color: '#22c55e' },
     { key: 'paid', label: 'Paid', color: '#f59e0b' }
+  ];
+  // v0.34 (user spec #9): the availability pair — Available shows only
+  // key-backed models; All restores the default catalogue.
+  var AVAIL_OPTIONS = [
+    { key: 'available', label: 'Available', color: '#10b981' },
+    { key: 'all', label: 'All', color: '#38bdf8' }
   ];
 
   // Pills that re-rank the list by a benchmark score.
@@ -126,18 +109,15 @@
     try { localStorage.setItem(LS + key, JSON.stringify(v)); } catch (e) {}
   }
 
-  // Self-contained v0.32 styles (injected once).
+  // Self-contained styles (injected once).
   function ensureStyles() {
     if (document.getElementById('mb-v32-styles')) return;
     var s = document.createElement('style');
     s.id = 'mb-v32-styles';
     s.textContent =
-      '.mb-logrow,[data-provhead],[data-hostslot],[data-select],[data-expand]{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}' +
+      '.mb-logrow,[data-provhead],[data-hostslot],[data-slot],[data-expand],[data-select]{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}' +
       '.mb-logrow [data-select]{border-radius:8px;transition:background 130ms}' +
       '.mb-logrow [data-select]:hover{background:rgba(128,128,140,0.10)}' +
-      '.mb-logrow [data-expand] .mb-chevbtn{transition:background 140ms,border-color 140ms}' +
-      '.mb-logrow [data-expand]:hover .mb-chevbtn{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
-      '.mb-chevbtn svg{transition:transform 240ms cubic-bezier(0.32,0.72,0,1)}' +
       '[data-hostgrip],[data-grip]{user-select:none;-webkit-user-select:none;transition:background 130ms,color 130ms;border-radius:7px}' +
       '[data-hostgrip]:hover,[data-grip]:hover{background:rgba(128,128,140,0.14);color:var(--text-1)}' +
       '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(0,0,0,0.55);cursor:grabbing}' +
@@ -148,12 +128,8 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,[data-addkey]:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-cmpcheapest]:focus-visible,[data-unfilter]:focus-visible,[data-qs-star]:focus-visible,[data-pcmp]:focus-visible,[data-pcmpclose]:focus-visible,[data-pcmpbrowse]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-unfilter]:focus-visible,[data-avail]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-ufchip:active{transform:scale(0.95)}' +
-      // v0.32.9 F4: removable chips feel pressable too — a hover lift +
-      // brightness nudge (filter beats inline background/border styles).
-      '.mb-ufchip{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),filter 130ms}' +
-      '.mb-ufchip:hover{transform:translateY(-1px);filter:brightness(1.2)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
       '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
@@ -162,59 +138,76 @@
       '@keyframes mb-hint-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}' +
       '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
       '.mb-countline{animation:mb-hint-in 160ms cubic-bezier(0.32,0.72,0,1)}' +
-      // v0.32.2 A: the star button — pressable, amber when on.
-      '.mb-star{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),color 130ms,background 130ms,border-color 130ms}' +
+      // v0.34: the star is a BARE glyph that turns gold (user spec — no
+      // icon+background chip appears on tap).
+      '.mb-star{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),color 130ms}' +
       '.mb-star:hover{transform:scale(1.18)}' +
       '.mb-star:active{transform:scale(0.8)}' +
       '.mb-star:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       // v0.32.4 F2: the ℹ detail-toggle button + the drawer's animated
-      // benchmark bars (scaleX keyframe works on innerHTML insert — no JS
-      // post-render hook needed) and the drawer's entrance.
-      '.mb-infobtn{transition:background 140ms,border-color 140ms,color 140ms}' +
-      '.mb-logrow [data-expand]:hover .mb-infobtn{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      // benchmark bars and the drawer's entrance.
+      '.mb-infobtn,[data-info],[data-compare]{transition:background 140ms,border-color 140ms,color 140ms}' +
+      '[data-info]:hover,[data-compare]:hover{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
       '@keyframes mb-bar{from{transform:scaleX(0)}}' +
       '.mb-barfill{transform-origin:left center;animation:mb-bar 480ms cubic-bezier(0.32,0.72,0,1) both}' +
       '@keyframes mb-drawer-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}' +
       '.mb-detail{animation:mb-drawer-in 240ms cubic-bezier(0.32,0.72,0,1)}' +
-      // v0.32.7 F3: the compare drawer gets the same entrance as the
-      // detail drawer — the ⚖ decision slides in, it doesn't just appear.
-      '.mb-compare{animation:mb-drawer-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
-      // v0.32.7 F3: star-pop — the tap lands with a little bounce.
-      '@keyframes mb-star-pop{0%{transform:scale(1)}45%{transform:scale(1.4)}100%{transform:scale(1)}}' +
-      '.mb-star-pop{animation:mb-star-pop 240ms cubic-bezier(0.32,0.72,0,1)!important}' +
-      // v0.32.8 F5: provider-compare polish — ⚖ pin micro-interactions,
-      // metric-row hover scan tint, browse-button lift.
-      '.mb-pcmpbtn{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
-      '.mb-pcmpbtn:hover{transform:scale(1.12)}' +
-      '.mb-pcmpbtn:active{transform:scale(0.9)}' +
-      '.mb-pcmprow{border-radius:6px;transition:background 120ms}' +
-      '.mb-pcmprow:hover{background:rgba(128,128,140,0.08)}' +
-      '[data-pcmpbrowse]{transition:background 130ms,transform 120ms cubic-bezier(0.32,0.72,0,1),border-color 130ms}' +
-      '[data-pcmpbrowse]:hover{background:rgba(var(--accent-rgb),0.18);transform:translateY(-1px)}' +
-      '[data-pcmpbrowse]:active{transform:translateY(0)}' +
-      // v0.32.8 F3: the counts-line ★ total pops on change — same bounce
-      // language as the ★ buttons (inline-block so the transform lands).
-      '@keyframes mb-starcount-pop{0%{transform:scale(1)}45%{transform:scale(1.35)}100%{transform:scale(1)}}' +
-      '.mb-starcount-pop{display:inline-block;animation:mb-starcount-pop 260ms cubic-bezier(0.32,0.72,0,1)!important}' +
       // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
       '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
       '.mb-keyform input::placeholder{color:var(--border-strong)}' +
+      // ── v0.34: THE 6-COLUMN ROW ────────────────────────────────────
+      // One grid for every catalogue row (models, favorites, provider
+      // rows): NAME takes the remaining width and WRAPS (the full model
+      // name is never cut off); the fixed columns stay aligned across
+      // rows. Tapping the row (outside the buttons) selects.
+      '.mb-r6{display:grid;grid-template-columns:minmax(0,1fr) 28px 28px 28px 44px 58px;gap:7px;align-items:center;padding:9px 12px;cursor:pointer;touch-action:manipulation}' +
+      '.mb-r6 .mb-name{font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow-wrap:anywhere;word-break:break-word;line-height:1.25;min-width:0}' +
+      '.mb-r6 .mb-name .mb-curdot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--ok);background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);margin-right:6px;vertical-align:baseline}' +
+      '.mb-r6 .mb-ctx{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);text-align:right;font-variant-numeric:tabular-nums}' +
+      '.mb-r6 .mb-price{font-size:calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);border-radius:4px;padding:2px 0;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}' +
+      '.mb-r6 .mb-price.mb-free{color:#22c55e;background:rgba(34,197,94,0.12)}' +
+      '.mb-ic{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-2);padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-ic[data-on="1"]{border-color:rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.10);color:var(--accent)}' +
+      '.mb-starbtn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:transparent;border:none;color:var(--border-strong);font-size:17px;line-height:1;padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-starbtn[data-on="1"]{color:#eab308}' +
+      // the subtext line (models + favorites rows): stats + pills left,
+      // provider dots + the ➜ arrow right-aligned.
+      '.mb-sub{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 9px}' +
+      '.mb-sub .mb-subpills{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;min-width:0}' +
+      '.mb-dots{display:flex;align-items:center;gap:3px;flex-shrink:0;cursor:pointer;touch-action:manipulation}' +
+      '.mb-arrowbtn{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-1);flex-shrink:0;cursor:pointer;transition:background 140ms,border-color 140ms}' +
+      '.mb-arrowbtn:hover{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      '.mb-arrowbtn svg{transition:transform 240ms cubic-bezier(0.32,0.72,0,1)}' +
+      '.mb-arrowbtn[data-open="1"] svg{transform:rotate(180deg)}' +
+      // the host-priority drop-down rows: key icon | name | ctx | price | arrows
+      '.mb-hrow{display:grid;grid-template-columns:26px minmax(0,1fr) 44px 58px auto;gap:7px;align-items:center;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:44px}' +
+      '.mb-hrow .mb-hname{font-size:var(--ui-small-fs);color:var(--text-1);overflow-wrap:anywhere;word-break:break-word;line-height:1.25;min-width:0}' +
+      '.mb-hrow .mb-hname .mb-hprov{font-weight:700;color:var(--text-2)}' +
+      '.mb-hrow .mb-hname .mb-hid{color:var(--border-strong);font-size:calc(var(--ui-small-fs) - 2px)}' +
+      '.mb-keyic{display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;flex-shrink:0}' +
+      '.mb-keyic svg{width:15px;height:15px}' +
+      '.mb-keyic[data-key="1"]{color:var(--ok)}' +
+      '.mb-keyic[data-key="0"]{color:var(--border-strong);opacity:0.7}' +
+      '.mb-hbtn{background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:6px 8px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;touch-action:manipulation;min-width:30px}' +
+      '.mb-hbtn:hover{background:rgba(128,128,140,0.12);color:var(--text-1)}' +
+      '.mb-hrow .mb-ctx,.mb-hrow .mb-price{font-size:calc(var(--ui-small-fs) - 2px)}' +
+      // the "show more" pagination row + the availability pair
+      '.mb-more{display:block;width:100%;box-sizing:border-box;background:var(--surface-1);border:1px dashed var(--border);color:var(--text-2);font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;padding:11px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-more:hover{color:var(--text-1);border-color:var(--border-strong)}' +
+      '.mb-availpair{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
-      '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-star,.mb-star:hover,.mb-star:active,' +
-      '.mb-chevbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail,.mb-compare,.mb-star-pop,' +
-      '.mb-pcmpbtn,.mb-pcmpbtn:hover,.mb-pcmpbtn:active,.mb-pcmprow,[data-pcmpbrowse],' +
-      '[data-pcmpbrowse]:hover,.mb-starcount-pop,.mb-ufchip,.mb-ufchip:hover{transition:none!important;animation:none!important;filter:none!important}' +
+      '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-starbtn,.mb-starbtn:hover,.mb-starbtn:active,' +
+      '.mb-arrowbtn svg,.mb-hint,.mb-countline,.mb-barfill,.mb-detail{transition:none!important;animation:none!important}' +
       '}';
     document.head.appendChild(s);
   }
 
   // ── v0.32.3 F1/F2: module-level QUICK-SWITCH API ─────────────────────
   //
-  // The chat panel's ★ button needs model resolution WITHOUT opening the
-  // overlay. These live at module scope (outside open()) and keep their
-  // own small catalog cache (2-min TTL — selection never wants stale
-  // key state for longer than that).
+  // The chat panel's ★ button is GONE in v0.34 (favorites moved to the
+  // browser's ★ tab), but the API stays exported — quickEntries still
+  // powers the recents sort and any future surface.
   var quickCat = null;
   var quickCatAt = 0;
   var QUICK_TTL = 120000;
@@ -309,9 +302,6 @@
           });
         }
         var best = null, cur = false;
-        // v0.32.3: state.model is canonical (provider/modelId); the
-        // catalog's host modelId may lack that prefix — accept either
-        // (same rule as open()'s isCurrentModel).
         var wanted = opts.current && opts.current.modelId ? String(opts.current.modelId) : '';
         for (var i = 0; i < hosts.length; i++) {
           if (!best && hosts[i].hasApiKey) best = hosts[i];
@@ -320,8 +310,6 @@
                (hosts[i].provider + '/' + hosts[i].modelId) === wanted ||
                lm.logical === wanted)) cur = true;
         }
-        // v0.32.6 F1: price chip for the BEST key-backed route — free /
-        // "$X.XX/M" (prompt price) / null when the provider hides pricing.
         var price = null;
         if (best) {
           if (best.isFree) price = 'free';
@@ -348,10 +336,7 @@
   }
 
   // v0.32.1 F: Esc closes the overlay. v0.32.2 C: "/" focuses search.
-  // v0.32.9 F3: "x" clears every filter + search — document-level so it
-  // works wherever focus sits (a row, the empty state, body after a tap);
-  // typing contexts (INPUT/TEXTAREA/SELECT) and BUTTON targets keep their
-  // keys. (Bound once per page; the reset hook is re-exposed on open().)
+  // (Bound once per page.)
   var escBound = false;
   function bindEscOnce() {
     if (escBound) return;
@@ -365,13 +350,6 @@
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
         var si = window.ConnectOverlay.getContentEl().querySelector('#mb-search');
         if (si) { e.preventDefault(); si.focus(); }
-      } else if (e.key === 'x' || e.key === 'X') {
-        var tx = e.target;
-        if (tx && (tx.tagName === 'INPUT' || tx.tagName === 'TEXTAREA' || tx.tagName === 'SELECT' || tx.tagName === 'BUTTON')) return;
-        if (window.ModelBrowser && typeof window.ModelBrowser.resetFilters === 'function') {
-          e.preventDefault();
-          window.ModelBrowser.resetFilters();
-        }
       }
     });
   }
@@ -382,37 +360,27 @@
     bindEscOnce();
 
     // Mutable UI state (persisted where it makes sense).
-    var view = lsGet('view', 'providers');
+    var view = (function () {
+      var v = lsGet('view', 'providers');
+      return (v === 'favorites' || v === 'models' || v === 'providers') ? v : 'providers';
+    })();
     var search = '';
     var filters = lsGet('filters', []);
     var filtersOpen = lsGet('filtersOpen', false);
     var ctxMin = lsGet('ctxMin', 0);
     var pricing = lsGet('pricing', 'all');
+    var avail = (lsGet('avail', 'all') === 'available') ? 'available' : 'all'; // v0.34
     var providerOrder = lsGet('providerOrder', null);
     var providerExpanded = lsGet('providerExpanded', {});
     var hostOrder = lsGet('hostOrder', {});
     var expandedLogical = {};
     var infoOpen = {}; // v0.32.4 F2: transient per-session detail drawers
     var comparePair = []; // v0.32.5 F2: 0–2 logical ids pinned for compare
-    var provComparePair = []; // v0.32.8 F1: 0–2 provider names pinned for compare
     var sortKey = lsGet('sort', 'best');
     var currentModel = (opts && opts.current) || null; // {provider, modelId}
     var keyAdding = null; // provider name whose inline key form is open
     var starred = lsGet('starred', []); // v0.32.2 A: logical/family ids
-
-    // v0.32.9 F3: one reset path — the clear button, the hidden-count
-    // line, and the 'x' keyboard shortcut all reset the same state.
-    // (open()-scope so BOTH bindKeyboardNav and the click-binding section
-    // can see it — it originally lived inside bindKeyboardNav and the
-    // click bindings threw ReferenceError.)
-    function resetAllFilters() {
-      filters = []; ctxMin = 0; pricing = 'all'; search = '';
-      lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
-      render();
-    }
-    // v0.32.9 F3: the document-level 'x' handler (bindEscOnce) reaches in
-    // through this hook — re-exposed every open, inert while closed.
-    window.ModelBrowser.resetFilters = resetAllFilters;
+    var shownCount = PAGE; // v0.34: the list render cap (grows via "more")
 
     // Catalog data.
     var catalog = null;
@@ -453,36 +421,28 @@
     }
 
     // ── Rendering ───────────────────────────────────────────────────────
+    //
+    // v0.34 ZONED RENDER: the overlay is built ONCE with stable zones —
+    // the header (#mb-head), the sticky bar (#mb-sticky, the search input
+    // LIVES here and is never replaced) and the list (#mb-list). Every
+    // interaction updates only the zone it touches; row-level actions
+    // (ℹ, ➜) swap a single row. The 1–3s full-catalogue re-render lag is
+    // gone.
 
     function render() {
-      // v0.32.6 F4: the search + filter toggle (+ collapsed active-filter
-      // chips) ride in a STICKY bar — they stay reachable while the user
-      // scrolls a 500-row list (web-researched best practice: sticky
-      // filters beat scroll-away headers; only a minority of products do
-      // it). The expanded pill grid deliberately does NOT stick (it would
-      // eat half a phone screen). z-index 30: above the rows, BELOW the
-      // DnD ghost (z 40) so a dragged row still tracks the finger over it.
       var html =
-        '<div style="padding:16px 16px 24px">' +
-        header() +
-        '<div class="mb-stickybar" style="position:sticky;top:0;z-index:30;margin:0 -16px;padding:10px 16px 8px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
+        '<div id="mb-head">' + header() + '</div>' +
+        '<div id="mb-sticky" style="position:sticky;top:0;z-index:30;margin:0 -16px;padding:10px 16px 8px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
         searchBox() +
         filterToggleRow() +
         '</div>' +
-        (filtersOpen ? filterRow() : '') +
-        (view === 'providers' ? providerView() : modelsView()) +
-        footer() +
-        '</div>';
+        (filtersOpen ? '<div id="mb-filterrow">' + filterRow() + '</div>' : '') +
+        '<div id="mb-list">' + listHTML() + '</div>' +
+        footer();
 
-      // v0.32.2 C: the debounced re-render replaces the search input —
-      // remember focus + caret and restore them after the swap, so typing
-      // through a 200ms pause doesn't lose the caret (the old behaviour).
-      // v0.32.3 F4: ALSO remember a focused keyboard row — a background
-      // re-render (search debounce, catalog sync) must not strand a
-      // keyboard user on <body>.
+      // v0.32.2 C: a FULL re-render (catalog sync) replaces the search
+      // input — remember focus + caret and restore them after the swap.
       var keepFocus = false, caret = 0;
-      var kbRefocusSel = null; // row selector to refocus after the swap
-      var kbRefocusRow = true; // v0.32.4: rows get the roving rewrite; the ℹ button just refocuses
       if (opened) {
         var oldEl = window.ConnectOverlay.getContentEl();
         var oldSi = oldEl && oldEl.querySelector('#mb-search');
@@ -490,36 +450,21 @@
           keepFocus = true;
           caret = oldSi.selectionStart;
           if (typeof caret !== 'number') caret = oldSi.value.length;
-        } else if (oldEl && document.activeElement) {
-          var ae = document.activeElement;
-          if (ae.classList && ae.classList.contains('mb-logrow') && ae.dataset.logicalId) {
-            kbRefocusSel = '.mb-logrow[data-logical-id="' + String(ae.dataset.logicalId).replace(/"/g, '\\"') + '"]';
-          } else if (ae.hasAttribute && ae.hasAttribute('data-provhead') && ae.dataset.provhead) {
-            kbRefocusSel = '[data-provhead="' + String(ae.dataset.provhead).replace(/"/g, '\\"') + '"]';
-          } else if (ae.hasAttribute && ae.hasAttribute('data-info') && ae.dataset.info) {
-            // v0.32.4 F2: the ℹ toggle keeps focus through the re-render.
-            kbRefocusSel = '[data-info="' + String(ae.dataset.info).replace(/"/g, '\\"') + '"]';
-            kbRefocusRow = false;
-          } else if (ae.hasAttribute && ae.hasAttribute('data-compare') && ae.dataset.compare) {
-            // v0.32.5 F2: the ⚖ toggle keeps focus through the re-render.
-            kbRefocusSel = '[data-compare="' + String(ae.dataset.compare).replace(/"/g, '\\"') + '"]';
-            kbRefocusRow = false;
-          }
         }
       }
 
       if (!opened) {
         if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
-          window.ConnectOverlay.replaceContent(html, { onSwap: wireEvents });
+          window.ConnectOverlay.replaceContent(html, { onSwap: wireZones });
         } else {
-          window.ConnectOverlay.open(html, { onSwap: wireEvents });
+          window.ConnectOverlay.open(html, { onSwap: wireZones });
         }
         opened = true;
-        bindKeyboardNav(); // v0.32.3 F4: one keydown binding per open()
+        wireOnce();
       } else {
         var contentEl = window.ConnectOverlay.getContentEl();
         contentEl.innerHTML = html;
-        wireEvents();
+        wireZones();
       }
 
       if (keepFocus) {
@@ -528,193 +473,91 @@
           newSi.focus();
           try { newSi.setSelectionRange(caret, caret); } catch (e) {}
         }
-      } else if (kbRefocusSel) {
-        var kbRow = window.ConnectOverlay.getContentEl().querySelector(kbRefocusSel);
-        if (kbRow) {
-          if (kbRefocusRow) {
-            // keep exactly one tab stop (roving tabindex) and stay focused
-            var kbRows = window.ConnectOverlay.getContentEl().querySelectorAll(
-              view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]');
-            for (var k = 0; k < kbRows.length; k++) kbRows[k].tabIndex = -1;
-            kbRow.tabIndex = 0;
-          }
-          kbRow.focus();
-        }
       }
     }
 
-    // v0.32.3 F4: keyboard navigation (roving tabindex, WAI-APG).
-    // Arrows move focus among the logical rows (models view) or provider
-    // box headers (providers view); Enter/Space selects or toggles;
-    // ArrowRight/Left expand/collapse; Home/End jump to the ends; the
-    // search box's ArrowDown drops into the list. el.focus() scrolls the
-    // newly focused row into view — the APG's roving-tabindex benefit.
-    var kbBound = false;
-    function bindKeyboardNav() {
-      if (kbBound) return;
-      kbBound = true;
-      var contentEl = window.ConnectOverlay.getContentEl();
-      function visibleKbRows() {
-        var sel = view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]';
-        var els = contentEl.querySelectorAll(sel);
-        var out = [];
-        for (var i = 0; i < els.length; i++) {
-          if (els[i].offsetParent !== null) out.push(els[i]);
-        }
-        return out;
+    // ── zone updaters (surgical) ─────────────────────────────────────
+
+    function updateHead() {
+      var el = window.ConnectOverlay.getContentEl();
+      var h = el && el.querySelector('#mb-head');
+      if (h) h.innerHTML = header();
+    }
+    function updateSticky() {
+      var el = window.ConnectOverlay.getContentEl();
+      var s = el && el.querySelector('#mb-sticky');
+      if (!s) return;
+      // v0.34: the search input node is only replaced by THIS zone — keep
+      // the caret alive for the (rare) filter tap mid-typing.
+      var keepFocus = false, caret = 0, hadValue = '';
+      var oldSi = s.querySelector('#mb-search');
+      if (oldSi && oldSi === document.activeElement) {
+        keepFocus = true;
+        caret = oldSi.selectionStart;
+        if (typeof caret !== 'number') caret = oldSi.value.length;
       }
-      function focusKbRow(el) {
-        if (!el || !el.offsetParent) return;
-        var rows = visibleKbRows();
-        for (var i = 0; i < rows.length; i++) rows[i].tabIndex = -1;
-        el.tabIndex = 0; // the roving tab stop follows the keyboard focus
-        el.focus();
+      s.innerHTML = searchBox() + filterToggleRow();
+      // the expanded pill grid sits just BELOW the sticky bar
+      var oldRow = el.querySelector('#mb-filterrow');
+      if (oldRow) oldRow.remove();
+      if (filtersOpen) {
+        s.insertAdjacentHTML('afterend', '<div id="mb-filterrow">' + filterRow() + '</div>');
       }
-      function refocusAfterRender(selector) {
-        var again = contentEl.querySelector(selector);
-        if (again) focusKbRow(again);
+      if (keepFocus) {
+        var newSi = s.querySelector('#mb-search');
+        if (newSi) {
+          newSi.focus();
+          try { newSi.setSelectionRange(caret, caret); } catch (e) {}
+        }
       }
-      contentEl.addEventListener('keydown', function (e) {
-        var t = e.target;
-        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) {
-          if (t.id === 'mb-search' && e.key === 'ArrowDown') {
-            var r0 = visibleKbRows()[0];
-            if (r0) { e.preventDefault(); focusKbRow(r0); }
-          }
-          return; // typing in the search box owns every other key
-        }
-        // v0.32.9 F3: 'x' is handled at document level (bindEscOnce) — see
-        // the note there; this row-scoped branch was removed to avoid a
-        // double fire (contentEl handler + bubbling document handler).
-        var rows = visibleKbRows();
-        if (!rows.length) return;
-        var row = (t && t.classList && (t.classList.contains('mb-logrow') || t.hasAttribute('data-provhead'))) ? t : null;
-        if (!row) return; // inner controls (stars, ▲▼, pills) keep their keys
-        var idx = rows.indexOf(row);
-        if (idx < 0) return;
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          var next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-          if (next < 0) next = rows.length - 1;
-          if (next >= rows.length) next = 0;
-          focusKbRow(rows[next]);
-        } else if (e.key === 'Home') {
-          e.preventDefault();
-          focusKbRow(rows[0]);
-        } else if (e.key === 'End') {
-          e.preventDefault();
-          focusKbRow(rows[rows.length - 1]);
-        } else if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          if (view === 'providers') {
-            var name = row.dataset.provhead;
-            providerExpanded[name] = !providerExpanded[name];
-            lsSet('providerExpanded', providerExpanded);
-            render();
-            refocusAfterRender('[data-provhead="' + (name && name.replace(/"/g, '\\"')) + '"]');
-          } else {
-            selectLogical(row.dataset.logicalId);
-          }
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          if (view === 'providers') {
-            var pn = row.dataset.provhead;
-            if (!providerExpanded[pn]) {
-              providerExpanded[pn] = true;
-              lsSet('providerExpanded', providerExpanded);
-              render();
-              refocusAfterRender('[data-provhead="' + (pn && pn.replace(/"/g, '\\"')) + '"]');
-            }
-          } else {
-            var lid = row.dataset.logicalId;
-            if (!expandedLogical[lid]) {
-              expandedLogical[lid] = true;
-              render();
-              refocusAfterRender('.mb-logrow[data-logical-id="' + (lid && lid.replace(/"/g, '\\"')) + '"]');
-            }
-          }
-        } else if ((e.key === 'i' || e.key === 'I') && view !== 'providers') {
-          // v0.32.4 F2: "i" toggles the detail drawer on the focused row.
-          e.preventDefault();
-          var ilid = row.dataset.logicalId;
-          if (infoOpen[ilid]) delete infoOpen[ilid]; else infoOpen[ilid] = true;
-          render();
-          refocusAfterRender('.mb-logrow[data-logical-id="' + (ilid && ilid.replace(/"/g, '\\"')) + '"]');
-        } else if (e.key === 'c' || e.key === 'C') {
-          e.preventDefault();
-          if (view === 'providers') {
-            // v0.32.8 F6: 'c' pins the focused provider box for ⚖ compare —
-            // keyboard parity with the models view (v0.32.5 F2).
-            var cpn = row.dataset.provhead;
-            if (cpn) {
-              toggleProvComparePin(cpn);
-              render();
-              refocusAfterRender('[data-provhead="' + (cpn && cpn.replace(/"/g, '\\"')) + '"]');
-            }
-          } else {
-            var cl2 = row.dataset.logicalId;
-            toggleComparePin(cl2);
-            render();
-            refocusAfterRender('.mb-logrow[data-logical-id="' + (cl2 && cl2.replace(/"/g, '\\"')) + '"]');
-          }
-        } else if ((e.key === 's' || e.key === 'S') && view !== 'providers') {
-          // v0.32.7 F4: "s" stars/unstars the focused row — same logic as
-          // the row's ★ button (mutate, persist, badge, pop; re-render
-          // only when the Starred pill would change the list).
-          e.preventDefault();
-          var slid = row.dataset.logicalId;
-          var wasOn2 = starred.indexOf(slid) >= 0;
-          if (wasOn2) starred.splice(starred.indexOf(slid), 1);
-          else starred.push(slid);
-          lsSet('starred', starred);
-          updateStarBadge();
-          updateStarCountLine(); // v0.32.8 F3: counts-line ★ total, in place
-          if (filters.indexOf('starred') >= 0) {
-            render();
-            refocusAfterRender('.mb-logrow[data-logical-id="' + (slid && slid.replace(/"/g, '\\"')) + '"]');
-          } else {
-            var sbtn = row.querySelector('[data-star]');
-            if (sbtn) {
-              sbtn.classList.remove('mb-star-pop');
-              void sbtn.offsetWidth;
-              sbtn.classList.add('mb-star-pop');
-              sbtn.setAttribute('aria-pressed', wasOn2 ? 'false' : 'true');
-              sbtn.title = wasOn2 ? 'star this model' : 'unstar this model';
-              sbtn.style.color = wasOn2 ? 'var(--border-strong)' : '#eab308';
-              sbtn.style.background = wasOn2 ? 'transparent' : 'rgba(234,179,8,0.12)';
-              sbtn.style.borderColor = wasOn2 ? 'transparent' : 'rgba(234,179,8,0.45)';
-            }
-          }
-        } else if (e.key === 'ArrowLeft') {
-          e.preventDefault();
-          if (view === 'providers') {
-            var cn = row.dataset.provhead;
-            if (providerExpanded[cn]) {
-              delete providerExpanded[cn];
-              lsSet('providerExpanded', providerExpanded);
-              render();
-              refocusAfterRender('[data-provhead="' + (cn && cn.replace(/"/g, '\\"')) + '"]');
-            }
-          } else {
-            var clid = row.dataset.logicalId;
-            if (expandedLogical[clid]) {
-              delete expandedLogical[clid];
-              render();
-              refocusAfterRender('.mb-logrow[data-logical-id="' + (clid && clid.replace(/"/g, '\\"')) + '"]');
-            }
-          }
-        }
-      });
+    }
+    function renderList() {
+      var el = window.ConnectOverlay.getContentEl();
+      var l = el && el.querySelector('#mb-list');
+      if (l) l.innerHTML = listHTML();
+      wireZones();
+    }
+
+    // swap ONE logical row in place (ℹ drawer / ➜ dropdown toggles)
+    function refreshRow(logical) {
+      var el = window.ConnectOverlay.getContentEl();
+      if (!el) return;
+      var row = el.querySelector('.mb-logrow[data-logical-id="' + String(logical).replace(/"/g, '\\"') + '"]');
+      var lm = findLogical(logical);
+      if (!row || !lm) return;
+      var tmp = document.createElement('div');
+      tmp.innerHTML = logicalRow(lm, false);
+      if (tmp.firstChild) row.replaceWith(tmp.firstChild);
+    }
+    // swap ONE provider model row in place (ℹ drawer toggles)
+    function refreshSlotRow(slot) {
+      var el = window.ConnectOverlay.getContentEl();
+      if (!el) return;
+      var row = el.querySelector('.mb-logrow[data-slot="' + String(slot).replace(/"/g, '\\"') + '"]');
+      if (!row) return;
+      var parts = String(slot).split('/');
+      var provider = parts.shift();
+      var modelId = parts.join('/');
+      var g = groupByName(provider);
+      var m = g ? modelById(g, slot) : null; // models[].id carries the full "provider/…" form
+      var lm = findLogicalByRoute(provider, modelId);
+      if (!m) return;
+      var tmp = document.createElement('div');
+      tmp.innerHTML = providerModelRow(g, m, lm, false);
+      if (tmp.firstChild) row.replaceWith(tmp.firstChild);
     }
 
     function header() {
+      var isFav = view === 'favorites';
       var isProv = view === 'providers';
+      var favCount = starred.length;
       return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 3px);font-weight:600;color:var(--text-1);margin:0;flex:1">Select a model</h2>' +
-        // View toggle (the two "tabs")
+        // v0.34: the three tabs — ★ favorites | Providers | Models
         '<div style="display:flex;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:3px">' +
-          '<button id="mb-view-providers" class="mb-viewtab' + (isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:var(--ok);background:transparent;border:none;color:' + (isProv ? 'var(--text-1)' : 'var(--text-3)') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Providers</button>' +
-          '<button id="mb-view-models" class="mb-viewtab' + (!isProv ? ' dd-active-tab' : '') + '" style="--dd-accent:var(--accent);background:transparent;border:none;color:' + (!isProv ? 'var(--text-1)' : 'var(--text-3)') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;position:relative">Models</button>' +
+          tabBtn('favorites', '★' + (favCount ? ' ' + favCount : ''), 'var(--warn)') +
+          tabBtn('providers', 'Providers', 'var(--ok)') +
+          tabBtn('models', 'Models', 'var(--accent)') +
         '</div>' +
         '<button id="mb-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:2px 6px">✕</button>' +
         '</div>' +
@@ -725,6 +568,11 @@
         '<span id="mb-sync-label">' + syncLabel() + '</span></button>' +
         '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);flex:1;text-align:right">' + liveCount() + ' providers live · ' + totalModels() + ' models</span>' +
         '</div>';
+    }
+
+    function tabBtn(v, label, accent) {
+      var on = view === v;
+      return '<button data-viewtab="' + v + '" class="mb-viewtab' + (on ? ' dd-active-tab' : '') + '" style="--dd-accent:' + accent + ';background:transparent;border:none;color:' + (on ? 'var(--text-1)' : 'var(--text-3)') + ';font-size:12px;font-weight:600;font-family:inherit;padding:6px ' + (v === 'providers' ? '12px' : '10px') + ';border-radius:8px;cursor:pointer;position:relative' + (on ? '' : ';white-space:nowrap') + '">' + label + '</button>';
     }
 
     function syncLabel() {
@@ -760,6 +608,7 @@
       var n = filters.length;
       if (ctxMin > 0) n++;
       if (pricing !== 'all') n++;
+      if (avail === 'available') n++;
       return n;
     }
 
@@ -777,7 +626,7 @@
         '</button>';
       // The clear control sits BESIDE the toggle (a button can't nest a
       // button — the parser would break the structure).
-      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || search)
+      var clearHTML = (filters.length || ctxMin || pricing !== 'all' || avail !== 'all' || search)
         ? '<button id="mb-clear" title="reset all filters" style="flex:0 0 auto;background:transparent;border:1px solid rgba(var(--err-rgb),0.35);color:var(--err);font-size:11px;padding:0 12px;border-radius:10px;font-family:inherit;cursor:pointer;flex-shrink:0">clear</button>'
         : '';
       var out = '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:' + (filtersOpen ? '8px' : '0') + '">' + toggle + clearHTML + '</div>';
@@ -790,35 +639,28 @@
     }
 
     // v0.32.6 F3: one removable chip per active filter (collapsed state).
-    // v0.32.9 F2: chips wear the SAME live match count as the expanded
-    // pills ("Smart 134 ✕") — the collapsed state (the DEFAULT) tells
-    // you how restrictive each filter is without expanding anything.
-    // tabular-nums so the numbers don't jitter as counts change.
     function collapsedFilterChips() {
       if (!activeFilterCount()) return '';
-      var chip = function (label, color, attrVal, count) {
-        var cnt = (typeof count === 'number')
-          ? '<span style="font-size:9.5px;font-weight:700;opacity:0.8;font-variant-numeric:tabular-nums">' + count + '</span>'
-          : '';
+      var chip = function (label, color, attrVal) {
         return '<button data-unfilter="' + escAttr(attrVal) + '" class="mb-ufchip" title="remove this filter" style="display:inline-flex;align-items:center;gap:5px;background:' + color + '1c;border:1px solid ' + color + '80;color:' + color + ';font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;flex-shrink:0">' +
           escHTML(label) +
-          cnt +
           '<span style="font-size:9px;opacity:0.85;line-height:1">✕</span></button>';
       };
       var chips = '';
       for (var i = 0; i < filters.length; i++) {
         var def = null;
         for (var p = 0; p < PILLS.length; p++) if (PILLS[p].key === filters[i]) { def = PILLS[p]; break; }
-        if (def) chips += chip(def.label, def.color, 'pill:' + def.key, pillCount(def.key));
+        if (def) chips += chip(def.label, def.color, 'pill:' + def.key);
       }
+      if (avail === 'available') chips += chip('Available', '#10b981', 'avail:available');
       if (ctxMin > 0) {
         for (var c = 0; c < CTX_OPTIONS.length; c++) {
-          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin, ctxCount(ctxMin)); break; }
+          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin); break; }
         }
       }
       if (pricing !== 'all') {
         for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
-          if (PRICING_OPTIONS[pr].key === pricing) { chips += chip(PRICING_OPTIONS[pr].label, PRICING_OPTIONS[pr].color, 'pricing:' + pricing, priceCount(pricing === 'free')); break; }
+          if (PRICING_OPTIONS[pr].key === pricing) { chips += chip(PRICING_OPTIONS[pr].label, PRICING_OPTIONS[pr].color, 'pricing:' + pricing); break; }
         }
       }
       if (!chips) return '';
@@ -828,411 +670,92 @@
     // Squared, uniform, grid-like pills — a real CSS grid: every cell the
     // same width, rows aligned, wrapping naturally, NO horizontal scroll
     // (v0.32 spec #2).
-    // v0.32.8 F4: an ACTIVE pill wears its live match count — "Smart 134"
-    // is the number of catalog models the pill's OWN predicate matches
-    // (search/other pills excluded: the count you'd see tapping it on a
-    // clean slate). "Any" ctx never counts (it is the unfiltered state).
-    // The grid min widens from 70→84px while any pill carries a count so
-    // the badge never clips; cells stay uniform.
-    function squaredPill(attr, label, color, on, count) {
-      var cnt = (on && typeof count === 'number')
-        ? ' <span style="font-size:9px;opacity:0.78;font-weight:700;font-variant-numeric:tabular-nums">' + count + '</span>'
-        : '';
-      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + cnt + '</button>';
-    }
-
-    // v0.32.8 F4 → v0.32.9 F2 (hoisted): per-pill match counts — the
-    // pill's OWN predicate against the whole catalog (search/other pills
-    // excluded: the count you'd see tapping it on a clean slate). Shared
-    // by the expanded pill grid AND the collapsed removable chips so both
-    // states tell the same story. Cheap: ~500 logical models of in-memory
-    // checks, and only ON filters compute.
-    function pillCount(key) {
-      var logical = (catalog && catalog.logical) || [];
-      var n = 0;
-      for (var i = 0; i < logical.length; i++) {
-        var lm = logical[i];
-        if (key === 'available') {
-          if ((lm.hosts || []).some(function (h) { return h.hasApiKey; })) n++;
-        } else if (key === 'starred') {
-          if (starred.indexOf(lm.logical) >= 0) n++;
-        } else {
-          var attrs = lm.attributes || {};
-          if (matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''), [key])) n++;
-        }
-      }
-      return n;
-    }
-    function ctxCount(v) {
-      var logical = (catalog && catalog.logical) || [];
-      var n = 0;
-      for (var i = 0; i < logical.length; i++) {
-        if ((logical[i].contextLength || 0) >= v) n++;
-      }
-      return n;
-    }
-    function priceCount(wantFree) {
-      var logical = (catalog && catalog.logical) || [];
-      var n = 0;
-      for (var i = 0; i < logical.length; i++) {
-        if (!!logical[i].isFree === wantFree) n++;
-      }
-      return n;
+    function squaredPill(attr, label, color, on) {
+      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
     }
 
     function filterRow() {
-      var anyCount = false;
-      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(PLACEHOLDER,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
-      // Capability + availability pills.
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
+      // Capability pills.
       for (var i = 0; i < PILLS.length; i++) {
         var p = PILLS[i];
         var on = filters.indexOf(p.key) >= 0;
-        var cnt = on ? pillCount(p.key) : null;
-        if (on) anyCount = true;
-        html += squaredPill('data-pill="' + p.key + '"', p.label, p.color, on, cnt);
+        html += squaredPill('data-pill="' + p.key + '"', p.label, p.color, on);
       }
       // Context pills.
       for (var c = 0; c < CTX_OPTIONS.length; c++) {
         var co = CTX_OPTIONS[c];
         var onC = ctxMin === co.v;
-        var cntC = (onC && co.v > 0) ? ctxCount(co.v) : null;
-        if (cntC !== null) anyCount = true;
-        html += squaredPill('data-ctx="' + co.v + '"', co.label, '#14b8a6', onC, cntC);
+        html += squaredPill('data-ctx="' + co.v + '"', co.label, '#14b8a6', onC);
       }
       // Pricing pills (self-cancelling toggles — no "Any $").
       for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
         var po = PRICING_OPTIONS[pr];
         var onP = pricing === po.key;
-        if (onP) anyCount = true;
-        html += squaredPill('data-pricing="' + po.key + '"', po.label, po.color, onP, priceCount(po.key === 'free'));
+        html += squaredPill('data-pricing="' + po.key + '"', po.label, po.color, onP);
       }
-      html = html.replace('PLACEHOLDER', anyCount ? '84px' : '70px') + '</div>';
+      html += '</div>';
+      // v0.34 (user spec #9): the availability pair — its own row.
+      html += '<div class="mb-availpair">' +
+        squaredPill('data-avail="available"', 'Available', '#10b981', avail === 'available') +
+        squaredPill('data-avail="all"', 'All', '#38bdf8', avail === 'all') +
+        '</div>';
       return html;
     }
 
-    // v0.32.8 F3: surgical ★-count update for the models-tab counts line —
-    // star toggles restyle rows in place (no re-render, scroll survives),
-    // so the "· ★ N" chunk needs the same in-place treatment. Reads the
-    // closure `starred` array the toggles just mutated. Harmless after a
-    // full re-render (sets the same values it just rendered). Pops on a
-    // real CHANGE (F5) — the same bounce language as the ★ buttons; the
-    // span's OWN previous text is the baseline, so re-renders never pop.
-    function updateStarCountLine() {
-      var el = window.ConnectOverlay.getContentEl();
-      var sp = el && el.querySelector('[data-starcount]');
-      if (!sp) return;
-      var prev = sp.textContent;
-      var next = '· ★ ' + starred.length;
-      if (prev === next) return; // nothing changed (post-render no-op)
-      sp.textContent = next;
-      sp.style.display = starred.length > 0 ? '' : 'none';
-      sp.classList.remove('mb-starcount-pop');
-      void sp.offsetWidth; // restart the keyframe on rapid toggles
-      sp.classList.add('mb-starcount-pop');
+    // ── THE LIST ZONE (per tab) ──────────────────────────────────────
+
+    function listHTML() {
+      if (view === 'providers') return providerView();
+      if (view === 'favorites') return favoritesView();
+      return modelsView();
     }
 
-    // ── Providers view ──────────────────────────────────────────────────
-
-    function orderedGroups() {
-      var groups = ((catalog && catalog.groups) || []).slice();
-      if (providerOrder) {
-        groups.sort(function (a, b) {
-          var ia = providerOrder.indexOf(a.name); var ib = providerOrder.indexOf(b.name);
-          if (ia < 0) ia = 999; if (ib < 0) ib = 999;
-          return ia - ib;
-        });
-      }
-      return groups;
-    }
-
-    function providerView() {
-      var groups = orderedGroups();
-      var availOnly = filters.indexOf('available') >= 0;
-      var out = '';
-      var shown = 0, ready = 0;
-      for (var i = 0; i < groups.length; i++) {
-        if (groups[i].hasApiKey) ready++;
-        // "Available" hides keyless providers' boxes entirely (their models
-        // are all filtered out anyway).
-        // v0.32.1 A BUGFIX: the API field is hasApiKey — `hasKey` is
-        // undefined, so this check used to skip EVERY box when the filter
-        // was on ("No providers with API keys yet" with 2 keys set).
-        if (availOnly && !groups[i].hasApiKey) continue;
-        out += providerBox(groups[i], shown === 0);
-        shown++;
-      }
-      if (!groups.length) {
-        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing providers…</div>';
-      } else if (availOnly && !out) {
-        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">No providers with API keys yet — paste a key to unlock them.</div>';
-      }
-      // v0.32.1 C: live counts line.
-      var counts = groups.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
-        : '';
-      // v0.32.8 F1: provider compare drawer (pair complete) or the pin
-      // hint (one pinned, waiting for the second) — above the list, the
-      // same placement the model compare uses.
-      var pcmp = '';
-      if (provComparePair.length === 2) {
-        var ga = null, gb = null;
-        for (var pcg = 0; pcg < groups.length; pcg++) {
-          if (groups[pcg].name === provComparePair[0]) ga = groups[pcg];
-          if (groups[pcg].name === provComparePair[1]) gb = groups[pcg];
-        }
-        if (ga && gb) pcmp = provCompareDrawer(ga, gb);
-      } else if (provComparePair.length === 1) {
-        var gp = null;
-        for (var pch = 0; pch < groups.length; pch++) {
-          if (groups[pch].name === provComparePair[0]) { gp = groups[pch]; break; }
-        }
-        if (gp) pcmp = provCompareHint(gp);
-      }
-      return counts + pcmp + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
-    }
-
-    function providerBox(g, kbFirst) {
-      var expanded = !!providerExpanded[g.name];
+    function matchingLogicals() {
+      var logical = ((catalog && catalog.logical) || []).slice();
       var matching = [];
-      var filteredOut = 0;
-      var models = g.models || [];
-      for (var i = 0; i < models.length; i++) {
-        if (modelMatches(models[i], g)) matching.push(models[i]);
-        else filteredOut++;
+      for (var i = 0; i < logical.length; i++) {
+        if (logicalMatches(logical[i])) matching.push(logical[i]);
       }
-      var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';
-      // v0.32 #5: explicit availability badge + dimming (view-only vs ready).
-      // v0.32.1 (VLM review): view-only gets a bg fill so it reads as a badge,
-      // not disabled text.
-      var keyBadge = g.hasApiKey
-        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">ready</span>'
-        : '<span style="font-size:10px;font-weight:600;color:var(--text-2,var(--text-3));background:rgba(128,128,140,0.12);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
-      var chevron = expanded ? '▾' : '▸';
-      // v0.32 #8: grip — instant drag handle on the box.
-      var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
-      // v0.32.8 F1: the ⚖ provider-compare pin — same guards as the models
-      // view's ⚖ (data-nodrag disarms the long-press reorder; the click
-      // handler stopPropagation()s so the box header never toggles).
-      var cmpPinned = provComparePair.indexOf(g.name) >= 0;
-      var provCmpBtn = '<button data-pcmp="' + escAttr(g.name) + '" data-nodrag class="mb-pcmpbtn" aria-pressed="' + (cmpPinned ? 'true' : 'false') + '" title="' + (cmpPinned ? (provComparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another provider') + '" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (cmpPinned ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (cmpPinned ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (cmpPinned ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0;font-size:12px;line-height:1">⚖</button>';
-      // v0.32.1 D: one-tap key unlock on view-only boxes.
-      var addKeyBtn = (!g.hasApiKey && g.envVar)
-        ? '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;flex-shrink:0;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">＋ key</button>'
+      applySort(matching);
+      return { all: logical, matching: matching };
+    }
+
+    // v0.34: the ★ FAVORITES tab — the starred logical models, same
+    // 6-column rows + subtext as the models tab. Unstarring here removes
+    // the row live (the star tap special-case).
+    function favoritesView() {
+      var out = '';
+      var list = [];
+      var logical = (catalog && catalog.logical) || [];
+      for (var i = 0; i < logical.length; i++) {
+        if (starred.indexOf(logical[i].logical) >= 0) list.push(logical[i]);
+      }
+      applySort(list);
+      if (!starred.length) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">' +
+          'No favorites yet — tap the <span style="color:#eab308">★</span> on any model to pin it here.</div>';
+      } else if (!list.length) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">' +
+          (starred.length === 1 ? 'Your favorited model left the catalogue.' : 'Your ' + starred.length + ' favorited models left the catalogue.') + '</div>';
+      } else {
+        var shown = 0;
+        for (var l = 0; l < list.length && l < shownCount; l++) {
+          out += logicalRow(list[l], l === 0);
+          shown++;
+        }
+        out += moreRow(shown, list.length);
+      }
+      var counts = list.length
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + list.length + ' favorite' + (list.length === 1 ? '' : 's') + '</span><span style="color:#eab308;font-weight:600">★ pinned</span></div>'
         : '';
-
-      var rows = '';
-      for (var m = 0; m < matching.length; m++) {
-        rows += providerModelRow(g, matching[m]);
-      }
-      if (filteredOut > 0 && expanded) {
-        rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
-      }
-
-      var dim = g.hasApiKey ? '' : 'opacity:0.6;filter:saturate(0.5);';
-      // v0.32.4 F3: expanded detail strip — the catalog's description of the
-      // provider + free-tier chip + a "get a key ↗" deep link for keyless
-      // boxes (answers WHERE to get a key, right where it matters).
-      var detailStrip = '';
-      if (expanded) {
-        var strip =
-          '<div style="padding:10px 14px;border-top:1px solid var(--surface-2);background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:7px">';
-        if (g.description) {
-          strip += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45">' + escHTML(g.description) + '</div>';
-        }
-        var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
-        if (g.freeTier) {
-          chips += '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;white-space:nowrap">free tier</span>';
-        }
-        if (g.envVar) {
-          chips += '<span title="environment variable for the API key" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);padding:2px 8px;border-radius:5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap">' + escHTML(g.envVar) + '</span>';
-        }
-        if (!g.hasApiKey && g.settingsUrl) {
-          chips += '<a href="' + escAttr(g.settingsUrl) + '" target="_blank" rel="noopener noreferrer" data-nodrag title="open the provider\'s key page" style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--accent-2);background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.4);padding:2px 8px;border-radius:5px;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:4px">get a key ↗</a>';
-        }
-        chips += '</div>';
-        if (g.description || g.freeTier || g.envVar || (!g.hasApiKey && g.settingsUrl)) {
-          strip += chips + '</div>';
-          detailStrip = strip;
-        }
-      }
-      // v0.32.1 D: the inline paste-a-key form (opened by the ＋ key button).
-      var keyForm = '';
-      if (keyAdding === g.name && !g.hasApiKey && g.envVar) {
-        keyForm = '<div class="mb-keyform" data-keyform data-nodrag style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--surface-2);background:rgba(var(--ok-rgb),0.04)">' +
-          '<input data-keyinput type="password" placeholder="' + escAttr(g.envVar) + '" autocomplete="off" spellcheck="false" style="flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--surface-2);color:var(--text-1);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px 10px;border-radius:8px;outline:none" />' +
-          '<button data-keysave="' + escAttr(g.name) + '" data-nodrag style="background:var(--ok);border:none;color:#08240f;font-size:11px;font-weight:700;padding:8px 12px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap">Save</button>' +
-          '<button data-keycancel data-nodrag title="cancel" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;padding:8px 10px;border-radius:8px;cursor:pointer;font-family:inherit">✕</button>' +
-          '</div>';
-      }
-      return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
-        '<div data-provhead="' + escAttr(g.name) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
-          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
-          keyBadge +
-          addKeyBtn +
-          liveDot +
-          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
-          provCmpBtn +
-          grip +
-        '</div>' +
-        keyForm +
-        detailStrip +
-        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
-        '</div>';
+      return sortControl() + counts + compareZone(list) + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
     }
-
-    function providerModelRow(g, m) {
-      var ctx = fmtCtx(m.contextLength);
-      // v0.32.5 F3: real price chip — parse the provider's own pricing
-      // string (prompt price per M tokens); bare "paid" only as fallback.
-      var priceChip;
-      if (m.isFree) {
-        priceChip = '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">free</span>';
-      } else {
-        var ppm = String(m.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
-        priceChip = ppm
-          ? '<span title="' + escAttr(m.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">$' + ppm[1] + '/M</span>'
-          : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:2px 7px;border-radius:4px;flex-shrink:0">paid</span>';
-      }
-      var caps = (m.capabilities || []).length ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3);flex-shrink:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (m.capabilities || []).join('·') + '</span>' : '';
-      // v0.32.2 A: star the FAMILY (logical id) — same list as models view.
-      var star = m.family ? starBtnHtml(m.family) : '';
-      return '<div data-slot="' + escAttr(m.id) + '" data-nodrag style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:36px">' +
-        '<span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #a855f7;flex-shrink:0"></span>' +
-        '<span title="' + escAttr(m.displayName || m.rawId) + '" style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(m.displayName || m.rawId) + '</span>' +
-        star +
-        caps +
-        '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + ctx + '</span>' +
-        priceChip +
-        '</div>';
-    }
-
-    // v0.32.2 A: the star toggle button (rendered per row).
-    function starBtnHtml(key) {
-      var on = starred.indexOf(key) >= 0;
-      return '<button data-star="' + escAttr(key) + '" data-nodrag class="mb-star" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + (on ? 'unstar this model' : 'star this model') + '" style="background:' + (on ? 'rgba(234,179,8,0.12)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(234,179,8,0.45)' : 'transparent') + ';color:' + (on ? '#eab308' : 'var(--border-strong)') + ';width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:7px;flex-shrink:0;cursor:pointer;font-size:13px;padding:0;line-height:1;font-family:inherit;touch-action:manipulation">★</button>';
-    }
-
-    // v0.32.8 F1: PROVIDER COMPARE — the ⚖ pin on provider boxes. Two
-    // pinned providers get a side-by-side strip above the list: physical
-    // stats (models, free models, cheapest prompt price, biggest context,
-    // key status) with the winner highlighted, and a per-side "browse N
-    // models →" that deep-links into the Models tab (search = provider
-    // display name — logicalMatches already matches host names).
-    // Transient: like the model compare, never persisted.
-    function toggleProvComparePin(name) {
-      var idx = provComparePair.indexOf(name);
-      if (idx >= 0) {
-        provComparePair.splice(idx, 1);
-      } else if (provComparePair.length < 2) {
-        provComparePair.push(name);
-      } else {
-        provComparePair.shift(); // v0.32.5 behavior: oldest pin drops off
-        provComparePair.push(name);
-      }
-    }
-
-    function provStats(g) {
-      var models = g.models || [];
-      var free = 0, minPrompt = Infinity, maxCtx = 0;
-      for (var i = 0; i < models.length; i++) {
-        var m = models[i];
-        if (m.isFree) {
-          free++;
-          // v0.32.8 F1: a free model IS the cheapest route ($0) — an
-          // all-free provider must win "cheapest" over any paid price,
-          // not render "—" and forfeit (fmtP prints 0 as "free").
-          if (minPrompt > 0) minPrompt = 0;
-        } else if (m.pricing) {
-          var pm = String(m.pricing).match(/\$([0-9]+(?:\.[0-9]+)?)/);
-          if (pm) {
-            var v = parseFloat(pm[1]);
-            if (v < minPrompt) minPrompt = v;
-          }
-        }
-        if ((m.contextLength || 0) > maxCtx) maxCtx = m.contextLength;
-      }
-      return { n: models.length, free: free, minPrompt: (minPrompt === Infinity ? null : minPrompt), maxCtx: maxCtx, keyed: !!g.hasApiKey };
-    }
-
-    function provCompareDrawer(gA, gB) {
-      var a = provStats(gA), b = provStats(gB);
-      var lbl = function (g, s) {
-        return '<div style="display:flex;flex-direction:column;gap:2px;min-width:0">' +
-          '<div style="display:flex;align-items:center;gap:6px;min-width:0">' +
-          '<span style="width:9px;height:9px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-          '<span style="font-size:calc(var(--ui-small-fs));font-weight:700;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
-          '</div>' +
-          '<span style="font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;color:' + (s.keyed ? 'var(--ok)' : 'var(--text-3)') + '">' + (s.keyed ? 'ready' : 'view only') + '</span>' +
-          '</div>';
-      };
-      // metric row: winner side gets ▲ + var(--ok) + a faint ok tint; ties
-      // get neither. v0.32.8 F5 (VLM round): justification is FIXED per
-      // side (left cells always right-aligned toward the center label,
-      // right cells always left-aligned) — the win state must not MOVE a
-      // value, only color it; label contrast bumped to text-2; row
-      // min-height 26 + line-height so nothing clips.
-      var row = function (label, va, vb, fmt, better) {
-        // v0.32.8 F1 BUGFIX: null ("—", e.g. no paid models on that side)
-        // must NEVER win — `null < price` coerces null→0 and would crown
-        // the empty side as "cheapest". Guard both sides.
-        var hasA = va !== null && va !== undefined;
-        var hasB = vb !== null && vb !== undefined;
-        var winA = hasA && (better === 'more' ? va > vb : (better === 'less' ? va < vb : false));
-        var winB = hasB && (better === 'more' ? vb > va : (better === 'less' ? vb < va : false));
-        var cell = function (v, win, side) {
-          // v0.32.8 F5 (VLM round 2): no badge padding — it pushed values
-          // off the column line. The ▲ hugs the CENTER on both sides
-          // ("82 ▲" | "▲ 71") so the numbers sit on mirrored, straight
-          // lines; win state colors + emboldens, never moves.
-          var arrow = win ? '<span style="font-size:8px;line-height:1">▲</span>' : '';
-          return '<span style="display:inline-flex;align-items:center;gap:3px;font-size:calc(var(--ui-small-fs) - 1px);font-variant-numeric:tabular-nums;line-height:1.3;color:' + (win ? 'var(--ok)' : 'var(--text-2)') + ';font-weight:' + (win ? '700' : '500') + ';justify-self:' + (side === 'L' ? 'end' : 'start') + '">' + (side === 'L' ? (fmt(v) + arrow) : (arrow + fmt(v))) + '</span>';
-        };
-        return '<div class="mb-pcmprow" style="display:grid;grid-template-columns:1fr 84px 1fr;align-items:center;gap:6px;min-height:26px">' +
-          cell(va, winA, 'L') +
-          '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);text-align:center;text-transform:uppercase;letter-spacing:0.06em;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + label + '</span>' +
-          cell(vb, winB, 'R') +
-          '</div>';
-      };
-      var fmtP = function (v) { return v === null ? '—' : (v === 0 ? 'free' : '$' + v + '/M'); };
-      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:10px">' +
-        '<div style="display:flex;align-items:center;gap:8px">' +
-        '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
-        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-1);flex:1">Provider compare</span>' +
-        '<button data-pcmpclose data-nodrag title="unpin both" aria-label="close provider compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;width:22px;height:22px;border-radius:7px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 84px 1fr;gap:6px">' + lbl(gA, a) + '<span></span>' + lbl(gB, b) + '</div>' +
-        '<div style="display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--surface-2);padding-top:8px">' +
-        row('models', a.n, b.n, function (v) { return String(v); }, 'more') +
-        row('free', a.free, b.free, function (v) { return String(v); }, 'more') +
-        row('cheapest', a.minPrompt, b.minPrompt, fmtP, 'less') +
-        row('context', a.maxCtx, b.maxCtx, function (v) { return fmtCtx(v); }, 'more') +
-        '</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-        // v0.32.8 F1: no browse button for a 0-model side (nothing to
-        // deep-link — the grid cell just stays empty).
-        (a.n > 0 ? '<button data-pcmpbrowse="' + escAttr(gA.displayName || gA.name) + '" data-nodrag title="browse ' + escAttr(gA.displayName || gA.name) + ' models in the Models tab" style="background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);font-size:10.5px;font-weight:700;padding:6px 10px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">browse ' + a.n + ' models →</button>' : '<span></span>') +
-        (b.n > 0 ? '<button data-pcmpbrowse="' + escAttr(gB.displayName || gB.name) + '" data-nodrag title="browse ' + escAttr(gB.displayName || gB.name) + ' models in the Models tab" style="background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);font-size:10.5px;font-weight:700;padding:6px 10px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">browse ' + b.n + ' models →</button>' : '<span></span>') +
-        '</div>' +
-        '</div>';
-      return html;
-    }
-
-    function provCompareHint(g) {
-      return '<div data-nodrag style="display:flex;align-items:center;gap:8px;border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:rgba(var(--accent-rgb),0.05)">' +
-        '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
-        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--text-1)">' + escHTML(g.displayName || g.name) + '</b> pinned — tap ⚖ on another provider</span>' +
-        '<button data-pcmpclose data-nodrag title="unpin" aria-label="unpin provider compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:10px;width:20px;height:20px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
-        '</div>';
-    }
-
-    // ── Models view (logical, all providers combined) ────────────────────
 
     // v0.32.3 F5: friendly zero-result state (search or filters).
     function emptyStateHtml() {
       var hasSearch = !!search;
-      var hasFilters = filters.length > 0 || pricing !== 'all' || ctxMin > 0;
+      var hasFilters = filters.length > 0 || pricing !== 'all' || ctxMin > 0 || avail !== 'all';
       var h = '<div style="text-align:center;padding:36px 20px">' +
         '<div style="font-size:26px;color:var(--text-3);margin-bottom:8px">⌕</div>' +
         '<div style="font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);margin-bottom:4px">No models match</div>' +
@@ -1245,39 +768,35 @@
       return h;
     }
 
+    // v0.34: the pagination row — "showing X of Y · show more" (also
+    // auto-loads when the user scrolls near the bottom).
+    function moreRow(shown, total) {
+      if (shown >= total) return '';
+      return '<button id="mb-more" class="mb-more" style="margin-top:4px">show ' + Math.min(PAGE, total - shown) + ' more · ' + shown + ' of ' + total + '</button>';
+    }
+
     function modelsView() {
-      var logical = ((catalog && catalog.logical) || []).slice();
-      var matching = [];
-      for (var i = 0; i < logical.length; i++) {
-        if (logicalMatches(logical[i])) matching.push(logical[i]);
-      }
-      // v0.32.1 B: explicit sort (pills still re-rank under 'best').
-      applySort(matching);
+      var res = matchingLogicals();
+      var matching = res.matching;
+      var logical = res.all;
       var out = '';
-      // v0.32.2 D: friendly empty state when Starred is on but nothing is
-      // starred yet. (The starred filter empties the list anyway; this
-      // replaces it with an actionable hint instead of just "N hidden".)
-      var starredEmpty = filters.indexOf('starred') >= 0 && !starred.length;
-      if (starredEmpty) {
-        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">No starred models yet — tap the <span style="color:#eab308">★</span> on a model to pin it here.</div>';
-      } else if (!matching.length) {
-        // v0.32.3 F5: friendly zero-result state (search or filters)
+      if (!matching.length) {
         out = emptyStateHtml();
       }
-      for (var l = 0; l < matching.length; l++) {
+      var shown = 0;
+      for (var l = 0; l < matching.length && l < shownCount; l++) {
         out += logicalRow(matching[l], l === 0);
+        shown++;
       }
+      out += moreRow(shown, matching.length);
       var hidden = logical.length - matching.length;
-      if (hidden > 0 && !starredEmpty) {
+      if (hidden > 0 && matching.length) {
         out += '<div data-clearall title="clear all filters" style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center;cursor:pointer">' + hidden + ' models hidden by filters · <span style="color:var(--accent);text-decoration:underline">clear</span></div>';
       }
       if (!logical.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing models…</div>';
       }
       // v0.32.1 C: live counts — "X of Y models · Z with your keys".
-      // v0.32.8 F3: "· ★ N" (starred total) rides in the right span —
-      // amber like the ★ buttons, surgically updated on star toggles
-      // (data-starcount; hidden at 0 so the default line stays clean).
       var withKeys = 0;
       for (var wk = 0; wk < matching.length; wk++) {
         var wkHosts = matching[wk].hosts || [];
@@ -1285,29 +804,27 @@
           if (wkHosts[hh].hasApiKey) { withKeys++; break; }
         }
       }
-      var starChunk = '<span data-starcount style="color:#eab308;font-weight:600' + (starred.length ? '' : ';display:none') + '">· ★ ' + starred.length + '</span>';
       var counts = logical.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys ' + starChunk + '</span></div>'
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></div>'
         : '';
-      // v0.32.5 F2: compare drawer (pair complete) or the pin hint (one
-      // pinned, waiting for the second). Rendered above the list.
-      var cmp = '';
-      if (comparePair.length === 2) {
-        cmp = compareDrawer(comparePair[0], comparePair[1]);
-      } else if (comparePair.length === 1) {
-        var pl = null;
-        for (var pc = 0; pc < logical.length; pc++) {
-          if (logical[pc].logical === comparePair[0]) { pl = logical[pc]; break; }
-        }
-        if (pl) {
-          cmp = '<div data-nodrag style="display:flex;align-items:center;gap:8px;border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:rgba(var(--accent-rgb),0.05)">' +
-            '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
-            '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--text-1)">' + escHTML(pl.displayName || pl.logical) + '</b> pinned — tap ⚖ on another model</span>' +
-            '<button data-cmpclose data-nodrag title="unpin" aria-label="unpin compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:10px;width:20px;height:20px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
-            '</div>';
-        }
+      return sortControl() + counts + compareZone(logical) + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
+    }
+
+    // v0.32.5 F2: compare drawer (pair complete) or the pin hint (one
+    // pinned, waiting for the second). Rendered above the list.
+    function compareZone(logical) {
+      if (comparePair.length === 2) return compareDrawer(comparePair[0], comparePair[1]);
+      if (comparePair.length !== 1) return '';
+      var pl = null;
+      for (var pc = 0; pc < logical.length; pc++) {
+        if (logical[pc].logical === comparePair[0]) { pl = logical[pc]; break; }
       }
-      return sortControl() + counts + cmp + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
+      if (!pl) return '';
+      return '<div data-nodrag style="display:flex;align-items:center;gap:8px;border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:rgba(var(--accent-rgb),0.05)">' +
+        '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:var(--text-1)">' + escHTML(pl.displayName || pl.logical) + '</b> pinned — tap ⚖ on another model</span>' +
+        '<button data-cmpclose data-nodrag title="unpin" aria-label="unpin compare" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:10px;width:20px;height:20px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;display:flex;align-items:center;justify-content:center;padding:0">✕</button>' +
+        '</div>';
     }
 
     // v0.32.1 B: the sort control — a compact native select (mobile-friendly,
@@ -1397,11 +914,383 @@
       return false;
     }
 
+    // ── Providers view ──────────────────────────────────────────────────
+
+    function orderedGroups() {
+      var groups = ((catalog && catalog.groups) || []).slice();
+      if (providerOrder) {
+        groups.sort(function (a, b) {
+          var ia = providerOrder.indexOf(a.name); var ib = providerOrder.indexOf(b.name);
+          if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+          return ia - ib;
+        });
+      }
+      return groups;
+    }
+
+    function groupByName(name) {
+      var groups = (catalog && catalog.groups) || [];
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].name === name) return groups[i];
+      }
+      return null;
+    }
+
+    function modelById(g, id) {
+      var models = g.models || [];
+      for (var i = 0; i < models.length; i++) {
+        if (models[i].id === id) return models[i];
+      }
+      return null;
+    }
+
+    function findLogicalByRoute(provider, modelId) {
+      var logical = (catalog && catalog.logical) || [];
+      for (var i = 0; i < logical.length; i++) {
+        var hh = logical[i].hosts || [];
+        for (var j = 0; j < hh.length; j++) {
+          if (hh[j].provider === provider && hh[j].modelId === modelId) return logical[i];
+        }
+      }
+      return null;
+    }
+
+    function providerView() {
+      var groups = orderedGroups();
+      var availOnly = avail === 'available';
+      var out = '';
+      var shown = 0, ready = 0;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].hasApiKey) ready++;
+        // "Available" hides keyless providers' boxes entirely (their models
+        // are all filtered out anyway).
+        if (availOnly && !groups[i].hasApiKey) continue;
+        out += providerBox(groups[i], shown === 0);
+        shown++;
+      }
+      if (!groups.length) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing providers…</div>';
+      } else if (availOnly && !out) {
+        out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">No providers with API keys yet — paste a key to unlock them.</div>';
+      }
+      // v0.32.1 C: live counts line.
+      var counts = groups.length
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
+        : '';
+      return counts + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
+    }
+
+    function providerBox(g, kbFirst) {
+      var expanded = !!providerExpanded[g.name];
+      // v0.34 PERF: the matching model rows are only computed for
+      // EXPANDED boxes (a collapsed catalogue was matching ~3k models on
+      // every render — a fat slice of the 1-3s lag).
+      var rows = '';
+      var filteredOut = 0;
+      if (expanded) {
+        var matching = [];
+        var models = g.models || [];
+        for (var i = 0; i < models.length; i++) {
+          if (modelMatches(models[i], g)) matching.push(models[i]);
+          else filteredOut++;
+        }
+        for (var m = 0; m < matching.length; m++) {
+          // m.id is "provider/modelId" — strip the provider prefix for the
+          // logical lookup (hosts[].modelId carries no provider prefix).
+          var mid = String(matching[m].id || '');
+          var cutAt = mid.indexOf('/');
+          var lm = (cutAt >= 0 && mid.slice(0, cutAt) === g.name)
+            ? findLogicalByRoute(g.name, mid.slice(cutAt + 1))
+            : findLogicalByRoute(g.name, mid);
+          rows += providerModelRow(g, matching[m], lm, m === 0 && kbFirst);
+        }
+        if (filteredOut > 0) {
+          rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
+        }
+      }
+      var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';
+      // v0.32 #5: explicit availability badge + dimming (view-only vs ready).
+      var keyBadge = g.hasApiKey
+        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">ready</span>'
+        : '<span style="font-size:10px;font-weight:600;color:var(--text-2,var(--text-3));background:rgba(128,128,140,0.12);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
+      var chevron = expanded ? '▾' : '▸';
+      // v0.32 #8: grip — instant drag handle on the box.
+      var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
+      // v0.32.1 D: one-tap key unlock on view-only boxes.
+      var addKeyBtn = (!g.hasApiKey && g.envVar)
+        ? '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;flex-shrink:0;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">＋ key</button>'
+        : '';
+
+      var dim = g.hasApiKey ? '' : 'opacity:0.6;filter:saturate(0.5);';
+      // v0.32.4 F3: expanded detail strip — the catalog's description of the
+      // provider + free-tier chip + a "get a key ↗" deep link for keyless
+      // boxes (answers WHERE to get a key, right where it matters).
+      var detailStrip = '';
+      if (expanded) {
+        var strip =
+          '<div style="padding:10px 14px;border-top:1px solid var(--surface-2);background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:7px">';
+        if (g.description) {
+          strip += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45">' + escHTML(g.description) + '</div>';
+        }
+        var chips = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
+        if (g.freeTier) {
+          chips += '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;white-space:nowrap">free tier</span>';
+        }
+        if (g.envVar) {
+          chips += '<span title="environment variable for the API key" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);background:var(--surface-2);border:1px solid var(--border);padding:2px 8px;border-radius:5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap">' + escHTML(g.envVar) + '</span>';
+        }
+        if (!g.hasApiKey && g.settingsUrl) {
+          chips += '<a href="' + escAttr(g.settingsUrl) + '" target="_blank" rel="noopener noreferrer" data-nodrag title="open the provider\'s key page" style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--accent-2);background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.4);padding:2px 8px;border-radius:5px;text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:4px">get a key ↗</a>';
+        }
+        chips += '</div>';
+        if (g.description || g.freeTier || g.envVar || (!g.hasApiKey && g.settingsUrl)) {
+          strip += chips + '</div>';
+          detailStrip = strip;
+        }
+      }
+      // v0.32.1 D: the inline paste-a-key form (opened by the ＋ key button).
+      var keyForm = '';
+      if (keyAdding === g.name && !g.hasApiKey && g.envVar) {
+        keyForm = '<div class="mb-keyform" data-keyform data-nodrag style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--surface-2);background:rgba(var(--ok-rgb),0.04)">' +
+          '<input data-keyinput type="password" placeholder="' + escAttr(g.envVar) + '" autocomplete="off" spellcheck="false" style="flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--surface-2);color:var(--text-1);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px 10px;border-radius:8px;outline:none" />' +
+          '<button data-keysave="' + escAttr(g.name) + '" data-nodrag style="background:var(--ok);border:none;color:#08240f;font-size:11px;font-weight:700;padding:8px 12px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap">Save</button>' +
+          '<button data-keycancel data-nodrag title="cancel" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;padding:8px 10px;border-radius:8px;cursor:pointer;font-family:inherit">✕</button>' +
+          '</div>';
+      }
+      return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
+        '<div data-provhead="' + escAttr(g.name) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
+          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
+          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
+          keyBadge +
+          addKeyBtn +
+          liveDot +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
+          grip +
+        '</div>' +
+        keyForm +
+        detailStrip +
+        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
+        '</div>';
+    }
+
+    // ── SHARED ROW BUILDERS ────────────────────────────────────────────
+
+    // The 6 fixed columns every catalogue row shares (user spec): the
+    // NAME (biggest, wraps) + ★ + ℹ + ⚖ + context + pricing. `kind`
+    // distinguishes the row's click behavior (logical select vs route
+    // select); `isRoute` rows sit inside provider boxes.
+    function row6Columns(opts) {
+      var name = opts.name;
+      if (opts.isCur) name = '<span class="mb-curdot" title="current model"></span>' + name;
+      var star = opts.starKey
+        ? '<button data-star="' + escAttr(opts.starKey) + '" class="mb-starbtn" data-on="' + (starred.indexOf(opts.starKey) >= 0 ? '1' : '0') + '" aria-pressed="' + (starred.indexOf(opts.starKey) >= 0 ? 'true' : 'false') + '" title="' + (starred.indexOf(opts.starKey) >= 0 ? 'unstar this favorite' : 'star this favorite') + '">★</button>'
+        : '<span></span>';
+      var info = '<button data-info="' + escAttr(opts.infoKey) + '" data-nodrag class="mb-ic" data-on="' + (opts.infoOn ? '1' : '0') + '" aria-expanded="' + (opts.infoOn ? 'true' : 'false') + '" title="model details — benchmarks, pricing, ranks">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.2" r="0.4" fill="currentColor" stroke="none"/></svg>' +
+        '</button>';
+      var cmpIdx = comparePair.indexOf(opts.infoKey);
+      var cmp = '<button data-compare="' + escAttr(opts.infoKey) + '" data-nodrag class="mb-ic" data-on="' + (cmpIdx >= 0 ? '1' : '0') + '" aria-pressed="' + (cmpIdx >= 0 ? 'true' : 'false') + '" title="' + (cmpIdx >= 0 ? (comparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another model') + '">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>' +
+        '</button>';
+      var price;
+      if (opts.isFree) {
+        price = '<span class="mb-price mb-free">free</span>';
+      } else {
+        var pMatch = String(opts.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+        price = pMatch
+          ? '<span class="mb-price" title="' + escAttr(opts.pricing) + '">$' + pMatch[1] + '/M</span>'
+          : '<span class="mb-price">paid</span>';
+      }
+      // grid order = the user's column order: NAME | ★ | ℹ | ⚖ | ctx | price
+      return '<span class="mb-name">' + name + '</span>' +
+        star + info + cmp +
+        '<span class="mb-ctx">' + (opts.ctx || '—') + '</span>' +
+        price;
+    }
+
+    // v0.34: the star button — a bare ★ that turns gold (no chip).
+    function starBtnHtml(key) {
+      var on = starred.indexOf(key) >= 0;
+      return '<button data-star="' + escAttr(key) + '" class="mb-starbtn" data-on="' + (on ? '1' : '0') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + (on ? 'unstar this favorite' : 'star this favorite') + '">★</button>';
+    }
+
+    // ── THE MODELS / FAVORITES ROW ─────────────────────────────────────
+    //
+    // The 6-column top row (tapping anywhere except ★/ℹ/⚖/dots selects)
+    // + the subtext line: stat sliders, capability pills, then the
+    // provider dots + ➜ arrow right-aligned (the dropdown trigger).
+    function logicalRow(lm, kbFirst) {
+      var expanded = !!expandedLogical[lm.logical];
+      var hosts = orderedHosts(lm);
+      var available = hosts.some(function (h) { return h.hasApiKey; });
+      var isCur = isCurrentModel(lm); // v0.32.1 E
+      var attrs = lm.attributes || {};
+      var infoOpenNow = !!infoOpen[lm.logical];
+
+      // v0.34: the top formatted row — the shared 6 columns. Tapping it
+      // (outside its buttons) SELECTS the model.
+      var top = '<div class="mb-r6" data-select="' + escAttr(lm.logical) + '" role="button" tabindex="-1" title="' + (isCur ? 'current model — tap to keep' : 'select this model') + '">' +
+        row6Columns({
+          name: escHTML(lm.displayName || lm.logical),
+          isCur: isCur,
+          starKey: lm.logical,
+          infoKey: lm.logical,
+          infoOn: infoOpenNow,
+          isFree: !!lm.isFree,
+          pricing: attrs.pricing,
+          ctx: fmtCtx(lm.contextLength)
+        }) +
+        '</div>';
+
+      // v0.34: the subtext — stats (mini-bar chips), capability pills,
+      // then the provider dots + arrow right-aligned.
+      var sub = subtextRow(lm, hosts, expanded);
+
+      // v0.32 #5/#9: dimming carries availability; the row tap selects.
+      var dim = available ? '' : 'opacity:0.55;filter:saturate(0.6);';
+
+      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
+        top +
+        sub +
+        (infoOpenNow ? detailDrawer(lm) : '') +
+        (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRowsHTML(lm, hosts) + '</div>' : '') +
+        '</div>';
+    }
+
+    function subtextRow(lm, hosts, expanded) {
+      var attrs = lm.attributes || {};
+      var bm = attrs.benchmarks || {};
+      var pills = '';
+      if (bm.intelligence) pills += bmChip('AA ' + Math.round(bm.intelligence), bm.intelligence);
+      if (bm.coding) pills += bmChip('code ' + Math.round(bm.coding), bm.coding);
+      if (bm.agentic) pills += bmChip('agent ' + Math.round(bm.agentic), bm.agentic);
+      var caps = attrs.capabilities || [];
+      for (var c = 0; c < caps.length && c < 5; c++) {
+        pills += capChip(caps[c]);
+      }
+      if (attrs.effortLevels && attrs.effortLevels.length) pills += capChip('effort');
+      if (!pills) pills = '<span style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--border-strong)">no stats published</span>';
+
+      // v0.34: the provider dots moved from the top row to HERE, right
+      // before the ➜ arrow (both open the priority dropdown).
+      var dots = '';
+      var shown = Math.min(hosts.length, 5);
+      for (var d = 0; d < shown; d++) {
+        dots += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || 'var(--border-strong)') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + (hosts[d].hasApiKey ? ' (key)' : '') + '"></span>';
+      }
+      if (hosts.length > 5) dots += '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3)">+' + (hosts.length - 5) + '</span>';
+
+      return '<div class="mb-sub">' +
+        '<span class="mb-subpills">' + pills + '</span>' +
+        '<span class="mb-dots" data-expand="' + escAttr(lm.logical) + '" role="button" aria-expanded="' + (expanded ? 'true' : 'false') + '" title="provider priority">' + dots + '</span>' +
+        '<button class="mb-arrowbtn" data-expand="' + escAttr(lm.logical) + '" data-open="' + (expanded ? '1' : '0') + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" title="re-arrange this model\'s providers" data-nodrag>' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>' +
+        '</button>' +
+      '</div>';
+    }
+
+    // v0.34 (user spec #8): the host-priority drop-down rows — a 🔑
+    // key/no-key ICON column (the old ⠿ grip + "key ✓ / no key" pill are
+    // gone), the name (provider + route id, wraps), context, pricing,
+    // and ▲▼. Drag by holding the row ANYWHERE (except the arrows);
+    // tapping the arrows moves the row directly; tapping the row picks
+    // that exact provider+model.
+    function hostRowsHTML(lm, hosts) {
+      var html = '';
+      for (var h = 0; h < hosts.length; h++) {
+        var hr = hosts[h];
+        var price;
+        if (hr.isFree) {
+          price = '<span class="mb-price mb-free">free</span>';
+        } else {
+          var rpm = String(hr.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
+          price = rpm
+            ? '<span class="mb-price" title="' + escAttr(hr.pricing) + '">$' + rpm[1] + '/M</span>'
+            : '<span class="mb-price">paid</span>';
+        }
+        var keyIcon = '<span class="mb-keyic" data-key="' + (hr.hasApiKey ? '1' : '0') + '" title="' + (hr.hasApiKey ? 'API key set — ready to use' : 'no API key for this provider yet') + '">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 9-9"/><path d="m17 2 4 4"/><path d="m14.5 8.5 2 2"/></svg>' +
+          '</span>';
+        html += '<div class="mb-hrow" data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" title="' + (hr.hasApiKey ? 'select this route · hold to drag' : 'no key — select adds it to the plan') + '">' +
+          keyIcon +
+          '<span class="mb-hname"><span class="mb-hprov">' + escHTML(hr.providerDisplayName || hr.provider) + '</span>' +
+            '<br><span class="mb-hid">' + escHTML(hr.modelId) + '</span></span>' +
+          '<span class="mb-ctx">' + fmtCtx(hr.contextLength) + '</span>' +
+          price +
+          '<span style="display:flex;gap:4px;align-items:center">' +
+            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" class="mb-hbtn" data-nodrag title="raise priority">▲</button>' +
+            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" class="mb-hbtn" data-nodrag title="lower priority">▼</button>' +
+          '</span>' +
+          '</div>';
+      }
+      return html;
+    }
+
+    function orderedHosts(lm) {
+      var hosts = (lm.hosts || []).slice();
+      var order = hostOrder[lm.logical];
+      if (order && order.length) {
+        hosts.sort(function (a, b) {
+          var ia = order.indexOf(a.provider); var ib = order.indexOf(b.provider);
+          if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+          return ia - ib;
+        });
+      }
+      return hosts;
+    }
+
+    function bmChip(text, score) {
+      var color = score >= 70 ? '#22c55e' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
+      // v0.32.1 G: a 32×3px score mini-bar next to the number — the score
+      // becomes readable at a glance (green ≥70, amber ≥40).
+      var pct = Math.max(5, Math.min(100, Math.round(score)));
+      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text +
+        '<span style="width:32px;height:3px;border-radius:2px;background:rgba(128,128,140,0.22);overflow:hidden;flex-shrink:0" title="score ' + Math.round(score) + '/100"><i style="display:block;height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.85"></i></span>' +
+        '</span>';
+    }
+
+    var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: 'var(--accent)', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
+    function capChip(cap) {
+      var key = String(cap).toLowerCase();
+      var color = CAP_COLORS[key] || 'var(--text-3)';
+      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:' + color + '14;padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
+    }
+
+    // ── THE PROVIDER MODEL ROW (v0.34: the same 6-column format) ──────
+    //
+    // Same columns as the models tab (name | ★ | ℹ | ⚖ | ctx | price);
+    // ℹ uncollapses the model's benchmarks beneath the row — the exact
+    // method and function as the models tab. Tapping the row (outside the
+    // buttons) selects that exact provider+model.
+    function providerModelRow(g, m, lm, kbFirst) {
+      var slot = m.id; // "provider/modelId"
+      var infoKey = lm ? lm.logical : (slot);
+      var infoOpenNow = !!(lm && infoOpen[lm.logical]);
+      var starKey = lm ? lm.logical : (m.family || '');
+      var top = '<div class="mb-r6" data-slotrow="' + escAttr(slot) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" title="' + escAttr(m.displayName || m.rawId) + '">' +
+        row6Columns({
+          name: escHTML(m.displayName || m.rawId),
+          isCur: false,
+          starKey: starKey || null,
+          infoKey: infoKey,
+          infoOn: infoOpenNow,
+          isFree: !!m.isFree,
+          pricing: m.pricing,
+          ctx: fmtCtx(m.contextLength)
+        }) +
+        '</div>';
+      var drawer = (infoOpenNow && lm) ? detailDrawer(lm) : '';
+      var hasKey = !!g.hasApiKey;
+      return '<div class="mb-logrow mb-prow" data-slot="' + escAttr(slot) + '" data-logical-id="' + escAttr(lm ? lm.logical : '') + '" style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;' + (hasKey ? '' : 'opacity:0.55;filter:saturate(0.6);') + 'margin:6px 8px">' +
+        top + drawer + '</div>';
+    }
+
     // v0.32.4 F2: the MODEL DETAIL DRAWER — a per-row expandable card with
     // full benchmark bars, the prompt/completion pricing split, context,
     // capabilities, effort levels, usage-rank chips (OpenRouter ranks) and
-    // a hosts summary. Purely informational — selection stays on the row's
-    // left zone, priority stays on the chevron dropdown.
+    // a hosts summary. Purely informational — selection stays on the row,
+    // priority stays on the ➜ dropdown.
     function detailDrawer(lm) {
       var attrs = lm.attributes || {};
       var bm = attrs.benchmarks || {};
@@ -1439,40 +1328,27 @@
       // ── Pricing split (prompt / completion per M tokens) ──
       var pm = String(attrs.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)\s*\/\s*\$([0-9]+(?:\.[0-9]+)?)/);
       if (lm.isFree) {
-        html += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--ok)">free route — no token billing</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);flex-shrink:0">Pricing</span><span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:#22c55e">free route</span></div>';
       } else if (pm) {
-        html += '<div style="display:flex;flex-direction:column;gap:3px">' +
-          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Pricing</div>' +
-          '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">prompt <b style="color:var(--warn);font-variant-numeric:tabular-nums">$' + pm[1] + '</b></span>' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">completion <b style="color:var(--warn);font-variant-numeric:tabular-nums">$' + pm[2] + '</b></span>' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">per M tokens</span>' +
-          '</div></div>';
+        html += '<div style="display:flex;flex-direction:column;gap:5px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Pricing <span style="font-weight:400;letter-spacing:0;text-transform:none">· prompt / completion per M</span></div>' +
+          '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-1);font-variant-numeric:tabular-nums"><b>$' + pm[1] + '</b> <span style="color:var(--text-3)">/</span> <b>$' + pm[2] + '</b></div>' +
+          '</div>';
       }
 
-      // ── Usage ranks (№1 fullstack · №1 webapps …) ──
+      // ── Facts: context, capabilities, effort levels ──
+      var facts = '';
+      if (lm.contextLength) facts += '<span title="context window" style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);padding:2px 8px;border-radius:5px;white-space:nowrap">' + fmtCtx(lm.contextLength) + ' ctx</span>';
+      var caps2 = attrs.capabilities || [];
+      for (var c = 0; c < caps2.length && c < 6; c++) {
+        facts += capChip(caps2[c]);
+      }
+      if (attrs.effortLevels && attrs.effortLevels.length) facts += capChip('effort: ' + attrs.effortLevels.join('/'));
       var ranks = attrs.ranks || [];
-      if (ranks.length) {
-        var rch = '';
-        for (var r = 0; r < ranks.length && r < 4; r++) {
-          rch += '<span title="ranked #' + ranks[r].rank + ' for ' + escAttr(ranks[r].label) + '" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 8px;border-radius:5px;white-space:nowrap"><b>№' + ranks[r].rank + '</b> ' + escHTML(ranks[r].label) + '</span>';
-        }
-        if (ranks.length > 4) rch += '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);align-self:center">+' + (ranks.length - 4) + '</span>';
-        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' + rch + '</div>';
+      for (var r = 0; r < ranks.length && r < 3; r++) {
+        facts += '<span title="ranked #' + ranks[r].rank + ' for ' + escAttr(ranks[r].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>№' + ranks[r].rank + '</b> ' + escHTML(ranks[r].label) + '</span>';
       }
-
-      // ── Facts line: context · capabilities · effort levels ──
-      var facts = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)"><b style="color:var(--text-1)">' + fmtCtx(lm.contextLength) + '</b> context</span>';
-      var caps = attrs.capabilities || [];
-      var capStr = '';
-      for (var c = 0; c < caps.length; c++) {
-        capStr += (capStr ? ' · ' : '') + escHTML(caps[c]);
-      }
-      if (capStr) facts += '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + capStr + '</span>';
-      if (attrs.effortLevels && attrs.effortLevels.length) {
-        facts += '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">effort: ' + attrs.effortLevels.length + ' levels</span>';
-      }
-      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + facts + '</div>';
+      if (facts) html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + facts + '</div>';
 
       // ── Hosts summary ──
       var hd = '';
@@ -1582,17 +1458,6 @@
         '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + priceLabel(lb, pWin === 1) + '</span>' +
         '</div></div>';
 
-      // v0.32.7 F2: a strict winner gets a one-tap decision — "use the
-      // cheapest route" switches the chat straight to that side. Keyless
-      // winner renders muted (tap still explains via the inline hint),
-      // matching the per-column "use this model" behavior.
-      if (pWin !== 0) {
-        var cheapLm = (pWin === -1) ? la : lb;
-        var cheapKeys = (pWin === -1) ? ha.keys : hb.keys;
-        var cheapUsable = cheapKeys > 0;
-        html += '<button data-cmpcheapest="' + escAttr(cheapLm.logical) + '" data-nodrag title="' + (cheapUsable ? 'switch the chat to ' + escAttr(cheapLm.displayName || cheapLm.logical) + ' — the cheaper route' : 'the cheaper side has no key-backed route yet — tap for details') + '" style="display:flex;align-items:center;gap:6px;align-self:flex-start;background:' + (cheapUsable ? 'rgba(var(--ok-rgb),0.10)' : 'transparent') + ';border:1px solid ' + (cheapUsable ? 'rgba(var(--ok-rgb),0.55)' : 'var(--surface-2)') + ';color:' + (cheapUsable ? 'var(--ok)' : 'var(--text-3)') + ';font-size:10.5px;font-weight:700;padding:5px 11px;border-radius:8px;font-family:inherit;cursor:pointer;touch-action:manipulation">✓ use cheapest route <span style="font-size:9px">→</span></button>';
-      }
-
       // ── Context: bigger wins ──
       var ctxWin = la.contextLength === lb.contextLength ? 0 : (la.contextLength > lb.contextLength ? -1 : 1);
       html += '<div style="display:flex;flex-direction:column;gap:5px">' +
@@ -1667,177 +1532,6 @@
       }
     }
 
-    function logicalRow(lm, kbFirst) {
-      var expanded = !!expandedLogical[lm.logical];
-      var hosts = orderedHosts(lm);
-      var available = hosts.some(function (h) { return h.hasApiKey; });
-      var isCur = isCurrentModel(lm); // v0.32.1 E
-
-      // Provider priority indicator: up to 5 colored dots (dim when no key).
-      var dots = '';
-      var shown = Math.min(hosts.length, 5);
-      for (var d = 0; d < shown; d++) {
-        dots += '<span style="width:7px;height:7px;border-radius:50%;background:' + (hosts[d].color || 'var(--border-strong)') + ';opacity:' + (hosts[d].hasApiKey ? 1 : 0.35) + ';flex-shrink:0" title="' + escAttr(hosts[d].providerDisplayName || hosts[d].provider) + (hosts[d].hasApiKey ? ' (key)' : '') + '"></span>';
-      }
-      if (hosts.length > 5) dots += '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--text-3)">+' + (hosts.length - 5) + '</span>';
-      var dotsWrap = '<span style="display:flex;align-items:center;gap:3px;flex-shrink:0">' + dots + '</span>';
-
-      // Capability chips + benchmarks.
-      var attrs = lm.attributes || {};
-      var chips = '';
-      var bm = attrs.benchmarks || {};
-      if (bm.intelligence) chips += bmChip('AA ' + Math.round(bm.intelligence), bm.intelligence);
-      if (bm.coding) chips += bmChip('code ' + Math.round(bm.coding), bm.coding);
-      if (bm.agentic) chips += bmChip('agent ' + Math.round(bm.agentic), bm.agentic);
-      // v0.32.1 E: the "current" chip — the model this chat is using.
-      if (isCur) chips = '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 7px;border-radius:4px">current</span>' + chips;
-      var caps = attrs.capabilities || [];
-      for (var c = 0; c < caps.length && c < 5; c++) {
-        chips += capChip(caps[c]);
-      }
-      if (attrs.effortLevels && attrs.effortLevels.length) chips += capChip('effort');
-      // v0.32.2 B: real price — "$0.91/M" parsed from attributes.pricing
-      // (tooltip = full string); falls back to bare "paid".
-      var priceChip;
-      if (lm.isFree) {
-        priceChip = '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px">free route</span>';
-      } else {
-        var pMatch = String(attrs.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
-        priceChip = pMatch
-          ? '<span title="' + escAttr(attrs.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px;white-space:nowrap">$' + pMatch[1] + '/M</span>'
-          : '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);padding:1px 6px;border-radius:4px">paid</span>';
-      }
-
-      // v0.32 #6: the big, obvious chevron button (rotates when open) —
-      // the affordance for the provider-priority dropdown.
-      var chevBtn = '<span data-nodrag class="mb-chevbtn" style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-1);flex-shrink:0">' +
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (expanded ? '180deg' : '0deg') + ')"><path d="M6 9l6 6 6-6"/></svg>' +
-        '</span>';
-
-      // v0.32.4 F2: the ℹ detail toggle — opens the benchmark/pricing
-      // drawer below the row (selection stays left, priority stays chevron).
-      var infoOpenNow = !!infoOpen[lm.logical];
-      // v0.32.5 F2: compare pin state for this row.
-      var cmpIdx = comparePair.indexOf(lm.logical);
-      var cmpPinned = cmpIdx >= 0;
-      var infoBtn = '<button data-info="' + escAttr(lm.logical) + '" data-nodrag class="mb-infobtn" aria-expanded="' + (infoOpenNow ? 'true' : 'false') + '" title="model details — benchmarks, pricing, ranks" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (infoOpenNow ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (infoOpenNow ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0">' +
-        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.5"/><circle cx="12" cy="7.2" r="0.4" fill="currentColor" stroke="none"/></svg>' +
-        '</button>';
-
-      // v0.32.5 F2: the ⚖ compare pin — tap to pin, tap another row's ⚖ to
-      // open the side-by-side compare drawer. Pinned = accent state.
-      var cmpBtn = '<button data-compare="' + escAttr(lm.logical) + '" data-nodrag class="mb-cmpbtn" aria-pressed="' + (cmpPinned ? 'true' : 'false') + '" title="' + (cmpPinned ? (comparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another model') + '" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid ' + (cmpPinned ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';background:' + (cmpPinned ? 'rgba(var(--accent-rgb),0.10)' : 'rgba(128,128,140,0.06)') + ';border-radius:8px;color:' + (cmpPinned ? 'var(--accent)' : 'var(--text-2)') + ';flex-shrink:0;cursor:pointer;font-family:inherit;touch-action:manipulation;padding:0">' +
-        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>' +
-        '</button>';
-
-      // v0.32 #6: split row — LEFT selects, RIGHT (dots → chevron) opens the
-      // priority dropdown. The 1px separator marks the hotspot boundary.
-      // v0.32.1 E: the current model wears a filled radio + green ring.
-      // v0.32.2 A: the star toggle rides at the end of the left zone
-      // (stopPropagation — tapping it must NOT select the model).
-      var leftZone =
-        '<div data-select="' + escAttr(lm.logical) + '" role="button" title="' + (isCur ? 'current model — tap to keep' : 'select this model') + '" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer;touch-action:manipulation;padding:2px 4px 2px 0">' +
-          '<span style="width:8px;height:8px;border-radius:50%;border:1.5px solid ' + (isCur ? 'var(--ok)' : '#a855f7') + ';' + (isCur ? 'background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' : '') + 'flex-shrink:0"></span>' +
-          '<span title="' + escAttr(lm.displayName || lm.logical) + '" style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(lm.displayName || lm.logical) + '</span>' +
-          starBtnHtml(lm.logical) +
-        '</div>';
-      var separator = '<span style="width:1px;height:20px;background:var(--border);flex-shrink:0;opacity:0.9"></span>';
-      var rightZone =
-        '<div data-expand="' + escAttr(lm.logical) + '" role="button" aria-expanded="' + (expanded ? 'true' : 'false') + '" title="provider priority" style="display:flex;align-items:center;gap:8px;flex-shrink:0;cursor:pointer;touch-action:manipulation;padding:2px 0 2px 6px">' +
-          dotsWrap +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:34px;text-align:right">' + fmtCtx(lm.contextLength) + '</span>' +
-          priceChip +
-          infoBtn +
-          cmpBtn +
-          chevBtn +
-        '</div>';
-
-      // Host rank rows (the priority dropdown). Tap = select that
-      // provider+model; ▲▼ or the ⠿ handle re-orders.
-      var hostRows = '';
-      if (expanded) {
-        for (var h = 0; h < hosts.length; h++) {
-          var hr = hosts[h];
-          // v0.32.5 F1: route-level price chip — the same model can cost
-          // differently per provider. free routes stay green; paid routes
-          // show the prompt price per M tokens (tooltip = full pricing).
-          // VLM review: FIXED-WIDTH column (min-width + centered) so the
-          // ctx / key / arrows stay vertically aligned across rows — an
-          // invisible spacer keeps the column when a route has no pricing.
-          var routePrice = '<span style="min-width:54px;flex-shrink:0"></span>';
-          if (hr.isFree) {
-            routePrice = '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:#22c55e;background:rgba(34,197,94,0.12);padding:2px 7px;border-radius:4px;flex-shrink:0;min-width:54px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums">free</span>';
-          } else {
-            var rpm = String(hr.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)/);
-            if (rpm) {
-              routePrice = '<span title="' + escAttr(hr.pricing) + '" style="font-size: calc(var(--ui-small-fs) - 3px);color:var(--warn);background:rgba(var(--warn-rgb),0.10);padding:2px 7px;border-radius:4px;flex-shrink:0;min-width:54px;text-align:center;box-sizing:border-box;font-variant-numeric:tabular-nums">$' + rpm[1] + '/M</span>';
-            }
-          }
-          var keyBadge = hr.hasApiKey
-            ? '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:700;color:var(--ok);padding:2px 6px;border:1px solid rgba(var(--ok-rgb),0.4);border-radius:5px;flex-shrink:0;min-width:47px;text-align:center;box-sizing:border-box">key ✓</span>'
-            : '<span style="font-size: calc(var(--ui-small-fs) - 3px);font-weight:600;color:var(--border-strong);padding:2px 6px;border:1px solid var(--border);border-radius:5px;flex-shrink:0;min-width:47px;text-align:center;box-sizing:border-box">no key</span>';
-          hostRows += '<div data-hostslot="' + escAttr(hr.provider + '|' + hr.modelId) + '" data-nodrag style="display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation">' +
-            '<span data-hostgrip data-nodrag title="drag to re-order priority" style="cursor:grab;color:var(--text-3);width:22px;height:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:6px;touch-action:none;font-size:12px;line-height:1">⠿</span>' +
-            '<span style="font-size: calc(var(--ui-small-fs) - 2px);font-weight:700;color:var(--bg-app);background:' + (hr.color || 'var(--border-strong)') + ';width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + (h + 1) + '</span>' +
-            '<span style="width:8px;height:8px;border-radius:50%;background:' + (hr.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-            '<span style="font-size: var(--ui-small-fs);color:' + (hr.hasApiKey ? 'var(--text-1)' : 'var(--text-3)') + ';flex-shrink:0;max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.providerDisplayName || hr.provider) + '</span>' +
-            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--border-strong);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(hr.modelId) + '</span>' +
-            routePrice +
-            '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0;min-width:30px;text-align:right">' + fmtCtx(hr.contextLength) + '</span>' +
-            keyBadge +
-            '<button data-hostup="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit;margin-left:2px" title="raise priority">▲</button>' +
-            '<button data-hostdown="' + escAttr(lm.logical + '|' + hr.provider) + '" data-nodrag style="background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:3px 6px;border-radius:5px;cursor:pointer;flex-shrink:0;font-family:inherit" title="lower priority">▼</button>' +
-            '</div>';
-        }
-      }
-
-      // v0.32 #5/#9: no "use" button — dimming carries availability; the
-      // left-side tap selects. (v0.32.1 VLM review: 0.5→0.55 + saturation
-      // 0.45→0.6 keeps dimmed rows clearly dimmed but their chips legible.)
-      var dim = available ? '' : 'opacity:0.55;filter:saturate(0.6);';
-
-      // v0.32.1 E: the current row wears the mb-cur ring (see styles).
-      // v0.32.3 F4: roving tabindex — the first row is tabbable, the rest
-      // are arrow-reachable (WAI-APG pattern); data-logical-id serves the
-      // Enter-to-select keyboard path.
-      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
-        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px">' + leftZone + separator + rightZone + '</div>' +
-        (chips ? '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:0 12px 10px;align-items:center">' + chips + '</div>' : '') +
-        (infoOpenNow ? detailDrawer(lm) : '') +
-        (expanded ? '<div data-hostlist="' + escAttr(lm.logical) + '" style="border-top:1px solid var(--surface-2)">' + hostRows + '</div>' : '') +
-        '</div>';
-    }
-
-    function orderedHosts(lm) {
-      var hosts = (lm.hosts || []).slice();
-      var order = hostOrder[lm.logical];
-      if (order && order.length) {
-        hosts.sort(function (a, b) {
-          var ia = order.indexOf(a.provider); var ib = order.indexOf(b.provider);
-          if (ia < 0) ia = 999; if (ib < 0) ib = 999;
-          return ia - ib;
-        });
-      }
-      return hosts;
-    }
-
-    function bmChip(text, score) {
-      var color = score >= 70 ? '#22c55e' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
-      // v0.32.1 G: a 32×3px score mini-bar next to the number — the score
-      // becomes readable at a glance (green ≥70, amber ≥40).
-      var pct = Math.max(5, Math.min(100, Math.round(score)));
-      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text +
-        '<span style="width:32px;height:3px;border-radius:2px;background:rgba(128,128,140,0.22);overflow:hidden;flex-shrink:0" title="score ' + Math.round(score) + '/100"><i style="display:block;height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.85"></i></span>' +
-        '</span>';
-    }
-
-    var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: 'var(--accent)', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
-    function capChip(cap) {
-      var key = String(cap).toLowerCase();
-      var color = CAP_COLORS[key] || 'var(--text-3)';
-      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:' + color + '14;padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
-    }
-
     // ── Matching / filtering ─────────────────────────────────────────────
 
     function modelMatches(m, g) {
@@ -1849,18 +1543,10 @@
       if (ctxMin > 0 && (m.contextLength || 0) < ctxMin) return false;
       if (pricing === 'free' && !m.isFree) return false;
       if (pricing === 'paid' && m.isFree) return false;
-      // v0.32 #4: "available" — the provider must have an API key.
-      if (filters.indexOf('available') >= 0 && !g.hasApiKey) return false;
-      // v0.32.2 A: "starred" — the model's family must be starred.
-      if (filters.indexOf('starred') >= 0 && starred.indexOf(m.family || '') < 0) return false;
-      // v0.32.1 A BUGFIX: 'available' alone must NOT route into the caps
-      // matcher (no capability branch matches it → every model hidden).
-      // v0.32.2: same for 'starred'.
-      var capFiltersM = [];
-      for (var fmi = 0; fmi < filters.length; fmi++) {
-        if (filters[fmi] !== 'available' && filters[fmi] !== 'starred') capFiltersM.push(filters[fmi]);
-      }
-      if (capFiltersM.length) {
+      // v0.34: "Available" — the provider must have an API key (the
+      // exclusive Available/All pair replaced the old OR-pill).
+      if (avail === 'available' && !g.hasApiKey) return false;
+      if (filters.length) {
         var bm = famBm[m.family] || {};
         return matchesFiltersCaps((m.capabilities || []), m.effortLevels, bm, String(m.rawId || '') + ' ' + String(m.displayName || ''));
       }
@@ -1878,21 +1564,10 @@
       if (ctxMin > 0 && (lm.contextLength || 0) < ctxMin) return false;
       if (pricing === 'free' && !lm.isFree) return false;
       if (pricing === 'paid' && lm.isFree) return false;
-      // v0.32 #4: "available" — ≥1 host with an API key (position in the
+      // v0.34: "Available" — ≥1 host with an API key (position in the
       // priority order is irrelevant).
-      if (filters.indexOf('available') >= 0 && !(lm.hosts || []).some(function (h) { return h.hasApiKey; })) return false;
-      // v0.32.2 A: "starred" — this logical model must be starred.
-      if (filters.indexOf('starred') >= 0 && starred.indexOf(lm.logical) < 0) return false;
-      // v0.32.1 A BUGFIX: same as modelMatches — 'available' as the ONLY
-      // filter must not fall through into the capability matcher (none of
-      // its branches match 'available', so the list used to go empty:
-      // "503 models hidden by filters" while 148 were key-backed).
-      // v0.32.2: same exclusion for 'starred'.
-      var capFiltersL = [];
-      for (var fli = 0; fli < filters.length; fli++) {
-        if (filters[fli] !== 'available' && filters[fli] !== 'starred') capFiltersL.push(filters[fli]);
-      }
-      if (capFiltersL.length) {
+      if (avail === 'available' && !(lm.hosts || []).some(function (h) { return h.hasApiKey; })) return false;
+      if (filters.length) {
         var attrs = lm.attributes || {};
         return matchesFiltersCaps(attrs.capabilities || [], attrs.effortLevels, attrs.benchmarks || {}, String(lm.logical || '') + ' ' + String(lm.displayName || ''));
       }
@@ -1901,11 +1576,9 @@
 
     // OR across pills; reasoning also true when effort levels exist;
     // smart/code/agent match the Artificial Analysis benchmarks (v0.32 #3)
-    // with capability fallbacks.
-    // v0.32.8 F4: optional `keys` overrides the global filter list — the
-    // pill-count badges count one pill's predicate at a time.
-    function matchesFiltersCaps(caps, effortLevels, bm, name, keys) {
-      keys = keys || filters;
+    // with capability fallbacks. v0.34: only capability pills remain in
+    // `filters` (available → the exclusive pair, starred → the ★ tab).
+    function matchesFiltersCaps(caps, effortLevels, bm, name) {
       bm = bm || {};
       var capsLower = (caps || []).map(function (c) { return String(c).toLowerCase(); });
       var hasCap = function (frag) {
@@ -1914,8 +1587,8 @@
         }
         return false;
       };
-      for (var f = 0; f < keys.length; f++) {
-        var key = keys[f];
+      for (var f = 0; f < filters.length; f++) {
+        var key = filters[f];
         var ok = false;
         if (key === 'reasoning') ok = hasCap('reason') || (effortLevels && effortLevels.length > 0) || /reasoning|thinking/.test(name);
         else if (key === 'tools') ok = hasCap('tool') || hasCap('function') || hasCap('agent');
@@ -1923,7 +1596,6 @@
         else if (key === 'code') ok = (bm.coding || 0) > 0 || hasCap('code') || hasCap('coding');
         else if (key === 'agent') ok = (bm.agentic || 0) > 0 || hasCap('agent') || hasCap('agentic');
         else if (key === 'intelligence') ok = (bm.intelligence || 0) > 0 || hasCap('smart');
-        // 'available' is handled by the callers.
         if (ok) return true; // OR across pills
       }
       return false;
@@ -1944,7 +1616,7 @@
       return score;
     }
 
-    // ── Selection (v0.32 #6: left-side tap) ──────────────────────────────
+    // ── Selection ────────────────────────────────────────────────────────
 
     function findLogical(logical) {
       var logicals = (catalog && catalog.logical) || [];
@@ -1966,9 +1638,19 @@
         showHint('No API key yet for any provider of ' + escHTML(lm.displayName || lm.logical) + ' — add one in the Providers tab.');
         return;
       }
-      rememberRecent(logical); // v0.32.3 F1: recents feed the ★ quick-switch
+      rememberRecent(logical); // v0.32.3 F1: recents feed the MRU sort
       window.ConnectOverlay.close();
       if (onPick) onPick(best.provider, best.modelId);
+    }
+
+    function selectRoute(slot) {
+      var slash = String(slot).indexOf('/');
+      var provider = String(slot).slice(0, slash);
+      var modelId = String(slot).slice(slash + 1);
+      var lg = logicalFor(provider, modelId); // v0.32.3 F1
+      if (lg) rememberRecent(lg);
+      window.ConnectOverlay.close();
+      if (onPick) onPick(provider, modelId);
     }
 
     // v0.32.1 D: POST the pasted key for the view-only provider, then
@@ -1979,11 +1661,7 @@
       if (!inp) return;
       var key = (inp.value || '').trim();
       var name = keyAdding;
-      var g = null;
-      var groups = (catalog && catalog.groups) || [];
-      for (var i = 0; i < groups.length; i++) {
-        if (groups[i].name === name) { g = groups[i]; break; }
-      }
+      var g = groupByName(name);
       if (!g || !g.envVar) { keyAdding = null; render(); return; }
       if (!key) { inp.focus(); return; }
       var saveBtn = contentEl.querySelector('[data-keysave]');
@@ -2028,20 +1706,19 @@
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
-      // v0.32.2 (VLM round 3): --text-2 when available — the hint must be
-      // readable, not a whisper. v0.32.4: mentions the ℹ drawer + shortcuts.
-      // v0.32.5: mentions ⚖ compare + per-route prices.
       return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
-        'tap the name to select · the dots open priority · ℹ shows benchmarks & pricing · ⚖ compares two models or providers (press c) · ★ stars a favorite (or press s) · ⠿ drag to re-order · / searches · x clears all filters · Esc closes · ' + liveCount() + ' providers live' +
+        'tap a row to select · ★ pins a favorite (its own tab above) · ℹ shows benchmarks & pricing · ⚖ compares two models · ➜ re-arranges providers · hold a row to drag · / searches · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
 
     // ── Drag & drop (v0.32 #7/#8) — iPhone-style reorder ─────────────────
     //
     // The dragged item follows the finger 1:1 (transform, no transition);
-    // siblings FLIP around it (transform transitions). Works for both the
-    // provider boxes (hold 220ms or grab the ⠿ grip) and the host priority
-    // rows (drag from the ⠿ handle). Persists via onOrder(keys).
+    // siblings FLIP around it (transform transitions). Provider boxes:
+    // hold 220ms (or grab the ⠿ grip) and drag. v0.34: the host rows in
+    // the priority drop-down drag from a HOLD ANYWHERE too (the ⠿ grip is
+    // gone — the 🔑 icon replaced it) — taps still select the route, and
+    // the ▲▼ arrows stay exempt.
 
     function makeSortable(listEl, cfg) {
       // cfg: { itemSel, startSel (where a drag may begin), handleSel (instant
@@ -2204,7 +1881,7 @@
           detachDoc();
           down = null;
           if (changed && cfg.onOrder) cfg.onOrder(keys);
-          else render();
+          else renderList();
         }, 200);
       }
 
@@ -2223,8 +1900,7 @@
         var item = target.closest(cfg.itemSel);
         if (!item || !listEl.contains(item) || item.parentElement !== listEl) return;
         var onHandle = !!(cfg.handleSel && target.closest(cfg.handleSel));
-        // Drags may only begin in the allowed start zone (provider boxes:
-        // the header; host rows: the ⠿ handle only).
+        // Drags may only begin in the allowed start zone.
         var zone = cfg.startSel || cfg.itemSel;
         if (!onHandle && !target.closest(zone)) return;
         // Never hijack interactive children (▲▼, buttons, links).
@@ -2238,8 +1914,6 @@
           moved: false,
           handleInstant: onHandle
         };
-        // Gesture-level document listeners (removed on finish — no leaks
-        // across the panel's innerHTML re-renders).
         docMove = function (ev) {
           if (drag) {
             drag.lastY = ev.clientY;
@@ -2282,437 +1956,348 @@
     }
 
     // ── Wiring ───────────────────────────────────────────────────────────
+    //
+    // v0.34: ONE delegated click/input/change/keydown handler set on the
+    // overlay's contentEl, bound ONCE per open — the innerHTML zone swaps
+    // never orphan listeners, and there is no per-row wiring cost. This
+    // (plus the 100-row page cap) is what killed the 1–3s tap lag.
 
     var searchTimer = null;
 
-    function wireEvents() {
+    function wireOnce() {
       var contentEl = window.ConnectOverlay.getContentEl();
-      function clickSuppressed() { return Date.now() < suppressClickUntil; }
+      if (!contentEl) return;
 
-      var closeBtn = contentEl.querySelector('#mb-close');
-      if (closeBtn) closeBtn.addEventListener('click', window.ConnectOverlay.close);
-
-      var vp = contentEl.querySelector('#mb-view-providers');
-      var vm = contentEl.querySelector('#mb-view-models');
-      if (vp) vp.addEventListener('click', function () { switchView('providers'); });
-      if (vm) vm.addEventListener('click', function () { switchView('models'); });
-
-      var refreshBtn = contentEl.querySelector('#mb-refresh');
-      if (refreshBtn) refreshBtn.addEventListener('click', function () {
-        syncing = true;
-        render();
-        fetchCatalog(true, function () { render(); });
-      });
-
-      var searchInput = contentEl.querySelector('#mb-search');
-      if (searchInput) {
-        // v0.32.2 C: Esc inside a non-empty search clears it (instead of
-        // closing the whole overlay); empty + Esc blurs. stopPropagation so
-        // the document-level Esc-close doesn't also fire.
-        searchInput.addEventListener('keydown', function (e) {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            if (searchInput.value) {
-              searchInput.value = '';
-              search = '';
-              render(); // focus+caret are restored by render()
-            } else {
-              searchInput.blur();
-            }
-          }
-        });
-        searchInput.addEventListener('input', function () {
+      contentEl.addEventListener('click', delegatedClick);
+      contentEl.addEventListener('input', function (e) {
+        if (e.target && e.target.id === 'mb-search') {
           if (searchTimer) clearTimeout(searchTimer);
+          var v = e.target.value;
           searchTimer = setTimeout(function () {
-            search = searchInput.value;
-            render();
+            search = v;
+            shownCount = PAGE;
+            renderList();
           }, 200);
-        });
-      }
-
-      // v0.32 #1: the filter toggle.
-      var ft = contentEl.querySelector('#mb-filters-toggle');
-      if (ft) ft.addEventListener('click', function () {
-        filtersOpen = !filtersOpen;
-        lsSet('filtersOpen', filtersOpen);
-        render();
+        }
       });
-
-      // Filter pills.
-      // v0.32.4 P0 BUGFIX: activating a scoring pill (Smart/Agent/Code)
-      // auto-aligns the sort to the pill's metric — the pill's documented
-      // contract ("Smart = highest→lowest AA") must hold even when a
-      // different sort (e.g. 'starred') was persisted from an earlier
-      // session. The dropdown visibly updates, so it's discoverable and
-      // reversible. Deactivating never touches the sort.
-      var PILL_SORT = { intelligence: 'aa', code: 'code', agent: 'agent' };
-      contentEl.querySelectorAll('[data-pill]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var key = btn.dataset.pill;
-          var idx = filters.indexOf(key);
-          if (idx >= 0) filters.splice(idx, 1);
-          else {
-            filters.push(key);
-            if (PILL_SORT[key] && PILL_SORT[key] !== sortKey) {
-              sortKey = PILL_SORT[key];
-              lsSet('sort', sortKey);
-            }
-          }
-          lsSet('filters', filters);
-          render();
-        });
-      });
-
-      // Context pills.
-      contentEl.querySelectorAll('[data-ctx]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          ctxMin = parseInt(btn.dataset.ctx, 10) || 0;
-          lsSet('ctxMin', ctxMin);
-          render();
-        });
-      });
-
-      // Pricing pills (self-cancelling — no "Any $").
-      contentEl.querySelectorAll('[data-pricing]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          pricing = (pricing === btn.dataset.pricing) ? 'all' : btn.dataset.pricing;
-          lsSet('pricing', pricing);
-          render();
-        });
-      });
-
-      var clearBtn = contentEl.querySelector('#mb-clear');
-      if (clearBtn) clearBtn.addEventListener('click', resetAllFilters);
-
-      // v0.32.1 C: the tappable "N hidden · clear" line under the list.
-      var clearAll = contentEl.querySelector('[data-clearall]');
-      if (clearAll) clearAll.addEventListener('click', resetAllFilters);
-
-      // v0.32.3 F5: the zero-result empty state's clear buttons.
-      contentEl.querySelectorAll('[data-emptyclear]').forEach(function (b) {
-        b.addEventListener('click', function () {
-          if (b.dataset.emptyclear === 'search') {
+      contentEl.addEventListener('keydown', function (e) {
+        var t = e.target;
+        if (t && t.getAttribute && t.getAttribute('data-keyinput') != null) {
+          // the inline add-key form owns its keys
+          if (e.key === 'Enter') { e.stopPropagation(); saveProviderKey(); }
+          else if (e.key === 'Escape') { e.stopPropagation(); keyAdding = null; renderList(); }
+          return;
+        }
+        if (t && t.id === 'mb-search' && e.key === 'Escape') {
+          // v0.32.2 C: Esc inside a non-empty search clears it; empty blurs.
+          e.stopPropagation();
+          if (t.value) {
+            t.value = '';
             search = '';
-            var si = contentEl.querySelector('#mb-search');
-            if (si) si.value = '';
+            shownCount = PAGE;
+            renderList();
           } else {
-            filters = []; ctxMin = 0; pricing = 'all';
-            lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all');
+            t.blur();
           }
-          render();
+        }
+      });
+      contentEl.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'mb-sort') {
+          sortKey = e.target.value;
+          lsSet('sort', sortKey);
+          renderList();
+        }
+      });
+
+      // v0.34: auto-load the next page when the user nears the bottom.
+      var morePending = false;
+      contentEl.addEventListener('scroll', function () {
+        if (morePending) return;
+        if (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight > 600) return;
+        var more = contentEl.querySelector('#mb-more');
+        if (!more) return;
+        morePending = true;
+        requestAnimationFrame(function () {
+          morePending = false;
+          if (!window.ConnectOverlay.isOpen()) return;
+          var m2 = contentEl.querySelector('#mb-more');
+          if (!m2) return;
+          shownCount += PAGE;
+          renderList();
         });
       });
 
-      // v0.32.1 B: the sort select.
-      var sortSel = contentEl.querySelector('#mb-sort');
-      if (sortSel) sortSel.addEventListener('change', function () {
-        sortKey = sortSel.value;
-        lsSet('sort', sortKey);
-        render();
-      });
+      bindKeyboardNav(contentEl);
+    }
 
-      // v0.32.2 A: star toggles. In-place restyle (no re-render) so the
-      // scroll position survives — EXCEPT when the Starred pill is active
-      // (then the row must leave/enter the list).
-      contentEl.querySelectorAll('[data-star]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          if (clickSuppressed()) return;
-          var key = btn.dataset.star;
-          var wasOn = starred.indexOf(key) >= 0;
-          if (wasOn) {
-            starred.splice(starred.indexOf(key), 1);
-          } else {
-            starred.push(key);
-          }
-          lsSet('starred', starred);
-          updateStarBadge();
-          updateStarCountLine(); // v0.32.8 F3: counts-line ★ total, in place
-          // v0.32.7 F3: a quick pop so the tap lands visibly.
-          btn.classList.remove('mb-star-pop');
-          void btn.offsetWidth;
-          btn.classList.add('mb-star-pop');
-          if (filters.indexOf('starred') >= 0) { render(); return; }
-          btn.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
-          btn.title = wasOn ? 'star this model' : 'unstar this model';
-          btn.style.color = wasOn ? 'var(--border-strong)' : '#eab308';
-          btn.style.background = wasOn ? 'transparent' : 'rgba(234,179,8,0.12)';
-          btn.style.borderColor = wasOn ? 'transparent' : 'rgba(234,179,8,0.45)';
-        });
-      });
+    function delegatedClick(e) {
+      if (clickSuppressed()) { e.stopPropagation(); return; }
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var c = window.ConnectOverlay.getContentEl();
 
-      // v0.32.1 D: inline add-key flow on view-only provider boxes.
-      contentEl.querySelectorAll('[data-addkey]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          if (clickSuppressed()) return;
-          keyAdding = btn.dataset.addkey;
-          render();
-          var inp = contentEl.querySelector('[data-keyinput]');
-          if (inp) inp.focus();
-        });
-      });
-      // v0.32.8 F1: the ⚖ provider-compare pin — same guards as the models
-      // view's compare button.
-      contentEl.querySelectorAll('[data-pcmp]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          toggleProvComparePin(btn.dataset.pcmp);
-          render();
-        });
-      });
-      // v0.32.8 F1: ✕ on the provider compare drawer / hint — unpins all.
-      contentEl.querySelectorAll('[data-pcmpclose]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          provComparePair = [];
-          render();
-        });
-      });
-      // v0.32.8 F1: "browse N models →" — deep-link into the Models tab
-      // with the provider's name as the search (logicalMatches matches
-      // host display names), pins cleared so the strip doesn't linger.
-      // v0.32.8 F1 FIX: also reset pills/ctx/pricing — the button says
-      // "browse N models" and must DELIVER N rows; with a stray filter
-      // on (e.g. Smart) it used to show Smart∩provider (10 of 82) and
-      // break its own promise. A scoped browse starts clean.
-      contentEl.querySelectorAll('[data-pcmpbrowse]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          provComparePair = [];
-          search = String(btn.dataset.pcmpbrowse || '');
-          filters = [];
-          ctxMin = 0;
-          pricing = 'all';
-          lsSet('filters', filters);
-          lsSet('ctxMin', ctxMin);
-          lsSet('pricing', pricing);
-          view = 'models';
-          lsSet('view', 'models');
-          render();
-          var si = contentEl.querySelector('#mb-search');
-          if (si) si.focus();
-        });
-      });
-      var keyInput = contentEl.querySelector('[data-keyinput]');
-      if (keyInput) {
-        keyInput.addEventListener('keydown', function (e) {
-          e.stopPropagation();
-          if (e.key === 'Enter') saveProviderKey();
-          else if (e.key === 'Escape') { keyAdding = null; render(); }
-        });
+      // buttons FIRST (they sit inside bigger click zones)
+      var el;
+      if ((el = t.closest('[data-star]'))) {
+        e.stopPropagation();
+        var key = el.getAttribute('data-star');
+        var wasOn = starred.indexOf(key) >= 0;
+        if (wasOn) starred.splice(starred.indexOf(key), 1);
+        else starred.push(key);
+        lsSet('starred', starred);
+        if (view === 'favorites') { renderList(); updateHead(); return; }
+        // in-place: the bare ★ flips gold — no chip, no re-render
+        el.setAttribute('aria-pressed', wasOn ? 'false' : 'true');
+        el.setAttribute('data-on', wasOn ? '0' : '1');
+        el.title = wasOn ? 'star this favorite' : 'unstar this favorite';
+        return;
       }
-      var keySave = contentEl.querySelector('[data-keysave]');
-      if (keySave) keySave.addEventListener('click', function (e) {
+      if ((el = t.closest('[data-hostup]'))) {
+        e.stopPropagation();
+        moveHost(el.getAttribute('data-hostup'), -1);
+        return;
+      }
+      if ((el = t.closest('[data-hostdown]'))) {
+        e.stopPropagation();
+        moveHost(el.getAttribute('data-hostdown'), 1);
+        return;
+      }
+      if ((el = t.closest('[data-info]'))) {
+        e.stopPropagation();
+        var iKey = el.getAttribute('data-info');
+        if (infoOpen[iKey]) delete infoOpen[iKey]; else infoOpen[iKey] = true;
+        var row = el.closest('.mb-logrow');
+        if (row && row.getAttribute('data-slot')) refreshSlotRow(row.getAttribute('data-slot'));
+        else refreshRow(iKey);
+        return;
+      }
+      if ((el = t.closest('[data-compare]'))) {
+        e.stopPropagation();
+        toggleComparePin(el.getAttribute('data-compare'));
+        renderList();
+        return;
+      }
+      if ((el = t.closest('[data-cmpclose]'))) {
+        e.stopPropagation();
+        comparePair = [];
+        renderList();
+        return;
+      }
+      if ((el = t.closest('[data-cmpuse]'))) {
+        e.stopPropagation();
+        selectLogical(el.getAttribute('data-cmpuse'));
+        return;
+      }
+      if ((el = t.closest('[data-addkey]'))) {
+        e.stopPropagation();
+        keyAdding = el.getAttribute('data-addkey');
+        renderList();
+        var inp = c && c.querySelector('[data-keyinput]');
+        if (inp) inp.focus();
+        return;
+      }
+      if ((el = t.closest('[data-keysave]'))) {
         e.stopPropagation();
         saveProviderKey();
-      });
-      var keyCancel = contentEl.querySelector('[data-keycancel]');
-      if (keyCancel) keyCancel.addEventListener('click', function (e) {
+        return;
+      }
+      if ((el = t.closest('[data-keycancel]'))) {
         e.stopPropagation();
         keyAdding = null;
-        render();
-      });
-
-      // ── Providers tab ──
-      var provList = contentEl.querySelector('#mb-provlist');
-      if (provList) {
-        // Provider box expand/collapse (tap the header).
-        contentEl.querySelectorAll('[data-provhead]').forEach(function (head) {
-          head.addEventListener('click', function (e) {
-            if (clickSuppressed()) return;
-            if (e.target.closest && e.target.closest('[data-slot],[data-addkey],[data-keyform],[data-grip]')) return;
-            var name = head.dataset.provhead;
-            providerExpanded[name] = !providerExpanded[name];
-            lsSet('providerExpanded', providerExpanded);
-            render();
-          });
-        });
-
-        // v0.32 #8: hold a provider box (or grab its ⠿ grip) and drag to
-        // re-order the boxes.
-        makeSortable(provList, {
-          itemSel: '.mb-provbox',
-          startSel: '[data-provhead]',
-          handleSel: '[data-grip]',
-          holdMs: 220,
-          keyOf: function (el) { return el.dataset.prov; },
-          onOrder: function (keys) {
-            providerOrder = keys;
-            lsSet('providerOrder', providerOrder);
-            render();
-          }
-        });
+        renderList();
+        return;
       }
-
-      // Provider model row → select.
-      contentEl.querySelectorAll('[data-slot]').forEach(function (row) {
-        row.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          var slot = row.dataset.slot;
-          var slash = slot.indexOf('/');
-          var provider = slot.slice(0, slash);
-          var modelId = slot.slice(slash + 1);
-          var lg = logicalFor(provider, modelId); // v0.32.3 F1
-          if (lg) rememberRecent(lg);
-          window.ConnectOverlay.close();
-          if (onPick) onPick(provider, modelId);
-        });
-      });
-
-      // ── Models tab ──
-      // v0.32 #6: LEFT zone → select the model.
-      contentEl.querySelectorAll('[data-select]').forEach(function (zone) {
-        zone.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          selectLogical(zone.dataset.select);
-        });
-      });
-
-      // v0.32 #6: RIGHT zone (separator, dots, ctx, price, chevron) → open
-      // the provider-priority dropdown.
-      contentEl.querySelectorAll('[data-expand]').forEach(function (zone) {
-        zone.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          var logical = zone.dataset.expand;
-          if (expandedLogical[logical]) delete expandedLogical[logical];
-          else expandedLogical[logical] = true;
-          render();
-        });
-      });
-
-      // v0.32.4 F2: the ℹ button — toggles the detail drawer. Must NOT
-      // trigger the surrounding data-expand zone (stopPropagation) and must
-      // stay drag-safe (data-nodrag is on the button).
-      contentEl.querySelectorAll('[data-info]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          var logical = btn.dataset.info;
-          if (infoOpen[logical]) delete infoOpen[logical];
-          else infoOpen[logical] = true;
-          render();
-        });
-      });
-
-      // v0.32.5 F2: the ⚖ compare pin — same guards as the ℹ button
-      // (stopPropagation keeps the data-expand zone quiet; data-nodrag
-      // keeps the long-press reorder disarmed).
-      contentEl.querySelectorAll('[data-compare]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          toggleComparePin(btn.dataset.compare);
-          render();
-        });
-      });
-
-      // v0.32.5 F2: ✕ on the compare drawer / pin hint — unpins everything.
-      contentEl.querySelectorAll('[data-cmpclose]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          comparePair = [];
-          render();
-        });
-      });
-
-      // v0.32.6 F2: "use this model" straight from the compare drawer —
-      // same path as the row's left-zone select (best key-backed route;
-      // keyless → the inline hint explains, overlay stays open).
-      contentEl.querySelectorAll('[data-cmpuse]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          selectLogical(btn.dataset.cmpuse);
-        });
-      });
-
-      // v0.32.7 F2: the compare drawer's "use cheapest route" — same
-      // decision path as the per-column buttons (selectLogical handles
-      // the keyless case with the inline hint).
-      contentEl.querySelectorAll('[data-cmpcheapest]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          selectLogical(btn.dataset.cmpcheapest);
-        });
-      });
-
-      // v0.32.6 F3: remove ONE filter via its collapsed chip. The chip's
-      // data-unfilter encodes type:value so each kind resets precisely.
-      contentEl.querySelectorAll('[data-unfilter]').forEach(function (chip) {
-        chip.addEventListener('click', function () {
-          if (clickSuppressed()) return;
-          var spec = String(chip.dataset.unfilter || '');
-          var cut = spec.indexOf(':');
-          if (cut < 0) return;
+      if ((el = t.closest('[data-unfilter]'))) {
+        e.stopPropagation();
+        var spec = String(el.getAttribute('data-unfilter') || '');
+        var cut = spec.indexOf(':');
+        if (cut >= 0) {
           var kind = spec.slice(0, cut), val = spec.slice(cut + 1);
           if (kind === 'pill') {
             var idx = filters.indexOf(val);
             if (idx >= 0) filters.splice(idx, 1);
             lsSet('filters', filters);
           } else if (kind === 'ctx') {
-            ctxMin = 0;
-            lsSet('ctxMin', 0);
+            ctxMin = 0; lsSet('ctxMin', 0);
           } else if (kind === 'pricing') {
-            pricing = 'all';
-            lsSet('pricing', 'all');
+            pricing = 'all'; lsSet('pricing', 'all');
+          } else if (kind === 'avail') {
+            avail = 'all'; lsSet('avail', 'all');
           }
-          render();
-        });
-      });
+        }
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-emptyclear]'))) {
+        e.stopPropagation();
+        if (el.getAttribute('data-emptyclear') === 'search') {
+          search = '';
+          var si = c && c.querySelector('#mb-search');
+          if (si) si.value = '';
+        } else {
+          filters = []; ctxMin = 0; pricing = 'all'; avail = 'all';
+          lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all'); lsSet('avail', 'all');
+        }
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-clearall]'))) {
+        e.stopPropagation();
+        filters = []; ctxMin = 0; pricing = 'all'; avail = 'all'; search = '';
+        lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all'); lsSet('avail', 'all');
+        var si2 = c && c.querySelector('#mb-search');
+        if (si2) si2.value = '';
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if (t.closest('#mb-more')) {
+        e.stopPropagation();
+        shownCount += PAGE;
+        renderList();
+        return;
+      }
+      if (t.closest('#mb-close')) { window.ConnectOverlay.close(); return; }
+      if ((el = t.closest('[data-viewtab]'))) {
+        e.stopPropagation();
+        switchView(el.getAttribute('data-viewtab'));
+        return;
+      }
+      if (t.closest('#mb-refresh')) {
+        e.stopPropagation();
+        syncing = true;
+        updateHead();
+        fetchCatalog(true, function () { render(); });
+        return;
+      }
+      if (t.closest('#mb-filters-toggle')) {
+        e.stopPropagation();
+        filtersOpen = !filtersOpen;
+        lsSet('filtersOpen', filtersOpen);
+        updateSticky();
+        return;
+      }
+      if (t.closest('#mb-clear')) {
+        e.stopPropagation();
+        filters = []; ctxMin = 0; pricing = 'all'; avail = 'all'; search = '';
+        lsSet('filters', []); lsSet('ctxMin', 0); lsSet('pricing', 'all'); lsSet('avail', 'all');
+        var si3 = c && c.querySelector('#mb-search');
+        if (si3) si3.value = '';
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-pill]'))) {
+        e.stopPropagation();
+        var pKey = el.getAttribute('data-pill');
+        var pi = filters.indexOf(pKey);
+        if (pi >= 0) filters.splice(pi, 1);
+        else {
+          filters.push(pKey);
+          // v0.32.4 P0: a scoring pill auto-aligns the sort to its metric.
+          var PILL_SORT = { intelligence: 'aa', code: 'code', agent: 'agent' };
+          if (PILL_SORT[pKey] && PILL_SORT[pKey] !== sortKey) {
+            sortKey = PILL_SORT[pKey];
+            lsSet('sort', sortKey);
+          }
+        }
+        lsSet('filters', filters);
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-ctx]'))) {
+        e.stopPropagation();
+        ctxMin = parseInt(el.getAttribute('data-ctx'), 10) || 0;
+        lsSet('ctxMin', ctxMin);
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-pricing]'))) {
+        e.stopPropagation();
+        pricing = (pricing === el.getAttribute('data-pricing')) ? 'all' : el.getAttribute('data-pricing');
+        lsSet('pricing', pricing);
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-avail]'))) {
+        e.stopPropagation();
+        avail = el.getAttribute('data-avail') === 'available' ? 'available' : 'all';
+        lsSet('avail', avail);
+        shownCount = PAGE;
+        updateSticky(); renderList();
+        return;
+      }
+      if ((el = t.closest('[data-provhead]'))) {
+        e.stopPropagation();
+        if (t.closest && t.closest('[data-slot],[data-addkey],[data-keyform],[data-grip]')) return;
+        var pname = el.getAttribute('data-provhead');
+        providerExpanded[pname] = !providerExpanded[pname];
+        lsSet('providerExpanded', providerExpanded);
+        renderList();
+        return;
+      }
+      if ((el = t.closest('[data-hostslot]'))) {
+        e.stopPropagation();
+        selectRoute(el.getAttribute('data-hostslot'));
+        return;
+      }
+      if ((el = t.closest('[data-slotrow]'))) {
+        e.stopPropagation();
+        var srow = el.closest('[data-slot]');
+        if (srow) selectRoute(srow.getAttribute('data-slot'));
+        return;
+      }
+      if ((el = t.closest('[data-expand]'))) {
+        e.stopPropagation();
+        var xKey = el.getAttribute('data-expand');
+        if (expandedLogical[xKey]) delete expandedLogical[xKey];
+        else expandedLogical[xKey] = true;
+        refreshRow(xKey);
+        return;
+      }
+      if ((el = t.closest('[data-select]'))) {
+        e.stopPropagation();
+        selectLogical(el.getAttribute('data-select'));
+        return;
+      }
+    }
 
-      // Tapping a HOST row (in the expanded rank list) selects that exact
-      // provider+model.
-      contentEl.querySelectorAll('[data-hostslot]').forEach(function (row) {
-        row.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          if (e.target.closest && e.target.closest('[data-hostup], [data-hostdown], [data-hostgrip]')) return;
-          e.stopPropagation();
-          var parts = row.dataset.hostslot.split('|');
-          var provider = parts.shift();
-          var modelId = parts.join('|');
-          var lg = logicalFor(provider, modelId); // v0.32.3 F1
-          if (lg) rememberRecent(lg);
-          window.ConnectOverlay.close();
-          if (onPick) onPick(provider, modelId);
-        });
-      });
+    function clickSuppressed() { return Date.now() < suppressClickUntil; }
 
-      // Host reorder: ▲▼ buttons…
-      contentEl.querySelectorAll('[data-hostup]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          moveHost(btn.dataset.hostup, -1);
+    // rebind the per-list drag handlers after a zone swap (the delegated
+    // click/input/change/keydown handlers above survive untouched)
+    function wireZones() {
+      var contentEl = window.ConnectOverlay.getContentEl();
+      if (!contentEl) return;
+      var provList = contentEl.querySelector('#mb-provlist');
+      if (provList) {
+        makeSortable(provList, {
+          itemSel: '.mb-provbox',
+          startSel: '[data-provhead]',
+          handleSel: '[data-grip]',
+          holdMs: 220,
+          keyOf: function (el) { return el.getAttribute('data-prov'); },
+          onOrder: function (keys) {
+            providerOrder = keys;
+            lsSet('providerOrder', providerOrder);
+            renderList();
+          }
         });
-      });
-      contentEl.querySelectorAll('[data-hostdown]').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          if (clickSuppressed()) return;
-          e.stopPropagation();
-          moveHost(btn.dataset.hostdown, 1);
-        });
-      });
-
-      // …and v0.32 #7: drag-and-drop per expanded logical model.
+      }
       contentEl.querySelectorAll('[data-hostlist]').forEach(function (hostListEl) {
         makeSortable(hostListEl, {
           itemSel: '[data-hostslot]',
-          startSel: '[data-hostgrip]',
-          handleSel: '[data-hostgrip]',
-          holdMs: 0,
-          keyOf: function (el) { return el.dataset.hostslot; },
+          startSel: '[data-hostslot]', // v0.34: hold the ROW anywhere
+          handleSel: null,             // the ⠿ grip is gone (🔑 took its place)
+          holdMs: 220,
+          keyOf: function (el) { return el.getAttribute('data-hostslot'); },
           onOrder: function (keys) {
-            var logical = hostListEl.dataset.hostlist;
-            // Persist provider order (hostOrder is provider-keyed).
+            var logical = hostListEl.getAttribute('data-hostlist');
             var providers = [];
             keys.forEach(function (k) {
               var p = k.split('|')[0];
@@ -2720,28 +2305,147 @@
             });
             hostOrder[logical] = providers;
             lsSet('hostOrder', hostOrder);
-            render();
+            renderList();
           }
         });
       });
+      if (keyAdding) {
+        var inp = contentEl.querySelector('[data-keyinput]');
+        if (inp) { try { inp.focus(); } catch (e) {} }
+      }
+    }
+
+    // v0.32.3 F4: keyboard navigation (roving tabindex, WAI-APG).
+    // Arrows move focus among the logical rows (models + favorites views)
+    // or provider box headers (providers view); Enter/Space selects or
+    // toggles; ArrowRight/Left expand/collapse; Home/End jump to the
+    // ends; the search box's ArrowDown drops into the list. Bound ONCE
+    // per open on the content element (v0.34 — survives zone swaps).
+    function bindKeyboardNav(contentEl) {
+      contentEl.addEventListener('keydown', function (e) {
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) {
+          if (t.id === 'mb-search' && e.key === 'ArrowDown') {
+            var r0 = visibleKbRows()[0];
+            if (r0) { e.preventDefault(); focusKbRow(r0); }
+          }
+          return; // typing in the search box owns every other key
+        }
+        var rows = visibleKbRows();
+        if (!rows.length) return;
+        var row = (t && t.classList && (t.classList.contains('mb-logrow') || t.hasAttribute && t.hasAttribute('data-provhead'))) ? t : null;
+        if (!row) return; // inner controls (stars, ▲▼, pills) keep their keys
+        var idx = rows.indexOf(row);
+        if (idx < 0) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          var next = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+          if (next < 0) next = rows.length - 1;
+          if (next >= rows.length) next = 0;
+          focusKbRow(rows[next]);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          focusKbRow(rows[0]);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          focusKbRow(rows[rows.length - 1]);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var name = row.getAttribute('data-provhead');
+            providerExpanded[name] = !providerExpanded[name];
+            lsSet('providerExpanded', providerExpanded);
+            renderList();
+            refocusAfterRender('[data-provhead="' + (name && name.replace(/"/g, '\\"')) + '"]');
+          } else {
+            selectLogical(row.getAttribute('data-logical-id'));
+          }
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var pn = row.getAttribute('data-provhead');
+            if (!providerExpanded[pn]) {
+              providerExpanded[pn] = true;
+              lsSet('providerExpanded', providerExpanded);
+              renderList();
+              refocusAfterRender('[data-provhead="' + (pn && pn.replace(/"/g, '\\"')) + '"]');
+            }
+          } else {
+            var lid = row.getAttribute('data-logical-id');
+            if (!expandedLogical[lid]) {
+              expandedLogical[lid] = true;
+              refreshRow(lid);
+            }
+          }
+        } else if ((e.key === 'i' || e.key === 'I') && view !== 'providers') {
+          // v0.32.4 F2: "i" toggles the detail drawer on the focused row.
+          e.preventDefault();
+          var ilid = row.getAttribute('data-logical-id');
+          if (infoOpen[ilid]) delete infoOpen[ilid]; else infoOpen[ilid] = true;
+          refreshRow(ilid);
+          refocusAfterRender('.mb-logrow[data-logical-id="' + (ilid || '').replace(/"/g, '\\"') + '"]');
+        } else if ((e.key === 'c' || e.key === 'C') && view !== 'providers') {
+          // v0.32.5 F2: "c" toggles the compare pin on the focused row.
+          e.preventDefault();
+          toggleComparePin(row.getAttribute('data-logical-id'));
+          renderList();
+          refocusAfterRender('.mb-logrow[data-logical-id="' + (row.getAttribute('data-logical-id') || '').replace(/"/g, '\\"') + '"]');
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          if (view === 'providers') {
+            var cn = row.getAttribute('data-provhead');
+            if (providerExpanded[cn]) {
+              delete providerExpanded[cn];
+              lsSet('providerExpanded', providerExpanded);
+              renderList();
+              refocusAfterRender('[data-provhead="' + (cn && cn.replace(/"/g, '\\"')) + '"]');
+            }
+          } else {
+            var clid = row.getAttribute('data-logical-id');
+            if (expandedLogical[clid]) {
+              delete expandedLogical[clid];
+              refreshRow(clid);
+            }
+          }
+        }
+      });
+
+      function visibleKbRows() {
+        var sel = view === 'providers' ? '[data-provhead]' : '.mb-logrow[data-logical-id]:not([data-logical-id=""])';
+        var els = contentEl.querySelectorAll(sel);
+        var out = [];
+        for (var i = 0; i < els.length; i++) {
+          if (els[i].offsetParent !== null) out.push(els[i]);
+        }
+        return out;
+      }
+      function focusKbRow(el) {
+        if (!el || !el.offsetParent) return;
+        var rows = visibleKbRows();
+        for (var i = 0; i < rows.length; i++) rows[i].tabIndex = -1;
+        el.tabIndex = 0; // the roving tab stop follows the keyboard focus
+        el.focus();
+      }
+      function refocusAfterRender(selector) {
+        var again = contentEl.querySelector(selector);
+        if (again) focusKbRow(again);
+      }
     }
 
     function switchView(v) {
+      if (v !== 'favorites' && v !== 'providers' && v !== 'models') return;
       view = v;
       lsSet('view', view);
-      render();
+      shownCount = PAGE;
+      updateHead();
+      renderList();
     }
 
     function moveHost(key, dir) {
       var parts = key.split('|');
       var logical = parts[0];
       var provider = parts.slice(1).join('|');
-      // Find current ordered list for this logical.
-      var lm = null;
-      var logicals = (catalog && catalog.logical) || [];
-      for (var i = 0; i < logicals.length; i++) {
-        if (logicals[i].logical === logical) { lm = logicals[i]; break; }
-      }
+      var lm = findLogical(logical);
       if (!lm) return;
       var hosts = orderedHosts(lm);
       var order = hostOrder[logical] || hosts.map(function (h) { return h.provider; });
@@ -2756,7 +2460,7 @@
       var tmp = order[idx]; order[idx] = order[swap]; order[swap] = tmp;
       hostOrder[logical] = order;
       lsSet('hostOrder', hostOrder);
-      render();
+      renderList();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
@@ -2770,11 +2474,10 @@
     function escHTML(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
   }
 
-  // v0.32.6 F1: star/unstar from outside the overlay (the ★ quick-switch
-  // rows). Returns the NEW state (true = starred). NOTE: deliberately does
-  // NOT touch the open()-scoped `starred` copy — the overlay re-reads it
-  // from localStorage on every open(), and the quick-switch popup only
-  // ever runs while the overlay is closed, so the two never diverge.
+  // v0.32.6 F1: star/unstar from outside the overlay. Returns the NEW
+  // state (true = starred). NOTE: deliberately does NOT touch the
+  // open()-scoped `starred` copy — the overlay re-reads it from
+  // localStorage on every open(), so the two never diverge.
   function toggleStar(id) {
     if (!id) return false;
     var list = lsGet('starred', []);
@@ -2782,30 +2485,8 @@
     if (idx >= 0) list.splice(idx, 1);
     else list.push(id);
     lsSet('starred', list);
-    updateStarBadge();
     return idx < 0;
   }
 
-  // v0.32.7 F1: starred-count badge on the chat panel's ★ button. Reads
-  // the persisted list, so every path (overlay rows, quick-switch rows,
-  // ModelBrowser.toggleStar) lands in the same place. Pops on a count
-  // CHANGE; silent when the panel is closed (badge hidden anyway).
-  var lastBadgeCount = -1;
-  function updateStarBadge() {
-    var el = document.getElementById('panel-star-badge');
-    if (!el) return;
-    var n = lsGet('starred', []).length;
-    if (n > 99) n = '99+'; // cap — a 3-digit pill would crowd the button
-    var changed = (n !== lastBadgeCount);
-    lastBadgeCount = n;
-    el.textContent = (n === 0 || n === '0') ? '' : String(n);
-    el.classList.toggle('ps-on', n !== 0 && n !== '0');
-    if (changed && n !== 0 && n !== '0' && lastBadgeCount !== -1) {
-      el.classList.remove('ps-pop');
-      void el.offsetWidth; // restart the keyframe on rapid toggles
-      el.classList.add('ps-pop');
-    }
-  }
-
-  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries, toggleStar: toggleStar, updateStarBadge: updateStarBadge };
+  window.ModelBrowser = { open: open, quickPick: quickPick, quickEntries: quickEntries, toggleStar: toggleStar };
 })();

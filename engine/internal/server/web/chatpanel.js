@@ -144,19 +144,67 @@
     renderHost(bodyEl, icon, state, panel);
   }
 
+  // v0.34 PER-CHAT SCROLL MEMORY (user spec): "each chatbot must remember
+  // the user's scroll position (where they were last at in the chatbot
+  // view)". The scroller is #chat-scroll (inside the panel body); every
+  // scroll records the position on the chat's state (plus a debounced
+  // localStorage write so it survives reloads), renderHost RESTORES it
+  // instead of jumping to the bottom, and panel.js's root-restored poke
+  // re-applies it after a stacked view pops (detaching the DOM into the
+  // stash fragment resets an element's scrollTop — the reported "back to
+  // the top" bug).
+  var SCROLL_KEY = 'doomalay.chatscroll.v1';
+  function readScrollMap() {
+    try { return JSON.parse(localStorage.getItem(SCROLL_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  var scrollSaveTimer = null;
+  function saveScrollLS(id, pos) {
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(function () {
+      try {
+        var m = readScrollMap();
+        m[id] = pos;
+        var keys = Object.keys(m);
+        // cap the map at the 60 most-recent chats
+        if (keys.length > 60) {
+          delete m[keys[0]];
+        }
+        localStorage.setItem(SCROLL_KEY, JSON.stringify(m));
+      } catch (e) {}
+    }, 600);
+  }
+  function rememberScroll(state, pos) {
+    state._scrollPos = pos;
+    if (state._icon && state._icon.id) saveScrollLS(state._icon.id, pos);
+  }
+  function restoreChatScroll(scrollEl, state) {
+    if (!scrollEl || !state) return;
+    var pos = state._scrollPos;
+    if (pos == null || isNaN(pos)) {
+      scrollEl.scrollTop = scrollEl.scrollHeight; // first open — land on the now
+      return;
+    }
+    var max = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    scrollEl.scrollTop = Math.max(0, Math.min(pos, max));
+  }
+
   // v0.33: the deferred labels re-render — panel.js pokes this event
   // when the last view pops and the stashed root becomes visible again,
   // so the one-shot label repaint finally runs (it had to wait: it
   // can't clobber an open view by writing bodyEl directly).
+  // v0.34: the poke ALSO re-applies the chat's remembered scroll — the
+  // stash round-trip resets the detached scroller to 0.
   document.addEventListener('doomalay:root-restored', function () {
     var c = currentCtx;
-    if (c && c.state && c.state._labelsPending && !c.state._labelsDone &&
+    if (!c || !c.state || !c.bodyEl || !c.bodyEl.isConnected) return;
+    var sc = c.bodyEl.querySelector('#chat-scroll');
+    if (sc && c.state._scrollPos != null) restoreChatScroll(sc, c.state);
+    if (c.state._labelsPending && !c.state._labelsDone &&
         window.H && window.H.hasLabels && window.H.hasLabels()) {
       c.state._labelsPending = false;
       c.state._labelsDone = true;
-      if (c.bodyEl && c.bodyEl.isConnected) {
-        renderHost(c.bodyEl, c.icon, c.state, c.panel);
-      }
+      renderHost(c.bodyEl, c.icon, c.state, c.panel);
     }
   });
 
@@ -199,18 +247,20 @@
     // ── The chat (only once the gate is fulfilled) ──
     var chatHTML = complete
       ? '<div id="chat-live" style="flex:1 1 auto;display:flex;flex-direction:column;min-height:55%">' +
-          '<div id="chat-messages" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px">' +
+          '<div id="chat-messages" style="flex:1;padding:calc(16px * var(--chat-scale,1));display:flex;flex-direction:column;gap:calc(12px * var(--chat-scale,1))">' +
             (state.messages.length === 0
               ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
               : renderMessages(state.messages)) +
           '</div>' +
           // Sticky input bar — stays visible while scrolled.
-          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1);border-top:1px solid var(--surface-2);padding:10px 16px 12px;z-index:2">' +
+          // v0.34: the input rides the chat scale too (typing in the size
+          // you read); the textarea grows to at most ~3× its min height.
+          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1);border-top:1px solid var(--surface-2);padding:calc(10px * var(--chat-scale,1)) 16px calc(12px * var(--chat-scale,1));z-index:2">' +
           '<div id="chat-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>' +
           '<div style="display:flex;gap:8px">' +
-            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:8px;font-size:14px;font-family:inherit;resize:none;outline:none;min-height:40px;max-height:120px;line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
-            '<button id="chat-send" style="background:var(--border-strong);border:none;color:var(--text-1);padding:0 16px;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit;align-self:flex-start;height:40px">Send</button>' +
+            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:calc(10px * var(--chat-scale,1)) calc(12px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);font-family:inherit;resize:none;outline:none;min-height:calc(40px * var(--chat-scale,1));max-height:calc(120px * var(--chat-scale,1));line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
+            '<button id="chat-send" style="background:var(--border-strong);border:none;color:var(--text-1);padding:0 calc(16px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);cursor:pointer;font-family:inherit;align-self:flex-start;height:calc(40px * var(--chat-scale,1))">Send</button>' +
           '</div>' +
           '</div>' +
         '</div>'
@@ -254,6 +304,8 @@
     // bottom (or sending the next message) re-engages the follow. The
     // listener rides this scrollEl node; a re-render replaces the DOM and
     // wires a fresh one (the flag itself lives on state, so it survives).
+    // v0.34: the same scroll event records WHERE the user is (the per-chat
+    // scroll memory — see rememberScroll above).
     if (scrollEl) {
       scrollEl.addEventListener('touchstart', function () {
         if (state.isStreaming) state._scrollFrozen = true; // touch during a turn = about to read
@@ -264,6 +316,7 @@
         if (d < 80) state._scrollFrozen = false; // stayed at the bottom — keep following
       }, { passive: true });
       scrollEl.addEventListener('scroll', function () {
+        rememberScroll(state, scrollEl.scrollTop); // v0.34: where the user is
         if (!state.isStreaming) { state._scrollFrozen = false; return; }
         var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
         if (d < 80) state._scrollFrozen = false; // back at the bottom — follow again
@@ -373,7 +426,14 @@
         if (live && scrollEl) scrollEl.scrollTo({ top: live.offsetTop - 6, behavior: 'smooth' });
       }, 120);
     } else if (state.fulfilled && state.messages.length) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
+      // v0.34: back where the user left off (first open — no memory yet —
+      // lands at the bottom, the familiar behavior). Coming back to a
+      // chat they were reading mid-history stays mid-history now.
+      if (state._scrollPos == null) {
+        var m = readScrollMap();
+        if (m && typeof m[icon.id] === 'number') state._scrollPos = m[icon.id];
+      }
+      restoreChatScroll(scrollEl, state);
     }
 
     if (state.search && state.search.q) renderSearchbar(bodyEl, state, icon, panel);
@@ -851,7 +911,7 @@
     fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
       if (btn && btn.isConnected) btn.innerHTML = old;
       state._usage = u; // the header meters read this too
-      if (window.UsagePanel) window.UsagePanel.open(panel, u, { name: icon.name, sessionId: state.sessionId });
+      if (window.UsagePanel) window.UsagePanel.open(panel, u, { name: icon.name, sessionId: state.sessionId, state: state });
     }).catch(function () {
       if (btn && btn.isConnected) btn.innerHTML = old;
       if (btn) flashUtil(btn, 'usage unavailable');
@@ -2298,8 +2358,6 @@
     if (!btn) return;
     if (!state.model) {
       btn.style.display = 'none';
-      var sb0 = document.getElementById('panel-star-btn');
-      if (sb0) sb0.style.display = 'none';
       return;
     }
     btn.style.display = 'flex';
@@ -2312,296 +2370,10 @@
         applyModelChoice(provider, modelId, state, icon, bodyEl, panel);
       }, { current: { provider: state.provider, modelId: state.model } }); // v0.32.1 E: mark the chat's current model in the browser
     };
-
-    // v0.32.3 F3: the ★ quick-switch — one-tap model switching without
-    // opening the full browser. Shows the recent + starred lists in a
-    // popup anchored to this button.
-    var starBtn = document.getElementById('panel-star-btn');
-    if (starBtn) {
-      starBtn.style.display = 'flex';
-      starBtn.onclick = function () {
-        openQuickSwitch(starBtn, state, icon, bodyEl, panel);
-      };
-      // v0.32.7 F1: keep the starred-count badge honest on every header
-      // render (the count can change while the panel is closed).
-      if (window.ModelBrowser && window.ModelBrowser.updateStarBadge) window.ModelBrowser.updateStarBadge();
-    }
-  }
-
-  // ── v0.32.3 F3: the ★ quick-switch popup ─────────────────────────
-  // A small card with Recent + Starred rows; tapping a row calls
-  // ModelBrowser.quickPick (best key-backed host, user's priority
-  // order) and applies it via applyModelChoice. Esc / ✕ / outside
-  // pointerdown closes it. Anchored above or below the ★ button by
-  // available space; clamped to the viewport horizontally.
-  function openQuickSwitch(anchorBtn, state, icon, bodyEl, panel) {
-    closeQuickSwitch();
-    if (!window.ModelBrowser || !window.ModelBrowser.quickEntries) return;
-
-    var wrap = document.createElement('div');
-    wrap.id = 'qs-popup';
-    wrap.setAttribute('role', 'menu');
-    wrap.setAttribute('aria-label', 'Quick model switch');
-
-    // ── positioning (fixed, clamped) ──
-    var r = anchorBtn.getBoundingClientRect();
-    var vw = window.innerWidth, vh = window.innerHeight;
-    var W = Math.min(300, vw - 16);
-    var x = Math.max(8, Math.min(r.left, vw - W - 8));
-    var estH = 300; // conservative estimate; final clamp after render
-    var below = r.bottom + estH + 12 < vh;
-    var y = below ? r.bottom + 8 : Math.max(8, r.top - estH - 12);
-    wrap.style.cssText = 'position:fixed;left:' + x + 'px;top:' + y + 'px;width:' + W + 'px;' +
-      'z-index:3500;background:var(--surface-1);border:1px solid rgba(255,255,255,0.14);' +
-      'border-radius:12px;box-shadow:0 22px 60px rgba(0,0,0,0.5);' +
-      'max-height:' + (vh - 32) + 'px;overflow-y:auto;overflow-x:hidden;' +
-      'font-family:inherit;opacity:0;transform:scale(0.96) translateY(' + (below ? 6 : -6) + 'px);' +
-      'transition:opacity 140ms cubic-bezier(0.32,0.72,0,1),transform 140ms cubic-bezier(0.32,0.72,0,1);';
-
-    // loading shimmer while the catalog resolves
-    if (!document.getElementById('qs-style')) {
-      var st = document.createElement('style');
-      st.id = 'qs-style';
-      st.textContent = '@keyframes qs-spin{to{transform:rotate(360deg)}}' +
-        '#qs-popup button:hover{background:rgba(128,128,140,0.10)}' +
-        '#qs-popup button:active{background:rgba(128,128,140,0.16)}' +
-        '#qs-popup button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}' +
-        '@media (prefers-reduced-motion:reduce){#qs-popup{transition:none!important}}';
-      document.head.appendChild(st);
-    }
-    wrap.innerHTML =
-      '<div style="display:flex;align-items:center;gap:8px;padding:12px 14px;font-size:12px;color:var(--text-3)">' +
-      '<span style="width:10px;height:10px;border:2px solid var(--border-strong);border-top-color:var(--accent);border-radius:50%;animation:qs-spin 0.7s linear infinite"></span>' +
-      'loading models…</div>';
-    document.body.appendChild(wrap);
-    requestAnimationFrame(function () {
-      wrap.style.opacity = '1';
-      wrap.style.transform = 'scale(1) translateY(0)';
-    });
-
-    var onDocDown = function (e) {
-      if (wrap.contains(e.target) || e.target === anchorBtn) return;
-      closeQuickSwitch();
-    };
-    var onKey = function (e) {
-      if (e.key === 'Escape') { e.stopPropagation(); closeQuickSwitch(); }
-    };
-    document.addEventListener('pointerdown', onDocDown, true);
-    document.addEventListener('keydown', onKey, true);
-    wrap._qsCleanup = function () {
-      document.removeEventListener('pointerdown', onDocDown, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-
-    window.ModelBrowser.quickEntries(
-      { current: { provider: state.provider, modelId: state.model } },
-      function (entries) { renderQuickEntries(wrap, entries, state, icon, bodyEl, panel); }
-    );
-  }
-
-  function closeQuickSwitch() {
-    var old = document.getElementById('qs-popup');
-    if (old) {
-      if (old._qsCleanup) old._qsCleanup();
-      old.remove();
-    }
-  }
-
-  function qsSectionHeader(label, glyph, color) {
-    // v0.32.3 (VLM round 4): generous breathing room around section
-    // headers — cramped sections read as clutter.
-    // v0.32.6: data-qs-section lets the ★ toggle drop a section header
-    // when its last row goes away.
-    return '<div data-qs-section="' + escAttr(label.toLowerCase()) + '" style="display:flex;align-items:center;gap:6px;padding:12px 14px 6px;font-size:10px;font-weight:700;' +
-      'letter-spacing:0.08em;text-transform:uppercase;color:' + color + '">' +
-      '<span style="font-size:12px">' + glyph + '</span>' + label + '</div>';
-  }
-
-  // v0.32.6 F1: rows carry a PRICE chip (best key-backed route) + a ★
-  // toggle on the right. The row is a wrapper DIV holding the pick
-  // button + the star button as siblings — buttons can't nest (the HTML
-  // parser breaks them apart), so the pick stays a real <button>.
-  // starredSet: {id:true} map for the star state of every visible entry.
-  // v0.32.8 F2: `cheapest` marks the cheapest PAID row (green tag) when
-  // every visible row is priced — free rows keep their "free" chip.
-  function qsRowHtml(en, starredSet, cheapest) {
-    var curChip = en.isCurrent
-      ? '<span style="font-size:9px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 6px;border-radius:4px;flex-shrink:0">current</span>'
-      : '';
-    var prov = en.hasKey
-      ? '<span style="font-size:10px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:1">' + esc(en.providerLabel) + '</span>'
-      : '<span style="font-size:10px;color:var(--warn);flex-shrink:0">no key</span>';
-    // price chip: free (green) or "$X.XX/M" (amber, tabular) — only for
-    // key-backed routes whose provider exposes pricing.
-    var priceChip = '';
-    if (en.hasKey && en.price) {
-      priceChip = en.price === 'free'
-        ? '<span style="font-size:9px;font-weight:700;color:#22c55e;background:rgba(34,197,94,0.12);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">free</span>'
-        : '<span style="font-size:9px;font-weight:600;color:var(--warn);background:rgba(var(--warn-rgb),0.10);padding:1px 6px;border-radius:4px;flex-shrink:0;font-variant-numeric:tabular-nums">' + esc(en.price) + '</span>';
-    }
-    // v0.32.8 F2: the cheapest paid route gets a green tag so the price
-    // decision is one glance, not mental math across rows.
-    var cheapChip = (cheapest && en.hasKey && en.price && en.price !== 'free')
-      ? '<span title="cheapest route among your recents & starred" style="font-size:9px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35);padding:1px 6px;border-radius:4px;flex-shrink:0">cheapest</span>'
-      : '';
-    var glyph = starredSet[en.id]
-      ? '<span style="color:#eab308;font-size:12px;flex-shrink:0;line-height:1">★</span>'
-      : '<span style="color:var(--text-3);font-size:11px;flex-shrink:0;line-height:1">🕘</span>';
-    var starBtn = '<button data-qs-star="' + escAttr(en.id) + '" aria-pressed="' + (starredSet[en.id] ? 'true' : 'false') + '" title="' + (starredSet[en.id] ? 'unstar this model' : 'star this model') + '" style="background:' + (starredSet[en.id] ? 'rgba(234,179,8,0.12)' : 'transparent') + ';border:1px solid ' + (starredSet[en.id] ? 'rgba(234,179,8,0.45)' : 'transparent') + ';color:' + (starredSet[en.id] ? '#eab308' : 'var(--border-strong)') + ';width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:8px;flex-shrink:0;cursor:pointer;font-size:13px;padding:0;line-height:1;font-family:inherit;touch-action:manipulation;margin:0 8px 0 2px">★</button>';
-    return '<div style="display:flex;align-items:center;gap:2px;border-left:2px solid ' + (en.isCurrent ? 'rgba(var(--ok-rgb),0.6)' : 'transparent') + (en.hasKey ? '' : ';opacity:0.65') + '">' +
-      '<button data-qs="' + escAttr(en.id) + '" role="menuitem" title="' + escAttr(en.name) + '"' +
-      ' style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;box-sizing:border-box;background:transparent;border:none;' +
-      'color:var(--text-1);font-family:inherit;font-size:calc(var(--ui-fs) - 1px);font-weight:600;padding:10px 4px 10px 10px;cursor:pointer;' +
-      'touch-action:manipulation;text-align:left;transition:background 120ms">' +
-      glyph +
-      '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(en.name) + '</span>' +
-      curChip + prov + priceChip + cheapChip +
-      '</button>' +
-      starBtn +
-      '</div>';
-  }
-
-  function renderQuickEntries(wrap, entries, state, icon, bodyEl, panel) {
-    if (!document.getElementById('qs-popup') || document.getElementById('qs-popup') !== wrap) return; // closed meanwhile
-    var MB = window.ModelBrowser;
-
-    var html = '';
-    // v0.32.6 F1: star state of every visible entry (recents can be
-    // starred too — the ★ button on their right is filled then).
-    var starredSet = {};
-    for (var s0 = 0; s0 < entries.starred.length; s0++) starredSet[entries.starred[s0].id] = true;
-    // v0.32.8 F2: cheapest PAID route across every visible row (recents +
-    // starred, one pool — the decision is cross-section). Free rows keep
-    // their "free" chip and never wear the tag (free is trivially
-    // cheapest). The tag only shows when there's a real choice: ≥2 paid
-    // routes, otherwise a lone paid row labeled "cheapest" is noise.
-    var qsAll = entries.recent.concat(entries.starred);
-    var qsPaidMin = Infinity, qsPaidCount = 0;
-    for (var c0 = 0; c0 < qsAll.length; c0++) {
-      var en0 = qsAll[c0];
-      if (en0.hasKey && en0.price && en0.price !== 'free') {
-        var pm0 = String(en0.price).match(/\$([0-9]+(?:\.[0-9]+)?)/);
-        if (pm0) {
-          var pv0 = parseFloat(pm0[1]);
-          if (pv0 < qsPaidMin) qsPaidMin = pv0;
-          qsPaidCount++;
-        }
-      }
-    }
-    var qsCheapSet = {};
-    if (qsPaidCount >= 2) {
-      for (var c1 = 0; c1 < qsAll.length; c1++) {
-        var en1 = qsAll[c1];
-        if (en1.hasKey && en1.price && en1.price !== 'free') {
-          var pm1 = String(en1.price).match(/\$([0-9]+(?:\.[0-9]+)?)/);
-          if (pm1 && Math.abs(parseFloat(pm1[1]) - qsPaidMin) < 1e-9) qsCheapSet[en1.id] = true;
-        }
-      }
-    }
-    if (entries.recent.length) {
-      html += qsSectionHeader('Recent', '🕘', 'var(--text-3)');
-      for (var i = 0; i < entries.recent.length; i++) html += qsRowHtml(entries.recent[i], starredSet, !!qsCheapSet[entries.recent[i].id]);
-    }
-    if (entries.starred.length) {
-      html += qsSectionHeader('Starred', '★', '#eab308');
-      for (var j = 0; j < entries.starred.length; j++) html += qsRowHtml(entries.starred[j], starredSet, !!qsCheapSet[entries.starred[j].id]);
-    }
-    if (!html) {
-      // friendly empty state
-      html = '<div style="padding:18px 16px;text-align:center">' +
-        '<div style="font-size:22px;color:#eab308;margin-bottom:6px">★</div>' +
-        '<div style="font-size:calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1);margin-bottom:4px">Nothing pinned yet</div>' +
-        '<div style="font-size:11px;color:var(--text-3);line-height:1.5">Star your favorite models in the browser and they land here for one-tap switching. Recently used models appear too.</div>' +
-        '</div>';
-    }
-    // footer: browse everything
-    html += '<div style="border-top:1px solid var(--surface-2);margin-top:6px">' +
-      '<button data-qs-browse style="display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;background:transparent;border:none;color:var(--accent);font-family:inherit;font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;padding:10px 14px;cursor:pointer;touch-action:manipulation;text-align:left">' +
-      'Browse all models <span style="color:var(--text-3)">→</span></button></div>';
-    // inline hint slot
-    html += '<div data-qs-hint style="display:none"></div>';
-
-    wrap.innerHTML = html;
-
-    // clamp vertical position now that content has real height
-    var r2 = wrap.getBoundingClientRect();
-    var anchor = document.getElementById('panel-star-btn');
-    if (anchor) {
-      var ar = anchor.getBoundingClientRect();
-      var vh = window.innerHeight;
-      var below2 = ar.bottom + r2.height + 12 < vh;
-      var y2 = below2 ? ar.bottom + 8 : Math.max(8, ar.top - r2.height - 12);
-      if (Math.abs(y2 - r2.top) > 2) wrap.style.top = y2 + 'px';
-    }
-
-    function qsHint(text, isWarn) {
-      var h = wrap.querySelector('[data-qs-hint]');
-      if (!h) return;
-      h.style.cssText = 'display:flex;align-items:center;gap:8px;margin:8px 12px 12px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.4;' +
-        (isWarn
-          ? 'background:rgba(var(--warn-rgb),0.1);border:1px solid rgba(var(--warn-rgb),0.4);color:var(--warn)'
-          : 'background:rgba(var(--ok-rgb),0.08);border:1px solid rgba(var(--ok-rgb),0.35);color:var(--ok)');
-      h.innerHTML = '<span>' + (isWarn ? '⚠' : '✓') + '</span><span style="flex:1">' + esc(text) + '</span>';
-    }
-
-    wrap.querySelectorAll('[data-qs]').forEach(function (row) {
-      row.addEventListener('click', function () {
-        var id = row.dataset.qs;
-        row.style.background = 'rgba(128,128,140,0.1)';
-        MB.quickPick(id, function (provider, modelId, lm) {
-          applyModelChoice(provider, modelId, state, icon, bodyEl, panel);
-          qsHint('Switched to ' + (lm && (lm.displayName || lm.logical) ? lm.displayName || lm.logical : id) + ' via ' + provider);
-          setTimeout(closeQuickSwitch, 350);
-        }, function (reason, lm) {
-          row.style.background = '';
-          if (reason === 'nokey') {
-            qsHint('No API key yet for any provider of ' + ((lm && (lm.displayName || lm.logical)) || id) + ' — add one in the model browser\'s Providers tab.', true);
-          } else {
-            qsHint('That model is no longer in the catalog.', true);
-          }
-        });
-      });
-    });
-
-    // v0.32.6 F1: the ★ toggles. One id can appear in BOTH sections —
-    // (Recent + Starred) — so an in-place restyle would leave the twin
-    // row stale. The popup is tiny and the catalog is cached, so the
-    // correct-and-simple move is: toggle, re-render both sections from
-    // the fresh lists, then surface a hint on the re-rendered popup.
-    wrap.querySelectorAll('[data-qs-star]').forEach(function (sbtn) {
-      sbtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var id = sbtn.dataset.qsStar;
-        var nowOn = MB.toggleStar ? MB.toggleStar(id) : false;
-        // v0.32.7 F1: toggleStar already refreshed the ★ badge.
-        MB.quickEntries({ current: { provider: state.provider, modelId: state.model } }, function (ent2) {
-          if (document.getElementById('qs-popup') !== wrap) return; // closed meanwhile
-          renderQuickEntries(wrap, ent2, state, icon, bodyEl, panel);
-          // v0.32.7 F3: pop the FRESH star button for the toggled row —
-          // the re-render replaced the one that was tapped.
-          var fresh = wrap.querySelector('[data-qs-star="' + String(id).replace(/"/g, '&quot;') + '"]');
-          if (fresh) {
-            fresh.classList.remove('mb-star-pop');
-            void fresh.offsetWidth;
-            fresh.classList.add('mb-star-pop');
-          }
-          qsHint(nowOn
-            ? 'Starred ' + id + ' — pinned in the ★ Starred section.'
-            : 'Unstarred ' + id + ' — it stays in Recent until it ages out.');
-        });
-      });
-    });
-
-    var browse = wrap.querySelector('[data-qs-browse]');
-    if (browse) {
-      browse.addEventListener('click', function () {
-        closeQuickSwitch();
-        if (!window.ModelBrowser) return;
-        window.ModelBrowser.open(function (provider, modelId) {
-          applyModelChoice(provider, modelId, state, icon, bodyEl, panel);
-        }, { current: { provider: state.provider, modelId: state.model } });
-      });
-    }
+    // v0.34 (user spec): the ★ quick-switch button is GONE from the chat
+    // header — favorites now live in the model browser's own ★ tab (the
+    // recents it showed survive as the "Recently used" sort). The browser
+    // itself opens from the model button right here.
   }
 
   // ── doSend (shared by input + regenerate) ──────────────────────

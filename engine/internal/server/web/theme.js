@@ -142,8 +142,15 @@
     }
 
     // 3. text sizes — chat (0-100 slider → 12-24px), general + small
+    //    v0.34: --chat-scale rides the chat slider — a unitless ratio of
+    //    the chat font to its 16px default (0.75…1.5). Everything INSIDE
+    //    the message scope (bubble padding, code cards, thinking strips,
+    //    artifact cards, icons) multiplies its px by it, so the whole
+    //    conversation scales as ONE piece: no more text that grows while
+    //    its bubbles, code and spacing stay put (the "wonky formatting").
     var size = (typeof s.chatTextSize === 'number') ? s.chatTextSize : 50;
     document.documentElement.style.setProperty('--chat-fs', (12 + (size / 100) * 12).toFixed(1) + 'px');
+    document.documentElement.style.setProperty('--chat-scale', ((12 + (size / 100) * 12) / 16).toFixed(3));
     var ui = (typeof s.uiTextSize === 'number') ? s.uiTextSize : 50;   // 0-100 → 12-17px
     document.documentElement.style.setProperty('--ui-fs', (12 + (ui / 100) * 5).toFixed(1) + 'px');
     var sm = (typeof s.smallTextSize === 'number') ? s.smallTextSize : 50; // 0-100 → 9.5-15px

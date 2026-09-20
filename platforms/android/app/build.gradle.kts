@@ -10,8 +10,8 @@ android {
         applicationId = "com.doomalay.engine"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3300
-        versionName = "0.33.0"
+        versionCode = 3400
+        versionName = "0.34.0"
         ndk { abiFilters += "arm64-v8a" }
     }
     // CRITICAL: libdoomalayengine.so is NOT a JNI library — it is a standalone

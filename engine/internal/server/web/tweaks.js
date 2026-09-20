@@ -45,12 +45,17 @@
   // before each apply — an absent override must fall back to the GLOBAL
   // value, which lives on :root)
   var FMT_VARS = ['--fmt-a1', '--fmt-a2', '--fmt-a3', '--fmt-bright', '--fmt-link'];
-  var SIZE_VARS = ['--chat-fs', '--ui-fs', '--ui-small-fs'];
+  var SIZE_VARS = ['--chat-fs', '--chat-scale', '--ui-fs', '--ui-small-fs'];
   var SIZES = [
     { key: 'chatTextSize', cssVar: '--chat-fs', lo: 12, span: 12 },   // 0-100 → 12-24px
     { key: 'uiTextSize', cssVar: '--ui-fs', lo: 12, span: 5 },        // 0-100 → 12-17px
     { key: 'smallTextSize', cssVar: '--ui-small-fs', lo: 9.5, span: 5.5 } // 0-100 → 9.5-15px
   ];
+
+  // v0.34: the chat text slider's companion ratio (chat-fs ÷ 16px) —
+  // every message-scope px multiplies by it (see index.html), so bubbles,
+  // code cards and spacing scale TOGETHER with the text.
+  function chatScaleOf(v) { return ((12 + (v / 100) * 12) / 16).toFixed(3); }
 
   // ── the effective values (per-chat override ?? global) ───────────
   // Mirrors theme.js's pendingScheme logic for the global fallback so
@@ -106,10 +111,12 @@
     }
 
     // text sizes — only the ones this chat overrides (same px math as
-    // theme.js, so the slider = the pixels)
+    // theme.js, so the slider = the pixels). The chat slider ALSO writes
+    // --chat-scale so the whole message scope follows the font.
     SIZES.forEach(function (d) {
       if (t[d.key] != null) {
         root.style.setProperty(d.cssVar, (d.lo + (t[d.key] / 100) * d.span).toFixed(1) + 'px');
+        if (d.key === 'chatTextSize') root.style.setProperty('--chat-scale', chatScaleOf(t[d.key]));
       }
     });
 
@@ -205,6 +212,7 @@
     state._tweaks.chatScheme = id;
     apply(state);
     persist(state);
+    rerenderView(); // v0.34: the fmt color rows + swatch selection update NOW
   }
 
   function setFmtSlot(state, slot, hex) {
@@ -232,6 +240,7 @@
     delete state._tweaks.fmtOverrides;
     apply(state);
     persist(state);
+    rerenderView(); // v0.34: "inherit the global colors again" repaints the rows in place
   }
 
   function resetSizes(state) {
@@ -239,6 +248,7 @@
     SIZES.forEach(function (d) { delete state._tweaks[d.key]; });
     apply(state);
     persist(state);
+    rerenderView(); // v0.34: "inherit the global sizes again" snaps the sliders in place
   }
 
   function setBgColor(state, hex) {
@@ -391,6 +401,17 @@
       });
       nb.scrollTop = scroll;
     });
+  }
+
+  // v0.34: LIVE RE-RENDER — the same fix the settings screen got in
+  // v0.26: every scoped mutation (preset pick, "inherit … again") rebuilds
+  // the open tweaks view so the sliders/swatches reflect the change
+  // IMMEDIATELY (they used to keep stale values until close/re-open).
+  // rebuild() preserves the expanded sections + the scroll position.
+  function rerenderView() {
+    if (!cur || !cur.panel || typeof cur.panel.viewDepth !== 'function') return rebuild();
+    if (cur.panel.viewDepth() <= 0) return; // view already gone — nothing to paint
+    rebuild();
   }
 
   function buildView() {
