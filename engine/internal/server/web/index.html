@@ -1037,6 +1037,52 @@
     100% { background-position: 145% 0; }
   }
 
+  /* ── v0.36 STALL ESCALATION — 120s of total silence ──
+     The row turns honest: warn tones (theme vars only), the dots slow to
+     an "on hold" cadence, the sweep line pauses, and a ⇄ switch-model
+     chip appears so the user can act on the stuck turn immediately. */
+  .chat-working-stalled {
+    background: rgba(var(--warn-rgb),0.07);
+    border-color: rgba(var(--warn-rgb),0.45);
+    color: var(--text-1);
+    flex-wrap: wrap;
+    animation: cwk-stall-in 0.3s ease-out;
+  }
+  @keyframes cwk-stall-in {
+    from { background: rgba(var(--accent-rgb),0.05); border-color: rgba(var(--accent-rgb),0.18); }
+    to   { background: rgba(var(--warn-rgb),0.07);   border-color: rgba(var(--warn-rgb),0.45); }
+  }
+  .chat-working-stalled .cwd i {
+    background: var(--warn);
+    animation-duration: 2.2s; /* the "still there, but on hold" pulse */
+  }
+  .chat-working-stalled .cwt { color: var(--warn); }
+  .chat-working-stalled .cwk-bar { animation-play-state: paused; opacity: 0.5; }
+  .chat-working-stalled .cwe { color: rgba(var(--warn-rgb),0.75); }
+  .cw-switch {
+    flex: 1 0 100%;
+    margin-top: calc(6px * var(--chat-scale));
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: calc(7px * var(--chat-scale)) calc(12px * var(--chat-scale));
+    border-radius: 9px;
+    background: rgba(var(--warn-rgb),0.12);
+    border: 1px solid rgba(var(--warn-rgb),0.55);
+    color: var(--warn);
+    font-family: inherit;
+    font-size: calc(var(--chat-fs) * 0.72);
+    font-weight: 600;
+    cursor: pointer; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .cw-switch:active { transform: scale(0.97); }
+  @media (hover: hover) {
+    .cw-switch:hover {
+      background: rgba(var(--warn-rgb),0.2);
+      border-color: rgba(var(--warn-rgb),0.8);
+    }
+  }
+
   /* ── tool pills (center-aligned, tappable → expand) — v0.34: chat-scaled ── */
   .tool-pill {
     align-self: center; max-width: 92%;

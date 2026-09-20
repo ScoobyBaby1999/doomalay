@@ -2056,6 +2056,24 @@
       fallback = 'waiting on ' + (PROVIDER_LABELS[state.provider] || state.provider) + '…';
     }
     var phase = text || (silent > 1500 ? (state._waitPhase || fallback) : 'working…');
+    // v0.36 STALL ESCALATION (user spec: "the app should constantly check
+    // if the stream/connection broke … surface errors"): after 120s of
+    // TOTAL silence (no token, no progress event — covers both the
+    // pre-first-token queue AND a mid-stream drop), the indicator
+    // escalates: warn styling + an honest "may be stuck" line + a ⇄
+    // switch-model chip so the user can act without losing the turn.
+    // The silence clock starts at the LAST relevant activity OR the turn
+    // start, whichever is later — a stale _lastActAt from a PREVIOUS turn
+    // must not make a brand-new turn look stalled from its first second.
+    var lastRelevant = Math.max(state._lastActAt || 0, state._turnStartAt || 0);
+    var stallMs = Date.now() - lastRelevant;
+    var stalled = state.isStreaming && stallMs >= 120000;
+    if (stalled) {
+      var who = (PROVIDER_LABELS[state.provider] || state.provider || 'the model');
+      var mins = Math.floor(stallMs / 60000);
+      phase = 'no response from ' + who + ' for ' + (mins >= 1 ? mins + 'm' : Math.round(stallMs / 1000) + 's') +
+        ' — it may be stuck or rate-limited';
+    }
     if (!row) {
       row = document.createElement('div');
       row.className = 'chat-working';
@@ -2065,6 +2083,35 @@
       scrollTo = true;
     } else if (row.nextSibling) {
       container.appendChild(row); // keep it the LAST row
+    }
+    // v0.36: the stalled look + the ⇄ chip manage the SAME row element —
+    // after the create/ensure block above (row can be null before it).
+    if (row.classList.contains('chat-working-stalled') !== stalled) {
+      row.classList.toggle('chat-working-stalled', stalled);
+      scrollTo = true;
+    }
+    var chip = row.querySelector('.cw-switch');
+    if (stalled && !chip) {
+      // v0.36: the suggestion chip — opens the model browser bound to THIS
+      // chat's pick handler; picking swaps the model for the NEXT turn
+      // while the stuck one keeps its timeout backstop.
+      chip = document.createElement('button');
+      chip.className = 'cw-switch';
+      chip.type = 'button';
+      chip.textContent = '⇄ switch model';
+      chip.setAttribute('aria-label', 'Switch to a different model');
+      chip.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (!currentCtx || !currentCtx.ctx || !window.ModelBrowser) return;
+        window.ModelBrowser.open(function (provider, modelId) {
+          if (currentCtx && currentCtx.ctx) currentCtx.ctx.applyModel(provider, modelId);
+        }, { current: { provider: state.provider, modelId: state.model } });
+      });
+      row.appendChild(chip);
+      scrollTo = true;
+    } else if (!stalled && chip && chip.parentNode) {
+      chip.parentNode.removeChild(chip); // tokens resumed — stand down
     }
     var tEl = row.querySelector('.cwt');
     if (tEl.textContent !== phase) {
@@ -2100,6 +2147,10 @@
   // silence watchdog: while a turn runs, keep the indicator honest.
   function ensureActivityWatch(bodyEl, state) {
     state._turnStartAt = Date.now();
+    // v0.36: a fresh turn resets the silence clock — a stale _lastActAt
+    // from the PREVIOUS turn made both the "waiting on X…" fallback and
+    // the 120s stall escalation fire instantly on a brand-new turn.
+    state._lastActAt = Date.now();
     if (state._actTimer) return;
     state._actTimer = setInterval(function () {
       if (!state.isStreaming) {

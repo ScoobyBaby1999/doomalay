@@ -67,6 +67,12 @@
               window.ProvidersScreen.open(onPick, { useReplaceContent: true });
             } else if (res.connected < 3) {
               window.ProvidersScreen.open(onPick, { useReplaceContent: true, reminder: true });
+            } else {
+              // v0.35.1 FIX: ≥3 connected AND picked = silent one-press
+              // unlock — but nobody closed the picker, so "Pick a model
+              // source" sat over the now-ready chat until the user found
+              // the ✕ (live-repro'd). Close it: the chat IS the next step.
+              window.ConnectOverlay.close();
             }
             // ≥3 connected AND picked: silent one-press unlock, no GUI
           });

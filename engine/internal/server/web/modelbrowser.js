@@ -361,6 +361,29 @@
   // browser exposes ModelBrowser.resetFilters while open, inert closed.
   // (Bound once per page.)
   var escBound = false;
+
+  // v0.35.1 LISTENER LIFECYCLE: the browser renders into ConnectOverlay's
+  // SINGLETON content element. Every open() used to add another full set
+  // of delegated listeners (click/input/keydown/change/scroll) — closures
+  // over THAT open's onPick + filters + catalog — and nothing ever
+  // detached the previous set. One row tap then fired N listeners: the
+  // pick applied to EVERY chat that had ever opened the browser (both
+  // icons + both engine sessions patched with the same model — the
+  // cross-chat "model bleed"; live-captured: 4 PATCH calls, one per
+  // accumulated listener, from 4 different closures). wireOnce now
+  // detaches the previous open's handlers before attaching its own.
+  var wiredHandlers = []; // [{el, type, fn, opts}]
+  function detachWired() {
+    for (var i = 0; i < wiredHandlers.length; i++) {
+      var w = wiredHandlers[i];
+      try { w.el.removeEventListener(w.type, w.fn, w.opts || undefined); } catch (e) {}
+    }
+    wiredHandlers = [];
+  }
+  function wireTracked(el, type, fn, opts) {
+    el.addEventListener(type, fn, opts);
+    wiredHandlers.push({ el: el, type: type, fn: fn, opts: opts || null });
+  }
   function bindEscOnce() {
     if (escBound) return;
     escBound = true;
@@ -2252,8 +2275,12 @@
       var contentEl = window.ConnectOverlay.getContentEl();
       if (!contentEl) return;
 
-      contentEl.addEventListener('click', delegatedClick);
-      contentEl.addEventListener('input', function (e) {
+      // v0.35.1: previous open's delegated handlers go FIRST (see the
+      // wiredHandlers note above) — exactly one live listener set.
+      detachWired();
+
+      wireTracked(contentEl, 'click', delegatedClick);
+      wireTracked(contentEl, 'input', function (e) {
         if (e.target && e.target.id === 'mb-search') {
           if (searchTimer) clearTimeout(searchTimer);
           var v = e.target.value;
@@ -2264,7 +2291,7 @@
           }, 200);
         }
       });
-      contentEl.addEventListener('keydown', function (e) {
+      wireTracked(contentEl, 'keydown', function (e) {
         var t = e.target;
         if (t && t.getAttribute && t.getAttribute('data-keyinput') != null) {
           // the inline add-key form owns its keys
@@ -2285,7 +2312,7 @@
           }
         }
       });
-      contentEl.addEventListener('change', function (e) {
+      wireTracked(contentEl, 'change', function (e) {
         if (e.target && e.target.id === 'mb-sort') {
           sortKey = e.target.value;
           lsSet('sort', sortKey);
@@ -2295,7 +2322,7 @@
 
       // v0.34: auto-load the next page when the user nears the bottom.
       var morePending = false;
-      contentEl.addEventListener('scroll', function () {
+      wireTracked(contentEl, 'scroll', function () {
         if (morePending) return;
         if (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight > 600) return;
         var more = contentEl.querySelector('#mb-more');
@@ -2631,7 +2658,10 @@
     // ends; the search box's ArrowDown drops into the list. Bound ONCE
     // per open on the content element (v0.34 — survives zone swaps).
     function bindKeyboardNav(contentEl) {
-      contentEl.addEventListener('keydown', function (e) {
+      // v0.35.1: tracked like every other contentEl listener — the old
+      // untracked addEventListener accumulated one keyboard-nav handler
+      // per open() (duplicate ArrowDown hops once 2+ opens stacked).
+      wireTracked(contentEl, 'keydown', function (e) {
         var t = e.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) {
           if (t.id === 'mb-search' && e.key === 'ArrowDown') {

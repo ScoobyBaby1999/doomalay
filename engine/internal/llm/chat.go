@@ -556,6 +556,39 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
         if resp == nil {
                 return nil, nil // error already emitted
         }
+        // v0.36: 429/503 RETRY-WITH-BACKOFF (mirrors the brain's
+        // num_retries=3): NVIDIA's per-model rate limits answer 429 on
+        // burst sends — failing the whole turn on the first 429 was harsh
+        // when a short pause clears it. Up to 2 retries (3 attempts total)
+        // with 4s/8s backoff, each wait announced as a progress notice so
+        // the UI explains the pause ("429: rate-limited — retrying in
+        // 4s (attempt 2 of 3)"). Non-retryable statuses flow straight to
+        // friendlyHTTPError; a turn cancelled mid-wait ends quietly.
+        for attempt := 1; (resp.StatusCode == 429 || resp.StatusCode == 503) && attempt < 3; attempt++ {
+                wait := time.Duration(attempt*4) * time.Second // 4s, then 8s
+                io.Copy(io.Discard, resp.Body)
+                resp.Body.Close()
+                note := fmt.Sprintf("429: rate-limited by %s — retrying in %ds (attempt %d of 3)",
+                        providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
+                if resp.StatusCode == 503 {
+                        note = fmt.Sprintf("%s is overloaded (503) — retrying in %ds (attempt %d of 3)",
+                                providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
+                }
+                select {
+                case ch <- ChatChunk{Type: "progress", Text: note}:
+                default: // never block the stream on UI notices
+                }
+                select {
+                case <-ctx.Done():
+                        ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while waiting to retry after the rate limit"}
+                        return nil, nil
+                case <-time.After(wait):
+                }
+                resp = doPostSSE(ctx, req, url, bodyBytes, ch)
+                if resp == nil {
+                        return nil, nil // error already emitted
+                }
+        }
         if resp.StatusCode != 200 {
                 bts, _ := io.ReadAll(resp.Body)
                 resp.Body.Close()
