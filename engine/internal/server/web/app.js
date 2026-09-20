@@ -932,18 +932,31 @@
         // attached — only the internal id changes.
         const seenIds = new Set();
         for (const c of savedIcons) {
-          if (!c.id) c.id = 'chat_' + Math.random().toString(36).slice(2, 10);
-          while (seenIds.has(c.id)) {
-            c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
-          }
-          seenIds.add(c.id);
+          // v0.35 WHITE-SCREEN GUARD: one corrupt entry (a string, null, or
+          // a malformed object from a crashed write) used to throw here in
+          // strict mode → init() aborted → __doomalayReady never set → the
+          // app booted to a dead blank screen, permanently. Skip poison
+          // entries; the rest of the chats still load.
+          if (!c || typeof c !== 'object') continue;
+          try {
+            if (!c.id) c.id = 'chat_' + Math.random().toString(36).slice(2, 10);
+            while (seenIds.has(c.id)) {
+              c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
+            }
+            seenIds.add(c.id);
+          } catch (e) { continue; }
         }
         for (const c of savedIcons) {
-          if (!c.type) c.type = 'chat';  // migration from v0.7.0
-          const icon = window.GridIcon.create(c);
-          if (icon) {
-            world.add(icon);
-            iconLayer.appendChild(icon.el);
+          try {
+            if (!c || typeof c !== 'object') continue;
+            if (!c.type) c.type = 'chat';  // migration from v0.7.0
+            const icon = window.GridIcon.create(c);
+            if (icon) {
+              world.add(icon);
+              iconLayer.appendChild(icon.el);
+            }
+          } catch (e) {
+            console.warn('doomalay: skipped a corrupt saved chat entry', e);
           }
         }
       }

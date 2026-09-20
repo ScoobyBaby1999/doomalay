@@ -16,6 +16,13 @@
   var scrimEl = null;
   var onCloseCb = null;
   var closing = false;
+  // v0.35 RACE FIX ("panels stopped opening"): close() fades out over
+  // 250ms and a replaceContent() swap takes 150ms — if an open() lands
+  // inside one of those windows, the still-pending timer would HIDE the
+  // freshly-opened overlay (open → instantly invisible, looked dead).
+  // Every open/close/replace bumps this generation; stale timers check it
+  // and abort instead of fighting a newer action.
+  var gen = 0;
 
   function ensureElements() {
     if (overlayEl) return;
@@ -50,6 +57,7 @@
   function open(html, opts) {
     opts = opts || {};
     ensureElements();
+    gen++; // invalidate any in-flight close/replace timers
     closing = false;
     contentEl.innerHTML = html;
     // Wire events AFTER the DOM swap — callers pass onSwap for this.
@@ -70,6 +78,7 @@
   function close() {
     if (!overlayEl || overlayEl.style.visibility === 'hidden' || closing) return;
     closing = true;
+    var myGen = ++gen; // invalidate in-flight replace swaps too
     // Stop the overlay from eating taps WHILE it fades out (v0.12 fix):
     // for the 250ms close animation the overlay still sat at z-index 3000
     // intercepting touches — a fast tap right after picking a model landed
@@ -80,6 +89,9 @@
     contentEl.style.opacity = '0';
     contentEl.style.transform = 'scale(0.95) translateY(10px)';
     setTimeout(function () {
+      // v0.35: an open() arrived after this close began — the overlay is
+      // showing NEW content; the stale close must NOT hide it.
+      if (myGen !== gen) { closing = false; return; }
       overlayEl.style.visibility = 'hidden';
       overlayEl.style.display = 'none';
       overlayEl.style.pointerEvents = '';
@@ -106,10 +118,12 @@
       return;
     }
     opts = opts || {};
+    var myGen = ++gen; // a newer open/close during the fade cancels this swap
     // Fade out current content
     contentEl.style.opacity = '0';
     contentEl.style.transform = 'scale(0.98) translateY(4px)';
     setTimeout(function () {
+      if (myGen !== gen) return; // superseded — a newer action owns the overlay now
       contentEl.innerHTML = html;
       void contentEl.offsetWidth; // reflow
       onCloseCb = opts.onClose || null;

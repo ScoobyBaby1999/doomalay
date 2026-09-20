@@ -63,7 +63,10 @@
       .catch(function () { return {}; });
     var gotLive = false;
     var isPartial = false;
-    Promise.all([withTimeout(modelsP, 4000, null), keysP]).then(function (results) {
+    // v0.35: keysP gets a timeout too — a wedged /api/keys request used to
+    // hang this Promise.all forever and the whole providers panel never
+    // rendered ("connect cloud provider stopped opening" report).
+    Promise.all([withTimeout(modelsP, 4000, null), withTimeout(keysP, 4000, {})]).then(function (results) {
       gotLive = results[0] !== null;
       providers = (results[0] && results[0].providers) || {};
       catalogModels = (results[0] && results[0].models) || [];
@@ -261,10 +264,14 @@
       } else if (val && val.state === 'valid') {
         valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--ok)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
       } else if (val && val.state === 'invalid') {
-        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err)" title="' + escAttr(val.reason || '') + '">✕ invalid' + (val.reason ? ' — ' + short(val.reason) : '') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err)">✕ invalid — see details below</span>';
       } else if (val && val.state === 'unverified') {
-        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--warn)" title="' + escAttr(val.reason || '') + '">◦ saved · unverified' + (badgeReason ? ' (' + badgeReason + ')' : '') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--warn)">◦ saved · unverified' + (badgeReason ? ' (' + badgeReason + ')' : '') + '</span>';
       }
+      // v0.35: the FULL validation reason renders as a wrapped block under
+      // the header — never truncated (user report: the OpenCode 401 text was
+      // cut off mid-sentence and unreadable).
+      var valReasonBlock = (val && !val.checking && val.reason) ? reasonHTML(val.reason) : '';
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
 
@@ -299,6 +306,7 @@
         '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:2px 0 0;line-height:1.4">' + (cfg.description || '') + '</p>' +
         '</div>' +
         '</div>' +
+        valReasonBlock +
         // Key input (disabled once a key is saved — paste new to replace)
         '<div style="display:flex;gap:6px">' +
         '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
@@ -556,9 +564,26 @@
   }
 
   // ── helpers ─────────────────────────────────────────────────────
+  // v0.35: short() only guards CHIPS now — validation badges render the
+  // FULL reason, wrapped on its own line (user report: the OpenCode 401
+  // "free tier can only be used…" text was cut at 48 chars with no wrap and
+  // nobody could read what was wrong).
   function short(s) {
     s = String(s || '');
     return s.length > 48 ? s.slice(0, 48) + '…' : s;
+  }
+  function reasonHTML(reason) {
+    var r = String(reason || '');
+    if (!r) return '';
+    // v0.35: OpenCode FreeTierError — the key is VALID; free models are just
+    // walled to the OpenCode app (live-verified 2026-09). Say it plainly and
+    // point at the fix (credits unlock the paid models from Doomalay).
+    if (/freetier|free tier can only be used/i.test(r)) {
+      return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px;padding:6px 8px;background:rgba(var(--notice-rgb,var(--warn-rgb)),0.10);border:1px solid rgba(var(--notice-rgb,var(--warn-rgb)),0.3);border-radius:8px">' +
+        '✓ Your key works — OpenCode reserves its <b>free models for the OpenCode app itself</b>. ' +
+        'Add credits at <b>opencode.ai/zen</b> to use the paid models here, or use NVIDIA / PrivateMode (both have free models that work right now).</span>';
+    }
+    return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px">' + escHTMLInline(r) + '</span>';
   }
   function escAttr(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');

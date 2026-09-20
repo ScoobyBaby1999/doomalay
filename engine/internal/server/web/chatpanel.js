@@ -48,6 +48,26 @@
   var chatStates = {};
   var currentCtx = null; // the chat currently shown in the panel
 
+  // v0.35 CHAT ISOLATION (the cross-chat leak): the panel body is ONE
+  // shared DOM node — when chat B renders, it re-owns bodyEl and chat A's
+  // event closures still hold the SAME node. Every render path below must
+  // verify ownership ("am I the chat currently shown?") before touching
+  // the live DOM. A background chat streaming or finishing must NEVER
+  // paint its activity row, thinking bubbles, header meters, or send-button
+  // state into the foreground chat's DOM.
+  function isOwner(state) {
+    return !!(currentCtx && currentCtx.state === state && currentCtx.bodyEl);
+  }
+
+  // v0.35 (user spec #9): friendly provider names for the activity row's
+  // silence fallback — "waiting on Nvidia…" instead of a bare "thinking…".
+  var PROVIDER_LABELS = {
+    nvidia: 'Nvidia', opencode: 'OpenCode', privatemodeai: 'PrivateMode',
+    openrouter: 'OpenRouter', cloudflare: 'Cloudflare', groq: 'Groq',
+    together: 'Together', mistral: 'Mistral', anthropic: 'Anthropic',
+    openai: 'OpenAI', deepseek: 'DeepSeek'
+  };
+
   // The DEFAULT persona (v0.20): our artifact protocol MERGED with the old
   // HF space's system-prompt style (direct/concise, explicit model identity,
   // tool discipline). {model} and {provider} are substituted at composition
@@ -385,6 +405,14 @@
         }
       });
       sendBtn.addEventListener('click', send);
+      // v0.35: reopening a chat MID-TURN used to render a plain "Send"
+      // button — the stop affordance was lost until the turn ended. If this
+      // chat is still streaming, restore Stop + its handler right away.
+      if (state.isStreaming) {
+        var stype = window.ChatTypes.get(state.sandbox || 'quick');
+        sendBtn.textContent = 'Stop';
+        sendBtn.onclick = function () { stype.stop(state, ctx || {}); };
+      }
 
       // Connect the WS — only after the engine session exists; rebind the
       // icon's persisted session so a restart replays the SAME conversation.
@@ -959,15 +987,16 @@
     if (!state || !state.sessionId) return;
     var now = Date.now();
     if (state._metersAt && now - state._metersAt < 2500) {
-      if (state._usage) applyMeters(bodyEl, state, state._usage);
+      if (state._usage && isOwner(state)) applyMeters(currentCtx.bodyEl, state, state._usage);
       return;
     }
     state._metersAt = now;
     fetch('/api/sessions/' + state.sessionId + '/usage').then(function (r) { return r.json(); }).then(function (u) {
-      // a re-render may have swapped the DOM under us — re-resolve live
+      // v0.35 ISOLATION: usage meters paint ONLY into the chat that owns
+      // the live DOM — the old fallback painted a background chat's turn
+      // cost/context into the FOREGROUND chat's header.
       state._usage = u;
-      var be = bodyEl.isConnected ? bodyEl : (currentCtx && currentCtx.bodyEl);
-      if (be) applyMeters(be, state, u);
+      if (isOwner(state)) applyMeters(currentCtx.bodyEl, state, u);
     }).catch(function () {});
   }
 
@@ -1337,7 +1366,7 @@
       if (streamMsg) {
         streamMsg.complete = true;
         streamMsg.streaming = false;
-        updateMessageEl(bodyEl, streamMsg, true);
+        updateMessageEl(bodyEl, streamMsg, true, state);
         finalizeArtifacts(streamMsg, state, bodyEl); // v0.17
       }
       // v0.20: CHAIN the persists — the old fire-and-forget raced the
@@ -1379,7 +1408,7 @@
           appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
         }
         last.text += t;
-        scheduleUpdate(bodyEl, last, false);
+        scheduleUpdate(bodyEl, last, false, state);
       },
       // v0.27.1: pmsdk fires this when the thinking phase ends (content
       // starts or the stream closes) — freeze the bubble's timer there
@@ -1390,7 +1419,7 @@
         bumpActivity(state);
         var m2 = getStreamMsg();
         m2.text += t;
-        scheduleUpdate(bodyEl, m2, false);
+        scheduleUpdate(bodyEl, m2, false, state);
       },
       // v0.23 NO-SILENCE (PM path): the suppressed ACTION stream reports
       // "building X · 12.4 KB so far" from inside roundTripOnce — same
@@ -1403,7 +1432,7 @@
         // call — clear it so the tool pills render on a clean slate.
         if (streamMsg) {
           streamMsg.text = '';
-          updateMessageEl(bodyEl, streamMsg, false);
+          updateMessageEl(bodyEl, streamMsg, false, state);
         }
       },
       onTool: function (ev) {
@@ -1622,29 +1651,63 @@
       state.client.onEvent = function (ev) {
         handleEvent(ev, state, msgContainer, bodyEl.querySelector('#chat-scroll'), bodyEl, null, null);
       };
+      wireClientClose(bodyEl, state, msgContainer);
       return;
     }
     state.client = new window.ChatClient('', state.sessionId, '');
     var scrollEl = bodyEl.querySelector('#chat-scroll');
     state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, null, null); };
+    wireClientClose(bodyEl, state, msgContainer);
     state.client.connect();
   }
 
+  // v0.35 (user spec #9): a WS drop mid-turn used to leave isStreaming=true
+  // FOREVER — the bubble thought endlessly and leaked its state across chat
+  // switches. Now the drop ends the turn with an honest error bubble in the
+  // OWNING chat only; the engine's persisted events replay on reopen.
+  function wireClientClose(bodyEl, state, msgContainer) {
+    state.client.onClose = function () {
+      if (!state.isStreaming) return;
+      state.isStreaming = false;
+      state._actText = null;
+      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply — your messages are safe. Tap Send to retry.' };
+      state.messages.push(msg);
+      if (isOwner(state)) {
+        hideActivity(bodyEl, state);
+        appendMessage(currentCtx.bodyEl.querySelector('#chat-messages'), null, msg, currentCtx.bodyEl, state._icon, state);
+        var btn = currentCtx.bodyEl.querySelector('#chat-send');
+        if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
+        completeAllStreaming(currentCtx.bodyEl, state);
+      }
+    };
+  }
+
   // ensureSession creates the engine session (if missing) and calls back.
+  // v0.35 RACE FIX: the render path AND the send path can BOTH call this
+  // for the same fresh chat (quick-chat + cloud provider repro) — two POSTs
+  // raced, the WS bound session #1 while state.sessionId landed on #2, and
+  // histories crossed after reload. One in-flight creation, queued cbs.
   function ensureSession(icon, state, cb) {
     if (state.sessionId) { cb(); return; }
+    if (state._ensureQ) { state._ensureQ.push(cb); return; }
+    state._ensureQ = [cb];
     fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sessionBody(icon, state))
     }).then(function (r) { return r.json(); }).then(function (data) {
+      var q = state._ensureQ || [];
+      state._ensureQ = null;
       if (data && data.ID) {
         state.sessionId = data.ID;
         icon._sessionData = data;
         bindSessionToIcon(icon, data.ID);
-        cb();
+        q.forEach(function (c) { try { c(); } catch (e) { console.error(e); } });
       }
-    }).catch(function (e) { console.error('create session failed', e); });
+    }).catch(function (e) {
+      state._ensureQ = null; // failed creation — next send retries fresh
+      console.error('create session failed', e);
+    });
   }
 
   function sessionBody(icon, state) {
@@ -1736,6 +1799,10 @@
     // v0.23 NO-SILENCE: ephemeral progress events (never persisted, no i)
     // drive the activity indicator — "building bundle.zip · 12.4 KB…".
     if (type === 'progress') {
+      // v0.35: remember the latest provider/wait phase — renderActivity now
+      // keeps it on screen for the whole turn (user spec #9) instead of
+      // decaying to "thinking…" after 5s while NVIDIA queues the request.
+      state._waitPhase = ev.text || ev.message || null;
       setActivity(bodyEl, state, ev.text || ev.message || 'working…');
       return;
     }
@@ -1747,7 +1814,7 @@
         return;
       }
       state.messages.push({ role: 'user', text: ev.text || '' });
-      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' }, bodyEl, state._icon);
+      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' }, bodyEl, state._icon, state);
       // v0.19: NO auto-title — the chat keeps its default random name from
       // the list until the user renames it themselves (tap the name in the
       // panel header).
@@ -1761,17 +1828,17 @@
         if (!last || last.role !== 'assistant' || last.complete) {
           last = { role: 'assistant', text: '', complete: false, streaming: true };
           state.messages.push(last);
-          appendMessage(msgContainer, scrollEl, last, bodyEl, state._icon);
+          appendMessage(msgContainer, scrollEl, last, bodyEl, state._icon, state);
         }
         last.text += ev.text;
-        scheduleUpdate(bodyEl, last, false);
+        scheduleUpdate(bodyEl, last, false, state);
       }
       if (type === 'assistant_complete') {
         var last2 = state.messages[state.messages.length - 1];
         if (last2) {
           last2.complete = true;
           last2.streaming = false;
-          updateMessageEl(bodyEl, last2, true);
+          updateMessageEl(bodyEl, last2, true, state);
           finalizeArtifacts(last2, state, bodyEl);
         }
       }
@@ -1784,7 +1851,7 @@
       if ((ev.text || '') && assembled.indexOf(ev.text) === -1) {
         var full = { role: 'assistant', text: ev.text, complete: true };
         state.messages.push(full);
-        appendMessage(msgContainer, scrollEl, full, bodyEl, state._icon);
+        appendMessage(msgContainer, scrollEl, full, bodyEl, state._icon, state);
         finalizeArtifacts(full, state, bodyEl);
       } else if (ev.text) {
         // v0.17: the trailing full-reply event confirms the streamed text
@@ -1796,7 +1863,7 @@
             if (!state.messages[j].complete) {
               state.messages[j].complete = true;
               state.messages[j].streaming = false;
-              updateMessageEl(bodyEl, state.messages[j], true);
+              updateMessageEl(bodyEl, state.messages[j], true, state);
               finalizeArtifacts(state.messages[j], state, bodyEl);
             }
             break;
@@ -1809,10 +1876,10 @@
       if (!lastThink || lastThink.role !== 'thinking') {
         lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now() };
         state.messages.push(lastThink);
-        appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon);
+        appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon, state);
       }
       lastThink.text += ev.text;
-      scheduleUpdate(bodyEl, lastThink, false);
+      scheduleUpdate(bodyEl, lastThink, false, state);
     } else if (type === 'tool_use') {
       bumpActivity(state);
       stampThinkEnd(state); // v0.27.1: the model moved on to tools
@@ -1823,7 +1890,7 @@
         try { pay = JSON.parse(pay.text); } catch (e) {}
       }
       state.messages.push({ role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
     } else if (type === 'tool_result') {
       bumpActivity(state);
       stampThinkEnd(state); // v0.27.1
@@ -1832,11 +1899,11 @@
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
       }
       state.messages.push({ role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2 });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
       // v0.22: file tools (docx/xlsx/zip) — a real download card follows the pill.
       if (ev.artifact && ev.artifact.name) {
         state.messages.push({ role: 'artifact', artifact: ev.artifact });
-        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
         // v0.26: same dedupe set as the WS path (see above).
         if (!state._toolArtifactNames) state._toolArtifactNames = {};
         state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
@@ -1847,7 +1914,7 @@
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
         state.messages.push({ role: 'sources', sources: srcs });
-        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
       }
     } else if (type === 'assistant_reset') {
       // v0.22: a long preamble streamed as if final, then turned out to be
@@ -1875,7 +1942,7 @@
           (cj.contextLimit ? ', window ~' + Math.round(cj.contextLimit / 1000) + 'k' : '') + ')';
       } catch (e2) { cinfo = 'older turns summarized'; }
       state.messages.push({ role: 'tool', text: cinfo, compact: true, payload: ev });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon);
+      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
         state.isStreaming = false;
@@ -1895,7 +1962,10 @@
             finalizeArtifacts(sm, state, bodyEl);
           }
         }
-        var btn = document.querySelector('#chat-send');
+        var btn = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
+        // v0.35: only the chat that OWNS the live panel may reset its Send
+        // button — the old document.querySelector reset the FOREGROUND
+        // chat's Stop button while it was still streaming.
         if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
       } else if (ev.state === 'running' && (ev.text || ev.message)) {
         // v0.23: running-state messages ("network hiccup — retry 1/2",
@@ -1911,25 +1981,27 @@
         errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
       }
       state.messages.push({ role: 'error', text: errText });
-      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, state._icon);
-      var btn2 = document.querySelector('#chat-send');
+      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, state._icon, state);
+      var btn2 = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
       if (btn2) { btn2.textContent = 'Send'; btn2.onclick = null; }
     }
   }
 
   // throttled re-render for streaming (markdown every ~180ms, not per delta)
-  function scheduleUpdate(bodyEl, msg, immediate) {
-    if (immediate) { updateMessageEl(bodyEl, msg, true); return; }
+  // v0.35: ownerState rides along so background chats never index their
+  // bubbles against the foreground chat.
+  function scheduleUpdate(bodyEl, msg, immediate, ownerState) {
+    if (immediate) { updateMessageEl(bodyEl, msg, true, ownerState); return; }
     msg._renderTimer = msg._renderTimer || 0;
     var now = Date.now();
     if (now - msg._renderTimer > 180) {
       msg._renderTimer = now;
-      updateMessageEl(bodyEl, msg, false);
+      updateMessageEl(bodyEl, msg, false, ownerState);
     } else if (!msg._renderPending) {
       msg._renderPending = setTimeout(function () {
         msg._renderPending = null;
         msg._renderTimer = Date.now();
-        updateMessageEl(bodyEl, msg, false);
+        updateMessageEl(bodyEl, msg, false, ownerState);
       }, 180);
     }
   }
@@ -1958,18 +2030,32 @@
   }
 
   function renderActivity(bodyEl, state, scrollTo) {
-    var container = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
+    // v0.35: only the chat that OWNS the live DOM may render its activity
+    // row. Previously a background chat's closures wrote "waiting for
+    // kimi-k3…" into whichever chat was on screen (the leak).
+    if (!isOwner(state)) return;
+    var container = currentCtx.bodyEl.querySelector('#chat-messages');
     if (!container) return;
     var row = container.querySelector('.chat-working');
     var text = state._actText;
     var silent = Date.now() - (state._lastActAt || 0);
-    var show = state.isStreaming &&
-      ((text && Date.now() - (state._actAt || 0) < 5000) || silent > 1500);
+    var show = state.isStreaming;
     if (!show) {
       if (row && row.parentNode) row.parentNode.removeChild(row);
       return;
     }
-    var phase = text || (silent > 1500 ? 'thinking…' : 'working…');
+    // v0.35 (user spec #9): the engine's wait-notices ("waiting on Nvidia · Ns",
+    // "…may be at capacity") must STAY on screen while the turn streams —
+    // the old 5s decay fell back to a plain "thinking…" exactly during the
+    // long NVIDIA pre-first-token queue (~30s measured live), hiding the
+    // one text that told the user it was the provider, not the app. And
+    // after ~8s of silence with no notice yet, the fallback names the
+    // PROVIDER — the thing the user actually picked.
+    var fallback = 'thinking…';
+    if (silent > 8000 && state.provider) {
+      fallback = 'waiting on ' + (PROVIDER_LABELS[state.provider] || state.provider) + '…';
+    }
+    var phase = text || (silent > 1500 ? (state._waitPhase || fallback) : 'working…');
     if (!row) {
       row = document.createElement('div');
       row.className = 'chat-working';
@@ -1999,7 +2085,12 @@
 
   function hideActivity(bodyEl, state) {
     state._actText = null;
-    var container = bodyEl ? bodyEl.querySelector('#chat-messages') : null;
+    // v0.35: a background chat finishing its turn must not remove the
+    // FOREGROUND chat's activity row (the old code did — that removal was
+    // also why the leaked indicator "healed itself" when the old chat's
+    // reply finally completed).
+    if (!isOwner(state)) return;
+    var container = currentCtx.bodyEl.querySelector('#chat-messages');
     if (container) {
       var row = container.querySelector('.chat-working');
       if (row && row.parentNode) row.parentNode.removeChild(row);
@@ -2017,9 +2108,12 @@
         hideActivity(currentCtx && currentCtx.bodyEl, state);
         return;
       }
-      // find THIS chat's live DOM (panel may have re-rendered)
-      var body = (currentCtx && currentCtx.state === state && currentCtx.bodyEl) || bodyEl;
-      if (body && body.isConnected) {
+      // v0.35 ISOLATION: only render when THIS chat owns the live DOM. The
+      // old `|| bodyEl` fallback resolved to the shared panel node and kept
+      // a leaked "waiting on kimi-k3…" row ticking inside the foreground
+      // chat even after it switched models/providers.
+      var body = isOwner(state) ? currentCtx.bodyEl : null;
+      if (body) {
         renderActivity(body, state, false);
         tickThinkingMeta(body, state); // v0.24: live reasoning stats even between trickles
       }
@@ -2069,7 +2163,7 @@
       if (m && m.streaming) {
         m.streaming = false;
         if (m.role === 'assistant') m.complete = true;
-        updateMessageEl(bodyEl, m, false);
+        updateMessageEl(bodyEl, m, false, state);
       }
     }
   }
@@ -2094,7 +2188,7 @@
         refreshArtifactCount(state, bodyEl);
       }).catch(function (e) { console.error('artifact save failed', e); });
     });
-    updateMessageEl(bodyEl, msg, true); // re-render → artifact cards appear
+    updateMessageEl(bodyEl, msg, true, state); // re-render → artifact cards appear
   }
 
   function refreshArtifactCount(state, bodyEl) {
@@ -2210,40 +2304,49 @@
   }
 
   // ── DOM: mount a message + run the Formatter into its bubble ────
-  function appendMessage(container, scrollEl, msg, bodyEl, icon) {
+  // v0.35 ISOLATION: ownerState (6th arg) is the chat the message BELONGS
+  // to. When a background chat streams into its detached closure container,
+  // we skip DOM work entirely — state.messages stays the source of truth and
+  // renderHost rebuilds the transcript the moment the user reopens the chat.
+  // The old code indexed background messages against the FOREGROUND chat's
+  // array (mi=-1) and scrolled the foreground chat's view on every append.
+  function appendMessage(container, scrollEl, msg, bodyEl, icon, ownerState) {
     var greeting = container && container.querySelector('#chat-greeting');
     if (greeting && greeting.parentNode) greeting.parentNode.removeChild(greeting);
-    var st = currentCtx && currentCtx.state;
+    var st = ownerState || (currentCtx && currentCtx.state);
     var mi = st ? st.messages.indexOf(msg) : -1;
     var div = document.createElement('div');
     div.innerHTML = messageHTML(msg, mi);
     var el = div.firstChild;
     container.appendChild(el);
     mountFormatting(el, msg);
-    scrollBottom(bodyEl || container);
+    if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl || container);
     return el;
   }
 
   // re-format an existing message's bubble (found via data-mi)
-  function updateMessageEl(bodyEl, msg, final) {
+  // v0.35 ISOLATION: index against the OWNING state — a background chat's
+  // streaming updates target its own (detached) container only; the live
+  // foreground chat is never touched.
+  function updateMessageEl(bodyEl, msg, final, ownerState) {
     var container = bodyEl.querySelector('#chat-messages');
     if (!container) return;
-    var st = currentCtx && currentCtx.state;
+    var st = ownerState || (currentCtx && currentCtx.state);
     if (!st) return;
     var mi = st.messages.indexOf(msg);
     if (mi < 0) return;
     var wrapper = container.querySelector('[data-mi="' + mi + '"]');
     if (!wrapper) {
       // not mounted yet (rare race) — append it
-      appendMessage(container, null, msg, bodyEl, null);
+      appendMessage(container, null, msg, bodyEl, null, ownerState);
       return;
     }
     var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
     mountFormatting(el, msg, final);
     if (final || msg.role === 'user') {
-      scrollBottom(bodyEl);
+      if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl);
     } else if (nearBottom(container)) {
-      scrollBottom(bodyEl);
+      if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl);
     }
   }
 
@@ -2388,7 +2491,7 @@
     // v0.28 SMART SCROLL FREEZE: the user's own send re-engages the
     // follow — their finger is back in the conversation's here-and-now.
     state._scrollFrozen = false;
-    appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon);
+    appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon, state);
     // v0.19: no auto-title on the first message (user spec — the random
     // default name stays until a manual rename).
 
@@ -2429,7 +2532,7 @@
           var err = 'Still connecting to the engine — tap Send again in a moment.' +
             (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
           state.messages.push({ role: 'error', text: err });
-          appendMessage(msgContainer, null, { role: 'error', text: err }, bodyEl, icon);
+          appendMessage(msgContainer, null, { role: 'error', text: err }, bodyEl, icon, state);
           state.isStreaming = false;
         }
       }, 100);

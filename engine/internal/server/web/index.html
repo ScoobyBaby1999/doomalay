@@ -1020,7 +1020,10 @@
     0%, 100% { opacity: 0.18; transform: scale(0.82); }
     45%      { opacity: 1;   transform: scale(1.12); }
   }
-  .cwt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* v0.35: the wait phase text now WRAPS (up to 2 lines) — the OpenCode 401
+     "free tier can only be used…" message and long provider notices were
+     single-line-ellipsized and unreadable on a phone. */
+  .cwt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; word-break: break-word; overflow-wrap: anywhere; }
   .cwe { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 2px); font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .cwk-bar {
     position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;

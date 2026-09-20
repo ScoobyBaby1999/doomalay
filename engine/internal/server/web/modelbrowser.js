@@ -53,13 +53,19 @@
   // Filter pill definitions (label, color, match key).
   // v0.34: 'available' moved to its own exclusive pair; 'starred' moved
   // to the ★ tab — both gone from the OR-pills.
+  // v0.34.1 THEME TONES: pill/chip colors compose from the theme vars —
+  // a tone is {c:'var(--x)', rgb:'var(--x-rgb)'} so active states render
+  // as rgba(var(--x-rgb),a). No raw hex remains in the catalogue (every
+  // theme recolors it). Mapping: reasoning/tools→accent-3, smart/agent/
+  // ctx→accent, code/all→accent-2, vision/free/avail→ok, paid→warn.
+  function tone(name) { return { c: 'var(--' + name + ')', rgb: 'var(--' + name + '-rgb)' }; }
   var PILLS = [
-    { key: 'reasoning', label: 'Reason', color: '#f97316' },
-    { key: 'intelligence', label: 'Smart', color: '#a855f7' },
-    { key: 'code', label: 'Code', color: '#3b82f6' },
-    { key: 'agent', label: 'Agent', color: '#14b8a6' },
-    { key: 'tools', label: 'Tools', color: '#8b5cf6' },
-    { key: 'vision', label: 'Vision', color: '#22c55e' }
+    { key: 'reasoning', label: 'Reason', color: tone('accent-3') },
+    { key: 'intelligence', label: 'Smart', color: tone('accent') },
+    { key: 'code', label: 'Code', color: tone('accent-2') },
+    { key: 'agent', label: 'Agent', color: tone('accent') },
+    { key: 'tools', label: 'Tools', color: tone('accent-3') },
+    { key: 'vision', label: 'Vision', color: tone('ok') }
   ];
   var CTX_OPTIONS = [
     { label: 'Any', v: 0 },
@@ -70,14 +76,14 @@
   // "Any $" removed (v0.32): Free / Paid are self-cancelling toggles —
   // neither active == pricing 'all'.
   var PRICING_OPTIONS = [
-    { key: 'free', label: 'Free', color: '#22c55e' },
-    { key: 'paid', label: 'Paid', color: '#f59e0b' }
+    { key: 'free', label: 'Free', color: tone('ok') },
+    { key: 'paid', label: 'Paid', color: tone('warn') }
   ];
   // v0.34 (user spec #9): the availability pair — Available shows only
   // key-backed models; All restores the default catalogue.
   var AVAIL_OPTIONS = [
-    { key: 'available', label: 'Available', color: '#10b981' },
-    { key: 'all', label: 'All', color: '#38bdf8' }
+    { key: 'available', label: 'Avail', color: tone('ok') },
+    { key: 'all', label: 'All', color: tone('accent-2') }
   ];
 
   // Pills that re-rank the list by a benchmark score.
@@ -117,9 +123,9 @@
     s.textContent =
       '.mb-logrow,[data-provhead],[data-hostslot],[data-slot],[data-expand],[data-select]{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}' +
       '.mb-logrow [data-select]{border-radius:8px;transition:background 130ms}' +
-      '.mb-logrow [data-select]:hover{background:rgba(128,128,140,0.10)}' +
+      '.mb-logrow [data-select]:hover{background:rgba(var(--text-3-rgb),0.10)}' +
       '[data-hostgrip],[data-grip]{user-select:none;-webkit-user-select:none;transition:background 130ms,color 130ms;border-radius:7px}' +
-      '[data-hostgrip]:hover,[data-grip]:hover{background:rgba(128,128,140,0.14);color:var(--text-1)}' +
+      '[data-hostgrip]:hover,[data-grip]:hover{background:rgba(var(--text-3-rgb),0.14);color:var(--text-1)}' +
       '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(0,0,0,0.55);cursor:grabbing}' +
       '.mb-dragging *{pointer-events:none}' +
       'body.mb-noselect,body.mb-noselect *{user-select:none!important;-webkit-user-select:none!important}' +
@@ -138,10 +144,18 @@
       '.mb-ufchip{transition:transform 120ms cubic-bezier(0.32,0.72,0,1)}' +
       '.mb-ufchip:hover{transform:scale(1.05)}' +
       '.mb-provbox{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
-      '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(255,255,255,0.18)!important}' +
+      '.mb-provbox:not(.mb-dragging):hover{border-color:rgba(var(--surface-3-rgb),0.18)!important}' +
       '.mb-logrow{transition:opacity 200ms,filter 200ms,border-color 150ms}' +
-      '.mb-logrow:not(.mb-dragging):not(.mb-cur):hover{border-color:rgba(255,255,255,0.16)!important}' +
+      '.mb-logrow:not(.mb-dragging):not(.mb-cur):hover{border-color:rgba(var(--surface-3-rgb),0.16)!important}' +
       '.mb-logrow.mb-cur{border-color:rgba(var(--ok-rgb),0.55)!important}' +
+      // v0.34.1 FIX 3: the PROVIDERS tab rings its current model in the
+      // PRIMARY theme color (accent — user asked for accent, not ok-green)
+      // and the owning provider box gets a softer accent outline. The
+      // :hover twin keeps the accent winning over the generic provbox
+      // hover rule (equal-specificity !important, later wins).
+      '.mb-prow.mb-cur{border-color:rgba(var(--accent-rgb),0.65)!important}' +
+      '.mb-provbox.mb-prov-cur,.mb-provbox.mb-prov-cur:not(.mb-dragging):hover{border-color:rgba(var(--accent-rgb),0.55)!important}' +
+      '.mb-logrow[data-slot] [data-slotrow]:hover{background:rgba(var(--accent-rgb),0.06)}' +
       '@keyframes mb-hint-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}' +
       '.mb-hint{animation:mb-hint-in 200ms cubic-bezier(0.32,0.72,0,1)}' +
       '.mb-countline{animation:mb-hint-in 160ms cubic-bezier(0.32,0.72,0,1)}' +
@@ -154,7 +168,7 @@
       // v0.32.4 F2: the ℹ detail-toggle button + the drawer's animated
       // benchmark bars and the drawer's entrance.
       '.mb-infobtn,[data-info],[data-compare]{transition:background 140ms,border-color 140ms,color 140ms}' +
-      '[data-info]:hover,[data-compare]:hover{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      '[data-info]:hover,[data-compare]:hover{background:rgba(var(--text-3-rgb),0.14);border-color:rgba(var(--surface-3-rgb),0.22)}' +
       '@keyframes mb-bar{from{transform:scaleX(0)}}' +
       '.mb-barfill{transform-origin:left center;animation:mb-bar 480ms cubic-bezier(0.32,0.72,0,1) both}' +
       '@keyframes mb-drawer-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}' +
@@ -172,22 +186,22 @@
       '.mb-r6 .mb-name .mb-curdot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--ok);background:var(--ok);box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);margin-right:6px;vertical-align:baseline}' +
       '.mb-r6 .mb-ctx{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);text-align:right;font-variant-numeric:tabular-nums}' +
       '.mb-r6 .mb-price{font-size:calc(var(--ui-small-fs) - 2px);color:var(--warn);background:rgba(var(--warn-rgb),0.1);border-radius:4px;padding:2px 0;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}' +
-      '.mb-r6 .mb-price.mb-free{color:#22c55e;background:rgba(34,197,94,0.12)}' +
-      '.mb-ic{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-2);padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-r6 .mb-price.mb-free{color:var(--ok);background:rgba(var(--ok-rgb),0.12)}' +
+      '.mb-ic{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--surface-2);background:rgba(var(--text-3-rgb),0.06);border-radius:8px;color:var(--text-2);padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
       '.mb-ic[data-on="1"]{border-color:rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.10);color:var(--accent)}' +
       '.mb-starbtn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:transparent;border:none;color:var(--border-strong);font-size:17px;line-height:1;padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
-      '.mb-starbtn[data-on="1"]{color:#eab308}' +
+      '.mb-starbtn[data-on="1"]{color:var(--warn)}' +
       // the subtext line (models + favorites rows): stats + pills left,
       // provider dots + the ➜ arrow right-aligned.
       '.mb-sub{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 12px 9px}' +
       '.mb-sub .mb-subpills{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;min-width:0}' +
       '.mb-dots{display:flex;align-items:center;gap:3px;flex-shrink:0;cursor:pointer;touch-action:manipulation}' +
-      '.mb-arrowbtn{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--surface-2);background:rgba(128,128,140,0.06);border-radius:8px;color:var(--text-1);flex-shrink:0;cursor:pointer;transition:background 140ms,border-color 140ms}' +
-      '.mb-arrowbtn:hover{background:rgba(128,128,140,0.14);border-color:rgba(255,255,255,0.22)}' +
+      '.mb-arrowbtn{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--surface-2);background:rgba(var(--text-3-rgb),0.06);border-radius:8px;color:var(--text-1);flex-shrink:0;cursor:pointer;transition:background 140ms,border-color 140ms}' +
+      '.mb-arrowbtn:hover{background:rgba(var(--text-3-rgb),0.14);border-color:rgba(var(--surface-3-rgb),0.22)}' +
       '.mb-arrowbtn svg{transition:transform 240ms cubic-bezier(0.32,0.72,0,1)}' +
       '.mb-arrowbtn[data-open="1"] svg{transform:rotate(180deg)}' +
       // the host-priority drop-down rows: key icon | name | ctx | price | arrows
-      '.mb-hrow{display:grid;grid-template-columns:26px minmax(0,1fr) 44px 58px auto;gap:7px;align-items:center;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;touch-action:manipulation;min-height:44px}' +
+      '.mb-hrow{display:grid;grid-template-columns:26px minmax(0,1fr) 44px 58px auto;gap:7px;align-items:center;padding:9px 12px;border-bottom:1px solid rgba(var(--surface-3-rgb),0.04);cursor:pointer;touch-action:manipulation;min-height:44px}' +
       '.mb-hrow .mb-hname{font-size:var(--ui-small-fs);color:var(--text-1);overflow-wrap:anywhere;word-break:break-word;line-height:1.25;min-width:0}' +
       '.mb-hrow .mb-hname .mb-hprov{font-weight:700;color:var(--text-2)}' +
       '.mb-hrow .mb-hname .mb-hid{color:var(--border-strong);font-size:calc(var(--ui-small-fs) - 2px)}' +
@@ -196,12 +210,12 @@
       '.mb-keyic[data-key="1"]{color:var(--ok)}' +
       '.mb-keyic[data-key="0"]{color:var(--border-strong);opacity:0.7}' +
       '.mb-hbtn{background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:6px 8px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;touch-action:manipulation;min-width:30px}' +
-      '.mb-hbtn:hover{background:rgba(128,128,140,0.12);color:var(--text-1)}' +
+      '.mb-hbtn:hover{background:rgba(var(--text-3-rgb),0.12);color:var(--text-1)}' +
       '.mb-hrow .mb-ctx,.mb-hrow .mb-price{font-size:calc(var(--ui-small-fs) - 2px)}' +
-      // the "show more" pagination row + the availability pair
+      // the "show more" pagination row (v0.34.1: the .mb-availpair row is
+      // GONE — the avail pair folded into the main pill grid, see filterRow)
       '.mb-more{display:block;width:100%;box-sizing:border-box;background:var(--surface-1);border:1px dashed var(--border);color:var(--text-2);font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;padding:11px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
       '.mb-more:hover{color:var(--text-1);border-color:var(--border-strong)}' +
-      '.mb-availpair{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
       '.mb-pill,.mb-pill:hover,.mb-pill:active,.mb-starbtn,.mb-starbtn:hover,.mb-starbtn:active,' +
@@ -462,7 +476,12 @@
     // gone.
 
     function render() {
+      // v0.34.1 FIX 1: everything sits in a 16px-padded wrapper — the
+      // catalogue no longer rides flush against the overlay's border. The
+      // sticky bar's -16px negative margins (below) now work CORRECTLY:
+      // they stretch it edge-to-edge across the padded content box.
       var html =
+        '<div id="mb-wrap" style="padding:16px">' +
         '<div id="mb-head">' + header() + '</div>' +
         '<div id="mb-sticky" style="position:sticky;top:0;z-index:30;margin:0 -16px;padding:10px 16px 8px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
         searchBox() +
@@ -470,7 +489,8 @@
         '</div>' +
         (filtersOpen ? '<div id="mb-filterrow">' + filterRow() + '</div>' : '') +
         '<div id="mb-list">' + listHTML() + '</div>' +
-        footer();
+        footer() +
+        '</div>';
 
       // v0.32.2 C: a FULL re-render (catalog sync) replaces the search
       // input — remember focus + caret and restore them after the swap.
@@ -647,10 +667,10 @@
     function filterToggleRow() {
       var n = activeFilterCount();
       var badge = n
-        ? '<span style="font-size:10px;font-weight:700;color:#10b981;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.45);padding:2px 8px;border-radius:6px;flex-shrink:0">' + n + ' on</span>'
+        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.14);border:1px solid rgba(var(--ok-rgb),0.45);padding:2px 8px;border-radius:6px;flex-shrink:0">' + n + ' on</span>'
         : '';
       var funnel = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 5h18l-7 8.2V19l-4 2v-7.8L3 5z"/></svg>';
-      var toggle = '<button id="mb-filters-toggle" style="flex:1;min-width:0;box-sizing:border-box;display:flex;align-items:center;gap:9px;background:var(--surface-1);border:1px solid ' + (n ? 'rgba(16,185,129,0.5)' : 'var(--surface-2)') + ';color:' + (n ? 'var(--text-1)' : 'var(--text-3)') + ';padding:9px 12px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation;transition:border-color 150ms">' +
+      var toggle = '<button id="mb-filters-toggle" style="flex:1;min-width:0;box-sizing:border-box;display:flex;align-items:center;gap:9px;background:var(--surface-1);border:1px solid ' + (n ? 'rgba(var(--ok-rgb),0.5)' : 'var(--surface-2)') + ';color:' + (n ? 'var(--text-1)' : 'var(--text-3)') + ';padding:9px 12px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation;transition:border-color 150ms">' +
         funnel +
         '<span style="font-size:12.5px;font-weight:600;flex:1;text-align:left;overflow:hidden;white-space:nowrap">Filters</span>' +
         badge +
@@ -675,8 +695,10 @@
     // the expanded pills — both states tell the same story.
     function collapsedFilterChips() {
       if (!activeFilterCount()) return '';
-      var chip = function (label, color, attrVal, count) {
-        return '<button data-unfilter="' + escAttr(attrVal) + '" class="mb-ufchip" title="remove this filter" style="display:inline-flex;align-items:center;gap:5px;background:' + color + '1c;border:1px solid ' + color + '80;color:' + color + ';font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;flex-shrink:0">' +
+      var chip = function (label, t, attrVal, count) {
+        // v0.34.1: t = theme tone {c, rgb} — chips compose rgba() like the
+        // pills (the old hex+'1c'/'80' alpha-append can't do var() colors).
+        return '<button data-unfilter="' + escAttr(attrVal) + '" class="mb-ufchip" title="remove this filter" style="display:inline-flex;align-items:center;gap:5px;background:rgba(' + t.rgb + ',0.11);border:1px solid rgba(' + t.rgb + ',0.5);color:' + t.c + ';font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation;flex-shrink:0">' +
           escHTML(label) +
           (count != null ? ' <span style="font-weight:800;opacity:0.85">' + count + '</span>' : '') +
           '<span style="font-size:9px;opacity:0.85;line-height:1">✕</span></button>';
@@ -687,10 +709,10 @@
         for (var p = 0; p < PILLS.length; p++) if (PILLS[p].key === filters[i]) { def = PILLS[p]; break; }
         if (def) chips += chip(def.label, def.color, 'pill:' + def.key, pillCount(def.key));
       }
-      if (avail === 'available') chips += chip('Available', '#10b981', 'avail:available', pillCount('available'));
+      if (avail === 'available') chips += chip('Available', tone('ok'), 'avail:available', pillCount('available'));
       if (ctxMin > 0) {
         for (var c = 0; c < CTX_OPTIONS.length; c++) {
-          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', '#14b8a6', 'ctx:' + ctxMin, ctxCount(ctxMin)); break; }
+          if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', tone('accent'), 'ctx:' + ctxMin, ctxCount(ctxMin)); break; }
         }
       }
       if (pricing !== 'all') {
@@ -743,12 +765,17 @@
     // Squared, uniform, grid-like pills — a real CSS grid: every cell the
     // same width, rows aligned, wrapping naturally, NO horizontal scroll
     // (v0.32 spec #2).
+    // v0.34.1: `color` is a theme TONE {c, rgb} — an active pill wears
+    // rgba(var(--x-rgb),a) mixes of its theme color.
     function squaredPill(attr, label, color, on) {
-      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? color + '22' : 'transparent') + ';border:1px solid ' + (on ? color + '99' : 'var(--border)') + ';color:' + (on ? color : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
+      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? 'rgba(' + color.rgb + ',0.13)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(' + color.rgb + ',0.6)' : 'var(--border)') + ';color:' + (on ? color.c : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
     }
 
     function filterRow() {
-      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
+      // v0.34.1 FIX 4: ONE grid — the availability pair folded IN as regular
+      // (shorter-label) cells + a ↺ Reset half-pill at the end. The min
+      // column shrank 70→56px so the 15 cells still wrap tidily.
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
       // Capability pills — v0.32.8 F4: an ACTIVE pill wears its live
       // match count ("Smart 134").
       for (var i = 0; i < PILLS.length; i++) {
@@ -762,7 +789,7 @@
         var co = CTX_OPTIONS[c];
         var onC = ctxMin === co.v;
         var cntC = onC && co.v > 0 ? ctxCount(co.v) : null;
-        html += squaredPill('data-ctx="' + co.v + '"', co.label + (cntC != null ? ' ' + cntC : ''), '#14b8a6', onC);
+        html += squaredPill('data-ctx="' + co.v + '"', co.label + (cntC != null ? ' ' + cntC : ''), tone('accent'), onC);
       }
       // Pricing pills (self-cancelling toggles — no "Any $").
       for (var pr = 0; pr < PRICING_OPTIONS.length; pr++) {
@@ -771,14 +798,15 @@
         var cntP = onP ? priceCount(po.key === 'free') : null;
         html += squaredPill('data-pricing="' + po.key + '"', po.label + (cntP != null ? ' ' + cntP : ''), po.color, onP);
       }
-      html += '</div>';
-      // v0.34 (user spec #9): the availability pair — its own row. The
-      // ACTIVE side wears its count (v0.32.8 F4 language).
+      // v0.34 (user spec #9) → v0.34.1: the availability pair lives IN the
+      // grid now (short labels; the count still rides the ACTIVE side).
       var availCnt = pillCount('available');
-      html += '<div class="mb-availpair">' +
-        squaredPill('data-avail="available"', 'Available' + (avail === 'available' ? ' ' + availCnt : ''), '#10b981', avail === 'available') +
-        squaredPill('data-avail="all"', 'All' + (avail === 'all' ? ' ' + (catalog && catalog.logical ? catalog.logical.length : '') : ''), '#38bdf8', avail === 'all') +
-        '</div>';
+      html += squaredPill('data-avail="available" title="available models only"', 'Avail' + (avail === 'available' ? ' ' + availCnt : ''), tone('ok'), avail === 'available');
+      html += squaredPill('data-avail="all" title="all models"', 'All' + (avail === 'all' ? ' ' + (catalog && catalog.logical ? catalog.logical.length : '') : ''), tone('accent-2'), avail === 'all');
+      // v0.34.1: the 15th cell — the ↺ Reset half-pill (one tap = the
+      // same reset as the "clear" button / the 'x' key).
+      html += '<button data-resetfilters="1" title="reset all filters" class="mb-pill" style="display:flex;align-items:center;justify-content:center;gap:3px;overflow:hidden;white-space:nowrap;background:transparent;border:1px solid var(--border-strong);color:var(--text-2);font-size:10px;font-weight:600;padding:5px 4px;border-radius:8px;font-family:inherit;cursor:pointer;touch-action:manipulation">↺ Reset</button>';
+      html += '</div>';
       return html;
     }
 
@@ -813,7 +841,7 @@
       applySort(list);
       if (!starred.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">' +
-          'No favorites yet — tap the <span style="color:#eab308">★</span> on any model to pin it here.</div>';
+          'No favorites yet — tap the <span style="color:var(--warn)">★</span> on any model to pin it here.</div>';
       } else if (!list.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size:calc(var(--ui-fs) - 1px)">' +
           (starred.length === 1 ? 'Your favorited model left the catalogue.' : 'Your ' + starred.length + ' favorited models left the catalogue.') + '</div>';
@@ -826,7 +854,7 @@
         out += moreRow(shown, list.length);
       }
       var counts = list.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + list.length + ' favorite' + (list.length === 1 ? '' : 's') + '</span><span style="color:#eab308;font-weight:600">★ pinned</span></div>'
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + list.length + ' favorite' + (list.length === 1 ? '' : 's') + '</span><span style="color:var(--warn);font-weight:600">★ pinned</span></div>'
         : '';
       return sortControl() + counts + compareZone(list) + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
     }
@@ -884,7 +912,7 @@
         }
       }
       var counts = logical.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="display:flex;gap:10px;align-items:center"><span id="mb-star-total" title="favorited models" style="color:#eab308;font-weight:600">★ ' + starred.length + '</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></span></div>'
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + matching.length + ' of ' + logical.length + ' models</span><span style="display:flex;gap:10px;align-items:center"><span id="mb-star-total" title="favorited models" style="color:var(--warn);font-weight:600">★ ' + starred.length + '</span><span style="color:' + (withKeys ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + withKeys + ' with your keys</span></span></div>'
         : '';
       return sortControl() + counts + compareZone(logical) + '<div style="display:flex;flex-direction:column;gap:6px">' + out + '</div>';
     }
@@ -1006,6 +1034,28 @@
       return false;
     }
 
+    // v0.34.1 FIX 3: is this exact provider ROUTE the chat's current
+    // model? Mirrors isCurrentModel()'s id forms (bare modelId,
+    // "provider/modelId", logical id) but keyed to the exact provider —
+    // the Providers tab rings ITS current row in the primary accent.
+    function isCurrentRoute(g, m, lm) {
+      if (!currentModel || !currentModel.modelId) return false;
+      if (currentModel.provider !== g.name) return false;
+      var cm = String(currentModel.modelId);
+      var mid = String(m.id || '');
+      if (mid === cm) return true;
+      var cutAt = mid.indexOf('/');
+      if (cutAt > 0 && mid.slice(0, cutAt) === g.name && mid.slice(cutAt + 1) === cm) return true;
+      if (lm && lm.logical === cm) return true;
+      return false;
+    }
+    // v0.34.1 FIX 3: does the current model belong to this provider's box?
+    // (provider names are the shared key across hosts[]/groups[] — the
+    // box gets the soft .mb-prov-cur accent outline)
+    function providerHasCurrent(g) {
+      return !!(currentModel && currentModel.modelId && currentModel.provider === g.name);
+    }
+
     // ── Providers view ──────────────────────────────────────────────────
 
     function orderedGroups() {
@@ -1118,20 +1168,21 @@
         }
       }
       var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';
-      // v0.32 #5: explicit availability badge + dimming (view-only vs ready).
+      // v0.32 #5 → v0.34.1 FIX 2: the availability badge and the one-tap
+      // key unlock MERGED — a keyless provider shows a single "+ key" pill
+      // BUTTON (accent, dashed) in the old "view only" slot; the separate
+      // ＋ key button is gone (no duplicates, data-addkey semantics kept:
+      // the value is the provider name the click handler feeds keyAdding).
       var keyBadge = g.hasApiKey
-        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">ready</span>'
-        : '<span style="font-size:10px;font-weight:600;color:var(--text-2,var(--text-3));background:rgba(128,128,140,0.12);border:1px dashed var(--border-strong);padding:2px 8px;border-radius:5px;flex-shrink:0;white-space:nowrap">view only</span>';
+        ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);padding:2px 8px;border-radius:5px;white-space:nowrap">ready</span>'
+        : '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="font-size:10px;font-weight:700;color:var(--accent);background:rgba(var(--accent-rgb),0.12);border:1px dashed rgba(var(--accent-rgb),0.5);padding:2px 8px;border-radius:5px;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">+ key</button>';
       var chevron = expanded ? '▾' : '▸';
       // v0.32.8 F1 (ported v0.34): the provider-compare pin on the box.
       var cmpPinned = provComparePair.indexOf(g.name) >= 0;
       var provCmpBtn = '<button data-pcmp="' + escAttr(g.name) + '" data-nodrag class="mb-ic" data-on="' + (cmpPinned ? '1' : '0') + '" aria-pressed="' + (cmpPinned ? 'true' : 'false') + '" title="' + (cmpPinned ? (provComparePair.length === 2 ? 'in compare — tap to remove' : 'pinned for compare — tap to unpin') : 'compare with another provider') + '" style="width:26px;height:26px;font-size:12px;line-height:1">⚖</button>';
       // v0.32 #8: grip — instant drag handle on the box.
       var grip = '<span data-grip data-nodrag title="drag to re-order providers" style="cursor:grab;color:var(--text-3);width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:7px;touch-action:none;font-size:13px;line-height:1">⠿</span>';
-      // v0.32.1 D: one-tap key unlock on view-only boxes.
-      var addKeyBtn = (!g.hasApiKey && g.envVar)
-        ? '<button data-addkey="' + escAttr(g.name) + '" data-nodrag title="paste an API key for ' + escAttr(g.displayName || g.name) + '" style="background:rgba(var(--ok-rgb),0.10);border:1px solid rgba(var(--ok-rgb),0.45);color:var(--ok);font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;flex-shrink:0;white-space:nowrap;cursor:pointer;font-family:inherit;touch-action:manipulation">＋ key</button>'
-        : '';
+      // (v0.32.1 D's separate addKeyBtn is GONE — merged into keyBadge above.)
 
       var dim = g.hasApiKey ? '' : 'opacity:0.6;filter:saturate(0.5);';
       // v0.32.4 F3: expanded detail strip — the catalog's description of the
@@ -1165,25 +1216,30 @@
       if (keyAdding === g.name && !g.hasApiKey && g.envVar) {
         keyForm = '<div class="mb-keyform" data-keyform data-nodrag style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--surface-2);background:rgba(var(--ok-rgb),0.04)">' +
           '<input data-keyinput type="password" placeholder="' + escAttr(g.envVar) + '" autocomplete="off" spellcheck="false" style="flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--surface-2);color:var(--text-1);font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px 10px;border-radius:8px;outline:none" />' +
-          '<button data-keysave="' + escAttr(g.name) + '" data-nodrag style="background:var(--ok);border:none;color:#08240f;font-size:11px;font-weight:700;padding:8px 12px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap">Save</button>' +
+          '<button data-keysave="' + escAttr(g.name) + '" data-nodrag style="background:var(--ok);border:none;color:var(--surface-1);font-size:11px;font-weight:700;padding:8px 12px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap">Save</button>' +
           '<button data-keycancel data-nodrag title="cancel" style="background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;padding:8px 10px;border-radius:8px;cursor:pointer;font-family:inherit">✕</button>' +
           '</div>';
       }
-      return '<div class="mb-provbox" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
-        '<div data-provhead="' + escAttr(g.name) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);flex-shrink:0">' + chevron + '</span>' +
-          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
-          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
+      // v0.34.1 FIX 3: the box owning the chat's current model wears the
+      // .mb-prov-cur accent outline (CSS rule in ensureStyles).
+      var provCur = providerHasCurrent(g);
+      return '<div class="mb-provbox' + (provCur ? ' mb-prov-cur' : '') + '" data-prov="' + escAttr(g.name) + '" style="background:var(--surface-1);border:1px solid ' + (expanded ? 'rgba(var(--surface-3-rgb),0.14)' : 'var(--surface-2)') + ';border-radius:12px;overflow:hidden;--dd-accent:' + (g.color || 'var(--ok)') + ';' + dim + 'transition:opacity 200ms,filter 200ms">' +
+        // v0.34.1 FIX 2: a GRID header — the count / ⚖ / grip columns are
+        // FIXED widths now, so every provider row aligns identically
+        // whether it holds 10 or 400 models.
+        '<div data-provhead="' + escAttr(g.name) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="display:grid;grid-template-columns:14px 10px minmax(0,1fr) auto auto 34px 26px 26px;gap:9px;align-items:center;padding:12px 14px;cursor:pointer;touch-action:manipulation">' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3)">' + chevron + '</span>' +
+          '<span style="width:10px;height:10px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + '"></span>' +
+          '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
           keyBadge +
-          addKeyBtn +
           liveDot +
-          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex-shrink:0">' + (g.modelCount || 0) + '</span>' +
+          '<span title="' + (g.modelCount || 0) + ' models" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);width:34px;text-align:right;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (g.modelCount || 0) + '</span>' +
           provCmpBtn +
           grip +
         '</div>' +
         keyForm +
         detailStrip +
-        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key (view only)') + '</div>') + '</div>' : '') +
+        (expanded ? '<div style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--surface-2)">' + (rows || '<div style="padding:16px;font-size: var(--ui-small-fs);color:var(--text-3);text-align:center">no models match' + (g.hasApiKey ? '' : ' — no API key yet') + '</div>') + '</div>' : '') +
         '</div>';
     }
 
@@ -1263,7 +1319,7 @@
       // v0.32 #5/#9: dimming carries availability; the row tap selects.
       var dim = available ? '' : 'opacity:0.55;filter:saturate(0.6);';
 
-      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(255,255,255,0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
+      return '<div class="mb-logrow' + (isCur ? ' mb-cur' : '') + '" data-logical-id="' + escAttr(lm.logical) + '" tabindex="' + (kbFirst ? 0 : -1) + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--ok-rgb),0.55)' : (expanded ? 'rgba(var(--surface-3-rgb),0.14)' : 'var(--surface-2)')) + ';border-radius:12px;overflow:hidden;' + dim + 'transition:opacity 200ms,filter 200ms">' +
         top +
         sub +
         (infoOpenNow ? detailDrawer(lm) : '') +
@@ -1354,20 +1410,30 @@
     }
 
     function bmChip(text, score) {
-      var color = score >= 70 ? '#22c55e' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
+      var color = score >= 70 ? 'var(--ok)' : (score >= 40 ? 'var(--warn)' : 'var(--text-3)');
       // v0.32.1 G: a 32×3px score mini-bar next to the number — the score
       // becomes readable at a glance (green ≥70, amber ≥40).
       var pct = Math.max(5, Math.min(100, Math.round(score)));
-      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(255,255,255,0.04);padding:1px 6px;border-radius:4px">' + text +
-        '<span style="width:32px;height:3px;border-radius:2px;background:rgba(128,128,140,0.22);overflow:hidden;flex-shrink:0" title="score ' + Math.round(score) + '/100"><i style="display:block;height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.85"></i></span>' +
+      return '<span style="display:inline-flex;align-items:center;gap:5px;font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:rgba(var(--surface-3-rgb),0.04);padding:1px 6px;border-radius:4px">' + text +
+        '<span style="width:32px;height:3px;border-radius:2px;background:rgba(var(--text-3-rgb),0.22);overflow:hidden;flex-shrink:0" title="score ' + Math.round(score) + '/100"><i style="display:block;height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.85"></i></span>' +
         '</span>';
     }
 
-    var CAP_COLORS = { reasoning: '#f97316', code: '#3b82f6', tools: 'var(--accent)', vision: '#22c55e', audio: '#ec4899', agents: '#14b8a6' };
+    // v0.34.1 THEME SWEEP: capability chips compose from theme tones too
+    // (the old code appended raw hex alpha — impossible with var()
+    // colors). audio keeps the persona tint when the theme has one.
+    var CAP_COLORS = {
+      reasoning: tone('accent-3'),
+      code: tone('accent-2'),
+      tools: tone('accent'),
+      vision: tone('ok'),
+      audio: { c: 'var(--persona-tint,var(--accent))', rgb: 'var(--persona-rgb,var(--accent-rgb))' },
+      agents: tone('accent')
+    };
     function capChip(cap) {
       var key = String(cap).toLowerCase();
-      var color = CAP_COLORS[key] || 'var(--text-3)';
-      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + color + ';background:' + color + '14;padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
+      var t = CAP_COLORS[key] || null;
+      return '<span style="font-size: calc(var(--ui-small-fs) - 3px);color:' + (t ? t.c : 'var(--text-3)') + ';background:' + (t ? 'rgba(' + t.rgb + ',0.08)' : 'rgba(var(--text-3-rgb),0.08)') + ';padding:1px 6px;border-radius:4px">' + escHTML(cap) + '</span>';
     }
 
     // ── THE PROVIDER MODEL ROW (v0.34: the same 6-column format) ──────
@@ -1381,10 +1447,11 @@
       var infoKey = lm ? lm.logical : (slot);
       var infoOpenNow = !!(lm && infoOpen[lm.logical]);
       var starKey = lm ? lm.logical : (m.family || '');
+      var isCur = isCurrentRoute(g, m, lm); // v0.34.1 FIX 3: real current-model state (was hardcoded false)
       var top = '<div class="mb-r6" data-slotrow="' + escAttr(slot) + '" role="button" tabindex="' + (kbFirst ? 0 : -1) + '" title="' + escAttr(m.displayName || m.rawId) + '">' +
         row6Columns({
           name: escHTML(m.displayName || m.rawId),
-          isCur: false,
+          isCur: isCur,
           starKey: starKey || null,
           infoKey: infoKey,
           infoOn: infoOpenNow,
@@ -1395,7 +1462,7 @@
         '</div>';
       var drawer = (infoOpenNow && lm) ? detailDrawer(lm) : '';
       var hasKey = !!g.hasApiKey;
-      return '<div class="mb-logrow mb-prow" data-slot="' + escAttr(slot) + '" data-logical-id="' + escAttr(lm ? lm.logical : '') + '" style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;' + (hasKey ? '' : 'opacity:0.55;filter:saturate(0.6);') + 'margin:6px 8px">' +
+      return '<div class="mb-logrow mb-prow' + (isCur ? ' mb-cur' : '') + '" data-slot="' + escAttr(slot) + '" data-logical-id="' + escAttr(lm ? lm.logical : '') + '" style="background:var(--surface-1);border:1px solid ' + (isCur ? 'rgba(var(--accent-rgb),0.55)' : 'var(--surface-2)') + ';border-radius:10px;' + (hasKey ? '' : 'opacity:0.55;filter:saturate(0.6);') + 'margin:6px 8px">' +
         top + drawer + '</div>';
     }
 
@@ -1441,7 +1508,7 @@
       // ── Pricing split (prompt / completion per M tokens) ──
       var pm = String(attrs.pricing || '').match(/\$([0-9]+(?:\.[0-9]+)?)\s*\/\s*\$([0-9]+(?:\.[0-9]+)?)/);
       if (lm.isFree) {
-        html += '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);flex-shrink:0">Pricing</span><span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:#22c55e">free route</span></div>';
+        html += '<div style="display:flex;gap:8px;align-items:center"><span style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);flex-shrink:0">Pricing</span><span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--ok)">free route</span></div>';
       } else if (pm) {
         html += '<div style="display:flex;flex-direction:column;gap:5px">' +
           '<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3)">Pricing <span style="font-weight:400;letter-spacing:0;text-transform:none">· prompt / completion per M</span></div>' +
@@ -1459,7 +1526,7 @@
       if (attrs.effortLevels && attrs.effortLevels.length) facts += capChip('effort: ' + attrs.effortLevels.join('/'));
       var ranks = attrs.ranks || [];
       for (var r = 0; r < ranks.length && r < 3; r++) {
-        facts += '<span title="ranked #' + ranks[r].rank + ' for ' + escAttr(ranks[r].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>№' + ranks[r].rank + '</b> ' + escHTML(ranks[r].label) + '</span>';
+        facts += '<span title="ranked #' + ranks[r].rank + ' for ' + escAttr(ranks[r].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>#' + ranks[r].rank + '</b> ' + escHTML(ranks[r].label) + '</span>';
       }
       if (facts) html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + facts + '</div>';
 
@@ -1557,7 +1624,7 @@
         return m ? parseFloat(m[1]) : Infinity;
       };
       var priceLabel = function (lm, isWin) {
-        if (lm.isFree) return '<b style="color:' + (isWin ? 'var(--ok)' : '#22c55e') + '">free</b>';
+        if (lm.isFree) return '<b style="color:var(--ok)">free</b>';
         var pm = String(((lm.attributes || {}).pricing) || '').match(/\$([0-9]+(?:\.[0-9]+)?)\s*\/\s*\$([0-9]+(?:\.[0-9]+)?)/);
         if (!pm) return '<span style="color:var(--text-3)">—</span>';
         return '<b style="color:' + (isWin ? 'var(--ok)' : 'var(--text-1)') + ';font-variant-numeric:tabular-nums">$' + pm[1] + '</b><span style="color:var(--text-3)"> / $' + pm[2] + '</span>';
@@ -1613,7 +1680,7 @@
         var rcol = function (list) {
           if (!list.length) return '<span style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3)">—</span>';
           var s = '';
-          for (var k = 0; k < list.length && k < 3; k++) s += '<span title="ranked #' + list[k].rank + ' for ' + escAttr(list[k].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>№' + list[k].rank + '</b> ' + escHTML(list[k].label) + '</span>';
+          for (var k = 0; k < list.length && k < 3; k++) s += '<span title="ranked #' + list[k].rank + ' for ' + escAttr(list[k].label) + '" style="font-size:calc(var(--ui-small-fs) - 3px);color:var(--accent);background:rgba(var(--accent-rgb),0.10);border:1px solid rgba(var(--accent-rgb),0.35);padding:2px 7px;border-radius:5px;white-space:nowrap"><b>#' + list[k].rank + '</b> ' + escHTML(list[k].label) + '</span>';
           return '<div style="display:flex;gap:4px;flex-wrap:wrap">' + s + '</div>';
         };
         html += '<div style="display:flex;flex-direction:column;gap:5px">' +
@@ -1695,7 +1762,7 @@
           '<span style="width:9px;height:9px;border-radius:50%;background:' + (g.color || 'var(--border-strong)') + ';flex-shrink:0"></span>' +
           '<span style="font-size:calc(var(--ui-small-fs));font-weight:700;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHTML(g.displayName || g.name) + '</span>' +
           '</div>' +
-          '<span style="font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;color:' + (s.keyed ? 'var(--ok)' : 'var(--text-3)') + '">' + (s.keyed ? 'ready' : 'view only') + '</span>' +
+          '<span style="font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;color:' + (s.keyed ? 'var(--ok)' : 'var(--text-3)') + '">' + (s.keyed ? 'ready' : '+ key needed') + '</span>' +
           '</div>';
       };
       // metric row: winner side gets ▲ + var(--ok); ties get neither.
@@ -1907,9 +1974,12 @@
       if (old) old.remove();
       var el = document.createElement('div');
       el.className = 'mb-hint';
-      el.style.cssText = 'position:sticky;bottom:0;left:0;right:0;display:flex;align-items:center;gap:8px;background:rgba(30,30,38,0.97);border:1px solid rgba(245,158,11,0.5);color:var(--warn);font-size:12px;padding:10px 14px;border-radius:10px;margin-top:10px';
+      el.style.cssText = 'position:sticky;bottom:0;left:0;right:0;display:flex;align-items:center;gap:8px;background:var(--surface-1);border:1px solid rgba(var(--warn-rgb),0.5);color:var(--warn);font-size:12px;padding:10px 14px;border-radius:10px;margin-top:10px';
       el.innerHTML = '<span style="flex-shrink:0">⚠</span><span style="flex:1">' + text + '</span>';
-      contentEl.appendChild(el);
+      // v0.34.1: append INSIDE the padded wrapper so the toast keeps the
+      // catalogue's 16px side spacing (falls back to the content root).
+      var hintHost = contentEl.querySelector('#mb-wrap') || contentEl;
+      hintHost.appendChild(el);
       setTimeout(function () {
         el.style.transition = 'opacity 300ms';
         el.style.opacity = '0';
@@ -1920,7 +1990,7 @@
     // ── Footer ───────────────────────────────────────────────────────────
 
     function footer() {
-      return '<div style="padding:16px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
+      return '<div style="padding:12px 0 0;font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-2,var(--text-3));text-align:center">' +
         'tap a row to select · ★ pins a favorite (its own tab above) · ℹ shows benchmarks & pricing · ⚖ compares models or providers · ➜ re-arranges providers · hold a row to drag · / searches · x clears filters · s stars · Esc closes · ' + liveCount() + ' providers live' +
         '</div>';
     }
@@ -2462,6 +2532,13 @@
         lsSet('avail', avail);
         shownCount = PAGE;
         updateSticky(); renderList();
+        return;
+      }
+      // v0.34.1 FIX 4: the ↺ Reset half-pill — one tap, same path as the
+      // "clear" button / the document-level 'x' shortcut.
+      if ((el = t.closest('[data-resetfilters]'))) {
+        e.stopPropagation();
+        resetAllFilters();
         return;
       }
       if ((el = t.closest('[data-provhead]'))) {
