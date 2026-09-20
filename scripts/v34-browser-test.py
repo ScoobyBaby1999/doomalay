@@ -377,12 +377,35 @@ with sync_playwright() as p:
     ok(pg.locator(".mb-prow .mb-detail").count() == 1,
        "ℹ on a provider row uncollapses the model info + benchmarks BENEATH its row")
 
-    # ── Available / All (no keys yet → empty; key posted → ready) ──
+    # ── v0.32.7-9 ports: provider ⚖ compare + pill counts + 'x' ──
+    pc = pg.locator("[data-pcmp]")
+    ok(pc.count() >= 2, f"every provider box carries the ⚖ compare pin ({pc.count()})")
+    pc.nth(0).click(); pg.wait_for_timeout(400)
+    ok("pinned" in pg.locator("#mb-list").inner_text(),
+       "one ⚖ pin shows the hint strip")
+    pc2 = pg.locator("[data-pcmp]")
+    pc2.nth(1).click(); pg.wait_for_timeout(600)
+    ok("Provider compare" in pg.locator("#mb-list").inner_text(), "two pins open the provider compare drawer")
+    ok(pg.locator("[data-pcmpbrowse]").count() == 2, "the drawer offers per-side 'browse N models →' deep links")
+    pg.locator("[data-pcmpclose]").first.click(); pg.wait_for_timeout(400)
+    ok("Provider compare" not in pg.locator("#mb-list").inner_text(), "✕ unpins both providers")
+
+    # ── pill counts + the 'x' clear-all shortcut (v0.32.8/9 ports) ──
+    pg.locator('[data-viewtab="models"]').click(); pg.wait_for_timeout(600)
+    ok(pg.locator("#mb-star-total").count() == 1 and "★ 1" in pg.locator("#mb-star-total").inner_text(),
+       "the counts line carries the ★ total")
     pg.locator("#mb-filters-toggle").click(); pg.wait_for_timeout(500)
+    pg.locator('[data-pill="tools"]').click(); pg.wait_for_timeout(800)
+    tools_txt = pg.locator('[data-pill="tools"]').inner_text()
+    ok(any(ch.isdigit() for ch in tools_txt), f"the ACTIVE pill wears its live match count ('{tools_txt}')")
+    pg.keyboard.press("x"); pg.wait_for_timeout(600)
+    ok(pg.locator('[data-pill="tools"]').get_attribute("aria-pressed") == "false",
+       "the 'x' key clears every filter (resetFilters hook)")
+    # the filters row is still open here — the Available/All checks follow
     ok(pg.locator('[data-avail="available"]').count() == 1, "the 'Available' pill exists in the filter box")
-    ok(pg.locator('[data-avail="all"]').count() == 1, "the 'All' pill exists beside it")
     pg.locator('[data-avail="available"]').click(); pg.wait_for_timeout(800)
     ok(pg.locator('[data-avail="available"]').get_attribute("aria-pressed") == "true", "Available selects")
+    pg.locator('[data-viewtab="providers"]').click(); pg.wait_for_timeout(800)
     empty_txt = pg.evaluate("() => document.querySelector('#mb-list').innerText")
     ok("No providers with API keys yet" in empty_txt, "no keys → the providers tab explains (empty, not broken)")
     pg.locator('[data-viewtab="models"]').click(); pg.wait_for_timeout(700)
