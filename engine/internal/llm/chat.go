@@ -63,6 +63,13 @@ type ChatRequest struct {
 type Message struct {
         Role    string `json:"role"`
         Content string `json:"content"`
+        // v0.38 NATIVE TOOLS: assistant messages may carry structured
+        // tool_calls (JSON, OpenAI shape) and tool results reply with
+        // tool_call_id — both marshal onto the wire, both stay empty for
+        // every legacy path.
+        ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+        ToolCallID string          `json:"tool_call_id,omitempty"`
+        Name      string          `json:"name,omitempty"`
         // FoldedDone marks assistant messages assembled from assistant_delta
         // fragments (pre-v0.13 sessions) so later deltas don't append to them.
         FoldedDone bool `json:"-"`
@@ -95,6 +102,11 @@ type openAIChunk struct {
                 Delta struct {
                         Content   string `json:"content"`
                         Reasoning string `json:"reasoning_content"`
+                        // v0.38: native function-calling deltas — the FIRST
+                        // chunk of a call carries id+name; the rest ride the
+                        // index and append argument fragments (per the OpenAI
+                        // streaming spec, verified against NVIDIA NIM).
+                        ToolCalls []openAIToolCallDelta `json:"tool_calls"`
                 } `json:"delta"`
                 FinishReason string `json:"finish_reason"`
         } `json:"choices"`
@@ -103,6 +115,17 @@ type openAIChunk struct {
                 CompletionTokens int `json:"completion_tokens"`
                 TotalTokens      int `json:"total_tokens"`
         } `json:"usage,omitempty"`
+}
+
+// openAIToolCallDelta is one streamed tool-call fragment.
+type openAIToolCallDelta struct {
+        Index    int    `json:"index"`
+        ID       string `json:"id"`
+        Type     string `json:"type"`
+        Function struct {
+                Name      string `json:"name"`
+                Arguments string `json:"arguments"`
+        } `json:"function"`
 }
 
 // Chat streams a chat completion from an OpenAI-compatible provider,
@@ -118,6 +141,17 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                 switch {
                 case req.DeepResearch && req.Provider != "":
                         runDeepResearch(ctx, ch, errs, req)
+                case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
+                        // v0.38: OpenRouter's provider-side search keeps its
+                        // one-round native path (Path A) — no client loop needed.
+                        runWebSearchTurn(ctx, ch, errs, req)
+                case SupportsNativeTools(req.Provider):
+                        // v0.38 NATIVE FUNCTION CALLING: plain + web-search turns
+                        // on OpenAI-compatible hosts run structured tool_calls —
+                        // the model can't hand-write malformed ACTION JSON (the
+                        // zip_create failure class). Providers that 400 tools
+                        // fall back to the ACTION protocol inside.
+                        runNativeToolsTurn(ctx, ch, errs, req)
                 case req.WebSearch && req.Provider != "":
                         runWebSearchTurn(ctx, ch, errs, req)
                 default:
@@ -498,6 +532,15 @@ func friendlyHTTPError(status int, body string, provider string) string {
 // at once). ch receives error chunks (so the UI sees provider failures);
 // onDelta receives the fragments.
 func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch chan<- ChatChunk, onDelta func(reasoning, content string)) (*Usage, error) {
+        usage, _, err := scanSSECollect(ctx, req, extraBody, ch, onDelta)
+        return usage, err
+}
+
+// scanSSECollect is scanSSE + native tool-call accumulation (v0.38): streams
+// one completion, forwards thinking/content, and ALSO assembles any streamed
+// tool_calls deltas (index-keyed, per the OpenAI streaming spec) into a
+// complete call list. The legacy callers ignore the second return.
+func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]any, ch chan<- ChatChunk, onDelta func(reasoning, content string)) (*Usage, []nativeCall, error) {
         messages := make([]Message, 0, len(req.Messages)+1)
         if req.SystemPrompt != "" {
                 messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
@@ -526,10 +569,11 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
         for k, v := range extraBody {
                 body[k] = v
         }
+        _, hasTools := body["tools"]
 
         bodyBytes, err := json.Marshal(body)
         if err != nil {
-                return nil, fmt.Errorf("marshal: %w", err)
+                return nil, nil, fmt.Errorf("marshal: %w", err)
         }
 
         base := strings.TrimSuffix(req.BaseURL, "/")
@@ -554,7 +598,7 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
 
         resp := doPostSSE(ctx, req, url, bodyBytes, ch)
         if resp == nil {
-                return nil, nil // error already emitted
+                return nil, nil, nil // error already emitted
         }
         // v0.36: 429/503 RETRY-WITH-BACKOFF (mirrors the brain's
         // num_retries=3): NVIDIA's per-model rate limits answer 429 on
@@ -581,17 +625,26 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
                 select {
                 case <-ctx.Done():
                         ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while waiting to retry after the rate limit"}
-                        return nil, nil
+                        return nil, nil, nil
                 case <-time.After(wait):
                 }
                 resp = doPostSSE(ctx, req, url, bodyBytes, ch)
                 if resp == nil {
-                        return nil, nil // error already emitted
+                        return nil, nil, nil // error already emitted
                 }
         }
         if resp.StatusCode != 200 {
                 bts, _ := io.ReadAll(resp.Body)
                 resp.Body.Close()
+                // v0.38 NATIVE-TOOLS REJECTION: a 400 that names tools/function
+                // calling on a tools-bearing request is a capability gap, not a
+                // user error — suppress the UI error, blacklist the provider
+                // for this engine's lifetime, and let the caller fall back to
+                // the ACTION text protocol.
+                if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
+                        blacklistNativeTools(req.Provider)
+                        return nil, nil, errToolsRejected
+                }
                 if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
                         blacklistEffort(req.Provider, req.Model)
                         for _, k := range effortKeys {
@@ -603,15 +656,15 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
                                         bts2, _ := io.ReadAll(resp2.Body)
                                         resp2.Body.Close()
                                         ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
-                                        return nil, nil
+                                        return nil, nil, nil
                                 }
                                 resp = resp2
                         } else {
-                                return nil, nil
+                                return nil, nil, nil
                         }
                 } else {
                         ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
-                        return nil, nil
+                        return nil, nil, nil
                 }
         }
 
@@ -632,6 +685,8 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
         scanner := bufio.NewScanner(wd)
         scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
         usage := &Usage{}
+        var calls []nativeCall
+        callIdx := map[int]int{} // delta index → position in calls
         for scanner.Scan() {
                 line := scanner.Text()
                 if !strings.HasPrefix(line, "data: ") {
@@ -646,6 +701,24 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
                         continue
                 }
                 for _, choice := range chunk.Choices {
+                        // v0.38: assemble streamed tool-call fragments — the
+                        // first carries id+name, later ones only arguments.
+                        for _, tc := range choice.Delta.ToolCalls {
+                                wd.markDelta()
+                                pos, ok := callIdx[tc.Index]
+                                if !ok {
+                                        pos = len(calls)
+                                        callIdx[tc.Index] = pos
+                                        calls = append(calls, nativeCall{ID: tc.ID, Name: tc.Function.Name})
+                                }
+                                if tc.ID != "" && calls[pos].ID == "" {
+                                        calls[pos].ID = tc.ID
+                                }
+                                if tc.Function.Name != "" && calls[pos].Name == "" {
+                                        calls[pos].Name = tc.Function.Name
+                                }
+                                calls[pos].Arguments += tc.Function.Arguments
+                        }
                         if choice.Delta.Reasoning != "" || choice.Delta.Content != "" {
                                 wd.markDelta() // v0.24: real token — wait-notices go quiet
                                 if onDelta != nil {
@@ -661,13 +734,13 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
         if err := scanner.Err(); err != nil {
                 if wd.timedOut.Load() {
                         ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
-                        return usage, nil
+                        return usage, calls, nil
                 }
                 ch <- ChatChunk{Type: "error", Error: "stream", Message: err.Error()}
-                return usage, nil
+                return usage, calls, nil
         }
         usage.TotalTokens = usage.InputTokens + usage.OutputTokens
-        return usage, nil
+        return usage, calls, nil
 }
 
 // doPostSSE builds + sends ONE streaming request (with the v0.24 connect-
