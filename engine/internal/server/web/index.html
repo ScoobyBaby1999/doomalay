@@ -2692,6 +2692,11 @@
   <button class="dock-btn" id="dock-library" title="Hub library" aria-label="Hub library">
     <svg viewBox="0 0 24 24"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg>
   </button>
+  <!-- v0.42: the all-chats index — every conversation, most recently
+       active first, with a one-line preview of where it left off -->
+  <button class="dock-btn" id="dock-chats" title="All chats" aria-label="All chats">
+    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
+  </button>
   <!-- v0.41: global chat search — the transcript across every chat -->
   <button class="dock-btn" id="dock-search" title="Search all chats" aria-label="Search all chats">
     <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
@@ -2787,6 +2792,14 @@
      snippets; tapping a result jumps straight to the message in its chat
      (data-ei + find-hit pulse). -->
 <script src="globalsearch.js"></script>
+<!-- v0.42: THE ALL-CHATS INDEX — every conversation, date-grouped, with
+     previews; opened from the canvas dock's 💬 glyph. Tapping a row
+     opens that chat (materializing an icon when missing). -->
+<script src="chatsview.js"></script>
+<!-- v0.42: THE GLOBAL KEYBOARD LAYER — '?' opens the shortcuts overlay,
+     Ctrl/Cmd+F opens the live chat's find bar, Ctrl/Cmd+K opens global
+     chat search (the command-palette entry). -->
+<script src="keys.js"></script>
 <script src="gesture.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
