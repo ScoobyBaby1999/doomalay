@@ -476,6 +476,24 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
                 }
         }
 
+        // v0.38 BRAIN HISTORY: brain turns used to run with NO conversation
+        // memory — brainReq never carried a "history" key, so the fresh
+        // per-turn Strands agent saw only the current message (every brain
+        // turn was amnesiac). Build it exactly like the direct proxy does
+        // (event log → folded turns, the session's sliding window); the
+        // brain appends the new user message itself.
+        {
+                hist := s.buildHistoryCompacted(sessionID, sess, sess.SlidingWindow)
+                if sess.SlidingWindow == 0 {
+                        hist = s.buildHistoryCompacted(sessionID, sess, 40)
+                }
+                brainHistory := make([]map[string]any, 0, len(hist))
+                for _, m := range hist {
+                        brainHistory = append(brainHistory, map[string]any{"role": m.Role, "content": m.Content})
+                }
+                brainReq["history"] = brainHistory
+        }
+
         // Stream from the brain, OR the direct LLM proxy if brain is down.
         // v0.16: the streaming client has no wall-clock cap (reasoning models
         // think for minutes) — this per-turn timeout is the backstop that

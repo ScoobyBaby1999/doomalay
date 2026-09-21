@@ -48,6 +48,14 @@
   var chatStates = {};
   var currentCtx = null; // the chat currently shown in the panel
 
+  // v0.38: when the master panel closes, NO chat owns the live DOM
+  // anymore. panel.close() dispatches 'doomalay:panel-closed'; clearing
+  // currentCtx here means a still-streaming background chat's closures
+  // can't paint into the hidden panel (they flip to data-only mode).
+  document.addEventListener('doomalay:panel-closed', function () {
+    currentCtx = null;
+  });
+
   // v0.35 CHAT ISOLATION (the cross-chat leak): the panel body is ONE
   // shared DOM node — when chat B renders, it re-owns bodyEl and chat A's
   // event closures still hold the SAME node. Every render path below must
@@ -1909,10 +1917,14 @@
   // 181s" rounds whose actual thinking was ~30s). endedAt is stamped the
   // moment the stream moves past thinking (content, a tool event, or turn
   // end) — both the WS engine path and the PM bridge report through here.
-  function stampThinkEnd(state) {
+  function stampThinkEnd(state, tsMs) {
     if (!state || !Array.isArray(state.messages)) return;
     var lt = state.messages[state.messages.length - 1];
-    if (lt && lt.role === 'thinking' && !lt.endedAt) lt.endedAt = Date.now();
+    // v0.38: prefer the SERVER timestamp of the event that ended the
+    // thinking phase (ev.ts rides every persisted event) — arrival time
+    // lies on replays (whole turns land in one burst → "0s") and on
+    // post-completion bursts.
+    if (lt && lt.role === 'thinking' && !lt.endedAt) lt.endedAt = tsMs || Date.now();
   }
 
   function container2(bodyEl, mi) {
@@ -1921,8 +1933,35 @@
   }
 
   // ── Handle a WS event (idempotent replay, streaming, errors) ─────
+  // v0.38 THE SANDBOX RULE (the chat-leak fix, for real): there is exactly
+  // ONE live chat DOM — the FOREGROUND chat's projection of its state.
+  // A background chat's events update its OWN state.messages (its
+  // sandbox) and never touch any DOM: the panel's single bodyEl is shared,
+  // and its #chat-messages resolves to whichever chat is on screen — the
+  // root cause of every leak symptom (thought bubbles appearing in the
+  // new chat, responses flashing in then vanishing on the next rebuild,
+  // reasoning text overwriting another chat's bubble by index collision).
+  // renderHost rebuilds the full transcript from state on reopen, so
+  // data-only updates lose nothing.
   function handleEvent(ev, state, msgContainer, scrollEl, bodyEl, _icon, _panel) {
     var type = ev.type;
+    // v0.38 BELT-AND-SUSPENDERS: every engine event carries session_id —
+    // if it ever mismatches this chat's session, it is not ours to render
+    // (guards against any future engine-side routing change).
+    if (ev.session_id && state.sessionId && ev.session_id !== state.sessionId) return;
+    if (isOwner(state) && currentCtx && currentCtx.bodyEl) {
+      // owner → resolve the LIVE targets (stale closure inputs are ignored)
+      var liveC = currentCtx.bodyEl.querySelector('#chat-messages');
+      var liveS = currentCtx.bodyEl.querySelector('#chat-scroll');
+      if (liveC) msgContainer = liveC;
+      if (liveS) scrollEl = liveS;
+      bodyEl = currentCtx.bodyEl;
+    } else {
+      // background chat → data-only sandbox mode
+      msgContainer = null;
+      scrollEl = null;
+      bodyEl = null;
+    }
     if (ev.i !== undefined && ev.i !== null && !isNaN(ev.i)) {
       if (ev.i <= (state.lastEventI || 0)) return;
       state.lastEventI = ev.i;
@@ -1959,7 +1998,7 @@
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
       bumpActivity(state);
-      stampThinkEnd(state); // v0.27.1: content follows thinking → timer freezes
+      stampThinkEnd(state, evTsMs(ev)); // v0.27.1: content follows thinking → timer freezes
       if (ev.text) {
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'assistant' || last.complete) {
@@ -1981,7 +2020,7 @@
         }
       }
     } else if (type === 'assistant') {
-      stampThinkEnd(state); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
       var assembled = '';
       for (var i = 0; i < state.messages.length; i++) {
         if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
@@ -2013,7 +2052,7 @@
       bumpActivity(state);
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
-        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now(), ts: evTsMs(ev) };
+        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: evTsMs(ev), ts: evTsMs(ev) };
         if (ev.i) lastThink.ei = ev.i;
         state.messages.push(lastThink);
         appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon, state);
@@ -2022,7 +2061,7 @@
       scheduleUpdate(bodyEl, lastThink, false, state);
     } else if (type === 'tool_use') {
       bumpActivity(state);
-      stampThinkEnd(state); // v0.27.1: the model moved on to tools
+      stampThinkEnd(state, evTsMs(ev)); // v0.27.1: the model moved on to tools
       // v0.20: PM-persisted tool events carry their payload as a JSON text
       // (the engine's own events have name/summary top-level) — lift it.
       var pay = ev;
@@ -2035,7 +2074,7 @@
       appendMessage(msgContainer, scrollEl, tuMsg, bodyEl, state._icon, state);
     } else if (type === 'tool_result') {
       bumpActivity(state);
-      stampThinkEnd(state); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
       var pay2 = ev;
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
@@ -2053,7 +2092,7 @@
         state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
       }
     } else if (type === 'sources') {
-      stampThinkEnd(state); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
@@ -2085,13 +2124,17 @@
       // v0.22: a long preamble streamed as if final, then turned out to be
       // a tool call — wipe the in-progress assistant message (the engine
       // also drops its persisted copy; the tool pill renders instead).
+      // v0.38: the DOM row removal is OWNER-only — a background chat used
+      // to resolve the shared bodyEl and DELETE a row from the foreground
+      // chat (the "message vanished" flavor of the leak).
       for (var rk = state.messages.length - 1; rk >= 0; rk--) {
         var rm = state.messages[rk];
         if (rm.role === 'assistant') {
           if (!rm.complete && !rm.text) break;
           if (!rm.complete) {
             state.messages.splice(rk, 1);
-            var rw = container2(bodyEl, rk);
+            var rw = (isOwner(state) && currentCtx && currentCtx.bodyEl)
+              ? container2(currentCtx.bodyEl, rk) : null;
             if (rw && rw.parentNode) rw.parentNode.removeChild(rw);
           }
           break;
@@ -2413,10 +2456,14 @@
   }
 
   function refreshArtifactCount(state, bodyEl) {
-    if (!state.sessionId) return;
+    if (!state || !state.sessionId) return;
     window.Artifacts.list(state.sessionId).then(function (items) {
       state.artifactsCount = items.length;
-      var badge = (bodyEl || document).querySelector('#pill-artifacts-count');
+      // v0.38: the artifacts badge paints only into the chat that owns the
+      // live DOM — a background chat's count used to overwrite the
+      // FOREGROUND chat's badge via the document fallback.
+      if (!isOwner(state) || !currentCtx || !currentCtx.bodyEl) return;
+      var badge = currentCtx.bodyEl.querySelector('#pill-artifacts-count');
       if (badge) badge.textContent = String(items.length);
     }).catch(function () {});
   }
@@ -2553,6 +2600,11 @@
   // The old code indexed background messages against the FOREGROUND chat's
   // array (mi=-1) and scrolled the foreground chat's view on every append.
   function appendMessage(container, scrollEl, msg, bodyEl, icon, ownerState) {
+    // v0.38 SANDBOX RULE: a null container means the event belongs to a
+    // BACKGROUND chat — state.messages already carries it; the DOM is the
+    // foreground chat's alone. (Also guards nulls from callers that pass
+    // no container.)
+    if (!container) return null;
     var st = ownerState || (currentCtx && currentCtx.state);
     // v0.37 STALE-CLOSURE HARDENING: events processed by an earlier
     // renderHost's closure carried a DETACHED container (the panel has
@@ -2593,34 +2645,32 @@
   }
 
   // re-format an existing message's bubble (found via data-mi)
-  // v0.35 ISOLATION: index against the OWNING state — a background chat's
-  // streaming updates target its own (detached) container only; the live
-  // foreground chat is never touched.
+  // v0.38 SANDBOX RULE: updates paint ONLY when this chat's state OWNS the
+  // live DOM. Background chats keep their state.messages current (the
+  // caller already mutated it) and the transcript is rebuilt from state on
+  // reopen. The old code resolved #chat-messages off the SHARED bodyEl for
+  // background chats — i.e. the FOREGROUND chat's container — then either
+  // overwrote a foreign bubble by index collision or appended foreign
+  // rows that vanished on the next rebuild. THE leak.
   function updateMessageEl(bodyEl, msg, final, ownerState) {
-    // v0.37 STALE-CLOSURE HARDENING (see appendMessage): a stale bodyEl
-    // from an earlier renderHost would update a DETACHED bubble while the
-    // live one never saw the delta — and its not-found fallback would
-    // double-append. When this chat owns the panel, use the live bodyEl.
-    var st0 = ownerState || (currentCtx && currentCtx.state);
-    if (st0 && isOwner(st0) && currentCtx.bodyEl) bodyEl = currentCtx.bodyEl;
-    var container = bodyEl.querySelector('#chat-messages');
-    if (!container) return;
     var st = ownerState || (currentCtx && currentCtx.state);
-    if (!st) return;
+    if (!st || !isOwner(st) || !currentCtx || !currentCtx.bodyEl) return;
+    var container = currentCtx.bodyEl.querySelector('#chat-messages');
+    if (!container) return;
     var mi = st.messages.indexOf(msg);
     if (mi < 0) return;
     var wrapper = container.querySelector('[data-mi="' + mi + '"]');
     if (!wrapper) {
-      // not mounted yet (rare race) — append it
-      appendMessage(container, null, msg, bodyEl, null, ownerState);
+      // not mounted yet (rare race) — append it (owner-only path)
+      appendMessage(container, null, msg, currentCtx.bodyEl, null, ownerState);
       return;
     }
     var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
     mountFormatting(el, msg, final);
     if (final || msg.role === 'user') {
-      if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl);
+      scrollBottom(currentCtx.bodyEl);
     } else if (nearBottom(container)) {
-      if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl);
+      scrollBottom(currentCtx.bodyEl);
     }
   }
 

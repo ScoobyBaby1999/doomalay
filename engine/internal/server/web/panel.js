@@ -161,6 +161,9 @@
       var cb = this.onClose;
       this.currentContext = null;
       this.onClose = null;
+      // v0.38: broadcast the close — ChatPanel clears its currentCtx so a
+      // still-streaming chat can't paint into the hidden panel DOM.
+      try { document.dispatchEvent(new CustomEvent('doomalay:panel-closed')); } catch (e) {}
       if (cb) cb();
     }
 

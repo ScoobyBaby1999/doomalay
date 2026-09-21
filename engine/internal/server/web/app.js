@@ -930,7 +930,14 @@
         // construction so every restored chat gets its own state entry.
         // The renamed chat keeps its sessionId, so its history stays
         // attached — only the internal id changes.
+        // v0.38 SESSION-ISOLATION HEAL: the same era of saves can also
+        // carry TWO icons bound to the SAME engine sessionId — both then
+        // replay each other's full history on every WS connect and write
+        // into one event log (the data-level chat leak). The FIRST icon
+        // keeps the session; later duplicates are unbound and create a
+        // fresh engine session on their next open.
         const seenIds = new Set();
+        const seenSessions = new Set();
         for (const c of savedIcons) {
           // v0.35 WHITE-SCREEN GUARD: one corrupt entry (a string, null, or
           // a malformed object from a crashed write) used to throw here in
@@ -944,6 +951,10 @@
               c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
             }
             seenIds.add(c.id);
+            if (c.sessionId) {
+              if (seenSessions.has(c.sessionId)) c.sessionId = ''; // own sandbox on next open
+              else seenSessions.add(c.sessionId);
+            }
           } catch (e) { continue; }
         }
         for (const c of savedIcons) {

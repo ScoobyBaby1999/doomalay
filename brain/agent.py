@@ -25,6 +25,7 @@ emits) + forwards to the PWA via WebSocket.
 from __future__ import annotations
 
 import asyncio
+import queue as _queue
 import json
 import os
 import sys
@@ -137,24 +138,36 @@ async def _run_strands_agent(
 
     try:
         # Build the LLM model.
+        # v0.38: litellm 1.55's LiteLLM client takes base_url + max_retries
+        # (the old api_base/num_retries kwargs 500'd every brain turn).
+        # A custom base_url (provider registry) forces the OpenAI-compatible
+        # client via the "openai/" prefix — and litellm wants the BASE url
+        # (registry URLs point at the /chat/completions endpoint).
+        litellm_id = model
+        litellm_base = base_url
+        if litellm_base:
+            if litellm_base.endswith("/chat/completions"):
+                litellm_base = litellm_base[: -len("/chat/completions")]
+            litellm_id = "openai/" + model
+        client_args = {
+            "api_key": api_key,
+            "timeout": 60,
+            "max_retries": 2,
+        }
+        if litellm_base:
+            client_args["base_url"] = litellm_base
         llm = LiteLLMModel(
-            model_id=model,
-            client_args={
-                "api_key": api_key,
-                "api_base": base_url,
-                "timeout": 60,
-                "num_retries": 2,
-            },
+            model_id=litellm_id,
+            client_args=client_args,
             stream=True,
             additional_request_params=_build_effort_body(model, effort),
         )
 
         # Build the conversation manager (V0: per_turn=True for context management).
-        convo_manager = SlidingWindowConversationManager(
-            window_size=40,
-            per_turn=True,
-            proactive_compression=True,
-        )
+        # v0.38: strands 0.1.5's SlidingWindowConversationManager takes ONLY
+        # window_size (per_turn/proactive_compression were from a different
+        # strands build and 500'd every brain turn).
+        convo_manager = SlidingWindowConversationManager(window_size=40)
 
         # Build the callback handler (V0: the SOLE event source, no post-turn walk).
         callback = _StreamCallback()
@@ -163,25 +176,64 @@ async def _run_strands_agent(
         tools = _build_tools(workspace, web_search)
 
         # V0 FIX: fresh Agent per turn. Never reuse.
+        # v0.38 MEMORY: the agent is pre-seeded with the conversation
+        # history (all messages before the current one) — a fresh agent
+        # used to see ONLY the current user message, making every brain
+        # turn amnesiac. messages= is the constructor's documented way to
+        # load prior turns; the current message still goes through
+        # agent(prompt) so the callback stream is unchanged.
+        # Strands expects content as a LIST OF BLOCKS (a bare string is
+        # iterated char-by-char — "content_type=<T>" TypeError).
+        prior = None
+        if len(messages) > 1:
+            prior = []
+            for m in messages[:-1]:
+                c = m.get("content")
+                if isinstance(c, str):
+                    c = [{"text": c}]
+                prior.append({"role": m.get("role", "user"), "content": c})
         agent = Agent(
             model=llm,
             tools=tools,
             system_prompt=system_prompt,
             callback_handler=callback,
             conversation_manager=convo_manager,
+            messages=prior,
         )
 
-        # Run the agent (blocking call — the callback handler emits events
-        # in real-time as the agent works).
-        # V0 FIX: no daemon thread, no 90s timeout. The agent runs in this
-        # coroutine. The Go engine's ctx cancellation will abort the HTTP
-        # request if the user clicks Stop.
+        # V0.38 LIVE STREAMING: the old code ran the agent to completion in
+        # the executor and THEN yielded every buffered callback event in one
+        # post-completion burst — the browser saw thinking + content land
+        # milliseconds apart, so the reasoning pill read "0s · 90 chars" and
+        # brain-path turns never actually streamed. The callback now also
+        # pushes onto a thread-safe queue and this coroutine PUMPS it live
+        # while the agent works (50ms poll; drains to empty after done).
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, agent, messages[-1]["content"])
+        fut = loop.run_in_executor(None, agent, messages[-1]["content"])
 
-        # Emit all buffered events from the callback.
-        for ev in callback.events:
-            yield ev
+        async def _pump():
+            while True:
+                try:
+                    ev = callback.q.get_nowait()
+                    yield ev
+                except _queue.Empty:
+                    if fut.done():
+                        # final drain — everything the callback queued before
+                        # the executor finished, THEN stop.
+                        while True:
+                            try:
+                                yield callback.q.get_nowait()
+                            except _queue.Empty:
+                                return
+                    else:
+                        await asyncio.sleep(0.05)
+
+        try:
+            async for ev in _pump():
+                yield ev
+            await fut  # propagate agent exceptions
+        except Exception as e:
+            raise
 
         # V0: tool_use_id pairing is handled by the callback (it extracts
         # tool_use_id from the Strands tool_use content block).
@@ -265,12 +317,22 @@ class _StreamCallback:
     - tool_use content block → tool_use event (with tool_use_id)
     - tool_result content block → tool_result event (with matching tool_use_id)
     - complete → usage extraction
+
+    V0.38: every event ALSO lands on a thread-safe queue (self.q) — the
+    streaming pump in _run_strands_agent drains it live so the browser sees
+    thinking/content/tool events as they happen (not as one post-turn burst
+    that made the reasoning pill read "0s").
     """
 
     def __init__(self):
         self.events: list[dict] = []
         self.usage = None
         self._assistant_emitted = False
+        self.q = _queue.Queue()
+
+    def _emit(self, ev: dict):
+        self.events.append(ev)
+        self.q.put(ev)
 
     def __call__(self, **kwargs):
         """Called by Strands on every event."""
@@ -280,11 +342,11 @@ class _StreamCallback:
         event = kwargs.get("event", {})
 
         if reasoning:
-            self.events.append({"type": "thinking", "text": reasoning})
+            self._emit({"type": "thinking", "text": reasoning})
 
         if data:
             self._assistant_emitted = True
-            self.events.append({"type": "assistant_delta", "text": data})
+            self._emit({"type": "assistant_delta", "text": data})
 
         # Tool use (contentBlockStart with toolUse).
         content_block_start = event.get("contentBlockStart", {})
@@ -293,7 +355,7 @@ class _StreamCallback:
         if tool_use:
             tool_name = tool_use.get("name", "unknown")
             tool_use_id = tool_use.get("toolUseId", str(uuid.uuid4()))
-            self.events.append({
+            self._emit({
                 "type": "tool_use",
                 "name": tool_name,
                 "summary": "",
@@ -314,7 +376,7 @@ class _StreamCallback:
                 elif isinstance(part, str):
                     text_parts.append(part)
             is_error = tool_result.get("status") == "error"
-            self.events.append({
+            self._emit({
                 "type": "tool_result",
                 "text": "\n".join(text_parts) or "{}",
                 "tool_use_id": tool_use_id,
@@ -347,18 +409,22 @@ def _build_tools(workspace: str, web_search: bool) -> list:
     """
     tools = []
 
-    # Strands built-in tools.
-    try:
-        from strands_tools import (
-            file_read, file_write, editor, http_request, calculator,
-            glob, grep, current_time, env, think, journal, memorize,
-            slug, retrieve,
-        )
-        tools.extend([file_read, file_write, editor, http_request, calculator,
-                      glob, grep, current_time, env, think, journal, memorize,
-                      slug, retrieve])
-    except ImportError:
-        pass
+    # Strands built-in tools (v0.38: import ONE BY ONE — strands-agents-tools
+    # renamed modules across releases (env→environment, no glob/grep/memorize/
+    # slug), and ONE stale name in a single big import used to silently drop
+    # the WHOLE tool suite, so brain turns ran with zero tools (and litellm
+    # then rejected the empty tools list with UnsupportedParamsError).
+    from importlib import import_module as _im
+    for mod in ("file_read", "file_write", "editor", "http_request", "calculator",
+                "glob", "grep", "current_time", "environment", "env", "think",
+                "journal", "memorize", "slug", "retrieve", "shell"):
+        try:
+            m = _im("strands_tools." + mod)
+            fn = getattr(m, mod, None)
+            if fn is not None:
+                tools.append(fn)
+        except Exception:
+            continue
 
     # Shell tool (the key tool — runs commands in the workspace).
     if workspace:

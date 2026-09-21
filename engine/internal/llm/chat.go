@@ -982,6 +982,31 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 // in order; observations are numbered so the model can
                 // attribute results.
                 acts := parseActions(answer)
+                // v0.38 PHANTOM-ACTION FILTER (the "error: empty query" bug):
+                // when the model RECAPS an earlier call inside its final
+                // prose ("…I ran ACTION: web_search…"), the parser grabs that
+                // line, args default to {}, and the loop executed a REAL
+                // empty web_search — its error observation confused the next
+                // round into thinking a tool had failed. An arg-requiring
+                // tool with an empty required arg is a recap, not a call:
+                // drop it; if nothing executable remains, this round was
+                // the FINAL answer.
+                var live []parsedAction
+                for _, act := range acts {
+                        if actionHasRequiredArg(act.Name, act.Args) {
+                                live = append(live, act)
+                        }
+                }
+                if len(live) == 0 {
+                        // Merely MENTIONED a tool in final prose — treat exactly
+                        // like a no-action round: sources + idle.
+                        if len(allSources) > 0 {
+                                ch <- ChatChunk{Type: "sources", Sources: allSources}
+                        }
+                        ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
+                        return
+                }
+                acts = live
                 var obsParts []string
                 for ai, act := range acts {
                         observation := executeAction(ctx, req, ch, act.Name, act.Args, &allSources)
@@ -1018,6 +1043,56 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 ch <- ChatChunk{Type: "sources", Sources: allSources}
         }
         ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
+}
+
+// actionHasRequiredArg reports whether the parsed call carries its
+// tool's REQUIRED argument (v0.38). Arg-requiring tools with an empty
+// required value are RECAPS of earlier calls quoted in final prose, not
+// real invocations — executing them produced the confusing
+// "error: empty query" observations.
+func actionHasRequiredArg(name, argJSON string) bool {
+        switch canonicalToolName(name) {
+        case "web_search":
+                var a struct {
+                        Query string `json:"query"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.Query) != ""
+        case "web_fetch":
+                var a struct {
+                        URL string `json:"url"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.URL) != ""
+        case "delegate":
+                var a struct {
+                        Prompt string `json:"prompt"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.Prompt) != ""
+        case "calculator":
+                var a struct {
+                        Expr string `json:"expr"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.Expr) != ""
+        case "regex_extract":
+                var a struct {
+                        Pattern string `json:"pattern"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.Pattern) != ""
+        case "zip_create", "docx_create", "xlsx_create", "archive_create":
+                var a struct {
+                        Name string `json:"name"`
+                }
+                return json.Unmarshal([]byte(argJSON), &a) == nil && strings.TrimSpace(a.Name) != ""
+        case "archive_extract":
+                var a struct {
+                        B64       string `json:"b64"`
+                        Artifact string `json:"artifact"`
+                }
+                if json.Unmarshal([]byte(argJSON), &a) != nil {
+                        return false
+                }
+                return strings.TrimSpace(a.B64) != "" || strings.TrimSpace(a.Artifact) != ""
+        }
+        return true // no required arg (time_now, uuid, persona_list…) or unknown tool
 }
 
 // executeAction runs ONE parsed tool call and returns its observation

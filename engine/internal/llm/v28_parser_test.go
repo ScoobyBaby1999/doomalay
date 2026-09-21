@@ -241,3 +241,32 @@ func TestLenientJSON(t *testing.T) {
 		}
 	}
 }
+
+// v0.38 phantom-action filter: the required-arg guard.
+func TestActionHasRequiredArg(t *testing.T) {
+	cases := []struct {
+		name, args string
+		want       bool
+	}{
+		{"web_search", `{"query":"latest news"}`, true},
+		{"web_search", `{}`, false},                     // the phantom recap
+		{"web_search", `{"query":"  "}`, false},         // whitespace-only
+		{"search", ``, false},                           // alias + empty args (rest defaulted "{}")
+		{"web_fetch", `{"url":"https://x.dev"}`, true},  //
+		{"web_fetch", `{"url":""}`, false},              //
+		{"calculator", `{"expr":"2+2"}`, true},          //
+		{"calculator", `{}`, false},                    //
+		{"time_now", `{}`, true},                        // no required arg
+		{"uuid", ``, true},                              //
+		{"unknown_tool", `{"x":1}`, true},               // unknown → let the tool speak
+	}
+	for _, c := range cases {
+		args := c.args
+		if args == "" {
+			args = "{}"
+		}
+		if got := actionHasRequiredArg(c.name, args); got != c.want {
+			t.Errorf("actionHasRequiredArg(%q, %q) = %v, want %v", c.name, args, got, c.want)
+		}
+	}
+}

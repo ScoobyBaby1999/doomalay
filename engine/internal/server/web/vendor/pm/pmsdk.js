@@ -501,6 +501,22 @@ async function runToolLoop(c, opts) {
       finalText = reply;
       break;
     }
+    // v0.38 PHANTOM-ACTION FILTER (mirrors the Go engine's actionHasRequiredArg):
+    // the model RECAPS an earlier call inside its final prose
+    // ("…I ran ACTION: web_search…") — the parser grabs the line, args
+    // default to {}, and the loop executed a REAL empty search whose error
+    // observation confused the next round. Arg-requiring tools with an
+    // empty required arg are recaps, not calls; if nothing executable
+    // remains, this round WAS the final answer.
+    var live = [];
+    for (var fi = 0; fi < act.length; fi++) {
+      if (actionHasRequiredArgJS(act[fi])) live.push(act[fi]);
+    }
+    if (!live.length) {
+      finalText = reply;
+      break;
+    }
+    act = live;
     anyToolRun = true;
     // v0.22: a >700-byte preamble streamed before its ACTION line — wipe
     // the leaked text so the tool pills render on a clean slate.
@@ -681,6 +697,31 @@ function lenientJSONJS(s) {
 // execAction — v0.25: ONE parsed tool call → its OBSERVATION string (the
 // old inline dispatch, extracted so the multi-action loop can call it per
 // action). Throws on unexpected errors (the loop catches → observation).
+// v0.38 PHANTOM-ACTION FILTER helper (mirrors the Go engine's
+// actionHasRequiredArg): does this parsed action carry its tool's REQUIRED
+// argument? An arg-requiring tool with an empty required value is a RECAP
+// of an earlier call quoted in final prose — not a call.
+function actionHasRequiredArgJS(act) {
+  var tool = canonicalToolNameJS(act.name);
+  var arg = {};
+  if (act.rest) {
+    try { arg = JSON.parse(act.rest); }
+    catch (e) {
+      try { arg = JSON.parse(repairJSON(act.rest)); }
+      catch (e2) { arg = {}; }
+    }
+  }
+  if (typeof arg !== 'object' || arg === null) return true; // bare string — execAction wraps it
+  var req = {
+    web_search: 'query', web_fetch: 'url', delegate: 'prompt', calculator: 'expr',
+    regex_extract: 'pattern', zip_create: 'name', docx_create: 'name',
+    xlsx_create: 'name', archive_create: 'name'
+  }[tool];
+  if (!req) return true; // no required arg (time_now, uuid, persona_list…)
+  var v = arg[req];
+  return typeof v === 'string' && v.trim() !== '';
+}
+
 async function execAction(act, opts, allSources) {
   var tool = canonicalToolNameJS(act.name);
   var arg = {};

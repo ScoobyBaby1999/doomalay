@@ -52,6 +52,10 @@ class provider:
     trains_on_data: object = "unknown"
     privacy_optout_url: str = ""
     stability_tier: int = 0                             # 1=most stable host ... higher=flakier
+    #   v0.38: the env var(s) that hold this provider's key — carried from
+    #   the catalog so callers (server.py /chat) can check os.environ
+    #   without re-reading the catalog JSON.
+    env_var: object = ""                                  # str | tuple[str, ...]
 
     def __repr__(self) -> str:
         #   NEVER expose api_key via repr/str: oplog's JSON fallback reprs unknown
@@ -555,6 +559,7 @@ def make_provider_registry() -> list[provider]:
             name=name,
             url=url,
             api_key=api_key,
+            env_var=entry.get("env_var", ""),
             models=tuple(entry.get("models", [])),
             rpm=int(limits.get("rpm") or 30),
             extra_headers=dict(entry.get("extra_headers", {})),

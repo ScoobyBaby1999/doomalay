@@ -418,6 +418,11 @@ async def chat(request: Request):
 
     # Resolve the model via the provider registry.
     # model can be "openrouter/auto" or a logical name like "glm-5.2".
+    # v0.38: the registry resolves env_var + api_key from the X-Env-* headers
+    # (make_provider_registry reads os.environ AFTER the header injection
+    # above). litellm needs the provider PREFIX STRIPPED (the engine sends
+    # "nvidia/z-ai/glm-5.3-flash"; NVIDIA's own model id is "z-ai/glm-5.3-flash")
+    # and the openai-compatible client is forced in agent.py via base_url.
     registry = make_provider_registry()
     litellm_model = model
     base_url = ""
@@ -428,9 +433,9 @@ async def chat(request: Request):
         prov_name, model_name = model.split("/", 1)
         for p in registry:
             if p.name == prov_name:
-                litellm_model = f"{p.models[0]}" if model_name == "auto" else model
+                litellm_model = p.models[0] if model_name == "auto" else model_name
                 base_url = p.url
-                env_var = p.env_var
+                env_var = p.env_var if hasattr(p, "env_var") else ""
                 break
     else:
         # Logical model name — look it up in the models catalog.
