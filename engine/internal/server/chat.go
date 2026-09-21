@@ -828,6 +828,19 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                 ev["message"] = chunk.Message
                                 ev["provider"] = provider
                                 ev["model"] = llmModel
+                                // v0.40 MODEL-GONE ONE-TAP RECOVERY: when the
+                                // failure is the deprecation class (404 not-
+                                // found-for-account / 410 end-of-life — the
+                                // chronic NIM behavior) and the v0.38 alternate
+                                // routing had nowhere to rotate, attach the top
+                                // closest available replacements so the frontend
+                                // renders one-tap "Switch to X" chips instead of
+                                // a dead-end "pick another model".
+                                if llm.ModelGoneMessage(chunk.Message) || llm.ModelGoneMessage(chunk.Error) {
+                                        if sug := llm.SuggestReplacements(llmModel, provider, keys, 3); len(sug) > 0 {
+                                                ev["suggest"] = sug
+                                        }
+                                }
                         }
                         if chunk.Name != "" {
                                 ev["name"] = chunk.Name

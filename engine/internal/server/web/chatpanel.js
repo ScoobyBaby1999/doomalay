@@ -285,6 +285,52 @@
     state._scrollPos = pos;
     if (state._icon && state._icon.id) saveScrollLS(state._icon.id, pos);
   }
+
+  // ── v0.40 PER-CHAT DRAFT PERSISTENCE ─────────────────────────────
+  // The Google-Chat pattern (shipped there Sep 2026): an unsent half-
+  // typed message survives app restarts, phone doze, and panel switches.
+  // One JSON map in localStorage (same shape as the scroll memory):
+  // keyed by session id, debounced 250ms writes on input, cleared on
+  // send. state.draftText already carries the text within a session —
+  // this makes it durable ACROSS sessions (process restarts).
+  var DRAFT_KEY = 'doomalay.chatdraft.v1';
+  function readDraftMap() {
+    try { return JSON.parse(localStorage.getItem(DRAFT_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  var draftSaveTimer = null;
+  function saveDraftLS(sid, text) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(function () {
+      try {
+        var m = readDraftMap();
+        if (text) m[sid] = text; else delete m[sid];
+        var keys = Object.keys(m);
+        // cap at the 60 most-recent chats (same budget as scroll memory)
+        if (keys.length > 60) delete m[keys[0]];
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(m));
+      } catch (e) {}
+    }, 250);
+  }
+  function loadDraftLS(sid) {
+    if (!sid) return '';
+    try { return readDraftMap()[sid] || ''; } catch (e) { return ''; }
+  }
+  function clearDraftLS(sid) {
+    if (!sid) return;
+    try {
+      var m = readDraftMap();
+      if (m[sid] !== undefined) { delete m[sid]; localStorage.setItem(DRAFT_KEY, JSON.stringify(m)); }
+    } catch (e) {}
+  }
+  // v0.40.1: drafts key by the CHAT ICON id (same as the scroll memory) —
+  // state.sessionId binds asynchronously (WS bind), and the first cut keyed
+  // drafts by session id, so a chip tap or send racing the bind no-op'd the
+  // save/clear (live-observed flakes). The icon id is synchronous, stable,
+  // and 1:1 with the chat.
+  function draftId(state) {
+    return (state && state._icon && state._icon.id) || (state && state.sessionId) || '';
+  }
   function restoreChatScroll(scrollEl, state) {
     if (!scrollEl || !state) return;
     var pos = state._scrollPos;
@@ -315,6 +361,36 @@
     }
   });
 
+  // ── v0.40 EMPTY-STATE STARTER CHIPS ────────────────────────────────
+  // The empty transcript greeted with "Say hi Bot…" and a blinking cursor
+  // gave a new chat a cold start. Now three themed starter chips sit under
+  // the greeting — tapping one PREFILLS the composer (never auto-sends:
+  // the user stays in control and can edit before sending).
+  var CHAT_STARTERS = {
+    quick: [
+      { label: '✍️  Help me write', prompt: 'Help me write a short, friendly reply to a meeting invite.' },
+      { label: '🧠  Explain simply', prompt: 'Explain how HTTPS keeps my data safe — in simple terms.' },
+      { label: '⭐  What can you do?', prompt: 'What can you do? Give me a quick tour of your capabilities.' }
+    ],
+    research: [
+      { label: '🔎  Research a topic', prompt: 'Research the current state of small language models — sources please.' },
+      { label: '📊  Compare options', prompt: 'Compare the top renewable energy sources for home use, with trade-offs.' },
+      { label: '⭐  What can you do?', prompt: 'What can you do? Give me a quick tour of your capabilities.' }
+    ]
+  };
+  function startersFor(sandbox) {
+    return CHAT_STARTERS[sandbox] || CHAT_STARTERS.quick;
+  }
+  function renderStarters(state, type) {
+    if (state.messages.length > 0) return '';
+    var list = startersFor(state.sandbox);
+    var out = '<div id="chat-starters" class="chat-starters" role="group" aria-label="Starter prompts">';
+    for (var i = 0; i < list.length; i++) {
+      out += '<button class="starter-chip" data-starter="' + i + '">' + esc(list[i].label) + '</button>';
+    }
+    return out + '</div>';
+  }
+
   function renderHost(bodyEl, icon, state, panel) {
     var type = window.ChatTypes.get(state.sandbox || 'quick');
     currentCtx = { bodyEl: bodyEl, icon: icon, state: state, panel: panel, type: type };
@@ -342,24 +418,39 @@
     var justFulfilled = complete && !state.fulfilled;
     if (complete) state.fulfilled = true;
 
+    // v0.40 DRAFT PERSISTENCE: hydrate the durable draft BEFORE the
+    // composer template renders (it prints state.draftText). Only fills
+    // an EMPTY in-memory draft — a mid-session state always wins over
+    // the disk copy (the disk copy may be a hair stale mid-debounce).
+    if (!state.draftText) {
+      var savedDraft = loadDraftLS(draftId(state));
+      if (savedDraft) state.draftText = savedDraft;
+    }
+
     var ctx = buildCtx(bodyEl, icon, state, panel, type);
     currentCtx.ctx = ctx;
 
-    // ── PINNED header: arrow + summary; dropdown hidden by default ──
+  // ── PINNED header: arrow + summary; dropdown hidden by default ──
     var headerHTML = renderHeader(type, state, ctx, complete);
 
     // ── THE GATELOCK (start of the convo — never collapsible) ──
     var gateHTML = renderGatelock(type, state, ctx, complete);
 
     // ── The chat (only once the gate is fulfilled) ──
+    // v0.40: the starter chips render OUTSIDE #chat-messages (they are
+    // empty-state chrome like the composer, not message rows — the
+    // isolation tests count #chat-messages children, and message-row
+    // semantics stay pure). appendMessage removes them with the greeting
+    // when the first real message lands.
     var chatHTML = complete
       ? '<div id="chat-live" style="flex:1 1 auto;display:flex;flex-direction:column;min-height:55%">' +
           '<div id="chat-messages" style="flex:1;padding:calc(16px * var(--chat-scale,1));display:flex;flex-direction:column;gap:calc(12px * var(--chat-scale,1))">' +
             (state.messages.length === 0
-              ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px">' +
+              ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px 12px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
               : renderMessages(state.messages)) +
           '</div>' +
+          (state.messages.length === 0 ? renderStarters(state, type) : '') +
           // Sticky input bar — stays visible while scrolled.
           // v0.34: the input rides the chat scale too (typing in the size
           // you read); the textarea grows to at most ~3× its min height.
@@ -374,12 +465,19 @@
       : '';
 
     bodyEl.innerHTML =
-      '<div id="chat-root" style="height:100%;display:flex;flex-direction:column;overflow:hidden">' +
+      // v0.40: position:relative — #chat-jump (the jump-to-latest pill)
+      // anchors HERE, to the VISIBLE panel box (inside the scroller its
+      // absolute bottom would ride the CONTENT height and scroll away).
+      '<div id="chat-root" style="position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden">' +
         headerHTML +
         '<div id="chat-scroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;display:flex;flex-direction:column">' +
         gateHTML +
         chatHTML +
         '</div>' +
+        // v0.40 JUMP TO LATEST: floats above the composer whenever the
+        // reader is scrolled up (pairs with the v0.28 scroll-freeze —
+        // mid-stream reading had no way back but a full drag).
+        '<button id="chat-jump" class="chat-jump" aria-label="Jump to latest messages" title="Jump to latest">↓</button>' +
       '</div>';
 
     var scrollEl = bodyEl.querySelector('#chat-scroll');
@@ -422,13 +520,66 @@
         var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
         if (d < 80) state._scrollFrozen = false; // stayed at the bottom — keep following
       }, { passive: true });
+      // v0.40: THE JUMP-TO-LATEST PILL — the scroll handler now runs for
+      // BOTH states (the old one bailed when idle, so reading history
+      // while idle had no affordance either). The pill floats above the
+      // composer whenever the reader is >1.5 screens above the bottom,
+      // rides above the sticky inputbar, and pulses while a turn streams
+      // below the fold (the freeze keeps the view parked — this is the
+      // way back).
+      var jumpBtn = bodyEl.querySelector('#chat-jump');
+      var updateJump = function () {
+        if (!jumpBtn || !jumpBtn.isConnected) return;
+        var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+        var far = d > Math.max(240, scrollEl.clientHeight * 1.5);
+        var ib = bodyEl.querySelector('#chat-inputbar');
+        if (far) {
+          jumpBtn.style.bottom = ((ib ? ib.offsetHeight : 90) + 14) + 'px';
+          jumpBtn.classList.add('show');
+          if (state.isStreaming) jumpBtn.classList.add('live'); else jumpBtn.classList.remove('live');
+        } else {
+          jumpBtn.classList.remove('show', 'live');
+        }
+      };
+      if (jumpBtn) {
+        jumpBtn.addEventListener('click', function () {
+          state._scrollFrozen = false; // re-engage the follow
+          try { scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'smooth' }); }
+          catch (e) { scrollEl.scrollTop = scrollEl.scrollHeight; }
+          jumpBtn.classList.remove('show', 'live');
+        });
+        // open mid-turn (reopened while streaming): show it right away
+        if (state.isStreaming) setTimeout(updateJump, 400);
+      }
       scrollEl.addEventListener('scroll', function () {
         rememberScroll(state, scrollEl.scrollTop); // v0.34: where the user is
+        updateJump(); // v0.40: pill visibility
         if (!state.isStreaming) { state._scrollFrozen = false; return; }
         var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
         if (d < 80) state._scrollFrozen = false; // back at the bottom — follow again
         else if (d > 160) state._scrollFrozen = true; // reading above — freeze
       }, { passive: true });
+    }
+
+    // v0.40 STARTER CHIPS: tap → prefill the composer (never auto-send)
+    var startersWrap = bodyEl.querySelector('#chat-starters');
+    if (startersWrap) {
+      startersWrap.addEventListener('click', function (e) {
+        var chip = e.target.closest && e.target.closest('.starter-chip');
+        if (!chip) return;
+        var list = startersFor(state.sandbox);
+        var item = list[parseInt(chip.getAttribute('data-starter'), 10)];
+        if (!item) return;
+        var ta = bodyEl.querySelector('#chat-input');
+        if (!ta) return;
+        ta.value = item.prompt;
+        state.draftText = item.prompt;
+        saveDraftLS(draftId(state), item.prompt);
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+        ta.focus();
+        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (err) {}
+      });
     }
 
     wireHeader(bodyEl, icon, state, type, ctx);
@@ -449,6 +600,43 @@
 
     // long-press message actions (copy / quote / regenerate / edit / delete)
     if (msgContainer) {
+      // v0.40 MODEL-GONE ONE-TAP RECOVERY (delegated — survives transcript
+      // rebuilds): a chip tap on a model-gone error switches this chat to
+      // the suggested model, drops the resolved error bubble, toasts the
+      // switch (never silent — the Hermes anti-pattern), and re-sends the
+      // failed prompt after the model settle. One tap, full recovery.
+      msgContainer.addEventListener('click', function (e) {
+        var chip = e.target.closest && e.target.closest('.err-switch');
+        if (!chip) return;
+        var ctx = currentCtx;
+        if (!ctx || !ctx.state || !ctx.bodyEl) return;
+        var state = ctx.state, icon = state._icon, bodyEl2 = ctx.bodyEl, panel2 = ctx.panel;
+        if (state.isStreaming) return;
+        var prov = chip.getAttribute('data-provider') || state.provider;
+        var mid = chip.getAttribute('data-model');
+        if (!mid) return;
+        // the failed prompt = the last user message
+        var lastUser = null;
+        for (var i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === 'user') { lastUser = state.messages[i]; break; }
+        }
+        applyModelChoice(prov, mid, state, icon, bodyEl2, panel2);
+        // drop the resolved error bubble(s) with suggestions
+        for (var j = state.messages.length - 1; j >= 0; j--) {
+          if (state.messages[j].role === 'error' && state.messages[j].suggest) {
+            state.messages.splice(j, 1);
+          }
+        }
+        rebuildTranscript(bodyEl2.querySelector('#chat-messages'), state);
+        if (window.Artifacts && window.Artifacts.toast) {
+          window.Artifacts.toast('switched to ' + (chip.textContent || '').replace(/^⇄/, '').trim() + (lastUser ? ' — retrying' : ''));
+        }
+        if (lastUser) {
+          setTimeout(function () {
+            if (!state.isStreaming) doSend(lastUser.text, bodyEl2, icon, state, panel2);
+          }, 400);
+        }
+      });
       window.MsgActions.wire(msgContainer, {
         onQuote: function (text) {
           var q = String(text).split('\n').map(function (l) { return '> ' + l; }).join('\n');
@@ -531,6 +719,8 @@
         state.draftText = input.value;
         input.style.height = 'auto';
         input.style.height = Math.min(120, input.scrollHeight) + 'px';
+        // v0.40: durable per-chat draft (debounced; cleared on send)
+        saveDraftLS(draftId(state), input.value);
       });
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -1805,7 +1995,15 @@
       '<button id="chat-find-prev" class="chat-find-btn" title="previous match (Shift+Enter)">↑</button>' +
       '<button id="chat-find-next" class="chat-find-btn" title="next match (Enter)">↓</button>' +
       '<button id="chat-find-close" class="chat-find-btn" title="close (Esc)">✕</button>';
-    inputbar.parentNode.insertBefore(el, inputbar);
+    // v0.40 OVERLAP FIX: the bar now mounts INSIDE the sticky composer
+    // (first child, above the toolbar). The v0.39 mount as a SIBLING before
+    // #chat-inputbar put it in normal flow while the sticky composer
+    // (z-index 2) shifted up past its flow position whenever the
+    // transcript was scrolled — painting OVER the bar (measured: the
+    // input's center point landed on the inputbar; the bar clipped to
+    // ~13px). Inside the sticky context it rides WITH the composer —
+    // overlap is structurally impossible.
+    inputbar.insertBefore(el, inputbar.firstChild);
     // slide-in
     requestAnimationFrame(function () { el.classList.add('open'); });
 
@@ -2372,17 +2570,40 @@
         setActivity(bodyEl, state, ev.message || ev.text);
       }
     } else if (type === 'error') {
+      // v0.40.1 REPLAY FIX: live error events carry parsed fields
+      // (message/provider/model/suggest), but REPLAYED ones (the store's
+      // wire shape) dump the whole payload as a JSON string in ev.text —
+      // so a reopened chat rendered a raw-JSON bubble and lost the model-
+      // gone chips. Parse the text back when it looks like our payload.
+      var src = ev;
+      if (typeof ev.text === 'string' && ev.text.charAt(0) === '{' && (!ev.message || !ev.suggest)) {
+        try {
+          var p = JSON.parse(ev.text);
+          if (p && (p.message || p.error || p.suggest)) {
+            src = {};
+            for (var ek in ev) src[ek] = ev[ek];
+            for (var pk in p) { if (p[pk] !== undefined && p[pk] !== null) src[pk] = p[pk]; }
+          }
+        } catch (e2) {}
+      }
       state.isStreaming = false;
       hideActivity(bodyEl, state);
-      var errText = friendlyError(ev.message || ev.error || ev.text || 'Unknown error');
-      if (ev.provider) {
-        errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
+      var errText = friendlyError(src.message || src.error || src.text || 'Unknown error');
+      if (src.provider) {
+        errText += ' (via ' + src.provider + (src.model ? ' · ' + src.model : '') + ')';
       }
       // v0.37.1: ONE object for state + DOM (data-mi used to be -1 — the
       // push/append literal mismatch made error rows undeletable). ts + ei
       // ride along so errors get timestamps AND deletable engine ids.
       var emsg = { role: 'error', text: errText, ts: evTsMs(ev) };
       if (ev.i) emsg.ei = ev.i;
+      // v0.40 MODEL-GONE ONE-TAP RECOVERY: the engine attaches the closest
+      // available replacements (same provider, key-backed, family-ranked)
+      // when the failure is the deprecation class — render them as
+      // "Switch to X" chips that switch + auto-resend in one tap.
+      if (Array.isArray(src.suggest) && src.suggest.length) {
+        emsg.suggest = src.suggest.slice(0, 3);
+      }
       state.messages.push(emsg);
       appendMessage(msgContainer, scrollEl, emsg, bodyEl, state._icon, state);
       var btn2 = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
@@ -2699,8 +2920,23 @@
         (msg.ts ? '<div class="msg-time">' + esc(fmtTime(msg.ts)) + '</div>' : '') +
         '</div>';
     } else if (msg.role === 'error') {
+      // v0.40: model-gone errors carry one-tap replacement chips (the
+      // engine's suggest array — same provider, key-backed, family-
+      // ranked). Tapping a chip switches the chat's model and re-sends
+      // the failed prompt (the delegated .err-switch handler below).
+      var sugHtml = '';
+      if (Array.isArray(msg.suggest) && msg.suggest.length) {
+        sugHtml = '<div class="err-suggest" role="group" aria-label="Replacement models">';
+        for (var si = 0; si < msg.suggest.length; si++) {
+          var sg = msg.suggest[si];
+          if (!sg || !sg.model) continue;
+          sugHtml += '<button class="err-switch" data-provider="' + escAttr(sg.provider || '') + '" data-model="' + escAttr(sg.model) + '">' +
+            '<span class="err-switch-ico">⇄</span>' + esc(sg.label || sg.model) + '</button>';
+        }
+        sugHtml += '</div>';
+      }
       return '<div class="msg-bubble msg-error" data-msg-role="error"' + miAttr + '>' +
-        '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
+        '<div class="fmt fmt-plain">' + esc(msg.text) + '</div>' + sugHtml + '</div>';
     } else if (msg.role === 'thinking') {
       // v0.38: per-chat thinkOpen pref drives the default (msg.open wins
       // only when explicitly set — the delegated toggle handler).
@@ -2816,6 +3052,12 @@
     }
     var greeting = container && container.querySelector('#chat-greeting');
     if (greeting && greeting.parentNode) greeting.parentNode.removeChild(greeting);
+    // v0.40: the starter chips ride out with the greeting (same lifecycle:
+    // empty-state chrome). They live in #chat-live (outside the message
+    // list), so look one level up from the transcript container.
+    var startersEl = container && container.parentNode && container.parentNode.querySelector
+      ? container.parentNode.querySelector('#chat-starters') : null;
+    if (startersEl && startersEl.parentNode) startersEl.parentNode.removeChild(startersEl);
     var mi = st ? st.messages.indexOf(msg) : -1;
     // v0.37: a fresh calendar day gets its divider before the row.
     if (msg.ts && needsDayDivider(container, msg.ts)) {
@@ -3096,7 +3338,7 @@
       for (var i = 0; i < state._editStash.length; i++) state.messages.push(state._editStash[i]);
       state._editStash = null;
       var ta = bodyEl.querySelector('#chat-input');
-      if (ta) { ta.value = ''; state.draftText = ''; }
+      if (ta) { ta.value = ''; state.draftText = ''; saveDraftLS(draftId(state), ''); }
       var mc = bodyEl.querySelector('#chat-messages');
       if (mc) rebuildTranscript(mc, state);
     }
@@ -3135,6 +3377,8 @@
       input.value = '';
       state.draftText = '';
       input.style.height = 'auto';
+      // v0.40: the draft left home — clear the durable copy too
+      clearDraftLS(draftId(state));
     }
 
     state.isStreaming = true;
