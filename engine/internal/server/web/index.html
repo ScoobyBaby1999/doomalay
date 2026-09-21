@@ -797,6 +797,76 @@
     max-width: 90%;
   }
 
+  /* ── v0.37 MESSAGE PRESENCE — rows, time chips, day dividers ──
+     User/assistant bubbles ride inside a .msg-row (flex column) so the
+     time chip can sit UNDER the bubble — outside it, because the Formatter
+     replaces bubble innerHTML on every streaming tick. The row inherits
+     the flex-column parent's gap; the chip folds into the row's own
+     3px top margin so vertical rhythm is unchanged. */
+  .msg-row { display: flex; flex-direction: column; max-width: 100%; }
+  .msg-row-user { align-items: flex-end; }
+  .msg-row-assistant { align-items: flex-start; }
+  .msg-time {
+    font-size: 10.5px; font-weight: 500; color: var(--text-3);
+    font-variant-numeric: tabular-nums; letter-spacing: 0.2px;
+    margin: 3px 4px 0; user-select: none; -webkit-user-select: none;
+    opacity: 0.85; transition: opacity 150ms;
+  }
+  .msg-row:hover .msg-time { opacity: 1; }
+  /* Centered, hairline-flanked day divider (the Telegram/iMessage pattern). */
+  .msg-day {
+    display: flex; align-items: center; gap: 10px;
+    margin: 6px 0 2px; user-select: none; -webkit-user-select: none;
+  }
+  .msg-day::before, .msg-day::after {
+    content: ''; flex: 1; height: 1px;
+    background: var(--surface-3);
+  }
+  .msg-day span {
+    font-size: 11px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.8px; white-space: nowrap;
+  }
+  /* One-shot entrance for LIVE appends only (appendMessage adds the class;
+     full rebuilds never do — no transcript-wide re-animation). */
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .msg-new { animation: msg-in 220ms cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+  @media (prefers-reduced-motion: reduce) {
+    .msg-new { animation: none; }
+  }
+  /* Desktop nicety: a whisper of a border on hover so the pointer has
+     something to land on (the touch UI never sees this). */
+  @media (hover: hover) {
+    .msg-row-user > .msg-bubble:hover, .msg-row-assistant > .msg-bubble:hover {
+      outline: 1px solid rgba(var(--surface-3-rgb), 0.6);
+    }
+  }
+  /* ── v0.37 EDITING BANNER (pinned inside the sticky input bar) ── */
+  #edit-banner {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 8px; padding: 6px 10px;
+    background: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    border-radius: 8px;
+    opacity: 0; transform: translateY(-4px);
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  #edit-banner.open { opacity: 1; transform: translateY(0); }
+  #edit-banner .eb-ico { font-size: 13px; color: var(--accent); flex-shrink: 0; }
+  #edit-banner .eb-text {
+    flex: 1; font-size: 12px; font-weight: 600; color: var(--text-2);
+    letter-spacing: 0.2px;
+  }
+  #edit-banner .eb-cancel {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-2); font-size: 11px; font-weight: 600;
+    padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; touch-action: manipulation;
+  }
+  #edit-banner .eb-cancel:hover { border-color: var(--err); color: var(--err); }
+
   /* ── markdown content (the .fmt scope formatter.js renders) ── */
   .fmt { color: var(--text-1); }
   .fmt p { margin: 0.45em 0; }
@@ -1175,6 +1245,17 @@
   }
   .msg-action-btn:active { background: var(--border); }
   .msg-action-ico { color: var(--fmt-a1); font-size: calc(var(--ui-fs) + 2px); width: 18px; }
+  /* v0.37: timestamp subtitle anchoring the sheet to its message. */
+  .msg-action-ts {
+    padding: 8px 14px 2px; font-size: 11px; font-weight: 600;
+    color: var(--text-3); font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px; border-bottom: 1px solid var(--surface-2);
+    margin-bottom: 4px;
+  }
+  /* v0.37: destructive actions (delete) read as such. */
+  .msg-action-danger .msg-action-ico { color: var(--err); }
+  .msg-action-danger { color: var(--err); }
+  .msg-action-danger:active { background: rgba(var(--err-rgb), 0.12); }
 
   /* ── Prism tokens (custom scheme-aware theme) ── */
   .token.comment, .token.prolog, .token.doctype, .token.cdata { color: var(--text-3-dim); font-style: italic; }

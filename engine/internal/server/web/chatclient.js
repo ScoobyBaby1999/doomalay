@@ -149,6 +149,18 @@
     }
   };
 
+  // v0.37: control frames beyond send/stop (hide — edit/delete/regenerate
+  // masking). Same queueing semantics as send: if the socket is down, the
+  // frame is dropped (the POST /events endpoint is the fallback path).
+  ChatClient.prototype.sendRaw = function (payload) {
+    var msg = JSON.stringify(payload);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(msg);
+      return true;
+    }
+    return false;
+  };
+
   ChatClient.prototype.close = function () {
     this._closedByUser = true;
     if (this.ws) {

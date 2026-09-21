@@ -288,10 +288,12 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
         // THIS endpoint — rejecting tool_use/tool_result/sources meant PM
         // tool events + citations silently vanished (400 on every tool turn,
         // histories lost their pills after reload).
-        case "user", "assistant", "status", "error", "tool_use", "tool_result", "sources":
+        // v0.37: 'hide' — the PM path's edit/delete/regenerate masks events
+        // the same way the WS path does (content = JSON array of event ids).
+        case "user", "assistant", "status", "error", "tool_use", "tool_result", "sources", "hide":
                 // ok
         default:
-                writeError(w, 400, "type must be user|assistant|status|error|tool_use|tool_result|sources")
+                writeError(w, 400, "type must be user|assistant|status|error|tool_use|tool_result|sources|hide")
                 return
         }
         persisted, err := s.db.AppendEvent(id, req.Type, req.Text, "")

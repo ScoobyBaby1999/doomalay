@@ -59,6 +59,73 @@
     return !!(currentCtx && currentCtx.state === state && currentCtx.bodyEl);
   }
 
+  // ── v0.37 MESSAGE PRESENCE — timestamps + day separators ────────
+  // The engine has ALWAYS persisted created_at per event (chat_events
+  // .created_at rides the WS wire as ev.ts, Unix seconds) — the frontend
+  // just dropped it. These helpers stamp + format it:
+  //   evTsMs(ev)  engine seconds → local ms (fallback: now)
+  //   fmtTime(ms) "14:32" (24h, locale hour12 respected via Intl)
+  //   fmtDay(ms)  "Today" / "Yesterday" / "Mon, Mar 3" / "Mar 3, 2024"
+  //   dayKey(ms)  local YYYY-MM-DD — the day-divider boundary key
+  function evTsMs(ev) {
+    var t = ev && ev.ts;
+    if (typeof t === 'number' && t > 0) return Math.round(t * 1000);
+    return Date.now();
+  }
+  function fmtTime(ms) {
+    try {
+      return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+    } catch (e) {
+      var d = new Date(ms);
+      return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    }
+  }
+  function dayKey(ms) {
+    var d = new Date(ms);
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+  function fmtDay(ms) {
+    var d = new Date(ms);
+    var today = new Date();
+    var yest = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    var sameDay = function (a, b) { return dayKey(a.getTime()) === dayKey(b.getTime()); };
+    if (sameDay(d, today)) return 'Today';
+    if (sameDay(d, yest)) return 'Yesterday';
+    var opts = (d.getFullYear() === today.getFullYear())
+      ? { weekday: 'short', month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' };
+    try { return new Intl.DateTimeFormat(undefined, opts).format(d); } catch (e) { return d.toDateString(); }
+  }
+  // The day divider html (a centered, hairline-flanked label).
+  function dayDividerHTML(ms) {
+    return '<div class="msg-day" data-day="' + dayKey(ms) + '"><span>' + esc(fmtDay(ms)) + '</span></div>';
+  }
+  // Does `ms` start a NEW calendar day vs the container's last rendered
+  // ts? (appendMessage path — reads the live DOM, works for streaming.)
+  // v0.37.1 FIX: the old querySelector('[data-ts]:last-of-type') broke the
+  // moment a non-row DIV (a .msg-day divider, the .chat-working indicator)
+  // sat after the last ts-bearing row — :last-of-type matched NOTHING, the
+  // "no previous" branch fired, and stray day dividers landed mid-day.
+  // A reverse walk is immune: find the LAST child that carries data-ts
+  // (a ts row) or data-day (a divider — its day IS the day in effect).
+  function needsDayDivider(container, ms) {
+    if (!container || !container.children || !container.children.length) return false;
+    var kids = container.children;
+    for (var i = kids.length - 1; i >= 0; i--) {
+      var k = kids[i];
+      if (!k.getAttribute) continue;
+      var ts = k.getAttribute('data-ts');
+      if (ts) {
+        var prevTs = parseInt(ts, 10);
+        if (!prevTs || isNaN(prevTs)) return true;
+        return dayKey(prevTs) !== dayKey(ms);
+      }
+      var day = k.getAttribute('data-day');
+      if (day) return String(day) !== String(dayKey(ms));
+    }
+    return false; // no ts-bearing row yet → first message: no divider
+  }
+
   // v0.35 (user spec #9): friendly provider names for the activity row's
   // silence fallback — "waiting on Nvidia…" instead of a bare "thinking…".
   var PROVIDER_LABELS = {
@@ -360,7 +427,7 @@
       refreshArtifactCount(state, bodyEl);
     }
 
-    // long-press message actions (copy / quote / regenerate)
+    // long-press message actions (copy / quote / regenerate / edit / delete)
     if (msgContainer) {
       window.MsgActions.wire(msgContainer, {
         onQuote: function (text) {
@@ -381,11 +448,58 @@
             if (state.messages[i].role === 'user') { lastUser = state.messages[i]; break; }
           }
           if (!lastUser) return;
+          // v0.37: remember the popped tail's engine ids — the regenerate
+          // re-sends, so the old assistant turn must not linger in the
+          // engine's LLM context as a duplicate answer.
+          var regenIds = [];
           while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
-            state.messages.pop();
+            var popped = state.messages.pop();
+            if (popped.ei) regenIds.push(popped.ei);
           }
-          if (msgContainer) msgContainer.innerHTML = renderMessages(state.messages);
+          // v0.37.1: pop the last USER message too — doSend re-adds it (the
+          // engine dedupes its own echo). The old flow kept the original
+          // user row AND added a duplicate via doSend, so the transcript
+          // rendered the same text twice after every regenerate.
+          var poppedUser = state.messages.pop();
+          if (poppedUser && poppedUser.ei) regenIds.push(poppedUser.ei);
+          emitHideEvents(state, regenIds);
+          rebuildTranscript(msgContainer, state);
           doSend(lastUser.text, bodyEl, icon, state, panel);
+        },
+        // v0.37 — EDIT: truncate from the tapped user message, prefill the
+        // input with its text, and pin an "editing…" banner over the input.
+        // Cancel restores the stashed tail untouched; the actual send is a
+        // normal doSend (the engine receives the edited text as the newest
+        // turn; the replaced messages are masked via hide events).
+        onEdit: function (mi) {
+          if (state.isStreaming) return;
+          var miN = parseInt(mi, 10);
+          if (isNaN(miN) || miN < 0 || miN >= state.messages.length) return;
+          if (state.messages[miN].role !== 'user') return;
+          var ta = bodyEl.querySelector('#chat-input');
+          if (!ta) return;
+          // stash + truncate
+          state._editStash = state.messages.splice(miN);
+          var editText = state._editStash[0].text;
+          ta.value = editText;
+          state.draftText = editText;
+          rebuildTranscript(msgContainer, state);
+          showEditBanner(bodyEl, state, icon, panel);
+          ta.focus();
+          try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
+        },
+        // v0.37 — DELETE: drop the tapped message from the transcript and
+        // mask its engine event (buildHistory + replay skip it everywhere).
+        onDelete: function (mi) {
+          if (state.isStreaming) return;
+          var miN = parseInt(mi, 10);
+          if (isNaN(miN) || miN < 0 || miN >= state.messages.length) return;
+          var victim = state.messages[miN];
+          if (!victim || (victim.role !== 'user' && victim.role !== 'assistant' && victim.role !== 'error')) return;
+          state.messages.splice(miN, 1);
+          if (victim.ei) emitHideEvents(state, [victim.ei]);
+          rebuildTranscript(msgContainer, state);
+          if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('message deleted');
         }
       });
     }
@@ -420,7 +534,7 @@
       if (state.client) {
         state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, icon, panel); };
         if (state.messages.length > 0 && msgContainer && msgContainer.querySelector('#chat-greeting')) {
-          msgContainer.innerHTML = renderMessages(state.messages);
+          rebuildTranscript(msgContainer, state);
           scrollEl.scrollTop = scrollEl.scrollHeight;
         }
       } else if (!state._wsBinding) {
@@ -1212,6 +1326,9 @@
         // the type itself (one-press connect: no separate sandbox step
         // needed when the user goes straight for a cloud provider).
         if (!state.sandbox) state.sandbox = type.id;
+        // v0.37: mid-turn switches must end the running turn first (same
+        // honest stop as the Stop button) — no orphaned stream fragments.
+        stopTurnIfStreaming(state, bodyEl);
         state.model = canonicalModel(provider, modelId);
         state.provider = provider;
         if (icon) {
@@ -1335,14 +1452,14 @@
     var streamMsg = null;
     var getStreamMsg = function () {
       if (!streamMsg) {
-        streamMsg = { role: 'assistant', text: '', complete: false, streaming: true };
+        streamMsg = { role: 'assistant', text: '', complete: false, streaming: true, ts: Date.now() };
         state.messages.push(streamMsg);
         appendMessage(msgContainer, scrollEl, streamMsg, bodyEl, icon);
       }
       return streamMsg;
     };
 
-    var persist = function (type, payload) {
+    var persist = function (type, payload, stampMsg) {
       if (!state.sessionId) return Promise.resolve();
       return fetch('/api/sessions/' + state.sessionId + '/events', {
         method: 'POST',
@@ -1351,6 +1468,12 @@
       }).then(function (r) { return r.json(); }).then(function (saved) {
         if (saved && saved.id && saved.id > (state.lastEventI || 0)) {
           state.lastEventI = saved.id;
+        }
+        // v0.37: capture the engine event id on the local message so
+        // delete/edit can mask it later (PM messages have no WS echo).
+        if (saved && saved.id && stampMsg) {
+          stampMsg.ei = saved.id;
+          if (!stampMsg.ts) stampMsg.ts = Date.now();
         }
       }).catch(function (e) { console.error('persist PM event failed', e); });
     };
@@ -1372,12 +1495,13 @@
       // v0.20: CHAIN the persists — the old fire-and-forget raced the
       // assistant + status fetches, and the status could land in the log
       // BEFORE the assistant text (replayed histories read out of order).
-      var p = streamMsg && streamMsg.text ? persist('assistant', streamMsg.text) : Promise.resolve();
+      var p = streamMsg && streamMsg.text ? persist('assistant', streamMsg.text, streamMsg) : Promise.resolve();
       p.then(function () {
         if (errText) {
           return persist('error', errText).then(function () {
-            state.messages.push({ role: 'error', text: errText });
-            appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, icon);
+            var epm = { role: 'error', text: errText };
+            state.messages.push(epm);
+            appendMessage(msgContainer, scrollEl, epm, bodyEl, icon);
             return persist('status', JSON.stringify({ state: 'error', usage: usage || null }));
           });
         }
@@ -1385,7 +1509,13 @@
       });
     };
 
-    persist('user', text);
+    // v0.37: stamp the doSend-pushed user message (the last one in state)
+    // with its engine event id so PM-path user messages are deletable too.
+    var lastUserMsg = null;
+    for (var lu = state.messages.length - 1; lu >= 0; lu--) {
+      if (state.messages[lu].role === 'user') { lastUserMsg = state.messages[lu]; break; }
+    }
+    persist('user', text, lastUserMsg);
 
     return window.PMBridge.streamChat({
       model: model,
@@ -1403,7 +1533,7 @@
         bumpActivity(state);
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'thinking') {
-          last = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now() };
+          last = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now(), ts: Date.now() };
           state.messages.push(last);
           appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
         }
@@ -1441,16 +1571,17 @@
           var srcs = ev.sources.map(function (s) {
             return { title: s.title, url: s.url, snippet: s.snippet };
           });
-          state.messages.push({ role: 'sources', sources: srcs });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
+          var pmSrc = { role: 'sources', sources: srcs, ts: Date.now() };
+          state.messages.push(pmSrc);
+          appendMessage(msgContainer, scrollEl, pmSrc, bodyEl, icon);
           persist('sources', JSON.stringify(srcs));
         }
-        var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev };
-        if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev };
+        var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev, ts: Date.now() };
+        if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev, ts: Date.now() };
         state.messages.push(chip);
         appendMessage(msgContainer, scrollEl, chip, bodyEl, icon);
         persist(chip.result ? 'tool_result' : 'tool_use',
-          JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '' }));
+          JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '' }), chip);
         // v0.22: file tools saved a binary — card + refresh the drawer count
         if (ev.artifact && ev.artifact.name) {
           state.messages.push({ role: 'artifact', artifact: ev.artifact });
@@ -1811,10 +1942,16 @@
       var last = state.messages[state.messages.length - 1];
       if (last && last.role === 'user' && last.local && last.text === (ev.text || '')) {
         delete last.local;
+        // v0.37: the engine echo is authoritative for ts + ei — restamp the
+        // optimistic local message so replayed ids line up for delete/edit.
+        last.ts = evTsMs(ev);
+        if (ev.i) last.ei = ev.i;
         return;
       }
-      state.messages.push({ role: 'user', text: ev.text || '' });
-      appendMessage(msgContainer, scrollEl, { role: 'user', text: ev.text || '' }, bodyEl, state._icon, state);
+      var uMsg = { role: 'user', text: ev.text || '', ts: evTsMs(ev) };
+      if (ev.i) uMsg.ei = ev.i;
+      state.messages.push(uMsg);
+      appendMessage(msgContainer, scrollEl, uMsg, bodyEl, state._icon, state);
       // v0.19: NO auto-title — the chat keeps its default random name from
       // the list until the user renames it themselves (tap the name in the
       // panel header).
@@ -1826,7 +1963,8 @@
       if (ev.text) {
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'assistant' || last.complete) {
-          last = { role: 'assistant', text: '', complete: false, streaming: true };
+          last = { role: 'assistant', text: '', complete: false, streaming: true, ts: evTsMs(ev) };
+          if (ev.i) last.ei = ev.i;
           state.messages.push(last);
           appendMessage(msgContainer, scrollEl, last, bodyEl, state._icon, state);
         }
@@ -1849,7 +1987,8 @@
         if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
       }
       if ((ev.text || '') && assembled.indexOf(ev.text) === -1) {
-        var full = { role: 'assistant', text: ev.text, complete: true };
+        var full = { role: 'assistant', text: ev.text, complete: true, ts: evTsMs(ev) };
+        if (ev.i) full.ei = ev.i;
         state.messages.push(full);
         appendMessage(msgContainer, scrollEl, full, bodyEl, state._icon, state);
         finalizeArtifacts(full, state, bodyEl);
@@ -1874,7 +2013,8 @@
       bumpActivity(state);
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
-        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now() };
+        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now(), ts: evTsMs(ev) };
+        if (ev.i) lastThink.ei = ev.i;
         state.messages.push(lastThink);
         appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon, state);
       }
@@ -1889,8 +2029,10 @@
       if ((!pay.name || pay.summary === undefined) && pay.text) {
         try { pay = JSON.parse(pay.text); } catch (e) {}
       }
-      state.messages.push({ role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
+      var tuMsg = { role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay, ts: evTsMs(ev) };
+      if (ev.i) tuMsg.ei = ev.i;
+      state.messages.push(tuMsg);
+      appendMessage(msgContainer, scrollEl, tuMsg, bodyEl, state._icon, state);
     } else if (type === 'tool_result') {
       bumpActivity(state);
       stampThinkEnd(state); // v0.27.1
@@ -1898,8 +2040,10 @@
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
       }
-      state.messages.push({ role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2 });
-      appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
+      var trMsg = { role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2, ts: evTsMs(ev) };
+      if (ev.i) trMsg.ei = ev.i;
+      state.messages.push(trMsg);
+      appendMessage(msgContainer, scrollEl, trMsg, bodyEl, state._icon, state);
       // v0.22: file tools (docx/xlsx/zip) — a real download card follows the pill.
       if (ev.artifact && ev.artifact.name) {
         state.messages.push({ role: 'artifact', artifact: ev.artifact });
@@ -1913,8 +2057,29 @@
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
-        state.messages.push({ role: 'sources', sources: srcs });
-        appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
+        var srcMsg = { role: 'sources', sources: srcs, ts: evTsMs(ev) };
+        if (ev.i) srcMsg.ei = ev.i;
+        state.messages.push(srcMsg);
+        appendMessage(msgContainer, scrollEl, srcMsg, bodyEl, state._icon, state);
+      }
+    } else if (type === 'hide') {
+      // v0.37: an edit/delete/regenerate (this device or another) masked
+      // engine events. Drop the matching messages from the local view —
+      // the append-only log keeps everything, the transcript just skips.
+      var hideIds = ev.ids || [];
+      if (ev.text) { try { hideIds = JSON.parse(ev.text) || hideIds; } catch (e2) {} }
+      var hideSet = {};
+      for (var hi = 0; hi < hideIds.length; hi++) hideSet[hideIds[hi]] = true;
+      var droppedAny = false;
+      for (var hj = state.messages.length - 1; hj >= 0; hj--) {
+        if (state.messages[hj].ei && hideSet[state.messages[hj].ei]) {
+          state.messages.splice(hj, 1);
+          droppedAny = true;
+        }
+      }
+      if (droppedAny) {
+        var hc = bodyEl && bodyEl.querySelector('#chat-messages');
+        if (hc && isOwner(state)) rebuildTranscript(hc, state);
       }
     } else if (type === 'assistant_reset') {
       // v0.22: a long preamble streamed as if final, then turned out to be
@@ -1980,8 +2145,13 @@
       if (ev.provider) {
         errText += ' (via ' + ev.provider + (ev.model ? ' · ' + ev.model : '') + ')';
       }
-      state.messages.push({ role: 'error', text: errText });
-      appendMessage(msgContainer, scrollEl, { role: 'error', text: errText }, bodyEl, state._icon, state);
+      // v0.37.1: ONE object for state + DOM (data-mi used to be -1 — the
+      // push/append literal mismatch made error rows undeletable). ts + ei
+      // ride along so errors get timestamps AND deletable engine ids.
+      var emsg = { role: 'error', text: errText, ts: evTsMs(ev) };
+      if (ev.i) emsg.ei = ev.i;
+      state.messages.push(emsg);
+      appendMessage(msgContainer, scrollEl, emsg, bodyEl, state._icon, state);
       var btn2 = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
       if (btn2) { btn2.textContent = 'Send'; btn2.onclick = null; }
     }
@@ -2254,7 +2424,14 @@
   // ── THE MESSAGE RENDERER (everything formatted) ────────────────
   function renderMessages(messages) {
     var html = '';
+    var prevTs = 0;
     for (var i = 0; i < messages.length; i++) {
+      // v0.37: a centered day divider opens each new calendar day (and the
+      // very first message — the Telegram/iMessage orientation pattern).
+      if (messages[i].ts && dayKey(messages[i].ts) !== dayKey(prevTs || messages[i].ts)) {
+        html += dayDividerHTML(messages[i].ts);
+      }
+      if (messages[i].ts) prevTs = messages[i].ts;
       html += messageHTML(messages[i], i);
     }
     return html;
@@ -2263,13 +2440,27 @@
   // The bubble wrapper + Formatter content. Long-press handlers read
   // data-msg-role / data-msg-raw. data-mi = message index (streaming
   // updates re-find the bubble by it).
+  //
+  // v0.37: user/assistant bubbles ride inside a .msg-row (flex column)
+  // with a .msg-time chip under the bubble — the chip must live OUTSIDE
+  // the bubble because Formatter.renderInto REPLACES the bubble's
+  // innerHTML on every streaming update (an in-bubble chip would be
+  // wiped per delta). The row carries data-ts; the bubble carries
+  // data-ts too (the long-press sheet reads it for its timestamp line).
   function messageHTML(msg, mi) {
     mi = (mi === undefined || mi === null) ? -1 : mi;
     var miAttr = ' data-mi="' + mi + '"';
+    var tsAttr = msg.ts ? ' data-ts="' + msg.ts + '"' : '';
     if (msg.role === 'user') {
-      return '<div class="msg-bubble msg-user" data-msg-role="user" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + '></div>';
+      return '<div class="msg-row msg-row-user"' + tsAttr + '>' +
+        '<div class="msg-bubble msg-user" data-msg-role="user" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + tsAttr + '></div>' +
+        (msg.ts ? '<div class="msg-time">' + esc(fmtTime(msg.ts)) + '</div>' : '') +
+        '</div>';
     } else if (msg.role === 'assistant') {
-      return '<div class="msg-bubble msg-assistant" data-msg-role="assistant" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + '></div>';
+      return '<div class="msg-row msg-row-assistant"' + tsAttr + '>' +
+        '<div class="msg-bubble msg-assistant" data-msg-role="assistant" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + tsAttr + '></div>' +
+        (msg.ts ? '<div class="msg-time">' + esc(fmtTime(msg.ts)) + '</div>' : '') +
+        '</div>';
     } else if (msg.role === 'error') {
       return '<div class="msg-bubble msg-error" data-msg-role="error"' + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
@@ -2362,17 +2553,43 @@
   // The old code indexed background messages against the FOREGROUND chat's
   // array (mi=-1) and scrolled the foreground chat's view on every append.
   function appendMessage(container, scrollEl, msg, bodyEl, icon, ownerState) {
+    var st = ownerState || (currentCtx && currentCtx.state);
+    // v0.37 STALE-CLOSURE HARDENING: events processed by an earlier
+    // renderHost's closure carried a DETACHED container (the panel has
+    // since re-rendered) — appends into it silently vanished while later
+    // events hit the live container, producing transcripts with random
+    // missing rows. If this chat owns the live panel, ALWAYS target the
+    // live container (the v0.35 ownership philosophy, mirrored).
+    if (st && isOwner(st) && currentCtx.bodyEl) {
+      var liveC = currentCtx.bodyEl.querySelector('#chat-messages');
+      if (liveC && liveC !== container) container = liveC;
+    }
     var greeting = container && container.querySelector('#chat-greeting');
     if (greeting && greeting.parentNode) greeting.parentNode.removeChild(greeting);
-    var st = ownerState || (currentCtx && currentCtx.state);
     var mi = st ? st.messages.indexOf(msg) : -1;
+    // v0.37: a fresh calendar day gets its divider before the row.
+    if (msg.ts && needsDayDivider(container, msg.ts)) {
+      var ddiv = document.createElement('div');
+      ddiv.innerHTML = dayDividerHTML(msg.ts);
+      container.appendChild(ddiv.firstChild);
+    }
     var div = document.createElement('div');
     div.innerHTML = messageHTML(msg, mi);
     var el = div.firstChild;
     container.appendChild(el);
-    mountFormatting(el, msg);
+    // The formatting target is the BUBBLE (rows wrap user/assistant only;
+    // every other role is still its own top-level element).
+    var bubble = el.classList && el.classList.contains('msg-bubble') ? el : (el.querySelector ? el.querySelector('.msg-bubble') : el);
+    mountFormatting(bubble, msg);
+    // v0.37: live appends get a one-shot entrance animation (a full
+    // renderMessages rebuild — regenerate/edit/delete — must NOT re-
+    // animate the whole transcript, so the class is added ONLY here).
+    if (el.classList) {
+      el.classList.add('msg-new');
+      setTimeout(function () { if (el.classList) el.classList.remove('msg-new'); }, 400);
+    }
     if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl || container);
-    return el;
+    return bubble || el;
   }
 
   // re-format an existing message's bubble (found via data-mi)
@@ -2380,6 +2597,12 @@
   // streaming updates target its own (detached) container only; the live
   // foreground chat is never touched.
   function updateMessageEl(bodyEl, msg, final, ownerState) {
+    // v0.37 STALE-CLOSURE HARDENING (see appendMessage): a stale bodyEl
+    // from an earlier renderHost would update a DETACHED bubble while the
+    // live one never saw the delta — and its not-found fallback would
+    // double-append. When this chat owns the panel, use the live bodyEl.
+    var st0 = ownerState || (currentCtx && currentCtx.state);
+    if (st0 && isOwner(st0) && currentCtx.bodyEl) bodyEl = currentCtx.bodyEl;
     var container = bodyEl.querySelector('#chat-messages');
     if (!container) return;
     var st = ownerState || (currentCtx && currentCtx.state);
@@ -2434,6 +2657,16 @@
       var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
       mountFormatting(el, msg, true);
     }
+  }
+
+  // v0.37.1: rebuild the transcript from state AND format every bubble.
+  // renderMessages emits EMPTY shells (the Formatter fills them) — every
+  // rebuild path that skipped mountAllFormatting (regenerate since v0.26,
+  // the new hide/edit/delete/restore paths) rendered blank bubbles.
+  function rebuildTranscript(container, state) {
+    if (!container) return;
+    container.innerHTML = renderMessages(state.messages);
+    mountAllFormatting(container, state);
   }
 
   // run Formatter into a mounted bubble (user/assistant/thinking)
@@ -2495,7 +2728,26 @@
   // ── The far-left panel-header model button ("model · provider") ──
   // v0.32.3 F3: extracted — both the model pill and the ★ quick-switch
   // apply a choice through this one path.
+  // v0.37: switching models MID-TURN left the running turn orphaned — its
+  // stream kept going into the transcript as an "ACTIONS~" fragment and
+  // the new model's turn collided with it. Both apply paths stop the
+  // running turn FIRST (same path as the Stop button — abort + honest end).
+  function stopTurnIfStreaming(state, bodyEl) {
+    if (!state.isStreaming) return;
+    try {
+      var curType = window.ChatTypes.get(state.sandbox || 'quick');
+      var curCtx = currentCtx && currentCtx.ctx;
+      curType.stop(state, curCtx || {});
+    } catch (eStop) { /* the swap proceeds regardless */ }
+    state.isStreaming = false;
+    var sBtn = bodyEl && bodyEl.querySelector('#chat-send');
+    if (sBtn) { sBtn.textContent = 'Send'; sBtn.onclick = null; }
+    hideActivity(bodyEl, state);
+    completeAllStreaming(bodyEl, state);
+  }
+
   function applyModelChoice(provider, modelId, state, icon, bodyEl, panel) {
+    stopTurnIfStreaming(state, bodyEl);
     state.model = canonicalModel(provider, modelId);
     state.provider = provider;
     if (icon) {
@@ -2531,6 +2783,81 @@
   }
 
   // ── doSend (shared by input + regenerate) ──────────────────────
+  // v0.37: an EDIT that was committed (the user edited a message, we
+  // truncated + stashed its tail) — mask the replaced engine events so
+  // the resent text doesn't see the old turn as live context.
+  function commitEditStash(state) {
+    if (!state._editStash) return;
+    var ids = [];
+    for (var i = 0; i < state._editStash.length; i++) {
+      if (state._editStash[i].ei) ids.push(state._editStash[i].ei);
+    }
+    emitHideEvents(state, ids);
+    state._editStash = null;
+  }
+
+  // Mask engine events (edit/delete/regenerate) on BOTH chat paths:
+  // WS sessions send a hide control frame; PrivateMode sessions POST
+  // the same shape to the events endpoint. The engine persists ONE
+  // 'hide' event carrying the ids — buildHistory + replay skip them.
+  function emitHideEvents(state, ids) {
+    if (!ids || !ids.length || !state.sessionId) return;
+    if (state.provider === 'privatemodeai') {
+      fetch('/api/sessions/' + state.sessionId + '/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'hide', text: JSON.stringify(ids) })
+      }).catch(function (e) { console.error('hide persist failed', e); });
+    } else if (state.client && state.client.sendRaw) {
+      state.client.sendRaw({ type: 'hide', ids: ids });
+    } else if (state.provider !== 'privatemodeai' && state.sessionId) {
+      // no live WS (rare — session closed): the POST endpoint covers it.
+      fetch('/api/sessions/' + state.sessionId + '/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'hide', text: JSON.stringify(ids) })
+      }).catch(function (e) { console.error('hide persist failed', e); });
+    }
+  }
+
+  // ── v0.37 EDITING BANNER (inside the sticky input bar) ─────────
+  function showEditBanner(bodyEl, state, icon, panel) {
+    if (!bodyEl) return;
+    var existing = bodyEl.querySelector('#edit-banner');
+    if (existing) return; // already editing
+    var bar = bodyEl.querySelector('#chat-inputbar');
+    if (!bar) return;
+    var b = document.createElement('div');
+    b.id = 'edit-banner';
+    b.innerHTML =
+      '<span class="eb-ico">✎</span>' +
+      '<span class="eb-text">editing message</span>' +
+      '<button class="eb-cancel" title="cancel and restore">cancel</button>';
+    b.querySelector('.eb-cancel').addEventListener('click', function () {
+      hideEditBanner(bodyEl, state, icon, panel, true);
+    });
+    bar.insertBefore(b, bar.firstChild);
+    // slide-in
+    requestAnimationFrame(function () { b.classList.add('open'); });
+  }
+
+  function hideEditBanner(bodyEl, state, icon, panel, restore) {
+    var b = bodyEl && bodyEl.querySelector('#edit-banner');
+    if (restore && state._editStash) {
+      // cancel: put the stashed tail back, clear the input prefill
+      for (var i = 0; i < state._editStash.length; i++) state.messages.push(state._editStash[i]);
+      state._editStash = null;
+      var ta = bodyEl.querySelector('#chat-input');
+      if (ta) { ta.value = ''; state.draftText = ''; }
+      var mc = bodyEl.querySelector('#chat-messages');
+      if (mc) rebuildTranscript(mc, state);
+    }
+    if (b) {
+      b.classList.remove('open');
+      setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 200);
+    }
+  }
+
   function doSend(text, bodyEl, icon, state, panel) {
     var type = window.ChatTypes.get(state.sandbox || 'quick');
     var ctx = currentCtx && currentCtx.ctx;
@@ -2538,11 +2865,21 @@
     var input = bodyEl.querySelector('#chat-input');
     var sendBtn = bodyEl.querySelector('#chat-send');
 
-    state.messages.push({ role: 'user', text: text, local: true });
+    // v0.37: an edit was committed — drop the banner WITHOUT restoring,
+    // mask the replaced events, then proceed as a normal send.
+    if (state._editStash) {
+      hideEditBanner(bodyEl, state, icon, panel, false);
+      commitEditStash(state);
+    }
+    // v0.37: ONE object for state + DOM — the appended bubble's data-mi is a
+    // real index (was -1: doSend used to append a *different* literal than
+    // the pushed one, so edit/delete couldn't target user messages).
+    var uMsg = { role: 'user', text: text, local: true, ts: Date.now() };
+    state.messages.push(uMsg);
     // v0.28 SMART SCROLL FREEZE: the user's own send re-engages the
     // follow — their finger is back in the conversation's here-and-now.
     state._scrollFrozen = false;
-    appendMessage(msgContainer, null, { role: 'user', text: text }, bodyEl, icon, state);
+    appendMessage(msgContainer, null, uMsg, bodyEl, icon, state);
     // v0.19: no auto-title on the first message (user spec — the random
     // default name stays until a manual rename).
 
@@ -2582,8 +2919,9 @@
           if (sendBtn) sendBtn.textContent = 'Send';
           var err = 'Still connecting to the engine — tap Send again in a moment.' +
             (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
-          state.messages.push({ role: 'error', text: err });
-          appendMessage(msgContainer, null, { role: 'error', text: err }, bodyEl, icon, state);
+          var connErr = { role: 'error', text: err };
+          state.messages.push(connErr);
+          appendMessage(msgContainer, null, connErr, bodyEl, icon, state);
           state.isStreaming = false;
         }
       }, 100);

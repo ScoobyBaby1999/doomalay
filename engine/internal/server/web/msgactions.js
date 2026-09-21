@@ -84,6 +84,8 @@
     var sheet = ensureSheet();
     var role = bubble.getAttribute('data-msg-role') || '';
     var text = bubble.getAttribute('data-msg-raw') || bubble.textContent || '';
+    var mi = bubble.getAttribute('data-mi');
+    var ts = bubble.getAttribute('data-ts');
     var isAssistant = role === 'assistant';
     var isUser = role === 'user';
 
@@ -96,16 +98,41 @@
         handlers.onQuote(text);
       }});
     }
+    if (isUser && handlers && handlers.onEdit && mi !== null && mi !== undefined) {
+      actions.push({ icon: '✎', label: 'edit', run: function () {
+        handlers.onEdit(mi);
+      }});
+    }
     if (isAssistant && handlers && handlers.onRegenerate) {
       actions.push({ icon: '↻', label: 'regenerate', run: function () {
         handlers.onRegenerate();
       }});
     }
+    // v0.37: delete — user/assistant/error bubbles (thinking/tool rows are
+    // turn anatomy, not standalone messages), destructive tone.
+    if ((isUser || isAssistant || role === 'error') && handlers && handlers.onDelete && mi !== null && mi !== undefined) {
+      actions.push({ icon: '🗑', label: 'delete', danger: true, run: function () {
+        handlers.onDelete(mi);
+      }});
+    }
 
     sheet.innerHTML = '';
+    // v0.37: a timestamp subtitle anchors the sheet to the message —
+    // "Mon, Mar 3 · 14:32" in the theme's tertiary tone.
+    if (ts) {
+      var tsEl = document.createElement('div');
+      tsEl.className = 'msg-action-ts';
+      try {
+        var d = new Date(parseInt(ts, 10));
+        var datePart = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+        var timePart = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
+        tsEl.textContent = datePart + ' · ' + timePart;
+      } catch (e) { tsEl.textContent = ''; }
+      if (tsEl.textContent) sheet.appendChild(tsEl);
+    }
     actions.forEach(function (a) {
       var b = document.createElement('button');
-      b.className = 'msg-action-btn';
+      b.className = 'msg-action-btn' + (a.danger ? ' msg-action-danger' : '');
       b.innerHTML = '<span class="msg-action-ico">' + a.icon + '</span>' + esc(a.label);
       b.addEventListener('click', function () {
         hideSheet();

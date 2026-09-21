@@ -299,7 +299,9 @@
       }
       if (!best) { if (onFail) onFail('nokey', lm); return; }
       rememberRecent(id);
-      if (onPick) onPick(best.provider, best.modelId, lm);
+      // v0.37.1: namespaced id (see selectLogical) — quickPick feeds the
+      // gatelock/stall-chip flows; the raw form 404'd on NVIDIA own models.
+      if (onPick) onPick(best.provider, best.provider + '/' + best.modelId, lm);
     });
   }
 
@@ -1944,17 +1946,35 @@
       }
       rememberRecent(logical); // v0.32.3 F1: recents feed the MRU sort
       window.ConnectOverlay.close();
-      if (onPick) onPick(best.provider, best.modelId);
+      // v0.37.1: hosts[].modelId is the provider's RAW id (for NVIDIA's own
+      // models that itself starts with "nvidia/"). The app — the session
+      // store AND the engine's one-prefix strip — works in "provider/raw"
+      // form, so hand the picker the NAMESPACED id (was: raw → 404s).
+      if (onPick) onPick(best.provider, best.provider + '/' + best.modelId);
     }
 
     function selectRoute(slot) {
-      var slash = String(slot).indexOf('/');
-      var provider = String(slot).slice(0, slash);
-      var modelId = String(slot).slice(slash + 1);
+      slot = String(slot);
+      var provider, modelId;
+      // v0.37.1 FIX: host-route rows carry "provider|rawModelId" (pipe —
+      // raw ids contain '/'), provider-view rows carry the namespaced
+      // "provider/modelId". The old parse split on '/' ONLY — a host-slot
+      // pick produced provider="openrouter|anthropic" garbage. Handle both.
+      var pipe = slot.indexOf('|');
+      if (pipe >= 0) {
+        provider = slot.slice(0, pipe);
+        modelId = slot.slice(pipe + 1);
+      } else {
+        var slash = slot.indexOf('/');
+        provider = slot.slice(0, slash);
+        modelId = slot.slice(slash + 1);
+      }
       var lg = logicalFor(provider, modelId); // v0.32.3 F1
       if (lg) rememberRecent(lg);
       window.ConnectOverlay.close();
-      if (onPick) onPick(provider, modelId);
+      // v0.37.1: namespaced onPick (see selectLogical) — modelId here is
+      // already the RAW id in both slot forms.
+      if (onPick) onPick(provider, provider + '/' + modelId);
     }
 
     // v0.32.1 D: POST the pasted key for the view-only provider, then
