@@ -347,3 +347,55 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 	}
 	ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
 }
+
+// ── v0.38 MODEL-GONE FALLBACK ROUTING ───────────────────────────────────
+//
+// Live-observed (NVIDIA NIM): models get DEPROVISIONED mid-session — the
+// provider answers 404 "Function …: Not found for account …" (during this
+// release's own testing: lightning, kimi-k2.6, nemotron-51b and nemotron-340b
+// all vanished between runs). The turn used to die with "this model is no
+// longer available — pick another model". Now: the SAME logical model is
+// looked up in the catalog, and the next key-backed host takes the turn
+// (one rotation per turn, announced as a progress pill).
+
+// ResolveModelAlternate finds another provider hosting the same logical
+// model as (userModel, userProvider) and resolves ITS credentials.
+func ResolveModelAlternate(userModel, userProvider string, keys map[string]string) (model, baseURL, envVar, apiKey, authStyle, altProvider string, ok bool) {
+	if keys == nil || userModel == "" || userProvider == "" {
+		return "", "", "", "", "", "", false
+	}
+	// The user-facing id is "provider/modelId" — find the logical entry
+	// whose hosts include THIS route.
+	cat := BuildCatalogV2(keys, false)
+	stripped := strings.TrimPrefix(userModel, userProvider+"/")
+	for _, lm := range cat.Logical {
+		for _, h := range lm.Hosts {
+			if h.Provider != userProvider || h.ModelID != stripped {
+				continue
+			}
+			// found OUR route — pick the next key-backed alternate host
+			for _, alt := range lm.Hosts {
+				if alt.Provider == userProvider {
+					continue
+				}
+				m, bu, ev, ak, as, err := ResolveModel(alt.Provider+"/"+alt.ModelID, alt.Provider, keys)
+				if err == nil && ak != "" {
+					return m, bu, ev, ak, as, alt.Provider, true
+				}
+			}
+			return "", "", "", "", "", "", false
+		}
+	}
+	return "", "", "", "", "", "", false
+}
+
+// modelGoneBody sniffs a 404/410 body for deprovisioning language.
+func modelGoneBody(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "not found for account") ||
+		strings.Contains(b, "no longer available") ||
+		strings.Contains(b, "does not exist") ||
+		strings.Contains(b, "decommission") ||
+		strings.Contains(b, "model not found") ||
+		strings.Contains(b, "not available")
+}

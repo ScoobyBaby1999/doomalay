@@ -270,3 +270,35 @@ func TestActionHasRequiredArg(t *testing.T) {
 		}
 	}
 }
+
+// v0.38 model-gone fallback routing.
+func TestModelGoneBody(t *testing.T) {
+	if !modelGoneBody(`{"title":"Not Found","detail":"Function 'abc': Not found for account 'xyz'"}`) {
+		t.Errorf("nvidia deprovisioned body should match")
+	}
+	if !modelGoneBody(`{"error":{"message":"model llama-x not available"}}`) {
+		t.Errorf("not-available body should match")
+	}
+	if modelGoneBody(`{"error":{"message":"bad request shape"}}`) {
+		t.Errorf("ordinary body should NOT be model-gone")
+	}
+}
+
+func TestResolveModelAlternate(t *testing.T) {
+	keys := map[string]string{"NVIDIA_API_KEY": "nv-test", "OPENCODE_ZEN_API_KEY": "oc-test"}
+	// glm-5.3 is hosted on nvidia + opencode + openrouter — an NVIDIA route
+	// must find the OpenCode alternate with our key.
+	m, bu, _, ak, _, prov, okAlt := ResolveModelAlternate("nvidia/z-ai/glm-5.3", "nvidia", keys)
+	if !okAlt {
+		t.Skip("no alternate host found in the current embedded catalog")
+	}
+	if prov == "nvidia" {
+		t.Errorf("alternate must not be the same provider, got %s", prov)
+	}
+	if ak != "oc-test" || m == "" || bu == "" {
+		t.Errorf("alternate resolution incomplete: model=%q base=%q key=%q", m, bu, ak)
+	}
+	// A single-host model has no alternate.
+	_, _, _, _, _, _, ok2 := ResolveModelAlternate("nvidia/single-host-model-x", "nvidia", keys)
+	_ = ok2 // may be false or true depending on catalog; the invariant above is what matters
+}

@@ -57,6 +57,11 @@ type ChatRequest struct {
         // the server (it owns the session store); nil = the tools report
         // "need a session" instead of running.
         PersonaToolFn func(ctx context.Context, name, argJSON string) string `json:"-"`
+        // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
+        // time) lets a deprovisioned model rotate to another provider hosting
+        // the same logical model; FallbackTried caps it at one rotation/turn.
+        Keys          map[string]string `json:"-"`
+        FallbackTried bool              `json:"-"`
 }
 
 // Message is one chat message.
@@ -487,6 +492,13 @@ func friendlyHTTPError(status int, body string, provider string) string {
         if status == 410 || strings.Contains(b, "end of life") || strings.Contains(b, "end-of-life") {
                 return "this model has been retired by the provider (end of life) — pick another model"
         }
+        // v0.38: 402 from the OpenCode bridge ("Upstream request failed:
+        // Insufficient account funds" — live hit during testing; the user's
+        // "GLM flash hit its capacity" report). The key is fine; the FREE
+        // quota is spent.
+        if status == 402 || strings.Contains(strings.ToLower(b), "insufficient account funds") {
+                return "this provider's free quota for this model is used up (402) — try again later, another provider hosting the same model, or a different model"
+        }
         // v0.25 OPENCODE ZEN billing clarifications (live-verified with a
         // working key): paid models answer 400 CreditsError "No payment
         // method …/billing" even though the KEY is perfectly valid — free
@@ -636,35 +648,63 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         if resp.StatusCode != 200 {
                 bts, _ := io.ReadAll(resp.Body)
                 resp.Body.Close()
-                // v0.38 NATIVE-TOOLS REJECTION: a 400 that names tools/function
-                // calling on a tools-bearing request is a capability gap, not a
-                // user error — suppress the UI error, blacklist the provider
-                // for this engine's lifetime, and let the caller fall back to
-                // the ACTION text protocol.
-                if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
-                        blacklistNativeTools(req.Provider)
-                        return nil, nil, errToolsRejected
-                }
-                if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
-                        blacklistEffort(req.Provider, req.Model)
-                        for _, k := range effortKeys {
-                                delete(body, k)
+                // v0.38 MODEL-GONE FALLBACK ROUTING (live-observed: NIM models
+                // get deprovisioned mid-session — 404 "Not found for account"):
+                // rotate to another provider hosting the same logical model,
+                // once per turn, announced as a progress notice.
+                if (resp.StatusCode == 404 || resp.StatusCode == 410) && !req.FallbackTried && modelGoneBody(string(bts)) {
+                        if am, ab, _, ak, as, altProv, ok := ResolveModelAlternate(req.Model, req.Provider, req.Keys); ok {
+                                req.FallbackTried = true
+                                note := fmt.Sprintf("%s no longer hosts %s — switching to %s (same model)",
+                                        providerLabel(req.Provider), modelShort(req.Model), providerLabel(altProv))
+                                select {
+                                case ch <- ChatChunk{Type: "progress", Text: note}:
+                                default:
+                                }
+                                req.Model, req.APIKey, req.BaseURL, req.AuthStyle = am, ak, ab, as
+                                body["model"] = am
+                                bodyBytes, _ = json.Marshal(body)
+                                resp = doPostSSE(ctx, req, url, bodyBytes, ch)
+                                if resp == nil {
+                                        return nil, nil, nil // error already emitted
+                                }
+                                if resp.StatusCode != 200 {
+                                        bts, _ = io.ReadAll(resp.Body)
+                                        resp.Body.Close()
+                                }
                         }
-                        clean, _ := json.Marshal(body)
-                        if resp2 := doPostSSE(ctx, req, url, clean, ch); resp2 != nil {
-                                if resp2.StatusCode != 200 {
-                                        bts2, _ := io.ReadAll(resp2.Body)
-                                        resp2.Body.Close()
-                                        ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+                }
+                if resp.StatusCode != 200 {
+                        // v0.38 NATIVE-TOOLS REJECTION: a 400 that names tools/function
+                        // calling on a tools-bearing request is a capability gap, not a
+                        // user error — suppress the UI error, blacklist the provider
+                        // for this engine's lifetime, and let the caller fall back to
+                        // the ACTION text protocol.
+                        if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
+                                blacklistNativeTools(req.Provider)
+                                return nil, nil, errToolsRejected
+                        }
+                        if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
+                                blacklistEffort(req.Provider, req.Model)
+                                for _, k := range effortKeys {
+                                        delete(body, k)
+                                }
+                                clean, _ := json.Marshal(body)
+                                if resp2 := doPostSSE(ctx, req, url, clean, ch); resp2 != nil {
+                                        if resp2.StatusCode != 200 {
+                                                bts2, _ := io.ReadAll(resp2.Body)
+                                                resp2.Body.Close()
+                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+                                                return nil, nil, nil
+                                        }
+                                        resp = resp2
+                                } else {
                                         return nil, nil, nil
                                 }
-                                resp = resp2
                         } else {
+                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
                                 return nil, nil, nil
                         }
-                } else {
-                        ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
-                        return nil, nil, nil
                 }
         }
 
@@ -2430,14 +2470,30 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         emitStatus := func(stage, detail string) {
                 ch <- ChatChunk{Type: "status", State: "running", Text: stage, Message: detail}
         }
+        // v0.38 TRACEABLE RESEARCH (user spec: "no tool pills or anything of
+        // the sort — a black box"): every research stage now emits the SAME
+        // tool_use/tool_result pill pairs the ReAct path uses — the research
+        // is fully traceable in the transcript, exactly like the GLM/nemotron
+        // web-search chains the user praised.
+        emitPill := func(name, summary, result string) {
+                ch <- ChatChunk{Type: "tool_use", Name: name, Summary: clamp(summary, 80)}
+                ch <- ChatChunk{Type: "tool_result", Name: name, Text: clamp(result, 600)}
+        }
 
         // 1. Initial search.
         emitStatus("initial_search", question)
+        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: clamp(question, 80)}
         results, err := WebSearch(ctx, question, 8, req.TavilyKey)
         if err != nil {
                 ch <- ChatChunk{Type: "error", Error: "web_search", Message: err.Error()}
                 ch <- ChatChunk{Type: "status", State: "error"}
                 return
+        }
+        if len(results) > 0 {
+                ch <- ChatChunk{Type: "tool_result", Name: "web_search",
+                        Text: clamp(fmt.Sprintf("%d results — %s", len(results), results[0].Title), 600)}
+        } else {
+                ch <- ChatChunk{Type: "tool_result", Name: "web_search", Text: "(no results)"}
         }
         ch <- ChatChunk{Type: "sources", Sources: results}
         allSources := results
@@ -2445,6 +2501,11 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         // 2. Read the top pages (parallel).
         emitStatus("reading", fmt.Sprintf("reading %d pages", min(5, len(results))))
         pages := readTopPages(ctx, results, 5)
+        for _, pr := range pages {
+                if pr.idx >= 0 && pr.idx < len(results) {
+                        emitPill("web_fetch", results[pr.idx].URL, clamp(pr.text, 600))
+                }
+        }
 
         // 3. Follow-up queries from the model.
         emitStatus("followups", "generating follow-up queries")
@@ -2461,6 +2522,11 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
                         for _, q := range queries {
                                 if r, err := WebSearch(ctx, q, 3, req.TavilyKey); err == nil {
                                         allSources = append(allSources, r...)
+                                        res := fmt.Sprintf("%d results", len(r))
+                                        if len(r) > 0 {
+                                                res += " — " + r[0].Title
+                                        }
+                                        emitPill("web_search", q, res)
                                         ch <- ChatChunk{Type: "sources", Sources: r}
                                 }
                         }
