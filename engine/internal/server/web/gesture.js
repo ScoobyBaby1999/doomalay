@@ -1,37 +1,52 @@
-// gesture.js — v0.38 THE PANEL PHYSICS REWORK (the "satisfying sheet").
+// gesture.js — v0.42 THE ALWAYS-TALL SHEET (background-gap + settle-jank fix).
 //
-// USER SPEC (v0.38): "the panel scrolling needs to be flawless… it just has
-// to feel much better, especially in knowing when to close and when to stay
-// open, when to drag down and follow the finger to mid position, and how
-// smooth and satisfying it feels doing so."
+// USER SPEC (v0.42, three complaints, one root cause): the sheet used to be
+// a RIGID card whose HEIGHT swapped per state, so:
+//   1. "during smooth snap animations the background shows" — dragging up
+//      from default translated the 62dvh card upward, its bottom edge
+//      left the screen bottom and the canvas peeked through the gap.
+//   2. "snapping down, a black box / background bounces up from the
+//      bottom" — the shrink settle's no-teleport compensation
+//      (comp = nowPx − prevPx + drag) goes NEGATIVE on shrink: the sheet
+//      sat translated up with a bottom gap for the ENTIRE settle spring.
+//   3. "jittery / low fps / small vibrations during slides" — the height
+//      swap forced a full relayout exactly as the spring started,
+//      Math.round() quantized the transform every frame, and the CSS
+//      transform transition fought the rAF spring in some paths.
 //
-// THE JANK ROOT CAUSES THIS REWORK KILLS:
-//   1. The CSS transform transition stayed ON during the drag — every
-//      finger write restarted a 250ms ease, so the sheet perpetually
-//      lagged the finger ("floaty", not 1:1).
-//   2. Snapping changed HEIGHT instantly (no height transition existed)
-//      while the transform eased — a visible double-motion teleport.
-//   3. Only two positions; a "mid" drag from full had no natural target.
-//   4. vh heights vs innerHeight drag math drifted apart on dynamic
-//      toolbars (100vh ≠ window.innerHeight on mobile browsers).
+// THE v0.42 MODEL (canonical always-tall bottom sheet):
+//   · #chat-panel is PERMANENTLY 100dvh tall. NOTHING ever writes its
+//     height again — the sheet surface reaches from its top edge PAST the
+//     physical screen bottom at every offset ("infinitely stretched
+//     downwards"): the bottom edge sits at H + Y ≥ H, so it is glued to
+//     the screen bottom and a background gap is geometrically impossible.
+//   · Position is driven ONLY by transform: translate3d(0, Ypx, 0) with
+//     Y ∈ [0, innerHeight]: 0 = full, (1−0.62)·H = default, H = closed.
+//     Sub-pixel values — no rounding (rounding was the micro-stutter).
+//   · .panel-body (THE scroller every view renders into) is sized by the
+//     --panel-vis-h custom property this file writes in the SAME frame as
+//     the transform: vis = innerHeight − Y − chrome. The content window's
+//     bottom rides the screen bottom at every Y — an upward drag visibly
+//     STRETCHES the sheet, sticky composers and every view's scrollport
+//     stay inside the visible window, and the chat's own #chat-root
+//     height:100% keeps working unchanged.
+//   · THE SETTLE: one continuous motion — Y springs to the target with
+//     the same critically-damped spring (release-velocity seeded) while
+//     the window var follows in the same frame. No height writes, no
+//     getBoundingClientRect in the loop.
+//   · OPEN / CLOSE look EXACTLY like v0.41: the open rise is the same
+//     0.25s cubic-bezier(0.32,0.72,0,1) (set inline, removed after); the
+//     gesture close is the same fling spring; the class-driven closes
+//     (scrim tap → panel.close()) slide the sheet down the same 0.25s —
+//     a class observer picks those up now that the CSS transform rules
+//     are gone.
 //
-// THE NEW MODEL:
-//   · THREE snap points: closed (0) / default (62dvh) / full (100dvh).
-//   · During the drag: transition:none + the sheet tracks the finger
-//     (a 0.8-per-frame convergence lerp — kills sensor jitter, still
-//     1:1 to the eye) with rubber-banding past full.
-//   · On release: VELOCITY PROJECTION (position + vy·140ms) picks the
-//     target; the intent thresholds (fling/drag fractions) remain as
-//     tie-breakers so casual scrolls never close the sheet.
-//   · THE SETTLE: set the new height instantly, compensate the transform
-//     so nothing teleports on screen, then run a critically-damped spring
-//     to zero — ONE continuous motion from finger to rest.
-//   · CLOSE animates the sheet fully down (spring), THEN fires the hook.
-//
-// PRESERVED VERBATIM (battle-tested through v0.19–v0.29):
+// PRESERVED VERBATIM (battle-tested through v0.19–v0.41):
 //   · the scroll chain (inner scroller → chat body → sheet after 24px
 //     slop at the top), slider ownership, the anchor soft-tap zones,
-//   per-chat position memory (openAt), panel-state events, justDragged.
+//     per-chat position memory (openAt), panel-state events, justDragged,
+//     every intent threshold (FLING_VY, DOCK_VY, the drag fractions and
+//     the velocity projection) — the "when to close" feel is untouched.
 
 (function () {
   'use strict';
@@ -52,14 +67,72 @@
   var CLOSE_FRAC = 0.32;       // from default: > 32% deliberate drag closes
   var PROJECTION_MS = 140;     // v0.38: release velocity horizon
 
-  // v0.38: viewport height — dvh tracks the DYNAMIC viewport (mobile
-  // toolbars); innerHeight stays the drag-math source of truth so the
-  // finger and the sheet always agree.
-  function panelH() { return window.innerHeight; }
+  // ── v0.42 THE ALWAYS-TALL GEOMETRY ──────────────────────────────
+  // H is the drag-math source of truth (innerHeight — dynamic toolbars),
+  // matching the sheet's 100dvh box. curY is THE position: everything on
+  // screen is a function of it.
+  var H = 0;            // cached window.innerHeight (resize re-derives)
+  var curY = 0;         // current sheet offset in px (0 full … H closed)
+  var chromeH = 0;      // handle + header + sheet border/paddings (incl. the
+                        // safe-area padding — counted so the visible window
+                        // ends ABOVE the home indicator, like the old sheet
+                        // padding did, while the box itself hangs off-screen)
+
+  function panelH() { return H; }
   function vhFrac() {
-    // the effective fraction the current vh-based height represents
-    var h = panelEl.getBoundingClientRect().height;
-    return panelH() > 0 ? h / panelH() : states[currentState];
+    // the effective fraction the current offset represents
+    return H > 0 ? 1 - curY / H : states[currentState];
+  }
+  function yForState(name) { return (1 - states[name]) * H; }
+  function visForY(y) {
+    var v = H - y - chromeH;
+    return v > 0 ? v : 0;      // closed clamps to a zero-height window
+  }
+
+  // THE two writes. writeY positions the (infinitely tall) sheet;
+  // renderY does both in the SAME frame so the content window bottom
+  // lands on the screen bottom the instant the sheet moves.
+  function writeY(y) {
+    curY = y;
+    panelEl.style.transform = 'translate3d(0,' + y + 'px,0)';
+  }
+  function writeVis(y) {
+    panelEl.style.setProperty('--panel-vis-h', visForY(y) + 'px');
+  }
+  function renderY(y) { writeY(y); writeVis(y); }
+
+  // chrome = everything above .panel-body inside the sheet + the sheet's
+  // own bottom padding (safe area). Measured OUTSIDE the animation loops
+  // (attach, state changes, resize) — .panel-full tightens padding-top
+  // 8→4px, which shifts the window by exactly that much.
+  function measureChrome() {
+    if (!panelEl) return;
+    var cs = window.getComputedStyle(panelEl);
+    var c = (parseFloat(cs.paddingTop) || 0) +
+            (parseFloat(cs.borderTopWidth) || 0) +
+            (parseFloat(cs.paddingBottom) || 0);
+    var handle = panelEl.querySelector('.handle');
+    var header = panelEl.querySelector('.panel-header');
+    if (handle) c += handle.offsetHeight;
+    if (header) c += header.offsetHeight;
+    chromeH = c;
+  }
+
+  // one-off (NOT per-frame): where the sheet visually sits right now —
+  // used only when interrupting the 0.25s open/close transition, so a
+  // finger grabbing the sheet mid-flight takes over from the exact
+  // on-screen position instead of the logical landing spot.
+  function readComputedY(fallback) {
+    try {
+      var m = window.getComputedStyle(panelEl).transform;
+      if (!m || m === 'none' || m.slice(0, 6) !== 'matrix') return fallback;
+      var open = m.indexOf('(');
+      if (open < 0) return fallback;
+      var parts = m.slice(open + 1, m.length - 1).split(',');
+      // matrix(a,b,c,d,tx,ty) → ty = parts[5]; matrix3d(…,tx,ty,tz,1) → parts[13]
+      var y = parseFloat(parts.length === 16 ? parts[13] : parts[5]);
+      return isNaN(y) ? fallback : y;
+    } catch (e) { return fallback; }
   }
 
   // v0.29: elements that OWN their touch gestures — the sheet must never
@@ -72,28 +145,90 @@
   function attach(panel, opts) {
     panelEl = panel;
     onStateChange = (opts && opts.onStateChange) || null;
-    setHeight((opts && opts.initial) || 'default', false);
+    H = window.innerHeight;
+    measureChrome();
 
     var track = {
       active: false, y0: 0, t0: 0, lastY: 0, lastT: 0, vy: 0,
-      fromAnchor: false, hijacked: false, baseFrac: 0,
+      fromAnchor: false, hijacked: false, baseFrac: 0, baseY: 0,
       bodyStart: null
     };
 
-    // ── THE SPRING (critically damped — no overshoot, no bounce lag) ──
-    var springRaf = 0;
-    function stopSpring() {
-      if (springRaf) { cancelAnimationFrame(springRaf); springRaf = 0; }
+    // ── MOTION OWNERSHIP ───────────────────────────────────────────
+    // Exactly ONE writer drives the sheet at a time: the drag loop, the
+    // settle spring, the dismiss spring, or the 0.25s transition. Every
+    // handoff goes through the matching stop*() so a stale rAF can never
+    // fight the new one (the old dismiss loop was uncancellable — two
+    // writers fought if you grabbed the sheet mid-close).
+    var springRaf = 0;    // the settle spring
+    var dismissRaf = 0;   // the gesture-close spring
+    var dragRaf = 0;      // the finger-tracking loop
+    var dragTargetY = 0, dragNowY = 0;
+    var rising = false;   // the 0.25s open/close CSS transition is armed
+    var riseTimer = 0, riseEnd = null;
+
+    function stopSpring() { if (springRaf) { cancelAnimationFrame(springRaf); springRaf = 0; } }
+    function stopDismiss() { if (dismissRaf) { cancelAnimationFrame(dismissRaf); dismissRaf = 0; } }
+    function stopDragLoop() { if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; } }
+    function stopAll() { stopSpring(); stopDismiss(); stopDragLoop(); stopRise(); }
+    function stopRise() {
+      if (riseTimer) { clearTimeout(riseTimer); riseTimer = 0; }
+      if (riseEnd) { panelEl.removeEventListener('transitionend', riseEnd); riseEnd = null; }
+      if (!rising) return;
+      rising = false;
+      // freeze the sheet exactly where the transition has got it
+      panelEl.style.transition = 'none';
+      writeY(readComputedY(curY));
+      panelEl.style.transition = '';
     }
-    // settleFromPx: animate transform px → 0 with a critically-damped
-    // spring. Stiffness tuned for ~260ms settle from typical drag deltas.
-    function springToZero(fromPx, onDone) {
-      stopSpring();
-      var x = fromPx;
-      var v = track.vy * 1000 * 0.25; // seed with a quarter of release velocity (momentum feel)
+
+    // ── THE 0.25s TRANSITION (open rise + class-driven close slide) ──
+    // The exact curve the stylesheet used from v0.17 to v0.41 — set
+    // inline now that no CSS transform/transition rules exist.
+    var RISE_MS = 250;
+    function riseTo(targetY, freezeVis, after) {
+      stopAll();
+      var fromY = curY;                       // stopAll froze a mid-flight sheet at its visual spot
+      panelEl.style.transition = 'none';
+      writeY(fromY);
+      if (!freezeVis) writeVis(targetY);      // open: window sized for the LANDING state
+      void panelEl.offsetWidth;               // flush — commit the start before arming the curve
+      panelEl.style.transition = 'transform ' + RISE_MS + 'ms cubic-bezier(0.32,0.72,0,1)';
+      writeY(targetY);
+      rising = true;
+      function finish() {
+        if (!rising) return;
+        rising = false;
+        if (riseTimer) { clearTimeout(riseTimer); riseTimer = 0; }
+        if (riseEnd) { panelEl.removeEventListener('transitionend', riseEnd); riseEnd = null; }
+        panelEl.style.transition = '';
+        writeY(targetY);                      // exact landing — no sub-pixel residue
+        if (!freezeVis) writeVis(targetY);
+        if (after) after();
+      }
+      riseEnd = function (e) {
+        if (e && e.target !== panelEl) return;           // bubbled from children
+        if (e && e.propertyName && e.propertyName !== 'transform') return;
+        finish();
+      };
+      panelEl.addEventListener('transitionend', riseEnd);
+      riseTimer = setTimeout(finish, RISE_MS + 90);      // fallback (hidden tab swallows events)
+    }
+
+    // ── THE SETTLE SPRING (critically damped — no overshoot, no lag) ──
+    // v0.42: it animates Y → targetY (the always-tall offset), writing the
+    // transform AND the window var in the same frame. Stiffness kept from
+    // v0.38 (~260ms settle from typical drag deltas); release velocity is
+    // seeded at a quarter strength for the momentum feel.
+    function springY(fromY, targetY, v0) {
+      stopAll();
+      panelEl.style.transition = 'none';
+      var x = fromY - targetY;
+      var v = v0;
       if (v > 2400) v = 2400; if (v < -2400) v = -2400;
       var lastT = performance.now();
       var stiffness = 170, damping = 2 * Math.sqrt(stiffness) * 1.02;
+      renderY(fromY);                          // re-paint the window for the (possibly new) chrome
       function step(now) {
         var dt = Math.min(0.05, (now - lastT) / 1000);
         lastT = now;
@@ -101,48 +236,38 @@
         v += a * dt;
         x += v * dt;
         if (Math.abs(x) < 1.5 && Math.abs(v) < 40) { // snap the last sub-2px (imperceptible)
-          panelEl.style.transform = '';
-          panelEl.style.transition = '';
           springRaf = 0;
-          if (onDone) onDone();
+          renderY(targetY);                    // exact rest — both writes, one frame
           return;
         }
-        panelEl.style.transform = 'translateY(' + Math.round(x) + 'px)';
+        renderY(targetY + x);
         springRaf = requestAnimationFrame(step);
       }
       springRaf = requestAnimationFrame(step);
     }
 
-    function setHeight(next, animate, compensateFromPx) {
-      var prevPx = panelEl.offsetHeight; // LAYOUT height (transforms ignored)
+    // ── STATE APPLICATION (the old setHeight, minus the height) ─────
+    // Same contract: toggles .panel-full, fires onStateChange and the
+    // 'doomalay:panel-state' window event at exactly the old trigger
+    // points (attach / openAt / settle / setHeight / reset).
+    function applyState(next) {
       currentState = next;
       panelEl.classList.toggle('panel-full', next === 'full');
-      var h = Math.round(states[next] * 100) + 'dvh';
-      panelEl.style.transition = 'none';
-      panelEl.style.height = h;
-      if (compensateFromPx !== undefined && compensateFromPx !== null) {
-        // THE NO-TELEPORT SETTLE: the height just changed under the sheet;
-        // offset the transform by exactly the visual delta so the screen
-        // shows NO jump, then spring the transform to zero.
-        var nowPx = panelEl.offsetHeight; // layout height after the change
-        // visual continuity: the sheet's on-screen top must not move when the
-        // height changes under it. oldVisualTop = (H − prevH) + drag;
-        // newLayoutTop = (H − newH); transform = oldVisualTop − newLayoutTop
-        // = newH − prevH + drag.
-        var comp = nowPx - prevPx + compensateFromPx;
-        panelEl.style.transform = 'translateY(' + Math.round(comp) + 'px)';
-        panelEl.getBoundingClientRect(); // force layout so the next frame animates
-        springToZero(comp);
-      } else {
-        panelEl.style.transform = '';
-        if (animate === false) {
-          requestAnimationFrame(function () { panelEl.style.transition = ''; });
-        } else {
-          panelEl.style.transition = '';
-        }
-      }
+      measureChrome();   // .panel-full tightens padding-top (8→4px)
       if (onStateChange) { try { onStateChange(next); } catch (e) {} }
       window.dispatchEvent(new CustomEvent('doomalay:panel-state', { detail: { state: next } }));
+    }
+
+    function setHeight(next, animate) {
+      applyState(next);
+      var targetY = yForState(next);
+      if (animate === false) {
+        stopAll();
+        panelEl.style.transition = 'none';
+        renderY(targetY);                      // instant, both writes
+      } else {
+        springY(curY, targetY, 0);             // glide to the state's offset
+      }
     }
 
     // Where does this gesture END? (no side effects — end() acts on it)
@@ -152,7 +277,7 @@
       var downward = dy > 0;
       var upward = dy < 0;
       var projected = dy + vy * PROJECTION_MS; // where the finger WANTS to land
-      var fromFrac = vhFrac();
+      var fromFrac = track.baseFrac;           // the resting fraction the gesture STARTED from
       var toFrac = fromFrac - projected / h;
 
       // The three landings on the fraction line: 0 (closed) / .62 (default) / 1 (full).
@@ -173,109 +298,121 @@
 
     function begin(y, fromAnchor, e) {
       track.active = true;
-      stopSpring();
+      stopAll();          // kills any spring/dismiss/transition — the finger is boss now
       track.y0 = track.lastY = y;
       track.t0 = track.lastT = performance.now();
       track.vy = 0;
       track.fromAnchor = !!fromAnchor;
       track.hijacked = false;
-      track.baseFrac = vhFrac();
-      // v0.38 THE FIX: no transition while the finger drives the sheet —
-      // every write lands THIS frame (1:1 tracking, zero lag).
+      track.baseY = curY;                       // where the sheet sits (mid-flight included)
+      track.baseFrac = H > 0 ? 1 - curY / H : states[currentState];
+      // no transition while the finger drives the sheet — every write
+      // lands THIS frame (1:1 tracking, zero lag).
       panelEl.style.transition = 'none';
       if (e && e.cancelable && track.fromAnchor) e.preventDefault();
     }
 
     // 1:1 finger tracking with a whisper of jitter smoothing (0.8/frame).
-    var dragRaf = 0, dragTargetPx = 0, dragNowPx = 0;
+    // v0.42: the sheet's TOP EDGE follows the finger — the offset target
+    // is baseY + dy, clamped/rubber-banded. Sub-pixel throughout: the
+    // old Math.round quantized the transform and read as micro-vibration.
     function dragRender() {
       dragRaf = 0;
-      dragNowPx += (dragTargetPx - dragNowPx) * 0.8;
-      if (Math.abs(dragTargetPx - dragNowPx) < 0.4) dragNowPx = dragTargetPx;
-      panelEl.style.transform = 'translateY(' + Math.round(dragNowPx) + 'px)';
-      if (dragNowPx !== dragTargetPx) dragRaf = requestAnimationFrame(dragRender);
+      dragNowY += (dragTargetY - dragNowY) * 0.8;
+      if (Math.abs(dragTargetY - dragNowY) < 0.4) dragNowY = dragTargetY;
+      renderY(dragNowY);                        // stretch write: transform + window, same frame
+      if (dragNowY !== dragTargetY) dragRaf = requestAnimationFrame(dragRender);
     }
 
     function move(y) {
       if (!track.active) return;
       var now = performance.now();
       var dy = y - track.y0;
-      if (now - track.lastT > 0) {
+      // v0.42 note: the sub-frame dt floor guards the scroll-chain hijack,
+      // whose rebase (y0 = y − 6) calls begin()+move() in the SAME event —
+      // that first "move" is 6px of REBASE, not finger motion, and when it
+      // crosses a performance.now() millisecond boundary the raw dt=1ms
+      // sample read as a 6 px/ms fling and randomly dismissed the sheet on
+      // gentle pulls (latent since v0.19; real fingers never produce
+      // sub-frame move pairs, so the floor changes nothing for them).
+      if (now - track.lastT > 4) {
         var instVy = (y - track.lastY) / (now - track.lastT);
         track.vy = track.vy * 0.7 + instVy * 0.3;
       }
       track.lastY = y;
       track.lastT = now;
 
-      // live drag: the sheet tracks the finger 1:1 FROM ANY STATE.
-      // v0.38 ROOT-CAUSE FIX: the old px = (1-frac)*h mapping was only
-      // correct when dragging FROM FULL — from default it translated
-      // (1−baseFrac)·h + dy ≈ 3.4× the finger ("hyper", the floaty-jank
-      // the user felt). The rest position of EVERY snap is translateY 0
-      // (the height does the work), so the drag delta IS the translate.
-      var h = panelH();
-      var frac = track.baseFrac - dy / h;
-      var px;
-      if (frac > 1) {
-        // past full: rubber-band the upward overshoot (never detaches)
-        px = -Math.round((frac - 1) * h * 0.25);
+      // live drag from ANY state: raw = where the finger puts the top edge
+      var raw = track.baseY + dy;
+      if (raw < 0) {
+        // past full: rubber-band the upward overshoot (never detaches —
+        // the sheet surface still reaches past the screen bottom)
+        dragTargetY = raw * 0.25;
+      } else if (raw > H) {
+        // below closed the sheet is already fully gone — Y never exceeds H
+        dragTargetY = H;
       } else {
-        px = Math.round(dy);
+        dragTargetY = raw;
       }
-      dragTargetPx = px;
       if (!dragRaf) {
-        var cur = parseFloat(panelEl.style.transform.replace(/[^0-9.-]/g, ''));
-        dragNowPx = isNaN(cur) ? 0 : cur;
+        dragNowY = curY;
         dragRaf = requestAnimationFrame(dragRender);
       }
+    }
+
+    // ── THE GESTURE CLOSE (dismiss spring, rigid slide) ─────────────
+    // vis stays FROZEN (no window writes): the sheet slides away as one
+    // rigid card exactly like v0.41 — the content never squashes on exit.
+    function dismiss(fromY, closeFn) {
+      stopAll();
+      panelEl.style.transition = 'none';
+      var x = fromY, target = H;
+      var v = Math.max(track.vy * 1000 * 0.5, 900);
+      var lastT = performance.now();
+      var stiffness = 260, damping = 2 * Math.sqrt(stiffness);
+      function step(now) {
+        var dt = Math.min(0.05, (now - lastT) / 1000);
+        lastT = now;
+        var a = stiffness * (target - x) - damping * v;
+        v += a * dt;
+        x += v * dt;
+        if (x >= target - 1) {
+          dismissRaf = 0;
+          writeY(H);                            // exactly closed
+          if (closeFn) closeFn();
+          // AFTER the hook (same tick — nothing paints between): reset
+          // for the next open. Silent: the old dismiss never fired state
+          // events either (panel.close() already read the position).
+          currentState = 'default';
+          panelEl.classList.remove('panel-full');
+          measureChrome();
+          return;
+        }
+        writeY(x);                              // transform ONLY — rigid
+        dismissRaf = requestAnimationFrame(step);
+      }
+      dismissRaf = requestAnimationFrame(step);
     }
 
     function end(closeFn) {
       if (!track.active) return;
       track.active = false;
-      if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+      stopDragLoop();
       var dy = track.lastY - track.y0;
 
       var next = decide(track.vy, dy);
-      var settleFrom = dragNowPx; // where the sheet visually sits right now
-      panelEl.style.transform = 'translateY(' + Math.round(settleFrom) + 'px)';
+      var settleFrom = curY; // where the sheet visually sits right now (sub-pixel)
 
       if (next === 'CLOSE') {
-        // Animate the dismiss: spring the sheet fully down, then close.
-        // The close hook removes .open (the CSS fade handles scrim+panel).
-        var h = panelH();
-        // animate height to ~0 via transform: from settleFrom to h
-        (function dismiss() {
-          var x0 = settleFrom, target = h;
-          var v = Math.max(track.vy * 1000 * 0.5, 900);
-          var lastT = performance.now();
-          var stiffness = 260, damping = 2 * Math.sqrt(stiffness);
-          function step(now) {
-            var dt = Math.min(0.05, (now - lastT) / 1000);
-            lastT = now;
-            var a = stiffness * (target - x0) - damping * v;
-            v += a * dt;
-            x0 += v * dt;
-            if (x0 >= target - 1) {
-              panelEl.style.height = Math.round(states.default * 100) + 'dvh';
-              if (closeFn) closeFn();
-              // AFTER the close hook (same tick — nothing paints between):
-              // the closed state's own styles take over; clearing here keeps
-              // the NEXT open from inheriting a stray inline transform.
-              panelEl.style.transform = '';
-              panelEl.style.transition = '';
-              return;
-            }
-            panelEl.style.transform = 'translateY(' + Math.round(x0) + 'px)';
-            requestAnimationFrame(step);
-          }
-          requestAnimationFrame(step);
-        })();
+        dismiss(settleFrom, closeFn);
         return;
       }
-      // The settle: instant height + transform compensation + spring = the
-      // finger hands the sheet to physics and it GLIDES to the snap point.
-      setHeight(next, true, settleFrom);
+      // The settle: apply the target state (class + events), then ONE
+      // continuous spring — the finger hands the sheet to physics and it
+      // GLIDES to the snap point while the window stretches along.
+      applyState(next);
+      var v = track.vy * 1000 * 0.25; // seed with a quarter of release velocity (momentum feel)
+      springY(settleFrom, yForState(next), v);
     }
 
     // ── Wire the ANCHOR zone: handle + panel header ──────────────
@@ -288,11 +425,54 @@
       state: function () { return currentState; },
       setHeight: function (next, animate) { setHeight(next, animate !== false); },
       openAt: function (pos) {
-        setHeight(states[pos] !== undefined ? pos : 'default', false);
+        var next = states[pos] !== undefined ? pos : 'default';
+        applyState(next);
+        if (curY >= H - 1) {
+          // closed → the 0.25s rise (identical curve to the old CSS one).
+          // The window var is sized for the LANDING state before the sheet
+          // moves, so the content glides up rigid — exactly v0.41's look.
+          riseTo(yForState(next), false, null);
+        } else {
+          // already on screen (switching chats / remembered states): glide
+          // there with the settle spring — the bottom stays glued.
+          springY(curY, yForState(next), 0);
+        }
       },
-      reset: function () { setHeight('default', false); },
+      reset: function () {
+        applyState('default');
+        stopAll();
+        panelEl.style.transition = 'none';
+        if (curY >= H - 1) writeY(H);           // closed: stay closed
+        else renderY(yForState('default'));     // visible: snap home instantly
+      },
       justDragged: function () { return performance.now() - lastDragEndedAt < 350; }
     };
+
+    // ── CLASS-DRIVEN CLOSES (scrim tap and friends) ─────────────────
+    // panel.close() drops .open directly — with the CSS transform rules
+    // gone, the slide-down motion has to come from us. Watch the class:
+    // when 'open' is REMOVED while the sheet is still on screen, run the
+    // same 0.25s slide the old stylesheet did (vis frozen → rigid card).
+    function slideClosed() {
+      track.active = false;
+      track.bodyStart = null;
+      riseTo(H, true, function () {
+        // silent reset for the next open (same as the dismiss spring's end)
+        currentState = 'default';
+        panelEl.classList.remove('panel-full');
+        measureChrome();
+      });
+    }
+    var clsObs = new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var old = (muts[i].oldValue || '').split(/\s+/);
+        if (old.indexOf('open') === -1) continue;         // 'open' wasn't there → not a close
+        if (panelEl.classList.contains('open')) continue; // still there → not a close
+        if (curY < H - 1) slideClosed();
+        break;
+      }
+    });
+    clsObs.observe(panelEl, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
 
     function wireAnchor(el) {
       if (!el) return;
@@ -436,14 +616,29 @@
       });
     }
 
-    // viewport resize (rotation / split-screen): dvh heights recompute on
-    // their own, but the state class stays consistent.
+    // viewport resize (rotation / split-screen / keyboard): the 100dvh box
+    // reflows on its own; re-derive the offset from the current FRACTION so
+    // the sheet keeps its exact on-screen proportion, and rewrite the
+    // window var for the new geometry.
     window.addEventListener('resize', function () {
-      panelEl.style.height = Math.round(states[currentState] * 100) + 'dvh';
+      var frac = H > 0 ? 1 - curY / H : states[currentState];
+      H = window.innerHeight;
+      measureChrome();
+      renderY((1 - frac) * H);
     });
 
     var closeHook = null;
     anchorAPI.setCloseHook = function (fn) { closeHook = fn; };
+
+    // ── v0.42 INITIAL STATE: closed before anything paints ───────────
+    // No CSS transform rule hides the sheet anymore — THIS inline write is
+    // the hidden state. It runs synchronously during attach (script load),
+    // before the first frame can show the 100dvh surface.
+    panelEl.style.transition = 'none';
+    writeVis(H);        // zero-height window while off-screen
+    writeY(H);          // fully below the viewport
+    applyState((opts && opts.initial) || 'default');
+
     return anchorAPI;
   }
 

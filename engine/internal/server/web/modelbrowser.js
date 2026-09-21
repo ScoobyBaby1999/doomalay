@@ -29,6 +29,16 @@
 //      list renders in pages of 100 rows ("show more" + auto-load on
 //      scroll) — a filter tap repaints ≤100 rows, not 500+.
 //
+// v0.42 (user spec, two fixes):
+//   1. PINNED HEADER: #mb-top wraps the tabs/close head, the search+filter
+//      bar AND the expanded pill row in ONE sticky unit — the whole block
+//      stays pinned while the catalogue scrolls beneath (before, only the
+//      #mb-sticky bar pinned; the ★/Models/Providers tabs scrolled away).
+//   2. PILL FIT AT 390px: the availability pill reads "Ready" and lives on
+//      its own full-width row (grid cells clipped "Avail N" at phone
+//      width); the reset controls shrank to compact ✕ buttons; the uniform
+//      grid widened minmax 56→70px (4 comfortable columns, not 5 cramped).
+//
 // Retained from v0.32.x: AA benchmark ranking, sort control, inline
 // add-key, live provider dots, current-model ring, compare drawer,
 // detail drawers, keyboard navigation, drag reordering, sticky filter
@@ -85,8 +95,10 @@
   ];
   // v0.34 (user spec #9): the availability pair — Available shows only
   // key-backed models; All restores the default catalogue.
+  // v0.42 (user spec): 'Avail' renamed 'Ready' (the stored value stays
+  // 'available' — localStorage keys never change, only the label).
   var AVAIL_OPTIONS = [
-    { key: 'available', label: 'Avail', color: tone('ok') },
+    { key: 'available', label: 'Ready', color: tone('ok') },
     { key: 'all', label: 'All', color: tone('accent-2') }
   ];
 
@@ -138,7 +150,9 @@
       '.mb-pill{transition:transform 120ms cubic-bezier(0.32,0.72,0,1),background 130ms,border-color 130ms,color 130ms}' +
       '.mb-pill:hover{transform:scale(1.05)}' +
       '.mb-pill:active{transform:scale(0.95)}' +
-      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-unfilter]:focus-visible,[data-avail]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+      // v0.42: #mb-clear + [data-resetfilters] joined the focus-ring list —
+      // the new icon-only ✕ buttons are meaningless without one.
+      '.mb-pill:focus-visible,.mb-chevbtn:focus-visible,#mb-sort:focus-visible,#mb-search:focus-visible,#mb-clear:focus-visible,[data-resetfilters]:focus-visible,[data-keyinput]:focus-visible,[data-info]:focus-visible,[data-compare]:focus-visible,[data-cmpclose]:focus-visible,[data-cmpuse]:focus-visible,[data-unfilter]:focus-visible,[data-avail]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
       '.mb-ufchip:active{transform:scale(0.95)}' +
       // v0.32.7 F3 (ported to the v0.34 rows): star-pop — the tap lands
       // with a little bounce.
@@ -490,6 +504,25 @@
     var syncing = false;
     var opened = false;
 
+    // v0.34.1 THEME SWEEP: capability chips compose from theme tones too
+    // (the old code appended raw hex alpha — impossible with var()
+    // colors). audio keeps the persona tint when the theme has one.
+    // v0.42 FIX (found live): this map must be initialized BEFORE the
+    // cached-render call below. It used to sit way down by capChip() —
+    // every function render() touches is a hoisted declaration, but a
+    // `var X = …` initializer down there has NOT run yet when the
+    // open-time render() fires, so a persisted Models/Favorites view
+    // (which renders capability chips) crashed capChip() with
+    // "reading 'vision' of undefined" and the overlay never opened.
+    var CAP_COLORS = {
+      reasoning: tone('accent-3'),
+      code: tone('accent-2'),
+      tools: tone('accent'),
+      vision: tone('ok'),
+      audio: { c: 'var(--persona-tint,var(--accent))', rgb: 'var(--persona-rgb,var(--accent-rgb))' },
+      agents: tone('accent')
+    };
+
     // v0.38: hydrate from the persisted cache FIRST — the overlay opens
     // instantly. The FIRST open of each app session revalidates in the
     // background (stale-while-revalidate); an explicit resync (the sync
@@ -538,20 +571,32 @@
     // interaction updates only the zone it touches; row-level actions
     // (ℹ, ➜) swap a single row. The 1–3s full-catalogue re-render lag is
     // gone.
+    // v0.42: the zones nest inside ONE sticky wrapper (#mb-top) — see
+    // render(). #mb-sticky keeps its id (zone updaters + the search input
+    // focus/caret logic target it) but the sticky duties moved up to the
+    // wrapper: head, bar and expanded pill row pin TOGETHER.
 
     function render() {
       // v0.34.1 FIX 1: everything sits in a 16px-padded wrapper — the
       // catalogue no longer rides flush against the overlay's border. The
-      // sticky bar's -16px negative margins (below) now work CORRECTLY:
+      // sticky wrapper's -16px negative margins (below) now work CORRECTLY:
       // they stretch it edge-to-edge across the padded content box.
+      // v0.42 (user spec): #mb-top — ONE sticky wrapper owning the whole
+      // header block (tabs+close+sync head / search+filter bar / expanded
+      // pill row). The wrapper carries the full-bleed margins, the opaque
+      // background and the border+shadow, so the list scrolls UNDER the
+      // pinned block cleanly; the old layout pinned only #mb-sticky and
+      // the tabs row scrolled away.
       var html =
         '<div id="mb-wrap" style="padding:16px">' +
-        '<div id="mb-head">' + header() + '</div>' +
-        '<div id="mb-sticky" style="position:sticky;top:0;z-index:30;margin:0 -16px;padding:10px 16px 8px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
+        '<div id="mb-top" style="position:sticky;top:0;z-index:40;margin:0 -16px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
+        '<div id="mb-head" style="padding:4px 16px 0">' + header() + '</div>' +
+        '<div id="mb-sticky" style="padding:10px 16px 8px">' +
         searchBox() +
         filterToggleRow() +
         '</div>' +
-        (filtersOpen ? '<div id="mb-filterrow">' + filterRow() + '</div>' : '') +
+        (filtersOpen ? '<div id="mb-filterrow" style="padding:0 16px">' + filterRow() + '</div>' : '') +
+        '</div>' +
         '<div id="mb-list">' + listHTML() + '</div>' +
         footer() +
         '</div>';
@@ -613,11 +658,14 @@
         if (typeof caret !== 'number') caret = oldSi.value.length;
       }
       s.innerHTML = searchBox() + filterToggleRow();
-      // the expanded pill grid sits just BELOW the sticky bar
+      // the expanded pill grid sits just BELOW the sticky bar — v0.42:
+      // still INSIDE the pinned #mb-top wrapper (s's parent), so the pills
+      // pin with the rest of the header; the 16px side padding restores
+      // the inset the wrapper's -16px full-bleed margins eat.
       var oldRow = el.querySelector('#mb-filterrow');
       if (oldRow) oldRow.remove();
       if (filtersOpen) {
-        s.insertAdjacentHTML('afterend', '<div id="mb-filterrow">' + filterRow() + '</div>');
+        s.insertAdjacentHTML('afterend', '<div id="mb-filterrow" style="padding:0 16px">' + filterRow() + '</div>');
       }
       if (keepFocus) {
         var newSi = s.querySelector('#mb-search');
@@ -742,8 +790,12 @@
         '</button>';
       // The clear control sits BESIDE the toggle (a button can't nest a
       // button — the parser would break the structure).
+      // v0.42 (user spec): compact icon-only ✕ (was the wide "clear" text
+      // pill) — aria-label + title carry the meaning, and the freed ~20px
+      // keeps the Filters toggle roomy at 390px. Same resetAllFilters
+      // path as the pill row's ✕ and the document-level 'x' shortcut.
       var clearHTML = (filters.length || ctxMin || pricing !== 'all' || avail !== 'all' || search)
-        ? '<button id="mb-clear" title="reset all filters" style="flex:0 0 auto;background:transparent;border:1px solid rgba(var(--err-rgb),0.35);color:var(--err);font-size:11px;padding:0 12px;border-radius:10px;font-family:inherit;cursor:pointer;flex-shrink:0">clear</button>'
+        ? '<button id="mb-clear" aria-label="Reset all filters" title="Reset all filters" style="flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:38px;background:transparent;border:1px solid rgba(var(--err-rgb),0.35);color:var(--err);font-size:12px;padding:0;border-radius:10px;font-family:inherit;cursor:pointer;flex-shrink:0;touch-action:manipulation">✕</button>'
         : '';
       var out = '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:' + (filtersOpen ? '8px' : '0') + '">' + toggle + clearHTML + '</div>';
       // v0.32.6 F3: with the pills collapsed but filters ACTIVE, show the
@@ -773,7 +825,7 @@
         for (var p = 0; p < PILLS.length; p++) if (PILLS[p].key === filters[i]) { def = PILLS[p]; break; }
         if (def) chips += chip(def.label, def.color, 'pill:' + def.key, pillCount(def.key));
       }
-      if (avail === 'available') chips += chip('Available', tone('ok'), 'avail:available', pillCount('available'));
+      if (avail === 'available') chips += chip('Ready', tone('ok'), 'avail:available', pillCount('available')); // v0.42: follows the pill's rename
       if (ctxMin > 0) {
         for (var c = 0; c < CTX_OPTIONS.length; c++) {
           if (CTX_OPTIONS[c].v === ctxMin) { chips += chip(CTX_OPTIONS[c].label + '+', tone('accent'), 'ctx:' + ctxMin, ctxCount(ctxMin)); break; }
@@ -831,15 +883,22 @@
     // (v0.32 spec #2).
     // v0.34.1: `color` is a theme TONE {c, rgb} — an active pill wears
     // rgba(var(--x-rgb),a) mixes of its theme color.
-    function squaredPill(attr, label, color, on) {
-      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? 'rgba(' + color.rgb + ',0.13)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(' + color.rgb + ',0.6)' : 'var(--border)') + ';color:' + (on ? color.c : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">' + label + '</button>';
+    // v0.42: `extra` (optional) appends inline styles — the availability
+    // pair's full-width row passes its flex sizing through here.
+    function squaredPill(attr, label, color, on, extra) {
+      return '<button ' + attr + ' class="mb-pill" aria-pressed="' + (on ? 'true' : 'false') + '" style="display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:' + (on ? 'rgba(' + color.rgb + ',0.13)' : 'transparent') + ';border:1px solid ' + (on ? 'rgba(' + color.rgb + ',0.6)' : 'var(--border)') + ';color:' + (on ? color.c : 'var(--text-3)') + ';font-size:11px;font-weight:600;padding:7px 4px;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation' + (extra || '') + '">' + label + '</button>';
     }
 
     function filterRow() {
-      // v0.34.1 FIX 4: ONE grid — the availability pair folded IN as regular
-      // (shorter-label) cells + a ↺ Reset half-pill at the end. The min
-      // column shrank 70→56px so the 15 cells still wrap tidily.
-      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:6px;padding:2px 0 4px;margin-bottom:8px">';
+      // v0.34.1 FIX 4 → v0.42 (user spec, pill fit at 390px): ONE uniform
+      // grid for the 12 capability/context/pricing cells — the availability
+      // pair moved OFF the grid onto its own full-width row (grid cells
+      // clipped the label at phone width: 5 columns × ~58px left "Avail N"
+      // cut off mid-word). The min column widened 56→70px: 4 comfortable
+      // columns instead of 5 cramped ones, so active pills with live
+      // counts ("Smart 134") fit too. The old 15th cell (↺ Reset) became
+      // the compact ✕ that ends the availability row.
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:6px;padding:2px 0 4px">';
       // Capability pills — v0.32.8 F4: an ACTIVE pill wears its live
       // match count ("Smart 134").
       for (var i = 0; i < PILLS.length; i++) {
@@ -862,15 +921,20 @@
         var cntP = onP ? priceCount(po.key === 'free') : null;
         html += squaredPill('data-pricing="' + po.key + '"', po.label + (cntP != null ? ' ' + cntP : ''), po.color, onP);
       }
-      // v0.34 (user spec #9) → v0.34.1: the availability pair lives IN the
-      // grid now (short labels; the count still rides the ACTIVE side).
-      var availCnt = pillCount('available');
-      html += squaredPill('data-avail="available" title="available models only"', 'Avail' + (avail === 'available' ? ' ' + availCnt : ''), tone('ok'), avail === 'available');
-      html += squaredPill('data-avail="all" title="all models"', 'All' + (avail === 'all' ? ' ' + (catalog && catalog.logical ? catalog.logical.length : '') : ''), tone('accent-2'), avail === 'all');
-      // v0.34.1: the 15th cell — the ↺ Reset half-pill (one tap = the
-      // same reset as the "clear" button / the 'x' key).
-      html += '<button data-resetfilters="1" title="reset all filters" class="mb-pill" style="display:flex;align-items:center;justify-content:center;gap:3px;overflow:hidden;white-space:nowrap;background:transparent;border:1px solid var(--border-strong);color:var(--text-2);font-size:10px;font-weight:600;padding:5px 4px;border-radius:8px;font-family:inherit;cursor:pointer;touch-action:manipulation">↺ Reset</button>';
       html += '</div>';
+      // v0.42 (user spec): the availability pair — its OWN full-width row
+      // (same squaredPill atoms, tone/colors unchanged). "Ready" is the
+      // renamed Avail pill: key-backed models only; "All" restores the
+      // default catalogue. The count still rides the ACTIVE side, and the
+      // row ends with the compact ✕ reset (the 15th cell's ↺ Reset,
+      // icon-sized — one tap = the same reset as the toggle row's ✕ / the
+      // 'x' key), which frees the ~58px the old Reset cell hoarded.
+      var availCnt = pillCount('available');
+      html += '<div style="display:flex;gap:6px;margin-bottom:8px">' +
+        squaredPill('data-avail="available" title="ready models only (a provider key is saved)"', 'Ready' + (avail === 'available' ? ' ' + availCnt : ''), tone('ok'), avail === 'available', ';flex:1;min-width:0') +
+        squaredPill('data-avail="all" title="all models"', 'All' + (avail === 'all' ? ' ' + (catalog && catalog.logical ? catalog.logical.length : '') : ''), tone('accent-2'), avail === 'all', ';flex:1;min-width:0') +
+        '<button data-resetfilters="1" aria-label="Reset all filters" title="Reset all filters" class="mb-pill" style="flex:0 0 38px;display:flex;align-items:center;justify-content:center;overflow:hidden;white-space:nowrap;background:transparent;border:1px solid var(--border-strong);color:var(--text-2);font-size:12px;font-weight:600;padding:5px 0;border-radius:7px;font-family:inherit;cursor:pointer;touch-action:manipulation">✕</button>' +
+        '</div>';
       return html;
     }
 
@@ -1488,17 +1552,6 @@
         '</span>';
     }
 
-    // v0.34.1 THEME SWEEP: capability chips compose from theme tones too
-    // (the old code appended raw hex alpha — impossible with var()
-    // colors). audio keeps the persona tint when the theme has one.
-    var CAP_COLORS = {
-      reasoning: tone('accent-3'),
-      code: tone('accent-2'),
-      tools: tone('accent'),
-      vision: tone('ok'),
-      audio: { c: 'var(--persona-tint,var(--accent))', rgb: 'var(--persona-rgb,var(--accent-rgb))' },
-      agents: tone('accent')
-    };
     function capChip(cap) {
       var key = String(cap).toLowerCase();
       var t = CAP_COLORS[key] || null;
@@ -2647,8 +2700,9 @@
         updateSticky(); renderList();
         return;
       }
-      // v0.34.1 FIX 4: the ↺ Reset half-pill — one tap, same path as the
-      // "clear" button / the document-level 'x' shortcut.
+      // v0.42: the compact ✕ at the availability row's end (was the ↺
+      // Reset half-pill) — one tap, same path as the toggle row's ✕ /
+      // the document-level 'x' shortcut.
       if ((el = t.closest('[data-resetfilters]'))) {
         e.stopPropagation();
         resetAllFilters();

@@ -1,4 +1,17 @@
-// artifacts.js — v0.17 the ARTIFACTS DRAWER + TEXT EDITOR.
+// artifacts.js — v0.42 the ARTIFACTS DRAWER + TEXT EDITOR.
+//
+// v0.42 REBUILD (user item #3): the drawer's file browser is now a
+// CUSTOM mobile-first tree renderer. The vendored wunderbaum library
+// (v0.29) is RETIRED for the browser view — its skin was, per the
+// user, "severely lacking in visual clarity: nested files don't
+// indent, the icons look weird, we can't collapse nested folders.
+// Functionally good, visually very bad." The hand-rolled tree (see
+// THE DRAWER below) indents every nesting level 18px with rail
+// hairlines, gives every file its FileTypes icon + color, collapses
+// folders with a smooth animated slide, sorts folders-first in
+// natural order, and adds expand-all / collapse-all controls. The
+// vendor files stay on disk untouched — the drawer just never loads
+// them anymore.
 //
 // User spec: "Each chat should have its own artifacts drawer located in
 // the header. It is a pill with a drawer icon that when pressed opens a
@@ -11,9 +24,11 @@
 // allows for editing, and saving changes."
 //
 // IMPLEMENTATION:
-//   Drawer  — full-screen overlay, one row per artifact (icon, name,
-//             type · size · date), inline rename, confirm-delete,
-//             download, tap row → editor.
+//   Drawer  — full-screen overlay, CUSTOM tree (v0.42): one row per
+//             folder/file, [chevron] [icon] name [size] [⋯], ≥44px
+//             rows, per-level indentation, collapsible folders with
+//             persisted expand state, long-press or ⋯ for the action
+//             sheet (rename / download / delete), tap row → editor.
 //   Editor  — CodeMirror 5 (vendored MIT) with per-type mode from
 //             FileTypes.cmMode; save (PUT), rename, download, delete.
 //             Binary artifacts → download-only view.
@@ -173,21 +188,37 @@
     return 'closed';
   }
 
-  // ── THE DRAWER (v0.29: a REAL FILE TREE) ─────────────────────────
-  // User spec: "support nested files and an actual tree... like an
-  // ancestral lineage or actual file tree. Where root folders are not
-  // indented, sub files and folders are indented, and the more nested
-  // the folders the more indentations. Nested files and folders are
-  // also collapsible... a sophisticated file explorer as the artifact
-  // drawer that can smoothly and efficiently render whole massive
-  // monorepos."
+  // ── THE DRAWER (v0.42: a CUSTOM file tree — wunderbaum retired) ──
+  // User spec history: v0.29 asked for "nested files and an actual
+  // tree… root folders not indented, sub files and folders indented…
+  // collapsible." wunderbaum rendered it but never looked right on
+  // mobile (see the v0.42 header note). This is a hand-rolled tree:
   //
-  // Implementation: Wunderbaum (vendored MIT, dist/wunderbaum.*) — the
-  // designated successor of Fancytree, zero deps, VIRTUAL SCROLLING (only
-  // the visible rows ever exist in the DOM — a 100k-node monorepo stays
-  // smooth). We build the tree from the artifacts' names (paths), skin it
-  // to the app theme (CSS overrides in index.html), and keep the flat
-  // actions (rename / download / delete) in a bottom action sheet (⋯).
+  //   • INDENTATION — every nesting level indents 18px (padding-left
+  //     per row via a --d depth var), with subtle rail hairlines
+  //     (repeating-linear-gradient) aligned to each level's chevron
+  //     column, VS-Code-style.
+  //   • FOLDERS — the row itself toggles; a CSS-triangle chevron
+  //     rotates ▸→▾ and children slide open/closed via an animated
+  //     max-height (0 → measured → 'none' once settled, so nested
+  //     expansion never clips). Open/closed state persists for the
+  //     drawer session (treeExpandState, keyed by folder path — the
+  //     same "src/lib/" keys v0.29 used).
+  //   • FILE ICONS — FileTypes' per-extension icon + color.
+  //   • ROWS — [chevron] [icon] name [size] [⋯], ≥44px tall, theme
+  //     vars (--surface-*/--text-*/--border) so light+dark both work.
+  //   • ACTIONS — every capability stays reachable: tap a file →
+  //     open/preview (editor, incl. the zip/docx/xlsx viewers), ⋯ or
+  //     long-press (the msgactions pattern) → the action sheet
+  //     (rename / download / delete).
+  //   • ZIP — archives stay file rows; tapping one opens the editor's
+  //     archive member browser (preview/entry/extract), unchanged.
+  //   • SORT — folders first, then files, both natural order
+  //     (numeric-aware: file2 < file10).
+  //   • TOP BAR — title/close/count + expand-all/collapse-all.
+  //   • SCALE — plain DOM (chats rarely exceed dozens of artifacts);
+  //     only >500-node trees skip the height animation (a 100k-row
+  //     max-height transition janks) and start fully collapsed.
   var treeExpandState = {}; // sessionId → { "path/": true } expanded folder keys
 
   function openDrawer(sessionId, chat) {
@@ -203,9 +234,13 @@
           '<span class="art-title">🌳 artifacts' +
             (chat && chat.name ? ' · ' + esc(chat.name) : '') + '</span>' +
           '<span class="art-count" id="art-count"></span>' +
+          // v0.42: tree-wide expand/collapse micro-controls (wired once
+          // the tree exists — renderTree owns them)
+          '<button class="art-tree-ctl" id="art-expand-all" aria-label="Expand all folders" title="expand all">▸▸</button>' +
+          '<button class="art-tree-ctl" id="art-collapse-all" aria-label="Collapse all folders" title="collapse all">▾▾</button>' +
           '<button class="art-close">✕</button>' +
         '</div>' +
-        '<div class="art-body" id="art-list" style="overflow:hidden;padding:8px 2px 0">' +
+        '<div class="art-body" id="art-list" style="overflow-y:auto;overscroll-behavior:contain;padding:6px 6px 2px">' +
           '<div class="art-loading">loading…</div>' +
         '</div>' +
       '</div>';
@@ -217,23 +252,25 @@
       if (!root.isConnected || currentSession !== sessionId) return;
       renderTree(listEl, items, sessionId);
     }).catch(function (e) {
+      listEl.style.overflow = 'auto';
+      listEl.style.padding = '12px 14px';
       listEl.innerHTML = '<div class="art-loading">⚠ ' + esc(e.message) + '</div>';
     });
     refreshPills();
   }
 
-  // wunderbaum marks folders by type:'folder' (no isFolder() method in
-  // v0.14) — one helper so the checks read the same everywhere.
-  function isFolderNode(node) {
-    return !!(node && (node.type === 'folder' || (node.children && node.children.length)));
+  // -- natural sort (numeric-aware, case-insensitive) ----------------
+  // localeCompare with {numeric:true} gives "file2" < "file10" on every
+  // Chromium WebView we ship; the fallback covers exotic locales.
+  function naturalCompare(a, b) {
+    try { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
+    catch (e) {
+      var x = String(a).toLowerCase(), y = String(b).toLowerCase();
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
   }
 
   // -- tree model from flat artifact paths ---------------------------
-  function ciSort(a, b) {
-    var x = a.seg.toLowerCase(), y = b.seg.toLowerCase();
-    return x < y ? -1 : x > y ? 1 : 0;
-  }
-
   function buildTreeModel(items) {
     var root = { folders: new Map(), files: [] };
     items.forEach(function (m) {
@@ -252,42 +289,185 @@
     return root;
   }
 
-  // -- model → wunderbaum source (folders first, alphabetical) -------
-  function folderSource(seg, node, path, expandedSet) {
-    var children = [];
-    var folderKeys = Array.from(node.folders.keys()).sort(function (a, b) {
-      return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0;
-    });
-    folderKeys.forEach(function (k) {
-      children.push(folderSource(k, node.folders.get(k), path + k + '/', expandedSet));
-    });
-    node.files.sort(ciSort).forEach(function (f) { children.push(fileSource(f)); });
-
-    // aggregates for the folder row: total files + summed size + newest mtime
-    var count = 0, size = 0, newest = 0;
+  // recursive aggregates for the folder row: file count + summed size
+  function folderStats(node) {
+    var count = 0, size = 0;
     (function walk(n) {
-      n.files.forEach(function (f) {
-        count++; size += f.meta.size || 0;
-        if ((f.meta.updated_at || 0) > newest) newest = f.meta.updated_at || 0;
-      });
+      n.files.forEach(function (f) { count++; size += f.meta.size || 0; });
       n.folders.forEach(function (child) { walk(child); });
     })(node);
-
-    return {
-      title: seg, key: path, type: 'folder', children: children,
-      expanded: !!(expandedSet && expandedSet[path]),
-      size: count + ' file' + (count === 1 ? '' : 's'),
-      date: fmtDate(newest)
-    };
+    return { count: count, size: size };
   }
 
-  function fileSource(f) {
-    return {
-      title: f.seg, key: f.meta.id, // the artifact id — openEditor's key
-      size: FT.humanBytes(f.meta.size),
-      date: fmtDate(f.meta.updated_at),
-      art: f.meta // the full artifact row, stashed on the node
-    };
+  // -- self-contained tree styles (injected once, modelbrowser-style) -
+  function ensureArtTreeStyles() {
+    if (document.getElementById('art-v42-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'art-v42-styles';
+    s.textContent =
+      /* rows: flat elements, indentation via --d-driven padding-left */
+      '.artt{--artt-ind:18px;--artt-rail:rgba(var(--surface-3-rgb),0.7);font-size:var(--ui-fs)}' +
+      '.artt-row{position:relative;display:flex;align-items:center;gap:6px;' +
+        'min-height:44px;padding-right:6px;margin:1px 0;border-radius:10px;cursor:pointer;' +
+        'padding-left:calc(8px + var(--d,0)*var(--artt-ind));' +
+        'user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.artt-row:active{background:rgba(var(--accent-2-rgb),0.10)}' +
+      /* indent guide rails: one hairline per nesting level, aligned
+         with each level's chevron column (background-position 8px) */
+      '.artt-row::before{content:"";position:absolute;left:0;top:0;bottom:0;' +
+        'width:calc(var(--d,0)*var(--artt-ind));pointer-events:none;' +
+        'background-image:repeating-linear-gradient(to right,var(--artt-rail) 0 1px,transparent 1px var(--artt-ind));' +
+        'background-position:8px 0}' +
+      /* chevron column: CSS triangle that rotates on open (folders) */
+      '.artt-chev{flex-shrink:0;width:18px;height:18px;position:relative;pointer-events:none}' +
+      '.artt-row[data-kind="folder"] .artt-chev::after{content:"";position:absolute;left:6px;top:6px;' +
+        'border-style:solid;border-width:4px 0 4px 5px;' +
+        'border-color:transparent transparent transparent var(--text-3);' +
+        'transition:transform 0.18s cubic-bezier(0.32,0.72,0,1)}' +
+      '.artt-branch.open>.artt-row .artt-chev::after{transform:rotate(90deg)}' +
+      /* per-type file icon (FileTypes icon+color) + distinct folder icon */
+      '.artt-ico{flex-shrink:0;width:24px;text-align:center;font-size:15px;line-height:1}' +
+      '.artt-ico-folder{font-size:16px}' +
+      '.artt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'color:var(--text-1);font-weight:500}' +
+      '.artt-row[data-kind="folder"] .artt-name{font-weight:600}' +
+      '.artt-size{flex-shrink:0;max-width:86px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'text-align:right;color:var(--text-3);font-size:calc(var(--ui-small-fs) - 1px);' +
+        'font-variant-numeric:tabular-nums}' +
+      /* the per-row ⋯ (actions) button */
+      '.artt-more{flex-shrink:0;background:transparent;border:none;color:var(--text-3);' +
+        'font-size:17px;font-weight:700;line-height:1;padding:8px 9px;margin-right:-6px;' +
+        'border-radius:8px;cursor:pointer;font-family:inherit;touch-action:manipulation;' +
+        '-webkit-tap-highlight-color:transparent}' +
+      '.artt-more:active{background:var(--surface-2);color:var(--text-1)}' +
+      /* children: hidden by default, animated max-height when opened */
+      '.artt-kids{overflow:hidden;max-height:0;opacity:0}' +
+      '.artt-branch.open>.artt-kids{opacity:1}' +
+      '.artt-kids.artt-anim{transition:max-height 0.22s cubic-bezier(0.32,0.72,0,1),opacity 0.15s ease}' +
+      /* the header's expand-all / collapse-all micro-controls */
+      '.art-tree-ctl{flex-shrink:0;display:flex;align-items:center;justify-content:center;' +
+        'background:transparent;border:1px solid var(--surface-3);color:var(--text-3);' +
+        'border-radius:7px;font-size:11px;line-height:1;letter-spacing:-1.5px;padding:6px 7px;' +
+        'cursor:pointer;font-family:inherit;touch-action:manipulation;' +
+        '-webkit-tap-highlight-color:transparent}' +
+      '.art-tree-ctl:active{background:var(--surface-2);color:var(--text-1)}';
+    document.head.appendChild(s);
+  }
+
+  // -- open/close a folder branch -----------------------------------
+  // animate: true → 0 → measured px → 'none' (so later nested expansion
+  // never clips); false → instant (build-time restore + bulk ops + huge
+  // trees where the transition would jank).
+  function setKidsOpen(branch, open, animate) {
+    var kids = branch.querySelector(':scope > .artt-kids');
+    if (!kids) return;
+    branch.classList.toggle('open', open);
+    var row = branch.querySelector(':scope > .artt-row');
+    if (row) {
+      row.setAttribute('aria-expanded', open ? 'true' : 'false');
+      var ico = row.querySelector('.artt-ico');
+      if (ico) ico.textContent = open ? '📂' : '📁'; // open/closed folder glyph
+    }
+    if (kids._capT) { clearTimeout(kids._capT); kids._capT = null; }
+    kids.setAttribute('aria-hidden', open ? 'false' : 'true'); // collapsed = hidden from AT
+    if (!animate) {
+      kids.classList.remove('artt-anim');
+      kids.style.maxHeight = open ? 'none' : '0px';
+      return;
+    }
+    kids.classList.add('artt-anim');
+    if (open) {
+      kids.style.maxHeight = kids.scrollHeight + 'px';
+      kids._capT = setTimeout(function () {
+        kids._capT = null;
+        if (branch.classList.contains('open')) kids.style.maxHeight = 'none';
+      }, 240);
+    } else {
+      // 'none' isn't animatable — pin the real height first, reflow,
+      // then slide to 0
+      if (!kids.style.maxHeight || kids.style.maxHeight === 'none') {
+        kids.style.maxHeight = kids.scrollHeight + 'px';
+        void kids.offsetHeight;
+      }
+      kids.style.maxHeight = '0px';
+    }
+  }
+
+  // -- DOM builders --------------------------------------------------
+  // A folder = .artt-branch [ .artt-row + .artt-kids [ nested branches +
+  // file rows ] ]. File rows are plain .artt-row siblings inside .artt-kids
+  // (or the tree root) — indentation is per-row padding, so the DOM stays
+  // shallow and rows never wrap weirdly.
+  function buildFolderBranch(seg, node, path, depth, expandedSet) {
+    var stats = folderStats(node);
+    var branch = document.createElement('div');
+    branch.className = 'artt-branch';
+    branch.setAttribute('data-path', path);
+
+    var row = document.createElement('div');
+    row.className = 'artt-row';
+    row.setAttribute('data-kind', 'folder');
+    row.setAttribute('aria-expanded', 'false');
+    row.style.setProperty('--d', depth);
+    row.title = path + ' — ' + stats.count + ' file' + (stats.count === 1 ? '' : 's') +
+      ' · ' + FT.humanBytes(stats.size);
+    row.innerHTML =
+      '<span class="artt-chev"></span>' +
+      '<span class="artt-ico artt-ico-folder">📁</span>' +
+      '<span class="artt-name"></span>' +
+      '<span class="artt-size"></span>';
+    row.querySelector('.artt-name').textContent = seg;
+    row.querySelector('.artt-size').textContent =
+      stats.count + ' file' + (stats.count === 1 ? '' : 's');
+    branch.appendChild(row);
+
+    var kids = document.createElement('div');
+    kids.className = 'artt-kids';
+    branch.appendChild(kids);
+
+    // children: folders first, then files, both natural-sorted
+    var names = Array.from(node.folders.keys()).sort(naturalCompare);
+    for (var i = 0; i < names.length; i++) {
+      kids.appendChild(buildFolderBranch(names[i], node.folders.get(names[i]),
+        path + names[i] + '/', depth + 1, expandedSet));
+    }
+    var files = node.files.slice().sort(function (a, b) { return naturalCompare(a.seg, b.seg); });
+    for (var j = 0; j < files.length; j++) {
+      kids.appendChild(buildFileRow(files[j], depth + 1));
+    }
+
+    // restore persisted expansion at build time (instant — the slide is
+    // for user toggles, not the initial paint)
+    if (expandedSet[path]) setKidsOpen(branch, true, false);
+    else kids.setAttribute('aria-hidden', 'true'); // closed by default → hidden from AT
+    return branch;
+  }
+
+  function buildFileRow(f, depth) {
+    var meta = f.meta;
+    var info = FT.info(meta.name || f.seg);
+    var glyph = info.icon || '📄';
+    if (glyph === 'BIN') glyph = '▦'; // the registry's only text glyph — swap for a shape
+    var row = document.createElement('div');
+    row.className = 'artt-row';
+    row.setAttribute('data-kind', 'file');
+    row.setAttribute('data-aid', meta.id);
+    row.style.setProperty('--d', depth);
+    row.title = (meta.name || f.seg) + ' · ' + info.label + ' · ' +
+      FT.humanBytes(meta.size) + (meta.updated_at ? ' · ' + fmtDate(meta.updated_at) : '');
+    row.innerHTML =
+      '<span class="artt-chev"></span>' + // spacer: icons align with folders
+      '<span class="artt-ico"></span>' +
+      '<span class="artt-name"></span>' +
+      '<span class="artt-size"></span>' +
+      '<button class="artt-more" aria-label="file actions">⋯</button>';
+    var icoEl = row.querySelector('.artt-ico');
+    icoEl.textContent = glyph;
+    icoEl.style.color = info.color || 'var(--text-2)';
+    row.querySelector('.artt-name').textContent = f.seg;
+    row.querySelector('.artt-size').textContent = FT.humanBytes(meta.size);
+    return row;
   }
 
   // -- mount the tree ------------------------------------------------
@@ -304,128 +484,150 @@
       return;
     }
 
-    // lazy-load the vendored library + its stylesheet, then mount
-    ensureCSS('/vendor/wunderbaum/wunderbaum.css')
-      .then(function () { return ensureScript('/vendor/wunderbaum/wunderbaum.umd.min.js'); })
-      .then(function () {
-        if (!listEl.isConnected || !window.mar10 || !window.mar10.Wunderbaum) {
-          throw new Error('tree library failed to load');
-        }
+    ensureArtTreeStyles();
+    var panelEl = listEl.closest('.art-panel');
 
-        // expansion memory: root folders expanded for small trees,
-        // everything collapsed once it gets big (a monorepo must not
-        // flash-open thousands of rows on open).
-        var expandedSet = treeExpandState[sessionId];
-        if (!expandedSet) {
-          expandedSet = {};
-          if (items.length <= 120) {
-            buildTreeModel(items).folders.forEach(function (_v, k) { expandedSet[k + '/'] = true; });
-          }
-          treeExpandState[sessionId] = expandedSet;
-        }
+    var model = buildTreeModel(items);
 
-        var model = buildTreeModel(items);
-        var source = [];
-        var folderKeys = Array.from(model.folders.keys()).sort(function (a, b) {
-          return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0;
+    // expansion memory: root folders expanded for small trees, everything
+    // collapsed once it gets big (a monorepo must not flash-open rows).
+    var expandedSet = treeExpandState[sessionId];
+    if (!expandedSet) {
+      expandedSet = {};
+      if (items.length <= 120) {
+        model.folders.forEach(function (_v, k) { expandedSet[k + '/'] = true; });
+      }
+      treeExpandState[sessionId] = expandedSet;
+    }
+
+    // scale guard: plain DOM is fine for chats (dozens of artifacts);
+    // >500 nodes → instant toggles only (huge max-height transitions jank)
+    var nodeCount = 0;
+    (function walk(n) {
+      nodeCount += n.files.length;
+      n.folders.forEach(function (c) { nodeCount++; walk(c); });
+    })(model);
+    var big = nodeCount > 500;
+
+    listEl.innerHTML = '';
+    var tree = document.createElement('div');
+    tree.className = 'art-tree artt';
+    tree.setAttribute('role', 'tree');
+    tree.style.cssText = 'padding:2px 2px 12px';
+    listEl.appendChild(tree);
+
+    var byId = {};
+    items.forEach(function (m) { byId[m.id] = m; });
+
+    // root level: folders first, then loose files, both natural-sorted
+    var folderNames = Array.from(model.folders.keys()).sort(naturalCompare);
+    for (var i = 0; i < folderNames.length; i++) {
+      tree.appendChild(buildFolderBranch(folderNames[i], model.folders.get(folderNames[i]),
+        folderNames[i] + '/', 0, expandedSet));
+    }
+    var rootFiles = model.files.slice().sort(function (a, b) { return naturalCompare(a.seg, b.seg); });
+    for (var j = 0; j < rootFiles.length; j++) {
+      tree.appendChild(buildFileRow(rootFiles[j], 0));
+    }
+
+    function toggleBranch(branch) {
+      var open = !branch.classList.contains('open');
+      setKidsOpen(branch, open, !big);
+      var path = branch.getAttribute('data-path');
+      try {
+        if (open) treeExpandState[sessionId][path] = true;
+        else delete treeExpandState[sessionId][path];
+      } catch (err) {}
+    }
+
+    // expand-all / collapse-all header controls (bulk = instant, never
+    // a cascade of height animations)
+    var expandBtn = panelEl ? panelEl.querySelector('#art-expand-all') : null;
+    var collapseBtn = panelEl ? panelEl.querySelector('#art-collapse-all') : null;
+    if (expandBtn) expandBtn.addEventListener('click', function () {
+      var branches = tree.querySelectorAll('.artt-branch');
+      for (var k = 0; k < branches.length; k++) setKidsOpen(branches[k], true, false);
+      (function mark(n, prefix) {
+        n.folders.forEach(function (child, name) {
+          try { treeExpandState[sessionId][prefix + name + '/'] = true; } catch (err) {}
+          mark(child, prefix + name + '/');
         });
-        folderKeys.forEach(function (k) { source.push(folderSource(k, model.folders.get(k), k + '/', expandedSet)); });
-        model.files.sort(ciSort).forEach(function (f) { source.push(fileSource(f)); });
+      })(model, '');
+    });
+    if (collapseBtn) collapseBtn.addEventListener('click', function () {
+      var branches = tree.querySelectorAll('.artt-branch');
+      for (var k = 0; k < branches.length; k++) setKidsOpen(branches[k], false, false);
+      try { treeExpandState[sessionId] = {}; } catch (err) {}
+      expandedSet = treeExpandState[sessionId];
+    });
 
-        listEl.innerHTML = '';
-        var host = document.createElement('div');
-        host.className = 'art-tree';
-        host.style.cssText = 'height:100%;min-height:0';
-        listEl.appendChild(host);
+    // ONE delegated click handler: ⋯ → action sheet; folder row →
+    // toggle; file row → open/preview (the editor + its zip/docx/xlsx
+    // viewers, all unchanged).
+    var suppressClickUntil = 0;
+    tree.addEventListener('click', function (ev) {
+      if (performance.now() < suppressClickUntil) { ev.stopPropagation(); ev.preventDefault(); return; }
+      var more = ev.target.closest ? ev.target.closest('.artt-more') : null;
+      if (more) {
+        ev.stopPropagation();
+        var row = more.closest('.artt-row');
+        var meta = row ? byId[row.getAttribute('data-aid')] : null;
+        if (meta) openActionSheet(panelEl, sessionId, meta);
+        return;
+      }
+      var row2 = ev.target.closest ? ev.target.closest('.artt-row') : null;
+      if (!row2 || !row2.isConnected) return;
+      if (row2.getAttribute('data-kind') === 'folder') {
+        toggleBranch(row2.parentElement); // folder rows are direct kids of their branch
+        return;
+      }
+      var aid = row2.getAttribute('data-aid');
+      if (aid) openEditor(sessionId, aid);
+    });
 
-        var tree = new window.mar10.Wunderbaum({
-          element: host,
-          source: source,
-          header: false,
-          checkbox: false,
-          icon: false,
-          rowHeightPx: 34,
-          minExpandLevel: 0,
-          sortFoldersFirst: true,
-          columns: [
-            { id: '*', title: 'name', width: '*' },
-            { id: 'size', title: 'size', width: '84px' },
-            { id: 'date', title: 'date', width: '58px' },
-            { id: 'act', title: '', width: '30px' }
-          ],
-          render: function (e) {
-            var node = e.node;
-            // our own file/folder emoji icon before the title (wunderbaum's
-            // icon spans are disabled — they want a web font we don't ship)
-            if (e.isNew) {
-              var col0 = e.allColInfosById && e.allColInfosById['*'];
-              var titleSpan = col0 && col0.elem ? col0.elem.querySelector('.wb-title') : null;
-              if (titleSpan) {
-                var prev = titleSpan.previousElementSibling;
-                if (!prev || !prev.classList || !prev.classList.contains('ft-ico')) {
-                  var ico = document.createElement('span');
-                  var fold = isFolderNode(node);
-                  ico.className = 'ft-ico' + (fold ? ' ft-folder' : '');
-                  ico.textContent = fold ? '📁' : (node.data.art ? FT.info(node.data.art.name).icon : '📄');
-                  titleSpan.parentNode.insertBefore(ico, titleSpan);
-                }
-              }
-            }
-            for (var colId in e.renderColInfosById) {
-              var col = e.renderColInfosById[colId];
-              if (col.elem && !col.elem.classList.contains('ftc-' + col.id)) {
-                col.elem.classList.add('ftc-' + col.id); // themed per-column CSS hook
-              }
-              if (col.id === 'size' || col.id === 'date') {
-                col.elem.textContent = node.data[col.id] || '';
-              } else if (col.id === 'act' && !isFolderNode(node) && node.data.art) {
-                col.elem.textContent = '';
-                var btn = document.createElement('button');
-                btn.className = 'art-act-btn';
-                btn.setAttribute('data-aid', node.data.art.id);
-                btn.textContent = '⋯';
-                col.elem.appendChild(btn);
-              }
-            }
-          },
-          activate: function (e) {
-            var node = e.node;
-            if (isFolderNode(node)) {
-              node.setExpanded(!node.expanded);
-              return;
-            }
-            if (node.data.art) openEditor(sessionId, node.data.art.id);
-          },
-          expand: function (e) {
-            if (e.node && e.node.key) {
-              try { treeExpandState[sessionId][e.node.key] = true; } catch (err) {}
-            }
-          },
-          collapse: function (e) {
-            if (e.node && e.node.key) {
-              try { delete treeExpandState[sessionId][e.node.key]; } catch (err) {}
-            }
-          }
-        });
-
-        // the ⋯ row buttons — capture-phase so the tree never sees the
-        // tap (it would activate the node underneath).
-        listEl.addEventListener('click', function (ev) {
-          var btn = ev.target && ev.target.closest ? ev.target.closest('.art-act-btn') : null;
-          if (!btn) return;
-          ev.stopPropagation();
-          ev.preventDefault();
-          var id = btn.getAttribute('data-aid');
-          var meta = null;
-          items.forEach(function (m) { if (m.id === id) meta = m; });
-          if (meta) openActionSheet(listEl.closest('.art-panel'), sessionId, meta);
-        }, true);
-      })
-      .catch(function (e) {
-        listEl.style.overflow = 'auto';
-        listEl.style.padding = '12px 14px';
-        listEl.innerHTML = '<div class="art-loading">⚠ ' + esc(e.message) + '</div>';
-      });
+    // LONG-PRESS a file row → action sheet (the msgactions pattern:
+    // 450ms touch / 675ms mouse, haptic, move cancels; the follow-up
+    // synthetic click is suppressed so the editor never also opens).
+    var LP_MS = 450;
+    var lpTimer = null;
+    var lpRow = null;
+    var lpDocUp = function () { lpClear(); };
+    function lpClear() {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+      lpRow = null;
+      document.removeEventListener('mouseup', lpDocUp);
+    }
+    function lpStart(target, ms) {
+      var row = target && target.closest ? target.closest('.artt-row[data-aid]') : null;
+      if (!row || (target.closest && target.closest('button, input, a'))) return;
+      lpRow = row;
+      document.addEventListener('mouseup', lpDocUp);
+      lpTimer = setTimeout(function () {
+        lpTimer = null;
+        var row2 = lpRow;
+        lpRow = null;
+        document.removeEventListener('mouseup', lpDocUp);
+        if (!row2 || !row2.isConnected) return;
+        try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+        suppressClickUntil = performance.now() + 400; // kill the ghost tap
+        var meta = byId[row2.getAttribute('data-aid')];
+        if (meta) openActionSheet(panelEl, sessionId, meta);
+      }, ms || LP_MS);
+    }
+    tree.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return lpClear();
+      lpStart(e.touches[0].target, LP_MS);
+    }, { passive: true });
+    tree.addEventListener('touchmove', lpClear, { passive: true });
+    tree.addEventListener('touchend', lpClear, { passive: true });
+    tree.addEventListener('touchcancel', lpClear, { passive: true });
+    // desktop: long mouse-hold (the agent-browser test path) — slower
+    // than touch, same as msgactions (450 × 1.5 = 675ms)
+    tree.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      lpStart(e.target, LP_MS * 1.5);
+    });
+    tree.addEventListener('mousemove', function () { if (lpTimer) lpClear(); });
   }
 
   // -- the ⋯ action sheet (rename / download / delete) ───────────────
@@ -434,6 +636,7 @@
     if (old) old.remove();
     var sheet = document.createElement('div');
     sheet.className = 'art-sheet';
+    sheet._openedAt = performance.now(); // v0.42: long-press ghost-tap guard
     sheet.innerHTML =
       '<div class="art-sheet-name">' + esc(meta.name) + '</div>' +
       '<button class="art-sheet-btn" data-sheet="rename"><span class="art-sheet-ico">✎</span> rename</button>' +
@@ -489,6 +692,9 @@
     }
 
     sheet.addEventListener('click', function (ev) {
+      // v0.42: opened by long-press → the release's synthetic click may
+      // land on a sheet button; ignore clicks in the first 350ms.
+      if (performance.now() - (sheet._openedAt || 0) < 350) return;
       var b = ev.target && ev.target.closest ? ev.target.closest('[data-sheet]') : null;
       if (!b) return;
       var act = b.getAttribute('data-sheet');

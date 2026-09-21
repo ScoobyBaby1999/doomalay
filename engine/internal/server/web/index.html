@@ -461,18 +461,21 @@
   }
 
   /* ── Slide-up chat panel ───────────────────────────────────────
-     Slides from the bottom of the screen to near the top when a chatbot
-     icon is tapped. Has a drag handle bar at the top — drag it down
-     (or tap the scrim) to close. Each panel is associated with the
-     specific chatbot that was tapped (its own convo + settings + storage).
-     For now the panel shows the chatbot's metadata; it'll become the
-     chat interface in a future commit. */
+     v0.42 ALWAYS-TALL SHEET: #chat-panel is PERMANENTLY 100dvh and
+     gesture.js positions it with a single sub-pixel translate3d — the
+     sheet surface always reaches from its top edge PAST the physical
+     screen bottom, so a background gap is geometrically impossible
+     during drags and snap springs. The visible content window
+     (.panel-body) is sized by the --panel-vis-h custom property that
+     gesture.js writes per frame (innerHeight − Y − chrome). Still has
+     the drag handle at the top; still closes via scrim tap or fling. */
   #chat-panel {
     position: fixed;
     left: 0; right: 0;
     bottom: 0;
-    height: 62dvh;         /* v0.38: DYNAMIC viewport units (mobile toolbars);
-                              v0.18: the DEFAULT sheet — top ~38% stays empty */
+    height: 100dvh;        /* v0.42: ALWAYS tall — never written again
+                              (v0.38 dvh kept: dynamic viewport units);
+                              default = translated down ~38% by gesture.js */
     background: var(--surface-1);
     border-top: 1px solid var(--surface-2);
     border-radius: 16px 16px 0 0;
@@ -480,15 +483,22 @@
     z-index: 2000;
     display: flex;
     flex-direction: column;
-    transform: translateY(100%);   /* hidden below screen by default */
-    transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    /* v0.42: NO CSS transition, and NO transform the JS doesn't own —
+       gesture.js drives the position with inline translate3d, written
+       synchronously at attach (before first paint). The ONE static rule
+       below is the pre-attach hidden default: progressive rendering can
+       paint mid-parse (before app.js runs — a real risk on slow phones),
+       and a plain translateY(100%) guarantees the 100dvh surface is
+       off-screen for those frames. It never fights the JS: inline styles
+       always override it, and nothing here animates. */
+    transform: translateY(100%);   /* pre-JS hidden state (inline wins after) */
     will-change: transform;
-    /* Pad for the rounded top + safe area */
+    /* Pad for the rounded top + safe area. The bottom padding is counted
+       into gesture.js's chrome measurement, so the safe area lands at the
+       VISIBLE window bottom (not below the screen, where the always-tall
+       box's own edge now lives). */
     padding-top: 8px;
     padding-bottom: env(safe-area-inset-bottom);
-  }
-  #chat-panel.open {
-    transform: translateY(0);
   }
   #chat-panel .handle {
     flex-shrink: 0;
@@ -581,7 +591,14 @@
     letter-spacing: 0.2px;
   }
   #chat-panel .panel-body {
-    flex: 1;
+    /* v0.42 ALWAYS-TALL: the VISIBLE height (written per frame by
+       gesture.js as --panel-vis-h = innerHeight − Y − chrome) instead of
+       flex:1 — the sheet box itself is a permanent 100dvh, only the
+       visible window is content-sized. Everything else unchanged: this
+       stays THE scroller every view renders into; sticky composers and
+       every view's scrollport ride the window bottom (== screen bottom). */
+    flex: 0 0 auto;
+    height: var(--panel-vis-h, 62dvh);
     overflow-y: auto;
     padding: 20px;
     -webkit-overflow-scrolling: touch;
@@ -1500,7 +1517,9 @@
 
   /* ── v0.18: snap-state panel (gesture.js — TWO positions only) ── */
   #chat-panel.panel-full {
-    height: 100dvh !important; border-radius: 0; /* v0.38: dvh — dynamic toolbars */
+    /* v0.42: height !important deleted — the sheet is always 100dvh;
+       only the full-state chrome polish remains */
+    border-radius: 0;
     padding-top: 4px;
   }
 
