@@ -910,6 +910,14 @@
       if (window.GlobalSearch) window.GlobalSearch.open();
     });
 
+    // v0.42: Chats glyph → THE ALL-CHATS INDEX (chatsview.js). Every
+    // conversation most-recently-active-first with previews — the same
+    // ride-the-panel pattern as search + the hub.
+    const dockChatsBtn = dockStripEl.querySelector('#dock-chats');
+    if (dockChatsBtn) dockChatsBtn.addEventListener('click', function () {
+      if (window.ChatsView) window.ChatsView.open();
+    });
+
     // Library glyph → the hub library, relocated from the chat util
     // row's ◈ pill — the SAME open path the pill had: the hub view
     // rides the master panel's view stack (panel.js pushView + the

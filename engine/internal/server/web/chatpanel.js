@@ -4047,6 +4047,17 @@
     render: render,
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },
+    // v0.42: the global keyboard layer's Ctrl/Cmd+F hook — open the
+    // LIVE chat's find bar. Only meaningful when the chat root is up
+    // (a stacked view stashes the root DOM; find searches the live
+    // transcript). Returns true when the bar opened.
+    openFind: function () {
+      if (!currentCtx || !currentCtx.bodyEl || !currentCtx.state) return false;
+      var panel = currentCtx.panel;
+      if (panel && panel.viewDepth && panel.viewDepth() > 0) return false;
+      openFindBar(currentCtx.bodyEl, currentCtx.state);
+      return true;
+    },
     // v0.30: exposed for the tweaks view — a tweak saved before the first
     // message (no session yet) creates the session so the chat's own
     // look persists from the very first customization (same creator the

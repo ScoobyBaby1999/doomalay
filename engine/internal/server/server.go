@@ -163,6 +163,7 @@ func (s *Server) routes() {
         // sessions (the in-chat find bar is per-conversation; this finds
         // WHICH conversation something lived in).
         s.mux.HandleFunc("GET /api/search", s.handleSearch)
+        s.mux.HandleFunc("GET /api/chats", s.handleChats)
         s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)
         s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionsGet)
         s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handleSessionsUpdate)
