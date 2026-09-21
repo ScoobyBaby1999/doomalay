@@ -70,7 +70,35 @@ AGENT_SYSTEM_PROMPT = (
     "- agent_panel: invoke the multi-model judge panel for critiques\n"
     "- memory: read/write the workspace memory layer (.pied sanity log)\n"
     "- delegate: spawn a sub-agent for a sub-task (multi-agent orchestration)\n"
-    "- load_tool: dynamically load more tools at runtime\n\n"
+    "- load_tool: dynamically load more tools at runtime\n"
+    "- swarm: fan a list of tasks out to PARALLEL sub-agents at once (the "
+    "multi-agent swarm node — prefer it over repeated delegate calls whenever "
+    "2+ independent sub-tasks exist)\n"
+    "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
+    "question, searches, fetches pages, refines queries over rounds, and "
+    "synthesizes a cited brief. Use it for ANY current-events or fresh-info "
+    "question instead of guessing from training data\n"
+    "- timemgr: the time manager — tasks with priorities/deadlines/subtasks, "
+    "natural dates ('tomorrow', 'next friday'), templates, pomodoro, today "
+    "board, stats\n"
+    "- djournal: the rich journal — entries with mood/tags/highlights/"
+    "gratitude, search, week/month reviews with mood trends + streaks, "
+    "journaling prompts, export\n"
+    "- socreate: the 10x productivity creation loop — start(goal) → plan → "
+    "execute steps (sub-agents) → critique → iterate until done\n"
+    "- skills: browse + load the 17 methodology skills (15 ported from "
+    "obra/superpowers: brainstorming, writing-plans, TDD, systematic-"
+    "debugging, verification…). Load one BEFORE starting work it covers\n"
+    "- dtemplate: browse + run the template library (deep research, "
+    "brainstorm, plan, SDD, TDD, debug, verify, redteam, research_paper…) "
+    "on any input\n"
+    "- artifact: create/edit/list REAL chat artifacts (files, folders, "
+    "zips) in the engine's artifact store so the user can download them — "
+    "write deliverables HERE, not just as chat text\n"
+    "- hf: publish results/datasets to the HuggingFace community library "
+    "(whoami, list, publish, publish_text, dataset_card)\n"
+    "- stocks: keyless market data — quotes, history, analysis (MA/RSI/"
+    "volatility/signals), compare (Stooq)\n\n"
     "CRITICAL: ALWAYS use the `shell` tool for ANY command-line operation. "
     "The `shell` tool gives you a REAL bash shell with full output capture. "
     "NEVER use python_repl to run subprocess or os.system — use `shell` directly.\n\n"
@@ -90,6 +118,23 @@ AGENT_SYSTEM_PROMPT = (
     "agents can see them. "
     "You can git clone repos, install packages, run build tools, and do "
     "anything a developer terminal can do. Lead with the outcome, not the process.\n\n"
+    "TOOL-FIRST DISCIPLINE (v0.43): you have a rich purpose-built tool suite — "
+    "USE IT instead of improvising:\n"
+    "- Fresh/current info, news, comparisons → rtsearch (NEVER answer from "
+    "memory what rtsearch can verify — say what you know, then verify).\n"
+    "- Any question about tasks, time, reminders, focus → timemgr (not a "
+    "text TODO list).\n"
+    "- Journaling, mood tracking, reviews → djournal.\n"
+    "- A goal worth iterating on (build/analyze/write anything non-trivial) → "
+    "socreate; parallelize its steps with swarm.\n"
+    "- Starting non-trivial work → skills(action='list') first; load the "
+    "matching methodology (brainstorming/writing-plans/TDD/debugging/…).\n"
+    "- Multi-stage deliverable (report/research/plan/red-team) → dtemplate.\n"
+    "- Market/quote/analysis questions → stocks.\n"
+    "- ANY file the user should keep (report, csv, code, zip) → artifact "
+    "(create it, then tell the user where it is).\n"
+    "- Publishing datasets/results → hf.\n"
+    "When unsure what a tool offers, call it with action='help' first.\n\n"
     "ISSUE-5 (RESPONSIVE-FIX): TOOL CALLING — The tools listed above are "
     "available as FUNCTION CALLS via the model's native tool-calling API "
     "(OpenAI function-calling format). You MUST invoke tools via the "
@@ -175,8 +220,17 @@ def _build_open_models() -> list[tuple[str, str, str, str | None, dict | None, s
                             base_url or None, extra_headers, name))
 
     # Also include dynamically synced models from providers with sync_config.
-    from provider_sync import get_panel_sync_cache
-    sync_cache = get_panel_sync_cache()
+    # v0.43 FIX: provider_sync ships with the PANEL deployment (doomalaysocreate
+    # lib), not the portable brain — a bare import here crashed EVERY
+    # _build_open_models() call (and with it the whole agent_sessions open
+    # tier: StrandsAdapter.open → _resolve_open_model → ModuleNotFoundError)
+    # whenever the brain ran without the panel libs on sys.path. Sync models
+    # are strictly additive; skip them when the module is absent.
+    try:
+        from provider_sync import get_panel_sync_cache
+        sync_cache = get_panel_sync_cache()
+    except Exception:
+        sync_cache = None
     if sync_cache:
         # Dedupe by (provider_name, model_last_segment) so each provider can
         # host its own copy of a shared model (e.g. both NVIDIA and Cloudflare
@@ -569,7 +623,55 @@ def _summarize_tool_input(name: str, tool_input: dict) -> str:
     for key in ("file_path", "path", "pattern", "url", "query", "prompt"):
         if key in tool_input:
             return str(tool_input[key])[:200]
+    # v0.43: action-style dt tools (swarm/rtsearch/timemgr/…) — lead with
+    # the action verb + the primary argument so the live pill reads like a
+    # sentence ("timemgr · add title=…").
+    for key in ("action", "task", "command", "name", "id", "skill",
+                "template", "question", "goal", "title", "symbols", "repo",
+                "date", "text"):
+        if key in tool_input:
+            v = str(tool_input[key]).replace("\n", " ")
+            return f"{name} · {key}={v[:80]}"
     return _clip(tool_input, 200)
+
+
+def _format_dt_progress(event: str, fields: dict) -> str | None:
+    """v0.43 — render a dt-tool ctx.log event as a SHORT progress line for
+    the chat activity indicator. Known events get purpose-built lines;
+    unknown events degrade to "tool: <event> <first-field>". None = skip
+    (e.g. registry load chatter — open()-time events have no live turn)."""
+    try:
+        if event in ("dt_tools_loaded", "agent_tools_loaded", "agent_call_start",
+                     "agent_tools"):
+            return None  # noisy startup chatter, oplog only
+        f = fields or {}
+        if event == "swarm_agent_done":
+            ok = bool(f.get("ok", True))
+            prev = str(f.get("preview", ""))[:70]
+            return (f"swarm: {f.get('agent', '?')} done — {prev}" if ok
+                    else f"swarm: {f.get('agent', '?')} failed")
+        if event == "rtsearch_round":
+            return (f"research: round {f.get('round', '?')} — "
+                    f"{f.get('results', '?')} results, {f.get('fetched', '?')} fetched")
+        if event == "rtsearch_done":
+            return f"research: {f.get('covered', '?')}/{f.get('total', '?')} sub-queries covered"
+        if event == "skill_loaded":
+            return f"skill loaded: {f.get('skill', '?')}"
+        if event == "hf_publish":
+            return f"hf: {f.get('step', 'publish')} {f.get('detail', '')}".strip()
+        if event == "socreate_call":
+            return f"socreate: {f.get('action', '?')} {str(f.get('detail', ''))[:60]}".strip()
+        if event == "djournal_write":
+            return f"journal: entry saved ({f.get('words', '?')} words)"
+        if event == "sub_agent_complete":
+            return f"sub-agent {f.get('sub_agent', f.get('id', '?'))} finished"
+        # generic fallback: first string-ish field
+        for v in f.values():
+            if isinstance(v, str) and v:
+                return f"tool: {event} — {v[:60]}"
+        return f"tool: {event}"
+    except Exception:
+        return None
 
 
 class ClaudeAdapter(BaseAdapter):
@@ -832,6 +934,82 @@ def _guarded_shell(tool_use=None, **kwargs):
                 "content": [{"text": f"Shell error: {exc}"}]}
 
 
+class _DoomalayLiveToolHooks:
+    """v0.43 — live tool pills from Strands' typed hook events.
+
+    WHY: the transcript's tool events used to be built AFTER the turn by
+    walking agent.messages (StrandsAdapter.turn's post-run walk) — meaning
+    during a multi-minute tool-heavy turn (a swarm fan-out, an rtsearch
+    loop) the chat showed nothing but the thinking dots. This provider
+    subscribes to BeforeToolCallEvent/AfterToolCallEvent and pushes
+    tool_use/tool_result chat events the moment each tool starts/finishes,
+    through the adapter's current-turn emit. The post-turn walk then skips
+    toolUseIds already emitted live (self._live_tool_ids) so nothing
+    duplicates. Everything is best-effort: a hooks API change or an emit
+    failure must never break the actual tool execution.
+    """
+
+    def __init__(self, adapter: "StrandsAdapter"):
+        self._adapter = adapter
+
+    def register_hooks(self, registry) -> None:  # HookProvider protocol
+        try:
+            from strands.hooks.events import (AfterToolCallEvent,
+                                              BeforeToolCallEvent)
+            registry.add_callback(BeforeToolCallEvent, self._on_before_tool)
+            registry.add_callback(AfterToolCallEvent, self._on_after_tool)
+        except Exception:
+            pass
+
+    # ── helpers ────────────────────────────────────────────────────────
+    def _emit(self, ev: dict) -> None:
+        try:
+            em = getattr(self._adapter, "_turn_emit", None)
+            if em is not None:
+                em(ev)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _tu_fields(tool_use) -> tuple[str, dict, str]:
+        """Normalize a strands ToolUse (object or dict) to (id, name, input)."""
+        get = (lambda k, d="": tool_use.get(k, d)) if isinstance(
+            tool_use, dict) else (lambda k, d="": getattr(tool_use, k, d) or d)
+        return str(get("toolUseId", "")), str(get("name", "tool")), dict(get("input", {}) or {})
+
+    # ── hook callbacks ──────────────────────────────────────────────────
+    def _on_before_tool(self, event) -> None:
+        try:
+            tu = getattr(event, "tool_use", None) or {}
+            tu_id, name, inp = self._tu_fields(tu)
+            if tu_id:
+                live = getattr(self._adapter, "_live_tool_ids", None)
+                if live is not None:
+                    live.add(tu_id)
+            self._emit({"type": "tool_use", "name": name,
+                        "summary": _summarize_tool_input(name, inp)})
+        except Exception:
+            pass
+
+    def _on_after_tool(self, event) -> None:
+        try:
+            tu = getattr(event, "tool_use", None) or {}
+            tu_id, name, _inp = self._tu_fields(tu)
+            dur = getattr(event, "duration", None)
+            exc = getattr(event, "exception", None)
+            ok = exc is None
+            bits = ["ok" if ok else "error"]
+            if isinstance(dur, (int, float)) and dur:
+                bits.append(f"{dur:.1f}s")
+            if exc is not None:
+                bits.append(str(exc)[:120])
+            summary = " · ".join(bits)
+            self._emit({"type": "tool_result", "name": name,
+                        "summary": summary, "is_error": not ok})
+        except Exception:
+            pass
+
+
 class StrandsAdapter(BaseAdapter):
     """Open tier — Strands Agents SDK (AWS, Apache-2.0). Provider-agnostic via
     LiteLLM, so one adapter drives every OpenAI-compatible model (Kimi, GLM,
@@ -865,6 +1043,11 @@ class StrandsAdapter(BaseAdapter):
         self.resolved_model: str | None = None
         self.resolved_provider: str | None = None
         self.resolved_api_base: str | None = None
+        # v0.43: the current turn's emit + the live-tool dedupe set (see
+        # _DoomalayLiveToolHooks and turn()). Set at each turn() start; the
+        # hooks provider and the dt-progress bridge read them mid-turn.
+        self._turn_emit = None
+        self._live_tool_ids: set = set()
         # Initialize the memory layer (.pied sanity log)
         try:
             import memory_layer
@@ -1257,6 +1440,39 @@ class StrandsAdapter(BaseAdapter):
         except Exception:
             pass
 
+        # 6. v0.43 — the doomalay tool registry: every brain/tools/dt_*.py
+        # module is discovered and built against a ToolContext carrying this
+        # session's workspace, the engine URL, and the spawn seam (sub-agent
+        # fan-out for dt_swarm / dt_socreate). Broken modules are skipped by
+        # the registry — this can never take the agent down. Agents add
+        # tools by dropping new dt_*.py files; this seam is the ONLY place
+        # they meet the adapter.
+        try:
+            import dt_registry
+            _sess_ref = self._session_ref()
+            _ctx = dt_registry.ToolContext(
+                workspace=self.workspace,
+                workspace_id=self.workspace_id,
+                chat_session_id=getattr(_sess_ref, "chat_session_id", None),
+                session=_sess_ref,
+                model=self.model,
+                engine_url=__import__("os").environ.get(
+                    "DOOMALAY_ENGINE_URL", "http://127.0.0.1:8080"),
+                spawn=lambda task, model="", wait=True, timeout=150, **kw: (
+                    spawn_subagent(
+                        task, model=model or self.model,
+                        workspace_path=self.workspace,
+                        workspace_id=self.workspace_id,
+                        wait=wait, timeout=timeout, **kw)),
+                spawn_status=spawn_status,
+                emit=self._emit_dt_progress,
+            )
+            dt_tools = dt_registry.load_doomalay_tools(_ctx)
+            if dt_tools:
+                tools.extend(dt_tools)
+        except Exception:
+            pass
+
         # Log which tools loaded so we can verify capabilities
         loaded = [getattr(t, "TOOL_SPEC", {}).get("name", "?") if hasattr(t, "TOOL_SPEC")
                   else getattr(t, "__name__", "?") for t in tools]
@@ -1296,11 +1512,13 @@ class StrandsAdapter(BaseAdapter):
         except Exception:
             pass
 
-        # 3. Hooks — disabled for now (requires proper typed event callbacks
-        #    that Strands can infer from type hints). The conversation manager
-        #    and session manager are more critical. TODO: add hooks with
-        #    @hook_provider decorator or explicit event_type annotations.
-        agent_hooks = []
+        # 3. Hooks — v0.43 LIVE TOOL PILLS: Strands' typed hook events fire
+        # as each tool STARTS and FINISHES mid-turn; the old path only walked
+        # agent.messages AFTER the turn (the user waited blind through a
+        # 2-minute swarm run with zero feedback). This provider emits
+        # tool_use/tool_result chat events the moment they happen; the
+        # post-turn walk skips toolUseIds it already emitted (dedupe set).
+        agent_hooks = [_DoomalayLiveToolHooks(self)]
 
         # 4. Build the Agent with all features enabled
         agent_kwargs = dict(
@@ -1330,10 +1548,54 @@ class StrandsAdapter(BaseAdapter):
         """Back-reference to the owning AgentSession (set by AgentSession._run)."""
         return getattr(self, "_session", None)
 
+    def _emit_dt_progress(self, event: str = "status", **fields) -> None:
+        """v0.43 dt-tool progress bridge: tool ctx.log events (swarm agent
+        done, rtsearch rounds, hf publish steps, skill loads…) become
+        (a) an oplog row (log_event — always) and (b) a LIVE
+        status/running line in the chat (feeds the activity indicator,
+        chatpanel.js ev.state==='running' branch) while the turn is open.
+        Known event names render as short human lines; unknown ones degrade
+        to "tool: <event>". Never raises — progress is strictly optional.
+        """
+        try:
+            log_event(event, **fields)
+        except Exception:
+            pass
+        em = getattr(self, "_turn_emit", None)
+        if em is None:
+            return
+        try:
+            msg = _format_dt_progress(event, fields)
+            if msg:
+                em({"type": "status", "state": "running", "message": msg})
+        except Exception:
+            pass
+
     def turn(self, user_msg: str, emit) -> None:
         _thread_local.workspace = self.workspace
         _thread_local.workspace_id = self.workspace_id
         sess = getattr(self, "_session", None)
+        # v0.43 CRITICAL FIX — the litellm cross-loop deadlock: litellm caches
+        # its async httpx client (AsyncHTTPHandler) in
+        # litellm.in_memory_llm_clients_cache, and that client binds to the
+        # event loop that CREATED it. Strands' run_async spins a fresh
+        # isolated loop per Agent.__call__ and tears it down after — so the
+        # cached client outlives its loop. The NEXT agent call (a swarm
+        # sub-agent turn, or any later turn in the process) reuses the
+        # dead-loop-bound client and its awaits hang FOREVER (py-spy showed
+        # both sub-agent loops parked in asyncio.run with nothing runnable).
+        # Flushing the cache before each turn forces a fresh client bound to
+        # the CURRENT loop. Cost: one TCP reconnect per turn — negligible.
+        try:
+            import litellm as _litellm
+            _litellm.in_memory_llm_clients_cache.flush_cache()
+        except Exception:
+            pass
+        # v0.43: the live emit for this turn — the hooks provider + the
+        # dt-registry progress bridge read it so tool pills/progress lines
+        # stream DURING the turn instead of after it.
+        self._turn_emit = emit
+        self._live_tool_ids = set()
         # Track whether thinking / assistant text was emitted via the streaming
         # callback. If so, skip re-emitting it in the post-turn walk (which
         # would duplicate the text). Reset at the start of each turn.
@@ -1394,7 +1656,14 @@ class StrandsAdapter(BaseAdapter):
         import threading as _threading
         _agent_error: list = []
         _agent_done = {"done": False}
-        _TIMEOUT_S = 90
+        # v0.43: 90 → 240. The swarm wave spawns SUB-AGENT turns through this
+        # adapter (ctx.spawn → spawn_subagent → get_or_create); a tool-laden
+        # sub-agent turn (23 tools + system prompt) can legitimately run
+        # 60-120s on reasoning models — the old 90s cap killed every swarm
+        # agent mid-turn ("done" with empty text). 240s matches the swarm
+        # tool's per-agent cap ceiling. User-facing turns keep their own
+        # liveness signals (streaming deltas + the engine watchdog).
+        _TIMEOUT_S = 240
 
         def _run_agent():
             _sess = getattr(self, "_session", None)
@@ -1441,11 +1710,23 @@ class StrandsAdapter(BaseAdapter):
             for block in (m.get("content") or []):
                 if "toolUse" in block:
                     tu = block["toolUse"] or {}
+                    # v0.43: skip pills the live hooks already emitted (the
+                    # dedupe set is populated by _DoomalayLiveToolHooks as
+                    # each tool starts; ids missing there = hooks never fired
+                    # (old strands / hook failure) → fall back to post-hoc).
+                    if str(tu.get("toolUseId", "")) in getattr(
+                            self, "_live_tool_ids", None) or set():
+                        continue
                     emit({"type": "tool_use", "name": tu.get("name", "tool"),
                           "summary": _summarize_tool_input(tu.get("name", ""),
                                                             tu.get("input", {}))})
                 elif "toolResult" in block:
                     tr = block["toolResult"] or {}
+                    # v0.43 dedupe: the after-hook already emitted the live
+                    # result pill for this toolUseId.
+                    if str(tr.get("toolUseId", "")) in getattr(
+                            self, "_live_tool_ids", None) or set():
+                        continue
                     parts = []
                     for c in (tr.get("content") or []):
                         if isinstance(c, dict) and "text" in c:
@@ -2542,10 +2823,15 @@ def get_or_create(session_id: str | None = None,
                   panel=None, effort: str | None = None,
                   web_search: bool = False, web_search_template: str | None = None,
                   deep_research: bool = False, deep_research_mode: str | None = None,
-                  deep_research_template: str | None = None) -> AgentSession:
+                  deep_research_template: str | None = None,
+                  workspace_path: "Path | None" = None) -> AgentSession:
     """Reuse a live session by id, or start a new one (CapacityError if full).
     `model` (optional) selects which model/tier drives a NEW session.
     `workspace_id` (optional) links the session to a user workspace sandbox.
+    `workspace_path` (optional, v0.43) forces the session workspace directly —
+    sub-agent spawns (delegate/swarm/socreate) pass the PARENT's workspace so
+    the swarm shares one filesystem even when no workspace row exists (quick
+    chat). Takes precedence over workspace_id resolution for the sandbox path.
     `conscious_id` + `agent_id` (optional, Tier 3) bind the session to a
     Conscious agent row so the conscious_* tools resolve context.
     `chat_session_id` (optional) links this agent session to a persistent
@@ -2587,9 +2873,11 @@ def get_or_create(session_id: str | None = None,
                 _sessions.pop(existing.id, None)
         if len(_sessions) >= MAX_SESSIONS:
             raise CapacityError(f"max {MAX_SESSIONS} concurrent agent sessions")
-        # resolve workspace_id to a filesystem path
-        workspace_path = None
-        if workspace_id:
+        # resolve the sandbox path. Precedence (v0.43):
+        #   1. explicit workspace_path (sub-agent spawns share the parent's
+        #      workspace — swarm/delegate/socreate semantics)
+        #   2. workspace_id row resolution (user workspace sandbox)
+        if workspace_path is None and workspace_id:
             import db
             import github_integration
             # repair sandbox if missing (Space restart wiped /data/)
@@ -2610,9 +2898,84 @@ def get_or_create(session_id: str | None = None,
 
 
 # ---------------------------------------------------------------------------
+# v0.43 — the sub-agent spawn seam (ctx.spawn for dt_* tools)
+# ---------------------------------------------------------------------------
+# spawn_subagent / spawn_status are the ONE sanctioned way for dt_swarm /
+# dt_socreate / future tools to fan out work. They mirror the delegate
+# tool's flow but return structured dicts so callers (ThreadPoolExecutor
+# fan-outs) can merge results programmatically. Every sub-agent shares the
+# PARENT's workspace (workspace_path passthrough — the v0.43 get_or_create
+# param), so a swarm writes into one filesystem and reads the same .pied
+# memory layer.
+
+def spawn_subagent(task: str, model: str | None = None,
+                   workspace_path: "Path | None" = None,
+                   workspace_id: str | None = None,
+                   wait: bool = True, timeout: float = 150.0,
+                   sub_id: str | None = None) -> dict:
+    """Spawn one sub-agent on the shared workspace.
+
+    v0.43: DELEGATES to agent.run_subagent_turn — the lightweight
+    fresh-Agent-per-turn path with the proven-live mechanics (the old
+    AgentSession → StrandsAdapter route deadlocked inside strands 1.56's
+    concurrent tool executor in the live server; see the full story in
+    agent.run_subagent_turn's docstring). Same return contract:
+    {"id", "status": done|error|timeout, "text"?, "error"?} — never raises.
+    """
+    try:
+        from agent import run_subagent_turn
+        return run_subagent_turn(
+            task, model=model or "",
+            workspace=str(workspace_path or "."),
+            timeout=float(timeout),
+            sub_id=sub_id or "",
+        )
+    except Exception as exc:  # noqa: BLE001 — tool-surface contract
+        return {"id": sub_id or "?", "status": "error",
+                "error": f"spawn failed: {exc}"}
+def _collect_subagent(sub_session, sub_id: str, task: str) -> dict:
+    """Extract the final assistant text from a finished sub-agent session."""
+    import time as _time
+    if getattr(sub_session, "status", "idle") == "error":
+        return {"id": sub_id, "status": "error",
+                "error": "sub-agent turn ended in error"}
+    agent = getattr(sub_session, "adapter", None)
+    msgs = getattr(agent, "agent", None)
+    if msgs is not None and hasattr(msgs, "messages"):
+        for m in reversed(msgs.messages):
+            if m.get("role") == "assistant":
+                for block in (m.get("content") or []):
+                    if "text" in block and block["text"].strip():
+                        try:
+                            import memory_layer
+                            memory_layer.log_event(
+                                sub_session.workspace or Path.cwd(), sub_id,
+                                "sub_agent_complete",
+                                {"task": task[:200],
+                                 "result_preview": block["text"][:200]})
+                        except Exception:
+                            pass
+                        return {"id": sub_id, "status": "done",
+                                "text": block["text"]}
+    return {"id": sub_id, "status": "done", "text": ""}
+
+
+def spawn_status(sub_id: str) -> dict:
+    """Poll a sub-agent spawned with wait=False (by swarm id). Best-effort:
+    sub-agents are looked up by session id in the live session table."""
+    with _sessions_lock:
+        for s in _sessions.values():
+            if s.id == sub_id:
+                if s.status in ("idle", "error"):
+                    return _collect_subagent(s, s.id, "")
+                return {"id": s.id, "status": "running"}
+    return {"id": sub_id, "status": "unknown",
+            "error": "no live session with that id"}
+
+
+# ---------------------------------------------------------------------------
 # Phase 2 — cost-ceiling turn-boundary helpers (§14 hard enforcement)
 # ---------------------------------------------------------------------------
-
 def _cost_figures(conscious_id: str) -> tuple[float, float]:
     """Return (spent, ceiling) for a conscious. ceiling=0 means infinite."""
     try:

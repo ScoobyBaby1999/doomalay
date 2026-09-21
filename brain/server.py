@@ -38,6 +38,87 @@ from fastapi.responses import StreamingResponse
 # Brain modules (siblings).
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import run_turn  # noqa: E402
+
+# v0.43 — stranded-coroutine watchdog (KEEP): every strands run_async loop
+# registers itself here; a global thread dumps any task still pending after
+# 50s so cross-loop deadlocks show their AWAITING stack (thread dumps alone
+# only ever showed "parked in asyncio.run" — this is how the sub-agent
+# deadlock was diagnosed). Zero overhead when turns behave.
+_ALL_LOOPS: "list[object]" = []
+_LOOPS_LOCK = __import__("threading").Lock()
+
+
+def _install_loop_watchdog() -> None:  # noqa: D401 — side-effecting patch
+    try:
+        import strands._async as _sa
+        import asyncio as _aio
+        import traceback as _tb
+        import time as _time
+        _orig = _sa.run_async
+
+        def run_async_watched(async_func):
+            def execute():
+                loop_holder: "dict[str, object]" = {}
+                with _LOOPS_LOCK:
+                    _ALL_LOOPS.append(loop_holder)
+
+                async def _main():
+                    loop_holder["loop"] = _aio.get_running_loop()
+                    return await async_func()
+
+                async def _dump_later():
+                    await _aio.sleep(50)
+                    loop = loop_holder.get("loop")
+                    if loop is None:
+                        return
+                    pending = [t for t in _aio.all_tasks(loop)
+                               if t is not _aio.current_task()]
+                    if not pending:
+                        return
+                    print(f"\n=== WATCHDOG: loop {id(loop)} still has "
+                          f"{len(pending)} pending tasks after 50s ===",
+                          file=sys.stderr, flush=True)
+                    for t in pending:
+                        st = t.get_stack()
+                        if st:
+                            print(f"--- task {t.get_name()} ---",
+                                  file=sys.stderr, flush=True)
+                            # st[0]=oldest/outermost; st[-1]=newest/innermost
+                            # await — printing FROM it walks f_back up the
+                            # whole chain (printing st[0] alone showed only
+                            # one frame, which is how this bug hid).
+                            _tb.print_stack(f=st[-1], file=sys.stderr)
+                    print("=== WATCHDOG END ===", file=sys.stderr, flush=True)
+
+                async def _wrapped():
+                    _aio.ensure_future(_dump_later())
+                    return await _main()
+
+                return _aio.run(_wrapped())
+
+            def _wrapped_sync():
+                token = _sa._RUN_ASYNC_BRIDGE.set(True)
+                try:
+                    return execute()
+                finally:
+                    _sa._RUN_ASYNC_BRIDGE.reset(token)
+
+            import concurrent.futures as _cf
+            import contextvars as _cv
+            with _cf.ThreadPoolExecutor() as _ex:
+                ctx = _cv.copy_context()
+                fut = _ex.submit(ctx.run, _wrapped_sync)
+                return fut.result()
+
+        _sa.run_async = run_async_watched
+        import strands.agent.agent as _agent_mod
+        _agent_mod.run_async = run_async_watched
+    except Exception:
+        pass
+
+
+_install_loop_watchdog()
+
 from providers import (  # noqa: E402
     load_provider_catalog,
     make_provider_registry,

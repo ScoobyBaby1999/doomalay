@@ -59,6 +59,9 @@ func main() {
 
         // Start the Python brain subprocess (best-effort; falls back to direct
         // cloud LLM proxy if Python is unavailable).
+        // v0.43: DOOMALAY_ENGINE_URL lets brain tools (artifact CRUD, engine
+        // status) call back into THIS engine instance regardless of port.
+        os.Setenv("DOOMALAY_ENGINE_URL", fmt.Sprintf("http://127.0.0.1:%d", cfg.Port))
         br, err := brain.Start(cfg.BrainDir, cfg.BrainPort)
         if err != nil {
                 log.Printf("warning: brain not started (%v) — falling back to direct cloud LLM proxy", err)

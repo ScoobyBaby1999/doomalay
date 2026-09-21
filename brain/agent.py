@@ -136,6 +136,18 @@ async def _run_strands_agent(
     """Full Strands agent with all tools. V0: fresh per turn, callback-only events."""
     yield {"type": "status", "state": "running", "usage": None}
 
+    # v0.43 CRITICAL FIX — the litellm cross-loop deadlock (full story in
+    # agent_core.StrandsAdapter.turn): litellm's cached async httpx client
+    # outlives the isolated event loop strands built for the PREVIOUS agent
+    # call, and every later call in the process hangs awaiting a dead loop.
+    # Flush the client cache at the top of every fresh agent so THIS turn's
+    # client binds to THIS turn's loop. One reconnect per turn — cheap.
+    try:
+        import litellm as _litellm
+        _litellm.in_memory_llm_clients_cache.flush_cache()
+    except Exception:
+        pass
+
     try:
         # Build the LLM model.
         # v0.38: litellm 1.55's LiteLLM client takes base_url + max_retries
@@ -173,7 +185,9 @@ async def _run_strands_agent(
         callback = _StreamCallback()
 
         # Build the tools.
-        tools = _build_tools(workspace, web_search)
+        tools = _build_tools(workspace, web_search, session_id=session_id,
+                             callback=callback, model=model,
+                             llm_info=(litellm_id, litellm_base or "", api_key))
 
         # V0 FIX: fresh Agent per turn. Never reuse.
         # v0.38 MEMORY: the agent is pre-seeded with the conversation
@@ -394,7 +408,163 @@ class _StreamCallback:
                 }
 
 
-def _build_tools(workspace: str, web_search: bool) -> list:
+# v0.43 — sub-agent recursion depth guard: a sub-agent's tool suite still
+# includes swarm, so an undisciplined model could recurse spawns forever.
+# Depth 1 = sub-agents of the user's chat; depth 2+ = sub-agents of
+# sub-agents → the swarm tool is DROPPED from nested suites and direct
+# spawns past depth 2 are refused with an actionable message.
+_SUBAGENT_DEPTH = {"n": 0}
+
+
+def run_subagent_turn(task: str, model: str = "", workspace: str = "",
+                      timeout: float = 150.0, sub_id: str = "",
+                      llm_info: "tuple[str, str, str] | None" = None) -> dict:
+    """v0.43 — spawn a sub-agent as a LIGHTWEIGHT synchronous turn.
+
+    WHY THIS EXISTS: the original spawn went through agent_core's
+    AgentSession → StrandsAdapter stack, which deadlocks inside strands
+    1.56's concurrent tool executor in the live server (py-spy + a
+    coroutine watchdog showed the sub-agent loops parked forever with
+    nothing runnable). The CHAT path — fresh Agent per turn, plain
+    synchronous ``agent(prompt)`` call, message walk for the reply — is
+    proven live (tools, multi-turn, streaming all verified). This function
+    is that exact shape minus the SSE plumbing, so sub-agents inherit the
+    working mechanics instead of the deadlocking ones.
+
+    Contract (identical to the old spawn_subagent): returns
+    {"id", "status": done|error|timeout, "text"?, "error"?}; never raises.
+    The sub-agent shares the caller's workspace, gets the full tool suite
+    (registry included — sub-agents can read memory, write files, use
+    artifacts), and a focused system prompt.
+    """
+    sub_id = sub_id or uuid.uuid4().hex[:8]
+    if not _HAS_STRANDS:
+        return {"id": sub_id, "status": "error",
+                "error": "strands not installed"}
+    if _SUBAGENT_DEPTH["n"] >= 2:
+        return {"id": sub_id, "status": "error",
+                "error": "swarm recursion limit reached (depth 2) — do the "
+                         "work directly instead of spawning more agents"}
+    _SUBAGENT_DEPTH["n"] += 1
+    try:
+        return _run_subagent_inner(task, model, workspace, timeout, sub_id,
+                                   llm_info=llm_info)
+    finally:
+        _SUBAGENT_DEPTH["n"] -= 1
+
+
+def _run_subagent_inner(task: str, model: str, workspace: str,
+                        timeout: float, sub_id: str,
+                        llm_info: "tuple[str, str, str] | None" = None) -> dict:
+    try:
+        # LLM routing — PREFER the caller's already-resolved routing
+        # (llm_info = (litellm_id, base_url, api_key), threaded from the
+        # parent chat turn). Name re-resolution goes through the catalog,
+        # whose synced-models section is EMPTY without the panel's
+        # provider_sync module — a "glm-5.3-flash" spawn then matched the
+        # HEAVY glm-5.3 and every sub-agent timed out at the provider.
+        if llm_info and len(llm_info) == 3 and llm_info[2]:
+            litellm_id, litellm_base, api_key = llm_info[0], llm_info[1], llm_info[2]
+        else:
+            litellm_id, litellm_base, api_key = model, "", ""
+            try:
+                import agent_core
+                pair = agent_core._resolve_open_model(model)
+                if pair:
+                    m, base_url, key_env, _label, _extra = pair
+                    litellm_id, litellm_base = m, base_url or ""
+                    api_key = os.environ.get(key_env or "", "") if key_env else ""
+            except Exception:
+                pass
+        if not api_key:
+            # best-effort env fallbacks for common providers
+            for k in ("NVIDIA_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+                      "GITHUB_TOKEN", "CF_API_TOKEN"):
+                if os.environ.get(k, "").strip():
+                    api_key = os.environ[k]
+                    break
+        if not api_key:
+            return {"id": sub_id, "status": "error",
+                    "error": f"no API key resolvable for model {model}"}
+
+        if litellm_base and litellm_base.endswith("/chat/completions"):
+            litellm_base = litellm_base[: -len("/chat/completions")]
+
+        client_args = {"api_key": api_key, "timeout": 60, "max_retries": 2}
+        if litellm_base:
+            client_args["base_url"] = litellm_base
+        # v0.43 cross-loop fix (see _run_strands_agent): the cached async
+        # httpx client must not outlive its loop — flush before every turn.
+        try:
+            import litellm as _litellm
+            _litellm.in_memory_llm_clients_cache.flush_cache()
+        except Exception:
+            pass
+        llm = LiteLLMModel(model_id=litellm_id, client_args=client_args,
+                           stream=True)
+        tools = _build_tools(workspace or ".", web_search=False,
+                             session_id=f"sub-{sub_id}", callback=None,
+                             model=model)
+        system_prompt = (
+            "You are a focused sub-agent in a doomalay swarm. Complete the "
+            "task you are given, working inside the CURRENT directory (the "
+            "shared workspace). You may use tools (memory, file ops, shell, "
+            "artifact, etc.) when they genuinely help. Reply with your final "
+            "answer as plain text — concise and complete; the orchestrator "
+            "merges it into the swarm report."
+        )
+        agent = Agent(model=llm, tools=tools, system_prompt=system_prompt)
+
+        result: dict = {}
+        done = {"ok": False}
+
+        def _run():
+            t0 = time.time()
+            try:
+                agent(f"You are sub-agent {sub_id}. Your task:\n{task}")
+                done["ok"] = True
+            except Exception as e:  # noqa: BLE001 — surfaced as status
+                result["error"] = f"{type(e).__name__}: {str(e)[:250]}"
+            result["secs"] = round(time.time() - t0, 1)
+
+        import threading as _threading
+        t = _threading.Thread(target=_run, daemon=True,
+                              name=f"subagent-{sub_id}")
+        t.start()
+        t.join(timeout=max(10.0, float(timeout)))
+        if not done["ok"] and "error" not in result:
+            return {"id": sub_id, "status": "timeout",
+                    "error": f"sub-agent exceeded {timeout:.0f}s"}
+        if "error" in result:
+            return {"id": sub_id, "status": "error", "error": result["error"]}
+
+        # Walk the transcript for the LAST assistant text (the final answer
+        # — intermediate tool-loop turns are skipped by taking the last).
+        text = ""
+        try:
+            for m in reversed(agent.messages or []):
+                if m.get("role") != "assistant":
+                    continue
+                for block in (m.get("content") or []):
+                    if isinstance(block, dict) and block.get("text", "").strip():
+                        text = block["text"]
+                        break
+                if text:
+                    break
+        except Exception:
+            text = ""
+        return {"id": sub_id, "status": "done", "text": text[:8000] or
+                "(sub-agent finished without a text reply)"}
+    except Exception as exc:  # noqa: BLE001 — tool-surface contract
+        return {"id": sub_id, "status": "error",
+                "error": f"sub-agent turn failed: {type(exc).__name__}: "
+                         f"{str(exc)[:200]}"}
+
+
+def _build_tools(workspace: str, web_search: bool,
+                 session_id: str = "", callback=None,
+                 model: str = "",
+                 llm_info: "tuple[str, str, str] | None" = None) -> list:
     """Build the full tool suite for the Strands agent.
 
     Tools ported from the old c-branch:
@@ -406,6 +576,17 @@ def _build_tools(workspace: str, web_search: bool) -> list:
     - current_time, env, think, journal, memorize, slug, retrieve (strands_tools)
     - delegate (sub-agent spawn)
     - agent_panel (judge panel fan-out)
+
+    v0.43: the DOOMALAY TOOL REGISTRY — every brain/tools/dt_*.py module
+    (swarm, rtsearch, timemgr, djournal, socreate, skills, dtemplate,
+    artifact, hf, stocks) is discovered and built against a ToolContext.
+    Quick chat (no workspace in the request body) gets a STABLE per-chat
+    workspace under brain/.chat-ws/<session_id>/ so the stateful tools
+    (timemgr tasks, journal entries, socreate sessions) persist across
+    turns of the same conversation. ctx.spawn fans sub-agents out through
+    agent_core.spawn_subagent (shared workspace, .pied memory); progress
+    events (swarm agent done, rtsearch rounds) ride the SAME live
+    callback queue as thinking/tool events so the chat streams them.
     """
     tools = []
 
@@ -504,6 +685,83 @@ def _build_tools(workspace: str, web_search: bool) -> list:
     except ImportError:
         pass
 
+    # v0.43 — the doomalay tool registry (the 10 swarm-wave tools). The
+    # workspace STAYS STABLE per chat session so stateful tools persist;
+    # the spawn seam routes sub-agents through agent_core.spawn_subagent
+    # (same workspace + .pied memory); progress events ride the live
+    # callback queue when one was passed. Broken/missing modules are
+    # skipped inside the registry — this block can never kill the agent.
+    try:
+        import dt_registry
+
+        if workspace:
+            ws_path = Path(workspace)
+        elif session_id:
+            ws_path = Path(__file__).parent / ".chat-ws" / (session_id or "default")
+        else:
+            ws_path = Path(__file__).parent / ".chat-ws" / "default"
+        ws_path.mkdir(parents=True, exist_ok=True)
+
+        def _dt_progress(event: str = "status", **fields):
+            """Best-effort live progress line (activity indicator) + oplog."""
+            try:
+                import oplog
+                oplog.log_event(event, **fields)
+            except Exception:
+                pass
+            if callback is None:
+                return
+            try:
+                import agent_core
+                msg = agent_core._format_dt_progress(event, fields)
+                if msg:
+                    callback._emit({"type": "status", "state": "running",
+                                    "message": msg})
+            except Exception:
+                pass
+
+        def _dt_spawn(task: str, model: str = "", wait: bool = True,
+                      timeout: float = 150.0, **kw):
+            """Sub-agent seam — run_subagent_turn (the lightweight
+            fresh-Agent-per-turn path). llm_info carries the PARENT turn's
+            resolved (litellm_id, base_url, api_key) so sub-agents ride the
+            exact same provider routing instead of re-resolving the model
+            name against a catalog whose synced-models section needs the
+            panel's provider_sync (absent here — name resolution matched a
+            different, heavier model and timed out at the provider)."""
+            try:
+                return run_subagent_turn(
+                    task, model=model or _dt_spawn._default_model,
+                    workspace=str(ws_path),
+                    timeout=float(timeout),
+                    llm_info=None if model.strip() else _dt_spawn._llm_info,
+                    **({"sub_id": kw["sub_id"]} if "sub_id" in kw else {}))
+            except Exception as exc:  # noqa: BLE001 — tool-surface contract
+                return {"id": "?", "status": "error",
+                        "error": f"spawn seam unavailable: {exc}"}
+
+        _dt_spawn._default_model = model
+        _dt_spawn._llm_info = llm_info
+
+        ctx = dt_registry.ToolContext(
+            workspace=ws_path,
+            chat_session_id=session_id or None,
+            model=model or None,
+            emit=_dt_progress,
+            spawn=_dt_spawn,
+        )
+        dt_tools = dt_registry.load_doomalay_tools(ctx)
+        if dt_tools:
+            # v0.43 recursion guard: sub-agents (depth >= 1) lose the swarm
+            # tool — one level of fan-out, no infinite agent recursion.
+            if _SUBAGENT_DEPTH["n"] >= 1:
+                dt_tools = [t for t in dt_tools
+                            if (getattr(t, "tool_name", None)
+                                or getattr(t, "__name__", "")) != "swarm"]
+            tools.extend(dt_tools)
+    except Exception:
+        pass
+
     return tools
 
 
@@ -527,6 +785,44 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
 
     if deep_research:
         parts.append("Deep research mode is on. Be thorough: search multiple sources, cross-reference, and cite.")
+
+    # v0.43 — the doomalay tool suite: the model must KNOW the purpose-built
+    # tools exist and reach for them first (the user's mandate: "tools u must
+    # use"). Without this block the model improvises text answers for jobs
+    # that have dedicated tools.
+    parts.append(
+        "TOOL-FIRST DISCIPLINE — you have purpose-built tools; USE THEM:\n"
+        "- swarm: fan a list of tasks out to PARALLEL sub-agents at once (the "
+        "swarm node — prefer over repeated delegate calls whenever 2+ "
+        "independent sub-tasks exist)\n"
+        "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
+        "question, searches, fetches pages, refines queries over rounds, "
+        "synthesizes a cited brief. Use for ANY current-events question "
+        "instead of guessing from training data\n"
+        "- timemgr: the time manager — tasks with priorities/deadlines/"
+        "subtasks, natural dates ('tomorrow', 'next friday'), templates, "
+        "pomodoro, today board, stats\n"
+        "- djournal: the rich journal — mood/tags/highlights/gratitude, "
+        "search, week/month reviews with trends + streaks, prompts, export\n"
+        "- socreate: the 10x productivity creation loop — start(goal) → plan "
+        "→ execute steps (sub-agents) → critique → iterate until done\n"
+        "- skills: browse + load the 17 methodology skills (brainstorming, "
+        "writing-plans, TDD, systematic-debugging, verification…) — load one "
+        "BEFORE starting work it covers\n"
+        "- dtemplate: browse + run the template library (deep research, "
+        "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input\n"
+        "- artifact: create/edit/list REAL chat artifacts (files, folders, "
+        "zips) the user can download — write deliverables HERE, not just as "
+        "chat text\n"
+        "- hf: publish results/datasets to the HuggingFace community library\n"
+        "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
+        "analysis, compare (Stooq)\n"
+        "Rules: fresh info → rtsearch (never answer from memory what it can "
+        "verify); tasks/time → timemgr; journaling → djournal; non-trivial "
+        "goal → socreate (parallelize with swarm); market questions → "
+        "stocks; files the user should keep → artifact. Unsure what a tool "
+        "offers? Call it with action='help' first."
+    )
 
     parts.append("When you use a tool, explain what you're doing and why. Be concise but complete.")
     return "\n\n".join(parts)

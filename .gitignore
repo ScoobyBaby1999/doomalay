@@ -49,3 +49,4 @@ Thumbs.db
 platforms/android/app/src/main/jniLibs/arm64-v8a/libdoomalayengine.so
 platforms/hf-space/engine/doomalay-engine
 app/tsconfig.tsbuildinfo
+brain/.chat-ws/
