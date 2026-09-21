@@ -2535,9 +2535,17 @@
     // chats grow long; finding "that thing it said about X" was scroll-hunt).
     // The button rides the toolbar's right edge; the bar mounts over the
     // composer when opened.
+    // v0.44 (user spec): the pill is now JUST a search glyph — the "⌕ find"
+    // label read as a wordy pill next to the other icon-only affordances;
+    // the aria-label + title carry the meaning for a11y/tooltips.
     var fb = document.createElement('button');
-    fb.textContent = '⌕ find';
-    fb.style.cssText = 'flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;margin-left:auto';
+    fb.id = 'chat-find-btn';
+    fb.setAttribute('aria-label', 'Find in chat');
+    fb.title = 'Find in chat';
+    fb.innerHTML = '<span style="font-size:14px;line-height:1">🔍</span>';
+    fb.style.cssText = 'flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text-3);' +
+      'width:32px;height:26px;display:flex;align-items:center;justify-content:center;' +
+      'border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;margin-left:auto;padding:0';
     fb.addEventListener('click', function () {
       openFindBar(bodyEl, state);
     });

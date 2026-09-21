@@ -35,16 +35,32 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # only _thread_
 from datetime import datetime, timezone
 from pathlib import Path
 
+
+def _env_int(name: str, default: int) -> int:
+    """Env-tunable knob: int when parseable, default otherwise (never raises
+    — a malformed env value must not take the tool down)."""
+    try:
+        return int(str(os.environ.get(name, "")).strip())
+    except Exception:
+        return default
+
+
 TOOL_NAMES = ["swarm"]
 
-# Fan-out knobs (spec): 4 workers default, 8 hard cap — past that the shared
-# sub-agent session table thrashes and per-agent latency dominates anyway.
-DEFAULT_MAX_PARALLEL = 4
-MAX_PARALLEL_CAP = 8
-# Per-agent wall budget: spawn_subagent's own default is 150s; the spec asks
-# 120 default / 240 cap. The 10s floor mirrors spawn_subagent's own clamp.
-DEFAULT_TIMEOUT_SECS = 120
-TIMEOUT_CAP_SECS = 240
+# Fan-out knobs — v0.44 UNBOUNDED SWARM (user spec #2: "let it swarm as
+# many agents and sub processes as it wants… no artificial caps").
+# The old caps (4 default / 8 hard / 240s) were machine-limits from the
+# deadlocking AgentSession era; run_subagent_turn is a lightweight
+# fresh-Agent-per-turn path that carries no session-table cost, so the
+# ceiling moves to env-tunable defaults an order of magnitude higher.
+# DOOMALAY_SWARM_MAX_PARALLEL=0 → truly unbounded (parallel == task count).
+DEFAULT_MAX_PARALLEL = 12
+MAX_PARALLEL_CAP = _env_int("DOOMALAY_SWARM_MAX_PARALLEL", 64)  # 0 = unbounded
+# Per-agent wall budget: spawn_subagent's own default was 150s; deep tasks
+# (repo exploration, multi-file builds) legitimately run minutes. The 10s
+# floor mirrors spawn_subagent's own clamp.
+DEFAULT_TIMEOUT_SECS = 300
+TIMEOUT_CAP_SECS = _env_int("DOOMALAY_SWARM_TIMEOUT_CAP", 900)
 TIMEOUT_FLOOR_SECS = 10
 
 PREVIEW_CHARS = 120      # ctx.log preview per completion (spec)
@@ -429,7 +445,8 @@ HELP_TEXT = (
     "Actions:\n"
     "  run     tasks=JSON array of strings or {\"task\", \"model\"} objects "
     "(plain multi-line text also works: one task per non-empty line);\n"
-    "          max_parallel=4 (hard cap 8), timeout_per_agent=120 (cap 240), "
+    "          max_parallel=12 (env DOOMALAY_SWARM_MAX_PARALLEL, default 64, "
+    "0 = unbounded — one worker per task), timeout_per_agent=300 (cap 900), "
     "model=\"\" = default model for agents without their own.\n"
     "          Blocks until every agent finishes; returns a merged report "
     "(per-agent text trimmed, full text in state).\n"
@@ -440,7 +457,8 @@ HELP_TEXT = (
     "Notes: agents share this workspace + memory layer; every completion "
     "logs a swarm_agent_done event; results persist under "
     ".doomalay/swarm/<swarm_id>.json — quote that path instead of pasting "
-    "huge outputs back into chat."
+    "huge outputs back into chat. Sub-agents keep the swarm tool too "
+    "(nested fan-out up to DOOMALAY_SWARM_DEPTH, default 6)."
 )
 
 
@@ -495,10 +513,13 @@ def _spawn_one(spawn_fn, idx: int, task: str, model: str, timeout: float) -> dic
 def _thread_runner(spawn_fn, calls: list[tuple], max_parallel: int,
                    on_result) -> None:
     """Default fan-out engine: one worker thread per in-flight sub-agent,
-    capped at max_parallel (and never more threads than tasks). This is the
-    ONLY function in the module that creates threads; as_completed feeds
-    each finished agent to on_result so state + logs update live."""
-    workers = max(1, min(max_parallel, len(calls)))
+    capped at max_parallel (and never more threads than tasks). max_parallel
+    <= 0 means UNBOUNDED — one thread per task, the v0.44 spec ("no
+    artificial caps"); ThreadPoolExecutor still pools the OS threads behind
+    the scenes but every task starts immediately. This is the ONLY function
+    in the module that creates threads; as_completed feeds each finished
+    agent to on_result so state + logs update live."""
+    workers = len(calls) if max_parallel <= 0 else max(1, min(max_parallel, len(calls)))
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_spawn_one, spawn_fn, *c): c for c in calls}
         for fut in as_completed(futs):
@@ -554,8 +575,12 @@ def _run_swarm(ctx, tasks_arg, max_parallel, timeout_per_agent, model: str,
             lines.append(f"  … (+{len(parsed) - 8} more)")
         return "\n".join(lines)
 
-    # clamp the knobs (the model may pass strings / nonsense / over-cap)
-    mp = max(1, min(MAX_PARALLEL_CAP, _to_int(max_parallel, DEFAULT_MAX_PARALLEL)))
+    # clamp the knobs (the model may pass strings / nonsense / over-cap).
+    # v0.44: cap==0 (DOOMALAY_SWARM_MAX_PARALLEL=0) means UNBOUNDED —
+    # every task gets its own worker immediately.
+    raw_mp = _to_int(max_parallel, DEFAULT_MAX_PARALLEL)
+    mp = raw_mp if (MAX_PARALLEL_CAP <= 0 or raw_mp <= 0) else \
+        max(1, min(MAX_PARALLEL_CAP, raw_mp))
     to = max(TIMEOUT_FLOOR_SECS,
              min(TIMEOUT_CAP_SECS, _to_int(timeout_per_agent, DEFAULT_TIMEOUT_SECS)))
     swarm_id = new_swarm_id()

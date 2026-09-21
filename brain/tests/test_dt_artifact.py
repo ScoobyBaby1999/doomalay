@@ -568,6 +568,106 @@ def test_build_never_raises():
     assert isinstance(da.build(None), (list,))
 
 
+def test_edit_surgical_patches():
+    """v0.44 — the edit action: find/replace, splices, inserts, dry_run."""
+    fake = FakeEngine()
+    c = make_client(fake)
+    da.run_action(c, "create", name="app.py", content="import os\n\ndef run():\n    print('hi')\n    return 1\n")
+
+    # unique find/replace lands and returns a diff (indent-aware: difflib
+    # prefixes the marker to the ORIGINAL line, spaces and all)
+    out = da.run_action(c, "edit", name="app.py", find="print('hi')",
+                        replace="print('hello')")
+    assert "edited app.py" in out and "-    print('hi')" in out \
+        and "+    print('hello')" in out, out
+    assert b"print('hello')" in fake.store["s1"]["000000000001"]["data"]
+
+    # ambiguous find is REFUSED and the file is untouched
+    out = da.run_action(c, "edit", name="app.py", find=" ", replace="_")
+    assert "occurs" in out and "replace_all" in out, out
+    assert b"import_os" not in fake.store["s1"]["000000000001"]["data"]
+
+    # replace_all actually replaces every occurrence
+    out = da.run_action(c, "edit", name="app.py", find=" ", replace="_",
+                        replace_all=True)
+    assert "occurrence(s) replaced" in out, out
+    assert b"import_os" in fake.store["s1"]["000000000001"]["data"]
+
+    # count=N replaces exactly N
+    da.run_action(c, "write", name="n.txt", content="a a a a")
+    da.run_action(c, "edit", name="n.txt", find="a", replace="b", count=2)
+    assert fake.store["s1"]["000000000002"]["data"] == b"b b a a"
+
+    # line splice (1-based inclusive) with replace= (not find=)
+    da.run_action(c, "write", name="n.txt", content="one\ntwo\nthree\nfour")
+    out = da.run_action(c, "edit", name="n.txt", lines="2-3", replace="TWO")
+    assert "splice lines 2-3" in out, out
+    assert fake.store["s1"]["000000000002"]["data"] == b"one\nTWO\nfour"
+
+    # sloppy line specs parse; garbage is refused with usage
+    da.run_action(c, "write", name="n.txt", content="x\ny")
+    da.run_action(c, "edit", name="n.txt", lines=" 2 ", replace="z")
+    assert fake.store["s1"]["000000000002"]["data"] == b"x\nz"
+    out = da.run_action(c, "edit", name="n.txt", lines="banana", replace="z")
+    assert "not understood" in out, out
+
+    # insert after / before / EOF
+    da.run_action(c, "write", name="n.txt", content="l1\nl2")
+    da.run_action(c, "edit", name="n.txt", after_line=1, content="mid")
+    assert fake.store["s1"]["000000000002"]["data"] == b"l1\nmid\nl2"
+    da.run_action(c, "edit", name="n.txt", before_line=1, content="top")
+    assert fake.store["s1"]["000000000002"]["data"] == b"top\nl1\nmid\nl2"
+
+    # dry_run previews and writes NOTHING
+    out = da.run_action(c, "edit", name="n.txt", find="mid", replace="MID",
+                        dry_run=True)
+    assert "DRY RUN" in out and "+MID" in out, out
+    assert b"MID" not in fake.store["s1"]["000000000002"]["data"]
+
+    # no-op edit says so instead of claiming success
+    out = da.run_action(c, "edit", name="n.txt", find="mid", replace="mid")
+    assert "NO change" in out, out
+
+    # binary artifacts refuse in-place edits with guidance
+    da.run_action(c, "create", name="blob.bin", content=b"\x00\x01\x02")
+    out = da.run_action(c, "edit", name="blob.bin", find="x", replace="y")
+    assert "binary" in out and "write" in out, out
+
+    # missing find entirely → usage message, not a crash
+    out = da.run_action(c, "edit", name="n.txt")
+    assert "edit needs" in out, out
+    # edit on a missing artifact → resolve error, missing flag
+    out = da.run_action(c, "edit", name="ghost.txt", find="a", replace="b")
+    assert "no artifact matches" in out, out
+
+
+def test_edit_pure_helpers():
+    # parse_line_spec: range, single, dots, whitespace, garbage, negatives
+    assert da.parse_line_spec("5-9") == (5, 9)
+    assert da.parse_line_spec("7") == (7, 7)
+    assert da.parse_line_spec("7..9") == (7, 9)
+    assert da.parse_line_spec(" 3 - 5 ") == (3, 5)
+    assert da.parse_line_spec("") == (0, 0)
+    assert da.parse_line_spec("x-y") == (0, 0)
+    assert da.parse_line_spec("9-5") == (5, 9)  # ordered
+    # apply_find_replace contract
+    t = "a\nb\na\nb"
+    nt, res = da.apply_find_replace(t, "b", "B")
+    assert nt == t and isinstance(res, str) and "2x" in res
+    nt, res = da.apply_find_replace(t, "b", "B", replace_all=True)
+    assert nt == "a\nB\na\nB" and res == 2
+    nt, res = da.apply_find_replace(t, "", "B")
+    assert isinstance(res, str) and "find=" in res
+    # splice clamping
+    assert da.apply_line_splice("1\n2\n3", 2, 99, "X") == "1\nX"
+    assert da.apply_line_splice("1\n2\n3", 0, 1, "X") == "X\n2\n3"  # start clamps to 1
+    # diff summary carries +/- lines and the file names
+    d = da._diff_summary("a\nb", "a\nB", "f.txt")
+    assert "-b" in d and "+B" in d and "a/f.txt" in d and "b/f.txt" in d
+    # identical texts → explicit no-change marker
+    assert da._diff_summary("x", "x") == "(no changes)"
+
+
 # ── standalone runner ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":

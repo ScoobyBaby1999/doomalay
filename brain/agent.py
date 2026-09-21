@@ -408,11 +408,22 @@ class _StreamCallback:
                 }
 
 
-# v0.43 — sub-agent recursion depth guard: a sub-agent's tool suite still
-# includes swarm, so an undisciplined model could recurse spawns forever.
-# Depth 1 = sub-agents of the user's chat; depth 2+ = sub-agents of
-# sub-agents → the swarm tool is DROPPED from nested suites and direct
-# spawns past depth 2 are refused with an actionable message.
+# v0.43→v0.44 — sub-agent recursion depth guard: a sub-agent's tool suite
+# still includes swarm, so an undisciplined model could recurse spawns
+# forever. The user spec (v0.44): "swarm as much agents and sub processes
+# as it wants… no artificial caps" — so nested fan-out is now allowed and
+# the guard is a RUNAWAY LOOP BREAK, not a capability limit: depth grows
+# only when a sub-agent ITSELF spawns more agents, and past
+# DOOMALAY_SWARM_DEPTH (default 6, env-tunable — set it higher for deeper
+# recursive task decomposition) spawns are refused with an actionable
+# message instead of an infinite agent tree.
+def _swarm_depth_limit() -> int:
+    try:
+        return max(1, int(str(os.environ.get("DOOMALAY_SWARM_DEPTH", "")).strip()))
+    except Exception:
+        return 6
+
+
 _SUBAGENT_DEPTH = {"n": 0}
 
 
@@ -441,10 +452,11 @@ def run_subagent_turn(task: str, model: str = "", workspace: str = "",
     if not _HAS_STRANDS:
         return {"id": sub_id, "status": "error",
                 "error": "strands not installed"}
-    if _SUBAGENT_DEPTH["n"] >= 2:
+    if _SUBAGENT_DEPTH["n"] >= _swarm_depth_limit():
         return {"id": sub_id, "status": "error",
-                "error": "swarm recursion limit reached (depth 2) — do the "
-                         "work directly instead of spawning more agents"}
+                "error": f"swarm recursion limit reached (depth "
+                         f"{_swarm_depth_limit()}, env DOOMALAY_SWARM_DEPTH) — "
+                         f"do the work directly instead of spawning more agents"}
     _SUBAGENT_DEPTH["n"] += 1
     try:
         return _run_subagent_inner(task, model, workspace, timeout, sub_id,
@@ -752,9 +764,13 @@ def _build_tools(workspace: str, web_search: bool,
         )
         dt_tools = dt_registry.load_doomalay_tools(ctx)
         if dt_tools:
-            # v0.43 recursion guard: sub-agents (depth >= 1) lose the swarm
-            # tool — one level of fan-out, no infinite agent recursion.
-            if _SUBAGENT_DEPTH["n"] >= 1:
+            # v0.44 UNBOUNDED SWARM: sub-agents KEEP the swarm tool — nested
+            # fan-out (a sub-agent swarming its own sub-agents) is exactly
+            # what "swarm as much as it wants" means. The recursion guard
+            # in run_subagent_turn (_swarm_depth_limit, default 6) is the
+            # runaway-loop break; the tool is only stripped on the LAST
+            # permitted level so the refusal message never even gets built.
+            if _SUBAGENT_DEPTH["n"] >= _swarm_depth_limit() - 1:
                 dt_tools = [t for t in dt_tools
                             if (getattr(t, "tool_name", None)
                                 or getattr(t, "__name__", "")) != "swarm"]
@@ -811,9 +827,9 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "BEFORE starting work it covers\n"
         "- dtemplate: browse + run the template library (deep research, "
         "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input\n"
-        "- artifact: create/edit/list REAL chat artifacts (files, folders, "
-        "zips) the user can download — write deliverables HERE, not just as "
-        "chat text\n"
+        "- artifact: create AND surgically EDIT (find/replace, line splices, "
+        "inserts, dry_run) the REAL chat artifacts — including files made in "
+        "earlier turns; write deliverables HERE, not just as chat text\n"
         "- hf: publish results/datasets to the HuggingFace community library\n"
         "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
         "analysis, compare (Stooq)\n"

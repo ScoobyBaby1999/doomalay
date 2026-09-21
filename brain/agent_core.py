@@ -39,7 +39,10 @@ from pathlib import Path
 
 AGENT_ROOT = Path(os.environ.get("AGENT_ROOT", "/tmp/agent"))
 SESSION_TTL_S = int(os.environ.get("AGENT_SESSION_TTL_S", "7200"))   # 2h idle
-MAX_SESSIONS = int(os.environ.get("AGENT_MAX_SESSIONS", "8"))        # RAM bound
+MAX_SESSIONS = int(os.environ.get("AGENT_MAX_SESSIONS", "32"))       # RAM bound
+# v0.44: 8 → 32 default — unbounded-swarm fan-outs plus concurrent chats
+# no longer trip CapacityError on a busy device; still env-tunable downward
+# for constrained environments (the Android APK sets its own in main.go).
 MAX_EVENT_CHARS = int(os.environ.get("AGENT_MAX_EVENT_CHARS", "4000"))
 MAX_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "50"))
 

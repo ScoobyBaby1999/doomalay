@@ -77,6 +77,14 @@ Actions:
   create name content [encoding]  new file (name may be "src/main.py"); bytes→base64 auto
   read name|aid            file content (capped; binary → note + download link)
   write name|aid content   replace content; CREATES the file when missing
+  edit name|aid find=... replace=...   SURGICAL patch on an EXISTING artifact
+                           (incl. files from earlier turns): unique find/replace,
+                           or replace_all=true / count=N for multiples; NO
+                           whole-file rewrite — token-cheap for big files.
+  edit name|aid lines=5-9 replace=...  splice that line range (inclusive, 1-based)
+  edit name|aid after_line=5 content=...  insert after line 5 (before_line=…
+                           inserts before; after_line=0 appends at EOF)
+  ...any edit form + dry_run=true → preview the diff, change nothing.
   append name content      read-modify-write (smart newline; creates when missing)
   delete name|aid
   rename name new_name     engine sanitizes (collapses "a.docx.doc", drops ../)
@@ -91,6 +99,107 @@ ids are 12 hex chars. help → this text."""
 
 
 # ── plain, unit-testable helpers (no HTTP, no strands) ───────────────────
+
+def parse_line_spec(spec) -> tuple[int, int]:
+    """"12-18" | "12" | "12.." → (12, 18) inclusive 1-based, clamped ≥1.
+
+    Accepts the sloppy forms a model produces (" 7 - 9 ", "7..9", "7").
+    Returns (0, 0) when unparseable — callers turn that into their own
+    actionable message (this helper stays pure and raise-free).
+    """
+    s = str(spec or "").strip().replace("..", "-")
+    if not s:
+        return (0, 0)
+    parts = [p.strip() for p in s.split("-") if p.strip()]
+    if not parts or not all(p.lstrip("+").isdigit() for p in parts):
+        return (0, 0)
+    start = max(1, int(parts[0]))
+    end = max(1, int(parts[1])) if len(parts) > 1 else start
+    # "9-5" means 5..9 just as surely as "5-9" — swap, don't collapse
+    return (min(start, end), max(start, end))
+
+
+def apply_find_replace(text: str, find: str, replace: str,
+                        replace_all: bool = False, count: int = 0) -> tuple[str, int | str]:
+    """Find/replace over artifact text. Returns (new_text, n_or_error).
+
+    SAFETY DEFAULT (why this exists): a whole-file rewrite through write=
+    costs the model the FULL file in tokens twice (read + rewrite) and
+    risks truncation drift on big files. A surgical replace costs only the
+    snippet. Default replaces the FIRST occurrence ONLY when the pattern is
+    UNIQUE in the file — an ambiguous find is refused with the match count
+    so the model widens its context instead of mangling the wrong spot.
+    replace_all=true (or count=N) opts out explicitly.
+    """
+    if not find:
+        return (text, "edit needs find= (the exact text to replace)")
+    n = text.count(find)
+    if n == 0:
+        return (text, f"find text not present ({find[:60]!r}…) — read the "
+                      f"artifact first and copy the exact span")
+    if not replace_all and not count and n > 1:
+        return (text, f"find text occurs {n}x — pass replace_all=true, "
+                      f"count=<n>, or add surrounding lines to make it unique")
+    if replace_all:
+        return (text.replace(find, replace), n)
+    k = count if (isinstance(count, int) and count > 0) else 1
+    return (text.replace(find, replace, min(k, n)), min(k, n))
+
+
+def apply_line_splice(text: str, start: int, end: int,
+                      replacement: str) -> str:
+    """Replace lines [start, end] (1-based inclusive) with replacement.
+
+    end past EOF clamps; the replacement keeps its own lines verbatim —
+    what the model sends is what lands (no magic separators, same as the
+    rest of the file's lines).
+    """
+    lines = text.split("\n")
+    s = max(1, start) - 1
+    e = min(end, len(lines))
+    if e < s:
+        e = s
+    repl = replacement.split("\n") if replacement != "" else []
+    return "\n".join(lines[:s] + repl + lines[e:])
+
+
+def apply_insert_at_line(text: str, content: str,
+                          after_line: int = 0, before_line: int = 0) -> str:
+    """Insert content after (or before) a 1-based line number.
+
+    after_line=0 with before_line=0 == append at EOF. Positions clamp to
+    EOF/BOB instead of erroring — an insert can never destroy data, so
+    being liberal here is safe.
+    """
+    lines = text.split("\n")
+    new = content.split("\n")
+    if after_line and not before_line:
+        pos = min(max(1, after_line), len(lines))
+        return "\n".join(lines[:pos] + new + lines[pos:])
+    if before_line:
+        pos = min(max(1, before_line) - 1, len(lines))
+        return "\n".join(lines[:pos] + new + lines[pos:])
+    return "\n".join(lines + new)
+
+
+def _diff_summary(old: str, new: str, name: str = "") -> str:
+    """Compact unified diff of an edit, capped for the tool return.
+
+    difflib is stdlib; the diff is what lets the model VERIFY its edit
+    landed where it intended (same discipline as the repo's superpowers
+    TDD skill: show the diff, don't trust the 200).
+    """
+    import difflib
+    diff = list(difflib.unified_diff(
+        old.split("\n"), new.split("\n"),
+        fromfile=("a/" + name) if name else "old",
+        tofile=("b/" + name) if name else "new",
+        lineterm=""))
+    body = "\n".join(diff)
+    if len(body) > _BODY_CAP:
+        body = body[:_BODY_CAP] + f"\n… (diff truncated, {len(diff)} lines total)"
+    return body or "(no changes)"
+
 
 def _human_size(n) -> str:
     """1.2 KB / 340 B — compact sizes for tree rows and summaries."""
@@ -512,20 +621,28 @@ def _preview_summary(pv: dict, client: ArtifactClient, aid: str) -> str:
 
 def run_action(client: ArtifactClient, action: str, name: str = "",
                content="", new_name: str = "", aid: str = "", path: str = "",
-               member: str = "", encoding: str = "", log=None) -> str:
+               member: str = "", encoding: str = "", find: str = "",
+               replace: str = "", replace_all: bool = False, count: int = 0,
+               lines: str = "", after_line: int = 0, before_line: int = 0,
+               dry_run: bool = False, log=None) -> str:
     """All artifact actions as a plain function so tests (and the module
     self-test) run without strands. Returns a string, never raises."""
     try:
         return _dispatch(client, action, name=name, content=content,
                          new_name=new_name, aid=aid, path=path,
-                         member=member, encoding=encoding, log=log)
+                         member=member, encoding=encoding, find=find,
+                         replace=replace, replace_all=replace_all, count=count,
+                         lines=lines, after_line=after_line,
+                         before_line=before_line, dry_run=dry_run, log=log)
     except Exception as exc:  # noqa: BLE001 — the model reads this, not a stack
         return f"artifact tool error ({action}): {type(exc).__name__}: {exc}"
 
 
 def _dispatch(client: ArtifactClient, action: str, name: str, content,
               new_name: str, aid: str, path: str, member: str,
-              encoding: str, log) -> str:
+              encoding: str, find: str, replace: str, replace_all: bool,
+              count: int, lines: str, after_line: int, before_line: int,
+              dry_run: bool, log) -> str:
     action = str(action or "").strip().lower()
 
     if action in ("help", "?"):
@@ -621,6 +738,77 @@ def _dispatch(client: ArtifactClient, action: str, name: str, content,
         return (f"updated {m.get('name')} → {m.get('size')} B "
                 f"(id {m.get('id')})\n"
                 f"download: {client.download_url(m.get('id'))}")
+
+    if action == "edit":
+        # v0.44 (user spec #1): SURGICAL edits on existing artifacts —
+        # find/replace, line splices, inserts — including files created in
+        # EARLIER turns (resolve by name works across turns; the drawer's
+        # editor can then open the updated file). Token-cheap: only the
+        # changed span crosses the wire, not the whole file.
+        if not (name or aid):
+            return ("edit needs name= (or aid=) of an EXISTING artifact plus "
+                    "one of: find=/replace=, lines=/replace=, or "
+                    "after_line=/before_line=/content=")
+        rr = _resolve_ref(client, name, aid)
+        if "error" in rr:
+            return _fmt_err(rr)
+        got = client.get(rr["aid"])
+        if "error" in got:
+            return got["error"]
+        if got.get("encoding") == "base64" or "\x00" in str(got.get("content") or "")[:4000]:
+            return (f"{got.get('name')} is a binary/base64 artifact — edit "
+                    f"can't patch it in place; use action='write' with the "
+                    f"full base64 payload, or download → edit → re-create.")
+        old = str(got.get("content") or "")
+        mode = ""
+        new_text = old
+        note = ""
+        # ORDERING: `replace` is shared by two modes — the find/replace
+        # branch is gated on find= (non-empty), the splice branch on lines=,
+        # so lines=+replace= never falls into find/replace with empty find.
+        if find:
+            mode = "find/replace"
+            new_text, res = apply_find_replace(old, find, replace,
+                                               replace_all=replace_all,
+                                               count=count)
+            if isinstance(res, str):
+                return res  # actionable error, not an exception
+            note = f"{res} occurrence(s) replaced"
+        elif lines:
+            s, e = parse_line_spec(lines)
+            if not s:
+                return (f'lines= not understood ({lines!r}) — use "5-9", '
+                        f'"7", or "7..")')
+            mode = f"splice lines {s}-{e}"
+            new_text = apply_line_splice(old, s, e, str(replace if replace else content))
+            note = "line range replaced"
+        elif after_line or before_line:
+            if not str(content or "").strip():
+                return "insert needs content= (the lines to insert)"
+            where = f"after line {after_line}" if after_line else f"before line {before_line}"
+            mode = f"insert {where}"
+            new_text = apply_insert_at_line(old, str(content),
+                                            after_line=after_line,
+                                            before_line=before_line)
+            note = "inserted"
+        else:
+            return ('edit needs one of: find=+replace=, lines=+replace= (or '
+                    'content=), or after_line=/before_line=+content=')
+        if new_text == old:
+            return (f"{got.get('name')}: edit produced NO change ({mode}) — "
+                    f"check the find text / line range against the file.")
+        diff = _diff_summary(old, new_text, str(got.get("name") or ""))
+        if dry_run:
+            return (f"DRY RUN — {got.get('name')} would change ({mode}):") + "\n" + diff
+        upd = client.update(rr["aid"], content=new_text)
+        if "error" in upd:
+            return upd["error"]
+        m = upd["updated"]
+        _emit(log, "artifact_edited", name=m.get("name"), aid=m.get("id"),
+              mode=mode, size=m.get("size"))
+        head = (f"edited {m.get('name')} ({mode}, {note}) → "
+                f"{m.get('size')} B (id {m.get('id')})\n")
+        return head + diff
 
     if action == "append":
         if not (name or aid):
@@ -789,28 +977,51 @@ def build(ctx) -> list:
             "engine. Use it whenever the user wants a produced file — an "
             "app's source files, a CSV/JSON analysis, a markdown report, a "
             "zip — or to fix, rename, delete, inspect, or link one for "
-            "download. Actions: list, create, read, write, append, delete, "
-            "rename, mkdir, download_url, preview, entry, extract, help. "
-            "Address artifacts by name (paths like 'src/main.py') or id."))
+            "download. EDITING is first-class: action='edit' patches an "
+            "EXISTING artifact surgically (find/replace, line splices, "
+            "inserts, dry_run) — including files created in earlier turns — "
+            "without rewriting the whole file. Actions: list, create, read, "
+            "write, edit, append, delete, rename, mkdir, download_url, "
+            "preview, entry, extract, help. Address artifacts by name (paths "
+            "like 'src/main.py') or id."))
         def artifact(action: str, name: str = "", content: str = "",
                      new_name: str = "", aid: str = "", path: str = "",
-                     member: str = "", encoding: str = "") -> str:
+                     member: str = "", encoding: str = "", find: str = "",
+                     replace: str = "", replace_all: bool = False,
+                     count: int = 0, lines: str = "", after_line: int = 0,
+                     before_line: int = 0, dry_run: bool = False) -> str:
             """Manage this chat's downloadable artifact files.
 
-            action: list|create|read|write|append|delete|rename|mkdir|
+            action: list|create|read|write|edit|append|delete|rename|mkdir|
                 download_url|preview|entry|extract|help
             name: artifact name/path ("report.md", "src/main.py"); matched
                 case-insensitively by full name, basename, or suffix
-            content: file text for create/write/append (auto base64 for bytes)
+            content: file text for create/write/append; the lines to insert
+                for insert-style edits (auto base64 for bytes on create)
             new_name: new name/path for rename
             aid: artifact id (12 hex chars) as an alternative to name
             path: folder prefix for list; folder path for mkdir
             member: path of a file inside an archive (for entry)
             encoding: "" (auto) | "utf8" | "base64"
+            find: edit — exact text span to replace (must be unique unless
+                replace_all/count; add surrounding lines to disambiguate)
+            replace: edit — the replacement text (for find/replace and
+                lines= splices)
+            replace_all: edit — replace EVERY occurrence of find
+            count: edit — replace the first N occurrences
+            lines: edit — 1-based line range to splice, e.g. "5-9" or "7"
+            after_line: edit — insert content AFTER this line (1-based)
+            before_line: edit — insert content BEFORE this line
+            dry_run: edit — preview the diff without writing
             """
             return run_action(client, action, name=name, content=content,
                               new_name=new_name, aid=aid, path=path,
-                              member=member, encoding=encoding, log=log)
+                              member=member, encoding=encoding, find=find,
+                              replace=replace, replace_all=replace_all,
+                              count=count, lines=lines,
+                              after_line=after_line,
+                              before_line=before_line, dry_run=dry_run,
+                              log=log)
 
         return [artifact]
     except Exception:
@@ -900,9 +1111,57 @@ if __name__ == "__main__":
     assert "appended" in out
     out = run_action(client, "read", name="hello.txt")
     assert out.endswith("hi\nthere"), out  # smart separator fired
+
+    # v0.44 — the EDIT action (surgical patches on existing artifacts)
+    # pure helpers first
+    assert parse_line_spec("5-9") == (5, 9) and parse_line_spec("7") == (7, 7)
+    assert parse_line_spec(" 3 .. 5 ") == (3, 5) and parse_line_spec("x") == (0, 0)
+    t = "alpha\nbeta\ngamma\nbeta"
+    nt, n = apply_find_replace(t, "beta", "BETA")          # ambiguous → refused
+    assert nt == t and isinstance(n, str) and "2x" in n, n
+    nt, n = apply_find_replace(t, "beta", "BETA", replace_all=True)
+    assert nt == "alpha\nBETA\ngamma\nBETA" and n == 2
+    nt, n = apply_find_replace(t, "gamma", "G")             # unique → ok
+    assert nt.count("G") == 1 and n == 1
+    nt, n = apply_find_replace(t, "nope", "x")
+    assert isinstance(n, str) and "not present" in n
+    assert apply_line_splice(t, 2, 3, "X\nY") == "alpha\nX\nY\nbeta"
+    assert apply_line_splice(t, 2, 99, "") == "alpha"       # end clamps at EOF
+    assert apply_insert_at_line(t, "NEW", after_line=1) == "alpha\nNEW\nbeta\ngamma\nbeta"
+    assert apply_insert_at_line(t, "NEW", before_line=1) == "NEW\nalpha\nbeta\ngamma\nbeta"
+    assert apply_insert_at_line(t, "END") == t + "\nEND"
+    assert "-beta" in _diff_summary(t, t.replace("beta", "BETA", 1), "t.txt")
+    # through the dispatcher: unique find/replace
+    out = run_action(client, "edit", name="hello.txt", find="there", replace="world")
+    assert "edited hello.txt" in out and "+world" in out and "-there" in out, out
+    out = run_action(client, "read", name="hello.txt")
+    assert out.endswith("hi\nworld"), out
+    # ambiguous find → refused with count, file UNCHANGED
+    out = run_action(client, "create", name="two.txt", content="same\nsame")
+    out = run_action(client, "edit", name="two.txt", find="same", replace="x")
+    assert "2x" in out, out
+    out = run_action(client, "read", name="two.txt")
+    assert out.endswith("same\nsame"), out
+    # replace_all + line splice + insert + dry_run
+    out = run_action(client, "edit", name="two.txt", find="same", replace="diff",
+                     replace_all=True)
+    assert "2 occurrence" in out, out
+    out = run_action(client, "edit", name="two.txt", lines="1", replace="first")
+    assert "splice lines 1-1" in out, out
+    out = run_action(client, "edit", name="two.txt", after_line=1, content="inserted")
+    assert "insert after line 1" in out, out
+    out = run_action(client, "read", name="two.txt")
+    assert "inserted" in out, out
+    out = run_action(client, "edit", name="two.txt", find="inserted", replace="zzz",
+                     dry_run=True)
+    assert "DRY RUN" in out, out
+    out = run_action(client, "read", name="two.txt")
+    assert "inserted" in out and "zzz" not in out, out  # nothing written
+
     out = run_action(client, "delete", name="hello.txt")
     assert "deleted hello.txt" in out
-    assert "0 artifacts" in run_action(client, "list")
+    out = run_action(client, "list")
+    assert "two.txt" in out and "hello.txt" not in out, out  # hello gone, two.txt survives
 
     # no-session guard fires before any HTTP
     nosess = ArtifactClient("http://eng.test", None,
