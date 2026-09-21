@@ -240,6 +240,10 @@
     getFamily: () => currentFamily,
     getConfig: () => config,
     scheduleSave,
+    // v0.41: global-search jump — open a chat by engine session id
+    // (materializing an icon if the grid has none) + optional jump to a
+    // specific engine event (scrollIntoView + find-hit pulse).
+    openChatBySession,
     resetView: function () {
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();
@@ -753,6 +757,112 @@
     }
   });
 
+  // ── v0.41: openChatPanelFor — shared by the canvas-dock views (the
+  // hub) and window.doomalay.openChatBySession (global search jumps).
+  // Opens a chat panel exactly the way a chatbot tap does — so a
+  // canvas-side view has the master panel to ride on.
+  function openChatPanelFor(icon) {
+    // v0.14: reset per-open header state — the far-left model button
+    // is hidden until ChatPanel shows it (chat icons with a model).
+    var modelBtn = document.getElementById('panel-model-btn');
+    if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+    // v0.14: the chat UI is full-bleed (its own padding).
+    panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
+    panel.open({
+      title: icon.getPanelTitle(),
+      subtitle: icon.getPanelSubtitle(),
+      avatarHTML: icon.getAvatarHTML(),
+      bodyHTML: icon.getPanelBodyHTML(),
+      context: icon
+    });
+    if (icon.type === 'chat' && window.ChatPanel) {
+      window.ChatPanel.render(panel.bodyEl, icon, panel);
+    }
+  }
+
+  // findIconBySession — the grid IS the chat list; icons carry their
+  // engine session id (v0.15).
+  function findIconBySession(sid) {
+    if (!sid) return null;
+    for (const e of world.entities) {
+      if (e.type === 'chat' && e.sessionId === sid) return e;
+    }
+    return null;
+  }
+
+  // openChatBySession(sid, { ei }) — v0.41 GLOBAL SEARCH JUMP.
+  // Finds (or recreates) the chat icon for an engine session, opens its
+  // panel, and optionally scrolls to + flashes a specific engine event
+  // (the WhatsApp/Telegram "tap result → jump to message" pattern).
+  // A NULL sid opens the first chat icon — the hub/search "host panel"
+  // fallback when the dock fires from the bare canvas. Returns a
+  // Promise<boolean>: did a panel open?
+  function openChatBySession(sid, opts) {
+    opts = opts || {};
+    var done = function (icon) {
+      openChatPanelFor(icon);
+      if (opts.ei !== undefined && opts.ei !== null) {
+        jumpToEvent(opts.ei);
+      }
+    };
+    var icon = sid ? findIconBySession(sid) : null;
+    if (!sid) {
+      // host-panel mode: any chat icon will do (the view that called
+      // us rides the panel stack; the chat underneath is a backdrop).
+      for (var i = 0; i < world.entities.length; i++) {
+        if (world.entities[i].type === 'chat') { icon = world.entities[i]; break; }
+      }
+      if (!icon) return Promise.resolve(false);
+      done(icon);
+      return Promise.resolve(true);
+    }
+    if (icon) { done(icon); return Promise.resolve(true); }
+    // No icon on the canvas (session created outside the grid, or the
+    // icon was never made): fetch the session and materialize an icon
+    // for it near the viewport center.
+    return fetch('/api/sessions/' + encodeURIComponent(sid))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) return false;
+        var wx = (W / 2 / scale) + offsetX + (Math.random() * 60 - 30);
+        var wy = (H / 2 / scale) + offsetY + (Math.random() * 60 - 30);
+        var ic = createIconAt(wx, wy);
+        try {
+          if (s.Title) ic.setName(s.Title);
+          if (s.Model) ic.model = s.Model;
+          if (s.Provider) ic.provider = s.Provider;
+          if (s.Sandbox) ic.sandbox = s.Sandbox;
+        } catch (e) {}
+        ic.sessionId = sid;
+        if (typeof ic.save === 'function') ic.save(); else scheduleSave();
+        done(ic);
+        return true;
+      })
+      .catch(function () { return false; });
+  }
+
+  // jumpToEvent — after a panel opens, the transcript loads async (WS
+  // replay). Poll for the row carrying the engine event id, then scroll
+  // it to the center and pulse it with the find-hit highlight.
+  function jumpToEvent(ei) {
+    var tries = 0;
+    var t = setInterval(function () {
+      tries++;
+      var row = panel.bodyEl && panel.bodyEl.querySelector('[data-ei="' + ei + '"]');
+      if (row) {
+        clearInterval(t);
+        try { row.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {
+          row.scrollIntoView(true);
+        }
+        row.classList.add('find-hit');
+        setTimeout(function () { row.classList.remove('find-hit'); }, 2600);
+        try { if (navigator.vibrate) navigator.vibrate(10); } catch (e) {}
+      } else if (tries > 60) { // ~6s: transcript never materialized
+        clearInterval(t);
+      }
+    }, 100);
+  }
+
   // ── v0.31.2: THE CANVAS DOCK ──────────────────────────────────
   // A › arrow sits left of the settings gear. Tapping it flips to ‹ and
   // expands a vertical strip holding the two relocated entries: the
@@ -785,32 +895,19 @@
       } catch (e) {}
     });
 
-    // Open a chat panel exactly the way a chatbot tap does — so a
-    // canvas-side view (the hub) has the master panel to ride on.
-    function openChatPanelFor(icon) {
-      // v0.14: reset per-open header state — the far-left model button
-      // is hidden until ChatPanel shows it (chat icons with a model).
-      var modelBtn = document.getElementById('panel-model-btn');
-      if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
-      // v0.14: the chat UI is full-bleed (its own padding).
-      panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
-      panel.open({
-        title: icon.getPanelTitle(),
-        subtitle: icon.getPanelSubtitle(),
-        avatarHTML: icon.getAvatarHTML(),
-        bodyHTML: icon.getPanelBodyHTML(),
-        context: icon
-      });
-      if (icon.type === 'chat' && window.ChatPanel) {
-        window.ChatPanel.render(panel.bodyEl, icon, panel);
-      }
-    }
-
     // Cloud glyph → the provider screen, relocated from Settings → Cloud.
     // Same panel, same wiring (the overlay works from anywhere).
     const dockCloudBtn = dockStripEl.querySelector('#dock-cloud');
     if (dockCloudBtn) dockCloudBtn.addEventListener('click', function () {
       if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
+    });
+
+    // v0.41: Search glyph → GLOBAL CHAT SEARCH (globalsearch.js). Same
+    // ride-the-panel pattern as the hub: the view lives on the master
+    // panel's stack whether a chat is open or not.
+    const dockSearchBtn = dockStripEl.querySelector('#dock-search');
+    if (dockSearchBtn) dockSearchBtn.addEventListener('click', function () {
+      if (window.GlobalSearch) window.GlobalSearch.open();
     });
 
     // Library glyph → the hub library, relocated from the chat util

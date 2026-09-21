@@ -159,6 +159,10 @@ func (s *Server) routes() {
 
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
+        // v0.41: global chat search — the visible transcript across all
+        // sessions (the in-chat find bar is per-conversation; this finds
+        // WHICH conversation something lived in).
+        s.mux.HandleFunc("GET /api/search", s.handleSearch)
         s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)
         s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionsGet)
         s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handleSessionsUpdate)

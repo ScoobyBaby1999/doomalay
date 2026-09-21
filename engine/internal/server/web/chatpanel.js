@@ -2908,14 +2908,18 @@
   function messageHTML(msg, mi) {
     mi = (mi === undefined || mi === null) ? -1 : mi;
     var miAttr = ' data-mi="' + mi + '"';
+    // v0.41: the engine event id rides the ROW — global search jumps
+    // straight to [data-ei="..."] (data-mi is per-render-state and the
+    // search result only knows the event id).
+    var eiAttr = (msg.ei !== undefined && msg.ei !== null) ? ' data-ei="' + msg.ei + '"' : '';
     var tsAttr = msg.ts ? ' data-ts="' + msg.ts + '"' : '';
     if (msg.role === 'user') {
-      return '<div class="msg-row msg-row-user"' + tsAttr + '>' +
+      return '<div class="msg-row msg-row-user"' + tsAttr + eiAttr + '>' +
         '<div class="msg-bubble msg-user" data-msg-role="user" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + tsAttr + '></div>' +
         (msg.ts ? '<div class="msg-time">' + esc(fmtTime(msg.ts)) + '</div>' : '') +
         '</div>';
     } else if (msg.role === 'assistant') {
-      return '<div class="msg-row msg-row-assistant"' + tsAttr + '>' +
+      return '<div class="msg-row msg-row-assistant"' + tsAttr + eiAttr + '>' +
         '<div class="msg-bubble msg-assistant" data-msg-role="assistant" data-msg-raw="' + escAttr(msg.text) + '"' + miAttr + tsAttr + '></div>' +
         (msg.ts ? '<div class="msg-time">' + esc(fmtTime(msg.ts)) + '</div>' : '') +
         '</div>';
