@@ -3,7 +3,9 @@
 Endpoints (all localhost-only, called by the Go engine):
   GET  /health        — liveness probe
   GET  /models        — provider catalog + sync status (dynamic)
-  GET  /templates     — list all templates (sophisticated roles + dynamic variables)
+  GET  /templates     — list the whole template library (v0.44: orchestrator
+                       stage-JSONs + superpowers user templates + the
+                       DEFAULT_TEMPLATES flows, merged + deduped)
   GET  /templates/<id> — get one template's full definition
   POST /chat          — run one agent turn, streams SSE events back
   POST /judge         — run the multi-model judge panel (fan-out + merge)
@@ -231,26 +233,242 @@ def list_models(refresh: bool = False, request: Request = None):
 
 
 # ── Templates ──────────────────────────────────────────────────────────────
+#
+# v0.44 TEMPLATE PILL (user spec: "change the deep research pill entirely to
+# a template pill where user can select templates and browse the library,
+# with the deep research being one of the default templates"): the index
+# grew beyond templates.py's DEFAULT_TEMPLATES. The library now merges
+# THREE sources, each tolerant (corrupt/missing → skip + warn, never 500):
+#
+#   1. DEFAULT_TEMPLATES (templates.py)            → kind "flow"
+#   2. brain/orchestrator/templates/*.json (13)    → kind "orchestrator"
+#      (stage-JSON pipelines; descriptions come from the "//" comment keys)
+#   3. brain/superpowers_user_templates.json (5)   → kind "user"
+#      (markdown disciplines)
+#
+# Dedup rule (mirrors tools/dt_template.py index_templates): a flow/user
+# entry whose task_type/id matches an orchestrator stem IS the same
+# pipeline — listed once. User ids are hyphenated ("superpowers-plan") so
+# they never collide with the underscored orchestrator stems.
+#
+# Entry shape (one for all three kinds):
+#   {id, name, description, task_type, kind, stage_count, tags,
+#    stages?: [{name, role, instructions, fanout?}], markdown?: "..."}
+
+
+def _tpl_first_comment_line(data: dict) -> str:
+    """Orchestrator JSONs describe themselves in "//", "//1", … comment
+    keys (dict order = file order) — first one's first line, else ""."""
+    for key, val in data.items():
+        if key.startswith("//") and isinstance(val, str):
+            line = val.strip().splitlines()[0].strip() if val.strip() else ""
+            if line:
+                return line
+    return ""
+
+
+def _tpl_slug(name: str) -> str:
+    """Name → id: lowercase alphanumerics + hyphens ("Superpowers Plan" →
+    "superpowers-plan"). Hyphenated on purpose so user ids never collide
+    with the underscored orchestrator file stems (dt_template's rule)."""
+    import re as _re
+    s = _re.sub(r"[^0-9A-Za-z]+", "-", str(name or "")).strip("-").lower()
+    return s or "template"
+
+
+def _tpl_stage_shape(st: dict) -> dict:
+    """One stage normalized to the index shape (name/role/instructions/
+    fanout — inputs + max_tokens stay in the source files, the index
+    doesn't need them)."""
+    out = {
+        "name": str(st.get("name") or ""),
+        "role": str(st.get("role") or ""),
+        "instructions": str(st.get("instructions") or ""),
+    }
+    fo = st.get("fanout")
+    if isinstance(fo, dict):
+        out["fanout"] = {
+            "over": str(fo.get("over") or ""),
+            "max_parallel": fo.get("max_parallel", 1),
+        }
+    return out
+
+
+def _scan_orchestrator_templates():
+    """brain/orchestrator/templates/*.json → index entries (kind
+    "orchestrator"). Pure DATA — the orchestrator engine is never imported
+    (dt_template's hard rule, kept here). Returns (entries, warnings)."""
+    root = Path(__file__).resolve().parent
+    tdir = root / "orchestrator" / "templates"
+    out, warnings = [], []
+    if not tdir.is_dir():
+        return out, warnings
+    for path in sorted(tdir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception as exc:  # corrupt JSON → skip + warn
+            warnings.append(f"{path.name}: unreadable JSON ({type(exc).__name__}) — skipped")
+            continue
+        if not isinstance(data, dict):
+            warnings.append(f"{path.name}: not a JSON object — skipped")
+            continue
+        stages = [s for s in data.get("stages") or [] if isinstance(s, dict)]
+        if not stages:
+            warnings.append(f"{path.name}: no stages[] — not an orchestrator template, skipped")
+            continue
+        task_type = str(data.get("task_type") or path.stem)
+        desc = _tpl_first_comment_line(data)
+        if not desc:
+            desc = f"{task_type.replace('_', ' ')} pipeline with {len(stages)} stages"
+        out.append({
+            "id": path.stem,
+            "kind": "orchestrator",
+            "name": str(data.get("name") or path.stem),
+            "task_type": task_type,
+            "description": desc,
+            "stage_count": len(stages),
+            "stages": [_tpl_stage_shape(st) for st in stages],
+            "tags": [],
+        })
+    return out, warnings
+
+
+def _scan_user_templates():
+    """brain/superpowers_user_templates.json → index entries (kind "user",
+    markdown disciplines). Returns (entries, warnings)."""
+    root = Path(__file__).resolve().parent
+    upath = root / "superpowers_user_templates.json"
+    out, warnings = [], []
+    if not upath.is_file():
+        return out, warnings
+    try:
+        data = json.loads(upath.read_text(encoding="utf-8", errors="replace"))
+    except Exception as exc:
+        warnings.append(f"{upath.name}: unreadable JSON ({type(exc).__name__}) — skipped")
+        return out, warnings
+    if not isinstance(data, list):
+        warnings.append(f"{upath.name}: expected a list — skipped")
+        return out, warnings
+    for raw in data:
+        if not isinstance(raw, dict) or not str(raw.get("name", "")).strip():
+            warnings.append(f"{upath.name}: entry without a name — skipped")
+            continue
+        name = str(raw["name"]).strip()
+        stages = [s for s in raw.get("stages") or [] if isinstance(s, dict)]
+        out.append({
+            "id": _tpl_slug(name),
+            "kind": "user",
+            "name": name,
+            "task_type": str(raw.get("task_type") or _tpl_slug(name)),
+            "description": str(raw.get("description") or raw.get("task") or name),
+            "stage_count": len(stages),
+            "stages": [_tpl_stage_shape(st) for st in stages],
+            "markdown": str(raw.get("markdown") or ""),
+            "tags": [str(t) for t in raw.get("tags") or [] if str(t).strip()],
+        })
+    return out, warnings
+
+
+def _default_flow_entries():
+    """templates.py's DEFAULT_TEMPLATES normalized to the index shape
+    (kind "flow"; id = task_type). Import is best-effort — a broken
+    templates.py just means no flow entries (the JSON sources carry the
+    same pipelines). Returns (entries, warnings) like its siblings."""
+    out = []
+    try:
+        import templates as tl
+        raw = getattr(tl, "DEFAULT_TEMPLATES", None)
+        if not isinstance(raw, list):
+            return out, []
+        for r in raw:
+            if not isinstance(r, dict) or not str(r.get("name", "")).strip():
+                continue
+            stages = [s for s in r.get("stages") or [] if isinstance(s, dict)]
+            out.append({
+                "id": str(r.get("task_type") or _tpl_slug(r["name"])),
+                "kind": "flow",
+                "name": str(r["name"]),
+                "task_type": str(r.get("task_type") or _tpl_slug(r["name"])),
+                "description": str(r.get("description") or r.get("task") or r["name"]),
+                "stage_count": len(stages),
+                "stages": [_tpl_stage_shape(st) for st in stages],
+                "markdown": str(r.get("markdown") or ""),
+                "tags": [str(t) for t in r.get("tags") or [] if str(t).strip()],
+            })
+    except Exception:
+        out = []
+    return out, []
+
+
+def _merged_template_index():
+    """The whole library view: orchestrator + user + flow, deduped.
+    Returns (entries, warnings). Order: orchestrator, user, flow (stable;
+    the frontend groups by kind/tags anyway)."""
+    orch, warnings = _scan_orchestrator_templates()
+    user, uwarn = _scan_user_templates()
+    warnings += uwarn
+    flow, _ = _default_flow_entries()
+
+    # dt_template's dedup: a flow entry whose task_type matches an
+    # orchestrator stem is the SAME pipeline — listed once.
+    orch_stems = {e["id"] for e in orch}
+    used_ids = set(orch_stems)
+    entries = list(orch)
+    for e in user:
+        if e["id"] in used_ids:
+            warnings.append(f"user template {e['id']}: duplicate id — skipped")
+            continue
+        used_ids.add(e["id"])
+        entries.append(e)
+    for e in flow:
+        if e["id"] in used_ids or e["task_type"] in orch_stems:
+            continue  # same pipeline, already listed from the JSON source
+        used_ids.add(e["id"])
+        entries.append(e)
+    return entries, warnings
+
+
+def _find_extra_template(template_id: str):
+    """One template from the three-file sources (orchestrator/user/flow).
+    EXACT id match first (so the hyphenated user ids stay distinct from
+    the underscored orchestrator stems), then a loose alphanumeric match
+    (the frontend and the model both type both shapes). Returns the entry
+    dict or None."""
+    entries, _ = _merged_template_index()
+
+    def _norm(s: str) -> str:
+        return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+    want = str(template_id or "").strip()
+    if not want:
+        return None
+    for e in entries:  # exact first — ids are the contract
+        if e["id"] == want:
+            return e
+    nwant = _norm(want)
+    if not nwant:
+        return None
+    for e in entries:
+        if _norm(e["id"]) == nwant or _norm(e.get("task_type") or "") == nwant:
+            return e
+    return None
+
 
 @app.get("/templates")
 def list_templates():
-    """List all templates (sophisticated roles + dynamic variables)."""
+    """List the whole template library (v0.44: orchestrator stage-JSONs +
+    superpowers user templates + the DEFAULT_TEMPLATES flows, merged and
+    deduped; warnings ride along so a corrupt file is visible, not
+    fatal)."""
     try:
-        import templates as tl
-        raw = None
-        if hasattr(tl, "DEFAULT_TEMPLATES"):
-            raw = tl.DEFAULT_TEMPLATES
-        elif hasattr(tl, "TEMPLATE_LIBRARY"):
-            raw = tl.TEMPLATE_LIBRARY
-        elif hasattr(tl, "TEMPLATES"):
-            raw = tl.TEMPLATES
-        elif hasattr(tl, "list_default_templates"):
-            raw = tl.list_default_templates()
-        else:
-            raw = _scan_templates(tl)
-        # Force-convert to plain JSON-serializable dicts.
-        out = _to_jsonable(raw)
-        return {"templates": out}
+        entries, warnings = _merged_template_index()
+        out = {
+            "templates": entries,
+            "total": len(entries),
+        }
+        if warnings:
+            out["warnings"] = warnings
+        return out
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -259,8 +477,14 @@ def list_templates():
 
 @app.get("/templates/{template_id}")
 def get_template(template_id: str):
-    """Get one template's full definition (roles, stages, dynamic variables)."""
+    """Get one template's full definition (v0.44: searched across ALL
+    three sources first — orchestrator JSONs, user markdown templates,
+    DEFAULT flows — then templates.py's DB-backed get_template for
+    user-created/downloaded rows)."""
     try:
+        hit = _find_extra_template(template_id)
+        if hit is not None:
+            return _to_jsonable(hit)
         import templates as tl
         if hasattr(tl, "get_template"):
             t = tl.get_template(template_id)
@@ -476,7 +700,10 @@ async def chat(request: Request):
     Body:
         { "session_id", "message", "model", "provider", "effort",
           "mode", "system_prompt", "web_search", "deep_research",
-          "workspace", "history" }
+          "workspace", "history",
+          "template_id", "template_brief"  # v0.44: informational — the
+          # METHOD TEMPLATE block is already prepended to system_prompt
+          # by the engine's handleTurn. }
 
     Provider keys arrive as X-Env-<ENV_VAR> headers.
     """
@@ -514,7 +741,38 @@ async def chat(request: Request):
         prov_name, model_name = model.split("/", 1)
         for p in registry:
             if p.name == prov_name:
-                litellm_model = p.models[0] if model_name == "auto" else model_name
+                if model_name == "auto":
+                    # v0.44 QA FIX (live redteam): the engine resolves
+                    # "<provider>/auto" to a concrete model BEFORE the turn
+                    # reaches us — but a stale session (or a direct brain
+                    # caller) can still land here, and p.models was an
+                    # EMPTY tuple for nvidia (stale providers_catalog.json)
+                    # → IndexError → 500 "provider error". Fall back to the
+                    # known-good quick models (the engine's FALLBACK_MODELS
+                    # philosophy — resilience, not discovery; the live
+                    # catalog remains the primary mechanism) and fail with
+                    # an actionable 400 when even that's impossible.
+                    AUTO_MODEL_FALLBACK = {
+                        "nvidia": "z-ai/glm-5.3-flash",
+                        "privatemodeai": "kimi-k2.6",
+                        "opencode": "big-pickle",
+                        "openrouter": "auto",  # OpenRouter natively routes auto
+                    }
+                    if p.models:
+                        litellm_model = p.models[0]
+                    elif prov_name in AUTO_MODEL_FALLBACK:
+                        litellm_model = AUTO_MODEL_FALLBACK[prov_name]
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"model 'auto' could not be resolved for "
+                                f"{prov_name} (provider catalog is empty — "
+                                "pick a specific model in the model browser)"
+                            ),
+                        )
+                else:
+                    litellm_model = model_name
                 base_url = p.url
                 env_var = p.env_var if hasattr(p, "env_var") else ""
                 break

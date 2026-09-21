@@ -290,3 +290,42 @@ func (b *Brain) Models(ctx context.Context) (json.RawMessage, error) {
 	}
 	return json.RawMessage(body), nil
 }
+
+// MarkUnhealthy (v0.44.1) flips the brain dead after a live connection
+// failure — Healthy() previously NEVER went false once true, so a brain
+// that died mid-run left every later turn brain-routed into a connection
+// refused (live-observed in the W5 redteam: two consecutive turns failed
+// with dial tcp ::1:9090 while the engine's own direct pipeline sat
+// ready). A quiet re-probe timer flips it back the moment the brain
+// answers /health again (e.g. the engine supervisor respawns it).
+func (b *Brain) MarkUnhealthy() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	if !b.healthy {
+		b.mu.Unlock()
+		return
+	}
+	b.healthy = false
+	url := b.url
+	b.mu.Unlock()
+	go func() {
+		// re-probe every 15s until the brain answers again
+		for {
+			time.Sleep(15 * time.Second)
+			resp, err := http.Get(url + "/health")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					b.mu.Lock()
+					b.healthy = true
+					b.mu.Unlock()
+					return
+				}
+			} else if resp != nil {
+				resp.Body.Close()
+			}
+		}
+	}()
+}

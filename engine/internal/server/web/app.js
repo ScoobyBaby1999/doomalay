@@ -1,5 +1,11 @@
 // app.js — main controller.
 //
+// v0.44: the grid canvas paints GRADIENTS — the four grid colors may
+// hold gradient specs ({colors[1..15], dir, angle?}; theme.js's
+// effectiveGridSpecs resolves them); gridPaint() turns a spec into a
+// canvas fill/stroke style (linear h/v/diag/diag2 + radial; swirl /
+// mesh / patterns fall back to the solid — see the comment there).
+//
 // Uses the modular components:
 //   • Physics.Entity, World (physics.js)
 //   • GridIcon base + registry (gridicon.js) — any icon on the grid
@@ -101,18 +107,27 @@
     const t = (window.DoomTheme && window.DoomTheme.effectiveGrid)
       ? window.DoomTheme.effectiveGrid(window.Settings.getState())
       : window.Settings.getState();
-    // v0.25: canvas fillStyle REJECTS invalid values silently (the grid bug:
-    // a stale color stayed on screen when the value wasn't a real hex).
-    // Validate every grid color before it reaches the canvas.
+    // v0.44: the SPEC view — the same resolver, returning each color as a
+    // gradient spec (legacy hexes fold into 1-color specs). Multi-color
+    // specs paint real canvas gradients for h / v / diag / diag2 /
+    // radial / auto; everything else (swirl, mesh, pat-*, tex) paints the
+    // SOLID first color (gridPaint documents why).
+    const specs = (window.DoomTheme && window.DoomTheme.effectiveGridSpecs)
+      ? window.DoomTheme.effectiveGridSpecs(window.Settings.getState())
+      : null;
+    // v0.25 guards (kept): canvas fillStyle REJECTS invalid values
+    // silently (the grid bug: a stale color stayed on screen when the
+    // value wasn't a real hex). Validate every SOLID fallback before it
+    // reaches the canvas; spec stops are validated inside gridPaint.
     const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-    ctx.fillStyle = (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b';
+    ctx.fillStyle = gridPaint(specs && specs.bg, (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b');
     ctx.fillRect(0, 0, W, H);
 
     const scaledGrid = gridSpacing() * scale;
     const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
     const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
-    ctx.strokeStyle = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    ctx.strokeStyle = gridPaint(specs && specs.lineColor, (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318');
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = startX; x < W; x += scaledGrid) {
@@ -125,7 +140,7 @@
     }
     ctx.stroke();
 
-    ctx.fillStyle = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    ctx.fillStyle = gridPaint(specs && specs.dotColor, (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a');
     const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
     for (let x = startX; x < W; x += scaledGrid) {
       for (let y = startY; y < H; y += scaledGrid) {
@@ -137,11 +152,74 @@
 
     const o = worldToScreen(0, 0);
     if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
-      ctx.fillStyle = (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e';
+      ctx.fillStyle = gridPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e');
       ctx.beginPath();
       ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  // ── v0.44 gridPaint — spec-or-hex → a canvas paint style ──────────
+  // The four grid colors may hold gradient specs (Settings keys written
+  // by the appearance GradientUI editors; theme.js resolves legacy
+  // hexes into 1-color specs). A spec paints:
+  //   · 1 valid stop            → the solid hex (today's behavior)
+  //   · ≥2 stops, dir h/v/diag/diag2/radial/auto → a REAL canvas
+  //     gradient (createLinearGradient / createRadialGradient) across
+  //     the viewport — the bg fill, line strokes, dots and origin all
+  //     take it (dots pick up the gradient at their own position)
+  //   · swirl / mesh / pat-* / tex → the SOLID first color. DOCUMENTED
+  //     LIMITATION: the infinite canvas repaints at pan/zoom frame rate
+  //     and has no cheap equivalent of a CSS conic sweep, layered mesh
+  //     or repeating background pattern — those aesthetics stay in the
+  //   CSS var surfaces; the canvas keeps its sweep. 'auto' = the CSS
+  //   recipe's 135° diagonal.
+  // ANGLE MAP (h/v/diag2/radial are exact; diag's default 135 too — a
+  // CUSTOM angle rotates the default direction about the center):
+  //   h      (0,0) → (W,0)          v      (0,0) → (0,H)
+  //   diag   (0,H) → (W,0)          diag2  (0,0) → (W,H)
+  //   radial circle at 50% 35% (the CSS recipe's focal), r = ½ diagonal
+  //   1-color + any dir → the solid (canvas gradients need ≥2 stops)
+  function gridPaint(spec, fallbackHex) {
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    // legacy plain value (no spec view, or a bare hex): validate + return
+    if (!spec || !Array.isArray(spec.colors)) {
+      const s = String(spec == null ? '' : spec);
+      return HEX_RE.test(s) ? s : fallbackHex;
+    }
+    const stops = spec.colors.filter(function (c) { return HEX_RE.test(c); });
+    if (!stops.length) return fallbackHex;      // nothing valid → caller's
+    if (stops.length < 2 || W <= 0 || H <= 0) return stops[0];
+    const dir = spec.dir || 'auto';
+    let g = null;
+    const half = Math.hypot(W, H) / 2;
+    if (dir === 'h') {
+      g = ctx.createLinearGradient(0, 0, W, 0);
+    } else if (dir === 'v') {
+      g = ctx.createLinearGradient(0, 0, 0, H);
+    } else if (dir === 'diag2') {
+      g = ctx.createLinearGradient(0, 0, W, H);
+    } else if (dir === 'radial') {
+      g = ctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, half);
+    } else if (dir === 'diag' || dir === 'auto') {
+      const angle = (dir === 'auto' || typeof spec.angle !== 'number') ? 135 : spec.angle;
+      if (angle === 135) {
+        g = ctx.createLinearGradient(0, H, W, 0);
+      } else {
+        // the default (0,H)→(W,0) direction = (1,−1)/√2; rotate it by
+        // (angle−135)° about the viewport center, spanning the diagonal
+        const rad = (angle - 135) * Math.PI / 180;
+        const c = Math.cos(rad), s = Math.sin(rad);
+        const dx = (c + s) / Math.SQRT2, dy = (s - c) / Math.SQRT2;
+        g = ctx.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half,
+          W / 2 + dx * half, H / 2 + dy * half);
+      }
+    }
+    if (!g) return stops[0];                    // swirl / mesh / pat-* → solid
+    for (let i = 0; i < stops.length; i++) {
+      g.addColorStop(i / (stops.length - 1), stops[i]);
+    }
+    return g;
   }
 
   function renderOffScreenArrows() {

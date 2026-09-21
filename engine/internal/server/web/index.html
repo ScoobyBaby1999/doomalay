@@ -202,6 +202,23 @@
     overscroll-behavior: none;
   }
 
+  /* ══ v0.44 THE VAR-TWIN GRADIENT LAYER ═══════════════════════════
+     Every gradient-capable CSS var X has a TWIN (theme.js / formatter.js
+     write both):  --X          = the SOLID hex (the spec's first color —
+                      every legacy color:/border:/canvas consumer keeps
+                      working untouched)
+                   --X-gradient = the full background-image value, or the
+                      literal 'none' when the spec is 1-color/no-pattern
+                      (a bare hex is NOT a valid background-image, so
+                      'none' is the explicit no-op).
+     Consumers add the IMAGE layer on top of their existing
+     background-color — with 'none' these rules are visual no-ops and
+     the solid paints exactly as before:
+       background-image: var(--X-gradient, none);
+     The rules live AFTER their base rule so the base `background:`
+     shorthand (which resets background-image) can never clobber them. */
+  html, body { background-image: var(--bg-app-gradient, none); }
+
   canvas {
     display: block;
     position: fixed;
@@ -1129,6 +1146,110 @@
   }
   #edit-banner .eb-cancel:hover { border-color: var(--err); color: var(--err); }
 
+  /* ── v0.44 TEMPLATE PILL: the composer's active-template chip + the
+     template sheet (templatesheet.js) — the edit-banner mechanics with
+     their own element, and the library rows follow the dx-pill texture ── */
+  #tpl-chip {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 8px; padding: 6px 10px;
+    background: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    border-radius: 8px;
+    opacity: 0; transform: translateY(-4px);
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  #tpl-chip.open { opacity: 1; transform: translateY(0); }
+  #tpl-chip .tpl-chip-ico { font-size: 13px; color: var(--accent); flex-shrink: 0; }
+  #tpl-chip .tpl-chip-text {
+    flex: 1; font-size: 12px; font-weight: 600; color: var(--text-2);
+    letter-spacing: 0.2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #tpl-chip .tpl-chip-x {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-2); font-size: 11px; font-weight: 600;
+    padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; touch-action: manipulation;
+  }
+  #tpl-chip .tpl-chip-x:hover { border-color: var(--err); color: var(--err); }
+
+  .ts-root { display: flex; flex-direction: column; min-height: 0; }
+  .ts-actions { display: flex; gap: 8px; margin: 8px 0 10px; }
+  .ts-act {
+    flex: 1 1 0; background: transparent; border: 1px solid var(--border);
+    color: var(--text-2); padding: 7px 4px; border-radius: 9px;
+    font-size: var(--ui-small-fs); font-weight: 700; font-family: inherit;
+    cursor: pointer; touch-action: manipulation; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .ts-act:active { background: var(--surface-3); }
+  .ts-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .ts-group {
+    font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--text-3);
+    margin: 12px 2px 6px; display: flex; align-items: baseline; gap: 6px;
+  }
+  .ts-group-n { color: var(--text-3); opacity: 0.7; font-weight: 600; }
+  .ts-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 10px;
+    border: 1px solid var(--surface-2); border-radius: 10px;
+    margin-bottom: 7px; cursor: pointer; background: var(--surface-1);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .ts-row:active, .ts-row:hover { background: var(--surface-2); }
+  .ts-row-on { border-color: rgba(var(--accent-rgb), 0.55); background: rgba(var(--accent-rgb), 0.07); }
+  .ts-row-main { flex: 1 1 auto; min-width: 0; }
+  .ts-row-name {
+    font-size: calc(var(--ui-fs) - 1.5px); font-weight: 700; color: var(--text-1);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ts-on-ico { color: var(--accent); }
+  .ts-row-desc {
+    font-size: var(--ui-micro-fs); color: var(--text-3); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4;
+  }
+  .ts-row-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .ts-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 7px;
+    background: var(--surface-2); border: 1px solid var(--surface-2);
+    color: var(--text-3); font-size: var(--ui-micro-fs); font-weight: 700;
+    letter-spacing: 0.2px; max-width: 110px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ts-meta { font-size: var(--ui-micro-fs); color: var(--text-3); font-weight: 600; }
+  .ts-star {
+    flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-3); font-size: 15px; cursor: pointer;
+    font-family: inherit; touch-action: manipulation; line-height: 1;
+  }
+  .ts-star-on { color: #f5b642; border-color: rgba(245, 182, 66, 0.55); background: rgba(245, 182, 66, 0.1); }
+  .ts-empty { text-align: center; color: var(--text-3); font-size: var(--ui-small-fs); padding: 34px 18px; line-height: 1.6; }
+  .ts-empty-title { font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+  .ts-empty-sub { font-size: var(--ui-micro-fs); }
+  .ts-empty-actions { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+  .ts-empty-actions .ts-act { flex: 0 1 auto; padding: 7px 14px; }
+  .ts-detail-head { padding: 2px 2px 10px; }
+  .ts-detail-name { font-size: var(--ui-fs); font-weight: 700; color: var(--text-1); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .ts-detail-desc { font-size: var(--ui-small-fs); color: var(--text-3); line-height: 1.55; margin-top: 6px; }
+  .ts-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .ts-detail-body { border-top: 1px solid var(--surface-2); padding-top: 10px; }
+  .ts-stage { border: 1px solid var(--surface-2); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
+  .ts-stage-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ts-stage-n {
+    width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb), 0.14); color: var(--accent);
+    font-size: var(--ui-micro-fs); font-weight: 700;
+  }
+  /* v0.44 var-twin: the step number chip layers the accent gradient
+     over its tint (no-op while the accent is a solid) */
+  .ts-stage-n { background-image: var(--accent-gradient, none); }
+  .ts-stage-name { font-size: calc(var(--ui-fs) - 2px); font-weight: 700; color: var(--text-1); }
+  .ts-stage-fo { font-size: var(--ui-micro-fs); color: var(--accent-2); font-weight: 600; margin-top: 4px; }
+  .ts-stage-ins { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5; margin-top: 6px; }
+  .ts-detail-actions { display: flex; gap: 8px; margin: 12px 2px 2px; }
+  .ts-md { font-size: var(--ui-small-fs); }
+
   /* ── markdown content (the .fmt scope formatter.js renders) ── */
   .fmt { color: var(--text-1); }
   .fmt p { margin: 0.45em 0; }
@@ -1163,6 +1284,49 @@
     cursor: pointer;
   }
   .fmt-link-cue { color: var(--fmt-link); opacity: 0.75; font-size: 0.85em; }
+
+  /* ── v0.44 GRADIENT TEXT — the fmt slot twins ─────────────────────
+     formatter.js tags the document (data-fmt-grad on :root; the per-chat
+     tweaks path can do the same on #chat-root — any ancestor works) with
+     the space-separated list of slots whose spec actually PAINTS a
+     gradient (multi-color or a pattern). Only then do these
+     background-clip:text rules engage; solid slots render exactly the
+     rules above, byte-for-byte.
+     The glyph color is --fmt-<slot>-ink: formatter sets it to
+     'transparent' next to the attribute (a fallback var(--fmt-<slot>)
+     guards against a stray attribute with no twin — text NEVER
+     vanishes); a scoped view (#chat-root) opts a slot OUT of a global
+     gradient by overriding the ink with its solid hex.
+     Families are capped at the four text carriers: headings(a1 — h2),
+     emphasis(a3 — em + h4), strong(bright — strong + h1), links(link).
+     INLINE CODE (.fmt-code-inline) is deliberately SOLID: it wears a
+     surface chip — background-clip:text would clip the chip itself
+     into text-shaped fragments and destroy the affordance. Links keep
+     their underline (text-decoration-color resolves from the solid
+     twin, independent of color:) so the affordance survives clipping. */
+  [data-fmt-grad~="a1"] .fmt h2 {
+    background-image: var(--fmt-a1-gradient, none);
+    -webkit-background-clip: text; background-clip: text;
+    color: var(--fmt-a1-ink, var(--fmt-a1));
+  }
+  [data-fmt-grad~="a3"] .fmt em,
+  [data-fmt-grad~="a3"] .fmt h4 {
+    background-image: var(--fmt-a3-gradient, none);
+    -webkit-background-clip: text; background-clip: text;
+    color: var(--fmt-a3-ink, var(--fmt-a3));
+  }
+  [data-fmt-grad~="bright"] .fmt strong,
+  [data-fmt-grad~="bright"] .fmt h1 {
+    background-image: var(--fmt-bright-gradient, none);
+    -webkit-background-clip: text; background-clip: text;
+    color: var(--fmt-bright-ink, var(--fmt-bright));
+  }
+  [data-fmt-grad~="link"] .fmt a.fmt-link,
+  [data-fmt-grad~="link"] .fmt-user a.fmt-link {
+    background-image: var(--fmt-link-gradient, none);
+    -webkit-background-clip: text; background-clip: text;
+    color: var(--fmt-link-ink, var(--fmt-link));
+  }
   /* ── v0.28 MEDIA EMBEDS (user spec: clickable / expandable / zoom / redirect) ── */
   .fmt-media-img {
     display: block; max-width: min(100%, 460px); max-height: 62vh;
@@ -1353,6 +1517,8 @@
     background: var(--accent);
     animation: cwd-pulse 0.9s ease-in-out infinite;
   }
+  /* v0.44 var-twin: the working dots follow the accent gradient */
+  .cwd i { background-image: var(--accent-gradient, none); }
   .cwd i:nth-child(2) { animation-delay: 0.12s; }
   .cwd i:nth-child(3) { animation-delay: 0.24s; }
   .cwd i:nth-child(4) { animation-delay: 0.36s; }
@@ -2004,6 +2170,9 @@
   }
   .pv-btn:active { background: var(--surface-3); }
   .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--accent); }
+  /* v0.44 var-twin: the primary action layers the accent gradient over
+     its tint (no-op while the accent is a solid) */
+  .pv-btn-primary { background-image: var(--accent-gradient, none); }
 
   /* ══ v0.27→v0.33 — chat header pills: squared, matte, equal proportions ══
      One row of peers: sandbox · model · artifacts · persona · mind —
@@ -2520,6 +2689,14 @@
     background: rgba(var(--template-rgb), 0.13);
     border-color: rgba(var(--template-rgb), 0.55); color: var(--template-tint);
   }
+  /* v0.44 var-twin: the ON pill layers the accent-2 gradient image over
+     its tint (this pill's accent IS accent-2). Scoped with
+     :not([data-tone]) — the persona/template tones keep their own look,
+     and the base `background:` shorthand above can't reset the image
+     from here. A no-op while accent-2 is a solid. */
+  .dx-pill[data-on="1"]:not([data-tone]) {
+    background-image: var(--accent-2-gradient, none);
+  }
   .dx-pill--sm { padding: 3px 9px; min-height: 26px;
     font-size: calc(var(--ui-small-fs) - 1.5px); }
   .dx-pill--sm .dx-pill-ico { font-size: calc(var(--ui-small-fs) - 0.5px); }
@@ -2765,6 +2942,13 @@
 <script src="chatbot.js"></script>
 <script src="panel.js"></script>
 <script src="settings.js"></script>
+<!-- v0.33→v0.44: THE SHARED UI KIT — the modular pill system (UIPills),
+     GradientUI v2 (the 1–15 color gradient engine + the compact editor)
+     and the drag-to-crop overlay (CropUI). One kit, reused by the hub /
+     publish / tweaks / theme / appearance. v0.44: loads BEFORE theme.js
+     + formatter.js — both boot-apply gradient specs the moment their
+     IIFEs run, so window.GradientUI must already exist. -->
+<script src="uikit.js"></script>
 <script src="theme.js"></script>
 <script src="appearance.js"></script>
 <script src="connectoverlay.js"></script>
@@ -2783,10 +2967,6 @@
      message long-press actions + snap-point panel gestures. -->
 <script src="filetypes.js"></script>
 <script src="formatter.js"></script>
-<!-- v0.33: THE SHARED UI KIT — the modular pill system (UIPills), the
-     1-10 color gradient editor (GradientUI) and the drag-to-crop
-     overlay (CropUI). One kit, reused by the hub / publish / tweaks. -->
-<script src="uikit.js"></script>
 <script src="artifacts.js"></script>
 <!-- v0.19→v0.27: the multi-persona system + usage/cost panel — every view
      now renders on the MASTER PANEL's view stack (panel.js pushView); the
@@ -2820,6 +3000,11 @@
      chat search (the command-palette entry). -->
 <script src="keys.js"></script>
 <script src="gesture.js"></script>
+<!-- v0.44: THE TEMPLATE SHEET — the ⧉ template pill's library browser
+     (search / favorites / groups / detail view / the hub links). Renders
+     as a view on the master panel's stack; chatpanel.js opens it from
+     the composer toolbar and feeds it the activation callback. -->
+<script src="templatesheet.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
 </body>

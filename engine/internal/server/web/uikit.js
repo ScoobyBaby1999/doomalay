@@ -1,45 +1,114 @@
-// uikit.js — v0.33 THE SHARED UI KIT: pills, gradients, and the cropper.
+// uikit.js — v0.44 THE SHARED UI KIT: pills, gradients, and the cropper.
 //
-// USER SPEC (Batch 10): "since we are already re-using many methods, like
-// the gallery picker, the panel everything is displayed on, and the color
-// gradient, let's also rework the pills system we have… a modular
-// reusable pill system… the pills all follow the themes as well… less
-// rounded and looking more like a hand drawn png with better coloring."
+// THE GRADIENT SPEC v2 (the binding contract every consumer obeys —
+// theme.js / appearance.js / tweaks.js / hubpublish.js in Wave 2):
 //
-// Three reusable widgets, one file, zero app deps (pure vanilla — loaded
-// before every view module, used by hub.js / hubpublish.js / tweaks.js):
+//   spec = { colors: ['#rrggbb', …]      1..15 stops (first = the solid)
+//            dir:    'auto'|'h'|'v'|'diag'|'diag2'|'radial'|'swirl'|'mesh'
+//                  | 'pat-navy'|'pat-pinstripe'|'pat-gingham'
+//                  | 'pat-sunburst'|'pat-checker'
+//            angle:  0..360 int           optional — meaningful for 'diag'
+//            tex:    'data:image/jpeg…'   optional texture dataURL (the
+//                                         BOTTOM background-image layer;
+//                                         consumers set
+//                                         background-blend-mode:color —
+//                                         check GradientUI.BLENDED) }
 //
-//   UIPills    the modular pill system. ONE builder → ONE look:
-//              matte surfaces, organic hand-drawn corner radii (each
-//              pill in a group gets a slightly different corner set —
-//              drawn, not stamped), a 1px offset sketch stroke, and
-//              theme-driven tints (accent / persona purple / template
-//              green — [data-theme] swaps the palettes).
-//   GradientUI the 1–10 color gradient editor (the v0.31 2–3 picker
-//              grew up): swatches with per-color remove, ＋ add
-//              (max 10), ⤨ shuffle, live preview callbacks, plus
-//              random() which now picks a RANDOM STOP COUNT (2–10) —
-//              "not strictly 2 or 3 colors".
-//   CropUI     the drag-to-crop overlay. The chat-background pipeline
-//              (cover) stays as is; the hub card image gets this: the
-//              image is dragged under a fixed-aspect frame and the
-//              crop is taken from the ORIGINAL pixels — no stretch, no
-//              forced fit, resolution and clarity kept (long edge
-//              capped only at maxEdge, default 1024).
+//   BACKWARD COMPAT (all still work): a bare '#hex' string, a plain
+//   colors ARRAY, and {colors:[…]} with no dir = legacy 1-color/'auto'.
+//   GradientUI.norm(v) folds every shape into a valid spec.
+//
+// THE RECIPES (stops = colors joined with ', '):
+//   auto  linear 135°          h  linear 90°           v  linear 180°
+//   diag  linear <angle|135>°  diag2 linear 315°       radial circle 50% 35%
+//   swirl conic from 240° wrapping back to the first color
+//   mesh  4 layered radials over a base linear
+//   pat-* repeating patterns: navy / pinstripe / gingham / sunburst /
+//         checker (single-color specs synthesize their 2nd stop)
+//
+// THE TWIN ARCHITECTURE: consumers write var twins per slot —
+//   --X = GradientUI.solid(spec)        (compat: canvas fillStyle,
+//                                        meta-theme-color, -rgb triplets)
+//   --X-gradient = GradientUI.twins(spec).css   (full layer stack or the
+//                                        bare hex; consumers add
+//                                        background-image:var(--X-gradient))
+//   1-color simple specs return the BARE hex from css() so legacy
+//   background-color callers keep working untouched.
+//
+// CropUI v2: pinch-zoom (evCache + focal math), ↻ rotate 90° (baked
+// into the source bitmap), double-tap reset. touch-action:none comes
+// from the one-time injected <style id="uikit-v2-style"> — index.html
+// is NOT touched (the v0.33 .gr-mini look is matched, not duplicated).
+//
+// Node-testable: nothing at module top-level touches document/window;
+// in a browser the kit lands on window.*, under node it exports
+// { GradientUI, hexToRgb, darken, lighten, rgba } for the self-test
+// script (scripts/test_uikit.js runs the whole contract).
 //
 // Exposes: window.UIPills, window.GradientUI, window.CropUI
 
 (function () {
   'use strict';
 
+  // esc() is PURE (node-safe — the old div.innerHTML trick needed a
+  // DOM; this is the identical escape set, no document required).
   function esc(s) {
-    var d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
   function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
 
-  // ══ UIPills — the modular pill system ═════════════════════════════
+  // ══ injected styles (once, DOM-guarded — index.html stays put) ═══
+  // The v2 editor controls (dir pills / pattern row / angle / texture)
+  // and the crop stage's touch-action ship with the kit. Injected on
+  // load, idempotent by #uikit-v2-style, skipped entirely under node.
+  (function injectStyles() {
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('uikit-v2-style')) return;
+    var css = [
+      // live preview bar (~36px, rounded 10px)
+      '.gr-preview-bar{height:36px;border-radius:10px;margin-bottom:8px;',
+      'border:1px solid var(--border);background-repeat:no-repeat;',
+      'background-size:cover;background-position:center;flex-shrink:0}',
+      // shared row wrapper for the v2 control rows
+      '.gr-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
+      '.gr-row-pat{margin-top:6px}',
+      '.gr-row-label{font-size:var(--ui-micro-fs);color:var(--text-3);',
+      'font-weight:700;letter-spacing:.05em;text-transform:uppercase;',
+      'margin-right:2px;user-select:none}',
+      // dir + pattern pills — compact siblings of the .gr-mini look
+      '.gr-dir{border:1px solid var(--border);background:transparent;',
+      'color:var(--text-3);border-radius:8px;padding:4px 10px;',
+      'font-size:calc(var(--ui-small-fs) - 2px);min-height:30px;',
+      'font-family:inherit;cursor:pointer;line-height:1.2;',
+      'touch-action:manipulation;-webkit-tap-highlight-color:transparent}',
+      '.gr-dir:hover{border-color:var(--border-strong);color:var(--text-2)}',
+      '.gr-dir[data-on="1"]{border-color:var(--accent);',
+      'background:var(--surface-3);color:var(--text-1)}',
+      // the angle row (only rendered for dir === 'diag')
+      '.gr-row-angle{gap:8px}',
+      '.gr-angle{flex:1;min-width:110px;accent-color:var(--accent)}',
+      '.gr-angle-val{font-size:var(--ui-micro-fs);color:var(--text-2);',
+      'font-weight:700;font-variant-numeric:tabular-nums;min-width:38px;',
+      'text-align:right}',
+      // the texture row (40px thumb + pick/remove)
+      '.gr-tex-thumb{display:inline-block;width:40px;height:40px;',
+      'border-radius:8px;border:1px solid var(--border);',
+      'background-size:cover;background-position:center;',
+      'background-repeat:no-repeat;flex-shrink:0}',
+      // pinch-zoom needs the browser's gestures switched OFF here
+      '.crop-stage{touch-action:none}'
+    ].join('');
+    var st = document.createElement('style');
+    st.id = 'uikit-v2-style';
+    st.textContent = css;
+    (document.head || document.getElementsByTagName('head')[0] || document.documentElement)
+      .appendChild(st);
+  })();
+
+  // ══ UIPills — the modular pill system (unchanged v0.33) ═══════════
   //
   // Every pill in the app routes through here so they share ONE visual
   // language (the CSS lives in index.html's .dx-pill block). Pills are
@@ -83,13 +152,32 @@
     }
   };
 
-  // ══ GradientUI — the 1–10 color gradient editor ═══════════════════
+  // ══ GradientUI v2 — the full gradient system ═════════════════════
   //
-  // One editor, two consumers: the publish card design and the chat
-  // background. MIN 1 color (a single stop = a solid fill), MAX 10.
-  // The caller owns the colors array; wire() mutates it and calls back.
-  var MAX_COLORS = 10;
+  // One editor, every consumer. MIN 1 color (a single stop = a solid
+  // fill), MAX 15. The caller owns the SPEC OBJECT; wire() mutates it
+  // in place (colors.splice/push, dir=, angle=, tex=) and calls back.
+  var MAX_COLORS = 15;
+  var DEFAULT_COLORS = ['#38bdf8', '#a78bfa'];
+  var VALID_DIRS = ['auto', 'h', 'v', 'diag', 'diag2', 'radial', 'swirl', 'mesh',
+    'pat-navy', 'pat-pinstripe', 'pat-gingham', 'pat-sunburst', 'pat-checker'];
+  // 1-color simple dirs are the legacy passthrough: css() hands back
+  // the bare hex so background-color callers never see a gradient.
+  var SIMPLE_DIRS = { auto: 1, h: 1, v: 1, diag: 1, diag2: 1, radial: 1 };
 
+  // the editor's style + pattern pill sets (label, data-gr-dir)
+  var DIR_STYLES = [
+    ['auto', '⤢ auto'], ['h', '→ h'], ['v', '↓ v'], ['diag', '↗ diag'],
+    ['diag2', '↖ diag2'], ['radial', '◎ radial'], ['swirl', '🌀 swirl'],
+    ['mesh', '✦ mesh']
+  ];
+  var DIR_PATTERNS = [
+    ['pat-navy', 'navy'], ['pat-pinstripe', 'pinstripe'],
+    ['pat-gingham', 'gingham'], ['pat-sunburst', 'sunburst'],
+    ['pat-checker', 'checker']
+  ];
+
+  // ── color helpers (pure — exported under node for the tests) ─────
   function hslToHex(h, s, l) {
     s /= 100; l /= 100;
     var k = function (n) { return (n + h / 30) % 12; };
@@ -101,12 +189,214 @@
     return '#' + f(0) + f(8) + f(4);
   }
 
+  function hexToRgb(hex) {
+    if (typeof hex !== 'string') return null;
+    var m = hex.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+    if (!m) return null;
+    var h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16)
+    };
+  }
+
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    var h = 0, s = 0, l = (max + min) / 2;
+    var d = max - min;
+    if (d > 0) {
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return { h: h, s: s * 100, l: l * 100 };
+  }
+
+  // amt = percentage points of the HSL L channel, clamped to 0..100.
+  // Unparseable hexes pass through untouched (total functions).
+  function darken(hex, amt) {
+    var rgb = hexToRgb(hex);
+    if (!rgb) return hex;
+    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    return hslToHex(hsl.h, hsl.s, Math.max(0, Math.min(100, hsl.l - amt)));
+  }
+  function lighten(hex, amt) {
+    var rgb = hexToRgb(hex);
+    if (!rgb) return hex;
+    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    return hslToHex(hsl.h, hsl.s, Math.max(0, Math.min(100, hsl.l + amt)));
+  }
+  function rgba(hex, a) {
+    var rgb = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
+    var av = String(Math.round(a * 1000) / 1000).replace(/^0\./, '.');
+    return 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',' + av + ')';
+  }
+
   var GradientUI = {
     MAX: MAX_COLORS,
 
-    // random(n) → array of hex stops. n omitted → a RANDOM count (2–10):
-    // the walk stays hue-adjacent (≤ ~200° span) with S/L inside the
-    // readable bands, so even 10 stops read as one tasteful sweep.
+    // consumers check this before opting into background-blend-mode
+    BLENDED: true,
+
+    // ── norm(v) → always a valid spec (pure; copies, never mutates) ─
+    //   '#aabbcc'            → {colors:['#aabbcc'], dir:'auto'}
+    //   ['#a','#b']          → {colors:[…],         dir:'auto'}
+    //   {colors,dir,angle,tex} → sanitized copy
+    //   anything else        → the fallback spec
+    norm: function (v) {
+      var colors = null;
+      if (typeof v === 'string' && v.charAt(0) === '#') colors = [v];
+      else if (Array.isArray(v)) colors = v.slice();
+      else if (v && typeof v === 'object' && Array.isArray(v.colors)) {
+        colors = v.colors.slice();
+      }
+      if (colors) {
+        colors = colors.filter(function (x) {
+          return typeof x === 'string' && x.length > 0;
+        });
+      }
+      if (!colors || !colors.length) {
+        colors = DEFAULT_COLORS.slice();
+      }
+      if (colors.length > MAX_COLORS) colors = colors.slice(0, MAX_COLORS);
+      var spec = { colors: colors, dir: 'auto' };
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        if (VALID_DIRS.indexOf(v.dir) >= 0) spec.dir = v.dir;
+        if (typeof v.angle === 'number' && isFinite(v.angle)) {
+          spec.angle = Math.max(0, Math.min(360, Math.round(v.angle)));
+        }
+        if (typeof v.tex === 'string' && v.tex.length) spec.tex = v.tex;
+      }
+      return spec;
+    },
+
+    // ── css(v) → the background-image value ─────────────────────────
+    // 1 color + a simple dir + no tex → the BARE hex (legacy callers
+    // paint with background-color). Everything else → the recipe
+    // string; a tex appends ', url("<tex>")' as the bottom layer (a
+    // 1-color simple dir becomes a flat 2-stop gradient underneath).
+    css: function (v) {
+      var s = GradientUI.norm(v);
+      var c = s.colors;
+      var dir = s.dir;
+      var hasTex = !!s.tex;
+      var multi = c.length > 1;
+
+      if (!multi && !hasTex && SIMPLE_DIRS[dir]) return c[0];
+
+      var stops = c.join(', ');
+      if (!multi && SIMPLE_DIRS[dir]) stops = c[0] + ', ' + c[0]; // flat layer
+
+      var layer;
+      switch (dir) {
+        case 'h':
+          layer = 'linear-gradient(90deg, ' + stops + ')';
+          break;
+        case 'v':
+          layer = 'linear-gradient(180deg, ' + stops + ')';
+          break;
+        case 'diag':
+          layer = 'linear-gradient(' +
+            (typeof s.angle === 'number' ? s.angle : 135) +
+            'deg, ' + stops + ')';
+          break;
+        case 'diag2':
+          layer = 'linear-gradient(315deg, ' + stops + ')';
+          break;
+        case 'radial':
+          layer = 'radial-gradient(circle at 50% 35%, ' + stops + ')';
+          break;
+        case 'swirl': {
+          // the closing stop wraps the conic sweep back to the first
+          // color; a single color gets a lightened 2nd stop first
+          var sw = multi ? stops : (c[0] + ', ' + lighten(c[0], 25));
+          layer = 'conic-gradient(from 240deg at 55% 45%, ' + sw + ', ' + c[0] + ')';
+          break;
+        }
+        case 'mesh': {
+          // 4 soft radials cycling the palette over a base linear
+          var spots = ['at 20% 25%', 'at 80% 15%', 'at 75% 80%', 'at 15% 85%'];
+          var fades = ['55%', '50%', '55%', '50%'];
+          var parts = [];
+          for (var i = 0; i < 4; i++) {
+            parts.push('radial-gradient(' + spots[i] + ', ' +
+              c[i % c.length] + ' 0px, transparent ' + fades[i] + ')');
+          }
+          var base = c.length > 1 ? c[c.length - 1] : darken(c[0], 20);
+          parts.push('linear-gradient(' + base + ')');
+          layer = parts.join(', ');
+          break;
+        }
+        case 'pat-navy': {
+          var n2 = c.length > 1 ? c[1] : darken(c[0], 18);
+          layer = 'repeating-linear-gradient(45deg, ' +
+            c[0] + ' 0 14px, ' + n2 + ' 14px 28px)';
+          break;
+        }
+        case 'pat-pinstripe': {
+          var p2 = c.length > 1 ? c[1] : lighten(c[0], 18);
+          layer = 'repeating-linear-gradient(90deg, transparent 0 18px, ' +
+            rgba(c[0], 0.35) + ' 18px 19px), ' +
+            'linear-gradient(160deg, ' + c[0] + ', ' + p2 + ')';
+          break;
+        }
+        case 'pat-gingham': {
+          var g2 = c.length > 1 ? c[1] : c[0];
+          var g3 = c.length > 2 ? c[2] : lighten(c[0], 30);
+          layer = 'repeating-linear-gradient(0deg, ' + rgba(c[0], 0.55) +
+            ' 0 40px, transparent 40px 80px), ' +
+            'repeating-linear-gradient(90deg, ' + rgba(g2, 0.35) +
+            ' 0 40px, transparent 40px 80px), ' +
+            'linear-gradient(' + g3 + ')';
+          break;
+        }
+        case 'pat-sunburst': {
+          var s2 = c.length > 1 ? c[1] : lighten(c[0], 18);
+          layer = 'repeating-conic-gradient(from 0deg at 50% 100%, ' +
+            c[0] + ' 0deg 15deg, ' + s2 + ' 15deg 30deg)';
+          break;
+        }
+        case 'pat-checker': {
+          var k2 = c.length > 1 ? c[1] : darken(c[0], 18);
+          layer = 'repeating-conic-gradient(' + c[0] + ' 0 25%, ' + k2 +
+            ' 0 50%) 0 0 / 32px 32px';
+          break;
+        }
+        default: // 'auto'
+          layer = 'linear-gradient(135deg, ' + stops + ')';
+      }
+      if (hasTex) layer += ', url("' + s.tex + '")';
+      return layer;
+    },
+
+    // ── solid(v) → the derived solid hex (the FIRST color) ──────────
+    // canvas fillStyle, meta-theme-color, and the -rgb triplet
+    // derivation all consume this.
+    solid: function (v) {
+      return GradientUI.norm(v).colors[0];
+    },
+
+    // ── twins(v) → the var-twin pair consumers write to CSS vars ────
+    //   --X        = twins.solid  (compat hex)
+    //   --X-gradient = twins.css  (full stack or the bare hex)
+    twins: function (v) {
+      return {
+        solid: GradientUI.norm(v).colors[0],
+        css: GradientUI.css(v)
+      };
+    },
+
+    // random(n) → array of hex stops. n omitted → a RANDOM count
+    // (2–15): the walk stays hue-adjacent (≤ ~200° span) with S/L
+    // inside the readable bands, so even 15 stops read as one
+    // tasteful sweep. COLORS ONLY — the dir is never touched here so
+    // callers that chose a style keep it (the ↻ button rerolls colors).
     random: function (n) {
       var count = (typeof n === 'number' && n >= 1)
         ? Math.max(1, Math.min(MAX_COLORS, Math.round(n)))
@@ -119,27 +409,64 @@
       var l1 = 45 + Math.floor(Math.random() * 21);    // 45–65%
       var out = [];
       for (var i = 0; i < count; i++) {
-        var t = count === 1 ? 0 : i / (count - 1);
+        var t = i / (count - 1);
         out.push(hslToHex(base + span * t, s1, l1 + (t * 8)));
       }
       return out;
     },
 
-    // css(colors) → a linear-gradient string; a single stop returns the
-    // solid color itself (CSS gradients need ≥2 stops).
-    css: function (colors, angle) {
-      var c = (colors || []).filter(function (x) { return !!x; });
-      if (!c.length) return '';
-      if (c.length === 1) return c[0];
-      return 'linear-gradient(' + (angle || 135) + 'deg, ' + c.join(', ') + ')';
+    // ── textureFromFile(file, maxEdge) → Promise<dataURL> ──────────
+    // The shared texture pipeline (Wave-2 agents reuse it for their
+    // own uploads): downscale to ≤ maxEdge on the long edge (default
+    // 512), re-encode JPEG q0.8 → dataURL.
+    textureFromFile: function (file, maxEdge) {
+      return new Promise(function (resolve, reject) {
+        if (!file) { reject(new Error('no file')); return; }
+        var maxE = (typeof maxEdge === 'number' && maxEdge > 0) ? maxEdge : 512;
+        var url = '';
+        try { url = URL.createObjectURL(file); } catch (e) { reject(e); return; }
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var dataURL = downscaleToDataURL(img, maxE, 'image/jpeg', 0.8);
+            try { URL.revokeObjectURL(url); } catch (e2) {}
+            if (dataURL) resolve(dataURL);
+            else reject(new Error('could not encode'));
+          } catch (err) {
+            try { URL.revokeObjectURL(url); } catch (e2) {}
+            reject(err);
+          }
+        };
+        img.onerror = function () {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          reject(new Error('not readable'));
+        };
+        img.src = url;
+      });
     },
 
-    // editor(pfx, colors) → the editor markup. Every control carries
-    // data-gr-* hooks; ids are namespaced by pfx so two editors can
-    // coexist (the publish form + the tweaks background view).
-    editor: function (pfx, colors, opts) {
+    // ── editor(pfx, v, opts) → the editor markup ────────────────────
+    // v is a spec (or any legacy shape — norm'd for RENDERING only;
+    // the caller's live spec is mutated by wire(), not here).
+    //   opts.noTex  hide the texture row (small surfaces)
+    //   opts.noDir  hide the style + pattern rows (small surfaces)
+    //   opts.randomBtn === false  hide the ↻ button (v0.33 carry-over)
+    // Layout, in order: live preview bar · swatches · tools · style
+    // row · pattern row · angle (diag only) · texture row.
+    editor: function (pfx, v, opts) {
       opts = opts || {};
-      var c = colors && colors.length ? colors : ['#38bdf8', '#a78bfa'];
+      var spec = GradientUI.norm(v);
+      var c = spec.colors;
+
+      // 1 — the live preview bar (style straight from css(spec))
+      var cssVal = GradientUI.css(spec);
+      var pvStyle = cssVal.charAt(0) === '#'
+        ? ('background-color:' + cssVal)
+        : ('background-image:' + cssVal);
+      var preview = '<div class="gr-preview-bar" role="img" aria-label="gradient preview" style="' +
+        escAttr(pvStyle) + '"></div>';
+
+      // 2 — the swatches
       var sw = '';
       for (var i = 0; i < c.length; i++) {
         sw += '<span class="gr-swatch">' +
@@ -150,72 +477,381 @@
             : '') +
           '</span>';
       }
+
+      // 3 — the tools row (＋ / ⤨ / ↻ / count)
+      var tools =
+        '<div class="gr-tools">' +
+          '<button type="button" class="gr-mini" data-gr-add="1"' +
+            (c.length >= MAX_COLORS ? ' disabled' : '') + '>＋ color</button>' +
+          '<button type="button" class="gr-mini" data-gr-shuffle="1">⤨ shuffle</button>' +
+          (opts.randomBtn !== false
+            ? '<button type="button" class="gr-mini" data-gr-random="1">↻ random</button>' : '') +
+          '<span class="gr-count">' + c.length + ' / ' + MAX_COLORS + '</span>' +
+        '</div>';
+
+      // 4 + 5 — the style + pattern rows (mutually exclusive: only
+      // the pill matching spec.dir carries data-on)
+      function dirPills(list) {
+        var out = '';
+        for (var j = 0; j < list.length; j++) {
+          out += '<button type="button" class="gr-mini gr-dir" data-gr-dir="' +
+            escAttr(list[j][0]) + '"' +
+            (spec.dir === list[j][0] ? ' data-on="1"' : '') + '>' +
+            list[j][1] + '</button>';
+        }
+        return out;
+      }
+      var styleRow = opts.noDir ? '' :
+        '<div class="gr-row gr-row-dir">' + dirPills(DIR_STYLES) + '</div>';
+      var patRow = opts.noDir ? '' :
+        '<div class="gr-row gr-row-pat">' +
+          '<span class="gr-row-label">patterns</span>' + dirPills(DIR_PATTERNS) +
+        '</div>';
+
+      // 6 — the angle slider (diag only; 135 is the default)
+      var ang = (typeof spec.angle === 'number') ? spec.angle : 135;
+      var angleRow = (spec.dir === 'diag') ?
+        '<div class="gr-row gr-row-angle">' +
+          '<span class="gr-row-label">angle</span>' +
+          '<input type="range" min="0" max="360" step="5" class="gr-angle" data-gr-angle="1" value="' + ang + '" aria-label="gradient angle">' +
+          '<span class="gr-angle-val" data-gr-angle-val="1">' + ang + '°</span>' +
+        '</div>' : '';
+
+      // 7 — the texture row (pick + hidden input + thumb + remove)
+      var texRow = opts.noTex ? '' :
+        '<div class="gr-row gr-row-tex">' +
+          '<button type="button" class="gr-mini" data-gr-tex-pick="1">📷 texture</button>' +
+          '<input type="file" accept="image/*" data-gr-tex-file="1" style="display:none">' +
+          (spec.tex
+            ? '<span class="gr-tex-thumb" data-gr-tex-thumb="1" role="img" aria-label="texture preview" style="background-image:url(\'' +
+                escAttr(spec.tex) + '\')"></span>' +
+              '<button type="button" class="gr-mini" data-gr-tex-rm="1">✕ remove texture</button>'
+            : '') +
+        '</div>';
+
       return (
         '<div class="gr-editor" id="' + escAttr(pfx) + '-gr">' +
+          preview +
           '<div class="gr-swatches">' + sw + '</div>' +
-          '<div class="gr-tools">' +
-            '<button type="button" class="gr-mini" data-gr-add="1"' +
-              (c.length >= MAX_COLORS ? ' disabled' : '') + '>＋ color</button>' +
-            '<button type="button" class="gr-mini" data-gr-shuffle="1">⤨ shuffle</button>' +
-            (opts.randomBtn !== false
-              ? '<button type="button" class="gr-mini" data-gr-random="1">↻ random</button>' : '') +
-            '<span class="gr-count">' + c.length + ' / ' + MAX_COLORS + '</span>' +
-          '</div>' +
+          tools +
+          styleRow +
+          patRow +
+          angleRow +
+          texRow +
           (c.length >= MAX_COLORS
-            ? '<div class="gr-cap">10 colors is the maximum</div>' : '') +
+            ? '<div class="gr-cap">' + MAX_COLORS + ' colors is the maximum</div>' : '') +
         '</div>'
       );
     },
 
-    // wire(el, h) — h = { colors, live, rebuild }
-    //   colors   the live array (mutated in place)
-    //   live()   a color VALUE changed → update the preview in place
-    //   rebuild() add/remove/shuffle changed the shape → re-render
+    // ── wire(el, h) — h = { spec, live, rebuild } ────────────────────
+    // The spec object is MUTATED IN PLACE by the editor:
+    //   spec.colors splice/push on add/remove/shuffle/random
+    //   spec.dir    on pill tap (style or pattern — one dir namespace)
+    //   spec.angle  on the slider (live, not a shape change)
+    //   spec.tex    on texture pick/remove
+    // live()    fires on value changes (color value / angle)
+    // rebuild() fires on shape changes (add/remove/shuffle/random/
+    //           dir/texture)
+    // LEGACY BRIDGE: h.colors instead of h.spec is still accepted —
+    // it becomes {colors: h.colors, dir:'auto', _legacy:true} and the
+    // ORIGINAL ARRAY keeps being mutated, so v0.33 callers work
+    // un-migrated (a dir pill tap will simply not survive their
+    // re-render — they render from the array — which is the accepted
+    // transitional behavior until Wave 2 moves them to specs).
     wire: function (el, h) {
-      if (!el || !h || !h.colors) return;
-      var colors = h.colors;
+      if (!el || !h) return;
+      var spec;
+      if (h.spec && typeof h.spec === 'object') spec = h.spec;
+      else if (h.colors) spec = { colors: h.colors, dir: 'auto', _legacy: true };
+      else return;
+
+      // floor the spec to usable, IN PLACE (never swap the array —
+      // legacy callers hold the reference)
+      if (!Array.isArray(spec.colors)) spec.colors = [];
+      if (!spec.colors.length) spec.colors.push(DEFAULT_COLORS[0], DEFAULT_COLORS[1]);
+      if (spec.colors.length > MAX_COLORS) spec.colors.length = MAX_COLORS;
+      var colors = spec.colors;
+
+      // the editor's own live preview bar
+      function paintPreview() {
+        var pv = el.querySelector('.gr-preview-bar');
+        if (!pv) return;
+        var cssVal = GradientUI.css(spec);
+        if (cssVal.charAt(0) === '#') {
+          pv.style.backgroundImage = '';
+          pv.style.backgroundColor = cssVal;
+        } else {
+          pv.style.backgroundColor = '';
+          pv.style.backgroundImage = cssVal;
+        }
+      }
+
+      // swatch values
       el.querySelectorAll('.gr-color').forEach(function (inp) {
         inp.addEventListener('input', function () {
           colors[parseInt(inp.getAttribute('data-gr'), 10) || 0] = inp.value;
+          paintPreview();
           if (h.live) h.live();
         });
       });
+
+      // remove (min 1 — the ✕ hides at 1)
       el.querySelectorAll('[data-gr-rm]').forEach(function (b) {
         b.addEventListener('click', function () {
-          if (colors.length <= 1) return; // min 1 — the ✕ hides at 1
+          if (colors.length <= 1) return;
           colors.splice(parseInt(b.getAttribute('data-gr-rm'), 10) || 0, 1);
           if (h.rebuild) h.rebuild();
         });
       });
+
+      // add
       var add = el.querySelector('[data-gr-add]');
       if (add) add.addEventListener('click', function () {
         if (colors.length >= MAX_COLORS) return;
         colors.push(GradientUI.random(1)[0]);
         if (h.rebuild) h.rebuild();
       });
+
+      // shuffle — same count, new hues
       var shuf = el.querySelector('[data-gr-shuffle]');
       if (shuf) shuf.addEventListener('click', function () {
-        var r = GradientUI.random(colors.length); // same count, new hues
+        var r = GradientUI.random(colors.length);
         for (var i = 0; i < r.length; i++) colors[i] = r[i];
         if (h.rebuild) h.rebuild();
       });
+
+      // random — a NEW random count (colors only; the dir is kept)
       var rnd = el.querySelector('[data-gr-random]');
       if (rnd) rnd.addEventListener('click', function () {
-        var r = GradientUI.random();              // NEW random count
+        var r = GradientUI.random();
         colors.length = 0;
         for (var i = 0; i < r.length; i++) colors.push(r[i]);
         if (h.rebuild) h.rebuild();
       });
+
+      // style + pattern pills — one dir namespace, mutually exclusive
+      // by construction (only one pill can match spec.dir at a time)
+      el.querySelectorAll('.gr-dir').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var d = b.getAttribute('data-gr-dir');
+          if (!d || d === spec.dir) return;
+          spec.dir = d;
+          if (h.rebuild) h.rebuild();
+        });
+      });
+
+      // the angle slider — a VALUE change (live, not a shape change)
+      var ang = el.querySelector('[data-gr-angle]');
+      if (ang) ang.addEventListener('input', function () {
+        spec.angle = Math.max(0, Math.min(360,
+          Math.round(parseFloat(ang.value) || 0)));
+        var val = el.querySelector('[data-gr-angle-val]');
+        if (val) val.textContent = spec.angle + '°';
+        paintPreview();
+        if (h.live) h.live();
+      });
+
+      // texture pick → downscale ≤512 long edge, JPEG q0.8 → dataURL
+      var pick = el.querySelector('[data-gr-tex-pick]');
+      var file = el.querySelector('[data-gr-tex-file]');
+      if (pick && file) {
+        pick.addEventListener('click', function () { file.click(); });
+        file.addEventListener('change', function () {
+          var f = file.files && file.files[0];
+          file.value = '';                      // allow re-picking same file
+          if (!f) return;
+          GradientUI.textureFromFile(f, 512).then(function (dataURL) {
+            spec.tex = dataURL;
+            if (h.rebuild) h.rebuild();
+          }, function () {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('uikit: texture not readable');
+            }
+          });
+        });
+      }
+
+      // texture remove
+      var rmTex = el.querySelector('[data-gr-tex-rm]');
+      if (rmTex) rmTex.addEventListener('click', function () {
+        spec.tex = null;
+        if (h.rebuild) h.rebuild();
+      });
+    },
+
+    // ── _selftest() → {ok, failures:[…]} ────────────────────────────
+    // Pure-function assertions only (node or browser): norm / css /
+    // solid / twins / random / helpers / single-color pattern
+    // synthesis / backward compat. scripts/test_uikit.js runs this
+    // plus the markup-level checks.
+    _selftest: function () {
+      var failures = [];
+      function ok(name, cond) { if (!cond) failures.push(name); }
+      function eq(name, got, want) {
+        if (got !== want) failures.push(name + ' (got ' + JSON.stringify(got) +
+          ', want ' + JSON.stringify(want) + ')');
+      }
+      var G = GradientUI;
+
+      // norm — shapes + fallbacks
+      var n1 = G.norm('#aabbcc');
+      eq('norm.hex.colors', n1.colors.join(), '#aabbcc');
+      eq('norm.hex.dir', n1.dir, 'auto');
+      eq('norm.array.len', G.norm(['#a', '#b']).colors.length, 2);
+      eq('norm.obj.dir', G.norm({ colors: ['#a'], dir: 'swirl' }).dir, 'swirl');
+      ['norm.null', 'norm.undefined', 'norm.emptyObj', 'norm.emptyColors',
+        'norm.garbageColors'].forEach(function (nm) {
+        var input = nm === 'norm.null' ? null :
+          nm === 'norm.undefined' ? undefined :
+          nm === 'norm.emptyObj' ? {} :
+          nm === 'norm.emptyColors' ? { colors: [] } : { colors: 'nope' };
+        var got = G.norm(input);
+        eq(nm, got.colors.join(), DEFAULT_COLORS.join());
+        eq(nm + '.dir', got.dir, 'auto');
+      });
+      eq('norm.badDir', G.norm({ colors: ['#a'], dir: 'zzz' }).dir, 'auto');
+      eq('norm.cap15', G.norm({ colors: (function () {
+        var a = []; for (var i = 0; i < 20; i++) a.push('#000000'); return a;
+      })() }).colors.length, 15);
+      eq('norm.dropNonStrings', G.norm({ colors: ['#a', 7, null, '#b'] }).colors.join(), '#a,#b');
+      var nA = G.norm({ colors: ['#a'], dir: 'diag', angle: 45 });
+      eq('norm.angle45', nA.angle, 45);
+      eq('norm.angleClamp', G.norm({ colors: ['#a'], angle: 999 }).angle, 360);
+      eq('norm.angleZero', G.norm({ colors: ['#a'], angle: 0 }).angle, 0);
+      ok('norm.angleDrop', G.norm({ colors: ['#a'], angle: 'x' }).angle === undefined);
+      eq('norm.texKept', G.norm({ colors: ['#a'], tex: 'data:image/png;base64,Q' }).tex,
+        'data:image/png;base64,Q');
+      ok('norm.texDrop', G.norm({ colors: ['#a'], tex: 5 }).tex === undefined);
+
+      // css — recipes
+      eq('css.oneColorPassthrough', G.css('#aabbcc'), '#aabbcc');
+      eq('css.oneColorH', G.css({ colors: ['#aabbcc'], dir: 'h' }), '#aabbcc');
+      eq('css.oneColorRadial', G.css({ colors: ['#aabbcc'], dir: 'radial' }), '#aabbcc');
+      eq('css.legacyArray', G.css(['#a', '#b']), 'linear-gradient(135deg, #a, #b)');
+      eq('css.legacyObj', G.css({ colors: ['#a', '#b'] }), 'linear-gradient(135deg, #a, #b)');
+      eq('css.auto', G.css({ colors: ['#a', '#b'], dir: 'auto' }), 'linear-gradient(135deg, #a, #b)');
+      eq('css.h', G.css({ colors: ['#a', '#b'], dir: 'h' }), 'linear-gradient(90deg, #a, #b)');
+      eq('css.v', G.css({ colors: ['#a', '#b'], dir: 'v' }), 'linear-gradient(180deg, #a, #b)');
+      eq('css.diagDefault', G.css({ colors: ['#a', '#b'], dir: 'diag' }), 'linear-gradient(135deg, #a, #b)');
+      eq('css.diagAngle', G.css({ colors: ['#a', '#b'], dir: 'diag', angle: 45 }), 'linear-gradient(45deg, #a, #b)');
+      eq('css.diagAngleZero', G.css({ colors: ['#a', '#b'], dir: 'diag', angle: 0 }), 'linear-gradient(0deg, #a, #b)');
+      eq('css.diag2', G.css({ colors: ['#a', '#b'], dir: 'diag2' }), 'linear-gradient(315deg, #a, #b)');
+      eq('css.radial', G.css({ colors: ['#a', '#b'], dir: 'radial' }), 'radial-gradient(circle at 50% 35%, #a, #b)');
+      eq('css.swirl', G.css({ colors: ['#a', '#b'], dir: 'swirl' }), 'conic-gradient(from 240deg at 55% 45%, #a, #b, #a)');
+      var sw1 = G.css({ colors: ['#aabbcc'], dir: 'swirl' });
+      eq('css.swirl1', sw1, 'conic-gradient(from 240deg at 55% 45%, #aabbcc, ' +
+        lighten('#aabbcc', 25) + ', #aabbcc)');
+      var mesh = G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'mesh' });
+      eq('css.mesh', mesh,
+        'radial-gradient(at 20% 25%, #aabbcc 0px, transparent 55%), ' +
+        'radial-gradient(at 80% 15%, #ccbbaa 0px, transparent 50%), ' +
+        'radial-gradient(at 75% 80%, #aabbcc 0px, transparent 55%), ' +
+        'radial-gradient(at 15% 85%, #ccbbaa 0px, transparent 50%), ' +
+        'linear-gradient(#ccbbaa)');
+      eq('css.mesh1Base', G.css({ colors: ['#aabbcc'], dir: 'mesh' }),
+        'radial-gradient(at 20% 25%, #aabbcc 0px, transparent 55%), ' +
+        'radial-gradient(at 80% 15%, #aabbcc 0px, transparent 50%), ' +
+        'radial-gradient(at 75% 80%, #aabbcc 0px, transparent 55%), ' +
+        'radial-gradient(at 15% 85%, #aabbcc 0px, transparent 50%), ' +
+        'linear-gradient(' + darken('#aabbcc', 20) + ')');
+      eq('css.navy', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-navy' }),
+        'repeating-linear-gradient(45deg, #aabbcc 0 14px, #ccbbaa 14px 28px)');
+      var navy1 = G.css({ colors: ['#aabbcc'], dir: 'pat-navy' });
+      eq('css.navy1', navy1, 'repeating-linear-gradient(45deg, #aabbcc 0 14px, ' +
+        darken('#aabbcc', 18) + ' 14px 28px)');
+      eq('css.pinstripe', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-pinstripe' }),
+        'repeating-linear-gradient(90deg, transparent 0 18px, rgba(170,187,204,.35) 18px 19px), ' +
+        'linear-gradient(160deg, #aabbcc, #ccbbaa)');
+      eq('css.gingham', G.css({ colors: ['#aabbcc', '#ccbbaa', '#123456'], dir: 'pat-gingham' }),
+        'repeating-linear-gradient(0deg, rgba(170,187,204,.55) 0 40px, transparent 40px 80px), ' +
+        'repeating-linear-gradient(90deg, rgba(204,187,170,.35) 0 40px, transparent 40px 80px), ' +
+        'linear-gradient(#123456)');
+      eq('css.sunburst', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-sunburst' }),
+        'repeating-conic-gradient(from 0deg at 50% 100%, #aabbcc 0deg 15deg, #ccbbaa 15deg 30deg)');
+      eq('css.checker', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-checker' }),
+        'repeating-conic-gradient(#aabbcc 0 25%, #ccbbaa 0 50%) 0 0 / 32px 32px');
+      ok('css.checkerTile', G.css({ colors: ['#a', '#b'], dir: 'pat-checker' })
+        .indexOf(' 0 0 / 32px 32px') > 0);
+
+      // tex layering
+      eq('css.tex', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'auto', tex: 'data:image/jpeg;base64,ZZ==' }),
+        'linear-gradient(135deg, #aabbcc, #ccbbaa), url("data:image/jpeg;base64,ZZ==")');
+      eq('css.tex1Color', G.css({ colors: ['#aabbcc'], dir: 'auto', tex: 'data:image/png;base64,Q' }),
+        'linear-gradient(135deg, #aabbcc, #aabbcc), url("data:image/png;base64,Q")');
+
+      // solid + twins
+      eq('solid.first', G.solid(['#112233', '#445566']), '#112233');
+      eq('solid.hex', G.solid('#ff0000'), '#ff0000');
+      eq('solid.fallback', G.solid(null), DEFAULT_COLORS[0]);
+      eq('solid.pattern', G.solid({ colors: ['#abc'], dir: 'pat-checker' }), '#abc');
+      var tw = G.twins({ colors: ['#aabbcc', '#ccbbaa'], dir: 'h' });
+      eq('twins.solid', tw.solid, '#aabbcc');
+      eq('twins.css', tw.css, 'linear-gradient(90deg, #aabbcc, #ccbbaa)');
+      var tw2 = G.twins('#aabbcc');
+      ok('twins.bare', tw2.solid === '#aabbcc' && tw2.css === '#aabbcc');
+
+      // helpers
+      eq('darken.gray', darken('#ffffff', 50), '#808080');
+      eq('lighten.gray', lighten('#000000', 50), '#808080');
+      eq('darken.clamp', darken('#ffffff', 150), '#000000');
+      eq('lighten.clamp', lighten('#000000', 150), '#ffffff');
+      eq('darken.garbage', darken('#a', 20), '#a');
+      eq('rgba.fmt', rgba('#38bdf8', 0.35), 'rgba(56,189,248,.35)');
+      var hr = hexToRgb('#38bdf8');
+      ok('hexToRgb', hr && hr.r === 56 && hr.g === 189 && hr.b === 248);
+      var h3 = hexToRgb('#abc');
+      ok('hexToRgb.3digit', h3 && h3.r === 170 && h3.g === 187 && h3.b === 204);
+      ok('hexToRgb.invalid', hexToRgb('zz') === null);
+
+      // random bounds
+      ok('random.n', G.random(3).length === 3 && G.random(3).every(function (x) {
+        return /^#[0-9a-f]{6}$/.test(x);
+      }));
+      eq('random.one', G.random(1).length, 1);
+      eq('random.cap', G.random(99).length, MAX_COLORS);
+      var boundsOk = true;
+      for (var r = 0; r < 60; r++) {
+        var len = G.random().length;
+        if (len < 2 || len > MAX_COLORS) { boundsOk = false; break; }
+      }
+      ok('random.bounds2to15', boundsOk);
+
+      // constants
+      eq('MAX', G.MAX, 15);
+      eq('BLENDED', G.BLENDED, true);
+
+      return { ok: failures.length === 0, failures: failures };
     }
   };
 
-  // ══ CropUI — the drag-to-crop overlay ═════════════════════════════
+  // the shared canvas downscale helper (tweaks.js's pipeline, made
+  // local): ≤ maxEdge on the long edge, re-encode, return the dataURL
+  // ('' on failure). Used by textureFromFile.
+  function downscaleToDataURL(img, maxEdge, type, quality) {
+    var w = img.naturalWidth || img.width;
+    var h = img.naturalHeight || img.height;
+    if (!w || !h) return '';
+    var scale = Math.min(1, maxEdge / Math.max(w, h));
+    var cw = Math.max(1, Math.round(w * scale));
+    var ch = Math.max(1, Math.round(h * scale));
+    var cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    cv.getContext('2d').drawImage(img, 0, 0, w, h, 0, 0, cw, ch);
+    var dataURL = '';
+    try { dataURL = cv.toDataURL(type, quality); } catch (e) { dataURL = ''; }
+    if (!dataURL || dataURL.indexOf('base64,') < 0) return '';
+    return dataURL;
+  }
+
+  // ══ CropUI v2 — pinch-zoom + rotate drag-to-crop overlay ═════════
   //
   // The image sits UNDER a fixed-aspect crop frame (the card's). The
-  // user drags it around (pan) and zooms (slider, 1–4× the cover
-  // scale); apply() crops the frame's region from the ORIGINAL bitmap
-  // — the output is never stretched, only re-encoded at up to maxEdge
-  // on the long edge so clarity survives even on wide screens.
+  // user drags it around (pan), pinch-zooms (two pointers, zoom
+  // around the live midpoint, 1–8×), rotates 90° (baked into the
+  // source bitmap), double-taps to reset; apply() crops the frame's
+  // region from the ORIGINAL pixels — never stretched, re-encoded at
+  // up to maxEdge on the long edge.
   var CropUI = (function () {
     var st = null; // the live overlay state
 
@@ -304,6 +940,37 @@
       place();
     }
 
+    // rotate 90° ↻ — baked into the SOURCE bitmap so apply() crops
+    // the rotated pixels at full fidelity (the canvas IS a valid
+    // CanvasImageSource, so no load wait: st.nat swaps immediately
+    // and measure()+reset() reflow the frame; the <img> only needs a
+    // display copy of the dataURL)
+    function rotate90() {
+      if (!st || !st.img) return;
+      var w = st.nat.h, h = st.nat.w;    // dimensions swap
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      var ctx = cv.getContext('2d');
+      ctx.translate(w / 2, h / 2);
+      ctx.rotate(Math.PI / 2);           // 90° clockwise
+      ctx.drawImage(st.img, -st.nat.w / 2, -st.nat.h / 2);
+      var dataURL = '';
+      try { dataURL = cv.toDataURL('image/jpeg', 0.9); } catch (e) { dataURL = ''; }
+      if (!dataURL || dataURL.indexOf('base64,') < 0) {
+        if (st.onErr) st.onErr('could not rotate');
+        return;
+      }
+      if (st.url) {
+        try { URL.revokeObjectURL(st.url); } catch (e) {}
+        st.url = '';
+      }
+      st.img = cv;                       // apply() draws from this
+      st.nat = { w: w, h: h };
+      st.imgEl.src = dataURL;            // display-only copy
+      measure();
+      reset();
+    }
+
     function open(opts) {
       if (st) close();
       opts = opts || {};
@@ -355,19 +1022,22 @@
         '</div>' +
         '<div class="crop-ctl">' +
           '<button type="button" class="crop-btn" data-crop-reset="1" title="reset" aria-label="reset">↺</button>' +
-          '<input type="range" class="crop-zoom" min="1" max="4" step="0.01" value="1" aria-label="zoom">' +
-          '<span class="crop-hint">drag the image · zoom with the slider</span>' +
+          '<button type="button" class="crop-btn" data-crop-rotate="1" title="rotate 90°" aria-label="rotate 90 degrees">↻</button>' +
+          '<input type="range" class="crop-zoom" min="1" max="8" step="0.01" value="1" aria-label="zoom">' +
+          '<span class="crop-hint">drag or pinch · zoom slider · ↻ rotates</span>' +
         '</div>';
       document.body.appendChild(el);
       st.el = el;
       st.frameEl = el.querySelector('.crop-frame');
       st.imgEl = el.querySelector('.crop-img');
+      st.fitEl = el.querySelector('.crop-fit');
       st.imgEl.src = st.url || st.img.src;
 
       // wire the buttons
       el.querySelector('.crop-x').addEventListener('click', cancel);
       el.querySelector('.crop-ok').addEventListener('click', apply);
       el.querySelector('[data-crop-reset]').addEventListener('click', function () { reset(); });
+      el.querySelector('[data-crop-rotate]').addEventListener('click', function () { rotate90(); });
       el.querySelector('.crop-zoom').addEventListener('input', function (e) {
         var oldZ = st.zoom;
         st.zoom = parseFloat(e.target.value) || 1;
@@ -379,29 +1049,112 @@
       });
       el.querySelector('.crop-stage').addEventListener('dblclick', function () { reset(); });
 
-      // drag (pointer events cover touch + mouse)
+      // drag + PINCH (pointer events cover touch + mouse). evCache is
+      // the W3C pattern: push on pointerdown, update IN PLACE by
+      // pointerId on pointermove, remove on up/cancel/out/leave. Two
+      // pointers = pinch-zoom around the CURRENT midpoint; one = pan.
       var stage = el.querySelector('.crop-stage');
+      var evCache = [];
       var drag = null;
+      var pinch = null;   // { d: previous two-pointer distance }
+      var lastTap = null; // { t, x, y } — double-tap reset
+
+      function evFind(id) {
+        for (var i = 0; i < evCache.length; i++) {
+          if (evCache[i].id === id) return i;
+        }
+        return -1;
+      }
+      function evDist() {
+        var a = evCache[0], b = evCache[1];
+        var dx = a.x - b.x, dy = a.y - b.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
       stage.addEventListener('pointerdown', function (e) {
         if (!st) return;
-        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: st.x, oy: st.y };
-        stage.setPointerCapture(e.pointerId);
+        var i = evFind(e.pointerId);
+        if (i >= 0) evCache.splice(i, 1);   // stale duplicate guard
+        evCache.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+        if (evCache.length === 1) {
+          drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: st.x, oy: st.y };
+        } else {
+          drag = null;                        // second finger → pinch
+          pinch = { d: evDist() };
+        }
+        try { stage.setPointerCapture(e.pointerId); } catch (err) {}
         stage.classList.add('grabbing');
         e.preventDefault();
       });
+
       stage.addEventListener('pointermove', function (e) {
-        if (!st || !drag || e.pointerId !== drag.id) return;
-        st.x = drag.ox + (e.clientX - drag.x);
-        st.y = drag.oy + (e.clientY - drag.y);
-        place();
+        if (!st) return;
+        var i = evFind(e.pointerId);
+        if (i < 0) return;                    // untracked hover
+        evCache[i].x = e.clientX;
+        evCache[i].y = e.clientY;
+        if (evCache.length >= 2) {
+          // pinch: k = distNow / distPrev, focal = current midpoint
+          // (frame-local so the math matches st.x/st.y's space)
+          var d = evDist();
+          if (pinch && pinch.d > 1 && d > 1) {
+            var k = d / pinch.d;
+            var r = st.fitEl.getBoundingClientRect();
+            var a = evCache[0], b = evCache[1];
+            var p = { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+            var oldZ = st.zoom;
+            var newZ = Math.max(1, Math.min(8, oldZ * k));
+            var keff = oldZ > 0 ? newZ / oldZ : 1;  // respect the clamp
+            st.x = p.x - (p.x - st.x) * keff;
+            st.y = p.y - (p.y - st.y) * keff;
+            st.zoom = newZ;
+            var zs = st.el.querySelector('.crop-zoom');
+            if (zs) zs.value = String(newZ);
+            place();
+          }
+          pinch = { d: d };
+        } else if (drag && e.pointerId === drag.id) {
+          st.x = drag.ox + (e.clientX - drag.x);
+          st.y = drag.oy + (e.clientY - drag.y);
+          place();
+        }
       });
-      var up = function (e) {
-        if (!drag || e.pointerId !== drag.id) return;
-        drag = null;
-        stage.classList.remove('grabbing');
+
+      var release = function (e) {
+        if (!st) return;                       // overlay already closed
+        var i = evFind(e.pointerId);
+        if (i < 0) return;
+        // double-tap reset: second tap within 300ms and 25px
+        if (e.type === 'pointerup') {
+          var now = (e.timeStamp && isFinite(e.timeStamp) && e.timeStamp > 0)
+            ? e.timeStamp : Date.now();
+          if (lastTap && (now - lastTap.t) <= 300 &&
+              Math.abs(e.clientX - lastTap.x) < 25 &&
+              Math.abs(e.clientY - lastTap.y) < 25) {
+            lastTap = null;
+            reset();
+          } else {
+            lastTap = { t: now, x: e.clientX, y: e.clientY };
+          }
+        }
+        evCache.splice(i, 1);
+        if (evCache.length === 0) {
+          drag = null;
+          pinch = null;
+          stage.classList.remove('grabbing');
+        } else if (evCache.length === 1) {
+          // the remaining finger continues as a pan
+          var rp = evCache[0];
+          drag = { id: rp.id, x: rp.x, y: rp.y, ox: st.x, oy: st.y };
+          pinch = null;
+        } else {
+          pinch = { d: evDist() };
+        }
       };
-      stage.addEventListener('pointerup', up);
-      stage.addEventListener('pointercancel', up);
+      stage.addEventListener('pointerup', release);
+      stage.addEventListener('pointercancel', release);
+      stage.addEventListener('pointerout', release);
+      stage.addEventListener('pointerleave', release);
 
       document.addEventListener('keydown', onKey, true);
       st._onResize = function () { if (st) { measure(); reset(); } };
@@ -429,7 +1182,21 @@
     };
   })();
 
-  window.UIPills = UIPills;
-  window.GradientUI = GradientUI;
-  window.CropUI = CropUI;
+  // ── exports: browser globals, or the node module path for the
+  // self-test script (nothing above touches document/window at load
+  // time except the guarded style injection) ──
+  if (typeof window !== 'undefined') {
+    window.UIPills = UIPills;
+    window.GradientUI = GradientUI;
+    window.CropUI = CropUI;
+  } else if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      GradientUI: GradientUI,
+      // the GradientSpec helpers (pure, test-critical)
+      hexToRgb: hexToRgb,
+      darken: darken,
+      lighten: lighten,
+      rgba: rgba
+    };
+  }
 })();

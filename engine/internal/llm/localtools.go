@@ -74,8 +74,10 @@ ACTION: persona_list {} — list YOUR personas and placeholders in this chat (id
 ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous)
 ACTION: persona_activate {"id": "p_123"} — become a listed persona (deactivates the previous one); {"id": ""} deactivates all (back to the app default)
 ACTION: placeholder_set {"key": "mood", "value": "playful"} — set a {placeholder} usable in personas and triggers
+ACTION: template_list {} — browse the app's method-template library (ids, names, stage counts): research pipelines, superpowers disciplines, audits, lessons…
+ACTION: template_show {"id": "redteam"} — read one template's full methodology (stages with instructions, or the markdown discipline); FOLLOW it for the task when the user picks one or asks for that method
 For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download. After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.
-Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files). You may inspect and rework your own personality with the persona tools whenever the user asks for a change in tone, style, name, or behavior — do it instead of only describing how it would be done.`
+Use a tool whenever it beats guessing (math, time, encodings, ids, validation, files, live facts, methodology). You may inspect and rework your own personality with the persona tools whenever the user asks for a change in tone, style, name, or behavior — do it instead of only describing how it would be done.`
 
 // IsLocalTool reports whether name is a local tool.
 func IsLocalTool(name string) bool {

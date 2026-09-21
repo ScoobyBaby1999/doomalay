@@ -99,6 +99,15 @@ func (e *Event) ToJSON() ([]byte, error) {
                 IsError   bool             `json:"is_error,omitempty"`
                 State     string           `json:"state,omitempty"`
                 Usage     any              `json:"usage,omitempty"`
+                // v0.44 INTERRUPT FIX: a status event may carry a human
+                // message — the v0.39 boot-heal writes "interrupted by
+                // engine restart" — but ToJSON decoded only state+usage,
+                // so the message was DROPPED on the wire: a replayed
+                // healed turn ended silently and the PWA had no text to
+                // show for why the reply died. Pass both through when
+                // the content actually carries them.
+                Message   string           `json:"message,omitempty"`
+                Healed    bool             `json:"healed,omitempty"`
                 Title     string           `json:"title,omitempty"`
                 Sources   []map[string]any `json:"sources,omitempty"`
                 SessionID string           `json:"session_id,omitempty"`
@@ -118,12 +127,18 @@ func (e *Event) ToJSON() ([]byte, error) {
         // If content is a JSON object (usage, etc.), decode it into the right field.
         if e.EventType == "status" && e.Content != "" {
                 var st struct {
-                        State string `json:"state"`
-                        Usage any    `json:"usage"`
+                        State   string `json:"state"`
+                        Usage   any    `json:"usage"`
+                        Message string `json:"message"`
+                        Healed  bool   `json:"healed"`
                 }
                 if json.Unmarshal([]byte(e.Content), &st) == nil {
                         w.State = st.State
                         w.Usage = st.Usage
+                        if st.Message != "" {
+                                w.Message = st.Message
+                                w.Healed = st.Healed
+                        }
                 }
         }
         // v0.37: 'hide' content is the JSON array of masked event ids — decode

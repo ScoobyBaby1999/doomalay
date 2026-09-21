@@ -24,6 +24,16 @@
 //     ('reconnecting' with attempt counts → 'open' on resume, 'failed'
 //     when the ladder gives up — the UI then shows the honest error).
 //
+// v0.44 INTERRUPT FIX (REPLAY TAG): the server replays the connect-time
+// backlog (full transcript on a fresh open, the gap after &since=N on a
+// resume) as a back-to-back burst on the new socket, followed by the
+// LIVE feed — and nothing on the wire says which is which. The panel
+// needs to know (a live delta re-arms the streaming state; a REPLAYED
+// old delta must not). While the burst runs, every event is tagged with
+// a synthetic `_replay: true`; the tag clears after a ~1.2s quiet gap
+// (the backlog drain pauses exactly that long only when it's over) or
+// on close/failed. isReplaying() exposes the live state.
+//
 // Exposes: window.ChatClient
 
 (function () {
@@ -45,7 +55,39 @@
     this.lastSeq = 0;           // highest seq seen (live or replayed)
     this.turnActive = false;    // a send is in flight (until status idle/error)
     this._attempt = 0;          // ladder position
+    // v0.44 replay tag: true from connect() until the backlog burst goes
+    // quiet (REPLAY_QUIET_MS) — events dispatched meanwhile carry
+    // _replay:true so the panel can skip stream re-arm on old history.
+    this._replaying = false;
+    this._replayLastAt = 0;
   }
+
+  // v0.44: true while the connect-time backlog burst is still draining
+  // (full replay on open, gap replay on resume). Events dispatched now
+  // are tagged ev._replay — historical, not live.
+  ChatClient.prototype.isReplaying = function () {
+    return !!this._replaying;
+  };
+
+  // v0.44: stamp the replay tag onto an incoming event. The quiet-gap
+  // clock starts at the FIRST arrival after open (_replayLastAt 0 = no
+  // event yet — connect latency must never end the drain before it
+  // starts); once events flow, a >REPLAY_QUIET_MS gap between arrivals
+  // means the backlog drained — this event (and everything after) is
+  // LIVE and goes out untagged.
+  ChatClient.prototype._tagReplay = function (ev) {
+    var now = Date.now();
+    if (this._replaying) {
+      if (this._replayLastAt && now - this._replayLastAt > 1200) this._replaying = false;
+      else if (ev && typeof ev === 'object') ev._replay = true;
+    }
+    this._replayLastAt = now;
+  };
+
+  ChatClient.prototype._stopReplayTag = function () {
+    this._replaying = false;
+    this._replayLastAt = 0;
+  };
 
   // v0.14: absolute WS base. baseUrl (when given) wins; otherwise derive
   // from location — ws:// for http, wss:// for https.
@@ -69,12 +111,18 @@
     if (this.lastSeq > 0) url += '&since=' + this.lastSeq;
 
     this.state = 'connecting';
+    // v0.44: the socket is about to deliver the connect-time backlog
+    // (the replay burst) before the live feed — arm the replay tag (the
+    // quiet-gap clock starts at the first arrival, not here).
+    this._replaying = true;
+    this._replayLastAt = 0;
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
       // Constructor-level failure (bad URL / very old WebView). Surface it —
       // the silent version of this was the 15s "Still connecting" dead end.
       this.state = 'failed';
+      this._stopReplayTag(); // v0.44: no socket, no backlog drain
       this.lastError = 'WebSocket unavailable: ' + (e && e.message ? e.message : e);
       console.error('WS connect failed', e);
       return;
@@ -96,6 +144,9 @@
     this.ws.onmessage = function (e) {
       try {
         var ev = JSON.parse(e.data);
+        // v0.44: tag the connect-time backlog burst (_replay) BEFORE the
+        // panel sees it — see the header comment.
+        self._tagReplay(ev);
         // v0.39: track the seq cursor + turn activity for the ladder.
         if (ev && typeof ev.seq === 'number' && ev.seq > self.lastSeq) {
           self.lastSeq = ev.seq;
@@ -116,6 +167,7 @@
     this.ws.onclose = function (ev) {
       var wasOpen = self.connected;
       self.connected = false;
+      self._stopReplayTag(); // v0.44: a closed socket ends any backlog drain
       if (self._closedByUser) {
         self.state = 'idle';
         return;
@@ -186,11 +238,16 @@
     // v0.15: model + provider ride every send too — the engine re-fetches
     // the session per turn AND applies these overrides, so a turn can
     // never run through a stale provider (the universal-401 bug).
+    // v0.44: template_id + template_brief ride the send when the
+    // composer has a method template active (the template pill — the
+    // brief is the resolved methodology text the engine injects).
     var payload = { type: 'send', message: text };
     if (opts) {
       if (opts.effort !== undefined) payload.effort = opts.effort;
       if (opts.web_search !== undefined) payload.web_search = !!opts.web_search;
       if (opts.deep_research !== undefined) payload.deep_research = !!opts.deep_research;
+      if (opts.template_id !== undefined && opts.template_id !== null && opts.template_id !== '') payload.template_id = opts.template_id;
+      if (opts.template_brief !== undefined && opts.template_brief !== null && opts.template_brief !== '') payload.template_brief = opts.template_brief;
       if (opts.model !== undefined && opts.model !== null && opts.model !== '') payload.model = opts.model;
       if (opts.provider !== undefined && opts.provider !== null && opts.provider !== '') payload.provider = opts.provider;
     }
@@ -229,6 +286,7 @@
 
   ChatClient.prototype.close = function () {
     this._closedByUser = true;
+    this._stopReplayTag(); // v0.44
     if (this.ws) {
       this.ws.onclose = null; // suppress callback
       this.ws.close();

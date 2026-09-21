@@ -1,10 +1,12 @@
 package server
 
-// v30_test.go — v0.30 engine behaviors: the per-chat TWEAKS kv store
-// (GET/PUT /api/sessions/{id}/tweaks — size cap + JSON validation) and
-// the chat BACKGROUND image endpoint (PUT/GET/DELETE round-trip, rev
-// bumping, mime sniffing, the 4MB cap, and the session-delete cleanup
-// that keeps kv rows from outliving their chat).
+// v30_test.go — v0.30→v0.44 engine behaviors: the per-chat TWEAKS kv
+// store (GET/PUT /api/sessions/{id}/tweaks — size cap + JSON
+// validation), the chat BACKGROUND image endpoint (PUT/GET/DELETE
+// round-trip, rev bumping, mime sniffing, the 4MB cap), the v0.44
+// gradient TEXTURE endpoint (the same contract on its own rev'd row),
+// and the session-delete cleanup that keeps kv rows from outliving
+// their chat.
 
 import (
 	"bytes"
@@ -192,8 +194,92 @@ func TestBackgroundRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTextureRoundTrip — v0.44: the gradient's blended texture rides the
+// same rev'd-row contract as the background (upload, byte-exact readback
+// with the sniffed type, rev bump, immutable cache, 415 on non-images,
+// delete).
+func TestTextureRoundTrip(t *testing.T) {
+	s := seedV30Session(t, "v30e")
+
+	// no texture yet → 404
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/sessions/v30e/texture", nil))
+	if rec.Code != 404 {
+		t.Fatalf("fresh chat texture: status %d, want 404", rec.Code)
+	}
+
+	// upload → rev 1 + sniffed mime
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/sessions/v30e/texture", bytes.NewReader(tinyPNG)))
+	if rec.Code != 200 {
+		t.Fatalf("PUT texture: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var up struct {
+		Rev  int    `json:"rev"`
+		Mime string `json:"mime"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&up); err != nil {
+		t.Fatalf("decode put: %v", err)
+	}
+	if up.Rev != 1 || up.Mime != "image/png" {
+		t.Fatalf("texture put resp = %+v, want rev 1 + image/png", up)
+	}
+
+	// read back — bytes + content type + the same immutable cache header
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/sessions/v30e/texture?v=1", nil))
+	if rec.Code != 200 {
+		t.Fatalf("GET texture: status %d", rec.Code)
+	}
+	body, _ := io.ReadAll(rec.Body)
+	if !bytes.Equal(body, tinyPNG) {
+		t.Fatalf("texture bytes differ (%d vs %d)", len(body), len(tinyPNG))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("texture content type %q, want image/png", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("texture cache-control %q, want immutable", cc)
+	}
+
+	// the texture row is SEPARATE from the background row
+	if raw, err := s.db.GetSetting("chat.bg.v30e"); err == nil && strings.TrimSpace(raw) != "" {
+		t.Fatalf("texture PUT leaked into the background row: %q", raw)
+	}
+
+	// re-upload → rev bumps
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/sessions/v30e/texture", bytes.NewReader(tinyPNG)))
+	if err := json.NewDecoder(rec.Body).Decode(&up); err != nil {
+		t.Fatalf("decode re-put: %v", err)
+	}
+	if up.Rev != 2 {
+		t.Fatalf("texture re-upload rev = %d, want 2", up.Rev)
+	}
+
+	// non-image bytes → 415
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/sessions/v30e/texture", strings.NewReader("definitely not an image")))
+	if rec.Code != 415 {
+		t.Fatalf("texture non-image: status %d, want 415", rec.Code)
+	}
+
+	// delete → gone
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/sessions/v30e/texture", nil))
+	if rec.Code != 200 {
+		t.Fatalf("DELETE texture: status %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/sessions/v30e/texture", nil))
+	if rec.Code != 404 {
+		t.Fatalf("GET texture after DELETE: status %d, want 404", rec.Code)
+	}
+}
+
 // TestSessionDeleteCleansTweaks — a deleted chat must not leak its tweak
-// + background rows (they'd orphan in app_settings forever otherwise).
+// + background + texture rows (they'd orphan in app_settings forever
+// otherwise).
 func TestSessionDeleteCleansTweaks(t *testing.T) {
 	s := seedV30Session(t, "v30d")
 
@@ -203,6 +289,7 @@ func TestSessionDeleteCleansTweaks(t *testing.T) {
 		t.Fatalf("put tweaks: %d", put.Code)
 	}
 	s.mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/sessions/v30d/background", bytes.NewReader(tinyPNG)))
+	s.mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/sessions/v30d/texture", bytes.NewReader(tinyPNG)))
 
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/sessions/v30d", nil))
@@ -216,5 +303,8 @@ func TestSessionDeleteCleansTweaks(t *testing.T) {
 	}
 	if raw, err := s.db.GetSetting("chat.bg.v30d"); err == nil && strings.TrimSpace(raw) != "" {
 		t.Fatalf("background row survived the session delete: %q", raw)
+	}
+	if raw, err := s.db.GetSetting("chat.tex.v30d"); err == nil && strings.TrimSpace(raw) != "" {
+		t.Fatalf("texture row survived the session delete: %q", raw)
 	}
 }

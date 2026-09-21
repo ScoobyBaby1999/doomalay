@@ -899,10 +899,31 @@ func isHexColor(s string) bool {
 	return true
 }
 
-// normalizeDesign keeps up to 10 gradient stops, dropping any stop that
-// is not a strict hex color (the stops are re-emitted into CSS gradients
-// client-side — they must be colors, not arbitrary strings). An empty
-// result degrades to "none".
+// v0.44 design caps: the uikit gradient editor grew to 15 stops and
+// gained dir/angle/tex (the shared spec contract). Tex rides the item
+// JSON as a dataURL string — it must LOOK like one and stay under the
+// 200KB cap or it's dropped (the card still renders the bare gradient).
+const (
+	designMaxColors = 15
+	designTexMax    = 200 << 10 // dataURL string length (chars ≈ bytes × 4/3 raw)
+)
+
+// designDirs is the v2 dir whitelist — exactly GradientUI's 12 dirs.
+var designDirs = map[string]bool{
+	"auto": true, "h": true, "v": true, "diag": true, "diag2": true,
+	"radial": true, "swirl": true, "mesh": true,
+	"pat-navy": true, "pat-pinstripe": true, "pat-gingham": true,
+	"pat-sunburst": true, "pat-checker": true,
+}
+
+// normalizeDesign keeps up to 15 gradient stops (v0.44 — was 10; old
+// ≤10-color rows pass untouched), dropping any stop that is not a
+// strict hex color (the stops are re-emitted into CSS gradients
+// client-side — they must be colors, not arbitrary strings). Dir must
+// be on the whitelist (missing/unknown → "auto" — the legacy 135°
+// linear sweep, so pre-v0.44 rows render exactly as before). Angle is
+// clamped to 0–360. Tex must be a data:image/… URL under 200KB, else
+// it's dropped. An empty color result degrades to "none".
 func normalizeDesign(d Design) Design {
 	switch d.Kind {
 	case "gradient":
@@ -911,13 +932,24 @@ func normalizeDesign(d Design) Design {
 			if isHexColor(c) {
 				kept = append(kept, c)
 			}
-			if len(kept) == 10 {
+			if len(kept) == designMaxColors {
 				break
 			}
 		}
 		d.Colors = kept
 		if len(d.Colors) == 0 {
 			d.Kind = "none"
+		}
+		if !designDirs[d.Dir] {
+			d.Dir = "auto"
+		}
+		if d.Angle < 0 || d.Angle > 360 {
+			d.Angle = clampInt(d.Angle, 0, 360)
+		}
+		if d.Tex != "" {
+			if !strings.HasPrefix(d.Tex, "data:image/") || len(d.Tex) > designTexMax {
+				d.Tex = ""
+			}
 		}
 	case "png":
 		// kept only when a PNG is actually attached (checked by the caller)
@@ -926,8 +958,22 @@ func normalizeDesign(d Design) Design {
 	}
 	if d.Kind != "gradient" {
 		d.Colors = nil
+		d.Dir = ""
+		d.Angle = 0
+		d.Tex = ""
 	}
 	return d
+}
+
+// clampInt pins v into [lo,hi] (angle sanitation helper).
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func bytesTrimSpace(b []byte) []byte {

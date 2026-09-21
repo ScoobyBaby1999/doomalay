@@ -1,4 +1,4 @@
-// hubpublish.js — v0.31→v0.33 THE HUB: publish + the Hugging Face connect flow.
+// hubpublish.js — v0.31→v0.44 THE HUB: publish + the Hugging Face connect flow.
 //
 // USER SPEC (Batch 10): "The publish page should be scrollable or act
 // more like the editor pages… the user should be able to scroll or
@@ -9,16 +9,21 @@
 // as well, which should use a random gradient and not strictly 2 or 3
 // colors."
 //
-// So the form became three COLLAPSIBLE sections (the essentials · card
+// v0.44: the card design rides the full gradient SPEC (the shared
+// GradientUI v2 system — "tweaking the per chat gradients… use the
+// gradient system"): style / pattern / angle rows + an optional
+// texture (a dataURL ≤ the engine's 200KB design cap, sent inline in
+// the design — the hub card bakes it into the css, unlike the chat bg
+// which uploads to a rev'd engine row). The preview strip renders the
+// exact css the card will.
+//
+// So the form is three COLLAPSIBLE sections (the essentials · card
 // design · payload) with the payload carrying a FOCUS toggle — ⤢ grows
 // it to own the whole panel (the other sections collapse away and come
 // back with one tap), exactly like the editor pages treat their body.
-// The card design rides the shared GradientUI (1–10 colors, per-color
-// remove, ＋ add, ⤨ shuffle, ↻ random — and "random" now picks a RANDOM
-// stop count, not strictly 2 or 3). The image picker rides CropUI —
-// drag the image under the card's frame; the crop is taken from the
-// ORIGINAL pixels, so resolution and clarity are kept (≤1024px long
-// edge, never stretched).
+// The image picker rides CropUI — drag the image under the card's
+// frame; the crop is taken from the ORIGINAL pixels, so resolution and
+// clarity are kept (≤1024px long edge, never stretched).
 //
 // If the engine answers 401 (no HF token), the FORM IS NOT LOST: a
 // CONNECT view stacks on top — step 1 opens the HF token page
@@ -28,13 +33,17 @@
 // whoami; a bad token shows inline and stays). On success the pending
 // publish auto-resumes; on publish OK the new item's detail opens.
 //
+// v0.44 TEMPLATE PILL: templates publish through the SAME flow (type
+// "template"; payload = the template JSON — the sheet prefills
+// name/desc/payload from the library entry via open()'s prefill).
+//
 // Exposes: window.HubPublish = { open }
 (function () {
   'use strict';
 
   var MAX_TAGS = 15, MAX_TAG_LEN = 24; // the engine's caps — mirrored UI-side
 
-  var cur = null; // { panel, type, name, desc, tags, design, pngBase64, payload, folds, focus }
+  var cur = null; // { panel, type, name, desc, tags, design:{kind,spec}, pngBase64, payload, folds, focus }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -103,6 +112,8 @@
   }
 
   // ── entry ────────────────────────────────────────────────────────
+  // v0.44: prefill now also carries desc — the template sheet publishes
+  // an existing library entry with its description already filled.
   function open(type, prefill) {
     var panel = PV();
     if (!panel) { toast('open a chat first'); return; }
@@ -112,9 +123,11 @@
       panel: panel,
       type: type || 'persona',
       name: prefill.name || '',
-      desc: '',
+      desc: prefill.desc || '',
       tags: [],
-      design: { kind: 'none', colors: GU.random() }, // "none" still sends a picked gradient
+      // v0.44: a full gradient spec — "none" still sends the picked
+      // gradient (the card stays deterministic)
+      design: { kind: 'none', spec: { colors: GU.random(), dir: 'auto' } },
       pngBase64: '',
       payload: prefill.payload || '',
       folds: { details: false, design: false },       // sections start open
@@ -144,7 +157,7 @@
     if (desg === 'gradient') {
       designHTML =
         '<div class="hp-design">' +
-          (window.GradientUI ? window.GradientUI.editor('hp', c.design.colors) : '') +
+          (window.GradientUI ? window.GradientUI.editor('hp', c.design.spec) : '') +
         '</div>';
     } else if (desg === 'image') {
       designHTML =
@@ -226,17 +239,24 @@
     );
   }
 
+  // the preview strip — the exact css the published card will render
+  // (tex dataURL inline, gradient over it with blend 'color' per the
+  // uikit contract); 1-color plain → background-color (the solid case)
   function previewBackground() {
     var c = cur;
     if (c.design.kind === 'image' && c.pngBase64) {
       return 'background-image:url(data:image/png;base64,' + c.pngBase64 + ')';
     }
-    var colors = (c.design.colors && c.design.colors.length)
-      ? c.design.colors : ['#38bdf8', '#a78bfa'];
-    if (window.GradientUI) {
-      var css = window.GradientUI.css(colors);
-      return colors.length === 1 ? ('background-color:' + css) : ('background-image:' + css);
+    var GU = window.GradientUI;
+    var spec = (c.design.spec && c.design.spec.colors && c.design.spec.colors.length)
+      ? c.design.spec : null;
+    if (GU && spec) {
+      var css = GU.css(spec);
+      if (css.charAt(0) === '#') return 'background-color:' + css;
+      return 'background-image:' + css +
+        ((spec.tex && GU.BLENDED) ? ';background-blend-mode:color' : '');
     }
+    var colors = (spec && spec.colors.length) ? spec.colors : ['#38bdf8', '#a78bfa'];
     return 'background-image:linear-gradient(135deg,' + colors.join(',') + ')';
   }
 
@@ -301,15 +321,15 @@
       });
     });
 
-    // the design segment
+    // the design segment — switching to gradient KEEPS an existing spec
+    // (back-and-forth no longer re-randomizes the user's edit); a fresh
+    // publish starts from the familiar pair
     el.querySelectorAll('[data-desg]').forEach(function (b) {
       b.addEventListener('click', function () {
         var k = b.getAttribute('data-desg');
         if (k === c.design.kind) return;
-        if (k === 'gradient') {
-          // the editor starts from the familiar pair — the ↻ random
-          // button (and the "random" segment) are what vary the count
-          c.design.colors = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+        if (k === 'gradient' && !(c.design.spec && c.design.spec.colors && c.design.spec.colors.length)) {
+          c.design.spec = { colors: (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2), dir: 'auto' };
         }
         if (k !== 'image') c.pngBase64 = '';
         c.design.kind = k;
@@ -317,11 +337,14 @@
       });
     });
 
-    // the shared gradient editor (1–10 colors · remove · add · shuffle · random)
+    // the shared gradient editor — FULL options (style / pattern /
+    // angle / texture); wire() mutates the live spec IN PLACE, live
+    // (color / angle) repaints the preview strip in place, shape changes
+    // re-render (the form's values live in `cur`, so nothing is lost)
     if (window.GradientUI) {
       var gr = el.querySelector('#hp-gr');
-      if (gr) window.GradientUI.wire(gr, {
-        colors: c.design.colors,
+      if (gr && c.design.spec) window.GradientUI.wire(gr, {
+        spec: c.design.spec,
         live: function () {
           var pv = el.querySelector('#hp-preview');
           if (pv) pv.setAttribute('style', previewBackground());
@@ -330,10 +353,15 @@
       });
     }
 
-    // random — a NEW random gradient (any count, not just 2–3)
+    // random — a NEW random gradient (any count, not just 2–3; colors
+    // only — a chosen style/texture survives the reroll, the uikit ↻
+    // contract)
     var reroll = el.querySelector('#hp-reroll');
     if (reroll) reroll.addEventListener('click', function () {
-      c.design.colors = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
+      var rnd = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
+      var spec = c.design.spec || (c.design.spec = {});
+      spec.colors = rnd;
+      if (!spec.dir) spec.dir = 'auto';
       c.panel.replaceView(buildView());
     });
 
@@ -390,13 +418,21 @@
 
   // what the engine receives: "none" sends the generated gradient (the
   // card stays deterministic); "image" rides the pngBase64 field; the
-  // gradient carries 1–10 stops.
+  // gradient carries the FULL v0.44 spec — colors + dir + angle + the
+  // tex dataURL (≤ the engine's 200KB design cap; empty when none).
   function designOut() {
     if (cur.design.kind === 'image') return { kind: 'png', colors: [] };
-    var colors = (cur.design.colors && cur.design.colors.length >= 1)
-      ? cur.design.colors.slice(0, (window.GradientUI && window.GradientUI.MAX) || 10)
-      : (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
-    return { kind: 'gradient', colors: colors };
+    var GU = window.GradientUI;
+    if (!GU || !cur.design.spec || !cur.design.spec.colors || !cur.design.spec.colors.length) {
+      // no editor (or an empty spec) — the deterministic random pair
+      var fallback = (GU || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
+      return { kind: 'gradient', colors: fallback, dir: 'auto' };
+    }
+    var n = GU.norm(cur.design.spec);
+    var out = { kind: 'gradient', colors: n.colors, dir: n.dir };
+    if (typeof n.angle === 'number') out.angle = n.angle;
+    if (n.tex) out.tex = n.tex;   // the dataURL rides the item JSON
+    return out;
   }
 
   // ── publish ───────────────────────────────────────────────────────

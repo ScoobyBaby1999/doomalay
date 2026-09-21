@@ -1,4 +1,4 @@
-// hub.js — v0.31→v0.33 THE PUBLIC LIBRARY (the modular hub panel).
+// hub.js — v0.31→v0.44 THE PUBLIC LIBRARY (the modular hub panel).
 //
 // USER SPEC (Batch 10): "In the hub panel, let's rename it to Public
 // Library, let's put everything that isn't the grid itself as the
@@ -415,12 +415,27 @@
     );
   }
 
-  // The card's background layer: design gradient (1–10 stops — one
-  // stop renders solid) → PNG (probed, fading 100→0 alpha into the card
-  // surface) → deterministic id gradient.
+  // The card's background layer: a v0.44 design SPEC (the shared
+  // gradient system — 1–15 stops, dir / angle / an optional texture
+  // dataURL blended in with background-blend-mode: color; legacy rows
+  // without dir render exactly as before: 'auto' = the 135° linear
+  // sweep — one stop renders solid) → PNG (probed, fading 100→0 alpha
+  // into the card surface) → deterministic id gradient.
   function paintCardBg(bgEl, it) {
     var d = it.design || {};
     if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
+      var GU = window.GradientUI;
+      if (GU) {
+        var css = GU.css({ colors: d.colors, dir: d.dir, angle: d.angle, tex: d.tex });
+        if (css.charAt(0) === '#') {
+          bgEl.style.backgroundColor = css;   // one stop + no texture = a solid
+        } else {
+          bgEl.style.backgroundImage = css;   // the tex dataURL rides as the bottom layer
+          if (d.tex && GU.BLENDED) bgEl.style.backgroundBlendMode = 'color';
+        }
+        return;
+      }
+      // no uikit — the v0.33 render
       if (d.colors.length === 1) {
         bgEl.style.backgroundColor = d.colors[0]; // one stop = a solid
       } else {

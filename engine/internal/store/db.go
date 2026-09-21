@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   workspace_id    TEXT,
   persona         TEXT,
   manually_renamed INTEGER DEFAULT 0,
+  template_id     TEXT,
   created_at      REAL NOT NULL,
   updated_at      REAL NOT NULL
 );
@@ -184,6 +185,9 @@ CREATE TABLE IF NOT EXISTS hub_items (
 		// them) — enabled by default, arms at 70% context fill.
 		{"chat_sessions", "compact_enabled", "ALTER TABLE chat_sessions ADD COLUMN compact_enabled INTEGER DEFAULT 1"},
 		{"chat_sessions", "compact_threshold", "ALTER TABLE chat_sessions ADD COLUMN compact_threshold INTEGER DEFAULT 70"},
+		// v0.44: the template pill's active method template (JSON
+		// blob {id, name, brief} — "" = none).
+		{"chat_sessions", "template_id", "ALTER TABLE chat_sessions ADD COLUMN template_id TEXT"},
 	}
 	for _, m := range migrations {
 		if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {

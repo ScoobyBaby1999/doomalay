@@ -1,4 +1,4 @@
-// appearance.js — v0.24 the Colors / Sizing / General settings pages.
+// appearance.js — v0.44 the Colors / Sizing / General settings pages.
 //
 // USER SPEC (v0.24, the theme round):
 //   "Currently we have chat colors, this is to be reworked to colors in
@@ -10,10 +10,29 @@
 //    and offer a scale for chat text size, general text size, small text
 //    size, ext."
 //
+// USER SPEC (v0.44, the color-system round):
+//   "Let's rework the color system entirely. Everywhere in the chat where
+//    we offer the user to change color. For each option it must use the
+//    gradient system, even in settings. So a text, pill, of any visuals
+//    feature may be colored gradient instead of solid. Using our current
+//    gradient system. Most things will probably offer 1 color by default,
+//    user can add up to 15... allow the user to change the direction and
+//    aesthetic of the gradient."
+//
+// EVERY color row on these pages is now a compact GradientUI editor
+// (uikit.js): theme-customize vars, the four grid colors, and the five
+// chat-markdown slots all store gradient SPECS ({colors[1..15], dir,
+// angle?} — legacy hexes still load fine, norm() folds them). The
+// editors write back through Settings.setState exactly like the old
+// color inputs did; theme.js / formatter.js translate specs into the
+// VAR-TWIN pairs (--X solid + --X-gradient image) that index.html's
+// consumer rules paint.
+//
 // Pages:
-//   🎨 Colors  — the app theme (10 palettes) · grid colors (theme-driven
-//               until customized) · chat colors (markdown scheme presets
-//               + per-slot advanced overrides)
+//   🎨 Colors  — the app theme (10 palettes) · customize THIS theme
+//               (gradient editors per var) · grid colors (spec-capable,
+//               theme-driven until customized) · chat colors (markdown
+//               scheme presets + per-slot gradient editors)
 //   📐 Sizing  — chat text · general text · small text · grid size
 //   ⚙️ General — font family · default chatbot names · view reset
 //
@@ -23,13 +42,227 @@
 // v0.30: the row builders are PARAMETERIZED (…UI functions at the bottom)
 // and exported as window.AppearanceUI — the per-chat ✦ tweaks view
 // (tweaks.js) renders the SAME controls over its own store instead of
-// duplicating this markup. The fmt input handler + the doomalay:action
-// handler branch on data-scope="chat" so one handler serves both stores.
+// duplicating this markup. The fmt routing branches on
+// data-scope="chat" so one handler serves both stores.
+// v0.44: AppearanceUI.wireFmtEditors(rootEl) wires the shared fmt rows
+// AFTER a host view inserts them (the tweaks view calls it on its own
+// root; the settings page's own wiring runs on the page token root).
 
 (function () {
   'use strict';
 
   const Settings = window.Settings;
+
+  // ── v0.44 GRADIENT-EDITOR WIRING ─────────────────────────────────
+  // render() returns HTML STRINGS, but GradientUI.wire() needs the LIVE
+  // elements — and settings.js inserts the string synchronously right
+  // after render() returns (panel.open → bodyEl.innerHTML). So: every
+  // appearance-page render bumps a TOKEN (the page HTML wraps in
+  // [data-appr-render="r<token>"]), the row builders queue their
+  // {editor id, spec, live, rebuild} entries, and one requestAnimationFrame
+  // later the queue drains against the token root. A newer render before
+  // the rAF fires simply resets the queue (the drain reads the LATEST
+  // entries; superseded elements are already gone from the DOM). Each
+  // element is therefore wired EXACTLY ONCE — re-renders replace the DOM,
+  // and the token lookup never crosses into another panel's view (the
+  // per-chat tweaks rows are wired by the transitional bridge below / a
+  // native wireFmtEditors call from tweaks.js).
+  var renderToken = 0;
+  var pendingWires = [];
+  var wireRaf = 0;
+
+  function queueEditorWire(elId, spec, onLive, onRebuild) {
+    pendingWires.push({ id: elId, spec: spec, live: onLive, rebuild: onRebuild });
+  }
+
+  // pageRender — the appearance page's render wrapper: bump the token,
+  // wrap, schedule. v0.44.1 CRITICAL FIX: the queue must NOT be reset
+  // here — the page's render() call is `pageRender(sectionA() + sectionB() + …)`
+  // and JavaScript evaluates that ARGUMENT (every section building +
+  // queueEditorWire pushing) BEFORE pageRender itself runs. The old
+  // `pendingWires = []` executed AFTER the pushes and WIPED the fresh
+  // queue — no appearance editor ever wired (only the fmt registry
+  // worked; live-observed in the W5 redteam). Stale wires from a
+  // superseded render are instead dropped by draining the queue into a
+  // DEDUP map at drain time (last entry per editor id wins), and the
+  // drain clears the queue as it reads it.
+  function pageRender(inner) {
+    renderToken++;
+    scheduleEditorWiring();
+    return '<div data-appr-render="r' + renderToken + '">' + inner + '</div>';
+  }
+
+  function scheduleEditorWiring() {
+    if (wireRaf) return;             // one flight — it drains the LATEST queue
+    var run = function () {
+      wireRaf = 0;
+      drainEditorWires();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      wireRaf = requestAnimationFrame(run);
+    } else { setTimeout(run, 0); }
+  }
+
+  function drainEditorWires() {
+    var queue = pendingWires;
+    pendingWires = [];
+    // v0.44.1: dedupe by editor id — LAST entry wins. A superseded render
+    // may have queued wires for the same ids before its rAF fired; both
+    // point at the same (fresh) DOM ids, so double-wiring would
+    // double-fire. The last queue entry is the newest render's.
+    var byId = {};
+    var order = [];
+    queue.forEach(function (w) {
+      if (!byId[w.id]) order.push(w.id);
+      byId[w.id] = w;
+    });
+    var G = window.GradientUI;
+    if (!G || !G.wire) return;
+    var root = document.querySelector('[data-appr-render="r' + renderToken + '"]');
+    if (!root || !root.isConnected) return;   // panel closed / replaced
+    order.forEach(function (id) {
+      var w = byId[id];
+      var el = root.querySelector('#' + w.id);
+      if (el) G.wire(el, { spec: w.spec, live: w.live, rebuild: w.rebuild });
+    });
+    // the fmt slot rows built through the shared builder (scope "" —
+    // the per-chat rows are wired by bridgeFmtChatRows / tweaks.js)
+    wireFmtEditors(root);
+  }
+
+  // ── the shared fmt row registry + wiring (tweaks.js reuses the rows) ─
+  var fmtSpecs = {};   // 'slot|scope' → the live spec the row was built with
+  var FMT_SLOTS_ALL = ['a1', 'a2', 'a3', 'bright', 'link'];
+
+  // wireFmtEditors(rootEl) — wire every [data-fmt-slot] row under rootEl:
+  //   live()    → route the write (chat scope → ChatTweaks.setFmtSlot,
+  //               global → Settings.setState({fmtOverrides}))
+  //   rebuild() → write + re-render: chat scope re-renders ONLY the row's
+  //               own editor in place (the tweaks view's DOM is not ours
+  //               to rebuild); global re-renders the whole settings page
+  //               (Settings.rerender preserves expanded sections + scroll)
+  function wireFmtEditors(rootEl) {
+    if (!rootEl || !rootEl.querySelectorAll) return;
+    var rows = rootEl.querySelectorAll('[data-fmt-slot]');
+    rows.forEach(wireFmtRow);
+  }
+
+  function wireFmtRow(rowEl) {
+    var G = window.GradientUI;
+    if (!G || !G.wire) return;
+    var slot = rowEl.getAttribute('data-fmt-slot');
+    var scope = rowEl.getAttribute('data-fmt-scope') || '';
+    var spec = fmtSpecs[slot + '|' + scope];
+    if (!slot || !spec) return;
+    var editorEl = rowEl.querySelector('.gr-editor');
+    // idempotent: the flag lives on the EDITOR element (fresh markup =
+    // fresh flag) so the local rebuild re-wire + any host-side native
+    // wiring + the transitional observer never stack duplicate handlers
+    if (!editorEl || editorEl._fmtWired) return;
+    editorEl._fmtWired = 1;
+    var live = function () { routeFmtWrite(slot, scope, spec); };
+    var rebuild = function () {
+      routeFmtWrite(slot, scope, spec);
+      if (scope === 'chat') {
+        // LOCAL in-place rebuild — swap the editor's own markup + re-wire
+        // (works regardless of the host view's re-render internals)
+        var host = editorEl.parentNode;
+        if (host) {
+          host.innerHTML = G.editor('fmt-' + slot, spec, { noTex: true });
+          wireFmtRow(rowEl);
+        }
+      } else {
+        Settings.rerender();
+      }
+    };
+    G.wire(editorEl, { spec: spec, live: live, rebuild: rebuild });
+  }
+
+  function routeFmtWrite(slot, scope, spec) {
+    if (scope === 'chat') {
+      // the per-chat tweaks store (tweaks.js accepts specs — the scoped
+      // handler contract v0.30 kept verbatim)
+      if (window.ChatTweaks) window.ChatTweaks.setFmtSlot(slot, spec);
+      // tweaks.apply() repaints --fmt-<slot> from the RAW store values,
+      // which can't express a gradient — restore the real twins on
+      // #chat-root right AFTER (see paintChatFmtTwins)
+      paintChatFmtTwins();
+      return;
+    }
+    var s = Settings.getState();
+    var ov = Object.assign({}, s.fmtOverrides || {});
+    ov[slot] = spec;
+    Settings.setState({ fmtOverrides: ov });
+  }
+
+  // paintChatFmtTwins — the per-chat twin paint on #chat-root (the same
+  // slot treatment formatter.applyScheme gives :root). Called after every
+  // chat-scope write; uses the fmtSpecs registry the builder filled when
+  // the tweaks view rendered (the LIVE spec objects — wire() mutates
+  // them in place, so the registry is always current for the open view).
+  // Exposed on AppearanceUI so a future spec-aware tweaks.js can reuse
+  // exactly this writer.
+  function paintChatFmtTwins() {
+    var derive = (window.DoomTheme && window.DoomTheme.deriveTwins) || null;
+    var root = document.getElementById('chat-root');
+    if (!derive || !root || !root.style) return;
+    var gradSlots = [];
+    FMT_SLOTS_ALL.forEach(function (k) {
+      var spec = fmtSpecs[k + '|chat'];
+      if (!spec) return;                        // view not rendered — nothing to paint
+      var twins = derive(spec);
+      root.style.setProperty('--fmt-' + k, twins.solid);
+      root.style.setProperty('--fmt-' + k + '-gradient', twins.grad);
+      if (twins.grad !== 'none') {
+        gradSlots.push(k);
+        root.style.setProperty('--fmt-' + k + '-ink', 'transparent');
+      } else {
+        root.style.removeProperty('--fmt-' + k + '-ink');
+      }
+    });
+    // the chat's OWN gradient list — a slot the GLOBAL side paints as a
+    // gradient but THIS chat owns as a solid opts out via its own ink
+    // override (index.html's [data-fmt-grad] rules explain the mechanism)
+    if (root.setAttribute) {
+      if (gradSlots.length) root.setAttribute('data-fmt-grad', gradSlots.join(' '));
+      else if (root.removeAttribute) root.removeAttribute('data-fmt-grad');
+    }
+  }
+
+  // ── v0.44 TRANSITIONAL BRIDGE — auto-wire the tweaks view's fmt rows ─
+  // The per-chat ✦ tweaks view (tweaks.js — NOT this file's to touch)
+  // renders the SAME fmt rows through the shared builder, but has no
+  // wiring hook of its own: the OLD color inputs were served by the
+  // global 'input' listener the editor conversion removed. Bridge, with
+  // ZERO touches to tweaks.js: ONE MutationObserver on document.body
+  // watches for [data-fmt-scope="chat"] rows appearing anywhere (the
+  // tweaks view renders into the chat panel's body) and wires them via
+  // wireFmtRow (idempotent — a native AppearanceUI.wireFmtEditors call
+  // from tweaks.js would set the editor flag first, in the same
+  // synchronous stack, and this observer would then skip).
+  // TRANSITIONAL: when tweaks.js wires its rows natively + applies specs
+  // on #chat-root itself, DELETE this block — the routing stays
+  // identical (setFmtSlot(slot, spec) + the twin paint).
+  var CHAT_ROW_SEL = '[data-fmt-slot][data-fmt-scope="chat"]';
+  function bridgeFmtChatRows() {
+    if (typeof MutationObserver !== 'function') return;
+    if (!document.body) return;
+    var mo = new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var nodes = muts[i].addedNodes;
+        for (var j = 0; j < nodes.length; j++) {
+          var nd = nodes[j];
+          if (nd.nodeType !== 1) continue;      // skip text / comment nodes
+          if (nd.matches && nd.matches(CHAT_ROW_SEL)) wireFmtRow(nd);
+          if (nd.querySelectorAll) {
+            nd.querySelectorAll(CHAT_ROW_SEL).forEach(wireFmtRow);
+          }
+        }
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+  bridgeFmtChatRows();
 
   // ── theme picker ───────────────────────────────────────────────
   // A swatch card per theme: 3 accent dots on the theme's own surface
@@ -67,23 +300,45 @@
   }
 
   // ── grid colors (theme-driven until the user customizes) ───────
-  // v0.25: stacked two-line rows + a live hex readout so what you set is
-  // what you see (the grid bug report).
-  function gridColorRow(key, label, resolved) {
+  // v0.44: each row is a compact GradientUI editor (noTex — the canvas
+  // can't paint textures). The initial spec = the RESOLVED grid spec
+  // (effectiveGridSpecs: the user's stored spec/hex, else the theme's
+  // palette as a 1-color spec) — the editor starts where the grid
+  // actually looks. live() writes the mutated spec into Settings (app.js
+  // repaints the canvas via Settings.onChange); rebuild() re-renders the
+  // page so the editor's shape (new swatches/dir pills) is fresh.
+  function writeGridKey(key, spec) {
+    var patch = {};
+    patch[key] = spec;
+    Settings.setState(patch);
+  }
+
+  function gridColorRow(key, label, spec) {
+    var G = window.GradientUI;
+    var pfx = 'gc-' + key;             // e.g. gc-bg / gc-lineColor
+    queueEditorWire(pfx + '-gr', spec,
+      function () { writeGridKey(key, spec); },
+      function () { writeGridKey(key, spec); Settings.rerender(); });
     return '<div class="setting-row">' +
       '<label>' + label + '</label>' +
-      '<div class="control">' +
-      '<input type="color" data-setting-key="' + key + '" data-setting-event="input" value="' + resolved + '">' +
-      '<span class="color-hex" data-color-hex="' + key + '">' + resolved + '</span>' +
-      '</div></div>';
+      (G ? G.editor(pfx, spec, { noTex: true }) :
+        '<span class="color-hex">' + String((spec.colors || [])[0] || '') + '</span>') +
+      '</div>';
   }
 
   function gridSection() {
     var s = Settings.getState();
-    var g = (window.DoomTheme && window.DoomTheme.effectiveGrid)
-      ? window.DoomTheme.effectiveGrid(s) : s;
+    // v0.44: resolve through the theme's SPEC view (legacy hex picks +
+    // specs + "never customized" all fold in; app.js consumes the same
+    // resolver when it paints the canvas).
+    var g = (window.DoomTheme && window.DoomTheme.effectiveGridSpecs)
+      ? window.DoomTheme.effectiveGridSpecs(s)
+      : { bg: { colors: [s.bg], dir: 'auto' },
+          lineColor: { colors: [s.lineColor], dir: 'auto' },
+          dotColor: { colors: [s.dotColor], dir: 'auto' },
+          originColor: { colors: [s.originColor], dir: 'auto' } };
     return section('Grid Colors', '' +
-      '<p class="hint">The infinite canvas behind the chats. Left at the theme\u2019s palette until you pick your own.</p>' +
+      '<p class="hint">The infinite canvas behind the chats. Left at the theme\u2019s palette until you pick your own — gradients (up to 15 colors, any direction or pattern) paint straight onto the canvas for horizontal / vertical / diagonal / radial sweeps.</p>' +
       gridColorRow('bg', 'Background', g.bg) +
       gridColorRow('lineColor', 'Grid Lines', g.lineColor) +
       gridColorRow('dotColor', 'Dots', g.dotColor) +
@@ -124,53 +379,46 @@
     var s = Settings.getState();
     var ov = s.fmtOverrides || {};
     var preset = (window.Formatter && window.Formatter.schemes[s.chatScheme || 'teal']) || {};
+    // v0.44: val may be a legacy hex OR a stored gradient spec — the row
+    // builder norm()s either into the editor's live spec.
     var val = ov[key] || preset[key] || '#22d3ee';
     return fmtColorRowUI(key, label, hint, val, false, '');
   }
 
-  // v0.30: the fmt color row, PARAMETERIZED — `customized` shows the
-  // per-slot override marker (the tweaks view passes it for slots THIS
-  // chat owns; the settings page never does — its rows show global values).
+  // v0.30→v0.44: the fmt color row, PARAMETERIZED — `customized` shows
+  // the per-slot override marker (the tweaks view passes it for slots
+  // THIS chat owns; the settings page never does — its rows show global
+  // values). v0.44: the color input + hex readout are gone — a compact
+  // GradientUI editor (pfx 'fmt-'+key, noTex — text slots can't blend a
+  // texture) renders instead. `val` may be a hex or a spec. The row's
+  // WIRING (scope-aware writes) lives in wireFmtEditors — the settings
+  // page drains it from its token root; tweaks.js calls
+  // AppearanceUI.wireFmtEditors on its own view root.
   function fmtColorRowUI(key, label, hint, val, customized, scope) {
-    // v0.25: stacked row — the hint sits under the label (not squeezed
-    // beside it), the swatch gets a hex readout.
-    return '<div class="setting-row">' +
+    var G = window.GradientUI;
+    // the live spec: norm'd COPY (wire() mutates it in place; writes go
+    // through routeFmtWrite) — legacy hexes fold into a 1-color spec
+    var spec = (G && G.norm) ? G.norm(val) :
+      { colors: [String((val && typeof val === 'object' && val.colors) ? val.colors[0] : val)], dir: 'auto' };
+    fmtSpecs[key + '|' + (scope || '')] = spec;
+    var editorHtml = (G && G.editor)
+      ? G.editor('fmt-' + key, spec, { noTex: true })
+      : '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>';
+    return '<div class="setting-row" data-fmt-slot="' + key + '"' +
+      (scope ? ' data-fmt-scope="' + scope + '"' : '') + '>' +
       '<label>' + label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
       (customized ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· this chat</span>' : '') + '</label>' +
-      '<div class="control">' +
-      '<input type="color" data-setting-key="fmtA_' + key + '" data-custom="fmt"' + (scope ? ' data-scope="' + scope + '"' : '') + ' value="' + val + '">' +
-      '<span class="color-hex" data-color-hex="fmtA_' + key + '">' + val + '</span>' +
-      '</div></div>';
+      '<div class="fmt-grad-editor">' + editorHtml + '</div>' +
+      '</div>';
   }
 
-  // v0.25: live hex readouts — every color input in the panel updates its
-  // neighboring .color-hex as the user drags in the picker.
-  document.addEventListener('input', function (e) {
-    var el = e.target;
-    if (!el || el.type !== 'color') return;
-    var hex = document.querySelector('[data-color-hex="' + (el.dataset.settingKey || '') + '"]');
-    if (hex) hex.textContent = el.value;
-  }, true);
-
-  // v0.25: intercept fmt color inputs (they nest under fmtOverrides, not
-  // flat) — merged with the hex-readout updater above.
-  // v0.30: data-scope="chat" reroutes the write into the PER-CHAT tweaks
-  // (the tweaks view reuses these exact inputs — one handler, two stores).
-  document.addEventListener('input', function (e) {
-    var el = e.target;
-    if (!el || el.getAttribute('data-custom') !== 'fmt') return;
-    var keyMap = { fmtA_a1: 'a1', fmtA_a2: 'a2', fmtA_a3: 'a3', fmtA_bright: 'bright', fmtA_link: 'link' };
-    var slot = keyMap[el.getAttribute('data-setting-key')];
-    if (!slot) return;
-    if (el.getAttribute('data-scope') === 'chat') {
-      if (window.ChatTweaks) window.ChatTweaks.setFmtSlot(slot, el.value);
-      return;
-    }
-    var s = Settings.getState();
-    var ov = Object.assign({}, s.fmtOverrides || {});
-    ov[slot] = el.value;
-    Settings.setState({ fmtOverrides: ov });
-  }, true);
+  // (v0.44) — the old global 'input' listeners for the fmt color inputs
+  // and the live .color-hex readouts are DELETED: every color surface on
+  // this page renders a GradientUI editor whose live/rebuild wiring in
+  // wireFmtRow / queueEditorWire routes the writes (the scoped-write
+  // semantics — data-scope="chat" → ChatTweaks.setFmtSlot — moved there,
+  // verbatim). No input[type=color] with data-setting-key remains on the
+  // settings pages, so the readout listener had nothing left to serve.
   // ── sizing sliders ─────────────────────────────────────────────
   function sizeSlider(key, label, hint, def) {
     var s = Settings.getState();
@@ -193,11 +441,28 @@
       '</div>';
   }
 
-  // ── v0.26: customize the CURRENT theme (user spec: "The user should
-  // be able to not only select a theme, but also customise it to their
-  // liking"). Per-theme overrides live in settings.themeOverrides —
-  // theme.js applies them as inline CSS vars (which beat the
-  // [data-theme] block) and auto-derives the -rgb triplets.
+  // ── v0.26→v0.44: customize the CURRENT theme (user spec: "The user
+  // should be able to not only select a theme, but also customise it to
+  // their liking"). Per-theme overrides live in settings.themeOverrides —
+  // theme.js applies them as inline CSS VAR-TWINS (which beat the
+  // [data-theme] block) and auto-derives the -rgb triplets from the
+  // solid. v0.44: each row is a compact GradientUI editor (pfx
+  // 'tv-<var-suffix>', noTex — texture is a chat-bg/hub feature, static
+  // theme-var consumers can't blend it); the initial spec is the stored
+  // override (hex or spec) or the live computed hex as a 1-color spec —
+  // the editor always starts where the app looks right now. live()
+  // writes the spec back into themeOverrides (theme.js re-applies the
+  // twins immediately, exactly like the old input handler did); rebuild()
+  // re-renders the page so the editor's shape is fresh.
+  function writeThemeVar(varName, spec) {
+    var s = Settings.getState();
+    var cur = s.theme || 'midnight';
+    var all = Object.assign({}, s.themeOverrides || {});
+    all[cur] = Object.assign({}, all[cur] || {});
+    all[cur][varName] = spec;
+    Settings.setState({ themeOverrides: all }); // persists + applies live
+  }
+
   function themeCustomizeSection() {
     var s = Settings.getState();
     var cur = s.theme || 'midnight';
@@ -207,17 +472,34 @@
     var customCount = Object.keys(ov).length;
     var rows = '';
     var customizable = (window.DoomTheme && window.DoomTheme.customizable) || [];
+    var G = window.GradientUI;
     customizable.forEach(function (c) {
-      var live = ov[c.var] || cssVarLive(c.var) || '#000000';
+      var pfx = 'tv-' + String(c.var || '').replace(/^--/, '');  // '--accent' → 'tv-accent'
+      var stored = ov[c.var];
+      var spec;
+      if (stored) {
+        // the stored override: a gradient spec or a legacy hex — norm
+        // folds either (a COPY: wire() mutates the editor's live spec)
+        spec = (G && G.norm) ? G.norm(stored) :
+          { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
+      } else {
+        // not customized: the theme's CURRENT computed hex, as a 1-color
+        // spec (what the editor offers is what the app looks like now)
+        var live = cssVarLive(c.var);
+        var liveHex = /^#[0-9a-fA-F]{6}$/.test(live || '') ? live : '#000000';
+        spec = { colors: [liveHex], dir: 'auto' };
+      }
+      queueEditorWire(pfx + '-gr', spec,
+        function () { writeThemeVar(c.var, spec); },
+        function () { writeThemeVar(c.var, spec); Settings.rerender(); });
       rows += '<div class="setting-row">' +
-        '<label>' + c.label + (ov[c.var] ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') + '</label>' +
-        '<div class="control">' +
-        '<input type="color" data-theme-var="' + c.var + '" value="' + live + '">' +
-        '<span class="color-hex" data-color-hex="tv_' + c.var + '">' + live + '</span>' +
-        '</div></div>';
+        '<label>' + c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') + '</label>' +
+        (G ? G.editor(pfx, spec, { noTex: true }) :
+          '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>') +
+        '</div>';
     });
     return section('Customize ' + (t.label || 'Theme'),
-      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — changes ride on top of the palette and persist for this theme only (each theme keeps its own customizations). ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
+      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — any var can stay a solid or grow into a gradient (up to 15 colors, any direction, the patterns included). Changes ride on top of the palette and persist for this theme only (each theme keeps its own customizations). ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
       rows +
       '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
@@ -230,21 +512,10 @@
     try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
   }
 
-  // live wiring for the customize inputs — preview + persist + hex readout
-  document.addEventListener('input', function (e) {
-    var el = e.target;
-    if (!el || !el.getAttribute) return;
-    var v = el.getAttribute('data-theme-var');
-    if (!v) return;
-    var hex = document.querySelector('[data-color-hex="tv_' + v + '"]');
-    if (hex) hex.textContent = el.value;
-    var s = Settings.getState();
-    var cur = s.theme || 'midnight';
-    var all = Object.assign({}, s.themeOverrides || {});
-    all[cur] = Object.assign({}, all[cur] || {});
-    all[cur][v] = el.value;
-    Settings.setState({ themeOverrides: all }); // persists + applies live
-  }, true);
+  // (v0.44) — the old data-theme-var 'input' listener is DELETED: the
+  // customize rows are GradientUI editors wired through queueEditorWire
+  // (writeThemeVar keeps the exact persist+apply-live semantics the old
+  // handler had).
 
   // ── register the three pages ───────────────────────────────────
   Settings.registerPage('appearance', {
@@ -252,14 +523,14 @@
     icon: '🎨',
     render: function (getState, setState) {
       const s = getState();
-      return (
+      return pageRender(
         section('Theme', '' +
           themeSwatches()
         ) +
         themeCustomizeSection() +
         gridSection() +
         section('Chat Colors', '' +
-          '<p class="hint">The markdown color scheme for messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below (all values are CSS variables).</p>' +
+          '<p class="hint">The markdown color scheme for messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below: each may stay a solid or grow into a gradient (multi-color slots paint gradient TEXT in headings, emphasis, bold and links).</p>' +
           schemeSwatches() +
           fmtColorRow('a1', 'Accent 1', 'headings · keywords') +
           fmtColorRow('a2', 'Accent 2', 'subheads · code') +
@@ -419,6 +690,14 @@
     section: section,
     schemeChatSwatches: schemeChatSwatches,
     fmtColorRow: fmtColorRowUI,
-    sizeSlider: sizeSliderUI
+    sizeSlider: sizeSliderUI,
+    // v0.44: wire the shared fmt editor rows after a host view inserts
+    // them — the per-chat tweaks view calls this on ITS root (scope
+    // "chat" rows route into ChatTweaks.setFmtSlot and rebuild locally);
+    // the settings page's own rows are wired by the page-token drain.
+    wireFmtEditors: wireFmtEditors,
+    // v0.44: the #chat-root twin writer for the per-chat fmt slots —
+    // a spec-aware tweaks.js can reuse exactly this paint
+    paintChatFmtTwins: paintChatFmtTwins
   };
 })();

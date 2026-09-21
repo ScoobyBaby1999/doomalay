@@ -54,6 +54,47 @@
 //   newline. v0.42 ALSO (spec #5): the in-chat search pill is GONE from
 //   the header dropdown (find — local + global, with the new Aa / Exact
 //   toggles — is the way forward; see globalsearch.js).
+//
+// v0.44 THE TEMPLATE PILL (user spec: "change the deep research pill
+//   entirely to a template pill where user can select templates and
+//   browse the library, with the deep research being one of the default
+//   templates"): the ⌖ deep research toolbar button became ⧉ template —
+//   it opens templatesheet.js (search / favorites / groups / the hub
+//   library / publish). Selecting the pinned "deep research" row keeps
+//   the OLD payload (deep_research: true — the engine-native pipeline);
+//   any other template sets state.template {id, name, brief} (the brief
+//   resolved client-side from the library entry) which rides every send
+//   as template_id + template_brief and paints a removable ⧉ chip above
+//   the composer. Persisted on the session (template column) + restored
+//   on reload like the other caps.
+//
+// v0.44 INTERRUPT HARDENING (the "chat gets randomly interrupted and my
+//   sent message lands back" report, root causes traced end-to-end):
+//   · CAUSE #1 (engine restart mid-turn): the boot-heal status now
+//     carries its message on the wire (store/events.go), and a LIVE
+//     terminal status with a message renders a notice bubble here
+//     (guarded by wasStreaming — replayed old heals never re-bubble).
+//     Dead clients self-heal: renderHost/connectWS kick a reconnect on
+//     a dead-but-present client, and ws_state 'failed' arms a 20s
+//     background revive poll (a returning engine heals the chat without
+//     the user having to send).
+//   · CAUSE #2 (user-echo dedupe only checked the LAST message): a
+//     mid-turn reconnect's gap replay re-pushed the sent message as a
+//     duplicate. doSend now records _pendingSends; the 'user' handler
+//     delegates to resolveUserEcho (pending match → tail-scan → push,
+//     pure + unit-tested) and ONE adjacent-duplicate pass runs after a
+//     reconnect replay (dropAdjacentUserDupes, also pure). The engine's
+//     busy-reject now persists the user message + a terminal too (see
+//     chat.go) — the optimistic bubble is never orphaned on reload.
+//   · CAUSE #3 (isStreaming never re-armed): a live stream that arrives
+//     WITHOUT a doSend (resumed mid-turn socket) re-arms streaming so
+//     the busy lock can't desync — replayed events (chatclient's
+//     connect-time _replay tag) never re-arm. PM turns set the client's
+//     turnActive so their drops earn the long reconnect ladder.
+//   · CAUSE #4 (late IME input): clearDraftLS stamps draftClearedAt;
+//     saveDraftLS skips anything reported within 800ms of a send-clear
+//     (stale composition state — the v0.42 timer-cancel only covered
+//     saves armed BEFORE the clear).
 
 (function () {
   'use strict';
@@ -240,6 +281,10 @@
         effort: (sessionData && (sessionData.Effort || sessionData.effort)) || 'med',
         webSearch: !!(sessionData && (sessionData.WebSearch || sessionData.web_search)),
         deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
+        // v0.44: the active method template (the template pill) —
+        // {id, name, brief}; null = none. Deep research (one of the
+        // default templates) keeps using deepResearch above.
+        template: null,
         persona: (sessionData && (sessionData.Persona || sessionData.persona)) || '',
         // v0.26: multi-persona + placeholders + the chat's name ({name}).
         personas: null,
@@ -322,7 +367,23 @@
     catch (e) { return {}; }
   }
   var draftSaveTimer = null;
+  // v0.44 INTERRUPT FIX (CAUSE #4): sid → Date.now() of the last
+  // send-clear. A mobile IME fires 'input' events AFTER Enter already
+  // cleared the composer — stale composition state re-ran saveDraftLS
+  // and resurrected the just-sent draft on the next re-render (the
+  // v0.42 timer-cancel only covered saves ARMED before the clear).
+  // Anything the IME reports within DRAFT_STALE_MS of a clear is stale;
+  // real typing re-saves after that window.
+  var draftClearedAt = {};
+  // pure decision core (unit-tested in scripts/test_interrupt_fixes.js)
+  function draftSaveStaleMs(clearedAtMs, nowMs) {
+    return (nowMs - (clearedAtMs || 0)) < 800;
+  }
   function saveDraftLS(sid, text) {
+    // v0.44: the composer was just cleared by a send — skip the save
+    // entirely (a late IME 'input' would otherwise re-arm the debounce
+    // and write the stale text back 250ms later).
+    if (sid && draftSaveStaleMs(draftClearedAt[sid], Date.now())) return;
     clearTimeout(draftSaveTimer);
     draftSaveTimer = setTimeout(function () {
       try {
@@ -341,6 +402,9 @@
   }
   function clearDraftLS(sid) {
     if (!sid) return;
+    // v0.44: stamp the clear so late IME input events can't resurrect
+    // the draft (see draftClearedAt above).
+    draftClearedAt[sid] = Date.now();
     // v0.42: cancel any pending debounced save FIRST — a send/queue whose
     // Enter followed the last keystroke by <250ms left the timer armed,
     // and it re-wrote the just-cleared draft a moment later (the text
@@ -836,6 +900,13 @@
     if (!c || !c.state || !c.bodyEl || !c.bodyEl.isConnected) return;
     var sc = c.bodyEl.querySelector('#chat-scroll');
     if (sc && c.state._scrollPos != null) restoreChatScroll(sc, c.state);
+    // v0.44: a template was activated while the sheet owned the panel —
+    // the composer DOM was stashed, so repaint the toolbar + chip from
+    // the (already-updated) state now that the root is visible again.
+    if (c.state._tplPending) {
+      c.state._tplPending = false;
+      buildToolbar(c.bodyEl, c.state, c.icon, c.type);
+    }
     if (c.state._labelsPending && !c.state._labelsDone &&
         window.H && window.H.hasLabels && window.H.hasLabels()) {
       c.state._labelsPending = false;
@@ -1257,6 +1328,11 @@
       // SINGLE-FLIGHT: one bind, one client; later renders re-point onEvent.
       if (state.client) {
         state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, icon, panel); };
+        // v0.44 INTERRUPT FIX (CAUSE #1): a re-render re-pointed the callback
+        // on a client that may have DIED while the chat was backgrounded
+        // (engine restart) — it sat silent until the next send. Kick the
+        // reconnect (connect() no-ops while connecting/open).
+        reviveClient(state);
         if (state.messages.length > 0 && msgContainer && msgContainer.querySelector('#chat-greeting')) {
           rebuildTranscript(msgContainer, state);
           scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -2002,13 +2078,22 @@
 
       // ── Transports (the host owns the plumbing, the type picks) ──
       runWSTurn: function (text) {
-        state.client.send(text, {
+        var opts = {
           effort: state.effort,
           web_search: !!state.webSearch,
           deep_research: !!state.deepResearch,
           model: state.model,
           provider: state.provider
-        });
+        };
+        // v0.44 TEMPLATE PILL: the resolved brief rides every send (the
+        // engine injects it as a METHOD TEMPLATE system block). Deep
+        // research keeps the plain deep_research flag — its pipeline is
+        // engine-native.
+        if (state.template && state.template.brief) {
+          opts.template_id = state.template.id || '';
+          opts.template_brief = state.template.brief;
+        }
+        state.client.send(text, opts);
       },
 
       runPMTurn: function (text) { return runPMTurn(text, state, bodyEl, icon); }
@@ -2035,6 +2120,14 @@
       (state.provider ? ', hosted via ' + state.provider : '') +
       ", chatting inside the Doomalay app on the user's own device. Today is " +
       new Date().toDateString() + '.';
+    // v0.44 TEMPLATE PILL: PM turns compose the system message client-side
+    // (they bypass the engine), so the METHOD TEMPLATE block is prepended
+    // HERE — the same shape the engine injects on the WS path.
+    if (state.template && state.template.brief) {
+      head = 'METHOD TEMPLATE — ' + (state.template.id || 'custom') +
+        "\nFollow this template's methodology for this task:\n" +
+        String(state.template.brief).trim() + "\n\n" + head;
+    }
     var personaText;
     if (state.personas && state.personas.length && window.Persona && window.Persona.resolveActive) {
       window.Persona.setData(state.personas, state.persona || '', state.placeholders || {});
@@ -2067,6 +2160,13 @@
     var scrollEl = bodyEl.querySelector('#chat-scroll');
     var abort = new AbortController();
     state._pmAbort = abort;
+    // v0.44 INTERRUPT FIX (CAUSE #3, PM path): PM chats keep a WS client
+    // (event replay + hide channel), and the client's reconnect ladder
+    // reads turnActive — but only client.send() ever set it, so a mid-PM-
+    // turn socket drop only earned the SHORT ladder (3 tries ~5s) instead
+    // of the long mid-turn one. Set it for the PM turn's lifetime; finish()
+    // clears it on success/error alike.
+    if (state.client) state.client.turnActive = true;
     // v0.42: no button wiring here — doSend already flipped the mode to
     // STOP (isStreaming), and the tap dispatcher stops through
     // type.stop → state._pmAbort.abort() (chatframework.js).
@@ -2138,6 +2238,7 @@
     var finish = function (errText, usage) {
       clearHint();
       state.isStreaming = false;
+      if (state.client) state.client.turnActive = false; // v0.44 (CAUSE #3): the PM turn is over
       hideActivity(bodyEl, state);
       // v0.27: turn end — the header meters (ring + cost) refresh.
       refreshHeaderMeters(bodyEl, state);
@@ -2338,7 +2439,8 @@
 
   function renderToolbar(bar, state, levels, icon, bodyEl) {
     bar.innerHTML = '';
-    var anyActive = state.webSearch || state.deepResearch;
+    state._effortLevels = levels || null; // v0.44: the chip's re-render reuses the ladder
+    var anyActive = state.webSearch || state.deepResearch || !!state.template;
 
     if (levels && levels.length > 0) {
       // v0.26: snap the persisted level into THIS model's ladder — the
@@ -2368,22 +2470,57 @@
     wb.style.cssText = capBtnStyle(state.webSearch, 'var(--accent-2)');
     wb.addEventListener('click', function () {
       state.webSearch = !state.webSearch;
-      if (state.webSearch) state.deepResearch = false;
+      if (state.webSearch) {
+        state.deepResearch = false;
+        state.template = null; // v0.44: web + template are composer modes — one at a time
+      }
       persistCaps(state, icon);
       renderToolbar(bar, state, levels, icon, bodyEl);
     });
     bar.appendChild(wb);
 
-    var db = document.createElement('button');
-    db.textContent = '⌖ deep research';
-    db.style.cssText = capBtnStyle(state.deepResearch, 'var(--accent)');
-    db.addEventListener('click', function () {
-      state.deepResearch = !state.deepResearch;
-      if (state.deepResearch) state.webSearch = false;
-      persistCaps(state, icon);
-      renderToolbar(bar, state, levels, icon, bodyEl);
+    // v0.44 THE TEMPLATE PILL (user spec: "change the deep research pill
+    // entirely to a template pill…"): ⌖ deep research became ⧉ template —
+    // the sheet (templatesheet.js) owns browsing/favorites/hub. The pill's
+    // label carries the active template's short name; deep research stays
+    // reachable as one of the default templates (engine-native pipeline).
+    var tb = document.createElement('button');
+    var tplActive = state.deepResearch || !!state.template;
+    var tplName = state.template ? state.template.name
+      : (state.deepResearch ? 'deep research' : 'template');
+    tb.textContent = '⧉ ' + tplName;
+    tb.title = 'Method templates — browse the library';
+    tb.setAttribute('aria-label', 'Method templates — browse the library');
+    tb.style.cssText = capBtnStyle(tplActive, 'var(--accent)');
+    tb.addEventListener('click', function () {
+      if (!window.TemplateSheet) {
+        if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the template sheet is not available');
+        return;
+      }
+      window.TemplateSheet.open({
+        active: tplActive ? (state.template ? state.template.id : 'deep-research') : '',
+        onActivate: function (tpl) {
+          if (tpl && tpl.deepResearch) {
+            state.deepResearch = true;
+            state.template = null;
+          } else if (tpl && tpl.brief) {
+            state.template = { id: tpl.id, name: tpl.name, brief: tpl.brief };
+            state.deepResearch = false;
+            state.webSearch = false;
+          } else {
+            state.template = null;
+            state.deepResearch = false;
+          }
+          persistCaps(state, icon);
+          // The composer DOM was stashed while the sheet was open — the
+          // root-restored listener repaints the toolbar + chip from state.
+          state._tplPending = true;
+        }
+      });
     });
-    bar.appendChild(db);
+    bar.appendChild(tb);
+
+    syncTemplateChip(bodyEl, state, icon);
 
     if (anyActive || (state.effort && state.effort !== 'med')) {
       var clear = document.createElement('button');
@@ -2395,6 +2532,7 @@
         state.effort = (levels && levels.length) ? levels[0] : 'med';
         state.webSearch = false;
         state.deepResearch = false;
+        state.template = null; // v0.44: the active template clears with the rest
         persistCaps(state, icon);
         renderToolbar(bar, state, levels, icon, bodyEl);
       });
@@ -2611,6 +2749,47 @@
       ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
+  // ── v0.44 THE ACTIVE-TEMPLATE CHIP (inside the sticky input bar) ───
+  // A one-line, removable '⧉ <name> ✕' banner pinned above the toolbar —
+  // the edit-banner DOM mechanics (insert as the inputbar's first child,
+  // slide-in) but its own element (the edit banner is NEVER touched).
+  // Deep research shows no chip (its state is the pill's data-on itself).
+  function syncTemplateChip(bodyEl, state, icon) {
+    if (!bodyEl) return;
+    var existing = bodyEl.querySelector('#tpl-chip');
+    if (!state.template) {
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      return;
+    }
+    var bar = bodyEl.querySelector('#chat-inputbar');
+    if (!bar) return;
+    var name = (state.template && state.template.name) || 'template';
+    if (existing) {
+      var label = existing.querySelector('.tpl-chip-text');
+      if (label) label.textContent = '⧉ ' + name;
+      return;
+    }
+    var b = document.createElement('div');
+    b.id = 'tpl-chip';
+    b.className = 'tpl-chip';
+    b.setAttribute('role', 'status');
+    b.innerHTML =
+      '<span class="tpl-chip-ico" aria-hidden="true">⧉</span>' +
+      '<span class="tpl-chip-text">' + esc('⧉ ' + name) + '</span>' +
+      '<button class="tpl-chip-x" title="clear the template" aria-label="Clear the active template">✕</button>';
+    b.querySelector('.tpl-chip-x').addEventListener('click', function () {
+      state.template = null;
+      persistCaps(state, icon);
+      if (b.parentNode) b.parentNode.removeChild(b);
+      var tb = bodyEl.querySelector('#chat-toolbar');
+      if (tb && state._icon) {
+        renderToolbar(tb, state, state._effortLevels || null, state._icon, bodyEl);
+      }
+    });
+    bar.insertBefore(b, bar.firstChild);
+    requestAnimationFrame(function () { b.classList.add('open'); });
+  }
+
   function persistCaps(state, icon) {
     if (!state.sessionId) {
       updateSession(icon, state, {});
@@ -2623,6 +2802,12 @@
         effort: state.effort,
         web_search: !!state.webSearch,
         deep_research: !!state.deepResearch,
+        // v0.44: the active method template — the WHOLE resolved blob
+        // {id, name, brief} so the reload restores it without re-fetching
+        // (deep research is the deep_research flag above, not this).
+        template: state.template ? JSON.stringify({
+          id: state.template.id, name: state.template.name, brief: state.template.brief
+        }) : '',
         sliding_window: state.slidingWindow || 40
       })
     }).catch(function (e) { console.error('persist caps failed', e); });
@@ -2636,6 +2821,10 @@
         handleEvent(ev, state, msgContainer, bodyEl.querySelector('#chat-scroll'), bodyEl, null, null);
       };
       wireClientClose(bodyEl, state, msgContainer);
+      // v0.44 INTERRUPT FIX (CAUSE #1): heal a client that died since the
+      // last bind (engine restart mid-session) — the old path only
+      // re-pointed the callback and relied on the next doSend to connect.
+      reviveClient(state);
       return;
     }
     state.client = new window.ChatClient('', state.sessionId, '');
@@ -2656,6 +2845,11 @@
       if (!state.isStreaming) return;
       state.isStreaming = false;
       state._actText = null;
+      // v0.44 (CAUSE #2): the turn died without its engine echo ever
+      // arriving — the pending-send ledger is stale (the ws_state 'failed'
+      // revive poll may still replay events, but a NEW send records a
+      // fresh entry; the tail-scan catches stragglers either way).
+      state._pendingSends = null;
       var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply and could not be re-established — your messages and partial replies are saved. Tap Retry to resend.' };
       state.messages.push(msg);
       state._holdQueue = true; // v0.42: a dropped turn parks the queue (not a clean finish)
@@ -2707,6 +2901,10 @@
       effort: state.effort || 'med',
       web_search: !!state.webSearch,
       deep_research: !!state.deepResearch,
+      // v0.44: the active method template blob (see persistCaps).
+      template: state.template ? JSON.stringify({
+        id: state.template.id, name: state.template.name, brief: state.template.brief
+      }) : '',
       sliding_window: state.slidingWindow || 40
     };
   }
@@ -2736,6 +2934,17 @@
         // tools after every reload (the state defaulted them to off).
         if (typeof data.WebSearch === 'boolean') state.webSearch = data.WebSearch;
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
+        // v0.44: restore the active method template (the persisted blob
+        // {id, name, brief} — engine column template_id, PATCHed by
+        // persistCaps; deep research restores via the flag above).
+        if (typeof data.TemplateID === 'string' && data.TemplateID) {
+          try {
+            var tpl = JSON.parse(data.TemplateID);
+            if (tpl && tpl.id && tpl.brief) {
+              state.template = { id: String(tpl.id), name: String(tpl.name || tpl.id), brief: String(tpl.brief) };
+            }
+          } catch (e) {}
+        }
         if (data.Effort) state.effort = data.Effort;
         if (typeof data.Persona === 'string' && data.Persona) state.persona = data.Persona;
         // v0.26: the multi-persona list + custom placeholders (the PM
@@ -2781,6 +2990,149 @@
     return c ? c.querySelector('[data-mi="' + mi + '"]') : null;
   }
 
+  // ── v0.44 INTERRUPT FIX (CAUSE #2): pure user-echo/dedupe helpers ──
+  // Both are module-level + side-effect-free so the Node harness
+  // (scripts/test_interrupt_fixes.js) exercises the exact logic the
+  // 'user' handler runs. The handler applies whatever action object
+  // they return.
+
+  // Decide what an engine 'user' echo means for the local transcript.
+  // The OLD handler only checked the LAST message — a mid-turn
+  // reconnect's gap replay delivered the echo UNDER thinking/delta
+  // bubbles and the handler PUSHED a duplicate of the message the user
+  // had already sent (the "sent message lands back on my message box,
+  // I have to delete it" report). Three layers, in order:
+  //   1. _pendingSends — doSend records every optimistic send
+  //      ({text, ts, mi}); a text match (with a 2-minute ts window when
+  //      the event carries a ts) finds the message wherever it now
+  //      lives (recorded mi when still valid, else a re-scan from the
+  //      END for a local user message with the same text).
+  //   2. tail-scan — ANY local (un-echoed) user message with the same
+  //      text inside the trailing 6 messages gets stamped.
+  //   3. push — genuinely new message, render a bubble.
+  // Returns {kind:'stamp', mi:<messages idx>, pend:<pendingSends idx or -1>}
+  // or {kind:'push'}.
+  function resolveUserEcho(pendingSends, messages, ev) {
+    var text = ev && ev.text != null ? String(ev.text) : '';
+    if (!messages || !messages.length || text === '') return { kind: 'push' };
+    var evMs = (ev && typeof ev.ts === 'number' && ev.ts > 0)
+      ? Math.round(ev.ts * 1000) : 0;
+    // 1. pending-send match
+    if (pendingSends && pendingSends.length) {
+      for (var p = 0; p < pendingSends.length; p++) {
+        var entry = pendingSends[p];
+        if (!entry || entry.text !== text) continue;
+        if (evMs && entry.ts && Math.abs(evMs - entry.ts) >= 120000) continue; // stale entry
+        var mi = -1;
+        if (typeof entry.mi === 'number' && messages[entry.mi] &&
+            messages[entry.mi].role === 'user' &&
+            messages[entry.mi].text === text) {
+          mi = entry.mi; // the recorded position still holds the message
+        } else {
+          for (var j = messages.length - 1; j >= 0; j--) {
+            if (messages[j].role === 'user' && messages[j].local && messages[j].text === text) {
+              mi = j; // it moved — find the local copy from the END
+              break;
+            }
+          }
+        }
+        if (mi >= 0) return { kind: 'stamp', mi: mi, pend: p };
+      }
+    }
+    // 2. tail-scan fallback (subsumes the old last-message-only check)
+    for (var k = messages.length - 1, seen = 0; k >= 0 && seen < 6; k--, seen++) {
+      var m = messages[k];
+      if (m.role === 'user' && m.local && m.text === text && m.ei == null) {
+        return { kind: 'stamp', mi: k, pend: -1 };
+      }
+    }
+    return { kind: 'push' };
+  }
+
+  // Belt-and-braces for any duplicate that slipped past the echo match
+  // (old-version logs replayed onto a fresh state, POST-persist/WS
+  // seq desyncs): when TWO ADJACENT user messages have identical text,
+  // one carries its engine echo (ei) and the other is still local, the
+  // local one is the orphan optimistic copy — return a new array
+  // without it, or null when there is nothing to drop. ONE drop per
+  // call (the caller may re-run). Replayed-only transcripts never
+  // match (nothing is `local` there), so a fresh open is a no-op.
+  function dropAdjacentUserDupes(messages) {
+    if (!messages || messages.length < 2) return null;
+    for (var i = 0; i + 1 < messages.length; i++) {
+      var a = messages[i], b = messages[i + 1];
+      if (a.role !== 'user' || b.role !== 'user' || a.text !== b.text) continue;
+      var aEi = a.ei != null, bEi = b.ei != null;
+      if (aEi === bEi) continue; // both echoed or both local — not our orphan
+      var dup = aEi ? b : a;    // the un-echoed twin is the orphan copy
+      if (!dup.local) continue; // only optimistic (pending-echo) copies
+      var dropIdx = aEi ? i + 1 : i;
+      return messages.slice(0, dropIdx).concat(messages.slice(dropIdx + 1));
+    }
+    return null;
+  }
+
+  // v0.44 (CAUSE #2 bookkeeping): a reconnect replay is landing on a
+  // transcript that may already hold part of it — remember it, run ONE
+  // adjacent-duplicate pass once the burst drains (~1.5s quiet) or at
+  // the next status event (whichever lands first).
+  function markReplayGap(state) {
+    if (!state) return;
+    state._replayedGap = true;
+    clearTimeout(state._gapPassTimer);
+    state._gapPassTimer = setTimeout(function () { runAdjacentDupPass(state); }, 1500);
+  }
+
+  function runAdjacentDupPass(state) {
+    if (!state || !state._replayedGap) return;
+    state._replayedGap = false;
+    clearTimeout(state._gapPassTimer);
+    state._gapPassTimer = null;
+    var cleaned = dropAdjacentUserDupes(state.messages);
+    if (cleaned) {
+      state.messages = cleaned;
+      // v0.38 sandbox rule: only the chat that OWNS the live DOM rebuilds
+      // (the hide-handler pattern); background chats keep state only.
+      if (isOwner(state) && currentCtx && currentCtx.bodyEl) {
+        var hc = currentCtx.bodyEl.querySelector('#chat-messages');
+        if (hc) rebuildTranscript(hc, state);
+      }
+    }
+  }
+
+  // v0.44 INTERRUPT FIX (CAUSE #1): re-pointing onEvent on an EXISTING
+  // client never revived a dead socket — a chat reopened after an
+  // engine restart sat on a failed client (no replay, no events, a dead
+  // transcript) until the next manual send forced a connect. Kick the
+  // reconnect here; connect() itself no-ops while connecting/open.
+  function reviveClient(state) {
+    var c = state && state.client;
+    if (!c || c.connected) return;
+    if (c.state === 'connecting' || c.state === 'open') return;
+    try { c.connect(); } catch (e) { console.error('ws revive failed', e); }
+  }
+
+  // v0.44 (CAUSE #1, belt and braces): the reconnect ladder gave up —
+  // usually the engine DIED (Android watchdog kill / force-stop). Poll
+  // a slow revive every 20s so a returning engine heals the chat on its
+  // own (replay + heal events flow through handleEvent; the user does
+  // not have to send 'continue'). Cleared on a successful 'open'.
+  function startReviveTimer(state) {
+    if (!state || state._reviveTimer) return;
+    state._reviveTimer = setInterval(function () {
+      var c = state.client;
+      if (!c) { stopReviveTimer(state); return; }
+      if (c.connected || c.state === 'connecting' || c.state === 'open') return;
+      try { c.connect(); } catch (e) {}
+    }, 20000);
+  }
+  function stopReviveTimer(state) {
+    if (state && state._reviveTimer) {
+      clearInterval(state._reviveTimer);
+      state._reviveTimer = null;
+    }
+  }
+
   // ── Handle a WS event (idempotent replay, streaming, errors) ─────
   // v0.38 THE SANDBOX RULE (the chat-leak fix, for real): there is exactly
   // ONE live chat DOM — the FOREGROUND chat's projection of its state.
@@ -2812,11 +3164,37 @@
       bodyEl = null;
     }
     if (ev.i !== undefined && ev.i !== null && !isNaN(ev.i)) {
-      if (ev.i <= (state.lastEventI || 0)) return;
+      if (ev.i <= (state.lastEventI || 0)) {
+        // v0.44 (CAUSE #2): a duplicate id means the server is replaying
+        // events this state already holds (a reconnect resume whose seq
+        // cursor lagged the panel's POST-persisted ids, an overlap
+        // replay) — the adjacent-duplicate pass runs once the burst
+        // drains. Nothing else to do for the event itself.
+        markReplayGap(state);
+        return;
+      }
       state.lastEventI = ev.i;
       // v0.42: last-arrival clock — scheduleOpenFlush waits for the
       // replay burst to go quiet before firing a parked queued message.
       state._lastEvAt = Date.now();
+    }
+    // v0.44 INTERRUPT FIX (CAUSE #3): a LIVE stream that arrives without
+    // a doSend (the socket resumed mid-turn after a drop, a turn the
+    // panel never saw start) re-arms the streaming state — otherwise
+    // the button reads Send while the engine still holds the turn lock
+    // and the next send hits the busy reject (the desync loop).
+    // CRITICAL GUARD: REPLAYED events never re-arm — chatclient tags the
+    // connect-time backlog burst with _replay:true, and a fresh open
+    // replays old assistant_delta/thinking events that must not flip
+    // the button to Stop forever.
+    if (!state.isStreaming && !ev._replay && (
+      type === 'assistant_delta' || type === 'thinking' ||
+      type === 'tool_use' || type === 'tool_result' || type === 'sources' ||
+      (type === 'status' && ev.state === 'running')
+    )) {
+      state.isStreaming = true;
+      ensureActivityWatch(bodyEl, state);
+      syncSendButton(bodyEl, state);
     }
     // v0.23 NO-SILENCE: ephemeral progress events (never persisted, no i)
     // drive the activity indicator — "building bundle.zip · 12.4 KB…".
@@ -2841,6 +3219,12 @@
         }
       } else if (ev.state === 'open') {
         state._wsDropped = false;
+        // v0.44 (CAUSE #1): a landed connect ends the background revive
+        // poll, and the replay burst that follows is flagged so the
+        // adjacent-duplicate pass runs once it drains (fresh opens are a
+        // no-op there — nothing is `local` after a pure replay).
+        stopReviveTimer(state);
+        markReplayGap(state);
         if (state.isStreaming) {
           // resumed mid-turn — the indicator falls back to the wait phase
           // (or the generic streaming state) until real events land.
@@ -2849,18 +3233,32 @@
       } else if (ev.state === 'failed') {
         state._wsDropped = false;
         // the ladder is exhausted → the terminal error path (wireClientClose)
+        // v0.44 (CAUSE #1): ...AND a slow background revive — the engine
+        // may just be restarting; when it comes back this poll heals the
+        // chat (replay + heal events) without the user sending anything.
+        startReviveTimer(state);
       }
       return;
     }
     if (type === 'user') {
       bumpActivity(state);
-      var last = state.messages[state.messages.length - 1];
-      if (last && last.role === 'user' && last.local && last.text === (ev.text || '')) {
-        delete last.local;
-        // v0.37: the engine echo is authoritative for ts + ei — restamp the
-        // optimistic local message so replayed ids line up for delete/edit.
-        last.ts = evTsMs(ev);
-        if (ev.i) last.ei = ev.i;
+      // v0.44 INTERRUPT FIX (CAUSE #2): the engine echo of a message WE
+      // sent must stamp the optimistic bubble wherever it now sits. The
+      // old code only checked the LAST message — a mid-turn reconnect's
+      // gap replay delivered the echo under thinking/delta bubbles and
+      // re-PUSHED the sent message as a duplicate (the user report).
+      // Pure decision (unit-tested), applied here:
+      var ures = resolveUserEcho(state._pendingSends, state.messages, ev);
+      if (ures.kind === 'stamp') {
+        var tgt = state.messages[ures.mi];
+        if (tgt) {
+          delete tgt.local;
+          // v0.37: the engine echo is authoritative for ts + ei — restamp the
+          // optimistic local message so replayed ids line up for delete/edit.
+          tgt.ts = evTsMs(ev);
+          if (ev.i) tgt.ei = ev.i;
+        }
+        if (ures.pend >= 0 && state._pendingSends) state._pendingSends.splice(ures.pend, 1);
         return;
       }
       var uMsg = { role: 'user', text: ev.text || '', ts: evTsMs(ev) };
@@ -3036,6 +3434,36 @@
         // status event — those must never flush the queue).
         var wasStreaming = state.isStreaming;
         state.isStreaming = false;
+        // v0.44 INTERRUPT FIX (CAUSE #1): a terminal status that arrives
+        // while the turn was LIVE used to end it SILENTLY — isStreaming
+        // drops, the activity hides, the button repaints, but NO bubble
+        // ever renders (bubbles only came from type:'error' events), so
+        // an engine-restart heal (or any status-error with no paired
+        // error event) left the user staring at a dead chat with no
+        // explanation. Render the notice here — the same emsg shape the
+        // type:'error' handler builds, minus the suggest chips. The
+        // message now survives the wire (store/events.go). wasStreaming
+        // ONLY: a replayed old healed event must never re-bubble after a
+        // fresh open.
+        if (ev.state === 'error' && wasStreaming) {
+          var she = {
+            role: 'error',
+            text: ev.message || 'the reply was interrupted — tap Retry',
+            ts: evTsMs(ev)
+          };
+          if (ev.i) she.ei = ev.i;
+          state.messages.push(she);
+          appendMessage(msgContainer, scrollEl, she, bodyEl, state._icon, state);
+          state._holdQueue = true; // an interrupted turn parks the queue — Retry is the way forward
+        }
+        // v0.44 (CAUSE #2): the turn is over — no engine echoes are
+        // coming for its optimistic bubbles; drop the pending-send
+        // ledger (the tail-scan still catches any late stragglers).
+        state._pendingSends = null;
+        // v0.44 (CAUSE #2): the first status after a reconnect is the
+        // natural end of the gap replay — run the adjacent-duplicate
+        // pass now instead of waiting out the quiet timer.
+        if (state._replayedGap) runAdjacentDupPass(state);
         hideActivity(bodyEl, state);
         // v0.27: turn end — the header meters (ring + cost) refresh.
         refreshHeaderMeters(bodyEl, state);
@@ -3871,6 +4299,13 @@
     // the pushed one, so edit/delete couldn't target user messages).
     var uMsg = { role: 'user', text: text, local: true, ts: Date.now() };
     state.messages.push(uMsg);
+    // v0.44 INTERRUPT FIX (CAUSE #2): record the optimistic send so the
+    // engine's 'user' echo can find THIS message even when later bubbles
+    // (thinking, deltas) bury it before the echo lands — the mid-turn
+    // reconnect gap-replay duplicate. Consumed by resolveUserEcho.
+    state._pendingSends = (state._pendingSends || []).concat([
+      { text: text, ts: uMsg.ts, mi: state.messages.length - 1 }
+    ]);
     // v0.28 SMART SCROLL FREEZE: the user's own send re-engages the
     // follow — their finger is back in the conversation's here-and-now.
     state._scrollFrozen = false;
@@ -3922,6 +4357,7 @@
           state.messages.push(connErr);
           appendMessage(msgContainer, null, connErr, bodyEl, icon, state);
           state.isStreaming = false;
+          state._pendingSends = null; // v0.44 (CAUSE #2): the turn never started — no echo is coming
           syncSendButton(bodyEl, state); // v0.42: the error bubble → RETRY
         }
       }, 100);
@@ -4068,4 +4504,18 @@
       ensureSession(icon, state, cb || function () {});
     }
   };
+
+  // v0.44: node test path (scripts/test_interrupt_fixes.js) — the pure
+  // interrupt-hardening helpers + the draft functions, exported the same
+  // way uikit.js/theme.js do (the browser never defines module).
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      resolveUserEcho: resolveUserEcho,
+      dropAdjacentUserDupes: dropAdjacentUserDupes,
+      draftSaveStaleMs: draftSaveStaleMs,
+      saveDraftLS: saveDraftLS,
+      clearDraftLS: clearDraftLS,
+      loadDraftLS: loadDraftLS
+    };
+  }
 })();

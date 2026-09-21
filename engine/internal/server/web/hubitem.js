@@ -1,4 +1,4 @@
-// hubitem.js — v0.31 THE HUB: the item detail panel.
+// hubitem.js — v0.31→v0.44 THE HUB: the item detail panel.
 //
 // USER SPEC: press a card → a panel rendering the full item —
 // a COLLAPSIBLE header showing the PNG/gradient background (the image
@@ -19,6 +19,8 @@
 // Downloading a PERSONA also imports it into the chat that opened the
 // hub (GET session → append {id, name, text, mode:"inactive"} → PATCH
 // — the persona_set convention; new personas start inactive).
+// v0.44: downloading a TEMPLATE saves it into the local user-template
+// library (window.TemplateSheet.saveFromHub → "Yours" in the sheet).
 //
 // Data: GET /api/hub/{type}/item/{repo}/{id} (repo URL-encoded as ONE
 // path segment), POST /api/hub/{type}/download {repo,id},
@@ -134,16 +136,30 @@
 
     // the header background: a PNG (image at full opacity at the top
     // fading to ~30% at the bottom — the gradient overlay sits OVER
-    // the image), or the item's gradient colors (same gentle overlay
-    // keeps the text readable), or the deterministic id gradient.
+    // the image), the item's v0.44 design SPEC (the shared gradient
+    // system: dir / angle / an optional texture dataURL blended in —
+    // legacy rows without dir render exactly as before, the 135°
+    // sweep), or the deterministic id gradient.
     var bgStyle = '';
     var d = it.design || {};
     if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
-      // 1–10 stops: one stop renders solid (a gradient needs ≥2)
-      var grad = (d.colors.length === 1)
-        ? 'background-color:' + d.colors[0] + ';'
-        : 'background-image:' + headFade() + ',linear-gradient(135deg,' + d.colors.join(',') + ');';
-      bgStyle = grad;
+      var GU = window.GradientUI;
+      if (GU) {
+        var css = GU.css({ colors: d.colors, dir: d.dir, angle: d.angle, tex: d.tex });
+        if (css.charAt(0) === '#') {
+          bgStyle = 'background-color:' + css + ';';  // 1 stop + no tex = a solid
+        } else {
+          // headFade OVER the gradient; the tex rides as the css bottom
+          // layer with blend 'color' (the uikit BLENDED contract)
+          bgStyle = 'background-image:' + headFade() + ',' + css + ';' +
+            ((d.tex && GU.BLENDED) ? 'background-blend-mode:color;' : '');
+        }
+      } else {
+        // no uikit — the v0.33 render
+        bgStyle = (d.colors.length === 1)
+          ? 'background-color:' + d.colors[0] + ';'
+          : 'background-image:' + headFade() + ',linear-gradient(135deg,' + d.colors.join(',') + ');';
+      }
     } else if (d.kind !== 'png') {
       bgStyle = 'background-image:' + (window.Hub && window.Hub.idGradient
         ? window.Hub.idGradient(it.id) : 'none') + ';';
@@ -262,6 +278,12 @@
         toast('downloaded — ' + cur.item.name);
         if (window.Hub) window.Hub.refreshItem(cur.item);
         if (cur.type === 'persona') importPersona(cur.item, cur.payload);
+        // v0.44 TEMPLATE PILL: a downloaded TEMPLATE lands in the local
+        // user-template library (templatesheet.js "Yours") — it is then
+        // selectable from the composer's ⧉ template pill like any other.
+        if (cur.type === 'template' && window.TemplateSheet && window.TemplateSheet.saveFromHub) {
+          window.TemplateSheet.saveFromHub(cur.item, cur.payload);
+        }
         cur.panel.replaceView(buildView());
       })
       .catch(function (e) {

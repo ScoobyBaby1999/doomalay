@@ -1,4 +1,4 @@
-// tweaks.js — v0.30 THE PER-CHAT SETTINGS (the ✦ tweaks pill).
+// tweaks.js — v0.30→v0.44 THE PER-CHAT SETTINGS (the ✦ tweaks pill).
 //
 // USER SPEC: "Let's add a tweaks pill next to the usage and export chat
 // pills in the chat metadata header. The tweaks pill should open a panel
@@ -8,6 +8,21 @@
 // the global settings… Add another section that allows the user to change
 // the background of the panel to an image of their choosing from their
 // library, or a background color of their choice."
+//
+// v0.44 USER SPECS: "When an image is pressed for background, we don't
+// get the ask to crop and fit the image as the user pleases… Everytime
+// the user selects to upload an image anywhere on the app… the user is
+// redirected to crop and fit the image to the aspect ratio of whatever
+// bubble/screen/borders it applies to" → every background pick now runs
+// through CropUI at the LIVE chat-root aspect (the viewport as the
+// fallback). And "tweaking the per chat gradients… use the gradient
+// system" → the Background segment is ONE gradient editor (the shared
+// GradientUI v2 — a 1-color spec IS the solid case, so the old color /
+// gradient pills merged) with the full style / pattern / angle / texture
+// rows. The texture uploads to the engine
+// (PUT/GET/DELETE /api/sessions/{id}/texture — a rev'd row like the
+// background) and composes into the root's background-image as the
+// bottom layer with background-blend-mode: color.
 //
 // THE NO-DUPLICATION ANSWER: the tweaks view renders the EXACT markup the
 // settings pages render — the same AppearanceUI builders (appearance.js
@@ -26,15 +41,23 @@
 //
 // STORAGE (engine-side, next to the chat's own session):
 //   GET/PUT   /api/sessions/{id}/tweaks      the JSON blob (only the
-//                                            overridden keys are present)
+//                                            overridden keys are present;
+//                                            bg = {type:'gradient',
+//                                            colors, dir, angle?, texRev?}
+//                                            — legacy {type:'color',color}
+//                                            and {type:'gradient',colors}
+//                                            blobs load via GradientUI.norm)
 //   GET/PUT/DELETE /api/sessions/{id}/background   the image bytes (the
-//                                            client downscales to ≤1600px
-//                                            before upload; the URL is
-//                                            cache-busted with ?v=<rev>)
+//                                            CropUI crop ≤1600px; the
+//                                            URL is cache-busted with
+//                                            ?v=<rev>)
+//   GET/PUT/DELETE /api/sessions/{id}/texture      the gradient's texture
+//                                            (≤512px from the shared uikit
+//                                            pipeline; ?v=<rev>)
 //
 // Exposes: window.ChatTweaks = { open, attach, setScheme, setFmtSlot,
 //                                setSize, resetColors, resetSizes,
-//                                setBgColor, clearBg }
+//                                setBgColor, setBgGradient, clearBg }
 
 (function () {
   'use strict';
@@ -43,8 +66,16 @@
 
   // the CSS variables this module manages on #chat-root (all cleared
   // before each apply — an absent override must fall back to the GLOBAL
-  // value, which lives on :root)
+  // value, which lives on :root). v0.44: the fmt slots carry their
+  // GRADIENT twins too (--fmt-x-gradient / --fmt-x-ink) + the
+  // data-fmt-grad attribute — the same trio formatter.js writes on
+  // :root; the index.html [data-fmt-grad~=…] text-clip rules match the
+  // attribute on ANY ancestor, so per-chat gradient text works.
   var FMT_VARS = ['--fmt-a1', '--fmt-a2', '--fmt-a3', '--fmt-bright', '--fmt-link'];
+  var FMT_TWIN_VARS = [];
+  ['a1', 'a2', 'a3', 'bright', 'link'].forEach(function (k) {
+    FMT_TWIN_VARS.push('--fmt-' + k + '-gradient', '--fmt-' + k + '-ink');
+  });
   var SIZE_VARS = ['--chat-fs', '--chat-scale', '--ui-fs', '--ui-small-fs'];
   var SIZES = [
     { key: 'chatTextSize', cssVar: '--chat-fs', lo: 12, span: 12 },   // 0-100 → 12-24px
@@ -97,17 +128,32 @@
   function apply(state) {
     var root = state && state._chatRootEl;
     if (!root) return;
-    FMT_VARS.concat(SIZE_VARS).forEach(function (v) { root.style.removeProperty(v); });
+    FMT_VARS.concat(FMT_TWIN_VARS).forEach(function (v) { root.style.removeProperty(v); });
+    root.removeAttribute('data-fmt-grad');
     var t = (state && state._tweaks) || {};
     var e = effective(state);
 
     // colors — only when THIS chat owns a scheme or any slot override;
-    // otherwise the chat inherits the global --fmt-* from :root
+    // otherwise the chat inherits the global --fmt-* from :root.
+    // v0.44: slots resolve through the GRADIENT twins (a spec override
+    // paints gradient text; a hex override paints solid — the same
+    // fmtTwins() formatter.js uses, exposed for exactly this path).
     var ownSlots = t.fmtOverrides && Object.keys(t.fmtOverrides).length;
     if (t.chatScheme != null || ownSlots) {
+      var twinsOf = (window.Formatter && window.Formatter.fmtTwins) ||
+        function (raw) { return { solid: raw, grad: 'none' }; };
+      var gradSlots = [];
       FMT_VARS.forEach(function (v, i) {
-        root.style.setProperty(v, e.fmt[['a1', 'a2', 'a3', 'bright', 'link'][i]]);
+        var slot = ['a1', 'a2', 'a3', 'bright', 'link'][i];
+        var twins = twinsOf(e.fmt[slot]);
+        root.style.setProperty(v, twins.solid);
+        root.style.setProperty(v + '-gradient', twins.grad);
+        if (twins.grad !== 'none') {
+          gradSlots.push(slot);
+          root.style.setProperty(v + '-ink', 'transparent');
+        }
       });
+      if (gradSlots.length) root.setAttribute('data-fmt-grad', gradSlots.join(' '));
     }
 
     // text sizes — only the ones this chat overrides (same px math as
@@ -120,20 +166,53 @@
       }
     });
 
-    // background — a color, a 1–10-stop gradient, or the engine-stored
-    // image (cache-busted by rev)
+    // background — v0.44: a full gradient SPEC (one color + a plain
+    // style = the solid case — exactly the v0.30 behavior), a spec with
+    // an engine texture, or the engine-stored image (cache-busted by
+    // rev). Legacy blobs fold through GradientUI.norm (old
+    // {type:'color'} → a 1-color spec; old {type:'gradient',colors} →
+    // dir 'auto' = the old 135° linear sweep).
     root.style.backgroundColor = '';
     root.style.backgroundImage = '';
     root.style.backgroundSize = '';
     root.style.backgroundPosition = '';
+    root.style.backgroundBlendMode = '';
     var bg = t.bg;
-    if (bg && bg.type === 'color' && bg.color) {
-      root.style.backgroundColor = bg.color;
-    } else if (bg && bg.type === 'gradient' && bg.colors && bg.colors.length) {
-      // v0.33 (user spec): the chat background can be a gradient — up
-      // to 10 colors, minimum 1 (one stop renders as a solid fill)
-      if (bg.colors.length === 1) root.style.backgroundColor = bg.colors[0];
-      else root.style.backgroundImage = 'linear-gradient(135deg,' + bg.colors.join(',') + ')';
+    if (bg && bg.type === 'color' && typeof bg.color === 'string') {
+      // legacy v0.30 blob — fold it into the v0.44 spec shape (in
+      // memory; the next save persists the folded form)
+      bg = { type: 'gradient', colors: [bg.color], dir: 'auto' };
+    }
+    if (bg && bg.type === 'gradient') {
+      var GU = window.GradientUI;
+      if (GU) {
+        var spec = GU.norm({ colors: bg.colors, dir: bg.dir, angle: bg.angle });
+        if (bg.texRev && state.sessionId) {
+          // the texture lives on the ENGINE (rev'd row) — css() builds
+          // the gradient layers (tex is NOT in the spec), the URL layer
+          // is appended by hand and blend-mode 'color' inks the gradient
+          // over the texture's luminance (the uikit BLENDED contract)
+          root.style.backgroundImage = bgGradientLayers(spec) +
+            ', url("/api/sessions/' + state.sessionId + '/texture?v=' + bg.texRev + '")';
+          root.style.backgroundSize = 'cover';
+          root.style.backgroundPosition = 'center';
+          root.style.backgroundBlendMode = GU.BLENDED ? 'color' : '';
+        } else {
+          var css = GU.css(spec);
+          if (css.charAt(0) === '#') {
+            // 1 color + a plain style (any of auto/h/v/diag/diag2/radial)
+            // → the solid fill — the old 'color' segment's behavior
+            root.style.backgroundColor = css;
+          } else {
+            root.style.backgroundImage = css;
+          }
+        }
+      } else {
+        // uikit missing — the v0.33 fallback render
+        var cols = (bg.colors && bg.colors.length) ? bg.colors : [];
+        if (cols.length === 1) root.style.backgroundColor = cols[0];
+        else if (cols.length) root.style.backgroundImage = 'linear-gradient(135deg,' + cols.join(',') + ')';
+      }
     } else if (bg && bg.type === 'image' && state.sessionId) {
       root.style.backgroundImage = 'url("/api/sessions/' + state.sessionId +
         '/background?v=' + (bg.rev || 1) + '")';
@@ -142,7 +221,33 @@
     }
   }
 
+  // bgGradientLayers(spec) — the background-image LAYERS for a spec
+  // (no tex): GradientUI.css returns the bare hex for a 1-color plain
+  // spec, which is background-color material — under a texture URL it
+  // becomes a flat 2-stop layer so the css stack stays valid.
+  function bgGradientLayers(spec) {
+    var css = window.GradientUI.css(spec);
+    if (css.charAt(0) === '#') {
+      return 'linear-gradient(' + css + ',' + css + ')';
+    }
+    return css;
+  }
+
   // ── STORE — load / persist the tweak blob ─────────────────────────
+
+  // foldLegacyBg — v0.44 read-time migration: a stored v0.30
+  // {type:'color',color} blob becomes the 1-color gradient spec (the
+  // solid case) the moment it loads, so the store converges on the new
+  // shape with the next save (apply() folds defensively too — a blob
+  // written by an older build between loads still renders right).
+  function foldLegacyBg(state) {
+    var t = state && state._tweaks;
+    var bg = t && t.bg;
+    if (bg && bg.type === 'color' && typeof bg.color === 'string') {
+      t.bg = { type: 'gradient', colors: [bg.color], dir: 'auto' };
+    }
+  }
+
   function load(state) {
     if (!state) return Promise.resolve({});
     if (state._tweaksPromise) return state._tweaksPromise;
@@ -165,6 +270,7 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         state._tweaks = (d && d.tweaks && typeof d.tweaks === 'object') ? d.tweaks : {};
+        foldLegacyBg(state);
         state._tweaksLoaded = true;
         state._tweaksPromise = null;
         apply(state);
@@ -251,21 +357,39 @@
     rerenderView(); // v0.34: "inherit the global sizes again" snaps the sliders in place
   }
 
+  // setBgColor — the public writer kept for external callers; v0.44
+  // re-routes it through the gradient system (a 1-color spec IS the
+  // solid — the stored blob is now always a gradient spec).
   function setBgColor(state, hex) {
-    touch(state);
-    state._tweaks.bg = { type: 'color', color: hex };
-    apply(state);
-    persist(state);
+    if (!window.GradientUI) return;
+    setBgGradient(state, { colors: [hex], dir: 'auto' });
   }
 
-  // v0.33: the chat background GRADIENT — 1–10 colors (the shared
-  // GradientUI owns the editor; this just persists + applies).
-  function setBgGradient(state, colors) {
+  // v0.33→v0.44: the chat background GRADIENT — a full spec (colors +
+  // dir + angle). Accepts BOTH shapes (legacy callers pass a plain
+  // colors array — GradientUI.norm folds every shape); the editor's
+  // live spec object carries texRev as an extra key, and an input
+  // object with an EXPLICIT texRev key is authoritative (null clears
+  // it), otherwise a previously stored texRev survives — the texture
+  // row is orthogonal to the colors.
+  function setBgGradient(state, specOrColors) {
+    var GU = window.GradientUI;
+    if (!GU) return;
+    var spec = GU.norm(specOrColors);
+    if (!spec.colors.length) return;
     touch(state);
-    var stops = [];
-    (colors || []).forEach(function (c) { if (c) stops.push(c); });
-    if (!stops.length) return;
-    state._tweaks.bg = { type: 'gradient', colors: stops.slice(0, 10) };
+    var texRev = null;
+    if (specOrColors && typeof specOrColors === 'object' &&
+        !Array.isArray(specOrColors) && specOrColors.hasOwnProperty('texRev')) {
+      texRev = specOrColors.texRev || null;
+    } else if (state._tweaks.bg && state._tweaks.bg.type === 'gradient' &&
+        state._tweaks.bg.texRev) {
+      texRev = state._tweaks.bg.texRev;
+    }
+    var bg = { type: 'gradient', colors: spec.colors, dir: spec.dir };
+    if (typeof spec.angle === 'number') bg.angle = spec.angle;
+    if (texRev) bg.texRev = texRev;
+    state._tweaks.bg = bg;
     apply(state);
     persist(state);
   }
@@ -273,47 +397,53 @@
   function clearBg(state) {
     touch(state);
     delete state._tweaks.bg;
-    bgMode = 'color';   // back to the default segment
+    bgMode = 'gradient';  // back to the default segment
+    gradDraft = null;     // a removed gradient doesn't ghost back
     if (state.sessionId) {
       fetch('/api/sessions/' + state.sessionId + '/background', { method: 'DELETE' })
+        .catch(function () {});
+      // the gradient's texture row goes with it (the blob no longer
+      // points at it — leaving it would orphan a rev'd kv row)
+      fetch('/api/sessions/' + state.sessionId + '/texture', { method: 'DELETE' })
         .catch(function () {});
     }
     apply(state);
     persist(state);
   }
 
-  // ── the image pipeline: pick → downscale → upload → apply ─────────
-  // A library photo is 3-12MP; the panel doesn't need it. Downscale to
-  // ≤1600px on the long edge and re-encode as JPEG — typically 100-400KB,
-  // comfortably inside the engine's 4MB cap and quick to fetch on chat
-  // open (it's also cached forever per ?v=rev).
-  function downscaleImage(file, maxEdge) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var img = new Image();
-      img.onload = function () {
-        try {
-          var w = img.naturalWidth, h = img.naturalHeight;
-          var scale = Math.min(1, maxEdge / Math.max(w, h));
-          var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
-          var cv = document.createElement('canvas');
-          cv.width = cw; cv.height = ch;
-          cv.getContext('2d').drawImage(img, 0, 0, cw, ch);
-          cv.toBlob(function (blob) {
-            URL.revokeObjectURL(url);
-            if (blob) resolve(blob); else reject(new Error('encode failed'));
-          }, 'image/jpeg', 0.85);
-        } catch (e) { URL.revokeObjectURL(url); reject(e); }
-      };
-      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('not readable')); };
-      img.src = url;
-    });
+  // ── the image pipeline: pick → CROP → upload → apply ─────────────
+  // v0.44 (user spec): every image pick runs through CropUI at the LIVE
+  // chat-root aspect — the user crops and fits the photo to the exact
+  // screen it fills, and the crop comes from the ORIGINAL pixels
+  // (≤1600px long edge, PNG out) — no blind downscale step anymore.
+
+  // b64ToBlob — CropUI's PNG output (raw base64) → a Blob for the PUT.
+  function b64ToBlob(b64, mime) {
+    try {
+      var bin = atob(String(b64 || ''));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime || 'image/png' });
+    } catch (e) { return null; }
+  }
+
+  // dataURLToBlob — the editor's texture pick (a dataURL string) → a
+  // Blob (the mime from the data: prefix, e.g. image/jpeg).
+  function dataURLToBlob(dataURL) {
+    var m = /^data:([^;,]+)(;base64)?,(.*)$/.exec(String(dataURL || ''));
+    if (!m || !m[2]) return null;          // only base64 data URLs
+    return b64ToBlob(m[3], m[1]);
   }
 
   function uploadBackground(state, blob) {
+    // the mime rides the blob's own type (CropUI → png, the texture
+    // pipeline → jpeg); the engine sniffs the magic bytes anyway — the
+    // Content-Type is advisory
+    var mime = (blob && blob.type) || 'image/jpeg';
+    if (mime.slice(0, 6) !== 'image/') mime = 'image/jpeg';
     return fetch('/api/sessions/' + state.sessionId + '/background', {
       method: 'PUT',
-      headers: { 'Content-Type': 'image/jpeg' },
+      headers: { 'Content-Type': mime },
       body: blob
     }).then(function (r) {
       if (!r.ok) throw new Error('upload failed (' + r.status + ')');
@@ -327,6 +457,48 @@
     });
   }
 
+  // uploadTexture — the gradient editor's texture pick (a dataURL the
+  // uikit pipeline already downscaled to ≤512px JPEG) → the engine's
+  // rev'd texture row → spec.texRev. On success the dataURL is CLEARED
+  // (the blob never stores texture bytes) and the view rebuilds.
+  function uploadTexture(state, spec) {
+    var status = cur && cur.panel ? cur.panel.bodyEl.querySelector('#tweaks-bg-status') : null;
+    if (status) status.textContent = 'uploading the texture…';
+    var go = function () {
+      var blob = dataURLToBlob(spec.tex);
+      if (!blob) {
+        spec.tex = null;
+        if (status) status.textContent = 'couldn\u2019t read that texture — try another';
+        setBgGradient(state, spec);
+        rebuild();
+        return;
+      }
+      fetch('/api/sessions/' + state.sessionId + '/texture', {
+        method: 'PUT',
+        headers: { 'Content-Type': blob.type || 'image/jpeg' },
+        body: blob
+      }).then(function (r) {
+        if (!r.ok) throw new Error('upload failed (' + r.status + ')');
+        return r.json();
+      }).then(function (d) {
+        spec.tex = null;                    // the bytes live on the engine now
+        spec.texRev = (d && d.rev) || 1;   // the cache-busting handle
+        setBgGradient(state, spec);
+        rebuild();
+      }).catch(function (err) {
+        spec.tex = null;                    // the texture can't ride the blob — drop it
+        if (status) status.textContent = 'couldn\u2019t add that texture — ' +
+          (err && err.message ? err.message : 'try another');
+        setBgGradient(state, spec);         // the other shape changes still persist
+        rebuild();
+      });
+    };
+    if (state.sessionId) return go();
+    if (window.ChatPanel && window.ChatPanel.ensureSession) {
+      window.ChatPanel.ensureSession(state, go);
+    }
+  }
+
   // ── attach — the chat host calls this on every render ─────────────
   function attach(state) {
     if (!state) return;
@@ -335,8 +507,9 @@
 
   // ── THE VIEW ──────────────────────────────────────────────────────
   var cur = null;      // { panel, icon, state } while the view is open
-  var bgMode = null;   // the Background segment's pick (color/gradient/image)
-  var gradDraft = null; // the gradient editor's live colors (pre-apply)
+  var bgMode = null;   // the Background segment's pick (gradient/image)
+  var gradDraft = null; // the gradient editor's live spec (pre-apply — a
+                        // fresh pair until the first edit persists it)
 
   function open(panel, icon, state) {
     if (!panel || !state) return;
@@ -350,24 +523,53 @@
     });
   }
 
-  // the gradient editor's colors: the stored gradient, else a fresh
-  // pair draft (the familiar 2 — the ↻ random button varies the count)
-  function gradColorsFor(t) {
-    if (t.bg && t.bg.type === 'gradient' && t.bg.colors && t.bg.colors.length) {
-      return t.bg.colors;
+  // the gradient editor's LIVE spec: the stored bg blob (any legacy
+  // shape folded through GradientUI.norm — old color blobs become
+  // 1-color specs, old gradient blobs get dir 'auto'), else a fresh
+  // pair draft (the familiar 2 — the ↻ random button varies the count).
+  // texRev rides along as an extra key: the editor never touches it,
+  // setBgGradient reads it, and the ✕ texture row clears it.
+  function bgSpecFor(t) {
+    var GU = window.GradientUI;
+    var bg = t && t.bg;
+    if (GU && bg && (bg.type === 'gradient' || bg.type === 'color')) {
+      // norm accepts the legacy shapes directly ({type:'color',color}
+      // hands its hex through, {type:'gradient',…} is already a spec)
+      var n = GU.norm(bg.type === 'color' ? bg.color : bg);
+      var spec = { colors: n.colors, dir: n.dir, texRev: bg.texRev || null };
+      if (typeof n.angle === 'number') spec.angle = n.angle;
+      return spec;
     }
     if (!gradDraft) {
-      gradDraft = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+      var rnd = (GU || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+      gradDraft = { colors: rnd, dir: 'auto', texRev: null };
     }
     return gradDraft;
   }
-  function gradPreviewStyle(t) {
-    var c = gradColorsFor(t);
-    if (window.GradientUI) {
-      var css = window.GradientUI.css(c);
-      return c.length === 1 ? ('background-color:' + css) : ('background-image:' + css);
+
+  // the big preview strip under the editor — the same resolution order
+  // apply() uses: a dataURL tex (mid-upload) → inline, texRev → the
+  // engine URL layer + blend, 1-color plain → background-color, else css.
+  function bgPreviewStyle(spec, state) {
+    var GU = window.GradientUI;
+    if (!GU) return 'background-image:linear-gradient(135deg,#38bdf8,#a78bfa)';
+    if (spec.tex && typeof spec.tex === 'string') {
+      // a picked texture waiting for its upload — show it inline
+      var inlineCss = GU.css(spec);
+      return inlineCss.charAt(0) === '#'
+        ? 'background-color:' + inlineCss
+        : 'background-image:' + inlineCss;
     }
-    return 'background-image:linear-gradient(135deg,' + c.join(',') + ')';
+    if (spec.texRev && state && state.sessionId) {
+      return 'background-image:' + bgGradientLayers(GU.norm(spec)) +
+        ',url("/api/sessions/' + state.sessionId + '/texture?v=' + spec.texRev + '")' +
+        ';background-size:cover;background-position:center' +
+        (GU.BLENDED ? ';background-blend-mode:color' : '');
+    }
+    var css = GU.css(spec);
+    return css.charAt(0) === '#'
+      ? ('background-color:' + css)
+      : ('background-image:' + css);
   }
   function bgSegPill(mode, label) {
     var on = (bgMode === mode);
@@ -427,9 +629,10 @@
         var bgSet = !!t.bg;
         var bgIsImage = !!(t.bg && t.bg.type === 'image');
         var bgIsGradient = !!(t.bg && t.bg.type === 'gradient');
-        if (!bgMode) bgMode = (t.bg && t.bg.type) || 'color';
-        var curBgColor = (t.bg && t.bg.type === 'color' && t.bg.color) ||
-          ((state._chatRootEl && rgbToHex(state._chatRootEl, 'background-color')) || '#0a0a0b');
+        // v0.44: the color + gradient segments MERGED — a 1-color spec is
+        // the solid, so legacy color blobs open the gradient editor too
+        if (!bgMode) bgMode = bgIsImage ? 'image' : 'gradient';
+        var gradSpec = bgSpecFor(t);
         return (
           '<p class="pv-hint">this chat\'s own look — it starts as a copy of the global settings; anything you change here overrides them for <b>' + esc(icon.name) + '</b> only. Other chats keep the global look.</p>' +
           sec('Chat Colors',
@@ -454,40 +657,36 @@
             '<button data-action="tweaks-sizes-reset" data-scope="chat" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px;width:100%">inherit the global sizes again</button>'
           ) +
           sec('Background',
-            '<p class="hint">The surface behind this chat — a color, a gradient (1–10 colors), or an image from your library.</p>' +
+            '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +
             '<div class="tw-bgseg">' +
-              bgSegPill('color', '● color') +
               bgSegPill('gradient', '◨ gradient') +
               bgSegPill('image', '🖼 image') +
             '</div>' +
-            '<div data-bgzone="color"' + (bgMode !== 'color' ? ' style="display:none"' : '') + '>' +
-              '<div class="setting-row">' +
-                '<label>Background color</label>' +
-                '<div class="control">' +
-                  '<input type="color" data-bg-color value="' + curBgColor + '">' +
-                  '<span class="color-hex" data-color-hex="bgColor">' + curBgColor + '</span>' +
-                '</div>' +
-              '</div>' +
-            '</div>' +
             '<div data-bgzone="gradient"' + (bgMode !== 'gradient' ? ' style="display:none"' : '') + '>' +
               (window.GradientUI
-                ? window.GradientUI.editor('tw', gradColorsFor(t)) +
-                  '<div class="gr-preview" id="tw-grad-preview" style="' + gradPreviewStyle(t) + '"></div>'
+                ? window.GradientUI.editor('tw', gradSpec) +
+                  (gradSpec.texRev
+                    ? '<div class="setting-row" id="tw-tex-row" style="margin-top:8px">' +
+                        '<label>texture set</label>' +
+                        '<div class="control"><button type="button" id="tw-tex-rm" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;min-height:44px;border-radius:10px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer">✕ remove texture</button></div>' +
+                      '</div>'
+                    : '') +
+                  '<div class="gr-preview" id="tw-grad-preview" style="' + bgPreviewStyle(gradSpec, state) + '"></div>'
                 : '<p class="hint">the gradient editor is not available</p>') +
             '</div>' +
             '<div data-bgzone="image"' + (bgMode !== 'image' ? ' style="display:none"' : '') + '>' +
               '<button id="tweaks-bg-pick" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">🖼 choose an image from the library</button>' +
               '<input type="file" id="tweaks-bg-file" accept="image/*" style="display:none">' +
+              '<p class="hint" style="margin:6px 0 0">the cropper opens at this screen\u2019s shape — fit the photo to the exact area it fills.</p>' +
             '</div>' +
             (bgSet ? '<button id="tweaks-bg-remove" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">' +
               (bgIsImage ? '✕ remove the background image' :
-               bgIsGradient ? '✕ remove the background gradient' :
-               '✕ remove the background color') + '</button>' : '') +
+               '✕ remove the background gradient') + '</button>' : '') +
             '<p class="hint" id="tweaks-bg-status" style="margin:8px 0 0">' +
               (bgIsImage ? 'an image is set — it fills the panel behind the messages.' :
-               bgIsGradient ? 'a gradient is set — ' + t.bg.colors.length +
-                 (t.bg.colors.length === 1 ? ' color.' : ' colors.') :
-               bgSet ? 'a color is set.' :
+               bgIsGradient ? 'a gradient is set — ' + (t.bg.colors ? t.bg.colors.length : 0) +
+                 ((t.bg.colors && t.bg.colors.length) === 1 ? ' color.' : ' colors.') +
+                 (t.bg.texRev ? ' + texture.' : '.') :
                'nothing set — this chat follows the app background.') + '</p>'
           )
         );
@@ -503,9 +702,10 @@
         }
         var t0 = state._tweaks || {};
 
-        // v0.33: the Background segment — color / gradient / image.
-        // The zones all exist in the DOM (the v30 pipeline drives them
-        // headlessly); the segment just shows one at a time.
+        // v0.44: the Background segment — gradient / image (the color
+        // pill merged into the gradient editor: a 1-color spec IS the
+        // solid). The zones all exist in the DOM (the v30 pipeline drives
+        // them headlessly); the segment just shows one at a time.
         el.querySelectorAll('[data-bgmode]').forEach(function (b) {
           b.addEventListener('click', function () {
             var mode = b.getAttribute('data-bgmode');
@@ -520,35 +720,54 @@
           });
         });
 
-        // the gradient editor — live preview updates in place; shape
-        // changes (add/remove/shuffle/random) rebuild + PERSIST
+        // the gradient editor (FULL options — style / pattern / angle /
+        // texture) — wire() mutates the spec IN PLACE: live (color /
+        // angle) updates the chat + the preview strip in place; shape
+        // changes (add/remove/shuffle/random/dir) persist + rebuild the
+        // view (preserving expansion + scroll — the wire contract). A
+        // freshly picked texture lands in spec.tex as a dataURL FIRST —
+        // the rebuild hook intercepts it (uploadTexture → texRev →
+        // re-render from the store) before the generic rebuild runs.
         var gr = el.querySelector('#tw-gr');
         if (gr && window.GradientUI) {
-          var colors = gradColorsFor(t0);
+          var spec = bgSpecFor(t0);
           window.GradientUI.wire(gr, {
-            colors: colors,
+            spec: spec,
             live: function () {
-              setBgGradient(state, colors);
+              setBgGradient(state, spec);
               var pv = el.querySelector('#tw-grad-preview');
-              if (pv) {
-                var css = window.GradientUI.css(colors);
-                pv.setAttribute('style', colors.length === 1
-                  ? ('background-color:' + css) : ('background-image:' + css));
-              }
+              if (pv) pv.setAttribute('style', bgPreviewStyle(spec, state));
             },
             rebuild: function () {
-              setBgGradient(state, colors);
+              if (spec.tex && typeof spec.tex === 'string' &&
+                  String(spec.tex).slice(0, 5) === 'data:') {
+                uploadTexture(state, spec);   // upload → texRev → rebuild
+                return;
+              }
+              setBgGradient(state, spec);
               rebuild();
             }
           });
         }
 
-        var bgc = el.querySelector('[data-bg-color]');
-        if (bgc) bgc.addEventListener('input', function () {
-          setBgColor(state, bgc.value);
-          var hex = el.querySelector('[data-color-hex="bgColor"]');
-          if (hex) hex.textContent = bgc.value;
+        // the ✕ texture row — the engine row + the persisted texRev go
+        // together (an object with an EXPLICIT texRev key is authoritative
+        // in setBgGradient, so null clears it)
+        var texRm = el.querySelector('#tw-tex-rm');
+        if (texRm) texRm.addEventListener('click', function () {
+          var done = function () {
+            var spec = bgSpecFor(state._tweaks || {});
+            spec.texRev = null;
+            setBgGradient(state, spec);
+            rebuild();
+          };
+          if (state.sessionId) {
+            fetch('/api/sessions/' + state.sessionId + '/texture', { method: 'DELETE' })
+              .catch(function () {})
+              .then(done, done);
+          } else done();
         });
+
         var pick = el.querySelector('#tweaks-bg-pick');
         var file = el.querySelector('#tweaks-bg-file');
         var status = el.querySelector('#tweaks-bg-status');
@@ -556,15 +775,55 @@
           pick.addEventListener('click', function () { file.click(); });
           file.addEventListener('change', function () {
             var f = file.files && file.files[0];
+            file.value = '';
             if (!f) return;
-            if (status) status.textContent = 'downscaling + uploading…';
+            if (!window.CropUI) {
+              if (status) status.textContent = 'the cropper is not available';
+              return;
+            }
+            // v0.44 (user spec): CROP AND FIT before the upload — the
+            // frame opens at the LIVE chat-root aspect (what the photo
+            // actually fills on screen); the fallback chain is the
+            // viewport, then CropUI's own 1.5 default
+            var aspect = 1.5;
+            try {
+              var r = state._chatRootEl && state._chatRootEl.getBoundingClientRect();
+              if (r && r.width > 0 && r.height > 0) aspect = r.width / r.height;
+              else if (window.innerWidth > 0 && window.innerHeight > 0) {
+                aspect = window.innerWidth / window.innerHeight;
+              }
+            } catch (e) { /* keep the default */ }
+            if (status) status.textContent = 'opening the cropper…';
             var go = function () {
-              downscaleImage(f, 1600).then(function (blob) {
-                return uploadBackground(state, blob);
-              }).then(function () {
-                rebuild();
-              }).catch(function (err) {
-                if (status) status.textContent = 'couldn\u2019t set that image — ' + (err && err.message ? err.message : 'try another');
+              window.CropUI.open({
+                file: f,
+                aspect: aspect,
+                maxEdge: 1600,   // the crop comes from the ORIGINAL pixels
+                onDone: function (b64, dims) {
+                  // CropUI outputs PNG (raw base64) — a Blob for the PUT
+                  var blob = b64ToBlob(b64, 'image/png');
+                  if (!blob) {
+                    if (status) status.textContent = 'couldn\u2019t read that image — try another';
+                    return;
+                  }
+                  if (status) status.textContent = 'uploading…';
+                  uploadBackground(state, blob).then(function () {
+                    rebuild();   // the fresh view carries the new status line
+                    var ns = cur && cur.panel
+                      ? cur.panel.bodyEl.querySelector('#tweaks-bg-status') : null;
+                    if (ns) ns.textContent = 'background set — cropped ' +
+                      dims.width + '\u00d7' + dims.height + ' at full clarity.';
+                  }).catch(function (err) {
+                    if (status) status.textContent = 'couldn\u2019t set that image — ' +
+                      (err && err.message ? err.message : 'try another');
+                  });
+                },
+                onCancel: function () {
+                  if (status) status.textContent = 'crop canceled — nothing changed.';
+                },
+                onErr: function (msg) {
+                  if (status) status.textContent = msg || 'could not read that image';
+                }
               });
             };
             if (state.sessionId) return go();
@@ -580,17 +839,6 @@
         });
       }
     };
-  }
-
-  // ── helpers ────────────────────────────────────────────────────────
-  function rgbToHex(el, prop) {
-    try {
-      var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(getComputedStyle(el)[prop] || '');
-      if (!m) return '';
-      return '#' + [1, 2, 3].map(function (i) {
-        return ('0' + parseInt(m[i], 10).toString(16)).slice(-2);
-      }).join('');
-    } catch (e) { return ''; }
   }
 
   // v0.38 PER-CHAT UI DEFAULTS (user spec): each chat remembers whether

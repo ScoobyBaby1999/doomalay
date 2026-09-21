@@ -16,11 +16,17 @@ import (
 )
 
 // Design is an item's card background: either a client-uploaded PNG
-// (Kind "png") or a gradient (Kind "gradient") built from 2–3 colors.
+// (Kind "png") or a gradient (Kind "gradient") — v0.44: a full gradient
+// SPEC (the shared uikit contract: dir + angle + an optional texture
+// dataURL). Legacy rows without Dir render exactly as before (the
+// client treats a missing dir as "auto" = the old 135° linear sweep).
 // "none" keeps the plain card surface.
 type Design struct {
-	Kind   string   `json:"kind"`   // "gradient" | "png" | "none"
-	Colors []string `json:"colors"` // gradient stops (hex), Kind == "gradient"
+	Kind   string   `json:"kind"`            // "gradient" | "png" | "none"
+	Colors []string `json:"colors"`          // gradient stops (hex), Kind == "gradient"
+	Dir    string   `json:"dir,omitempty"`   // v0.44: uikit dir (whitelist, default "auto")
+	Angle  int      `json:"angle,omitempty"` // v0.44: 0–360, meaningful for "diag"
+	Tex    string   `json:"tex,omitempty"`   // v0.44: texture dataURL (≤200KB string, "data:image/…")
 }
 
 // Item is one library item (metadata only — the payload lives in its own

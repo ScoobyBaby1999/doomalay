@@ -1,10 +1,16 @@
-// formatter.js — v0.17 the FORMATTING ENGINE.
+// formatter.js — v0.44 the FORMATTING ENGINE.
 //
 // The user spec: "the output itself is not formatted… We should detect and
 // put formatting on the responses as well, and the user inputs too.
 // Everything should be formatted… even more formatting or slight colors…
 // brighter texts here and there, a simple matching color scheme of 2 or 3
 // adjacent colors or different hues."
+//
+// v0.44: the 5 scheme slots (a1/a2/a3/bright/link) may each hold a
+// GRADIENT SPEC (uikit.js GradientUI) — applyScheme writes the slot's
+// var-twin pair + tags :root[data-fmt-grad] so index.html's
+// background-clip:text rules can paint gradient TEXT (headings, emphasis,
+// strong, links). See the FMT SLOT TWINS block below.
 //
 // PIPELINE:  raw text
 //   → artifact-block extraction (```artifact file=… → artifact cards)
@@ -86,22 +92,59 @@
   // Live scheme state — also persisted by Settings (chatScheme + overrides).
   var currentScheme = 'teal';
 
+  // ── v0.44 THE FMT SLOT TWINS ──────────────────────────────────────
+  // Every slot value (preset hex, legacy hex override, or a gradient
+  // SPEC from the appearance editor) resolves into a var-twin pair
+  // written on :root:
+  //   --fmt-<slot>          the SOLID (first color — every color: rule
+  //                          in index.html keeps working)
+  //   --fmt-<slot>-gradient the background-image value, or the literal
+  //                          'none' when the spec paints solid
+  //   --fmt-<slot>-ink      'transparent' ONLY while the slot paints a
+  //                          gradient (the background-clip:text rules
+  //                          key on it; removed otherwise so the solid
+  //                          color: rule paints)
+  // PLUS the :root attribute data-fmt-grad = the space-separated list
+  // of slots actually painting a gradient (e.g. 'a1 link') — absent
+  // when none. index.html's [data-fmt-grad~=…] text-clip rules engage
+  // per slot only then. (The per-chat tweaks path can do the same on
+  // #chat-root — any ancestor attribute works.) TEXTURE (spec.tex) is
+  // stripped: text-clip glyphs can't blend a texture layer sensibly.
+  var FMT_SLOTS = ['a1', 'a2', 'a3', 'bright', 'link'];
+  function fmtTwins(raw) {
+    var G = (typeof window !== 'undefined') ? window.GradientUI : null;
+    if (G && G.norm) {
+      var spec = G.norm(raw);
+      if (spec.tex) delete spec.tex;   // fmt slots never paint texture
+      var solid = spec.colors[0];
+      var css = G.css(spec);
+      return { solid: solid, css: css, grad: (css === solid) ? 'none' : css };
+    }
+    // no-uikit fallback: a plain string stays the solid; an object
+    // degrades to its first color (never a '[object Object]' paint)
+    var s = (raw && typeof raw === 'object' && Array.isArray(raw.colors) && raw.colors[0]) ? raw.colors[0] : raw;
+    s = String(s == null ? '' : s);
+    return { solid: s, css: s, grad: 'none' };
+  }
+
   function applyScheme(name, overrides) {
     var preset = SCHEMES[name] || SCHEMES.teal;
-    var vars = {
-      '--fmt-a1': preset.a1,
-      '--fmt-a2': preset.a2,
-      '--fmt-a3': preset.a3,
-      '--fmt-bright': preset.bright,
-      '--fmt-link': preset.link
-    };
-    if (overrides) {
-      for (var k in overrides) {
-        if (overrides[k]) vars['--fmt-' + k] = overrides[k];
-      }
-    }
     var root = document.documentElement;
-    for (var v in vars) root.style.setProperty(v, vars[v]);
+    var gradSlots = [];
+    FMT_SLOTS.forEach(function (k) {
+      var raw = (overrides && overrides[k]) || preset[k];
+      var twins = fmtTwins(raw);
+      root.style.setProperty('--fmt-' + k, twins.solid);
+      root.style.setProperty('--fmt-' + k + '-gradient', twins.grad);
+      if (twins.grad !== 'none') {
+        gradSlots.push(k);
+        root.style.setProperty('--fmt-' + k + '-ink', 'transparent');
+      } else {
+        root.style.removeProperty('--fmt-' + k + '-ink');
+      }
+    });
+    if (gradSlots.length) root.setAttribute('data-fmt-grad', gradSlots.join(' '));
+    else root.removeAttribute('data-fmt-grad');
     currentScheme = name;
   }
 
@@ -666,6 +709,7 @@
   window.Formatter = {
     renderInto: renderInto,
     applyScheme: applyScheme,
+    fmtTwins: fmtTwins,   // v0.44: tweaks.js paints the SAME twins on #chat-root
     schemes: SCHEMES,
     currentScheme: function () { return currentScheme; },
     copyText: copyText,

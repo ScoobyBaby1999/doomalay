@@ -47,8 +47,14 @@ type Session struct {
 	// CompactThresholdPct is the context-fill % that arms it (10-95).
 	CompactEnabled      bool
 	CompactThresholdPct int
-	CreatedAt           float64
-	UpdatedAt           float64
+	// v0.44 TEMPLATE PILL: the chat's active method template as a
+	// JSON blob {id, name, brief} ("" = none; deep-research stays the
+	// deep_research flag). The frontend writes it on every template
+	// switch and restores it on reload — the engine only stores and
+	// echoes it back.
+	TemplateID string
+	CreatedAt  float64
+	UpdatedAt  float64
 }
 
 // CreateSession inserts a new chat session.
@@ -64,14 +70,14 @@ INSERT INTO chat_sessions
    web_template, deep_template, deep_mode, judge_count, judge_template,
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
    workspace_id, persona, personas, placeholders, manually_renamed, compact_summary, compact_seq,
-   compact_enabled, compact_threshold, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+   compact_enabled, compact_threshold, template_id, created_at, updated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
 		s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
 		s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
 		s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
 		s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
-		s.CompactEnabled, s.CompactThresholdPct, s.CreatedAt, s.UpdatedAt)
+		s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.CreatedAt, s.UpdatedAt)
 	return err
 }
 
@@ -85,13 +91,13 @@ UPDATE chat_sessions SET
   web_template=?, deep_template=?, deep_mode=?, judge_count=?, judge_template=?,
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
   routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, manually_renamed=?,
-  compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, updated_at=?
+  compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?, updated_at=?
 WHERE id=?`,
 		s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
 		s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
 		s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
 		s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed,
-		s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.UpdatedAt, s.ID)
+		s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.UpdatedAt, s.ID)
 	return err
 }
 
@@ -128,18 +134,19 @@ func (db *DB) GetSession(id string) (*Session, error) {
 	var persona, personas, placeholders, compactSummary sql.NullString
 	var compactSeq sql.NullInt64
 	var compactEnabled, compactThreshold sql.NullInt64
+	var templateID sql.NullString
 	err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
        web_template, deep_template, deep_mode, judge_count, judge_template,
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
        workspace_id, persona, personas, placeholders, manually_renamed,
-       compact_summary, compact_seq, compact_enabled, compact_threshold, created_at, updated_at
+       compact_summary, compact_seq, compact_enabled, compact_threshold, template_id, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
 		&s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
 		&s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
 		&s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
 		&s.WorkspaceID, &persona, &personas, &placeholders, &mr,
-		&compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &s.CreatedAt, &s.UpdatedAt)
+		&compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID, &s.CreatedAt, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -176,6 +183,10 @@ FROM chat_sessions WHERE id=?`, id).Scan(
 	s.CompactThresholdPct = 70
 	if compactThreshold.Valid {
 		s.CompactThresholdPct = int(compactThreshold.Int64)
+	}
+	// v0.44: the template pill's active-template blob (JSON string).
+	if templateID.Valid {
+		s.TemplateID = templateID.String
 	}
 	return s, nil
 }

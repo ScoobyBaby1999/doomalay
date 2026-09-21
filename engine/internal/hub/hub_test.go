@@ -100,18 +100,19 @@ func TestSanitizeTags(t *testing.T) {
 
 // ── local store ───────────────────────────────────────────────────────────
 
-// v0.33: normalizeDesign keeps up to TEN gradient stops (the web's gradient
-// editor grew from 3) and drops anything that is not a strict hex color —
-// the stops are re-emitted into CSS gradients client-side.
+// v0.33→v0.44: normalizeDesign keeps up to FIFTEEN gradient stops (the
+// web's gradient editor grew from 3 → 10 → 15) and drops anything that
+// is not a strict hex color — the stops are re-emitted into CSS
+// gradients client-side.
 func TestNormalizeDesign(t *testing.T) {
-	// 12 valid stops → capped at the first 10
-	var twelve []string
-	for i := 0; i < 12; i++ {
-		twelve = append(twelve, fmt.Sprintf("#%02x0000", i+1))
+	// 18 valid stops → capped at the first 15
+	var eighteen []string
+	for i := 0; i < 18; i++ {
+		eighteen = append(eighteen, fmt.Sprintf("#%02x0000", i+1))
 	}
-	got := normalizeDesign(Design{Kind: "gradient", Colors: twelve})
-	if len(got.Colors) != 10 || got.Kind != "gradient" {
-		t.Fatalf("12 stops → cap 10, got %d (%s)", len(got.Colors), got.Kind)
+	got := normalizeDesign(Design{Kind: "gradient", Colors: eighteen})
+	if len(got.Colors) != 15 || got.Kind != "gradient" {
+		t.Fatalf("18 stops → cap 15, got %d (%s)", len(got.Colors), got.Kind)
 	}
 	if got.Colors[0] != "#010000" {
 		t.Fatalf("cap keeps the FIRST stops, got %v", got.Colors[0])
@@ -136,10 +137,76 @@ func TestNormalizeDesign(t *testing.T) {
 		t.Fatalf("1 stop stays a gradient, got %+v", one)
 	}
 
-	// non-gradient kinds still drop their colors
-	png := normalizeDesign(Design{Kind: "png", Colors: twelve})
-	if png.Kind != "png" || png.Colors != nil {
-		t.Fatalf("png drops colors, got %+v", png)
+	// non-gradient kinds still drop their colors (and v0.44 spec fields)
+	png := normalizeDesign(Design{Kind: "png", Colors: eighteen,
+		Dir: "swirl", Angle: 90, Tex: "data:image/png;base64,AAA"})
+	if png.Kind != "png" || png.Colors != nil || png.Dir != "" || png.Angle != 0 || png.Tex != "" {
+		t.Fatalf("png drops colors + spec fields, got %+v", png)
+	}
+}
+
+// v0.44: normalizeDesign DESIGN SPEC v2 — the dir whitelist (missing or
+// unknown → "auto", the legacy 135° linear render), the angle clamp,
+// and the tex dataURL gate (must look like data:image/… and stay ≤200KB).
+func TestNormalizeDesignV2(t *testing.T) {
+	// every whitelisted dir survives verbatim
+	for _, dir := range []string{"auto", "h", "v", "diag", "diag2", "radial",
+		"swirl", "mesh", "pat-navy", "pat-pinstripe", "pat-gingham",
+		"pat-sunburst", "pat-checker"} {
+		got := normalizeDesign(Design{Kind: "gradient",
+			Colors: []string{"#111111", "#222222"}, Dir: dir})
+		if got.Dir != dir {
+			t.Fatalf("whitelisted dir %q → %q", dir, got.Dir)
+		}
+	}
+
+	// missing / unknown / injection dirs → "auto" (legacy rows keep
+	// rendering the 135° linear sweep)
+	for _, dir := range []string{"", "linear-gradient(evil", "none", "AUTO"} {
+		got := normalizeDesign(Design{Kind: "gradient",
+			Colors: []string{"#111111"}, Dir: dir})
+		if got.Dir != "auto" {
+			t.Fatalf("dir %q → %q, want auto", dir, got.Dir)
+		}
+	}
+
+	// angle clamps into 0–360; in-range values pass
+	ang := normalizeDesign(Design{Kind: "gradient", Colors: []string{"#111111"}, Angle: 400})
+	if ang.Angle != 360 {
+		t.Fatalf("angle 400 → %d, want 360", ang.Angle)
+	}
+	ang = normalizeDesign(Design{Kind: "gradient", Colors: []string{"#111111"}, Angle: -15})
+	if ang.Angle != 0 {
+		t.Fatalf("angle -15 → %d, want 0", ang.Angle)
+	}
+	ang = normalizeDesign(Design{Kind: "gradient", Colors: []string{"#111111"}, Angle: 90})
+	if ang.Angle != 90 {
+		t.Fatalf("angle 90 → %d, want 90", ang.Angle)
+	}
+
+	// tex: a real-shaped dataURL passes; wrong prefix, script, and
+	// over-cap strings are dropped (card falls back to the gradient)
+	okTex := "data:image/jpeg;base64,/9j/4AAQ"
+	got := normalizeDesign(Design{Kind: "gradient", Colors: []string{"#111111"}, Tex: okTex})
+	if got.Tex != okTex {
+		t.Fatalf("valid tex dropped: %q", got.Tex)
+	}
+	for _, bad := range []string{
+		"https://evil.example/x.png",                              // not inline — never fetchable
+		"javascript:alert(1)",                                     // not an image
+		"data:text/html;base64,PHNjcmlwdD4",                       // data URL, wrong kind
+		"data:image/png;base64," + strings.Repeat("A", 200<<10+1), // over cap
+	} {
+		got := normalizeDesign(Design{Kind: "gradient", Colors: []string{"#111111"}, Tex: bad})
+		if got.Tex != "" {
+			t.Fatalf("bad tex kept: %.40s…", got.Tex)
+		}
+	}
+
+	// an empty-gradient result with dir/angle/tex still degrades to none
+	deg := normalizeDesign(Design{Kind: "gradient", Dir: "swirl", Angle: 45, Tex: okTex})
+	if deg.Kind != "none" || deg.Dir != "" || deg.Angle != 0 || deg.Tex != "" {
+		t.Fatalf("empty gradient → none, got %+v", deg)
 	}
 }
 

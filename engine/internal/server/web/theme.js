@@ -1,10 +1,33 @@
-// theme.js — v0.24 THE THEME ENGINE.
+// theme.js — v0.44 THE THEME ENGINE.
 //
 // User spec: "Let's go over the colors of the entire app, and make sure all
 // UI elements use a variable color instead of a hardcoded one... refactor
 // the theme tabs in the settings to have more themes, each theme should
 // include more contrasting yet adjacent colors with more hues to make the
 // entire feel of the app customisable."
+//
+// v0.44 GLOBAL COLOR SYSTEM — every customizable var is a GRADIENT SPEC
+// (uikit.js GradientUI): themeOverrides[cur][var] may hold
+// {colors:[1..15], dir, angle?} instead of a hex. applyTheme writes the
+// VAR-TWIN pair per override (see index.html's v0.44 block):
+//   --X           = GradientUI.solid(spec)  — the first color, so every
+//                    legacy color:/border:/canvas consumer keeps working
+//   --X-gradient  = the full background-image value, or the literal
+//                    'none' when the spec paints solid (1-color, simple
+//                    dir, no pattern) — a bare hex is NOT a valid
+//                    background-image, 'none' is the explicit no-op
+//   --X-rgb       = derived from the SOLID hex (rgba composition needs
+//                    the triplet; always from twins.solid — the old
+//                    hex-only regex path is gone)
+// TEXTURE (spec.tex) may ride in STORAGE but is NEVER applied on theme
+// vars: the consumers of these vars are static CSS rules that can't
+// safely switch background-blend-mode:color per-var — texture is a
+// chat-background / hub-design feature (tweaks.js / hubpublish.js).
+// GRID colors follow the same spec upgrade: Settings bg/lineColor/
+// dotColor/originColor may hold spec objects (legacy hexes still work —
+// norm() folds them); effectiveGridSpecs(s) resolves the specs for
+// app.js's canvas renderer, effectiveGrid(s) keeps the SOLID-hex contract
+// for the meta theme-color tint + any legacy consumer.
 //
 // Everything visual now flows through semantic CSS variables (see the
 // :root + [data-theme] blocks in index.html). This module:
@@ -17,7 +40,9 @@
 //   · keeps the Android status-bar tint (meta theme-color) in sync
 //   · re-tints the default chatbot family color from the theme
 //
-// Exposes: window.DoomTheme = { themes, apply, effectiveGrid, isLight }
+// Exposes: window.DoomTheme = { themes, apply, effectiveGrid,
+//            effectiveGridSpecs, isLight, customizable } — and a node
+// module path with the PURE twin/spec helpers (scripts/test_theme_twins.js)
 
 (function () {
   'use strict';
@@ -63,6 +88,43 @@
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // ── v0.44 PURE GRADIENT-TWIN HELPERS (node-testable) ────────────
+  //
+  // deriveTwins(raw) → the var-twin pair for ONE theme var override:
+  //   { solid: '#rrggbb',          the first color (the compat hex)
+  //     css:   '<background-image>' (GradientUI recipe, tex stripped),
+  //     grad:  css or the literal 'none'  — what --X-gradient gets };
+  //   a solid spec yields grad 'none' (a bare hex is not a valid
+  //   background-image). Falls back to the legacy plain-string path
+  //   (solid = the value, grad 'none') when GradientUI isn't loaded.
+  function deriveTwins(raw) {
+    var G = (typeof window !== 'undefined') ? window.GradientUI : null;
+    if (G && G.norm) {
+      var spec = G.norm(raw);
+      if (spec.tex) delete spec.tex;   // theme vars never paint texture
+      var solid = spec.colors[0];
+      var css = G.css(spec);
+      return { solid: solid, css: css, grad: (css === solid) ? 'none' : css };
+    }
+    // legacy / no-uikit fallback: a plain string stays the solid; a
+    // spec degrades to its first color (never a '[object Object]' paint)
+    var v = (raw && typeof raw === 'object' && Array.isArray(raw.colors) && raw.colors[0])
+      ? raw.colors[0] : raw;
+    var s = String(v == null ? '' : v);
+    return { solid: s, css: s, grad: 'none' };
+  }
+
+  // hexTriplet(hex) → 'r,g,b' for rgba() composition, or null when the
+  // string isn't a real 6-digit hex (total function — callers fall back).
+  function hexTriplet(hex) {
+    var m = /^#([0-9a-fA-F]{6})$/.exec(String(hex == null ? '' : hex));
+    if (!m) return null;
+    var h = m[1];
+    return parseInt(h.slice(0, 2), 16) + ',' +
+      parseInt(h.slice(2, 4), 16) + ',' +
+      parseInt(h.slice(4, 6), 16);
   }
 
   function isChatSchemePinned(s) {
@@ -117,15 +179,21 @@
     docEl._themeOverrideKeys = [];
     if (overrides) {
       Object.keys(overrides).forEach(function (k) {
-        docEl.style.setProperty(k, overrides[k]);
-        docEl._themeOverrideKeys.push(k);
-        // auto-derive the -rgb triplet (rgba() composition needs it)
-        var m = /^#([0-9a-fA-F]{6})$/.exec(String(overrides[k] || ''));
+        // v0.44: the override value may be a hex (legacy) or a gradient
+        // spec — deriveTwins folds both into the var-TWIN pair and
+        // setProperty writes --X (solid) + --X-gradient (image or 'none';
+        // consumer rules in index.html layer it over the solid).
+        var twins = deriveTwins(overrides[k]);
+        docEl.style.setProperty(k, twins.solid);
+        docEl.style.setProperty(k + '-gradient', twins.grad);
+        docEl._themeOverrideKeys.push(k, k + '-gradient');
+        // auto-derive the -rgb triplet (rgba() composition needs it) —
+        // ALWAYS from the SOLID twin (a gradient's stops can't compose
+        // rgba(); the first color is the canonical tint, v0.26 contract)
         var pair = RGB_PAIRS[k];
-        if (m && pair) {
-          var hex = m[1];
-          var rgb = parseInt(hex.slice(0, 2), 16) + ',' + parseInt(hex.slice(2, 4), 16) + ',' + parseInt(hex.slice(4, 6), 16);
-          docEl.style.setProperty(pair, rgb);
+        var triplet = hexTriplet(twins.solid);
+        if (pair && triplet) {
+          docEl.style.setProperty(pair, triplet);
           docEl._themeOverrideKeys.push(pair);
         }
       });
@@ -171,41 +239,112 @@
     }
   }
 
-  // effectiveGrid merges the user's explicit grid picks over the theme's
-  // defaults. Stored values that still equal the pre-v0.24 defaults are
-  // treated as "never customized" → the theme drives the grid.
-  // v0.25 SANITIZATION: only a REAL #rrggbb hex counts as a custom pick.
-  // The old code passed ANY stored string through — including CSS-var
-  // strings ('var(--bg-app)', written by the old reset button) which are
-  // INVALID canvas fillStyles (silently ignored → the grid showed stale
-  // colors that matched neither the theme nor the settings).
+  // effectiveGridSpecs merges the user's explicit grid picks over the
+  // theme's defaults — v0.44: every value resolves to a gradient SPEC
+  // (app.js's canvas renderer consumes these). Stored values that still
+  // equal the pre-v0.24 defaults are treated as "never customized" →
+  // the theme drives the grid.
+  // v0.25 SANITIZATION (kept): only a REAL #rrggbb hex counts as a custom
+  // pick. The old code passed ANY stored string through — including
+  // CSS-var strings ('var(--bg-app)', written by the old reset button)
+  // which are INVALID canvas fillStyles (silently ignored → the grid
+  // showed stale colors that matched neither the theme nor the settings).
+  // v0.44: a stored {colors,dir,angle} object (or a plain colors ARRAY —
+  // the legacy uikit shape) is a CUSTOM spec and wins over the theme.
   function isHexColor(v) {
     return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
   }
-  function effectiveGrid(s) {
+  function isSpecValue(v) {
+    if (Array.isArray(v)) return v.length > 0;
+    return !!(v && typeof v === 'object' && Array.isArray(v.colors) && v.colors.length > 0);
+  }
+  // gridSpecFor — pure: stored value → the effective spec for one key.
+  //   spec (object or array) → passed through verbatim (norm'd lazily by
+  //   the consumers — storage keeps what the user set)
+  //   custom hex             → a 1-color spec (the hex IS the palette)
+  //   legacy/default/other   → the theme's 1-color spec
+  function gridSpecFor(stored, legacyDefault, themeDefault) {
+    if (isSpecValue(stored)) return stored;
+    if (isHexColor(stored) && stored.toLowerCase() !== legacyDefault) {
+      return { colors: [stored], dir: 'auto' };
+    }
+    return { colors: [themeDefault], dir: 'auto' };
+  }
+  function effectiveGridSpecs(s) {
     var t = THEMES[THEMES[s.theme] ? s.theme : 'midnight'];
-    var g = {
-      bg: (isHexColor(s.bg) && s.bg.toLowerCase() !== LEGACY_GRID.bg) ? s.bg : t.grid.bg,
-      lineColor: (isHexColor(s.lineColor) && s.lineColor.toLowerCase() !== LEGACY_GRID.line) ? s.lineColor : t.grid.line,
-      dotColor: (isHexColor(s.dotColor) && s.dotColor.toLowerCase() !== LEGACY_GRID.dot) ? s.dotColor : t.grid.dot,
-      originColor: (isHexColor(s.originColor) && s.originColor.toLowerCase() !== LEGACY_GRID.origin) ? s.originColor : t.grid.origin
+    return {
+      bg: gridSpecFor(s.bg, LEGACY_GRID.bg, t.grid.bg),
+      lineColor: gridSpecFor(s.lineColor, LEGACY_GRID.line, t.grid.line),
+      dotColor: gridSpecFor(s.dotColor, LEGACY_GRID.dot, t.grid.dot),
+      originColor: gridSpecFor(s.originColor, LEGACY_GRID.origin, t.grid.origin)
     };
-    return g;
   }
 
-  // boot + live-apply
-  var Settings = window.Settings;
+  // solidOf — pure: the first REAL hex in a spec's colors (canvas
+  // fillStyle / meta theme-color need a valid #rrggbb; spec stops are
+  // user data — norm() guarantees strings but not hex format).
+  function solidOf(spec, fallback) {
+    var cs = (spec && Array.isArray(spec.colors)) ? spec.colors : [];
+    for (var i = 0; i < cs.length; i++) {
+      if (isHexColor(cs[i])) return cs[i];
+    }
+    return fallback;
+  }
+
+  // effectiveGrid keeps the LEGACY HEX contract (v0.24): the solid twin
+  // of each grid spec — the meta theme-color tint and any pre-v0.44
+  // consumer keep reading hexes from here.
+  function effectiveGrid(s) {
+    var sp = effectiveGridSpecs(s);
+    var t = THEMES[THEMES[s.theme] ? s.theme : 'midnight'];
+    return {
+      bg: solidOf(sp.bg, t.grid.bg),
+      lineColor: solidOf(sp.lineColor, t.grid.line),
+      dotColor: solidOf(sp.dotColor, t.grid.dot),
+      originColor: solidOf(sp.originColor, t.grid.origin)
+    };
+  }
+
+  // boot + live-apply (browser only — the node path skips straight to
+  // the module.exports below)
+  var HAS_WINDOW = (typeof window !== 'undefined');
+  var Settings = HAS_WINDOW ? window.Settings : null;
   if (Settings) {
     Settings.onChange(applyTheme);
     applyTheme(Settings.getState());
   }
 
-  window.DoomTheme = {
-    themes: THEMES,
-    apply: applyTheme,
-    effectiveGrid: effectiveGrid,
-    pendingScheme: pendingScheme,
-    isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
-    customizable: CUSTOMIZABLE
-  };
+  if (HAS_WINDOW) {
+    window.DoomTheme = {
+      themes: THEMES,
+      apply: applyTheme,
+      effectiveGrid: effectiveGrid,
+      effectiveGridSpecs: effectiveGridSpecs,
+      pendingScheme: pendingScheme,
+      isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
+      customizable: CUSTOMIZABLE,
+      // v0.44: the canonical twin derivation — appearance.js's per-chat
+      // #chat-root paint + any future consumer reuses THIS one function
+      // (the same math formatter.js's fmtTwins mirrors; the node harness
+      // asserts the parity).
+      deriveTwins: deriveTwins
+    };
+  }
+  // the node self-test path (scripts/test_theme_twins.js): the PURE
+  // spec/twin logic, no DOM anywhere near it. deriveTwins reads
+  // window.GradientUI at CALL time, so the harness can mount uikit's
+  // node exports on a stub window — or drop it to test the legacy
+  // no-uikit fallback.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      themes: THEMES,
+      legacyGrid: LEGACY_GRID,
+      deriveTwins: deriveTwins,
+      hexTriplet: hexTriplet,
+      gridSpecFor: gridSpecFor,
+      effectiveGridSpecs: effectiveGridSpecs,
+      effectiveGrid: effectiveGrid,
+      isHexColor: isHexColor
+    };
+  }
 })();
