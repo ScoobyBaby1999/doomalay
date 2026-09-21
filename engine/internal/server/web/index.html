@@ -58,8 +58,10 @@
     --surface-3: #2b2344; --surface-3-rgb: 43,35,68;
     --border: #2f2749; --border-strong: #413463;
     --accent: #c084fc; --accent-rgb: 192,132,252;
-    --accent-2: #38bdf8; --accent-2-rgb: 34,211,238;
+    --accent-2: #22d3ee; --accent-2-rgb: 34,211,238;  /* v0.38 FIX: hex was stale #38bdf8 while the tint said cyan */
     --accent-3: #f0abfc; --accent-3-rgb: 240,171,252;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #6ee7b7; --ok-rgb: 110,231,183; --warn: #fcd34d; --warn-rgb: 252,211,77; --err: #fda4af; --err-rgb: 253,164,175; --notice: #fdba74; --notice-rgb: 253,186,116;
   }
   /* ── Ember: warm ambers / orange / rose ── */
   [data-theme="ember"] {
@@ -72,6 +74,8 @@
     --accent: #fb923c; --accent-rgb: 251,146,60;
     --accent-2: #fbbf24; --accent-2-rgb: 251,191,36;
     --accent-3: #fb7185; --accent-3-rgb: 251,113,133;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #86efac; --ok-rgb: 134,239,172; --warn: #f59e0b; --warn-rgb: 245,158,11; --err: #f87171; --err-rgb: 248,113,113; --notice: #f97316; --notice-rgb: 249,115,22;
   }
   /* ── Forest: emerald / lime / teal ── */
   [data-theme="forest"] {
@@ -82,8 +86,10 @@
     --border: #213528; --border-strong: #2f4a37;
     --text-1: #e4eee6; --text-2: #a3b8a9; --text-3: #6f8476; --text-3-dim: #56695c;
     --accent: #4ade80; --accent-rgb: 74,222,128;
-    --accent-2: #38bdf8; --accent-2-rgb: 45,212,191;
+    --accent-2: #2dd4bf; --accent-2-rgb: 45,212,191;  /* v0.38 FIX: hex was stale #38bdf8 while the tint said teal */
     --accent-3: #a3e635; --accent-3-rgb: 163,230,53;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #4ade80; --ok-rgb: 74,222,128; --warn: #eab308; --warn-rgb: 234,179,8; --err: #f87171; --err-rgb: 248,113,113; --notice: #d97706; --notice-rgb: 217,119,6;
   }
   /* ── Ocean: sky / cyan / deep blue ── */
   [data-theme="ocean"] {
@@ -94,8 +100,10 @@
     --border: #1f3341; --border-strong: #2b4759;
     --text-1: #e2ecf3; --text-2: #a0b4c2; --text-3: #6d8291; --text-3-dim: #55697a;
     --accent: #38bdf8; --accent-rgb: 56,189,248;
-    --accent-2: #38bdf8; --accent-2-rgb: 125,211,252;
+    --accent-2: #7dd3fc; --accent-2-rgb: 125,211,252;  /* v0.38 FIX: sky-300 secondary — distinct from the primary */
     --accent-3: #818cf8; --accent-3-rgb: 129,140,248;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #2dd4bf; --ok-rgb: 45,212,191; --warn: #fde047; --warn-rgb: 253,224,71; --err: #fb7185; --err-rgb: 251,113,133; --notice: #fb923c; --notice-rgb: 251,146,60;
   }
   /* ── Rose: pinks / magenta / warm coral ── */
   [data-theme="rose"] {
@@ -108,6 +116,8 @@
     --accent: #f472b6; --accent-rgb: 244,114,182;
     --accent-2: #fb7185; --accent-2-rgb: 251,113,133;
     --accent-3: #e879f9; --accent-3-rgb: 232,121,249;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #6ee7b7; --ok-rgb: 110,231,183; --warn: #fbbf24; --warn-rgb: 251,191,36; --err: #fda4af; --err-rgb: 253,164,175; --notice: #fb923c; --notice-rgb: 251,146,60;
   }
   /* ── Mono: pure greyscale (accent = bright silver) ── */
   [data-theme="mono"] {
@@ -120,6 +130,8 @@
     --accent: #d4d4d4; --accent-rgb: 212,212,212;
     --accent-2: #a8a8a8; --accent-2-rgb: 168,168,168;
     --accent-3: #8a8a8a; --accent-3-rgb: 138,138,138;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #a1a1aa; --ok-rgb: 161,161,170; --warn: #d4d4d8; --warn-rgb: 212,212,216; --err: #f87171; --err-rgb: 248,113,113; --notice: #e4e4e7; --notice-rgb: 228,228,231;
   }
   /* ── Solar: deep navy + vivid amber (high contrast) ── */
   [data-theme="solar"] {
@@ -130,8 +142,10 @@
     --border: #1f2a42; --border-strong: #2e3d5e;
     --text-1: #eef2fb; --text-2: #a9b6cf; --text-3: #7484a3; --text-3-dim: #5a6a88;
     --accent: #fbbf24; --accent-rgb: 251,191,36;
-    --accent-2: #38bdf8; --accent-2-rgb: 103,232,249;
+    --accent-2: #38bdf8; --accent-2-rgb: 56,189,248;
     --accent-3: #a5b4fc; --accent-3-rgb: 165,180,252;
+    /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
+    --ok: #84cc16; --ok-rgb: 132,204,22; --warn: #f59e0b; --warn-rgb: 245,158,11; --err: #ef4444; --err-rgb: 239,68,68; --notice: #f97316; --notice-rgb: 249,115,22;
   }
   /* ── Paper: warm light ── */
   [data-theme="paper"] {
@@ -248,7 +262,7 @@
     font-size: var(--ui-small-fs);
     font-weight: 600;
     color: var(--text-2);
-    background: rgba(20,20,28,0.85);
+    background: rgba(var(--bg-app-rgb, 10,10,11), 0.85);
     padding: 2px 8px;
     border-radius: 6px;
     backdrop-filter: blur(8px);
@@ -514,8 +528,8 @@
     max-width: 42%;
     align-items: center;
     gap: 5px;
-    background: rgba(165,180,252,0.08);
-    border: 1px solid rgba(165,180,252,0.28);
+    background: rgba(var(--accent-rgb),0.08);
+    border: 1px solid rgba(var(--accent-rgb),0.28);
     color: var(--accent);
     padding: 6px 10px;
     border-radius: 10px;
@@ -529,7 +543,7 @@
     transition: background 0.15s, border-color 0.15s;
   }
   #panel-model-btn:active {
-    background: rgba(165,180,252,0.16);
+    background: rgba(var(--accent-rgb),0.16);
   }
   #panel-model-btn span {
     overflow: hidden;
@@ -947,7 +961,7 @@
   }
   #media-zoom #mz-close, #media-zoom #mz-open {
     position: absolute; top: max(10px, env(safe-area-inset-top));
-    background: rgba(20,20,28,0.85); border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(var(--bg-app-rgb, 10,10,11), 0.85); border: 1px solid rgba(255,255,255,0.18);
     color: #fff; border-radius: 9px; padding: 7px 12px;
     font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -1178,7 +1192,7 @@
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
   .tool-pill-detail {
     margin-top: calc(8px * var(--chat-scale)); padding-top: calc(8px * var(--chat-scale));
-    border-top: 1px solid rgba(255,255,255,0.07);
+    border-top: 1px solid var(--border);
     display: flex; flex-direction: column; gap: calc(6px * var(--chat-scale));
     font-size: calc(var(--chat-fs) * 0.72); text-align: left;
   }
@@ -1199,19 +1213,34 @@
     padding: 1px 0;
   }
 
-  /* ── sources cards (tappable, pretty) — v0.34: chat-scaled ── */
+  /* ── sources cards (tappable, pretty) — v0.34 chat-scaled; v0.38 COLLAPSIBLE ── */
   .src-wrap {
     align-self: stretch; max-width: 95%;
     background: var(--bg-app); border: 1px solid var(--surface-2);
     border-radius: 12px; padding: calc(8px * var(--chat-scale)) calc(10px * var(--chat-scale));
   }
-  .src-wrap-label { font-size: calc(9.5px * var(--chat-scale)); color: var(--text-3); margin-bottom: calc(6px * var(--chat-scale)); letter-spacing: 0.8px; }
+  .src-wrap > .src-wrap-label {
+    display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+    list-style: none; margin-bottom: 0;
+    font-size: calc(9.5px * var(--chat-scale)); color: var(--text-3); letter-spacing: 0.8px;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .src-wrap[open] > .src-wrap-label { margin-bottom: calc(6px * var(--chat-scale)); }
+  .src-wrap .src-wrap-label::-webkit-details-marker { display: none; }
+  .src-wrap .src-count {
+    background: rgba(var(--accent-2-rgb), 0.14); color: var(--accent-2);
+    border-radius: 999px; padding: 0 7px; font-weight: 700; letter-spacing: 0;
+    font-size: calc(9px * var(--chat-scale));
+  }
+  .src-wrap .src-chev { margin-left: auto; transition: transform 0.18s ease; color: var(--text-3); }
+  .src-wrap[open] .src-chev { transform: rotate(0deg); }
+  .src-wrap:not([open]) .src-chev { transform: rotate(-90deg); }
   .src-card {
     display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
     padding: calc(7px * var(--chat-scale)) calc(8px * var(--chat-scale)); border-radius: 10px; text-decoration: none;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .src-card:active { background: #14141c; }
+  .src-card:active { background: var(--surface-3); }
   .src-card-dom {
     width: calc(26px * var(--chat-scale)); height: calc(26px * var(--chat-scale)); border-radius: 7px; flex-shrink: 0;
     background: rgba(var(--accent-2-rgb),0.1); border: 1px solid rgba(var(--accent-2-rgb),0.3);
@@ -1794,24 +1823,53 @@
   /* ══ v0.27 — the header METERS: context ring + per-chat cost ══
      The usage panel's context bar, duplicated as two tiny front-facing
      elements on the far right of the expand/collapse metadata row (same
-     data source — /api/sessions/{id}/usage). The ring fills 0→100% and
-     shifts primary → warn → err as it climbs toward the compaction point
-     (auto-compact arms at 70%). Both open the usage view on tap. */
+     data source — /api/sessions/{id}/usage).
+     v0.38 THE RING, PER SPEC: the full circle = the model's context
+     window. A SOLID theme-tinted fill marks the auto-compaction ZONE
+     (0 → threshold) — the part auto-compact absorbs when it fills. The
+     dynamic progress bar grows 0 → used% and shifts primary → warn as
+     it slides toward the compaction point; when it crosses, compaction
+     fires and the bar resets. Compaction OFF: no zone, the whole circle
+     is the runway, and near-full uses the adjacent --notice tone
+     instead of the bright warn. Both elements open the usage view. */
   #chat-header-meters { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
   .ctx-ring-btn {
     width: 30px; height: 30px; padding: 3px; background: transparent;
     border: none; cursor: pointer; font-family: inherit; flex-shrink: 0;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    position: relative; display: flex; align-items: center; justify-content: center;
   }
   /* registered so the fill animates smoothly as --p changes */
   @property --p { syntax: '<number>'; inherits: false; initial-value: 0; }
   .ctx-ring {
-    --p: 0; --ring: var(--accent);
-    width: 100%; height: 100%; border-radius: 50%;
-    background: conic-gradient(var(--ring) calc(var(--p) * 1%), var(--surface-3) 0);
+    --p: 0; --thr: 70; --ring: var(--accent);
+    --zone: rgba(var(--accent-rgb), 0.16); --tick-op: .95;
+    /* v0.38 FIX: an empty inline <span> in a non-flex button computed to
+       0×0 — the ring has been INVISIBLE since v0.27. display:block. */
+    display: block;
+    width: 100%; height: 100%; border-radius: 50%; position: relative;
+    background: conic-gradient(
+      from 0deg,
+      /* the live progress — primary → warn as it climbs */
+      var(--ring) 0 calc(var(--p) * 1%),
+      /* the auto-compaction ZONE — solid theme-tinted fill up to the point
+         (transparent when compaction is OFF — no zone, all runway) */
+      var(--zone) calc(var(--p) * 1%) calc(var(--thr) * 1%),
+      /* the headroom above the compaction point */
+      var(--surface-3) calc(var(--thr) * 1%) 100%
+    );
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3px));
             mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3px));
     transition: --p 0.4s ease;
+  }
+  /* the compaction point — a crisp hairline tick where the zone ends */
+  .ctx-ring::after {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(from calc(var(--thr) * 3.6deg - 0.45deg),
+      var(--border-strong) 0 0.9deg, transparent 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 4px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 4px));
+    opacity: var(--tick-op); pointer-events: none;
   }
   .ctx-cost {
     border: none; background: transparent; cursor: pointer; font-family: inherit;

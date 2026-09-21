@@ -45,6 +45,10 @@
 // Exposes: window.ModelBrowser = { open, quickPick, quickEntries, toggleStar }
 (function () {
   'use strict';
+  // v0.38: the app session's birth — the catalog cache refreshes in the
+  // background on the FIRST browser open of each session (boot), later
+  // opens in the same session are pure cache.
+  var bootedAt = Date.now();
 
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
   var LS = 'doomalay.model-select.';
@@ -454,13 +458,47 @@
     window.ModelBrowser.resetFilters = resetAllFilters;
 
     // Catalog data.
+    // v0.38 CATALOG CACHE (user spec: "cache till user presses resync or on
+    // boot"): the last successfully fetched catalog persists in localStorage;
+    // open() hydrates from it SYNCHRONOUSLY (zero network, zero spinner —
+    // the open was re-downloading the full payload every time). The cache
+    // refreshes whenever a fetch succeeds: boot (ensureCatalog), the sync
+    // button (refresh=1), and key add/remove (providers.js forces refresh).
+    var CAT_CACHE_KEY = 'doomalay.modelcache.v1';
+    function cacheSave() {
+      try {
+        localStorage.setItem(CAT_CACHE_KEY, JSON.stringify({ at: Date.now(), catalog: catalog }));
+      } catch (e) { /* quota exceeded — the cache is best-effort */ }
+    }
+    function cacheLoad() {
+      try {
+        var raw = localStorage.getItem(CAT_CACHE_KEY);
+        if (!raw) return false;
+        var d = JSON.parse(raw);
+        if (!d || !d.catalog || typeof d.catalog !== 'object') return false;
+        catalog = d.catalog;
+        quickCat = catalog;
+        quickCatAt = Date.now();
+        buildFamBm();
+        syncedAt = d.at || 0;
+        return true;
+      } catch (e) { return false; }
+    }
     var catalog = null;
     var famBm = {};      // family → benchmarks (for provider-view pills)
     var syncedAt = 0;
     var syncing = false;
     var opened = false;
 
-    fetchCatalog(false, function () { render(); });
+    // v0.38: hydrate from the persisted cache FIRST — the overlay opens
+    // instantly. The FIRST open of each app session revalidates in the
+    // background (stale-while-revalidate); an explicit resync (the sync
+    // button / a key save) forces refresh=1 as before.
+    if (cacheLoad()) {
+      render();
+      if (syncedAt < bootedAt) fetchCatalog(false, function () { render(); });
+    }
+    else fetchCatalog(false, function () { render(); });
 
     function fetchCatalog(refresh, done) {
       var url = '/api/models' + (refresh ? '?refresh=1' : '');
@@ -472,6 +510,7 @@
         buildFamBm();
         syncedAt = Date.now();
         syncing = false;
+        cacheSave(); // v0.38: the catalog persists — the NEXT open is instant
         if (done) done();
       }).catch(function (e) {
         console.error('model browser fetch failed', e);
@@ -1142,25 +1181,30 @@
       }
       // v0.32.8 F1 (ported v0.34): the provider-compare drawer (pair
       // complete) or the pin hint (one pinned).
-      var cmp = '';
+      // v0.38 FIX: the MODEL-compare zone TOO — provider rows carry ⚖ model-
+      // compare buttons feeding comparePair, but this view never rendered
+      // the zone, so pinning a model in the Providers tab did NOTHING
+      // (the user report: "comparing models in the providers tab does not
+      // work"). Both drawers can coexist (model pins + provider pins).
+      var cmp = compareZone((catalog && catalog.logical) || []);
+      // v0.32.1 C: live counts line.
+      var counts = groups.length
+        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
+        : '';
       if (provComparePair.length === 2) {
         var ga = null, gb = null;
         for (var pcg = 0; pcg < groups.length; pcg++) {
           if (groups[pcg].name === provComparePair[0]) ga = groups[pcg];
           if (groups[pcg].name === provComparePair[1]) gb = groups[pcg];
         }
-        if (ga && gb) cmp = provCompareDrawer(ga, gb);
+        if (ga && gb) cmp += provCompareDrawer(ga, gb);
       } else if (provComparePair.length === 1) {
         var gp = null;
         for (var pch = 0; pch < groups.length; pch++) {
           if (groups[pch].name === provComparePair[0]) { gp = groups[pch]; break; }
         }
-        if (gp) cmp = provCompareHint(gp);
+        if (gp) cmp += provCompareHint(gp);
       }
-      // v0.32.1 C: live counts line.
-      var counts = groups.length
-        ? '<div class="mb-countline" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)"><span>' + shown + ' of ' + groups.length + ' providers</span><span style="color:' + (ready ? 'var(--ok)' : 'var(--text-3)') + ';font-weight:600">' + ready + ' ready</span></div>'
-        : '';
       return cmp + counts + '<div id="mb-provlist" style="display:flex;flex-direction:column;gap:10px">' + out + '</div>';
     }
 
@@ -1579,6 +1623,28 @@
         var list = (catalog && catalog.logical) || [];
         for (var i = 0; i < list.length; i++) {
           if (list[i].logical === id) return list[i];
+        }
+        // v0.38: slot-key pins (provider/modelId — provider rows whose model
+        // has NO logical match) resolve to a synthetic entry so the compare
+        // drawer still works for them (was: silently empty).
+        var cut = String(id || '').indexOf('/');
+        if (cut > 0) {
+          var prov = id.slice(0, cut), mid = id.slice(cut + 1);
+          // providers arrives as BOTH shapes across paths (list of entries
+          // OR a map keyed by name) — handle either.
+          var provs = (catalog && catalog.providers) || [];
+          var names = Array.isArray(provs) ? provs.map(function (e) { return e || {}; })
+            : Object.keys(provs).map(function (k) { var e = provs[k] || {}; e.name = e.name || k; return e; });
+          for (var j = 0; j < names.length; j++) {
+            var pd = names[j];
+            if (pd.name === prov || pd.id === prov) {
+              return {
+                logical: id, displayName: mid, family: mid,
+                hosts: [{ provider: prov, modelId: mid, hasApiKey: !!pd.hasApiKey }],
+                attributes: {}
+              };
+            }
+          }
         }
         return null;
       };

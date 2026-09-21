@@ -56,6 +56,18 @@
     currentCtx = null;
   });
 
+  // v0.38 PER-CHAT BOX DEFAULTS: thinking / sources / pills remember the
+  // user's expanded/collapsed preference PER CHAT (tweaks blob uiState).
+  function uiPref(state, key, dflt) {
+    var ui = window.ChatTweaks && window.ChatTweaks.uiStateOf
+      ? window.ChatTweaks.uiStateOf(state) : null;
+    if (ui && typeof ui[key] === 'boolean') return ui[key];
+    return dflt;
+  }
+  function saveUiPref(state, key, v) {
+    if (window.ChatTweaks && window.ChatTweaks.setUiState) window.ChatTweaks.setUiState(state, key, v);
+  }
+
   // v0.35 CHAT ISOLATION (the cross-chat leak): the panel body is ONE
   // shared DOM node — when chat B renders, it re-owns bodyEl and chat A's
   // event closures still hold the SAME node. Every render path below must
@@ -1142,6 +1154,16 @@
     var t = (u && u.totals) || {};
     var fill = Math.max(0, Math.min(100, c.fillPct || 0));
     ring.style.setProperty('--p', String(fill));
+    // v0.38: the compaction POINT rides the ring — the solid zone runs
+    // 0→threshold when auto-compaction is ON; OFF means no zone (the whole
+    // circle is the runway, tick parked at the top, 0deg).
+    var thr = 100;
+    if (c.compactEnabled !== false) {
+      thr = Math.max(10, Math.min(95, Number(c.compactThreshold) || 70));
+    }
+    ring.style.setProperty('--thr', String(thr));
+    ring.style.setProperty('--zone', c.compactEnabled === false ? 'transparent' : 'rgba(var(--accent-rgb), 0.16)');
+    ring.style.setProperty('--tick-op', c.compactEnabled === false ? '0' : '.95');
     // v0.30: the ring asks the ONE ladder (UsagePanel.ctxColor) and hands
     // it the chat's OWN compaction settings — the same values the mind
     // panel PATCHes — so a moved threshold or a turned-off compaction is
@@ -1758,12 +1780,23 @@
     return levels[0];
   }
 
+  // v0.38: effort follows the theme's notice tone (was hardcoded orange).
   function effortBtnStyle(active) {
-    return 'flex-shrink:0;background:' + (active ? 'rgba(249,115,22,0.15)' : 'transparent') + ';border:1px solid ' + (active ? 'rgba(249,115,22,0.5)' : 'var(--border)') + ';color:' + (active ? '#fb923c' : 'var(--text-3)') + ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
+    return 'flex-shrink:0;background:' + (active ? 'rgba(var(--notice-rgb, 251,146,60),0.15)' : 'transparent') +
+      ';border:1px solid ' + (active ? 'rgba(var(--notice-rgb, 251,146,60),0.5)' : 'var(--border)') +
+      ';color:' + (active ? 'var(--notice)' : 'var(--text-3)') +
+      ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
+  // v0.38: the old builder appended hex-alpha to a var() ("var(--accent-2)22"
+  // is INVALID CSS) — active web/deep-research buttons lost their tinted
+  // background/border in every theme. Theme vars + rgba composition instead.
   function capBtnStyle(active, color) {
-    return 'flex-shrink:0;background:' + (active ? color + '22' : 'transparent') + ';border:1px solid ' + (active ? color + '88' : '#2a2a35') + ';color:' + (active ? color : '#71717a') + ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
+    var rgb = (color === 'var(--accent-2)') ? 'var(--accent-2-rgb)' : 'var(--accent-rgb)';
+    return 'flex-shrink:0;background:' + (active ? 'rgba(' + rgb + ',0.16)' : 'transparent') +
+      ';border:1px solid ' + (active ? 'rgba(' + rgb + ',0.55)' : 'var(--border)') +
+      ';color:' + (active ? color : 'var(--text-3)') +
+      ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
   function persistCaps(state, icon) {
@@ -2052,7 +2085,9 @@
       bumpActivity(state);
       var lastThink = state.messages[state.messages.length - 1];
       if (!lastThink || lastThink.role !== 'thinking') {
-        lastThink = { role: 'thinking', text: '', open: true, streaming: true, startedAt: evTsMs(ev), ts: evTsMs(ev) };
+        // v0.38: open is DERIVED at render time from the per-chat pref (a
+        // tweaks fetch can race the replay; freezing it here staled it).
+        lastThink = { role: 'thinking', text: '', streaming: true, startedAt: evTsMs(ev), ts: evTsMs(ev) };
         if (ev.i) lastThink.ei = ev.i;
         state.messages.push(lastThink);
         appendMessage(msgContainer, scrollEl, lastThink, bodyEl, state._icon, state);
@@ -2096,7 +2131,7 @@
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
-        var srcMsg = { role: 'sources', sources: srcs, ts: evTsMs(ev) };
+        var srcMsg = { role: 'sources', sources: srcs, open: uiPref(state, 'sourcesOpen', true), ts: evTsMs(ev) };
         if (ev.i) srcMsg.ei = ev.i;
         state.messages.push(srcMsg);
         appendMessage(msgContainer, scrollEl, srcMsg, bodyEl, state._icon, state);
@@ -2512,7 +2547,10 @@
       return '<div class="msg-bubble msg-error" data-msg-role="error"' + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'thinking') {
-      return '<details class="msg-think"' + miAttr + ' ' + (msg.open ? ' open' : '') + '>' +
+      // v0.38: per-chat thinkOpen pref drives the default (msg.open wins
+      // only when explicitly set — the delegated toggle handler).
+      var thinkOpen = msg.open !== undefined ? !!msg.open : uiPref(currentCtx && currentCtx.state, 'thinkOpen', true);
+      return '<details class="msg-think"' + miAttr + ' ' + (thinkOpen ? ' open' : '') + '>' +
         '<summary class="msg-think-summary"><span class="msg-think-dot">✻</span> thinking' +
           '<span class="th-elapsed"' + (msg.streaming ? '' : ' style="display:none"') + '></span>' +
           '</summary>' +
@@ -2522,7 +2560,8 @@
       // TAPPABLE TOOL PILL — expands to the full payload (query / result).
       var payload = msg.payload || null;
       var hasDetail = !!(payload && ((payload.query || payload.name && (payload.result || payload.text || payload.summary)) || (payload.sources && payload.sources.length)));
-      var expanded = !!msg.expanded && hasDetail;
+      // v0.38: per-chat pills default (uiPref) unless this pill was toggled
+      var expanded = hasDetail && (msg.expanded !== undefined ? !!msg.expanded : uiPref(currentCtx && currentCtx.state, 'pillsOpen', false));
       var cls = msg.progress ? 'tool-pill tool-pill-progress' :
         (msg.result ? 'tool-pill tool-pill-result' : 'tool-pill tool-pill-use');
       var head =
@@ -2566,8 +2605,12 @@
             '</span>' +
           '</a>';
       }
-      return '<div class="src-wrap">' +
-        '<div class="src-wrap-label">SOURCES</div>' + items + '</div>';
+      // v0.38: the sources box is COLLAPSIBLE (user spec) — a summary row
+      // carries the count; the per-chat sourcesOpen pref drives the default.
+      var srcOpen = msg.open !== undefined ? !!msg.open : uiPref(currentCtx && currentCtx.state, 'sourcesOpen', true);
+      return '<details class="src-wrap" data-mi="' + mi + '"' + (srcOpen ? ' open' : '') + '>' +
+        '<summary class="src-wrap-label"><span>SOURCES</span><span class="src-count">' + msg.sources.length + '</span><span class="src-chev">▾</span></summary>' +
+        '<div class="src-list">' + items + '</div></details>';
     }
     return '';
   }
@@ -3062,12 +3105,36 @@
     }
     if (msgIdx < 0) return;
     st.messages[msgIdx].expanded = !st.messages[msgIdx].expanded;
+    // v0.38: the per-chat pills default follows the user's last choice
+    saveUiPref(st, 'pillsOpen', !!st.messages[msgIdx].expanded);
     // re-render just this pill in place
     var tmp = document.createElement('div');
     tmp.innerHTML = messageHTML(st.messages[msgIdx], msgIdx);
     var fresh = tmp.firstChild;
     pill.replaceWith(fresh);
   });
+
+  // v0.38: the thinking + sources boxes remember their expanded/collapsed
+  // state as the chat's DEFAULT (delegated — fires for any live message).
+  document.addEventListener('toggle', function (e) {
+    var el = e.target;
+    if (!el || !el.classList) return;
+    var st = currentCtx && currentCtx.state;
+    if (!st) return;
+    if (el.classList.contains('msg-think')) {
+      // ignore programmatic open during render (user events only — a
+      // fresh <details open> fires toggle on insert in some engines)
+      if (el._toggling) return;
+      el._toggling = true; setTimeout(function () { el._toggling = false; }, 0);
+      saveUiPref(st, 'thinkOpen', !!el.open);
+    } else if (el.classList.contains('src-wrap')) {
+      if (el._toggling) return;
+      el._toggling = true; setTimeout(function () { el._toggling = false; }, 0);
+      var idx = el.getAttribute('data-mi');
+      if (idx !== null && st.messages[idx]) st.messages[idx].open = !!el.open;
+      saveUiPref(st, 'sourcesOpen', !!el.open);
+    }
+  }, true);
 
   window.ChatPanel = {
     render: render,

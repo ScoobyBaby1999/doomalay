@@ -290,10 +290,14 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
         // histories lost their pills after reload).
         // v0.37: 'hide' — the PM path's edit/delete/regenerate masks events
         // the same way the WS path does (content = JSON array of event ids).
-        case "user", "assistant", "status", "error", "tool_use", "tool_result", "sources", "hide":
+        // v0.38: + thinking / assistant_delta / compact — parity with the WS
+        // path's event vocabulary (the PM bridge and test seeds persist the
+        // same types the engine itself writes; thinking was rejected with a
+        // 400 while the WS path happily logs it).
+        case "user", "assistant", "assistant_delta", "assistant_complete", "thinking", "status", "error", "tool_use", "tool_result", "sources", "hide", "compact":
                 // ok
         default:
-                writeError(w, 400, "type must be user|assistant|status|error|tool_use|tool_result|sources|hide")
+                writeError(w, 400, "type must be user|assistant|assistant_delta|thinking|status|error|tool_use|tool_result|sources|hide|compact")
                 return
         }
         persisted, err := s.db.AppendEvent(id, req.Type, req.Text, "")

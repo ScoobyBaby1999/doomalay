@@ -593,6 +593,22 @@
     } catch (e) { return ''; }
   }
 
+  // v0.38 PER-CHAT UI DEFAULTS (user spec): each chat remembers whether
+  // the user prefers the thinking / sources / tool-pill boxes expanded or
+  // collapsed — stored in the chat's own tweaks blob as uiState, applied on
+  // every render.
+  function setUiState(state, key, v) {
+    touch(state);
+    var ui = state._tweaks.uiState || {};
+    ui[key] = v;
+    state._tweaks.uiState = ui;
+    persist(state);
+  }
+  function uiStateOf(state) {
+    var t = state && state._tweaks;
+    return (t && t.uiState && typeof t.uiState === 'object') ? t.uiState : null;
+  }
+
   function esc(s) {
     var d = document.createElement('div');
     d.textContent = s == null ? '' : String(s);
@@ -611,6 +627,11 @@
   window.ChatTweaks = {
     open: open,
     attach: attach,
+    // v0.38: per-chat box preferences — ChatPanel calls these with an
+    // EXPLICIT state (not the attached view state) so background turns
+    // never write the foreground chat's prefs.
+    setUiState: setUiState,
+    uiStateOf: uiStateOf,
     setScheme: withState(setScheme),
     setFmtSlot: withState(setFmtSlot),
     setSize: withState(setSize),
