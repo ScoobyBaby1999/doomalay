@@ -74,6 +74,22 @@ func (s *Server) handleKeysSet(w http.ResponseWriter, r *http.Request) {
 		s.brain.SetEnv(s.vault.AsEnv())
 		llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"]) // v0.27.1
 	}
+	// v0.42 KEY-TRIGGERED RESYNC (the disappearing-effort-toggle root
+	// cause #2, live-verified on the shared engine): POSTing a key used
+	// to leave the provider's /api/models group untouched — hasApiKey
+	// stayed false, models stayed 0, effort stayed missing until the
+	// client's next natural poll after the 10-minute cache TTL. Fire an
+	// async live re-sync NOW (fire-and-forget goroutine; force=true so
+	// it bypasses the TTL cache; singleflight dedupes concurrent saves
+	// on the same key set). It rebuilds every group — the logical model
+	// view is derived from ALL providers' models, so a one-group patch
+	// would leave the model view stale. GET /api/models serves the live
+	// key flags immediately (ApplyLiveKeyState) and marks the response
+	// Partial until this resync lands — the client re-polls and the
+	// models + dynamic effort ladders appear within seconds.
+	if resyncKeys := s.vault.AsEnv(); resyncKeys != nil {
+		go llm.BuildCatalogV2(resyncKeys, true)
+	}
 	writeJSON(w, 200, map[string]any{"ok": true, "provider": req.Provider, "env_var": req.EnvVar})
 }
 

@@ -965,11 +965,30 @@ async function roundTripOnce(c, opts, messages) {
     stream: true,
     stream_options: { include_usage: true }
   };
-  // v0.26: effort for the PM path (privatemodeai = on/off per their
-  // docs — kimi's chat_template_kwargs.thinking toggle). 'off' sends
-  // nothing (the provider default); anything else turns thinking ON.
+  // v0.42 DYNAMIC EFFORT SHAPE (mirrors engine/internal/llm/effort.go —
+  // the OpenRouter-reasoning-registry merge): PM's live surface has two
+  // shapes per model family. 'off' (or empty) always sends NOTHING (the
+  // provider default). Otherwise:
+  //   · kimi family → chat_template_kwargs.thinking = true (the verified
+  //     PM toggle — even when the catalog carries an enum ladder, PM's
+  //     own API for kimi is the boolean).
+  //   · enum-level models (glm-5.3 / glm-flash / gpt-oss …) → top-level
+  //     reasoning_effort = the chosen level string.
+  //   · gemma/glm-5.1 style → chat_template_kwargs.enable_thinking.
+  // The 400-resilience net in the engine covers any mismatch (PM 400s
+  // are retried without the param).
   if (opts.effort && opts.effort !== 'off' && opts.effort !== '') {
-    body.chat_template_kwargs = { thinking: true };
+    var mLower = String(opts.model || '').toLowerCase();
+    var enumEffort = !/^(on|off)$/.test(opts.effort);
+    if (mLower.indexOf('kimi') >= 0) {
+      body.chat_template_kwargs = { thinking: true };
+    } else if (mLower.indexOf('gemma') >= 0 || mLower.indexOf('glm-5.1') >= 0) {
+      body.chat_template_kwargs = { enable_thinking: true };
+    } else if (enumEffort) {
+      body.reasoning_effort = opts.effort;
+    } else {
+      body.chat_template_kwargs = { thinking: true };
+    }
   }
   try {
     var stream = await c.streamChatCompletions(body, { signal: opts.signal || undefined });

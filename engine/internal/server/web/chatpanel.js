@@ -9,7 +9,7 @@
 //     │ ▸ ⚡ Quick Chat · NVIDIA · nemotron…  (pinned)│  ← collapsible header:
 //     │ ┄┄┄ dropdown (hidden by default) ┄┄┄         │     tap the arrow to
 //     │   [⚡ Quick Chat] [☁ NVIDIA]  (pills)        │     drop the pills down.
-//     │   [🗄 artifacts N] [⇩ export] [⌕] [memory]   │     More pills ship per
+//     │   [🗄 artifacts N] [⇩ export] [memory]        │     More pills ship per
 //     └──────────────────────────────────────────────┘     chat type later.
 //     ┌──────────────────────────────────────────────┐
 //     │ do this quickly - setup the AI bot           │  ← THE GATELOCK: the
@@ -36,6 +36,24 @@
 // absolute WS URLs, PM SDK bridge turns, idempotent event replay,
 // sessionId→icon binding, per-message provider/model overrides,
 // single-flight WS binding.
+//
+// v0.42 THE SEND/QUEUE/STOP/RETRY BUTTON (user spec #4): the old text
+//   "Send" button was a plain label the code mutated via textContent at
+//   every turn boundary (and a Stopped mid-turn chat re-rendered it
+//   wrong). It is now ONE mode machine — SendMode below — with an ICON
+//   button (44px tap target, icon over a tiny label), four modes picked
+//   automatically from {draft text, streaming, last-turn-failed}, and a
+//   chevron mini-button that drops a manual-override menu (the override
+//   sticks until it becomes impossible, then auto resumes). QUEUE:
+//   follow-ups typed mid-reply park on state.queue as compact pills
+//   above the composer and auto-send ONE per successful turn end (a
+//   user STOP or a failure parks them — tap a pill to fire early).
+//   RETRY: resends the last user text with the failed turn's engine
+//   events masked (the regenerate machinery). Enter follows the live
+//   mode: queue while streaming, send otherwise; Shift+Enter stays a
+//   newline. v0.42 ALSO (spec #5): the in-chat search pill is GONE from
+//   the header dropdown (find — local + global, with the new Aa / Exact
+//   toggles — is the way forward; see globalsearch.js).
 
 (function () {
   'use strict';
@@ -231,13 +249,18 @@
         messages: [],
         isStreaming: false,
         draftText: '',
+        // v0.42: the send/queue/stop/retry machine — queued follow-ups
+        // + the manual mode override live on state (survive re-renders,
+        // exactly like draftText). _holdQueue parks the auto-flush.
+        queue: [],
+        _sendModeOverride: null,
+        _holdQueue: false,
         client: null,
         dropdownOpen: false,  // pills hidden by default until the arrow
         fulfilled: false,     // gatelock passed?
         lastEventI: 0,        // idempotent replay dedup
         artifactsCount: 0,
         artifactSaved: {},    // msg-index → true (avoid re-saving)
-        search: null,         // in-chat search state {q, matches}
         _icon: icon
       };
       if (icon) icon._sessionData = sessionData || null;
@@ -318,6 +341,12 @@
   }
   function clearDraftLS(sid) {
     if (!sid) return;
+    // v0.42: cancel any pending debounced save FIRST — a send/queue whose
+    // Enter followed the last keystroke by <250ms left the timer armed,
+    // and it re-wrote the just-cleared draft a moment later (the text
+    // then resurrected into the composer at the next re-render; live-
+    // observed with agent-browser's back-to-back fill+Enter).
+    clearTimeout(draftSaveTimer);
     try {
       var m = readDraftMap();
       if (m[sid] !== undefined) { delete m[sid]; localStorage.setItem(DRAFT_KEY, JSON.stringify(m)); }
@@ -340,6 +369,460 @@
     }
     var max = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
     scrollEl.scrollTop = Math.max(0, Math.min(pos, max));
+  }
+
+  // ── v0.42 THE SEND MODE MACHINE (user spec #4) ───────────────────────
+  // Four modes, ONE button. The auto mode is a pure function of
+  // {draftText, isStreaming, lastTurnFailed}; a manual override (the
+  // chevron dropdown) sticks until it becomes impossible, then auto
+  // resumes. ONE entry point — SendMode.sync(bodyEl, state) — paints the
+  // icon + label + actionable styling, and it replaces EVERY old
+  // `btn.textContent = 'Send'/'Stop'/'…'` mutation site (the mode is
+  // derived from state, never set by hand).
+  // Icons: inline lucide-style SVG (stroke=currentColor, 20px box).
+
+  function smSVG(inner, size) {
+    var s = size || 20;
+    return '<svg viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
+  }
+  var SEND_ICONS = {
+    send: smSVG('<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>'),
+    stop: smSVG('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
+    queue: smSVG('<path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M7 6h10"/><path d="M7 12h10"/><path d="M17 18h4"/><path d="M19 16v4"/>'),
+    retry: smSVG('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+    chev: smSVG('<path d="m6 9 6 6 6-6"/>', 14)
+  };
+  var SEND_MODES = {
+    send:  { label: 'send',  aria: 'Send the message',      desc: 'Send now' },
+    queue: { label: 'queue', aria: 'Queue until the reply finishes', desc: 'Queue until the reply finishes' },
+    stop:  { label: 'stop',  aria: 'Stop the running turn', desc: 'Stop the running turn' },
+    retry: { label: 'retry', aria: 'Retry the last message', desc: 'Retry the last message' }
+  };
+
+  // lastTurnFailed: the last non-deleted message is an error bubble
+  // (engine 'error' events AND the connection-dropped error that
+  // wireClientClose pushes — the retry affordance covers both).
+  function lastTurnFailed(state) {
+    if (!state || !state.messages || !state.messages.length) return false;
+    return state.messages[state.messages.length - 1].role === 'error';
+  }
+  function lastUserText(state) {
+    if (!state || !state.messages) return null;
+    for (var i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].role === 'user') return state.messages[i].text || '';
+    }
+    return null;
+  }
+
+  // The AUTO mode ladder (user spec #4):
+  //   empty  + idle          → send   (ghost — nothing to send yet)
+  //   empty  + streaming     → stop
+  //   text   + streaming     → queue
+  //   empty  + idle + failed → retry
+  function autoSendMode(state) {
+    var hasText = !!(state.draftText && state.draftText.trim());
+    if (state.isStreaming) return hasText ? 'queue' : 'stop';
+    if (!hasText && lastTurnFailed(state)) return 'retry';
+    return 'send';
+  }
+  function sendModePossible(state, mode) {
+    if (mode === 'queue' || mode === 'stop') return !!state.isStreaming;
+    if (mode === 'retry') return !state.isStreaming && lastTurnFailed(state) && !!lastUserText(state);
+    return true; // 'send' is always possible (it just does nothing with no text)
+  }
+  function sendModeActionable(state, mode) {
+    var hasText = !!(state.draftText && state.draftText.trim());
+    if (mode === 'stop') return !!state.isStreaming;
+    if (mode === 'queue') return !!state.isStreaming && hasText;
+    if (mode === 'retry') return sendModePossible(state, 'retry');
+    return hasText;
+  }
+
+  // one injected stylesheet for the whole v0.42 UI (send cluster, mode
+  // menu, queued pills + the find bar's Aa/Exact chips) — index.html
+  // keeps its generic #chat-send / .chat-find rules.
+  var smStyleEl = null;
+  function ensureSendModeStyle() {
+    if (smStyleEl && smStyleEl.isConnected) return;
+    smStyleEl = document.createElement('style');
+    smStyleEl.id = 'sendmode-style';
+    smStyleEl.textContent = [
+      '#send-cluster { display:flex; align-items:stretch; flex-shrink:0; align-self:flex-start; }',
+      '#chat-send {',
+      '  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;',
+      '  min-width:56px; height:calc(44px * var(--chat-scale,1)); padding:2px 4px;',
+      '  border:1px solid var(--border); border-radius:10px 0 0 10px; cursor:pointer; font-family:inherit;',
+      '  background:transparent; color:var(--text-3);',
+      '  transition: background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease; }',
+      '#chat-send .sm-lab { font-size:9px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; line-height:1; }',
+      '#chat-send.sm-on { background:rgba(var(--accent-rgb),0.16); border-color:rgba(var(--accent-rgb),0.55); color:var(--accent); }',
+      '#chat-send.sm-on.sm-t-warn { background:rgba(var(--warn-rgb),0.15); border-color:rgba(var(--warn-rgb),0.5); color:var(--warn); }',
+      '#chat-send.sm-on.sm-t-ok { background:rgba(var(--ok-rgb),0.15); border-color:rgba(var(--ok-rgb),0.5); color:var(--ok); }',
+      '#chat-send.sm-ghost { background:var(--surface-2); border-color:var(--border); color:var(--text-3); }',
+      '#chat-send.sm-busy svg { animation: sm-pulse 1s ease-in-out infinite; }',
+      '@keyframes sm-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }',
+      '#chat-send-more {',
+      '  width:26px; border:1px solid var(--border); border-left:none; border-radius:0 10px 10px 0;',
+      '  background:var(--surface-2); color:var(--text-3); cursor:pointer; font-family:inherit;',
+      '  display:flex; align-items:center; justify-content:center;',
+      '  transition: background .15s ease, color .15s ease, border-color .15s ease; }',
+      '#chat-send-more:active { transform: scale(0.94); }',
+      '#send-cluster.sm-cluster-on #chat-send-more { border-color:rgba(var(--accent-rgb),0.55); background:rgba(var(--accent-rgb),0.10); color:var(--accent); }',
+      '#send-cluster.sm-cluster-warn #chat-send-more { border-color:rgba(var(--warn-rgb),0.5); background:rgba(var(--warn-rgb),0.09); color:var(--warn); }',
+      '#send-cluster.sm-cluster-ok #chat-send-more { border-color:rgba(var(--ok-rgb),0.5); background:rgba(var(--ok-rgb),0.09); color:var(--ok); }',
+      '#chat-send-more:focus-visible, .sm-row:focus-visible, .sq-x:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }',
+      // the find bar's Aa / Exact chips (v0.42) — 32px min tap targets
+      '.chat-find-chip {',
+      '  min-width:38px; height:32px; padding:0 9px; margin:0 1px; flex-shrink:0;',
+      '  font-family:inherit; font-size:12px; font-weight:700; line-height:1;',
+      '  color:var(--text-3); background:var(--surface-2); border:1px solid var(--border);',
+      '  border-radius:8px; cursor:pointer; letter-spacing:.02em;',
+      '  transition:color .14s ease, border-color .14s ease, background .14s ease; }',
+      '.chat-find-chip:active { transform:scale(0.94); }',
+      '.chat-find-chip[aria-pressed="true"] {',
+      '  color:var(--accent); border-color:rgba(var(--accent-rgb),0.55);',
+      '  background:rgba(var(--accent-rgb),0.12); }',
+      '.chat-find-chip:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }',
+      // the queued-pills rail (inside the sticky composer)
+      '#send-queue { display:flex; flex-direction:column; gap:4px; margin-bottom:8px; }',
+      '.sq-row { display:flex; align-items:center; gap:8px; cursor:pointer; font-family:inherit;',
+      '  background:rgba(var(--accent-rgb),0.07); border:1px dashed rgba(var(--accent-rgb),0.55);',
+      '  color:var(--text-2); border-radius:9px; padding:4px 4px 4px 10px; text-align:left; width:100%;',
+      '  transition: background .14s ease; }',
+      '.sq-row:hover { background:rgba(var(--accent-rgb),0.13); }',
+      '.sq-row .sq-text { flex:1; min-width:0; font-size:var(--ui-small-fs);',
+      '  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '.sq-row .sq-tag { flex-shrink:0; font-size:var(--ui-micro-fs); font-weight:700; color:var(--accent);',
+      '  text-transform:uppercase; letter-spacing:.06em; }',
+      '.sq-x { width:32px; height:32px; flex-shrink:0; border:none; border-radius:7px;',
+      '  background:transparent; color:var(--text-3); cursor:pointer; font-size:15px; font-family:inherit;',
+      '  display:flex; align-items:center; justify-content:center; }',
+      '.sq-x:active { transform: scale(0.9); background:var(--surface-3); }',
+      // the manual-override dropdown (absolute inside #chat-root — the
+      // panel's transform hijacks position:fixed; see openSendMenu)
+      '#send-menu { position:absolute; z-index:2600; width:268px; padding:4px;',
+      '  background:var(--surface-1); border:1px solid var(--border); border-radius:12px;',
+      '  box-shadow:0 10px 30px rgba(0,0,0,.24);',
+      '  opacity:0; transform:translateY(6px); transition:opacity .14s ease, transform .14s ease; }',
+      '#send-menu.open { opacity:1; transform:translateY(0); }',
+      '.sm-head { display:flex; align-items:center; justify-content:space-between; gap:8px;',
+      '  padding:6px 10px 4px; font-size:var(--ui-micro-fs); font-weight:700; color:var(--text-3);',
+      '  text-transform:uppercase; letter-spacing:.07em; }',
+      '.sm-reset { border:none; background:transparent; color:var(--accent); cursor:pointer;',
+      '  font:inherit; font-size:var(--ui-micro-fs); font-weight:700; padding:4px 6px; border-radius:6px;',
+      '  text-transform:none; letter-spacing:0; }',
+      '.sm-reset:active { background:rgba(var(--accent-rgb),0.14); }',
+      '.sm-row { display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px;',
+      '  background:transparent; border:none; border-radius:9px; cursor:pointer; font-family:inherit;',
+      '  color:var(--text-2); text-align:left; transition:background .13s ease; }',
+      '.sm-row:hover:not([disabled]) { background:var(--surface-2); }',
+      '.sm-row[disabled] { opacity:.4; cursor:default; }',
+      '.sm-row.on { background:rgba(var(--accent-rgb),0.12); color:var(--accent); }',
+      '.sm-row svg { flex-shrink:0; }',
+      '.sm-rmeta { flex:1; min-width:0; }',
+      '.sm-rname { display:block; font-size:var(--ui-small-fs); font-weight:700; line-height:1.25; }',
+      '.sm-rdesc { display:block; font-size:var(--ui-micro-fs); color:var(--text-3); line-height:1.3; margin-top:1px; }',
+      '.sm-row.on .sm-rdesc { color:inherit; opacity:.75; }',
+      '.sm-auto { flex-shrink:0; font-size:var(--ui-micro-fs); font-weight:700; color:var(--text-3);',
+      '  border:1px solid var(--border); border-radius:5px; padding:1px 5px; text-transform:uppercase; letter-spacing:.05em; }',
+      '.sm-row.on .sm-auto { color:var(--accent); border-color:rgba(var(--accent-rgb),0.5); }',
+      '@media (prefers-reduced-motion: reduce) {',
+      '  #chat-send.sm-busy svg, #send-menu, .sq-row { transition:none; animation:none; }',
+      '}'
+    ].join('\n');
+    document.head.appendChild(smStyleEl);
+  }
+
+  var SendMode = {
+    // the EFFECTIVE mode (override if possible, else auto). A stale
+    // override that became impossible is cleared here — auto resumes.
+    mode: function (state) {
+      var auto = autoSendMode(state);
+      var ov = state._sendModeOverride;
+      if (ov && ov !== auto && sendModePossible(state, ov)) return ov;
+      if (ov) state._sendModeOverride = null; // impossible → auto resumes
+      return auto;
+    },
+    // manual override ('auto' clears it); repaints the owning chat.
+    set: function (state, mode) {
+      state._sendModeOverride = (mode === 'auto' || mode === autoSendMode(state)) ? null : mode;
+      if (isOwner(state) && currentCtx && currentCtx.bodyEl) SendMode.sync(currentCtx.bodyEl, state);
+    },
+    // ONE painter. Owner-guarded (v0.35 isolation): only the chat that
+    // owns the live DOM paints its button — stale closures resolve the
+    // LIVE body first, exactly like appendMessage/handleEvent do.
+    sync: function (bodyEl, state) {
+      if (!state || !isOwner(state) || !currentCtx || !currentCtx.bodyEl) return;
+      var live = currentCtx.bodyEl;
+      var btn = live.querySelector('#chat-send');
+      if (!btn) return;
+      var mode = SendMode.mode(state);
+      var M = SEND_MODES[mode];
+      var on = sendModeActionable(state, mode);
+      btn.setAttribute('data-mode', mode);
+      btn.setAttribute('aria-label', M.aria);
+      btn.innerHTML = SEND_ICONS[mode] + '<span class="sm-lab">' + M.label + '</span>';
+      btn.classList.toggle('sm-on', on);
+      btn.classList.toggle('sm-ghost', !on);
+      btn.classList.toggle('sm-t-warn', on && mode === 'stop');
+      btn.classList.toggle('sm-t-ok', on && mode === 'retry');
+      btn.classList.remove('sm-busy'); // busy (connecting) is a doSend overlay
+      var cluster = live.querySelector('#send-cluster');
+      if (cluster) {
+        cluster.classList.toggle('sm-cluster-on', on && (mode === 'send' || mode === 'queue'));
+        cluster.classList.toggle('sm-cluster-warn', on && mode === 'stop');
+        cluster.classList.toggle('sm-cluster-ok', on && mode === 'retry');
+      }
+    }
+  };
+  // the one-liner every turn-boundary site calls (replaces the old
+  // `btn.textContent = 'Send' | 'Stop' | '…'` mutations, one by one).
+  function syncSendButton(bodyEl, state) { SendMode.sync(bodyEl, state); }
+  // the connecting overlay: pulse whatever mode is live ('…' in v0.41).
+  function setSendBusy(bodyEl, on) {
+    var btn = bodyEl && bodyEl.querySelector('#chat-send');
+    if (btn) btn.classList.toggle('sm-busy', !!on);
+  }
+
+  // ── v0.42 THE QUEUE (follow-ups typed while a reply streams) ────────
+  // state.queue lives on the chat's state (like draftText) so it survives
+  // re-renders; the pills ride the sticky composer so they stay visible.
+  // Flush policy: ONE queued message per SUCCESSFUL turn end (status
+  // idle / PM finish). A user stop, an error, or a dropped connection
+  // PARKS the queue (state._holdQueue) — "stop" must mean stop — and the
+  // next manual send re-arms the auto-flush.
+
+  function enqueueDraft(bodyEl, state, icon, panel) {
+    var input = bodyEl ? bodyEl.querySelector('#chat-input') : null;
+    var text = ((input ? input.value : state.draftText) || '').trim();
+    if (!text || !state.isStreaming) return; // queueing only makes sense mid-turn
+    if (!state.queue) state.queue = [];
+    state.queue.push({ text: text, ts: Date.now() });
+    if (input) {
+      input.value = '';
+      input.style.height = 'auto';
+    }
+    state.draftText = '';
+    clearDraftLS(draftId(state)); // the draft left home with the queue
+    renderSendQueue(bodyEl, state, icon, panel);
+    syncSendButton(bodyEl, state); // input now empty → mode may flip
+  }
+
+  function renderSendQueue(bodyEl, state, icon, panel) {
+    if (!bodyEl || !isOwner(state)) return;
+    var live = currentCtx.bodyEl;
+    var bar = live.querySelector('#chat-inputbar');
+    if (!bar) return;
+    var host = bar.querySelector('#send-queue');
+    var q = state.queue || [];
+    if (!q.length) {
+      if (host && host.parentNode) host.parentNode.removeChild(host);
+      return;
+    }
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'send-queue';
+      bar.insertBefore(host, bar.firstChild); // above the toolbar, like the edit banner
+    }
+    host.innerHTML = '';
+    for (var i = 0; i < q.length; i++) {
+      (function (idx) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'sq-row';
+        row.innerHTML =
+          '<span class="sq-tag">queued</span>' +
+          '<span class="sq-text">' + esc(q[idx].text) + '</span>' +
+          '<span class="sq-x" role="button" aria-label="Remove queued message" title="Remove">✕</span>';
+        row.title = state.isStreaming ? 'Tap to send now — stops the running reply' : 'Tap to send now';
+        row.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('.sq-x')) {
+            state.queue.splice(idx, 1);
+            renderSendQueue(bodyEl, state, icon, panel);
+            return;
+          }
+          if (state.isStreaming) {
+            // v0.42 "tap to send now": the tapped item jumps the queue and
+            // the running turn STOPS for it — the stop-induced turn end
+            // (status idle / PM finish) flushes THIS item first, so the
+            // transports never see two turns at once.
+            var tapped = state.queue.splice(idx, 1)[0];
+            if (tapped) state.queue.unshift(tapped);
+            state._holdQueue = false; // this stop exists FOR the flush
+            renderSendQueue(bodyEl, state, icon, panel);
+            try {
+              (window.ChatTypes.get(state.sandbox || 'quick')).stop(state, (currentCtx && currentCtx.ctx) || {});
+            } catch (eStop) { /* best-effort — the idle path still flushes */ }
+            return;
+          }
+          var item = state.queue.splice(idx, 1)[0];
+          renderSendQueue(bodyEl, state, icon, panel);
+          if (item) doSend(item.text, live, icon, state, panel);
+        });
+        host.appendChild(row);
+      })(i);
+    }
+  }
+
+  function flushSendQueue(bodyEl, state) {
+    if (!state || !state.queue || !state.queue.length) return;
+    if (state.isStreaming || state._holdQueue) return;
+    if (!isOwner(state) || !currentCtx || !currentCtx.bodyEl) return; // reopen path flushes
+    var next = state.queue.shift();
+    renderSendQueue(currentCtx.bodyEl, state, currentCtx.icon, currentCtx.panel);
+    doSend(next.text, currentCtx.bodyEl, currentCtx.icon, state, currentCtx.panel);
+  }
+
+  // A chat reopened with a parked queue (the flush sites are owner-only,
+  // so a background finish parked one). Wait for the WS + replay to
+  // settle (no new event for ~600ms) so the flushed send never
+  // interleaves with replayed history; PM chats have no WS — fire after
+  // the first tick. Cap ~10s.
+  function scheduleOpenFlush(bodyEl, state) {
+    if (!state.queue || !state.queue.length || state.isStreaming || state._holdQueue) return;
+    var tries = 0;
+    var t = setInterval(function () {
+      tries++;
+      if (!isOwner(state) || state.isStreaming || state._holdQueue ||
+          !state.queue || !state.queue.length) { clearInterval(t); return; }
+      var ready = (state.provider === 'privatemodeai') ||
+        (state.client && state.client.connected &&
+          (Date.now() - (state._lastEvAt || 0) > 600));
+      if (ready || tries > 100) {
+        clearInterval(t);
+        flushSendQueue(bodyEl, state);
+      }
+    }, 100);
+  }
+
+  // ── v0.42 RETRY: re-send the last user message as a new turn ───────
+  // The failed turn's engine events are masked first (the same
+  // edit/regenerate machinery — emitHideEvents) so the retry doesn't see
+  // the broken turn as live context, then doSend replays it as the
+  // newest turn. No last user message → the button is disabled.
+  function doRetrySend(bodyEl, icon, state, panel) {
+    if (!state || state.isStreaming) return;
+    var lastUser = null, lu = -1;
+    for (var i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].role === 'user') { lastUser = state.messages[i]; lu = i; break; }
+    }
+    if (!lastUser || !lastUser.text || lu < 0) return; // retry disabled
+    if (state._editStash) { // same contract as doSend's edit path
+      hideEditBanner(bodyEl, state, icon, panel, false);
+      commitEditStash(state);
+    }
+    var ids = [];
+    while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
+      var popped = state.messages.pop();
+      if (popped.ei) ids.push(popped.ei);
+    }
+    var poppedUser = state.messages.pop();
+    if (poppedUser && poppedUser.ei) ids.push(poppedUser.ei);
+    emitHideEvents(state, ids);
+    var live = (isOwner(state) && currentCtx && currentCtx.bodyEl) ? currentCtx.bodyEl : bodyEl;
+    var mc = live && live.querySelector('#chat-messages');
+    if (mc) rebuildTranscript(mc, state);
+    doSend(lastUser.text, live, icon, state, panel);
+  }
+
+  // ── v0.42 THE MODE DROPDOWN (the chevron mini-button) ──────────────
+  // Manual override with one-line descriptions; impossible modes read
+  // disabled. The override sticks until impossible (SendMode.mode
+  // clears it); "auto" resets it by hand.
+  function openSendMenu(bodyEl, state) {
+    if (!isOwner(state) || !currentCtx || !currentCtx.bodyEl) return;
+    var live = currentCtx.bodyEl;
+    var existing = live.querySelector('#send-menu');
+    if (existing) { closeSendMenu(live); return; } // chevron toggles
+    var cluster = live.querySelector('#send-cluster');
+    if (!cluster) return;
+    ensureSendModeStyle();
+
+    var el = document.createElement('div');
+    el.id = 'send-menu';
+    el.setAttribute('role', 'menu');
+    el.setAttribute('aria-label', 'Send button mode');
+
+    var head = document.createElement('div');
+    head.className = 'sm-head';
+    head.innerHTML = '<span>send button</span>';
+    var reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'sm-reset';
+    reset.textContent = 'auto';
+    reset.title = 'Let the button pick the mode automatically';
+    reset.addEventListener('click', function (e) {
+      e.stopPropagation();
+      SendMode.set(state, 'auto');
+      closeSendMenu(live);
+    });
+    head.appendChild(reset);
+    el.appendChild(head);
+
+    var eff = SendMode.mode(state);
+    var auto = autoSendMode(state);
+    ['send', 'queue', 'stop', 'retry'].forEach(function (m) {
+      var M = SEND_MODES[m];
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'sm-row' + (m === eff ? ' on' : '');
+      row.setAttribute('role', 'menuitemradio');
+      row.setAttribute('aria-checked', m === eff ? 'true' : 'false');
+      var possible = sendModePossible(state, m);
+      if (!possible) row.setAttribute('disabled', 'disabled');
+      row.innerHTML = SEND_ICONS[m] +
+        '<span class="sm-rmeta"><span class="sm-rname">' + M.label + '</span>' +
+        '<span class="sm-rdesc">' + M.desc + '</span></span>' +
+        (m === auto ? '<span class="sm-auto">auto</span>' : '');
+      if (possible) row.addEventListener('click', function (e) {
+        e.stopPropagation();
+        SendMode.set(state, m);
+        closeSendMenu(live);
+      });
+      el.appendChild(row);
+    });
+
+    live.querySelector('#chat-root').appendChild(el);
+    // anchor above the composer, right-aligned to the cluster. ABSOLUTE
+    // inside #chat-root with rect DIFFERENCES — the panel's translateY
+    // transform makes position:fixed resolve against the transformed
+    // box (measured live: a fixed menu landed 320px off-screen below),
+    // while viewport-rect differences cancel any transform cleanly.
+    var rootR = live.querySelector('#chat-root').getBoundingClientRect();
+    var r = cluster.getBoundingClientRect();
+    var w = 268;
+    var left = Math.max(6, Math.min(r.right - rootR.left - w, rootR.width - w - 6));
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = 'auto';
+    el.style.bottom = Math.round(rootR.bottom - r.top + 8) + 'px';
+    requestAnimationFrame(function () { el.classList.add('open'); });
+
+    var dismiss = function (e) {
+      // v0.42: a renderHost re-render nukes the menu with the old DOM —
+      // self-retire here, or the capture listener leaks on document.
+      if (!el.isConnected) { if (el._cleanup) el._cleanup(); return; }
+      if (!(e.target.closest && e.target.closest('#send-menu, #send-cluster'))) {
+        closeSendMenu(live);
+      }
+    };
+    var onKey = function (e) {
+      if (e.key === 'Escape') closeSendMenu(live);
+    };
+    document.addEventListener('click', dismiss, true);
+    document.addEventListener('keydown', onKey, true);
+    el._cleanup = function () {
+      document.removeEventListener('click', dismiss, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+    setTimeout(function () { try { el.querySelector('.sm-row:not([disabled])').focus(); } catch (e) {} }, 60);
+  }
+  function closeSendMenu(bodyEl) {
+    var el = bodyEl && bodyEl.querySelector('#send-menu');
+    if (!el) return;
+    if (el._cleanup) el._cleanup();
+    el.classList.remove('open');
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 150);
   }
 
   // v0.33: the deferred labels re-render — panel.js pokes this event
@@ -458,7 +941,14 @@
           '<div id="chat-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>' +
           '<div style="display:flex;gap:8px">' +
             '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:calc(10px * var(--chat-scale,1)) calc(12px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);font-family:inherit;resize:none;outline:none;min-height:calc(40px * var(--chat-scale,1));max-height:calc(120px * var(--chat-scale,1));line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
-            '<button id="chat-send" style="background:var(--border-strong);border:none;color:var(--text-1);padding:0 calc(16px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);cursor:pointer;font-family:inherit;align-self:flex-start;height:calc(40px * var(--chat-scale,1))">Send</button>' +
+            // v0.42 THE SEND CLUSTER: the main #chat-send button (id kept —
+            // other code queries it) is now an ICON over a tiny label, one
+            // 44px tap target painted entirely by SendMode.sync; the chevron
+            // mini-button at its right drops the manual-override menu.
+            '<span id="send-cluster">' +
+              '<button id="chat-send" type="button" aria-label="Send the message" data-mode="send"></button>' +
+              '<button id="chat-send-more" type="button" aria-label="Choose send mode" title="Choose send mode">' + SEND_ICONS.chev + '</button>' +
+            '</span>' +
           '</div>' +
           '</div>' +
         '</div>'
@@ -571,14 +1061,16 @@
         var item = list[parseInt(chip.getAttribute('data-starter'), 10)];
         if (!item) return;
         var ta = bodyEl.querySelector('#chat-input');
-        if (!ta) return;
-        ta.value = item.prompt;
-        state.draftText = item.prompt;
-        saveDraftLS(draftId(state), item.prompt);
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
-        ta.focus();
-        try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (err) {}
+        if (ta) {
+          ta.value = item.prompt;
+          state.draftText = item.prompt;
+          saveDraftLS(draftId(state), item.prompt);
+          ta.style.height = 'auto';
+          ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+          ta.focus();
+          try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (err) {}
+          syncSendButton(bodyEl, state); // v0.42: the draft landed — send turns actionable
+        }
       });
     }
 
@@ -589,8 +1081,9 @@
     // body that no longer holds their chat — discard the stack (the fresh
     // content below IS the new root; no restore).
     if (panel && panel.viewDepth && panel.viewDepth()) panel.dropViews();
-    // the search input mounts whenever the dropdown renders open
-    if (state.dropdownOpen) renderSearchbar(bodyEl, state, icon, panel);
+    // v0.42: the in-chat search pill is GONE from the dropdown (spec #5a) —
+    // find (local bar + global search) is the way forward. The dropdown is
+    // pills + utilities only now.
 
     // artifacts session binding + badge
     if (state.sessionId) {
@@ -646,6 +1139,7 @@
             state.draftText = ta.value;
             ta.focus();
             ta.scrollTop = ta.scrollHeight;
+            syncSendButton(bodyEl, state); // v0.42: the quote prefill is a draft
           }
         },
         onRegenerate: function () {
@@ -693,6 +1187,7 @@
           state.draftText = editText;
           rebuildTranscript(msgContainer, state);
           showEditBanner(bodyEl, state, icon, panel);
+          syncSendButton(bodyEl, state); // v0.42: the edit prefill is a draft
           ta.focus();
           try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
         },
@@ -707,6 +1202,7 @@
           state.messages.splice(miN, 1);
           if (victim.ei) emitHideEvents(state, [victim.ei]);
           rebuildTranscript(msgContainer, state);
+          syncSendButton(bodyEl, state); // v0.42: deleting the trailing error leaves send/retry
           if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('message deleted');
         }
       });
@@ -721,22 +1217,40 @@
         input.style.height = Math.min(120, input.scrollHeight) + 'px';
         // v0.40: durable per-chat draft (debounced; cleared on send)
         saveDraftLS(draftId(state), input.value);
+        // v0.42: the mode follows the draft — typing mid-turn flips the
+        // button to QUEUE, clearing it falls back to STOP/SEND.
+        syncSendButton(bodyEl, state);
       });
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          send();
+          // v0.42: Enter follows the LIVE mode — queue while a turn
+          // streams (queue-mode-active), send otherwise. Shift+Enter
+          // stays a newline. Any text mid-turn QUEUES regardless of a
+          // manual 'send' override (a plain send is impossible while
+          // streaming — falling through would silently drop the
+          // keystroke; enqueueDraft self-guards empty text).
+          if (state.isStreaming) enqueueDraft(bodyEl, state, icon, panel);
+          else send();
         }
       });
-      sendBtn.addEventListener('click', send);
-      // v0.35: reopening a chat MID-TURN used to render a plain "Send"
-      // button — the stop affordance was lost until the turn ended. If this
-      // chat is still streaming, restore Stop + its handler right away.
-      if (state.isStreaming) {
-        var stype = window.ChatTypes.get(state.sandbox || 'quick');
-        sendBtn.textContent = 'Stop';
-        sendBtn.onclick = function () { stype.stop(state, ctx || {}); };
-      }
+      // v0.42: ONE dispatcher — the button's behavior is its mode.
+      // (The old pair — addEventListener(send) + a mid-turn
+      // sendBtn.onclick=stop overwrite — is dead: sync() paints Stop
+      // whenever state.isStreaming, and this tap reads the mode live,
+      // so a chat reopened MID-TURN gets its stop affordance back too.)
+      sendBtn.addEventListener('click', onSendTap);
+      var sendMore = bodyEl.querySelector('#chat-send-more');
+      if (sendMore) sendMore.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openSendMenu(bodyEl, state);
+      });
+      // initial paint: icon + label + queued pills (state.queue survives
+      // re-renders — it lives on state like draftText).
+      ensureSendModeStyle();
+      syncSendButton(bodyEl, state);
+      renderSendQueue(bodyEl, state, icon, panel);
+      scheduleOpenFlush(bodyEl, state);
 
       // Connect the WS — only after the engine session exists; rebind the
       // icon's persisted session so a restart replays the SAME conversation.
@@ -788,7 +1302,21 @@
       restoreChatScroll(scrollEl, state);
     }
 
-    if (state.search && state.search.q) renderSearchbar(bodyEl, state, icon, panel);
+    // v0.42: the button's behavior IS its mode — one tap dispatcher
+    // (send / queue / stop / retry), replacing the old click=send +
+    // mid-turn onclick=stop overwrite pair.
+    function onSendTap() {
+      var mode = SendMode.mode(state);
+      if (mode === 'stop') {
+        state._holdQueue = true; // a deliberate stop parks the queue
+        var stype = window.ChatTypes.get(state.sandbox || 'quick');
+        try { stype.stop(state, ctx || {}); } catch (eStop) { /* engine best-effort */ }
+        return;
+      }
+      if (mode === 'queue' && state.isStreaming) { enqueueDraft(bodyEl, state, icon, panel); return; }
+      if (mode === 'retry') { doRetrySend(bodyEl, icon, state, panel); return; }
+      send(); // 'send' (guards empty text + streaming itself)
+    }
 
     function send() {
       var text = input.value.trim();
@@ -817,7 +1345,6 @@
         '</div>' +
         '<div id="chat-dropdown" style="' + (open ? '' : 'display:none;') + 'padding:2px 12px 10px;border-bottom:1px solid var(--surface-2)">' +
           '<div id="pill-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;-webkit-overflow-scrolling:touch;padding:4px 0 2px"></div>' +
-          '<div id="chat-searchbar"></div>' +
           '<div id="util-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px"></div>' +
         '</div>' +
       '</div>');
@@ -863,12 +1390,9 @@
       if (chevron) chevron.style.transform = 'rotate(' + (state.dropdownOpen ? '90deg' : '0deg') + ')';
       // v0.26: the header reads the static expand/collapse metadata line.
       if (summaryEl) summaryEl.textContent = type.summaryLine(state);
-      // v0.27: the search input lives IN the dropdown — mounted once the
-      // dropdown exists, it keeps its query + matches across toggles.
-      if (state.dropdownOpen) renderSearchbar(bodyEl, state, icon, ctx.panel);
     };
     if (row) row.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-searchbar, #chat-header-meters')) return;
+      if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-header-meters')) return;
       toggle();
     });
     if (chevron) chevron.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
@@ -1378,102 +1902,14 @@
     meters.style.display = 'flex';
   }
 
-  // ── the in-chat search (v0.27: the input IS the pill — it fills the
-  // entire row; the ▲▼ jump arrows + the "current / total" counter sit
-  // to its right; typing filters live, no toggle step). ────────────────
-  function renderSearchbar(bodyEl, state, icon, panel) {
-    var bar = bodyEl.querySelector('#chat-searchbar');
-    if (!bar) return;
-    if (!state.search) state.search = { q: '', idx: 0 };
-    var search = state.search;
-    bar.innerHTML =
-      '<input id="chat-search-input" type="text" placeholder="search this conversation…" value="' + escAttr(search.q) + '" aria-label="Search this conversation">' +
-      '<button id="chat-search-prev" class="chat-search-nav" aria-label="Previous match">▲</button>' +
-      '<button id="chat-search-next" class="chat-search-nav" aria-label="Next match">▼</button>' +
-      '<span class="chat-search-count" id="chat-search-count"></span>';
-    var inp = bar.querySelector('#chat-search-input');
-    var count = bar.querySelector('#chat-search-count');
-    var prevBtn = bar.querySelector('#chat-search-prev');
-    var nextBtn = bar.querySelector('#chat-search-next');
-
-    function updateCounter() {
-      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
-      var n = marks.length;
-      if (!search.q || n === 0) { count.textContent = search.q ? '0/0' : ''; return; }
-      search.idx = Math.max(0, Math.min(search.idx, n - 1));
-      count.textContent = (search.idx + 1) + '/' + n;
-    }
-    function focusCurrent() {
-      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
-      if (!marks.length) return;
-      search.idx = ((search.idx % marks.length) + marks.length) % marks.length;
-      marks.forEach(function (m, i) { m.classList.toggle('chat-search-current', i === search.idx); });
-      marks[search.idx].scrollIntoView({ block: 'center' });
-      updateCounter();
-    }
-    var run = function () {
-      search.q = inp.value;
-      search.idx = 0;
-      var n = highlightMatches(bodyEl, state, search.q);
-      if (n > 0) focusCurrent(); else updateCounter();
-    };
-    var deb = null;
-    inp.addEventListener('input', function () {
-      clearTimeout(deb);
-      deb = setTimeout(run, 200);
-    });
-    inp.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); run(); }
-      if (e.key === 'Escape') { // clears the query + the marks, keeps the bar
-        inp.value = ''; search.q = ''; search.idx = 0;
-        clearHighlights(bodyEl); updateCounter();
-      }
-    });
-    prevBtn.addEventListener('click', function () {
-      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
-      if (!marks.length) return;
-      search.idx = ((search.idx - 1) + marks.length) % marks.length;
-      focusCurrent();
-    });
-    nextBtn.addEventListener('click', function () {
-      var marks = bar.ownerDocument.querySelectorAll('mark.chat-search-mark');
-      if (!marks.length) return;
-      search.idx = (search.idx + 1) % marks.length;
-      focusCurrent();
-    });
-    if (search.q) run(); else updateCounter();
-  }
-
-  function highlightMatches(bodyEl, state, q) {
-    clearHighlights(bodyEl);
-    if (!q || q.length < 2) return 0;
-    var count = 0;
-    var walker = document.createTreeWalker(bodyEl.querySelector('#chat-messages'), NodeFilter.SHOW_TEXT, null);
-    var nodes = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode);
-    nodes.forEach(function (n) {
-      if (!n.nodeValue || n.parentNode.closest('.fmt-codecard, script, style, textarea')) return;
-      var idx = n.nodeValue.toLowerCase().indexOf(q.toLowerCase());
-      if (idx < 0) return;
-      count++;
-      // wrap the match in a <mark> (scrolling + the current-match
-      // highlight are the search bar's job — focusCurrent)
-      var range = document.createRange();
-      range.setStart(n, idx); range.setEnd(n, idx + q.length);
-      var mark = document.createElement('mark');
-      mark.className = 'chat-search-mark';
-      try { range.surroundContents(mark); } catch (e) {}
-    });
-    return count;
-  }
-  function clearHighlights(bodyEl) {
-    bodyEl.querySelectorAll('mark.chat-search-mark').forEach(function (m) {
-      var p = m.parentNode;
-      if (!p) return;
-      p.replaceChild(document.createTextNode(m.textContent), m);
-      p.normalize();
-    });
-  }
+  // ── v0.42 (spec #5a): the in-chat search pill — renderSearchbar +
+  // highlightMatches + clearHighlights + the #chat-searchbar row — is
+  // REMOVED. The find surface that stays is the composer's ⌕ find bar
+  // (openFindBar) + the dock's global search (globalsearch.js), which
+  // share the Aa / Exact toggles. (mark.chat-search-mark CSS stays in
+  // index.html — dead but harmless; nothing emits that class anymore.)
+  // The local find bar's own machinery (.find-hit pulse + computeMatches)
+  // never used these helpers — verified before deleting.
 
   function flashUtil(btn, msg) {
     var old = btn.innerHTML;
@@ -1629,10 +2065,11 @@
   function runPMTurn(text, state, bodyEl, icon) {
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var scrollEl = bodyEl.querySelector('#chat-scroll');
-    var sendBtn = bodyEl.querySelector('#chat-send');
     var abort = new AbortController();
     state._pmAbort = abort;
-    if (sendBtn) sendBtn.onclick = function () { abort.abort(); };
+    // v0.42: no button wiring here — doSend already flipped the mode to
+    // STOP (isStreaming), and the tap dispatcher stops through
+    // type.stop → state._pmAbort.abort() (chatframework.js).
 
     // v0.20 FIX: resolve the model BEFORE composing the history — the old
     // order called pmSystemMessage(state, model) while `model` was still
@@ -1705,7 +2142,12 @@
       // v0.27: turn end — the header meters (ring + cost) refresh.
       refreshHeaderMeters(bodyEl, state);
       completeAllStreaming(bodyEl, state); // v0.25: every thinking bubble + cursor stops animating
-      if (sendBtn) { sendBtn.textContent = 'Send'; sendBtn.onclick = null; }
+      // v0.42: the mode machine paints whatever the turn left behind
+      // (retry when the error bubble lands below, else send). A failed PM
+      // turn parks the queue; a clean one flushes ONE queued follow-up.
+      syncSendButton(bodyEl, state);
+      if (errText) state._holdQueue = true;
+      else flushSendQueue(bodyEl, state);
       if (streamMsg) {
         streamMsg.complete = true;
         streamMsg.streaming = false;
@@ -1722,6 +2164,7 @@
             var epm = { role: 'error', text: errText };
             state.messages.push(epm);
             appendMessage(msgContainer, scrollEl, epm, bodyEl, icon);
+            syncSendButton(bodyEl, state); // v0.42: the failed turn → retry affordance
             return persist('status', JSON.stringify({ state: 'error', usage: usage || null }));
           });
         }
@@ -1989,8 +2432,16 @@
     var el = document.createElement('div');
     el.id = 'chat-find';
     el.className = 'chat-find';
+    // v0.42: the Aa / Exact chips (the SHARED blob with the global search
+    // — globalsearch.js findOpts) ride the input row.
+    var fopts = (window.GlobalSearch && window.GlobalSearch.findOpts)
+      ? window.GlobalSearch.findOpts() : { caseSensitive: false, exact: false };
     el.innerHTML =
       '<input id="chat-find-input" class="chat-find-input" placeholder="Find in chat…" autocomplete="off" spellcheck="false">' +
+      '<button id="chat-find-aa" class="chat-find-chip" type="button" aria-pressed="' + (fopts.caseSensitive ? 'true' : 'false') + '" ' +
+        'title="Case-sensitive matching" aria-label="Case-sensitive matching">Aa</button>' +
+      '<button id="chat-find-exact" class="chat-find-chip" type="button" aria-pressed="' + (fopts.exact ? 'true' : 'false') + '" ' +
+        'title="Whole-word exact match" aria-label="Whole-word exact match">Exact</button>' +
       '<span id="chat-find-count" class="chat-find-count"></span>' +
       '<button id="chat-find-prev" class="chat-find-btn" title="previous match (Shift+Enter)">↑</button>' +
       '<button id="chat-find-next" class="chat-find-btn" title="next match (Enter)">↓</button>' +
@@ -2026,9 +2477,19 @@
       matches = [];
       pos = -1;
       if (!q) return;
-      var ql = q.toLowerCase();
+      // v0.42: the SHARED predicate (Aa / Exact) — the same one the global
+      // search post-filters with, so both surfaces agree. Falls back to
+      // the v0.39 case-insensitive scan if globalsearch.js is missing.
+      var opts = (window.GlobalSearch && window.GlobalSearch.findOpts)
+        ? window.GlobalSearch.findOpts() : null;
       var pool = searchable();
       for (var p = 0; p < pool.length; p++) {
+        if (opts && window.GlobalSearch.findMatches) {
+          var hits = window.GlobalSearch.findMatches(pool[p].text, q, opts);
+          for (var h = 0; h < hits.length; h++) matches.push({ mi: pool[p].mi, idx: hits[h].idx });
+          continue;
+        }
+        var ql = q.toLowerCase();
         var t = pool[p].text.toLowerCase();
         var from = 0;
         while (true) {
@@ -2080,10 +2541,34 @@
     function close() {
       clearHits();
       el.classList.remove('open');
+      document.removeEventListener('doomalay:find-opts', onOptsChange);
       setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 160);
       var ta = bodyEl.querySelector('#chat-input');
       if (ta) ta.focus();
     }
+
+    // v0.42: the chips toggle the SHARED blob (globalsearch.js) and the
+    // open bar re-computes — also when the other surface changed it.
+    var aaBtn = el.querySelector('#chat-find-aa');
+    var exBtn = el.querySelector('#chat-find-exact');
+    function paintChips(o) {
+      if (aaBtn) aaBtn.setAttribute('aria-pressed', o.caseSensitive ? 'true' : 'false');
+      if (exBtn) exBtn.setAttribute('aria-pressed', o.exact ? 'true' : 'false');
+    }
+    function chipTap(key) {
+      if (!window.GlobalSearch || !window.GlobalSearch.setFindOpts) return;
+      var o = window.GlobalSearch.findOpts();
+      o[key] = !o[key];
+      paintChips(window.GlobalSearch.setFindOpts(o));
+      refresh();
+    }
+    if (aaBtn) aaBtn.addEventListener('click', function () { chipTap('caseSensitive'); });
+    if (exBtn) exBtn.addEventListener('click', function () { chipTap('exact'); });
+    function onOptsChange(e) {
+      paintChips(e && e.detail ? e.detail : {});
+      refresh();
+    }
+    document.addEventListener('doomalay:find-opts', onOptsChange);
 
     el.querySelector('#chat-find-close').addEventListener('click', close);
     el.querySelector('#chat-find-next').addEventListener('click', function () { jump(1); });
@@ -2171,13 +2656,15 @@
       if (!state.isStreaming) return;
       state.isStreaming = false;
       state._actText = null;
-      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply and could not be re-established — your messages and partial replies are saved. Tap Send to retry.' };
+      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply and could not be re-established — your messages and partial replies are saved. Tap Retry to resend.' };
       state.messages.push(msg);
+      state._holdQueue = true; // v0.42: a dropped turn parks the queue (not a clean finish)
       if (isOwner(state)) {
         hideActivity(bodyEl, state);
         appendMessage(currentCtx.bodyEl.querySelector('#chat-messages'), null, msg, currentCtx.bodyEl, state._icon, state);
-        var btn = currentCtx.bodyEl.querySelector('#chat-send');
-        if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
+        // v0.42: the error bubble IS the last turn → the button reads RETRY
+        // (the old reset-to-Send lost the one affordance that mattered).
+        syncSendButton(currentCtx.bodyEl, state);
         completeAllStreaming(currentCtx.bodyEl, state);
       }
     };
@@ -2327,6 +2814,9 @@
     if (ev.i !== undefined && ev.i !== null && !isNaN(ev.i)) {
       if (ev.i <= (state.lastEventI || 0)) return;
       state.lastEventI = ev.i;
+      // v0.42: last-arrival clock — scheduleOpenFlush waits for the
+      // replay burst to go quiet before firing a parked queued message.
+      state._lastEvAt = Date.now();
     }
     // v0.23 NO-SILENCE: ephemeral progress events (never persisted, no i)
     // drive the activity indicator — "building bundle.zip · 12.4 KB…".
@@ -2541,6 +3031,10 @@
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
+        // v0.42: wasStreaming separates the LIVE end of THIS turn from
+        // REPLAYED old idles (a fresh-open replay re-lands every historic
+        // status event — those must never flush the queue).
+        var wasStreaming = state.isStreaming;
         state.isStreaming = false;
         hideActivity(bodyEl, state);
         // v0.27: turn end — the header meters (ring + cost) refresh.
@@ -2558,11 +3052,16 @@
             finalizeArtifacts(sm, state, bodyEl);
           }
         }
-        var btn = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
-        // v0.35: only the chat that OWNS the live panel may reset its Send
-        // button — the old document.querySelector reset the FOREGROUND
-        // chat's Stop button while it was still streaming.
-        if (btn) { btn.textContent = 'Send'; btn.onclick = null; }
+        // v0.35: only the chat that OWNS the live panel may repaint its
+        // send button — the old document.querySelector reset the FOREGROUND
+        // chat's Stop button while it was still streaming. v0.42: the paint
+        // itself is the mode machine (send | retry if the turn failed).
+        syncSendButton(bodyEl, state);
+        // v0.42 QUEUE FLUSH: ONE queued follow-up fires on a SUCCESSFUL,
+        // LIVE turn end. 'error' parks the queue (something is broken);
+        // replayed idles were filtered by wasStreaming above; a user stop
+        // parked it via _holdQueue at tap time.
+        if (ev.state === 'idle' && wasStreaming) flushSendQueue(bodyEl, state);
       } else if (ev.state === 'running' && (ev.text || ev.message)) {
         // v0.23: running-state messages ("network hiccup — retry 1/2",
         // research stages) now feed the activity indicator instead of
@@ -2606,8 +3105,10 @@
       }
       state.messages.push(emsg);
       appendMessage(msgContainer, scrollEl, emsg, bodyEl, state._icon, state);
-      var btn2 = isOwner(state) ? bodyEl.querySelector('#chat-send') : null;
-      if (btn2) { btn2.textContent = 'Send'; btn2.onclick = null; }
+      state._holdQueue = true; // v0.42: the failed turn parks the queue — Retry is the way forward
+      // v0.42: the error bubble is the LAST turn → the mode machine reads
+      // RETRY (was: a hard reset to "Send" that threw the affordance away).
+      syncSendButton(bodyEl, state);
     }
   }
 
@@ -3234,8 +3735,8 @@
       curType.stop(state, curCtx || {});
     } catch (eStop) { /* the swap proceeds regardless */ }
     state.isStreaming = false;
-    var sBtn = bodyEl && bodyEl.querySelector('#chat-send');
-    if (sBtn) { sBtn.textContent = 'Send'; sBtn.onclick = null; }
+    state._holdQueue = true; // v0.42: a deliberate interruption parks the queue
+    syncSendButton(bodyEl, state); // v0.42: mode machine (was: hard "Send")
     hideActivity(bodyEl, state);
     completeAllStreaming(bodyEl, state);
   }
@@ -3345,6 +3846,7 @@
       if (ta) { ta.value = ''; state.draftText = ''; saveDraftLS(draftId(state), ''); }
       var mc = bodyEl.querySelector('#chat-messages');
       if (mc) rebuildTranscript(mc, state);
+      syncSendButton(bodyEl, state); // v0.42: the restored tail may re-arm retry
     }
     if (b) {
       b.classList.remove('open');
@@ -3357,7 +3859,6 @@
     var ctx = currentCtx && currentCtx.ctx;
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var input = bodyEl.querySelector('#chat-input');
-    var sendBtn = bodyEl.querySelector('#chat-send');
 
     // v0.37: an edit was committed — drop the banner WITHOUT restoring,
     // mask the replaced events, then proceed as a normal send.
@@ -3386,14 +3887,15 @@
     }
 
     state.isStreaming = true;
+    // v0.42: a fresh turn re-arms the queue auto-flush (a previous stop
+    // or failure parked it) and paints STOP — the tap dispatcher reads
+    // the mode, so no button handler is wired by hand anymore.
+    state._holdQueue = false;
     // v0.23: start the no-silence watch the moment a turn begins (the
     // indicator covers the pre-first-token gap AND all tool phases).
     ensureActivityWatch(bodyEl, state);
     setActivity(bodyEl, state, 'sending…');
-    if (sendBtn) {
-      sendBtn.textContent = 'Stop';
-      sendBtn.onclick = function () { type.stop(state, ctx || {}); };
-    }
+    syncSendButton(bodyEl, state);
 
     // PrivateMode turns must never wait for the engine WS.
     if (state.provider !== 'privatemodeai' && !(state.client && state.client.connected)) {
@@ -3402,23 +3904,25 @@
       } else if (state.client && state.client.state !== 'connecting' && state.client.state !== 'open') {
         state.client.connect();
       }
-      if (sendBtn) sendBtn.textContent = '…';
+      setSendBusy(bodyEl, true); // v0.42: the '…' pulse while connecting
       var tries = 0;
       var check = setInterval(function () {
         tries++;
         if (state.client && state.client.connected) {
           clearInterval(check);
-          if (!state.isStreaming && sendBtn) sendBtn.textContent = 'Send';
+          setSendBusy(bodyEl, false);
+          if (!state.isStreaming) syncSendButton(bodyEl, state); // the turn already ended (fast fail)
           type.send(text, state, ctx || makeCtxFallback(bodyEl, icon, state, panel, type));
         } else if (tries > 100) {
           clearInterval(check);
-          if (sendBtn) sendBtn.textContent = 'Send';
-          var err = 'Still connecting to the engine — tap Send again in a moment.' +
+          setSendBusy(bodyEl, false);
+          var err = 'Still connecting to the engine — tap Retry in a moment.' +
             (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
           var connErr = { role: 'error', text: err };
           state.messages.push(connErr);
           appendMessage(msgContainer, null, connErr, bodyEl, icon, state);
           state.isStreaming = false;
+          syncSendButton(bodyEl, state); // v0.42: the error bubble → RETRY
         }
       }, 100);
       return;

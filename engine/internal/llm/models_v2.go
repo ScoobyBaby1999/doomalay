@@ -35,7 +35,14 @@ type ModelAttributes struct {
 	Pricing      string             `json:"pricing,omitempty"`
 	Ranks        []RankEntry        `json:"ranks,omitempty"`
 	EffortLevels []string           `json:"effortLevels,omitempty"`
-	Note         string             `json:"note,omitempty"`
+	// v0.42: the dynamic effort surface (additive — the pre-v0.42
+	// frontend ignores unknown fields; the new one reads them to pick
+	// the default level and hide 'off' on mandatory reasoners).
+	EffortDefault    string `json:"effortDefault,omitempty"`
+	EffortMandatory  bool   `json:"effortMandatory,omitempty"`
+	EffortCanDisable bool   `json:"effortCanDisable,omitempty"`
+	EffortBudget     bool   `json:"effortBudget,omitempty"`
+	Note             string `json:"note,omitempty"`
 }
 
 // RankEntry is a leaderboard rank (old: design_arena top-3).
@@ -56,6 +63,17 @@ type EnrichedModel struct {
 	Capabilities  []string `json:"capabilities,omitempty"`
 	Pricing       string   `json:"pricing,omitempty"`
 	EffortLevels  []string `json:"effortLevels,omitempty"`
+	// v0.42: the DYNAMIC per-model effort surface (resolved via the
+	// OpenRouter reasoning registry merge in effort.go). effortLevels is
+	// the ordered ladder the pre-v0.42 frontend already cycles; the new
+	// fields let the UI preselect the model's own default, hide 'off'
+	// for mandatory reasoners (glm-5.3, gpt-oss), and offer the budget
+	// dial where reasoning.max_tokens is accepted.
+	EffortDefault    string `json:"effortDefault,omitempty"`
+	EffortMandatory  bool   `json:"effortMandatory"` // meaningful when false too
+	EffortCanDisable bool   `json:"effortCanDisable"`
+	EffortBudget     bool   `json:"effortBudget,omitempty"`
+	Source           string `json:"effortSource,omitempty"` // openrouter | provider-default | catalog
 }
 
 // HostRoute is one provider-hosted route of a logical model.
@@ -145,6 +163,11 @@ type fetchedModel struct {
 	Pricing       string
 	Caps          []string
 	SyncedLive    bool
+	// Effort is the provider's OWN live effort surface when its model
+	// listing exposes one (v0.42 hook — see effort.go SOURCE 1). nil for
+	// every current fetcher; the resolution chain treats it as top
+	// precedence when present.
+	Effort *LiveEffortInfo
 }
 
 // fetchProviderModelsV2 dispatches to the per-provider live fetcher.
@@ -171,34 +194,25 @@ func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID st
 	}
 }
 
-// fetchOpenRouterModels — GET https://openrouter.ai/api/v1/models?output_modalities=text
-// (public; optional auth). Free detection: zero prices or ":free" suffix.
-// Free-only by default matches the old backend's safe default; the full
-// (paid) list is still fetched to enrich the family registry.
+// fetchOpenRouterModels — the OpenRouter provider view, derived from the
+// SAME v0.42 reasoning registry fetch effort.go performs (one network hit
+// per TTL window instead of two — the registry carries pricing + modalities
+// + reasoning for every entry). Free detection: zero prices or ":free"
+// suffix.
 func fetchOpenRouterModels(apiKey string) []fetchedModel {
-	body, err := httpGetJSON("https://openrouter.ai/api/v1/models?output_modalities=text", apiKey)
-	if err != nil {
+	reg := fetchOpenRouterRegistry()
+	if len(reg) == 0 {
 		return nil
 	}
-	var resp struct {
-		Data []struct {
-			ID            string `json:"id"`
-			ContextLength int64  `json:"context_length"`
-			Pricing       struct {
-				Prompt     string `json:"prompt"`
-				Completion string `json:"completion"`
-			} `json:"pricing"`
-			Architecture struct {
-				InputModalities []string `json:"input_modalities"`
-			} `json:"architecture"`
-		} `json:"data"`
+	ids := make([]string, 0, len(reg))
+	for id := range reg {
+		ids = append(ids, id)
 	}
-	if json.Unmarshal(body, &resp) != nil {
-		return nil
-	}
+	sort.Strings(ids) // deterministic provider view
 	var out []fetchedModel
-	for _, m := range resp.Data {
-		free := strings.HasSuffix(m.ID, ":free") ||
+	for _, id := range ids {
+		m := reg[id]
+		free := strings.HasSuffix(id, ":free") ||
 			(parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
 		var caps []string
 		for _, mod := range m.Architecture.InputModalities {
@@ -209,7 +223,7 @@ func fetchOpenRouterModels(apiKey string) []fetchedModel {
 			}
 		}
 		out = append(out, fetchedModel{
-			RawID:         m.ID,
+			RawID:         id,
 			ContextLength: m.ContextLength,
 			IsFree:        free,
 			Pricing:       pricingString(m.Pricing.Prompt, m.Pricing.Completion, free),
@@ -396,21 +410,34 @@ func fetchOpenCodeModels(apiKey string) []fetchedModel {
 	return out
 }
 
+// privateModeModelsURL is a package var so unit tests can serve the PM
+// model list from an httptest server (no network in tests).
+var privateModeModelsURL = "https://api.privatemode.ai/v1/models"
+
 // fetchPrivateModeModels — GET https://api.privatemode.ai/v1/models (Bearer).
-// Shape: {"data":[{"id":"kimi-k2.6","max_context_length":256000}]}.
+// v0.42 (research 3-c + live 2026-06): the shape changed — entries now carry
+// a tasks[] array ("generate" = chat, "transcribe" = whisper, "embed" =
+// embeddings) and kimi-k2.6 is DEPRECATED (the live lineup is kimi-latest,
+// glm-5.3 / glm-5.2 / glm-latest / glm-5.3-flash / glm-flash-latest,
+// gpt-oss-120b (+openai/ alias) / gpt-oss-latest, deepseek-ocr-2). The old
+// parser kept EVERY entry, so whisper/embedding models polluted the chat
+// group and the new ids never matched the static catalog — part of the
+// disappearing-effort-toggle bug. Now: keep CHAT models only (tasks contains
+// "generate"); entries without tasks[] pass through (older shape).
 func fetchPrivateModeModels(apiKey string) []fetchedModel {
 	if apiKey == "" {
 		return nil
 	}
-	body, err := httpGetJSON("https://api.privatemode.ai/v1/models", apiKey)
+	body, err := httpGetJSON(privateModeModelsURL, apiKey)
 	if err != nil {
 		return nil
 	}
 	var resp struct {
 		Data []struct {
-			ID               string `json:"id"`
-			MaxContextLength int64  `json:"max_context_length"`
-			ContextLength    int64  `json:"context_length"`
+			ID               string   `json:"id"`
+			MaxContextLength int64    `json:"max_context_length"`
+			ContextLength    int64    `json:"context_length"`
+			Tasks            []string `json:"tasks"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &resp) != nil {
@@ -418,6 +445,9 @@ func fetchPrivateModeModels(apiKey string) []fetchedModel {
 	}
 	var out []fetchedModel
 	for _, m := range resp.Data {
+		if len(m.Tasks) > 0 && !hasString(m.Tasks, "generate") {
+			continue // whisper (transcribe) / qwen3-embedding (embed) — not chat models
+		}
 		ctx := m.MaxContextLength
 		if ctx == 0 {
 			ctx = m.ContextLength
@@ -881,8 +911,17 @@ collect:
 				IsFree:        m.IsFree,
 				Capabilities:  m.Caps,
 				Pricing:       m.Pricing,
-				EffortLevels:  DetectEffortLevels(name, m.RawID),
 			}
+			// v0.42: the DYNAMIC effort surface (OpenRouter
+			// reasoning registry merge — see effort.go) replaces
+			// the blanket DetectEffortLevels ladder.
+			spec := ResolveEffortWithLive(name, m.RawID, m.Effort)
+			em.EffortLevels = spec.Levels
+			em.EffortDefault = spec.Default
+			em.EffortMandatory = spec.Mandatory
+			em.EffortCanDisable = spec.CanDisable
+			em.EffortBudget = spec.SupportsBudget
+			em.Source = spec.Source
 			// Enrich from the registry when the fetcher was sparse.
 			if em.ContextLength == 0 {
 				if meta, ok := registry[fam]; ok {
@@ -992,20 +1031,51 @@ collect:
 		if len(attrs.Capabilities) == 0 {
 			attrs.Capabilities = InferCapabilitiesFromName(fam)
 		}
-		// Effort levels: union of host-specific ladders (OpenRouter 7-level
-		// wins when present; curated shapes otherwise).
+		// v0.42: effort surface — union of the per-host DYNAMIC specs
+		// (the OpenRouter reasoning registry merge). The union keeps
+		// every level any host offers; the default prefers a host
+		// that actually has one; mandatory means EVERY host that has
+		// levels is mandatory (the frontend hides 'off' then);
+		// canDisable/budget are true when ANY host offers them.
 		levelSet := map[string]bool{}
 		var levels []string
+		levelHosts := 0
 		for _, h := range lm.Hosts {
-			for _, lv := range DetectEffortLevels(h.Provider, h.ModelID) {
+			hspec := ResolveEffort(h.Provider, h.ModelID)
+			for _, lv := range hspec.Levels {
 				if !levelSet[lv] {
 					levelSet[lv] = true
 					levels = append(levels, lv)
 				}
 			}
+			if len(hspec.Levels) > 0 {
+				levelHosts++
+				if attrs.EffortDefault == "" && hspec.Default != "" {
+					attrs.EffortDefault = hspec.Default
+				}
+				if hspec.Mandatory {
+					attrs.EffortMandatory = true
+				}
+				if hspec.CanDisable {
+					attrs.EffortCanDisable = true
+				}
+				if hspec.SupportsBudget {
+					attrs.EffortBudget = true
+				}
+			}
 		}
 		if len(levels) > 0 {
-			attrs.EffortLevels = normalizeLevels(levels)
+			attrs.EffortLevels = canonicalLevels(levels)
+			// Mandatory only when EVERY leveled host is mandatory.
+			if attrs.EffortMandatory && levelHosts > 0 {
+				for _, h := range lm.Hosts {
+					hspec := ResolveEffort(h.Provider, h.ModelID)
+					if len(hspec.Levels) > 0 && !hspec.Mandatory {
+						attrs.EffortMandatory = false
+						break
+					}
+				}
+			}
 		}
 		if len(attrs.Capabilities) > 0 && hasCapability(attrs.Capabilities, "reasoning") && len(attrs.EffortLevels) == 0 {
 			// Native reasoner — keep empty levels (frontend hides the knob).
@@ -1062,92 +1132,71 @@ type familyMeta struct {
 
 // buildFamilyRegistry merges OpenRouter's public list + GitHub's public
 // catalog into per-family metadata (first-wins merge, exactly like the old
-// _fetch_openrouter_family + _fetch_github_models_family).
+// _fetch_openrouter_family + _fetch_github_models_family). v0.42: the
+// OpenRouter half reads from the SHARED reasoning registry (one TTL-cached
+// fetch powers the effort surface, the provider view and this metadata).
 func buildFamilyRegistry() map[string]familyMeta {
 	registry := map[string]familyMeta{}
 
 	// OpenRouter: full list (free + paid) — metadata for the family.
-	body, err := httpGetJSON("https://openrouter.ai/api/v1/models?output_modalities=text", "")
-	if err == nil {
-		var resp struct {
-			Data []struct {
-				ID                  string   `json:"id"`
-				ContextLength       int64    `json:"context_length"`
-				SupportedParameters []string `json:"supported_parameters"`
-				Pricing             struct {
-					Prompt     string `json:"prompt"`
-					Completion string `json:"completion"`
-				} `json:"pricing"`
-				Architecture struct {
-					InputModalities []string `json:"input_modalities"`
-				} `json:"architecture"`
-				Benchmarks struct {
-					ArtificialAnalysis struct {
-						IntelligenceIndex float64 `json:"intelligence_index"`
-						CodingIndex       float64 `json:"coding_index"`
-						AgenticIndex      float64 `json:"agentic_index"`
-					} `json:"artificial_analysis"`
-					DesignArena []struct {
-						Category string `json:"category"`
-						Rank     int    `json:"rank"`
-					} `json:"design_arena"`
-				} `json:"benchmarks"`
-			} `json:"data"`
+	orReg := fetchOpenRouterRegistry()
+	orIDs := make([]string, 0, len(orReg))
+	for id := range orReg {
+		orIDs = append(orIDs, id)
+	}
+	sort.Strings(orIDs) // deterministic first-wins merge
+	for _, id := range orIDs {
+		m := orReg[id]
+		fam := MakeFamily(m.ID)
+		existing, ok := registry[fam]
+		if !ok {
+			existing = familyMeta{}
 		}
-		if json.Unmarshal(body, &resp) == nil {
-			for _, m := range resp.Data {
-				fam := MakeFamily(m.ID)
-				existing, ok := registry[fam]
-				if !ok {
-					existing = familyMeta{}
-				}
-				if existing.Context == 0 {
-					existing.Context = m.ContextLength
-				}
-				if existing.Pricing == "" {
-					free := strings.HasSuffix(m.ID, ":free") ||
-						(parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
-					existing.Pricing = pricingString(m.Pricing.Prompt, m.Pricing.Completion, free)
-					if free {
-						existing.IsFree = true
-					}
-				}
-				for _, mod := range m.Architecture.InputModalities {
-					if mod == "image" {
-						existing.Capabilities = appendUnique(existing.Capabilities, "vision")
-					} else if mod == "audio" {
-						existing.Capabilities = appendUnique(existing.Capabilities, "audio")
-					}
-				}
-				for _, p := range m.SupportedParameters {
-					if p == "tools" || p == "tool_choice" {
-						existing.Capabilities = appendUnique(existing.Capabilities, "tools")
-					}
-					if p == "reasoning" || p == "include_reasoning" {
-						existing.Capabilities = appendUnique(existing.Capabilities, "reasoning")
-					}
-				}
-				if existing.Benchmarks == nil {
-					aa := m.Benchmarks.ArtificialAnalysis
-					if aa.IntelligenceIndex > 0 || aa.CodingIndex > 0 || aa.AgenticIndex > 0 {
-						existing.Benchmarks = map[string]float64{
-							"intelligence": aa.IntelligenceIndex,
-							"coding":       aa.CodingIndex,
-							"agentic":      aa.AgenticIndex,
-						}
-					}
-				}
-				if len(existing.Ranks) == 0 {
-					for _, r := range m.Benchmarks.DesignArena {
-						existing.Ranks = append(existing.Ranks, RankEntry{Label: r.Category, Rank: r.Rank})
-					}
-					if len(existing.Ranks) > 3 {
-						existing.Ranks = existing.Ranks[:3]
-					}
-				}
-				registry[fam] = existing
+		if existing.Context == 0 {
+			existing.Context = m.ContextLength
+		}
+		if existing.Pricing == "" {
+			free := strings.HasSuffix(m.ID, ":free") ||
+				(parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
+			existing.Pricing = pricingString(m.Pricing.Prompt, m.Pricing.Completion, free)
+			if free {
+				existing.IsFree = true
 			}
 		}
+		for _, mod := range m.Architecture.InputModalities {
+			if mod == "image" {
+				existing.Capabilities = appendUnique(existing.Capabilities, "vision")
+			} else if mod == "audio" {
+				existing.Capabilities = appendUnique(existing.Capabilities, "audio")
+			}
+		}
+		for _, p := range m.SupportedParameters {
+			if p == "tools" || p == "tool_choice" {
+				existing.Capabilities = appendUnique(existing.Capabilities, "tools")
+			}
+			if p == "reasoning" || p == "include_reasoning" {
+				existing.Capabilities = appendUnique(existing.Capabilities, "reasoning")
+			}
+		}
+		if existing.Benchmarks == nil {
+			aa := m.Benchmarks.ArtificialAnalysis
+			if aa.IntelligenceIndex > 0 || aa.CodingIndex > 0 || aa.AgenticIndex > 0 {
+				existing.Benchmarks = map[string]float64{
+					"intelligence": aa.IntelligenceIndex,
+					"coding":       aa.CodingIndex,
+					"agentic":      aa.AgenticIndex,
+				}
+			}
+		}
+		if len(existing.Ranks) == 0 {
+			for _, r := range m.Benchmarks.DesignArena {
+				existing.Ranks = append(existing.Ranks, RankEntry{Label: r.Category, Rank: r.Rank})
+			}
+			if len(existing.Ranks) > 3 {
+				existing.Ranks = existing.Ranks[:3]
+			}
+		}
+		registry[fam] = existing
 	}
 
 	// GitHub: only ADDS missing fields (context, capabilities).
@@ -1241,13 +1290,106 @@ func sortLogical(models []LogicalModel, registry map[string]familyMeta) {
 	})
 }
 
-func normalizeLevels(levels []string) []string {
-	// Prefer the canonical 7-level ladder order when present.
-	order := map[string]int{"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4, "xhigh": 5, "max": 6, "on": 7, "off": 8}
-	sort.SliceStable(levels, func(i, j int) bool {
-		return order[levels[i]] < order[levels[j]]
-	})
-	return levels
+// normalizeLevels was the pre-v0.42 level sorter — canonicalLevels (effort.go)
+// replaced it for the dynamic surface (same ladder order, plus dedupe +
+// lowercase + unknown-level handling).
+
+// ── v0.42: live key state on the served catalog ────────────────────────────
+
+// ApplyLiveKeyState returns a copy of the catalog with every hasApiKey /
+// has_key flag re-derived from the LIVE vault contents (group.HasKey,
+// SyncStatus.HasKey, and the logical hosts' HasAPIKey), instead of the
+// key snapshot the cached entry was BUILT with.
+//
+// WHY (the disappearing-toggle bug's second half): POST /api/keys changes
+// the vault, but the cached catalog entry still describes the OLD key set
+// for up to its TTL — the v0.32.1 keysHash guard serves that stale entry
+// instantly (correctly — never block), so the client saw
+// hasApiKey:false + 0 models on a freshly-keyed provider and had no reason
+// to re-fetch. Now:
+//   - the flags are ALWAYS the live truth (a keyed provider shows keyed
+//     immediately, on the very next /api/models poll);
+//   - when the patch actually CHANGES a flag, the copy is marked Partial —
+//     the pre-existing v0.20 client contract ("partial = still syncing,
+//     re-fetch") — so the client keeps polling until the key-triggered
+//     background resync lands the models (see keys.go).
+func ApplyLiveKeyState(cat *CatalogV2, keys map[string]string) *CatalogV2 {
+	if cat == nil {
+		return cat
+	}
+	changed := false
+	envFor := map[string]string{}
+	for name, cfg := range cat.Providers {
+		envFor[name] = cfg.EnvVar
+	}
+
+	// Provider groups.
+	groups := make([]ProviderGroup, len(cat.Groups))
+	copy(groups, cat.Groups)
+	for i := range groups {
+		env := groups[i].EnvVar
+		if env == "" {
+			env = envFor[groups[i].Name]
+		}
+		has := env != "" && keys[env] != ""
+		if groups[i].HasKey != has {
+			groups[i].HasKey = has
+			changed = true
+		}
+	}
+
+	// Sync status.
+	status := make([]SyncStatus, len(cat.SyncStatus))
+	copy(status, cat.SyncStatus)
+	for i := range status {
+		env := envFor[status[i].Provider]
+		has := env != "" && keys[env] != ""
+		if status[i].HasKey != has {
+			status[i].HasKey = has
+			changed = true
+		}
+	}
+
+	// Logical host routes. (The Hosts slice is COPIED before any write —
+	// the LogicalModel values are shallow copies, so an in-place write
+	// would race every reader of the cached entry.)
+	var logical []LogicalModel
+	if cat.Logical != nil {
+		logical = make([]LogicalModel, len(cat.Logical))
+		copy(logical, cat.Logical)
+		for i := range logical {
+			touched := false
+			for j := range logical[i].Hosts {
+				env := envFor[logical[i].Hosts[j].Provider]
+				has := env != "" && keys[env] != ""
+				if logical[i].Hosts[j].HasAPIKey != has {
+					if !touched {
+						touched = true
+						logical[i].Hosts = append([]HostRoute(nil), logical[i].Hosts...) // copy-on-write
+					}
+					logical[i].Hosts[j].HasAPIKey = has
+				}
+			}
+			if touched {
+				changed = true
+				// Re-order: available hosts first (mirrors the
+				// build-time sort so the default route flips
+				// with the key state).
+				sortHosts(logical[i].Hosts)
+			}
+		}
+	}
+
+	out := *cat
+	out.Groups = groups
+	out.SyncStatus = status
+	if logical != nil {
+		out.Logical = logical
+	}
+	if changed {
+		out.Partial = true
+	}
+	return &out
 }
 
 func hasCapability(caps []string, want string) bool {

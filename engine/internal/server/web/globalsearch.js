@@ -15,12 +15,71 @@
 //     matched message scrolls into view with the find-hit pulse
 //   · Esc closes; Enter walks; the count chip shows N chats · M hits
 //
-// Exposes: window.GlobalSearch = { open }
+// v0.42 FIND OPTIONS (user spec #5b): two toggle chips next to the input
+// — "Aa" (case-sensitive) and "Exact" (whole-word) — persisted in
+// localStorage (doomalay.find.opts.v1) and SHARED with the local find
+// bar (chatpanel.js reads the same blob through GlobalSearch.findOpts).
+// The engine's search endpoint is case-insensitive substring only (no
+// flags — read search.go), so the global results are POST-FILTERED
+// client-side on the returned snippets; the local find bar applies the
+// same predicate to its own match computation.
+//
+// Exposes: window.GlobalSearch = { open, findOpts, setFindOpts, findMatches }
 (function () {
   'use strict';
 
   var DEBOUNCE_MS = 200;
   var seq = 0; // in-flight request guard (stale responses never paint)
+
+  // ── v0.42 SHARED FIND OPTIONS (Aa / Exact) ─────────────────────
+  // One blob in localStorage, both find surfaces. Writes dispatch
+  // 'doomalay:find-opts' so an open local bar re-computes live.
+  var FIND_OPTS_KEY = 'doomalay.find.opts.v1';
+  function findOpts() {
+    try {
+      var v = JSON.parse(localStorage.getItem(FIND_OPTS_KEY));
+      return { caseSensitive: !!(v && v.cs), exact: !!(v && v.exact) };
+    } catch (e) {
+      return { caseSensitive: false, exact: false };
+    }
+  }
+  function setFindOpts(opts) {
+    try {
+      localStorage.setItem(FIND_OPTS_KEY, JSON.stringify({ cs: !!opts.caseSensitive, exact: !!opts.exact }));
+    } catch (e) {}
+    try {
+      window.dispatchEvent(new CustomEvent('doomalay:find-opts', { detail: findOpts() }));
+    } catch (e) {}
+    return findOpts();
+  }
+
+  // The shared match predicate: every occurrence of q in text honoring
+  // the toggles → [{idx, len}] (idx is the char index in the ORIGINAL
+  // text — lengths are equal, only the casing differs).
+  function isWordChar(c) {
+    return !!c && /[A-Za-z0-9_]/.test(c);
+  }
+  function wordBounded(text, at, len) {
+    var before = at > 0 ? text.charAt(at - 1) : '';
+    var after = at + len < text.length ? text.charAt(at + len) : '';
+    return !isWordChar(before) && !isWordChar(after);
+  }
+  function findMatches(text, q, opts) {
+    var t = String(text || ''), needle = String(q || '');
+    if (!needle || !t) return [];
+    var hay = opts && opts.caseSensitive ? t : t.toLowerCase();
+    var nd = opts && opts.caseSensitive ? needle : needle.toLowerCase();
+    var out = [], from = 0;
+    for (;;) {
+      var at = hay.indexOf(nd, from);
+      if (at < 0) break;
+      if (!(opts && opts.exact) || wordBounded(t, at, needle.length)) {
+        out.push({ idx: at, len: needle.length });
+      }
+      from = at + Math.max(1, needle.length);
+    }
+    return out;
+  }
 
   // ── theming: one injected stylesheet, all classes, no inline soup ──
   var styleEl = null;
@@ -52,6 +111,25 @@
       '  border-radius: 8px; padding: 3px 8px; pointer-events: none;',
       '  transition: opacity .16s ease; }',
       '.gs-count:empty { display: none; }',
+      // v0.42: the Aa / Exact chips — ride the input row (fixed width,
+      // 44px+ tap targets), styled like the rest of the find UI.
+      '.gs-searchrow { display: flex; align-items: stretch; gap: 8px; }',
+      '.gs-searchrow .gs-searchbox { flex: 1; min-width: 0; }',
+      '.gs-opts { display: flex; gap: 6px; flex-shrink: 0; }',
+      '.gs-chip {',
+      '  min-width: 44px; min-height: 44px; padding: 0 10px; margin: 0;',
+      '  font: inherit; font-size: var(--ui-small-fs); font-weight: 700;',
+      '  color: var(--text-3); background: var(--surface-1);',
+      '  border: 1px solid var(--surface-2); border-radius: 12px; cursor: pointer;',
+      '  transition: border-color .16s ease, color .16s ease, background .16s ease; }',
+      '.gs-chip:hover { border-color: var(--border-strong); }',
+      '.gs-chip[aria-pressed="true"] {',
+      '  color: var(--accent); background: rgba(var(--accent-rgb), .12);',
+      '  border-color: rgba(var(--accent-rgb), .55); }',
+      '.gs-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }',
+      '.gs-chip .gs-chip-sub { display: block; font-size: calc(var(--ui-micro-fs) - 1px);',
+      '  font-weight: 600; color: var(--text-3); margin-top: 1px; }',
+      '.gs-chip[aria-pressed="true"] .gs-chip-sub { color: var(--accent); }',
       '.gs-hint { font-size: var(--ui-micro-fs); color: var(--text-3); margin: -2px 2px 0; }',
       '.gs-group { border: 1px solid var(--surface-2); border-radius: 12px; overflow: hidden;',
       '  background: var(--surface-1); transition: border-color .16s ease; }',
@@ -119,22 +197,30 @@
 
   // snippet + match_start → HTML with the match <mark>ed. The engine
   // guarantees match_start indexes the first case-insensitive hit of the
-  // query inside the snippet.
-  function snipHTML(text, matchStart, q) {
+  // query inside the snippet. v0.42: when Aa / Exact are on, the mark is
+  // re-derived with the shared predicate (the first opts-honoring hit
+  // inside the snippet); the post-filter already dropped snippets that
+  // have none.
+  function snipHTML(text, matchStart, q, opts) {
     var t = String(text || '');
     var s = Math.max(0, Math.min(t.length, matchStart | 0));
     var e = Math.min(t.length, s + String(q || '').length);
+    if (opts && (opts.caseSensitive || opts.exact)) {
+      var hits = findMatches(t, q, opts);
+      if (hits.length) { s = hits[0].idx; e = s + hits[0].len; }
+      else { s = e = 0; }
+    }
     return esc(t.slice(0, s)) + '<mark>' + esc(t.slice(s, e)) + '</mark>' + esc(t.slice(e));
   }
 
-  function groupHTML(g, q) {
+  function groupHTML(g, q, opts) {
     var hits = '';
     for (var i = 0; i < g.matches.length; i++) {
       var m = g.matches[i];
       hits += '<button class="gs-hit gs-role-' + esc(m.role) + '" data-gs-sid="' + esc(g.session_id) +
         '" data-gs-ei="' + esc(String(m.id)) + '">' +
         '<span class="gs-role">' + esc(m.role === 'user' ? 'you' : 'ai') + '</span>' +
-        '<span class="gs-snip">' + snipHTML(m.snippet, m.match_start, q) + '</span>' +
+        '<span class="gs-snip">' + snipHTML(m.snippet, m.match_start, q, opts) + '</span>' +
         '</button>';
     }
     return '<div class="gs-group" data-gs-group="' + esc(g.session_id) + '">' +
@@ -191,13 +277,25 @@
     panel.pushView({
       title: 'search all chats',
       render: function () {
+        var o = findOpts();
         return '<div class="gs-root">' +
-          '<div class="gs-searchbox">' +
-            '<svg class="gs-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
-              '<circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 L20.5 20.5"></path></svg>' +
-            '<input id="gs-input" class="gs-input" type="text" inputmode="search" autocomplete="off" ' +
-              'spellcheck="false" placeholder="Search every conversation…" aria-label="Search all chats">' +
-            '<span id="gs-count" class="gs-count" aria-live="polite"></span>' +
+          '<div class="gs-searchrow">' +
+            '<div class="gs-searchbox">' +
+              '<svg class="gs-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+                '<circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5 L20.5 20.5"></path></svg>' +
+              '<input id="gs-input" class="gs-input" type="text" inputmode="search" autocomplete="off" ' +
+                'spellcheck="false" placeholder="Search every conversation…" aria-label="Search all chats">' +
+              '<span id="gs-count" class="gs-count" aria-live="polite"></span>' +
+            '</div>' +
+            // v0.42: the Aa / Exact chips (shared with the local find bar).
+            '<div class="gs-opts" role="group" aria-label="Match options">' +
+              '<button id="gs-opt-aa" class="gs-chip" type="button" aria-pressed="' + (o.caseSensitive ? 'true' : 'false') + '" ' +
+                'title="Case-sensitive matching" aria-label="Case-sensitive matching">Aa' +
+                '<span class="gs-chip-sub">case</span></button>' +
+              '<button id="gs-opt-exact" class="gs-chip" type="button" aria-pressed="' + (o.exact ? 'true' : 'false') + '" ' +
+                'title="Whole-word exact match" aria-label="Whole-word exact match">Exact' +
+                '<span class="gs-chip-sub">word</span></button>' +
+            '</div>' +
           '</div>' +
           '<div id="gs-hint" class="gs-hint">Enter opens the first result · Esc closes</div>' +
           '<div id="gs-results" aria-live="polite">' +
@@ -210,11 +308,32 @@
         var countEl = document.getElementById('gs-count');
         var resultsEl = document.getElementById('gs-results');
         var hintEl = document.getElementById('gs-hint');
+        var aaBtn = document.getElementById('gs-opt-aa');
+        var exBtn = document.getElementById('gs-opt-exact');
         if (!input || !resultsEl) return;
         setTimeout(function () { try { input.focus(); } catch (e) {} }, 80);
 
+        // v0.42: the Aa / Exact chips — toggle, persist (shared blob),
+        // re-run immediately (no debounce — the results are in hand).
+        function paintChips(o) {
+          if (aaBtn) aaBtn.setAttribute('aria-pressed', o.caseSensitive ? 'true' : 'false');
+          if (exBtn) exBtn.setAttribute('aria-pressed', o.exact ? 'true' : 'false');
+        }
+        function chipTap(key) {
+          var o = findOpts();
+          o[key] = !o[key];
+          o = setFindOpts(o);
+          paintChips(o);
+          clearTimeout(debounceT);
+          runSearch();
+        }
+        if (aaBtn) aaBtn.addEventListener('click', function () { chipTap('caseSensitive'); });
+        if (exBtn) exBtn.addEventListener('click', function () { chipTap('exact'); });
+        paintChips(findOpts());
+
         function runSearch() {
           var q = (input.value || '').trim();
+          var opts = findOpts();
           if (q.length < 2) {
             mySeq++; // invalidate in-flight
             countEl.textContent = '';
@@ -233,15 +352,31 @@
                 return;
               }
               var groups = (d && d.results) || [];
+              // v0.42: the engine is case-insensitive substring ONLY (no
+              // flags — search.go) — post-filter the returned matches on
+              // their snippets with the shared predicate when a toggle is
+              // on, then let snipHTML re-mark the first honored hit.
+              if (opts.caseSensitive || opts.exact) {
+                groups = groups.map(function (g) {
+                  var kept = g.matches.filter(function (m) {
+                    return findMatches(m.snippet, d.query || q, opts).length > 0;
+                  });
+                  return {
+                    session_id: g.session_id, title: g.title, model: g.model,
+                    provider: g.provider, updated_at: g.updated_at, matches: kept
+                  };
+                }).filter(function (g) { return g.matches.length > 0; });
+              }
               if (!groups.length) {
                 countEl.textContent = '0';
-                resultsEl.innerHTML = emptyHTML('No chat mentions "' + q + '".', '🦀');
+                resultsEl.innerHTML = emptyHTML('No chat mentions "' + q + '"' +
+                  (opts.caseSensitive || opts.exact ? ' with these match options' : '') + '.', '🦀');
                 return;
               }
               var total = 0;
               var html = '';
               for (var i = 0; i < groups.length; i++) total += groups[i].matches.length;
-              for (var j = 0; j < groups.length; j++) html += groupHTML(groups[j], d.query || q);
+              for (var j = 0; j < groups.length; j++) html += groupHTML(groups[j], d.query || q, opts);
               countEl.textContent = groups.length + (groups.length === 1 ? ' chat' : ' chats') + ' · ' + total;
               resultsEl.innerHTML = html;
               if (hintEl) hintEl.textContent = 'Enter opens the first result · Esc closes';
@@ -298,5 +433,5 @@
     });
   }
 
-  window.GlobalSearch = { open: open };
+  window.GlobalSearch = { open: open, findOpts: findOpts, setFindOpts: setFindOpts, findMatches: findMatches };
 })();

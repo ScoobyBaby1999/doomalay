@@ -599,8 +599,14 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // v0.12 hardcoded o1/deepseek guesses).
         // v0.26: remember WHICH keys the effort body added — the 400-resilience
         // below strips exactly these on retry.
+        // v0.42: "off" now flows through too — BuildEffortBodyFor resolves the
+        // DYNAMIC per-model surface (effort.go registry) and only emits a
+        // disable when the model actually documents one (kimi
+        // chat_template_kwargs.thinking:false, deepseek reasoning_effort
+        // "none"); mandatory reasoners get nil (never a disable). "med"
+        // remains the session-default sentinel (unset — sends nothing).
         var effortKeys []string
-        if req.Effort != "" && req.Effort != "off" && req.Effort != "med" {
+        if req.Effort != "" && req.Effort != "med" {
                 if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
                         for k, v := range extra {
                                 body[k] = v

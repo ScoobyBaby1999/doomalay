@@ -56,8 +56,13 @@ func TestWebFetchSSRF(t *testing.T) {
 }
 
 // TestBuildEffortBodyFor — the per-provider reasoning translations.
+// v0.42: the translations resolve through the DYNAMIC registry, so this
+// test runs with an unreachable registry URL (pure offline path — the
+// blanket/curated fallbacks decide the shapes); the registry-driven cases
+// live in effort_v42_test.go against a canned OpenRouter payload.
 func TestBuildEffortBodyFor(t *testing.T) {
-	// OpenRouter: reasoning.effort ladder.
+	useTestORRegistry(t, nil) // offline: no dynamic data
+	// OpenRouter (offline): the curated openrouter/* ladder applies.
 	b := BuildEffortBodyFor("openrouter", "anthropic/claude-fable-5", "high")
 	if b == nil {
 		t.Fatal("openrouter effort body nil")
@@ -65,12 +70,6 @@ func TestBuildEffortBodyFor(t *testing.T) {
 	r, ok := b["reasoning"].(map[string]any)
 	if !ok || r["effort"] != "high" {
 		t.Errorf("openrouter body wrong: %v", b)
-	}
-	// Invalid level coerces to high.
-	b = BuildEffortBodyFor("openrouter", "x", "banana")
-	r, _ = b["reasoning"].(map[string]any)
-	if r["effort"] != "high" {
-		t.Errorf("openrouter coercion wrong: %v", b)
 	}
 	// v0.26: OpenCode Zen — OpenAI-compatible reasoning_effort, made
 	// safe by the 400-resilience retry (a rejecting model is retried
@@ -84,7 +83,7 @@ func TestBuildEffortBodyFor(t *testing.T) {
 	if b := BuildEffortBodyFor("opencode", "kimi-k2.6", "banana"); b == nil || b["reasoning_effort"] != "high" {
 		t.Errorf("opencode coercion wrong, got %v", b)
 	}
-	// NVIDIA kimi (curated toggle): chat_template_kwargs.thinking flips true.
+	// NVIDIA kimi (offline → blanket toggle): chat_template_kwargs.thinking flips true.
 	b = BuildEffortBodyFor("nvidia", "moonshotai/kimi-k2.6", "on")
 	if b == nil {
 		t.Fatal("nvidia kimi effort body nil")
@@ -101,10 +100,13 @@ func TestBuildEffortBodyFor(t *testing.T) {
 	if v, _ := ctk["thinking"].(bool); v {
 		t.Errorf("kimi thinking should be false for 'off'")
 	}
-	// deepseek-v4 (enum): reasoning_effort replaced by allowed level.
+	// v0.42: with the registry OFFLINE the deepseek enum resolves via the
+	// blanket toggle — the ONLINE behavior (OR [high,xhigh]) is covered
+	// by TestBuildEffortBodyForV42.
 	b = BuildEffortBodyFor("nvidia", "deepseek-ai/deepseek-v4-pro", "max")
-	if re, _ := b["reasoning_effort"].(string); re != "max" {
-		t.Errorf("deepseek reasoning_effort should be max, got %v", b)
+	ctk, _ = b["chat_template_kwargs"].(map[string]any)
+	if v, _ := ctk["thinking"].(bool); !v {
+		t.Errorf("offline deepseek should coerce max→on, got %v", b)
 	}
 }
 
@@ -142,24 +144,33 @@ func TestMakeFamily(t *testing.T) {
 	}
 }
 
-// TestDetectEffortLevels — live OpenRouter detection (public list).
+// TestDetectEffortLevels — LIVE OpenRouter detection (public list).
+// v0.42: the ladder is whatever the model's reasoning object says — the
+// old static 7-level assertions were exactly the bug this rework fixed.
 func TestDetectEffortLevels(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network")
 	}
 	levels := DetectEffortLevels("openrouter", "anthropic/claude-fable-5")
 	if len(levels) == 0 {
-		t.Fatal("openrouter claude should expose the 7-level ladder")
+		t.Fatal("openrouter claude should expose its live effort ladder")
 	}
-	if levels[0] != "none" || levels[len(levels)-1] != "max" {
-		t.Errorf("ladder wrong: %v", levels)
+	// Ordered along the canonical ladder and every value is a known one.
+	for i, lv := range levels {
+		if _, ok := effortLevelOrder[lv]; !ok {
+			t.Errorf("unknown level %q in %v", lv, levels)
+		}
+		if i > 0 && effortLevelOrder[levels[i-1]] >= effortLevelOrder[lv] {
+			t.Errorf("levels not ascending: %v", levels)
+		}
 	}
-	// v0.26: OpenCode — the provider default ladder (low/high).
+	// v0.42: kimi-k2.6 is TOGGLE-ONLY (OR reasoning object, no
+	// supported_efforts) — the old blanket [low,high] was wrong.
 	levels = DetectEffortLevels("opencode", "kimi-k2.6")
-	if len(levels) != 2 || levels[0] != "low" || levels[1] != "high" {
-		t.Errorf("opencode default ladder should be [low high], got %v", levels)
+	if len(levels) != 2 || levels[0] != "on" || levels[1] != "off" {
+		t.Errorf("kimi-k2.6 ladder should be the live toggle [on off], got %v", levels)
 	}
-	// NVIDIA default: on/off for the 95% (no curated entry needed).
+	// NVIDIA default: on/off for models OR doesn't know.
 	levels = DetectEffortLevels("nvidia", "some-unknown-model-x")
 	if len(levels) != 2 || levels[0] != "on" || levels[1] != "off" {
 		t.Errorf("nvidia default ladder should be [on off], got %v", levels)
@@ -169,10 +180,12 @@ func TestDetectEffortLevels(t *testing.T) {
 	if len(levels) != 2 || levels[0] != "on" || levels[1] != "off" {
 		t.Errorf("privatemodeai default ladder should be [on off], got %v", levels)
 	}
-	// NVIDIA curated still wins over the provider default:
+	// NVIDIA deepseek-v4-pro now carries OR's LIVE enum ([high xhigh] at
+	// capture time — the model is EOL'd on NIM, so this documents the
+	// dynamic-source precedence rather than a wire contract).
 	levels = DetectEffortLevels("nvidia", "deepseek-ai/deepseek-v4-pro")
-	if len(levels) == 0 || levels[0] != "none" {
-		t.Errorf("nvidia curated deepseek ladder should win, got %v", levels)
+	if len(levels) == 0 {
+		t.Error("nvidia deepseek-v4-pro should resolve through the OR registry")
 	}
 }
 
