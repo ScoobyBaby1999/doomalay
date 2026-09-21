@@ -457,7 +457,8 @@
     position: fixed;
     left: 0; right: 0;
     bottom: 0;
-    height: 62vh;          /* v0.18: the DEFAULT sheet — top ~38% stays empty */
+    height: 62dvh;         /* v0.38: DYNAMIC viewport units (mobile toolbars);
+                              v0.18: the DEFAULT sheet — top ~38% stays empty */
     background: var(--surface-1);
     border-top: 1px solid var(--surface-2);
     border-radius: 16px 16px 0 0;
@@ -1260,7 +1261,7 @@
 
   /* ── v0.18: snap-state panel (gesture.js — TWO positions only) ── */
   #chat-panel.panel-full {
-    height: 100vh !important; border-radius: 0;
+    height: 100dvh !important; border-radius: 0; /* v0.38: dvh — dynamic toolbars */
     padding-top: 4px;
   }
 
