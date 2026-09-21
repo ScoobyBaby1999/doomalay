@@ -1767,6 +1767,135 @@
       });
       bar.appendChild(clear);
     }
+
+    // v0.39 FIND IN CHAT: jump-to-match search over the transcript (the
+    // chats grow long; finding "that thing it said about X" was scroll-hunt).
+    // The button rides the toolbar's right edge; the bar mounts over the
+    // composer when opened.
+    var fb = document.createElement('button');
+    fb.textContent = '⌕ find';
+    fb.style.cssText = 'flex-shrink:0;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;margin-left:auto';
+    fb.addEventListener('click', function () {
+      openFindBar(bodyEl, state);
+    });
+    bar.appendChild(fb);
+  }
+
+  // ── v0.39 FIND IN CHAT ────────────────────────────────────────────────
+  // A compact find bar over the composer: live match count over the chat's
+  // messages (user + assistant text), Enter/Shift+Enter to walk matches,
+  // ↑/↓ buttons, Esc to close. Each jump scrolls the bubble into view and
+  // flashes a themed highlight ring.
+  function openFindBar(bodyEl, state) {
+    var bar = bodyEl.querySelector('#chat-find');
+    if (bar) {
+      var existingInput = bar.querySelector('#chat-find-input');
+      if (existingInput) { existingInput.focus(); existingInput.select(); }
+      return;
+    }
+    var inputbar = bodyEl.querySelector('#chat-inputbar');
+    if (!inputbar) return;
+
+    var el = document.createElement('div');
+    el.id = 'chat-find';
+    el.className = 'chat-find';
+    el.innerHTML =
+      '<input id="chat-find-input" class="chat-find-input" placeholder="Find in chat…" autocomplete="off" spellcheck="false">' +
+      '<span id="chat-find-count" class="chat-find-count"></span>' +
+      '<button id="chat-find-prev" class="chat-find-btn" title="previous match (Shift+Enter)">↑</button>' +
+      '<button id="chat-find-next" class="chat-find-btn" title="next match (Enter)">↓</button>' +
+      '<button id="chat-find-close" class="chat-find-btn" title="close (Esc)">✕</button>';
+    inputbar.parentNode.insertBefore(el, inputbar);
+    // slide-in
+    requestAnimationFrame(function () { el.classList.add('open'); });
+
+    var input = el.querySelector('#chat-find-input');
+    var countEl = el.querySelector('#chat-find-count');
+    var matches = [];   // [{mi, idx}] message index + char index
+    var pos = -1;       // current match cursor
+
+    function searchable() {
+      var out = [];
+      for (var i = 0; i < state.messages.length; i++) {
+        var m = state.messages[i];
+        if (m.role !== 'user' && m.role !== 'assistant') continue;
+        out.push({ mi: i, text: String(m.text || '') });
+      }
+      return out;
+    }
+
+    function computeMatches(q) {
+      matches = [];
+      pos = -1;
+      if (!q) return;
+      var ql = q.toLowerCase();
+      var pool = searchable();
+      for (var p = 0; p < pool.length; p++) {
+        var t = pool[p].text.toLowerCase();
+        var from = 0;
+        while (true) {
+          var at = t.indexOf(ql, from);
+          if (at < 0) break;
+          matches.push({ mi: pool[p].mi, idx: at });
+          from = at + Math.max(1, ql.length);
+        }
+      }
+    }
+
+    function clearHits() {
+      var host = bodyEl.querySelector('#chat-messages');
+      if (!host) return;
+      var hits = host.querySelectorAll('.find-hit');
+      for (var i = 0; i < hits.length; i++) hits[i].classList.remove('find-hit');
+    }
+
+    function jump(dir) {
+      if (!matches.length) return;
+      pos = pos + dir;
+      if (pos < 0) pos = matches.length - 1;
+      if (pos >= matches.length) pos = 0;
+      var m = matches[pos];
+      var host = bodyEl.querySelector('#chat-messages');
+      if (!host) return;
+      clearHits();
+      // locate the DOM bubble by data-mi (user/assistant bubbles carry it;
+      // the index is the transcript's message index — same key as edit/delete)
+      var bubble = host.querySelector('[data-mi="' + m.mi + '"]');
+      if (bubble) {
+        bubble.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        bubble.classList.add('find-hit');
+      }
+      countEl.textContent = (pos + 1) + '/' + matches.length;
+    }
+
+    function refresh() {
+      var q = (input.value || '').trim();
+      computeMatches(q);
+      if (!q) {
+        clearHits();
+        countEl.textContent = '';
+        return;
+      }
+      if (matches.length) jump(1); else countEl.textContent = '0/0';
+    }
+
+    function close() {
+      clearHits();
+      el.classList.remove('open');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 160);
+      var ta = bodyEl.querySelector('#chat-input');
+      if (ta) ta.focus();
+    }
+
+    el.querySelector('#chat-find-close').addEventListener('click', close);
+    el.querySelector('#chat-find-next').addEventListener('click', function () { jump(1); });
+    el.querySelector('#chat-find-prev').addEventListener('click', function () { jump(-1); });
+    input.addEventListener('input', refresh);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); jump(e.shiftKey ? -1 : 1); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    input.focus();
   }
 
   // v0.26: the sensible default per ladder shape (nvidia/pm on/off → on;
@@ -1835,14 +1964,16 @@
 
   // v0.35 (user spec #9): a WS drop mid-turn used to leave isStreaming=true
   // FOREVER — the bubble thought endlessly and leaked its state across chat
-  // switches. Now the drop ends the turn with an honest error bubble in the
-  // OWNING chat only; the engine's persisted events replay on reopen.
+  // switches. v0.39 RECOVERY: this now fires ONLY after the client's
+  // reconnect ladder is exhausted (~20s of retries, each announced as a
+  // ws_state indicator) — by then the engine's persisted events carry the
+  // truth, so the honest close-out lands in the OWNING chat only.
   function wireClientClose(bodyEl, state, msgContainer) {
     state.client.onClose = function () {
       if (!state.isStreaming) return;
       state.isStreaming = false;
       state._actText = null;
-      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply — your messages are safe. Tap Send to retry.' };
+      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply and could not be re-established — your messages and partial replies are saved. Tap Send to retry.' };
       state.messages.push(msg);
       if (isOwner(state)) {
         hideActivity(bodyEl, state);
@@ -2007,6 +2138,30 @@
       // decaying to "thinking…" after 5s while NVIDIA queues the request.
       state._waitPhase = ev.text || ev.message || null;
       setActivity(bodyEl, state, ev.text || ev.message || 'working…');
+      return;
+    }
+    // v0.39 RECOVERY: synthetic client-socket states (never persisted, no i).
+    // 'reconnecting' keeps the turn ALIVE with an honest indicator — the
+    // engine keeps the turn running and persisting; a resume (&since=)
+    // picks the live stream back up. 'failed' means the ladder gave up:
+    // the wireClientClose error bubble fires (the only terminal path).
+    if (type === 'ws_state') {
+      if (ev.state === 'reconnecting') {
+        state._wsDropped = true;
+        if (state.isStreaming) {
+          setActivity(bodyEl, state, 'connection dropped — reconnecting… (' + ev.attempt + '/' + ev.of + ')');
+        }
+      } else if (ev.state === 'open') {
+        state._wsDropped = false;
+        if (state.isStreaming) {
+          // resumed mid-turn — the indicator falls back to the wait phase
+          // (or the generic streaming state) until real events land.
+          setActivity(bodyEl, state, state._waitPhase || 'reconnected — streaming…');
+        }
+      } else if (ev.state === 'failed') {
+        state._wsDropped = false;
+        // the ladder is exhausted → the terminal error path (wireClientClose)
+      }
       return;
     }
     if (type === 'user') {

@@ -26,6 +26,7 @@ import (
         "io"
         "io/fs"
         "net/http"
+        "os"
         "strings"
         "sync"
         "time"
@@ -676,6 +677,15 @@ func ResolveModel(userModel, userProvider string, keys map[string]string) (model
         accountID := keys[cfg.ExtraEnvVar]
         baseURL = resolveBaseURL(cfg, accountID)
         authStyle = cfg.AuthStyle
+        // v0.39 POWER FEATURE: DOOMALAY_BASE_URL_<PROVIDER> overrides the
+        // catalog's base URL at resolve time — point a provider at a
+        // self-hosted mirror, a gateway, or an on-prem NIM deployment
+        // (e.g. DOOMALAY_BASE_URL_NVIDIA=http://my-nim:8000/v1). Every
+        // resolve path (chat turns, native tools, model-gone rotation)
+        // flows through here, so the override holds everywhere.
+        if v := os.Getenv("DOOMALAY_BASE_URL_" + strings.ToUpper(userProvider)); v != "" {
+                baseURL = strings.TrimSuffix(v, "/")
+        }
 
         // SyncModels prefixes model IDs with the provider name
         // ("openrouter/llama-3.3-70b"). The provider's own API expects the

@@ -3,8 +3,10 @@ package server
 import (
         "context"
         "encoding/json"
+        "fmt"
         "log"
         "net/http"
+        "strconv"
         "strings"
         "sync"
         "time"
@@ -75,6 +77,135 @@ var (
         sessionLocksMu sync.Mutex
         sessionLocks   = make(map[string]chan struct{})
 )
+
+// ── v0.39 P8-FULL: the per-session live pipe ────────────────────────────
+//
+// A turn's events flow persist-first into the event log and THEN to the
+// live WebSocket. Before v0.39 the turn captured the *websocket.Conn of
+// the socket that SENT the message — a disconnect mid-turn (tunnel hiccup,
+// Android doze, tab reload) cancelled the turn server-side AND a
+// reconnecting client only got the connect-time replay while live frames
+// kept going to the dead socket. The pipe decouples them:
+//
+//   - ALL frame writes serialize through the pipe mutex (turn + pings +
+//     replay — no interleaved frames).
+//   - swap(ws) installs a NEW connection (a resume takes over the live
+//     feed; the previous socket is closed under it).
+//   - clear(ws, gen) removes a dead connection ONLY if it is still the
+//     current generation — a late read-error from a replaced socket can
+//     never clobber the fresh one.
+//   - writes to a dead/absent pipe are ERRORS, not turn-killers: the event
+//     log keeps filling; the next swap resumes live delivery mid-stream.
+type chatPipe struct {
+        mu  sync.Mutex
+        ws  *websocket.Conn
+        gen int64
+}
+
+var (
+        chatPipesMu sync.Mutex
+        chatPipes   = map[string]*chatPipe{}
+)
+
+func pipeFor(sessionID string) *chatPipe {
+        chatPipesMu.Lock()
+        defer chatPipesMu.Unlock()
+        p := chatPipes[sessionID]
+        if p == nil {
+                p = &chatPipe{}
+                chatPipes[sessionID] = p
+        }
+        return p
+}
+
+// send writes one text frame (nil pipe / dead socket → error, never panic).
+func (p *chatPipe) send(b []byte) error {
+        if p == nil {
+                return fmt.Errorf("pipe: no connection")
+        }
+        p.mu.Lock()
+        defer p.mu.Unlock()
+        if p.ws == nil {
+                return fmt.Errorf("pipe: connection gone")
+        }
+        return p.ws.WriteMessage(websocket.TextMessage, b)
+}
+
+// sendControl writes a ping/pong control frame through the same lock.
+func (p *chatPipe) sendControl(t int, b []byte) error {
+        if p == nil {
+                return fmt.Errorf("pipe: no connection")
+        }
+        p.mu.Lock()
+        defer p.mu.Unlock()
+        if p.ws == nil {
+                return fmt.Errorf("pipe: connection gone")
+        }
+        return p.ws.WriteMessage(t, b)
+}
+
+// swap installs ws as the live connection and returns its generation.
+// The previous socket (if any) is closed — its read loop exits, its
+// handler returns, and the new socket owns the live feed.
+func (p *chatPipe) swap(ws *websocket.Conn) int64 {
+        p.mu.Lock()
+        old := p.ws
+        p.ws = ws
+        p.gen++
+        gen := p.gen
+        p.mu.Unlock()
+        if old != nil && old != ws {
+                old.Close()
+        }
+        return gen
+}
+
+// clear removes ws if it is still the CURRENT one (generation match).
+func (p *chatPipe) clear(ws *websocket.Conn, gen int64) {
+        if p == nil {
+                return
+        }
+        p.mu.Lock()
+        defer p.mu.Unlock()
+        if p.ws == ws && p.gen == gen {
+                p.ws = nil
+        }
+}
+
+// alive reports whether a live connection is installed.
+func (p *chatPipe) alive() bool {
+        if p == nil {
+                return false
+        }
+        p.mu.Lock()
+        defer p.mu.Unlock()
+        return p.ws != nil
+}
+
+// wsPingEvery / wsReadDeadline: the server pings every 20s; a client that
+// fails to pong (browsers auto-pong) for ~75s is treated as gone — the read
+// deadline fires and the pipe clears. Half-dead sockets (tunnels, doze)
+// used to linger forever because writes only fail when the OS buffer fills.
+const (
+        wsPingEvery    = 20 * time.Second
+        wsReadDeadline = 75 * time.Second
+)
+
+// pingLoop keeps the connection honest for the life of the WS handler.
+func pingLoop(ctx context.Context, pipe *chatPipe) {
+        t := time.NewTicker(wsPingEvery)
+        defer t.Stop()
+        for {
+                select {
+                case <-ctx.Done():
+                        return
+                case <-t.C:
+                        if err := pipe.sendControl(websocket.PingMessage, nil); err != nil {
+                                return
+                        }
+                }
+        }
+}
 
 // artifactSystemPrompt (v0.17) teaches the model the app's artifact
 // protocol: fenced blocks tagged with a filename become downloadable
@@ -298,7 +429,16 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         return b.String()
 }
 
-// handleChatWS is GET /api/chat?session_id=<id> — the WebSocket chat endpoint.
+// handleChatWS is GET /api/chat?session_id=<id>[&since=<lastSeq>] — the
+// WebSocket chat endpoint.
+//
+// v0.39 RESUME HANDSHAKE: a client that still holds its in-memory chat
+// state reconnects with &since=<lastSeq it has> and gets ONLY the events
+// after that seq (incremental replay) followed by the LIVE feed — a
+// mid-turn disconnect (tunnel hiccup, tab sleep, page reload) no longer
+// kills the in-flight turn server-side: the turn keeps running against
+// the event log, and the resumed socket picks the stream back up.
+// since=0 / absent → full replay (fresh open).
 func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
         sessionID := r.URL.Query().Get("session_id")
         if sessionID == "" {
@@ -324,28 +464,54 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
         }
         defer conn.Close()
 
-        // Replay existing events (since=0) so a reconnecting PWA sees full history.
-        // V0 idempotency: the PWA dedups by seq.
-        existing, err := s.db.ListEvents(sessionID, 0)
+        // v0.39 KEEPALIVE: pings every 20s + a 75s pong-guarded read
+        // deadline — half-dead sockets surface as read errors instead of
+        // lingering until the next write happens to fail.
+        _ = conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+        conn.SetPongHandler(func(string) error {
+                return conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+        })
+
+        // v0.39: take over the session's live pipe — a previous socket (if
+        // any) is closed under us; live events flow to THIS connection now.
+        pipe := pipeFor(sessionID)
+        gen := pipe.swap(conn)
+
+        // Replay events so a reconnecting PWA catches up. Idempotency: the
+        // PWA dedups by ev.i; with &since=N only events with seq > N ship.
+        since := 1 // full replay default
+        if v := r.URL.Query().Get("since"); v != "" {
+                if n, perr := strconv.Atoi(v); perr == nil && n > 0 {
+                        since = n + 1 // client has ≤ N; replay from N+1
+                }
+        }
+        existing, err := s.db.ListEvents(sessionID, since)
         if err != nil {
                 log.Printf("list events: %v", err)
         } else {
                 for _, ev := range existing {
                         b, _ := ev.ToJSON()
-                        if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
-                                return
+                        if err := pipe.send(b); err != nil {
+                                pipe.clear(conn, gen)
+                                return // socket died mid-replay
                         }
                 }
         }
 
-        // Read loop: handle PWA messages (send / stop).
-        ctx, cancel := context.WithCancel(r.Context())
-        defer cancel()
+        // Pings live for exactly as long as THIS handler.
+        pingCtx, pingCancel := context.WithCancel(context.Background())
+        defer pingCancel()
+        go pingLoop(pingCtx, pipe)
 
+        // Read loop: handle PWA messages (send / stop).
+        // v0.39: the loop's context is NOT the turn's lifetime — a
+        // disconnect clears the pipe but leaves in-flight turns running
+        // (they persist into the event log; a resume picks them up).
         for {
                 _, raw, err := conn.ReadMessage()
                 if err != nil {
-                        return // PWA disconnected
+                        pipe.clear(conn, gen) // only if still current
+                        return                 // PWA disconnected
                 }
                 var msg map[string]any
                 if err := json.Unmarshal(raw, &msg); err != nil {
@@ -354,7 +520,7 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                 msgType, _ := msg["type"].(string)
                 switch msgType {
                 case "send":
-                        go s.handleTurn(ctx, conn, sessionID, sess, msg)
+                        go s.handleTurn(pipe, sessionID, sess, msg)
                 case "stop":
                         // v0.19: abort ONLY the in-flight turn(s) for this session.
                         // The old cancel() killed the shared read-loop ctx — after ONE
@@ -377,22 +543,26 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                         }
                         if len(ids) > 0 {
                                 b, _ := json.Marshal(ids)
-                                s.emit(conn, sessionID, "hide", string(b), "")
+                                s.emit(pipe, sessionID, "hide", string(b), "")
                         }
                 }
         }
 }
 
 // handleTurn runs one chat turn: acquire lock → call brain → persist + forward events → release lock.
-func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, msg map[string]any) {
+// v0.39: the turn is NOT tied to the sending socket's lifetime — it derives
+// from context.Background() + the turn budget. The Stop button (abortTurn)
+// and the budget remain the only cancellation paths; a WS drop just clears
+// the pipe while the turn keeps persisting (a resumed client picks it up).
+func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
         // v0.15 (crash fix): this runs in its own goroutine — a panic here
         // would take the whole engine down (dead app, white screen). The
         // recoverMiddleware can't see goroutine panics, so guard locally.
         defer func() {
                 if rec := recover(); rec != nil {
                         log.Printf("PANIC recovered in turn %s: %v", sessionID, rec)
-                        s.emit(conn, sessionID, "error", fmtError("panic", "internal error — engine recovered", "", ""), "")
-                        s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                        s.emit(pipe, sessionID, "error", fmtError("panic", "internal error — engine recovered", "", ""), "")
+                        s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 }
         }()
 
@@ -409,7 +579,7 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         // v0 FIX: per-session turn lock, non-blocking acquire, release in defer.
         release, ok := lockSession(sessionID)
         if !ok {
-                s.emit(conn, sessionID, "error", `{"error":"busy","message":"agent already processing"}`, "")
+                s.emit(pipe, sessionID, "error", `{"error":"busy","message":"agent already processing"}`, "")
                 return
         }
         defer release()
@@ -419,7 +589,7 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         // (v0.13 fix: the direct AppendEvent + emit double-persisted every
         // user message, doubling them in reconstructed history).
         userText, _ := msg["message"].(string)
-        s.emit(conn, sessionID, "user", userText, "")
+        s.emit(pipe, sessionID, "user", userText, "")
 
         // v0.15: per-message model/provider overrides ride the send (the
         // frontend sends them on every message now — belt AND suspenders
@@ -502,12 +672,15 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
         // tool-demonstration turn (2.5-min thinking gaps per round × many
         // rounds): the flat 10-min cap killed those turns mid-chain ("its
         // response interrupted mid action", user report). Reasoning models get
-        // 20 min; the Stop button + WS disconnect still cancel instantly.
+        // 20 min; the Stop button cancels instantly (a WS drop does NOT —
+        // v0.39: the turn survives its socket and a resume picks it up).
         turnBudget := 10 * time.Minute
         if llm.IsSlowReasoningModel(sess.Model) {
                 turnBudget = 20 * time.Minute
         }
-        turnCtx, turnCancel := context.WithTimeout(ctx, turnBudget)
+        // v0.39: Background (NOT the WS request ctx) — the turn survives its
+        // socket. Stop (abortTurn) + this budget are the only cancellers.
+        turnCtx, turnCancel := context.WithTimeout(context.Background(), turnBudget)
         tcHandle := registerTurnCancel(sessionID, turnCancel)
         terminal := false // did the stream end with a status idle/error?
         defer func() {
@@ -519,26 +692,26 @@ func (s *Server) handleTurn(ctx context.Context, conn *websocket.Conn, sessionID
                 // freezing the chat forever after. Emit one if the stream
                 // forgot.
                 if !terminal {
-                        s.emit(conn, sessionID, "status", `{"state":"idle","usage":null}`, "")
+                        s.emit(pipe, sessionID, "status", `{"state":"idle","usage":null}`, "")
                 }
         }()
         if s.brain != nil && s.brain.Healthy() {
-                s.streamFromBrain(turnCtx, conn, sessionID, sess, brainReq, userText, &terminal)
+                s.streamFromBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal)
         } else {
-                s.streamFromDirectProxy(turnCtx, conn, sessionID, sess, userText, &terminal)
+                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, &terminal)
         }
 }
 
 // streamFromBrain proxies the chat turn through the Python brain (full
 // agent: Strands, tools, panel, templates). Used when the brain is available.
-func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool) {
+func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool) {
         events, errs, err := s.brain.Chat(ctx, brainReq)
         if err != nil {
-                s.emit(conn, sessionID, "error", `{"error":"brain","message":"`+err.Error()+`"}`, "")
-                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                s.emit(pipe, sessionID, "error", `{"error":"brain","message":"`+err.Error()+`"}`, "")
+                s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
-        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, errs, terminal)
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
 }
 
 // streamFromDirectProxy calls the cloud LLM directly from Go (no Python brain
@@ -549,25 +722,25 @@ func (s *Server) streamFromBrain(ctx context.Context, conn *websocket.Conn, sess
 // v0.13: builds conversation HISTORY from the event log (multi-turn now
 // works on the APK), and forwards capabilities (effort / web_search /
 // deep_research) into the llm.Chat pipeline.
-func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, terminal *bool) {
+func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText string, terminal *bool) {
         if s.vault == nil {
-                s.emit(conn, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
-                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                s.emit(pipe, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
+                s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
         keys := s.vault.AsEnv()
         model := sess.Model
         provider := sess.Provider
         if model == "" || provider == "" {
-                s.emit(conn, sessionID, "error", `{"error":"no_model","message":"no model selected for this chat"}`, "")
-                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                s.emit(pipe, sessionID, "error", `{"error":"no_model","message":"no model selected for this chat"}`, "")
+                s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
 
         llmModel, baseURL, _, apiKey, authStyle, err := llm.ResolveModel(model, provider, keys)
         if err != nil {
-                s.emit(conn, sessionID, "error", fmtError("model_resolve", err.Error(), provider, model), "")
-                s.emit(conn, sessionID, "status", `{"state":"error","usage":null}`, "")
+                s.emit(pipe, sessionID, "error", fmtError("model_resolve", err.Error(), provider, model), "")
+                s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
 
@@ -578,7 +751,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
         // the chat header dropdown cycles it). Default 40 (the brain's old default).
         // v0.21 AUTO-COMPACT (ported from the HF space's proactive compression):
         // summarize older turns when the context nears the model's window.
-        sess = s.maybeCompact(ctx, conn, sess, keys, llmModel, baseURL, apiKey, authStyle)
+        sess = s.maybeCompact(ctx, pipe, sess, keys, llmModel, baseURL, apiKey, authStyle)
 
         history := s.buildHistoryCompacted(sessionID, sess, sess.SlidingWindow)
         if sess.SlidingWindow == 0 {
@@ -718,7 +891,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, conn *websocket.Conn
         // pre-closed dummy so its trailing read doesn't block.
         dummyErrs := make(chan error, 1)
         close(dummyErrs)
-        s.forwardEvents(ctx, conn, sessionID, sess, userText, events, dummyErrs, terminal)
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, dummyErrs, terminal)
 }
 
 // buildHistory reconstructs the conversation from the event log: "user" and
@@ -775,7 +948,7 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
 // forwardEvents is the shared event-handling loop for both brain and direct
 // proxy paths. It persists each event to chat_events (V0 fix) + forwards to
 // the PWA via WebSocket + handles auto-naming.
-func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessionID string, sess *store.Session, userText string, events <-chan map[string]any, errs <-chan error, terminal *bool) {
+func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText string, events <-chan map[string]any, errs <-chan error, terminal *bool) {
         // v0.22 FREEZE FIX: reasoning models emit thinking ONE WORD per SSE
         // chunk — a single kimi/glm turn produced 12k+ SQLite writes + 12k
         // WS frames (observed live: a 4-minute file-gen turn logged 12,150
@@ -796,13 +969,13 @@ func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessio
                 persisted, err := s.db.AppendEvent(sessionID, "thinking", thinkBuf.String(), "")
                 if err != nil {
                         log.Printf("persist thinking: %v", err)
-                } else if conn != nil {
+                } else {
                         out := map[string]any{
                                 "i": persisted.ID, "ts": persisted.CreatedAt, "type": "thinking",
                                 "session_id": sessionID, "seq": persisted.Seq, "text": thinkBuf.String(),
                         }
                         if b, err := json.Marshal(out); err == nil {
-                                _ = conn.WriteMessage(websocket.TextMessage, b)
+                                _ = pipe.send(b) // v0.39: dead pipe ≠ dead turn — persisting continues
                         }
                 }
                 thinkBuf.Reset()
@@ -824,17 +997,15 @@ func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessio
                 // to the live WS only, never persisted, no i/seq (replay never
                 // sees them; the indicator is a live-UI concern).
                 if evType == "progress" {
-                        if conn != nil {
-                                out := map[string]any{"type": "progress", "session_id": sessionID}
-                                if t, ok := ev["text"].(string); ok {
-                                        out["text"] = t
-                                }
-                                if m, ok := ev["message"].(string); ok {
-                                        out["message"] = m
-                                }
-                                if b, err := json.Marshal(out); err == nil {
-                                        _ = conn.WriteMessage(websocket.TextMessage, b)
-                                }
+                        out := map[string]any{"type": "progress", "session_id": sessionID}
+                        if t, ok := ev["text"].(string); ok {
+                                out["text"] = t
+                        }
+                        if m, ok := ev["message"].(string); ok {
+                                out["message"] = m
+                        }
+                        if b, err := json.Marshal(out); err == nil {
+                                _ = pipe.send(b)
                         }
                         continue
                 }
@@ -907,9 +1078,10 @@ func (s *Server) forwardEvents(ctx context.Context, conn *websocket.Conn, sessio
                 }
                 out["seq"] = persisted.Seq
                 b, _ := json.Marshal(out)
-                if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
-                        return
-                }
+                // v0.39: a dead pipe no longer kills the turn — the event
+                // is already persisted; a resumed client will replay it.
+                // Keep consuming so the llm goroutine never blocks.
+                _ = pipe.send(b)
 
                 // Auto-name on first turn (V0 FIX: flag-after-success).
                 if evType == "status" {
@@ -964,14 +1136,15 @@ func fmtError(code, message, provider, model string) string {
         return string(b)
 }
 
-// emit sends a JSON event to the WebSocket (or no-op if conn is nil).
-func (s *Server) emit(conn *websocket.Conn, sessionID, evType, content, toolUseID string) {
+// emit sends a JSON event to the live pipe (or persists only when the
+// pipe is nil — the boot-time title path).
+func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID string) {
         persisted, err := s.db.AppendEvent(sessionID, evType, content, toolUseID)
         if err != nil {
                 log.Printf("emit persist: %v", err)
                 return
         }
-        if conn == nil {
+        if pipe == nil {
                 return
         }
         out := map[string]any{
@@ -1031,5 +1204,5 @@ func (s *Server) emit(conn *websocket.Conn, sessionID, evType, content, toolUseI
                 }
         }
         b, _ := json.Marshal(out)
-        _ = conn.WriteMessage(websocket.TextMessage, b)
+        _ = pipe.send(b)
 }

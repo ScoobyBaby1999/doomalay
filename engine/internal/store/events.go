@@ -85,6 +85,8 @@ ORDER BY seq ASC`, sessionID, since)
 
 // EventToJSON serializes an Event for the PWA. Matches the wire format
 // the PWA's streamWorker expects.
+// v0.39: seq rides on replayed events — the resume handshake (&since=N)
+// lets a reconnecting client track its cursor by seq as well as id.
 func (e *Event) ToJSON() ([]byte, error) {
         type wire struct {
                 ID        int64            `json:"i"`
@@ -102,6 +104,7 @@ func (e *Event) ToJSON() ([]byte, error) {
                 SessionID string           `json:"session_id,omitempty"`
                 Error     string           `json:"error,omitempty"`
                 IDs       []int64          `json:"ids,omitempty"`
+                Seq       int              `json:"seq,omitempty"`
         }
         w := wire{
                 ID:        e.ID,
@@ -110,6 +113,7 @@ func (e *Event) ToJSON() ([]byte, error) {
                 Text:      e.Content,
                 ToolUseID: e.ToolUseID,
                 SessionID: e.SessionID,
+                Seq:       e.Seq,
         }
         // If content is a JSON object (usage, etc.), decode it into the right field.
         if e.EventType == "status" && e.Content != "" {

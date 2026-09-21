@@ -179,11 +179,41 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
         ch <- ChatChunk{Type: "status", State: "running"}
         final, err := streamCompletion(ctx, req, ch, nil)
         if err != nil {
+                emitTurnError(ch, err)
                 errs <- err
                 return
         }
         _ = final
         ch <- ChatChunk{Type: "status", State: "idle", Usage: final}
+}
+
+// emitTurnError (v0.39): the ONE honest error chunk + terminal status pair
+// for a failed turn — emitted where the pause ladder gave up (or a non-
+// retryable error surfaced), never inside the retry loop (an early chunk
+// terminalizes the UI: the frontend treats error events as end-of-turn).
+func emitTurnError(ch chan<- ChatChunk, err error) {
+        ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
+        ch <- ChatChunk{Type: "status", State: "error"}
+}
+
+// friendlyStreamError humanizes the raw transport/stream error.
+func friendlyStreamError(err error) string {
+        if err == nil {
+                return "unknown error"
+        }
+        s := err.Error()
+        msg := s
+        for _, pair := range [][2]string{
+                {"request failed: ", ""},
+                {"stream: ", ""},
+                {"send: ", ""},
+        } {
+                msg = strings.Replace(msg, pair[0], pair[1], 1)
+        }
+        if len(msg) > 300 {
+                msg = msg[:300] + "…"
+        }
+        return msg
 }
 
 // streamCompletion performs ONE streaming chat completion, forwarding
@@ -608,20 +638,56 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 effortKeys = nil
         }
 
-        resp := doPostSSE(ctx, req, url, bodyBytes, ch)
+        // v0.39 PACING (P8-FULL, socreate scheduler.py:338-361): reserve the
+        // provider's rpm slot — reserve-under-lock, sleep outside — so
+        // concurrent turns (parallel chats) stagger instead of bursting
+        // into a 429. Bounded: pacing alone never stalls a turn >5s.
+        if wait := PaceProvider(req.Provider); wait > 0 {
+                select {
+                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("pacing %s — sending in %.1fs", providerLabel(req.Provider), wait.Seconds())}:
+                default:
+                }
+                select {
+                case <-ctx.Done():
+                        ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while pacing the provider"}
+                        return nil, nil, nil
+                case <-time.After(wait):
+                }
+        }
+
+        resp, reqErr := doPostSSE(ctx, req, url, bodyBytes, ch)
         if resp == nil {
-                return nil, nil, nil // error already emitted
+                return nil, nil, fmt.Errorf("request failed: %w", reqErr)
         }
         // v0.36: 429/503 RETRY-WITH-BACKOFF (mirrors the brain's
         // num_retries=3): NVIDIA's per-model rate limits answer 429 on
         // burst sends — failing the whole turn on the first 429 was harsh
         // when a short pause clears it. Up to 2 retries (3 attempts total)
         // with 4s/8s backoff, each wait announced as a progress notice so
-        // the UI explains the pause ("429: rate-limited — retrying in
-        // 4s (attempt 2 of 3)"). Non-retryable statuses flow straight to
-        // friendlyHTTPError; a turn cancelled mid-wait ends quietly.
+        // the UI explains the pause. Non-retryable statuses flow straight
+        // to friendlyHTTPError; a turn cancelled mid-wait ends quietly.
+        //
+        // v0.39 COOLDOWN TABLE (P8-FULL): every 429/503 is RECORDED (the
+        // provider's proportional cooldown informs alternate routing), and
+        // the SECOND retry waits the LONGER of the flat backoff and the
+        // cooldown — diverging from socreate's rotate-immediately because
+        // this engine usually has exactly ONE keyed provider (rotate has
+        // nowhere to go; the honest move is the proportional wait).
         for attempt := 1; (resp.StatusCode == 429 || resp.StatusCode == 503) && attempt < 3; attempt++ {
                 wait := time.Duration(attempt*4) * time.Second // 4s, then 8s
+                class := "429"
+                if resp.StatusCode == 503 {
+                        class = "5xx"
+                }
+                RecordProviderFailure(req.Provider, class, fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
+                if attempt >= 2 {
+                        if r := ProviderCooldownRemaining(req.Provider); r > wait {
+                                if r > 30*time.Second {
+                                        r = 30 * time.Second // single-provider cap: never wedge one wait past 30s
+                                }
+                                wait = r
+                        }
+                }
                 io.Copy(io.Discard, resp.Body)
                 resp.Body.Close()
                 note := fmt.Sprintf("429: rate-limited by %s — retrying in %ds (attempt %d of 3)",
@@ -640,9 +706,9 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         return nil, nil, nil
                 case <-time.After(wait):
                 }
-                resp = doPostSSE(ctx, req, url, bodyBytes, ch)
+                resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
                 if resp == nil {
-                        return nil, nil, nil // error already emitted
+                        return nil, nil, fmt.Errorf("request failed: %w", reqErr)
                 }
         }
         if resp.StatusCode != 200 {
@@ -664,9 +730,9 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 req.Model, req.APIKey, req.BaseURL, req.AuthStyle = am, ak, ab, as
                                 body["model"] = am
                                 bodyBytes, _ = json.Marshal(body)
-                                resp = doPostSSE(ctx, req, url, bodyBytes, ch)
+                                resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
                                 if resp == nil {
-                                        return nil, nil, nil // error already emitted
+                                        return nil, nil, fmt.Errorf("request failed: %w", reqErr)
                                 }
                                 if resp.StatusCode != 200 {
                                         bts, _ = io.ReadAll(resp.Body)
@@ -690,23 +756,39 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                         delete(body, k)
                                 }
                                 clean, _ := json.Marshal(body)
-                                if resp2 := doPostSSE(ctx, req, url, clean, ch); resp2 != nil {
+                                resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
+                                if resp2 != nil {
                                         if resp2.StatusCode != 200 {
                                                 bts2, _ := io.ReadAll(resp2.Body)
                                                 resp2.Body.Close()
+                                                RecordProviderFailure(req.Provider,
+                                                        ClassifyProviderError(resp2.StatusCode, string(bts2)),
+                                                        fmt.Sprintf("HTTP %d on %s (post effort-strip)", resp2.StatusCode, modelShort(req.Model)))
                                                 ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
                                                 return nil, nil, nil
                                         }
                                         resp = resp2
                                 } else {
-                                        return nil, nil, nil
+                                        return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
                                 }
                         } else {
+                                // v0.39: record the provider failure class (auth →
+                                // engine-lifetime blacklist, quota/payload/5xx →
+                                // 60s cooldown) — alternate routing + later
+                                // turns consult the table.
+                                RecordProviderFailure(req.Provider,
+                                        ClassifyProviderError(resp.StatusCode, string(bts)),
+                                        fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
                                 ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
                                 return nil, nil, nil
                         }
                 }
         }
+
+        // v0.39: a landed 200 clears the provider's EXPIRED cooldown (the
+        // socreate race guard — an ACTIVE 429 cooldown recorded by a sibling
+        // request survives).
+        RecordProviderSuccess(req.Provider)
 
         // v0.19: no-data watchdog — v0.24: MODEL-AWARE (idleWaitFor: reasoning
         // models get 240s — observed live: kimi-k3 thinks 5+ min server-side
@@ -776,22 +858,26 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
                         return usage, calls, nil
                 }
-                ch <- ChatChunk{Type: "error", Error: "stream", Message: err.Error()}
-                return usage, calls, nil
+                // v0.39: mid-stream transport failure — RETURN the error (the
+                // round-level pause ladder retries transient ones; the turn
+                // runners emit the single honest error chunk on give-up).
+                return usage, calls, fmt.Errorf("stream: %w", err)
         }
         usage.TotalTokens = usage.InputTokens + usage.OutputTokens
         return usage, calls, nil
 }
 
-// doPostSSE builds + sends ONE streaming request (with the v0.24 connect-
-// phase wait-notices) and returns the response — or nil after emitting the
-// error itself. v0.26: split out of scanSSE so the effort-param resilience
-// retry can re-send a cleaned body.
-func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byte, ch chan<- ChatChunk) *http.Response {
+// doPostSSE issues the POST and returns the response — or (nil, err) when
+// the request failed BEFORE any response (transport / NewRequest errors).
+// v0.39: failures are RETURNED, not emitted as chunks — the round-level
+// pause ladder retries transient ones quietly, and the turn runners emit
+// the honest error chunk only when the ladder gives up (the old emit-here
+// pattern terminalized the UI on recoverable blips: the frontend treats
+// an error event as end-of-turn).
+func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byte, ch chan<- ChatChunk) (*http.Response, error) {
         httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
         if err != nil {
-                ch <- ChatChunk{Type: "error", Error: "llm_call", Message: "new request: " + err.Error()}
-                return nil
+                return nil, fmt.Errorf("new request: %w", err)
         }
         httpReq.Header.Set("Content-Type", "application/json")
         httpReq.Header.Set("User-Agent", browserUA)
@@ -819,11 +905,14 @@ func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byt
         resp, err := providerStreamHTTP.Do(httpReq)
         if err != nil {
                 stopConnNotices()
-                ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
-                return nil
+                // v0.39: transport-level failure (timeout/reset/refused) —
+                // network class: 60s provider cooldown so alternate routing
+                // skips the dead host; the round-level pause ladder retries.
+                RecordProviderFailure(req.Provider, "net", err.Error())
+                return nil, fmt.Errorf("send: %w", err)
         }
         stopConnNotices()
-        return resp
+        return resp, nil
 }
 
 // ── v0.26: the effort-param blacklist (400-resilience state) ──────────
@@ -1001,6 +1090,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 if native := NativeWebSearchBody(req.Provider, req.Model); native != nil {
                         _, err := streamCompletion(ctx, req, ch, native)
                         if err != nil {
+                                emitTurnError(ch, err)
                                 errs <- err
                                 return
                         }
@@ -1044,8 +1134,8 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 // real error instead of a silent no-op.
                 answer, usage, err := runReActRoundWithRetry(ctx, roundReq, ch)
                 if err != nil {
-                        ch <- ChatChunk{Type: "error", Error: "llm_call", Message: err.Error()}
-                        ch <- ChatChunk{Type: "status", State: "error", Usage: usage}
+                        emitTurnError(ch, err)
+                        errs <- err
                         return
                 }
                 totalUsage = mergeUsage(totalUsage, usage)
@@ -1756,6 +1846,52 @@ func isValidActionLine(line string) bool {
         return actionNameRe.MatchString(stripActionDecorations(line))
 }
 
+// netPauseWaits (v0.39 P8-FULL): two quick hiccup retries, then the
+// pause-not-fail ladder — 15/30/60s waits that keep the turn ALIVE through
+// a network outage (timemanager's NetworkPauseError semantics: network-class
+// failure = paused, not failed). The turn budget + Stop button backstop it.
+var netPauseWaits = []time.Duration{
+        1500 * time.Millisecond,
+        3 * time.Second,
+        15 * time.Second,
+        30 * time.Second,
+        60 * time.Second,
+}
+
+// netPauseLadder retries a network-class failure. fn returns (emitted, err):
+// rounds that already streamed VISIBLE content are never retried (double-
+// render). Quick hiccups announce via status-running (v0.20 behavior); the
+// pause rungs announce via EPHEMERAL progress (live-only — a replayed log
+// must not contain stale "network paused" noise). Every failure refreshes
+// the provider's 60s network cooldown for alternate routing.
+func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
+        emitted, err := fn()
+        if err == nil || !isTransientNetErr(err) || emitted {
+                return err
+        }
+        for i, w := range netPauseWaits {
+                RecordProviderFailure(provider, "net", err.Error())
+                if w >= 15*time.Second {
+                        select {
+                        case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("network paused — %s unreachable, retrying in %ds (your turn is safe)", providerLabel(provider), int(w.Seconds()))}:
+                        default:
+                        }
+                } else {
+                        ch <- ChatChunk{Type: "status", State: "running", Message: fmt.Sprintf("network hiccup — retry %d/2", i+1)}
+                }
+                select {
+                case <-time.After(w):
+                case <-ctx.Done():
+                        return ctx.Err()
+                }
+                emitted, err = fn()
+                if err == nil || !isTransientNetErr(err) || emitted {
+                        return err
+                }
+        }
+        return err
+}
+
 // runReActRoundWithRetry (v0.20): one ReAct round with an empty-response
 // retry. Providers (NVIDIA NIM observed live; others too) intermittently
 // return a 200 SSE stream that carries ZERO reasoning/content tokens, or
@@ -1763,34 +1899,27 @@ func isValidActionLine(line string) bool {
 // ends with nothing — "the new model doesn't reply"); the retry catches
 // the transient flavor, and a persistently-empty model gets a visible
 // error instead of silence.
+// v0.39: the transient loop is now the netPauseLadder (pause-not-fail).
 func runReActRoundWithRetry(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, error) {
-        answer, usage, emitted, err := runReActRoundStream(ctx, req, ch)
+        var answer string
+        var usage *Usage
+        err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
+                var emitted bool
+                var e error
+                answer, usage, emitted, e = runReActRoundStream(ctx, req, ch)
+                return emitted, e
+        })
         if err != nil {
-                // v0.22: TRANSIENT NETWORK RETRY — long tool chains (12+
-                // ACTION/OBSERVATION rounds) died mid-chain on connection
-                // blips ("reading stream chunk: network error", EOF,
-                // resets — observed live). Rounds that emitted nothing
-                // (every ACTION round is fully suppressed; undecided holds
-                // emit nothing) can be retried without double-rendering.
-                for attempt := 1; attempt <= 2 && isTransientNetErr(err) && !emitted; attempt++ {
-                        ch <- ChatChunk{Type: "status", State: "running", Message: fmt.Sprintf("network hiccup — retry %d/2", attempt)}
-                        select {
-                        case <-time.After(time.Duration(attempt) * 1500 * time.Millisecond):
-                        case <-ctx.Done():
-                                return answer, usage, ctx.Err()
-                        }
-                        answer, usage, emitted, err = runReActRoundStream(ctx, req, ch)
-                }
-                if err != nil {
-                        return answer, usage, err
-                }
+                return answer, usage, err
         }
         if strings.TrimSpace(answer) != "" {
                 return answer, usage, nil
         }
         // empty round → one visible retry, then a diagnosable error.
         ch <- ChatChunk{Type: "status", State: "running", Message: "empty response — retrying"}
-        answer, usage, emitted, err = runReActRoundStream(ctx, req, ch)
+        var emitted2 bool
+        answer, usage, emitted2, err = runReActRoundStream(ctx, req, ch)
+        _ = emitted2
         if err != nil {
                 return answer, usage, err
         }
@@ -2540,6 +2669,7 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
         _, err = streamCompletion(ctx, synthReq, ch, nil)
         if err != nil {
+                emitTurnError(ch, err)
                 errs <- err
                 return
         }
