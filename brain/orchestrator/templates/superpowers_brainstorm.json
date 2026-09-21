@@ -1,0 +1,124 @@
+{
+  "//": "SUPERPOWERS BRAINSTORM - ideas-into-designs flow (ported from obra/superpowers",
+  "//1": "brainstorming SKILL.md, MIT (c) 2025 Jesse Vincent, adapted for doomalay v0.42).",
+  "//2": "Classifies the request (spike / bounded / architectural), asks the clarifying",
+  "//3": "questions that matter, explores 2-3 approaches in parallel, presents the design,",
+  "//4": "self-reviews the spec, and ends at the HARD-GATE: nothing is implemented until",
+  "//5": "the human partner approves. Pass the raw feature request as the prompt.",
+  "task_type": "superpowers_brainstorm",
+  "task": "<FILL ME IN: feature request or idea to explore>",
+  "stages": [
+    {
+      "name": "classify",
+      "role": "extractor",
+      "instructions": "Classify the request in the prompt using the superpowers three-path model. Output JSON {\"path\": \"spike|bounded|architectural\", \"reason\": str, \"clarifying_questions\": [str]}. RULES: spike = a feasibility question whose output is an answer, not kept code. bounded = a well-scoped change to a flow that ALREADY exists in the repo (a new flag, small endpoint, one-file fix) - if there is no existing flow to change, it is NOT bounded. architectural = new projects, new subsystems, restructuring how components fit, or interfaces others depend on. When in doubt between two paths, take the HEAVIER one (the ratchet is one-way: hidden complexity upgrades the path mid-task; nothing downgrades). Include 1-5 clarifying questions about purpose, constraints, and success criteria - only the ones that matter, one at a time in the final output. Return ONLY a single JSON object.",
+      "inputs": [
+        "prompt"
+      ],
+      "max_tokens": 1200
+    },
+    {
+      "name": "approach_seeds",
+      "role": "extractor",
+      "instructions": "Seeds for distinct design approaches. Output JSON {\"approaches\": [{\"name\": str, \"angle\": str}]} with EXACTLY 3 entries, each a genuinely different strategy for the request (different architecture, different data flow, or different scope - not three flavors of the same idea). Name them concretely. Return ONLY a single JSON object with the top-level key \"approaches\".",
+      "inputs": [
+        "prompt",
+        "classify"
+      ],
+      "max_tokens": 800
+    },
+    {
+      "name": "approaches",
+      "role": "planner",
+      "instructions": "Propose one distinct approach to the request (the one assigned to you). Output JSON {\"approach\": str, \"architecture\": str, \"pros\": [str], \"cons\": [str], \"risks\": [str], \"yagni_cuts\": [str]}. RULES: YAGNI ruthlessly - remove unnecessary features from the approach and name what you cut. Be concrete about components, data flow, and error handling. Do not merge with other approaches; distinctness is the point.",
+      "fanout": {
+        "over": "approach_seeds.approaches",
+        "max_parallel": 3
+      },
+      "inputs": [
+        "prompt",
+        "classify",
+        "approach_seeds.approaches.{i}"
+      ],
+      "max_tokens": 2500
+    },
+    {
+      "name": "design",
+      "role": "generator",
+      "instructions": "Present the design for the classified path, following superpowers brainstorming. If spike: present the question + probe plan (2-3 sentences) and what will be tried - no design doc. If bounded: a short in-chat design (approach, files touched, testing) of a few sentences to a few short paragraphs. If architectural: a sectioned design - architecture, components, data flow, error handling, testing - each section scaled to its complexity, with a recommendation between the proposed approaches and the reasoning. Lead with the recommended option and why. Every design ends with the approval gate sentence: 'Reply approves the stage actually presented - implementation starts only after you say yes.' Label anything throwaway (spike code) as throwaway. The design doc for the architectural path is saved to docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md (relative to the session workspace).",
+      "inputs": [
+        "prompt",
+        "classify",
+        "approaches.*"
+      ],
+      "max_tokens": 7000
+    },
+    {
+      "name": "spec_review",
+      "role": "reviewer",
+      "instructions": "Self-review the design/spec with fresh eyes, superpowers style. Output bulleted findings ONLY (no rewrite). Check: (1) Placeholder scan - any 'TBD', 'TODO', incomplete sections, vague requirements? (2) Internal consistency - do sections contradict each other; does the architecture match the feature descriptions? (3) Scope check - focused enough for a single implementation plan, or does it need decomposition into sub-projects? (4) Ambiguity check - could any requirement be interpreted two different ways? (5) Intent check - does the design preserve the user's intended outcome, constraints, success criteria; are assumptions separated from what they said? (6) HARD-GATE check - does the output actually STOP at approval (no implementation steps started)?",
+      "inputs": [
+        "body"
+      ],
+      "max_tokens": 3000
+    },
+    {
+      "name": "revise",
+      "role": "transformer",
+      "instructions": "Apply every spec_review finding inline and return the FULL revised design/spec. Fix placeholders, contradictions, ambiguities, scope issues. Keep the approval gate at the end. If the path is architectural, the final section states the file path the spec will be saved to (docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md) and the next step: the writing-plans flow (superpowers_plan template). Do not add new unrequested features while fixing.",
+      "inputs": [
+        "body",
+        "spec_review"
+      ],
+      "max_tokens": 8000
+    },
+    {
+      "name": "verify",
+      "role": "verifier",
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY of: the output implements code instead of presenting a design; no approval gate before implementation; path classification is missing or obviously wrong (new project labeled bounded); placeholders ('TBD', 'TODO') remain; approaches were not explored for the architectural path. Otherwise pass=true.",
+      "inputs": [
+        "body"
+      ],
+      "max_tokens": 1500
+    }
+  ],
+  "output_rules": {
+    "format": "markdown",
+    "required_sections": [
+      "Clarifying questions",
+      "Design"
+    ],
+    "banned_phrases": [
+      "obviously",
+      "as we discussed",
+      "best practice"
+    ],
+    "tone": "collaborative, one question at a time, approval-gated"
+  },
+  "judge_config": {
+    "rules": [
+      {
+        "type": "min_words",
+        "value": 200
+      },
+      {
+        "type": "section_present",
+        "value": "Design"
+      },
+      {
+        "type": "no_banned_phrases",
+        "value": [
+          "obviously",
+          "as we discussed"
+        ]
+      }
+    ],
+    "plugins": [],
+    "llm_judges": [
+      "Does the output stop at the approval gate (no implementation code or scaffolding started) as superpowers brainstorming requires?",
+      "Are clarifying questions focused on purpose, constraints, and success criteria rather than trivial details?"
+    ]
+  },
+  "max_rounds": 2,
+  "committee_size": 1
+}

@@ -1,0 +1,129 @@
+{
+  "//": "SUPERPOWERS PLAN - the writing-plans flow (ported from obra/superpowers",
+  "//1": "writing-plans SKILL.md, MIT (c) 2025 Jesse Vincent, adapted for doomalay v0.42).",
+  "//2": "Turns an approved spec into a bite-sized implementation plan: header (Goal/",
+  "//3": "Architecture/Tech Stack/Spec) + Global Constraints + Review Focus + Task N",
+  "//4": "sections with checkbox steps in RED-GREEN order, actual code in every step",
+  "//5": "(NO PLACEHOLDERS), then self-review and the execution-method handoff.",
+  "//6": "Pass the spec or requirements as the prompt.",
+  "task_type": "superpowers_plan",
+  "task": "<FILL ME IN: spec or requirements to plan>",
+  "stages": [
+    {
+      "name": "tasks",
+      "role": "extractor",
+      "inputs": [
+        "prompt"
+      ],
+      "instructions": "Decompose the spec into bite-sized tasks. Output JSON {\"tasks\": [{\"name\": str, \"files\": [{\"action\": \"create|modify|test\", \"path\": str}], \"interfaces\": {\"consumes\": [str], \"produces\": [str]}, \"test_command\": str, \"steps\": [{\"step\": str, \"detail\": str}]}]}. RULES: a task is the smallest unit that carries its own test cycle and is worth a fresh reviewer's gate; fold setup/config/scaffolding/docs into the task whose deliverable needs them; split only where a reviewer could reject one task while approving its neighbor. Steps are ONE ACTION each (2-5 minutes): write the failing test / run it to see it fail / implement minimal code / run tests / commit. Interface blocks carry exact signatures and names - a task's implementer sees only their own task; this block is how they learn what neighboring tasks use. Return ONLY a single JSON object with the top-level key \"tasks\".",
+      "max_tokens": 6000
+    },
+    {
+      "name": "constraints",
+      "role": "extractor",
+      "inputs": [
+        "prompt"
+      ],
+      "instructions": "Extract the spec's project-wide requirements. Output JSON {\"global_constraints\": [str], \"review_focus\": [str]}. global_constraints: version floors, dependency limits, naming/copy rules, platform requirements - ONE LINE EACH, exact values copied VERBATIM from the spec; every task implicitly includes them. review_focus: the five input classes or failure modes the spec implies but no task's tests exercise that are most likely to bite a person using this software - one line each, naming the input/condition and the behavior a reasonable person would expect, most likely first. The spec is a vision document: its silence on an input is not permission for that input to break the program. An empty review_focus means you checked and found none, not that you skipped the check.",
+      "max_tokens": 1500
+    },
+    {
+      "name": "draft_plan",
+      "role": "generator",
+      "inputs": [
+        "prompt",
+        "tasks",
+        "constraints"
+      ],
+      "instructions": "Write the full implementation plan document. Start with the EXACT header: '# [Feature Name] Implementation Plan' then the agentic-workers note ('> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-sub-agent-driven-development (recommended) or superpowers-executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.') then '**Goal:**', '**Architecture:**' (2-3 sentences), '**Tech Stack:**', '**Spec:**' (path), '## Global Constraints' (from the constraints input, verbatim), '## Review Focus' (from the constraints input, verbatim). Then one '### Task N: [Component Name]' section per task with **Files:**, **Interfaces:** (Consumes/Produces), and checkbox steps in RED-GREEN order - each code step contains the ACTUAL test code and implementation code, each run step contains the command plus 'Expected:' line. ABSOLUTE RULE - no placeholders: never write 'TBD', 'TODO', 'implement later', 'add appropriate error handling', 'write tests for the above' without the actual test code, or 'similar to Task N' (repeat the code - the engineer may read tasks out of order). Steps that describe what to do without showing how are plan failures.",
+      "max_tokens": 16000
+    },
+    {
+      "name": "plan_review",
+      "role": "reviewer",
+      "inputs": [
+        "body",
+        "tasks",
+        "constraints"
+      ],
+      "instructions": "Self-review the plan against the spec with fresh eyes - a bulleted findings list, no rewrite. Check: (1) Spec coverage - can you point to a task for every spec section/requirement? List gaps. (2) Placeholder scan - any TBD/TODO/'add appropriate X'/'similar to Task N' patterns, code steps without code? (3) Type consistency - do types, method signatures, and property names in later tasks match what earlier tasks define (clearLayers() vs clearFullLayers() is a bug)? (4) Review Focus - for each input class in review_focus, is there a task whose tests exercise it; is the section empty-but-checked or just missing? (5) Task shape - one action per step, RED-GREEN order, test-first, commit steps present.",
+      "max_tokens": 4000
+    },
+    {
+      "name": "revise",
+      "role": "transformer",
+      "inputs": [
+        "body",
+        "plan_review"
+      ],
+      "instructions": "Apply every plan_review finding and return the FULL revised plan. Fix placeholders with actual code, add tasks for uncovered spec requirements, reconcile interface names, add review-focus tests to the owning tasks. Do not soften or drop findings.",
+      "max_tokens": 18000
+    },
+    {
+      "name": "handoff",
+      "role": "transformer",
+      "inputs": [
+        "body"
+      ],
+      "instructions": "Append the Execution Handoff section to the plan and return the complete document. The section says the plan is complete and saved to 'docs/superpowers/plans/<filename>.md' (relative to the session workspace) and presents the two execution methods exactly: '**Sub-agent-driven** - A fresh sub-agent implements each task and a fresh reviewer checks it before the next one starts, then a whole-branch review at the end. Most thorough; costs a fresh context per task and per review.' and '**Native** - I implement every task myself in this session, the way this harness runs work, then one fresh reviewer on the most capable model checks the whole branch. Cheapest and fastest; no independent review until the end. Runs well with a mid-tier session model, since the plan carries the design.' Then one recommendation line with a concrete reason from the plan (how much the tasks depend on each other's interfaces, how many there are, what a shipped mistake would cost), ending with the question: which approach should we use? Wait for the human partner's choice - the plan is not executed until they pick.",
+      "max_tokens": 18000
+    },
+    {
+      "name": "verify",
+      "role": "verifier",
+      "inputs": [
+        "body"
+      ],
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY of: placeholder patterns remain (TBD, TODO, 'implement later', code-free code steps, 'similar to Task N'); tasks lack test-first RED-GREEN steps; Interfaces blocks missing exact signatures; no Global Constraints or Review Focus section; no execution-method handoff with the two options; a checkbox syntax missing on steps. Otherwise pass=true.",
+      "max_tokens": 2000
+    }
+  ],
+  "output_rules": {
+    "format": "markdown",
+    "required_sections": [
+      "Global Constraints",
+      "Review Focus",
+      "Execution Handoff"
+    ],
+    "banned_phrases": [
+      "TBD",
+      "implement later",
+      "add appropriate error handling",
+      "fill in details",
+      "Similar to Task"
+    ],
+    "tone": "imperative, exact-values, zero-context-engineer readable"
+  },
+  "judge_config": {
+    "rules": [
+      {
+        "type": "min_words",
+        "value": 600
+      },
+      {
+        "type": "section_present",
+        "value": "Global Constraints"
+      },
+      {
+        "type": "section_present",
+        "value": "Review Focus"
+      },
+      {
+        "type": "no_banned_phrases",
+        "value": [
+          "TBD",
+          "implement later",
+          "add appropriate error handling",
+          "fill in details"
+        ]
+      }
+    ],
+    "plugins": [],
+    "llm_judges": [
+      "Does every code step contain actual code the engineer could run, with no placeholder text?",
+      "Do the plan's tasks follow test-first (RED-GREEN) ordering with an Expected: line on every run step?"
+    ]
+  },
+  "max_rounds": 3,
+  "committee_size": 1
+}

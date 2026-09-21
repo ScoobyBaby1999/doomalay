@@ -1,0 +1,106 @@
+{
+  "//": "SUPERPOWERS DEBUG - systematic-debugging, the four phases (ported from",
+  "//1": "obra/superpowers systematic-debugging SKILL.md, MIT (c) 2025 Jesse Vincent,",
+  "//2": "adapted for doomalay v0.42). Phase 1 root-cause investigation (read errors,",
+  "//3": "reproduce, check recent changes, evidence at every component boundary) ->",
+  "//4": "Phase 2 pattern analysis (working examples, differences) -> Phase 3 single",
+  "//5": "hypothesis + minimal test -> Phase 4 failing-test fix. NO FIXES WITHOUT ROOT",
+  "//6": "CAUSE INVESTIGATION FIRST. Pass the bug report / error / failing test as the",
+  "//7": "prompt.",
+  "task_type": "superpowers_debug",
+  "task": "<FILL ME IN: bug, test failure, or unexpected behavior>",
+  "stages": [
+    {
+      "name": "phase1_root_cause",
+      "role": "reviewer",
+      "inputs": [
+        "prompt"
+      ],
+      "instructions": "PHASE 1 - ROOT CAUSE INVESTIGATION, before ANY fix is proposed. Bulleted findings with evidence citations only. Work through: (1) Read the error messages COMPLETELY - stack traces, line numbers, error codes; the exact solution is often in them. (2) Reproduce consistently - exact steps, does it happen every time; if not reproducible, gather more data, do not guess. (3) Check recent changes - git diff, recent commits, new dependencies, config changes. (4) Multi-component systems: gather evidence at EVERY component boundary BEFORE proposing anything - for each boundary, what data enters, what exits, which environment/config propagates, state at each layer; run once to show WHERE it breaks, then investigate the failing component. (5) Trace data flow backward - where does the bad value originate, what called this with it; keep tracing up to the source (fix at source, not symptom). Every finding cites file:line or the exact command + output. If you catch yourself writing a fix here, STOP - that is Phase 4.",
+      "max_tokens": 6000
+    },
+    {
+      "name": "phase2_pattern",
+      "role": "extractor",
+      "inputs": [
+        "prompt",
+        "phase1_root_cause"
+      ],
+      "instructions": "PHASE 2 - PATTERN ANALYSIS. Output JSON {\"working_examples\": [{\"where\": str, \"what_works\": str}], \"differences\": [str], \"dependencies\": [str]}. Find similar WORKING code in the same codebase; if implementing a pattern, read the reference COMPLETELY (don't skim - every line). List EVERY difference between working and broken, however small - never assume 'that can't matter'. List what the failing path depends on: other components, settings, config, environment, assumptions.",
+      "max_tokens": 2500
+    },
+    {
+      "name": "phase3_hypothesis",
+      "role": "planner",
+      "inputs": [
+        "prompt",
+        "phase1_root_cause",
+        "phase2_pattern"
+      ],
+      "instructions": "PHASE 3 - HYPOTHESIS. Output JSON {\"hypothesis\": str, \"evidence\": str, \"minimal_test\": str, \"predicted_result\": str}. Form ONE hypothesis stated clearly: 'I think <X> is the root cause because <Y>' - specific, not vague; write it down. The minimal test is the SMALLEST possible change to test it - one variable at a time; if you need to change multiple things at once, you have multiple hypotheses. predicted_result says what observing it proves or refutes. If you don't know, say 'I don't understand <X>' - never pretend.",
+      "max_tokens": 2000
+    },
+    {
+      "name": "phase4_fix",
+      "role": "generator",
+      "inputs": [
+        "prompt",
+        "phase1_root_cause",
+        "phase3_hypothesis"
+      ],
+      "instructions": "PHASE 4 - IMPLEMENTATION. Fix the ROOT CAUSE, not the symptom: (1) create the simplest failing test case reproducing the bug (it must fail before the fix, pass after - use the TDD flow); (2) implement the SINGLE fix addressing the identified root cause - no 'while I'm here' improvements, no bundled refactoring, one change at a time; (3) verify: the covering test passes, no other tests broke, the original symptom is actually resolved. IF THE FIX DOES NOT WORK: STOP - count your attempts; after fewer than 3, return to Phase 1 with the new information; at 3 or more failed fixes, the pattern indicates an ARCHITECTURAL problem (each fix reveals new coupling elsewhere / requires massive refactoring / creates new symptoms) - say so explicitly and question the fundamentals instead of attempting fix #4.",
+      "max_tokens": 6000
+    },
+    {
+      "name": "verify",
+      "role": "verifier",
+      "inputs": [
+        "body"
+      ],
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY of: a fix was proposed before root-cause evidence (Phase 1 skipped or thin); more than one variable changed in the hypothesis test; the fix has no failing-test-first reproduction; the fix addresses a symptom rather than the traced source; 'while I'm here' changes bundled in; 3+ fix attempts continued without an architecture question. Otherwise pass=true.",
+      "max_tokens": 1500
+    }
+  ],
+  "output_rules": {
+    "format": "markdown",
+    "required_sections": [
+      "Phase 1: Root Cause",
+      "Phase 3: Hypothesis",
+      "Phase 4: Fix"
+    ],
+    "banned_phrases": [
+      "it's probably",
+      "let me just try",
+      "quick fix for now",
+      "one more fix attempt"
+    ],
+    "tone": "evidence-cited, scientific-method, one-variable-at-a-time"
+  },
+  "judge_config": {
+    "rules": [
+      {
+        "type": "min_words",
+        "value": 300
+      },
+      {
+        "type": "section_present",
+        "value": "Phase 1: Root Cause"
+      },
+      {
+        "type": "no_banned_phrases",
+        "value": [
+          "it's probably",
+          "let me just try",
+          "quick fix for now"
+        ]
+      }
+    ],
+    "plugins": [],
+    "llm_judges": [
+      "Does the fix address the traced root cause at its source rather than a downstream symptom?",
+      "Was exactly one variable changed per hypothesis test, with the hypothesis stated before testing?"
+    ]
+  },
+  "max_rounds": 3,
+  "committee_size": 1
+}
