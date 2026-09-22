@@ -128,6 +128,8 @@
     // the fmt slot rows built through the shared builder (scope "" —
     // the per-chat rows are wired by bridgeFmtChatRows / tweaks.js)
     wireFmtEditors(root);
+    // v0.45 ITEM 5: wire the collapsed color rows (expand/collapse + per-row reset)
+    wireColorRows(root);
   }
 
   // ── the shared fmt row registry + wiring (tweaks.js reuses the rows) ─
@@ -313,17 +315,90 @@
     Settings.setState(patch);
   }
 
+  // ── v0.45 ITEM 5: colorRowCollapsed — a color row that shows just the
+  //    [name] [pattern banner preview] [▶ expand] [↺ per-row reset] by
+  //    default; clicking the row expands the full GradientUI editor below.
+  //    onReset clears ONLY this row's override (no global wipe). The
+  //    fmt-slot wiring picks up the data-fmt-slot attr inside the expanded
+  //    editor the same way the old flat row did.
+  function colorRowCollapsed(opts) {
+    var pfx = opts.pfx;
+    var label = opts.label;
+    var spec = opts.spec || { colors: ['#000000'], dir: 'auto' };
+    var editorHtml = opts.editorHtml || '';
+    var onReset = opts.onReset;
+    var colors = (spec && spec.colors) ? spec.colors : ['#000000'];
+    // the banner: a thin gradient strip previewing the spec's paint
+    var bannerCss = 'background:linear-gradient(135deg,';
+    if (colors.length === 1) {
+      bannerCss += colors[0] + ',' + colors[0];
+    } else {
+      bannerCss += colors.join(',');
+    }
+    bannerCss += ');';
+    var fmtAttr = (opts.fmtSlot ? ' data-fmt-slot="' + opts.fmtSlot + '"' : '') +
+      (opts.fmtScope ? ' data-fmt-scope="' + opts.fmtScope + '"' : '');
+    return '<div class="color-row-collapsed" data-color-row="' + pfx + '"' + fmtAttr + '>' +
+      '<div class="color-row-head" data-color-toggle="' + pfx + '">' +
+        '<span class="color-row-name">' + label + '</span>' +
+        '<span class="color-row-banner" style="' + bannerCss + '"></span>' +
+        '<button class="color-row-reset" data-color-reset="' + pfx + '" title="reset this row" aria-label="reset this row">↺</button>' +
+        '<span class="color-row-arrow">▶</span>' +
+      '</div>' +
+      '<div class="color-row-body" data-color-body="' + pfx + '">' + editorHtml + '</div>' +
+    '</div>';
+  }
+
+  // wireColorRows — click handlers for the collapsed color rows (expand/
+  //    collapse + per-row reset). Called once after the settings page
+  //    renders (and by tweaks.js on its own root).
+  function wireColorRows(rootEl) {
+    if (!rootEl || !rootEl.querySelectorAll) return;
+    var heads = rootEl.querySelectorAll('[data-color-toggle]');
+    heads.forEach(function (h) {
+      if (h._colorWired) return; h._colorWired = 1;
+      h.addEventListener('click', function (e) {
+        // don't toggle when the reset pill was tapped
+        if (e.target && e.target.closest && e.target.closest('[data-color-reset]')) return;
+        var pfx = h.getAttribute('data-color-toggle');
+        var row = h.closest('.color-row-collapsed');
+        if (row) row.classList.toggle('expanded');
+      });
+    });
+    var resets = rootEl.querySelectorAll('[data-color-reset]');
+    resets.forEach(function (r) {
+      if (r._resetWired) return; r._resetWired = 1;
+      r.addEventListener('click', function (e) {
+        e.stopPropagation();
+        // find the row's onReset via the registry (set when the row was built)
+        var pfx = r.getAttribute('data-color-reset');
+        var fn = rowResetFns[pfx];
+        if (fn) { try { fn(); } catch (err) { console.error('color row reset', err); } }
+      });
+    });
+  }
+  var rowResetFns = {};   // pfx → onReset closure (set by colorRowCollapsed callers)
+
   function gridColorRow(key, label, spec) {
     var G = window.GradientUI;
     var pfx = 'gc-' + key;             // e.g. gc-bg / gc-lineColor
     queueEditorWire(pfx + '-gr', spec,
       function () { writeGridKey(key, spec); },
       function () { writeGridKey(key, spec); Settings.rerender(); });
-    return '<div class="setting-row">' +
-      '<label>' + label + '</label>' +
-      (G ? G.editor(pfx, spec, { noTex: true }) :
-        '<span class="color-hex">' + String((spec.colors || [])[0] || '') + '</span>') +
-      '</div>';
+    // v0.45 ITEM 5: collapsed color row — banner + expand arrow + per-row reset
+    var onReset = function () {
+      var defaults = { bg: '#0a0a0b', lineColor: '#131318',
+        dotColor: '#2e2e3a', originColor: '#4a4a5e' };
+      writeGridKey(key, defaults[key]);
+      Settings.rerender();
+    };
+    rowResetFns[pfx] = onReset;
+    return colorRowCollapsed({
+      pfx: pfx, label: label, spec: spec,
+      editorHtml: (G ? G.editor(pfx, spec, { noTex: true }) :
+        '<span class="color-hex">' + String((spec.colors || [])[0] || '') + '</span>'),
+      onReset: onReset
+    });
   }
 
   function gridSection() {
@@ -404,12 +479,26 @@
     var editorHtml = (G && G.editor)
       ? G.editor('fmt-' + key, spec, { noTex: true })
       : '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>';
-    return '<div class="setting-row" data-fmt-slot="' + key + '"' +
-      (scope ? ' data-fmt-scope="' + scope + '"' : '') + '>' +
-      '<label>' + label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
-      (customized ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· this chat</span>' : '') + '</label>' +
-      '<div class="fmt-grad-editor">' + editorHtml + '</div>' +
-      '</div>';
+    var onReset = function () {
+      if (scope === 'chat' && window.ChatTweaks) {
+        window.ChatTweaks.setFmtSlot(key, null);
+      } else {
+        var s = Settings.getState();
+        var ov = Object.assign({}, s.fmtOverrides || {});
+        delete ov[key];
+        Settings.setState({ fmtOverrides: ov });
+        Settings.rerender();
+      }
+    };
+    rowResetFns['fmt-' + key] = onReset;
+    // v0.45 ITEM 5: collapsed color row with per-row reset
+    return colorRowCollapsed({
+      pfx: 'fmt-' + key, label: label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
+        (customized ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· this chat</span>' : ''),
+      spec: spec, editorHtml: editorHtml,
+      fmtSlot: key, fmtScope: scope,
+      onReset: onReset
+    });
   }
 
   // (v0.44) — the old global 'input' listeners for the fmt color inputs
@@ -492,11 +581,27 @@
       queueEditorWire(pfx + '-gr', spec,
         function () { writeThemeVar(c.var, spec); },
         function () { writeThemeVar(c.var, spec); Settings.rerender(); });
-      rows += '<div class="setting-row">' +
-        '<label>' + c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') + '</label>' +
-        (G ? G.editor(pfx, spec, { noTex: true }) :
-          '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>') +
-        '</div>';
+      var editorHtml = (G ? G.editor(pfx, spec, { noTex: true }) :
+        '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>');
+      var onReset = function () {
+        var sR = Settings.getState();
+        var curR = sR.theme || 'midnight';
+        var allR = Object.assign({}, sR.themeOverrides || {});
+        if (allR[curR]) {
+          delete allR[curR][c.var];
+          if (!Object.keys(allR[curR]).length) delete allR[curR];
+        }
+        Settings.setState({ themeOverrides: allR });
+        Settings.rerender();
+      };
+      rowResetFns[pfx] = onReset;
+      // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS var's override)
+      rows += colorRowCollapsed({
+        pfx: pfx,
+        label: c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : ''),
+        spec: spec, editorHtml: editorHtml,
+        onReset: onReset
+      });
     });
     return section('Customize ' + (t.label || 'Theme'),
       '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — any var can stay a solid or grow into a gradient (up to 15 colors, any direction, the patterns included). Changes ride on top of the palette and persist for this theme only (each theme keeps its own customizations). ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
@@ -547,6 +652,7 @@
     title: 'Sizing',
     icon: '📐',
     render: function (getState, setState) {
+      var s = getState();
       return (
         section('Text Size', '' +
           '<p class="hint">Every piece of text in the app scales through one of three sizes — no more 30-variable tweakfests.</p>' +
@@ -557,6 +663,16 @@
         section('Grid Size', '' +
           rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5,
             'Scales the grid spacing. 1× = default (48px). 5× = largest (240px), fewer squares.')
+        ) +
+        // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
+        section('Grid Effects', '' +
+          '<p class="hint">Quick tweaks for the canvas grid: hide the lines or dots, scatter them off-grid, vary their size, or rotate them. Scatter, size and rotation use a stable per-cell hash (the same cell always looks the same — no shimmer on pan/zoom).</p>' +
+          toggleRow('hideGridLines', 'Hide grid lines', s.hideGridLines) +
+          toggleRow('hideDots', 'Hide dots', s.hideDots) +
+          gridSlider('gridScatter', 'Scatter', s.gridScatter || 0, '0 = on-grid · 100 = up to ±60px displacement.') +
+          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '0 = uniform · 100 = ±50% radius/length.') +
+          gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '0 = axis-aligned · 100 = up to ±60°.') +
+          '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )
       );
     }
@@ -636,6 +752,13 @@
       });
       // v0.26: re-render — the inputs must show the theme's palette NOW.
       Settings.rerender();
+    } else if (d.action === 'grid-effects-reset') {
+      // v0.45 ITEM 6: reset just the grid effects (hide/scatter/size/rotation)
+      Settings.setState({
+        hideGridLines: false, hideDots: false,
+        gridScatter: 0, gridSizeVariation: 0, gridRotation: 0
+      });
+      Settings.rerender();
     }
   });
 
@@ -683,6 +806,34 @@
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
       '</div>';
   }
+  // v0.45 ITEM 6: a toggle row (switch) for the hide-lines/hide-dots grid options.
+  function toggleRow(key, label, checked) {
+    return '<div class="setting-row" style="align-items:center;justify-content:space-between">' +
+      '<label>' + label + '</label>' +
+      '<label class="app-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">' +
+        '<input type="checkbox" data-setting-key="' + key + '" data-setting-event="change" ' + (checked ? 'checked' : '') +
+        ' style="opacity:0;width:0;height:0;position:absolute">' +
+        '<span class="app-switch-track" style="position:absolute;inset:0;background:' + (checked ? 'var(--accent)' : 'var(--surface-3)') +
+        ';border-radius:12px;transition:background 0.15s"></span>' +
+        '<span class="app-switch-thumb" style="position:absolute;top:2px;left:' + (checked ? '20px' : '2px') +
+        ';width:20px;height:20px;background:#fff;border-radius:50%;transition:left 0.15s"></span>' +
+      '</label>' +
+    '</div>';
+  }
+  // v0.45 ITEM 6: a 0-100 slider for the grid effects (scatter/size/rotation).
+  function gridSlider(key, label, value, hint) {
+    return '<div class="setting-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+      '<label>' + label + '</label>' +
+      '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);font-variant-numeric:tabular-nums" ' +
+      'data-range-display="' + key + '" data-suffix="">' + value + '</span>' +
+      '</div>' +
+      '<input type="range" class="app-range" data-setting-key="' + key + '" data-setting-event="input" ' +
+      'data-setting-transform="number" min="0" max="100" step="1" value="' + value + '" ' +
+      'style="accent-color:var(--accent);height:32px;cursor:pointer">' +
+      (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
+      '</div>';
+  }
 
   // v0.30: the shared builders — the tweaks view (tweaks.js) renders the
   // same controls over the per-chat store: same UI, same method, no copy.
@@ -691,6 +842,8 @@
     schemeChatSwatches: schemeChatSwatches,
     fmtColorRow: fmtColorRowUI,
     sizeSlider: sizeSliderUI,
+    colorRowCollapsed: colorRowCollapsed,
+    wireColorRows: wireColorRows,
     // v0.44: wire the shared fmt editor rows after a host view inserts
     // them — the per-chat tweaks view calls this on ITS root (scope
     // "chat" rows route into ChatTweaks.setFmtSlot and rebuild locally);

@@ -125,6 +125,10 @@
     // retrieve it later via `panel.currentContext` — e.g. to know which
     // icon the panel is showing for. `onClose` fires when the panel closes.
     open({ title, subtitle, avatarHTML, bodyHTML, context, onClose }) {
+      // v0.45 ITEM 1: clear any lingering close state so the panel is
+      // fully interactable again the instant it re-opens.
+      this.panelEl.classList.remove('closing');
+      this.panelEl.style.pointerEvents = '';
       // A fresh root render discards any open views (their content was
       // never the source of truth — the caller is re-rendering anyway).
       this._teardownViews();
@@ -151,6 +155,12 @@
     }
 
     close() {
+      // v0.45 ITEM 1: mark closing + drop pointer-events immediately so
+      // the canvas is live the instant close begins (the slide-away
+      // animation runs on top, non-blocking). Cleared on next open()
+      // and at the end of gesture.js's slide animations.
+      this.panelEl.classList.add('closing');
+      this.panelEl.style.pointerEvents = 'none';
       // v0.18: remember where this chat's panel was sitting (full vs
       // default) BEFORE tearing it down — the next open restores it.
       this._syncPosNow();

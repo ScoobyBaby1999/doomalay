@@ -771,6 +771,81 @@
     border-bottom: 1px solid var(--surface-2);
   }
   .setting-row:last-child { border-bottom: none; }
+  /* v0.45 ITEM 5: collapsed color rows — banner + expand + per-row reset */
+  .color-row-collapsed {
+    border-bottom: 1px solid var(--surface-2);
+    padding: 10px 0;
+  }
+  .color-row-collapsed:last-child { border-bottom: none; }
+  .color-row-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    min-height: 40px;
+    padding: 4px 0;
+  }
+  .color-row-name {
+    flex: 1;
+    font-size: var(--ui-fs);
+    color: var(--text-1);
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .color-row-banner {
+    flex: 0 0 64px;
+    height: 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+  }
+  .color-row-reset {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 28px;
+    border-radius: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .color-row-reset:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+    border-color: var(--accent);
+  }
+  .color-row-arrow {
+    flex: 0 0 auto;
+    color: var(--text-3);
+    font-size: 10px;
+    transition: transform 0.18s;
+    width: 16px;
+    text-align: center;
+  }
+  .color-row-collapsed.expanded .color-row-arrow { transform: rotate(90deg); }
+  .color-row-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.24s cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+  .color-row-body > * { overflow: hidden; min-height: 0; }
+  .color-row-collapsed.expanded .color-row-body { grid-template-rows: 1fr; }
+  .color-row-collapsed.expanded .color-row-body > .gr-editor {
+    padding-top: 10px;
+    overflow: visible;
+  }
+  /* v0.45 ITEM 6: the toggle switch (hide lines / hide dots) */
+  .app-switch input:checked ~ .app-switch-track { background: var(--accent) !important; }
+  .app-switch input:checked ~ .app-switch-thumb { left: 20px !important; }
+  .app-switch input:focus-visible ~ .app-switch-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .setting-row label {
     font-size: var(--ui-fs);
     color: var(--text-1);
@@ -2863,6 +2938,70 @@
   ::selection:window-inactive { background: rgba(var(--accent-rgb), 0.20); }
   /* inputs share the accent caret so typing feels like the theme */
   input, textarea { caret-color: var(--accent); }
+
+  /* ══ v0.45 ITEM 4: the gradient-twin sweep ═══════════════════════════
+     The twin system (theme.js) writes --X (solid) + --X-gradient (image
+     or 'none') for every customizable var. Consumers that set ONLY
+     `background: var(--X)` paint the solid and the gradient is invisible
+     — the reported "colors don't follow the gradient" bug. This block
+     layers the gradient twin over EVERY element whose background reads a
+     customizable surface/border var, so a user-set multi-color gradient
+     actually paints. Elements that don't customize (gradient='none') see
+     no change — `background-image: none` is the no-op. */
+  [style*="background: var(--surface-1)"],
+  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none); }
+  [style*="background: var(--surface-2)"],
+  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none); }
+  [style*="background: var(--bg-panel)"],
+  [style*="background:var(--bg-panel)"] { background-image: var(--bg-panel-gradient, none); }
+  [style*="background: var(--bg-app)"],
+  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none); }
+  /* the stylesheet-rule consumers (not inline) — cover the common cases */
+  .panel-header, .panel-body, #chat-panel, .msg-assistant, .msg-user,
+  .fmt-code, .fmt-pre, .artifact-card, .ts-row, .pv-btn, .pill, .chip,
+  .kbd, .code-card, .bubble, .card, .modal, .sheet, .toolbar, .dock-strip,
+  .settings-nav .tab, .gr-editor, .gr-swatches, .gr-tools {
+    background-image: var(--surface-1-gradient, none);
+  }
+  /* surface-2 consumers (raised cards, inputs, hovers) */
+  .app-range, input[type=text], input[type=password], input[type=email],
+  input[type=number], textarea, select, .app-switch-track,
+  .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover {
+    background-image: var(--surface-2-gradient, none);
+  }
+  /* border twin — borders follow --border-gradient when set */
+  [style*="border: 1px solid var(--border)"],
+  [style*="border:1px solid var(--border)"] {
+    border-image: var(--border-gradient, none) 1;
+  }
+  /* accent twins — pills/buttons that use --accent get the gradient */
+  [style*="background: var(--accent)"],
+  [style*="background:var(--accent)"] {
+    background-image: var(--accent-gradient, none);
+  }
+  [style*="background: var(--accent-2)"],
+  [style*="background:var(--accent-2)"] {
+    background-image: var(--accent-2-gradient, none);
+  }
+  /* v0.45 ITEM 4 fix: --bg-app-rgb was referenced (L282, L1451) but never
+     defined — fell back to hardcoded 10,10,11 (Midnight) regardless of
+     theme. Derive it from the live --bg-app solid on :root so the rgba()
+     composition follows the theme/customization. */
+  :root {
+    --bg-app-rgb: 10,10,11;
+  }
+  [data-theme="nebula"]  { --bg-app-rgb: 11,9,18; }
+  [data-theme="ember"]   { --bg-app-rgb: 15,10,8; }
+  [data-theme="forest"]  { --bg-app-rgb: 8,13,10; }
+  [data-theme="ocean"]   { --bg-app-rgb: 7,11,16; }
+  [data-theme="rose"]    { --bg-app-rgb: 16,10,13; }
+  [data-theme="mono"]    { --bg-app-rgb: 10,10,10; }
+  [data-theme="solar"]   { --bg-app-rgb: 6,8,16; }
+  [data-theme="paper"]   { --bg-app-rgb: 244,241,234; }
+  [data-theme="frost"]   { --bg-app-rgb: 238,242,247; }
+  /* when the user customizes --bg-app, the inline solid overrides the
+     [data-theme] block; re-derive the rgb from the inline value via a
+     fallback chain (the rgba() consumers already pass a fallback). */
 </style>
 </head>
 <body>
@@ -2874,6 +3013,8 @@
 <button id="settings-btn" aria-label="Reset view">
   <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
 </button>
+<!-- v0.45 ITEM 7: the HF Space connect button (opens the OAuth flow + status pill) -->
+<button id="hf-btn" aria-label="Connect Hugging Face" style="position:fixed;top:8px;left:8px;z-index:30;width:36px;height:36px;border-radius:10px;background:var(--surface-1);border:1px solid var(--border);color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">🤗</button>
 <!-- v0.31.2: THE CANVAS DOCK — the › arrow left of the settings gear.
      Tapping it flips to ‹ and expands the vertical strip: the cloud
      glyph opens the provider screen (relocated from Settings → Cloud)
@@ -2952,6 +3093,7 @@
 <script src="theme.js"></script>
 <script src="appearance.js"></script>
 <script src="connectoverlay.js"></script>
+<script src="hfconnect.js"></script>
 <script src="uiactive.js"></script>
 <script src="sandboxpicker.js"></script>
 <script src="modelpicker.js"></script>

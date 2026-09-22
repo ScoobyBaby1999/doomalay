@@ -2080,7 +2080,7 @@
       runWSTurn: function (text) {
         var opts = {
           effort: state.effort,
-          web_search: !!state.webSearch,
+          web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
           deep_research: !!state.deepResearch,
           model: state.model,
           provider: state.provider
@@ -2286,7 +2286,7 @@
       messages: history,
       signal: abort.signal,
       sessionId: state.sessionId || '', // v0.22: file tools save into this chat
-      tools: !!state.webSearch && !state.deepResearch,
+      tools: !state.deepResearch,  // v0.45 ITEM 2: web search default-on — only a template (deep research) suppresses it
       // v0.26: the PM effort toggle (on/off → chat_template_kwargs.thinking).
       effort: state.effort || '',
       // v0.22: throttled re-render (the WS path already used scheduleUpdate;
@@ -2440,7 +2440,7 @@
   function renderToolbar(bar, state, levels, icon, bodyEl) {
     bar.innerHTML = '';
     state._effortLevels = levels || null; // v0.44: the chip's re-render reuses the ladder
-    var anyActive = state.webSearch || state.deepResearch || !!state.template;
+    var anyActive = state.deepResearch || !!state.template;
 
     if (levels && levels.length > 0) {
       // v0.26: snap the persisted level into THIS model's ladder — the
@@ -2465,19 +2465,11 @@
       bar.appendChild(eb);
     }
 
-    var wb = document.createElement('button');
-    wb.textContent = '⌕ web';
-    wb.style.cssText = capBtnStyle(state.webSearch, 'var(--accent-2)');
-    wb.addEventListener('click', function () {
-      state.webSearch = !state.webSearch;
-      if (state.webSearch) {
-        state.deepResearch = false;
-        state.template = null; // v0.44: web + template are composer modes — one at a time
-      }
-      persistCaps(state, icon);
-      renderToolbar(bar, state, levels, icon, bodyEl);
-    });
-    bar.appendChild(wb);
+    // v0.45 ITEM 2: the `⌕ web` pill is REMOVED — web search is now
+    // default-on and used dynamically when needed (the engine includes
+    // web_search/fetch tools on every turn unless a template owns the
+    // composer). See chatpanel.js ~L2289 (tools gate) + brain/agent.py
+    // default flip.
 
     // v0.44 THE TEMPLATE PILL (user spec: "change the deep research pill
     // entirely to a template pill…"): ⌖ deep research became ⧉ template —
@@ -2800,7 +2792,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         effort: state.effort,
-        web_search: !!state.webSearch,
+        web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
         deep_research: !!state.deepResearch,
         // v0.44: the active method template — the WHOLE resolved blob
         // {id, name, brief} so the reload restores it without re-fetching
@@ -2899,7 +2891,7 @@
       model: state.model,
       provider: state.provider,
       effort: state.effort || 'med',
-      web_search: !!state.webSearch,
+      web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
       deep_research: !!state.deepResearch,
       // v0.44: the active method template blob (see persistCaps).
       template: state.template ? JSON.stringify({

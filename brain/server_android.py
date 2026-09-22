@@ -288,7 +288,7 @@ class BrainHandler(BaseHTTPRequestHandler):
                 system_prompt=data.get("system_prompt", ""),
                 effort=data.get("effort", "med"),
                 workspace=data.get("workspace", ""),
-                web_search=data.get("web_search", False),
+                web_search=data.get("web_search", True),  # v0.45 ITEM 2: default-on
                 deep_research=data.get("deep_research", False),
                 mode=data.get("mode", "auto"),
                 history=data.get("history", []),

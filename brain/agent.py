@@ -66,7 +66,7 @@ async def run_turn(
     system_prompt: str = "",
     effort: str = "med",
     workspace: str = "",
-    web_search: bool = False,
+    web_search: bool = True,  # v0.45 ITEM 2: default-on (pill removed)
     deep_research: bool = False,
     mode: str = "auto",
     history: list = None,

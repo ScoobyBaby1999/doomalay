@@ -185,7 +185,7 @@
     // ── THE 0.25s TRANSITION (open rise + class-driven close slide) ──
     // The exact curve the stylesheet used from v0.17 to v0.41 — set
     // inline now that no CSS transform/transition rules exist.
-    var RISE_MS = 250;
+    var RISE_MS = 170;   // v0.45 ITEM 1: faster close slide (250→170ms)
     function riseTo(targetY, freezeVis, after) {
       stopAll();
       var fromY = curY;                       // stopAll froze a mid-flight sheet at its visual spot
@@ -366,10 +366,20 @@
     function dismiss(fromY, closeFn) {
       stopAll();
       panelEl.style.transition = 'none';
+      // v0.45 ITEM 1: unblock canvas the INSTANT the fling-close begins.
+      // The scrim loses .open (→ pointer-events:none) + the panel goes
+      // pointer-events:none, so touches pass straight through to the grid
+      // while the sheet finishes its slide-away. .open stays on panelEl
+      // so the class-observer does NOT fire slideClosed() mid-spring
+      // (that would kill this spring via stopAll and hijack the slide).
+      panelEl.classList.add('closing');
+      panelEl.style.pointerEvents = 'none';
+      var scrim = document.getElementById('chat-scrim');
+      if (scrim) scrim.classList.remove('open');
       var x = fromY, target = H;
       var v = Math.max(track.vy * 1000 * 0.5, 900);
       var lastT = performance.now();
-      var stiffness = 260, damping = 2 * Math.sqrt(stiffness);
+      var stiffness = 440, damping = 2 * Math.sqrt(stiffness);   // v0.45 ITEM 1: 260→440 snappier
       function step(now) {
         var dt = Math.min(0.05, (now - lastT) / 1000);
         lastT = now;
@@ -385,6 +395,8 @@
           // events either (panel.close() already read the position).
           currentState = 'default';
           panelEl.classList.remove('panel-full');
+          panelEl.classList.remove('closing');   // v0.45 ITEM 1
+          panelEl.style.pointerEvents = '';       // v0.45 ITEM 1
           measureChrome();
           return;
         }
@@ -456,10 +468,16 @@
     function slideClosed() {
       track.active = false;
       track.bodyStart = null;
+      // v0.45 ITEM 1: class-driven close (scrim tap / ✕) — unblock canvas
+      // immediately so the grid is live while the 0.17s slide runs.
+      panelEl.classList.add('closing');
+      panelEl.style.pointerEvents = 'none';
       riseTo(H, true, function () {
         // silent reset for the next open (same as the dismiss spring's end)
         currentState = 'default';
         panelEl.classList.remove('panel-full');
+        panelEl.classList.remove('closing');   // v0.45 ITEM 1
+        panelEl.style.pointerEvents = '';       // v0.45 ITEM 1
         measureChrome();
       });
     }

@@ -120,33 +120,106 @@
     // value wasn't a real hex). Validate every SOLID fallback before it
     // reaches the canvas; spec stops are validated inside gridPaint.
     const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-    ctx.fillStyle = gridPaint(specs && specs.bg, (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b');
+    // v0.45 ITEM 3: the canvas IS the app background — if the user has
+    // customized `--bg-app` (the "App background" row) with a gradient
+    // spec, paint THAT over the grid bg so the scrollable canvas itself
+    // carries the app background. theme.js exposes the resolved twin via
+    // DoomTheme.appBgSpec(); falls back to the grid bg spec when unset.
+    var appBgSpec = (window.DoomTheme && window.DoomTheme.appBgSpec)
+      ? window.DoomTheme.appBgSpec(window.Settings.getState())
+      : (specs && specs.bg);
+    ctx.fillStyle = gridPaint(appBgSpec, (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b');
     ctx.fillRect(0, 0, W, H);
+
+    // v0.45 ITEM 6: grid quick options — read once per redraw.
+    var st = window.Settings.getState();
+    var hideLines = !!st.hideGridLines;
+    var hideDots = !!st.hideDots;
+    var scatter = (typeof st.gridScatter === 'number') ? st.gridScatter : 0;       // 0-100 → up to ~scatter px
+    var sizeVar = (typeof st.gridSizeVariation === 'number') ? st.gridSizeVariation : 0; // 0-100 → ±50%
+    var rotVar = (typeof st.gridRotation === 'number') ? st.gridRotation : 0;      // 0-100 → up to rotVar deg
+    var scatterPx = scatter * 0.6;        // scale factor — 100 → 60px max
+    var sizeFrac = sizeVar / 100 * 0.5;   // 100 → ±50% of base radius
+    var rotDeg = rotVar * 0.6;            // 100 → 60deg max
 
     const scaledGrid = gridSpacing() * scale;
     const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
     const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
 
-    ctx.strokeStyle = gridPaint(specs && specs.lineColor, (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318');
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = startX; x < W; x += scaledGrid) {
-      ctx.moveTo(Math.round(x) + 0.5, 0);
-      ctx.lineTo(Math.round(x) + 0.5, H);
+    // ── v0.45 ITEM 6: stable per-cell hash so jitter is deterministic ──
+    // (the same grid cell always gets the same offset/size/rotation — no
+    // shimmer on pan/zoom repaint). A 32-bit integer hash of (ix, iy).
+    function hashCell(ix, iy) {
+      var h = (ix | 0) * 374761393 + (iy | 0) * 668265263;
+      h = (h ^ (h >>> 13)) * 1274126177;
+      h = h ^ (h >>> 16);
+      // normalize to [0,1)
+      return ((h >>> 0) % 1000000) / 1000000;
     }
-    for (let y = startY; y < H; y += scaledGrid) {
-      ctx.moveTo(0, Math.round(y) + 0.5);
-      ctx.lineTo(W, Math.round(y) + 0.5);
-    }
-    ctx.stroke();
 
-    ctx.fillStyle = gridPaint(specs && specs.dotColor, (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a');
-    const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
-    for (let x = startX; x < W; x += scaledGrid) {
-      for (let y = startY; y < H; y += scaledGrid) {
+    if (!hideLines) {
+      ctx.strokeStyle = gridPaint(specs && specs.lineColor, (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318');
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      var lineIdx = 0;
+      for (let x = startX; x < W; x += scaledGrid) {
+        // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
+        var ix = Math.round((x + offsetX * scale) / scaledGrid);
+        var h1 = hashCell(ix, 0);
+        var dx = scatterPx * (h1 - 0.5) * 2;
+        var rot = rotDeg * (hashCell(ix, 1) - 0.5) * 2;  // radians
+        var lw = 1 * (1 + sizeFrac * (hashCell(ix, 2) - 0.5) * 2);
+        ctx.save();
+        ctx.translate(x + dx, 0);
+        ctx.rotate(rot * Math.PI / 180);
+        ctx.lineWidth = Math.max(0.3, lw);
         ctx.beginPath();
-        ctx.arc(x, y, dotR, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, H);
+        ctx.stroke();
+        ctx.restore();
+        lineIdx++;
+      }
+      for (let y = startY; y < H; y += scaledGrid) {
+        var iy = Math.round((y + offsetY * scale) / scaledGrid);
+        var h2 = hashCell(0, iy);
+        var dy = scatterPx * (h2 - 0.5) * 2;
+        var rot2 = rotDeg * (hashCell(1, iy) - 0.5) * 2;
+        var lw2 = 1 * (1 + sizeFrac * (hashCell(2, iy) - 0.5) * 2);
+        ctx.save();
+        ctx.translate(0, y + dy);
+        ctx.rotate(rot2 * Math.PI / 180);
+        ctx.lineWidth = Math.max(0.3, lw2);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(W, 0);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    if (!hideDots) {
+      ctx.fillStyle = gridPaint(specs && specs.dotColor, (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a');
+      const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+      for (let x = startX; x < W; x += scaledGrid) {
+        for (let y = startY; y < H; y += scaledGrid) {
+          // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
+          var dix = Math.round((x + offsetX * scale) / scaledGrid);
+          var diy = Math.round((y + offsetY * scale) / scaledGrid);
+          var hd = hashCell(dix, diy);
+          var hd2 = hashCell(dix + 7, diy + 7);
+          var jx = scatterPx * (hd - 0.5) * 2;
+          var jy = scatterPx * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
+          var jr = dotR * (1 + sizeFrac * (hd2 - 0.5) * 2);
+          var jrot = rotDeg * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
+          ctx.save();
+          ctx.translate(x + jx, y + jy);
+          if (jrot) ctx.rotate(jrot * Math.PI / 180);
+          ctx.beginPath();
+          ctx.arc(0, 0, Math.max(0.3, jr), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       }
     }
 
@@ -696,6 +769,11 @@
 
   function isInsideUI(target) {
     if (!target) return false;
+    // v0.45 ITEM 1: a closing panel never blocks canvas touches — the
+    // sheet is sliding away; touches must reach the grid immediately.
+    // (Belt-and-suspenders: pointer-events:none on the closing panel
+    // already routes touches past it, but this guarantees it.)
+    if (panel.panelEl.classList.contains('closing')) return false;
     // ConnectOverlay covers the full screen (inset:0) while open — any
     // touch during that state is a UI touch. v0.10.1 MISSING THIS CHECK
     // WAS THE "nothing is interactable, not even the X" BUG: touches in
@@ -731,6 +809,11 @@
     // checks the strip's buttons die the same death on Android.
     if (dockStripEl && dockStripEl.contains(target)) return true;
     if (dockToggleEl && dockToggleEl.contains(target)) return true;
+    // v0.45 ITEM 7: the HF connect button + its status pill
+    var hfBtn = document.getElementById('hf-btn');
+    if (hfBtn && hfBtn.contains(target)) return true;
+    var hfPill = document.getElementById('hf-space-pill');
+    if (hfPill && hfPill.contains(target)) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
@@ -826,6 +909,14 @@
     setTimeout(function () { settingsBtnEl.classList.remove('spinning'); }, 400);
     window.Settings.openInPanel(panel);
   });
+
+  // v0.45 ITEM 7: HF Space connect button → opens the OAuth + status flow
+  var hfBtnEl = document.getElementById('hf-btn');
+  if (hfBtnEl) {
+    hfBtnEl.addEventListener('click', function () {
+      if (window.HFConnect) window.HFConnect.openConnect();
+    });
+  }
 
   // Listen for custom action events (e.g. "reset-view" from Appearance page).
   window.addEventListener('doomalay:action', function (e) {

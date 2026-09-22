@@ -37,6 +37,12 @@
     lineColor: '#131318',
     dotColor: '#2e2e3a',
     originColor: '#4a4a5e',
+    // ── v0.45 ITEM 6: grid quick options (hide / scatter / size / rotate) ──
+    hideGridLines: false,   // toggle the connecting grid lines
+    hideDots: false,        // toggle the dots
+    gridScatter: 0,         // 0-100 → max px displacement per dot/line intersection
+    gridSizeVariation: 0,   // 0-100 → max % radius/length delta
+    gridRotation: 0,        // 0-100 → max degrees of rotation per line/dot
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────

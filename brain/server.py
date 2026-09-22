@@ -813,7 +813,7 @@ async def chat(request: Request):
                 system_prompt=body.get("system_prompt", ""),
                 effort=body.get("effort", "med"),
                 workspace=body.get("workspace", ""),
-                web_search=body.get("web_search", False),
+                web_search=body.get("web_search", True),  # v0.45 ITEM 2: default-on
                 deep_research=body.get("deep_research", False),
                 mode=body.get("mode", "auto"),
                 history=body.get("history", []),

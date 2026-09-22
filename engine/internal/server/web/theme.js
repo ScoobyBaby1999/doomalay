@@ -305,6 +305,25 @@
     };
   }
 
+  // v0.45 ITEM 3: appBgSpec — the resolved gradient spec for the "App
+  // background" customizable var. The canvas (app.js renderGrid) reads THIS
+  // so the scrollable grid itself carries the app background (previously
+  // --bg-app painted the body, which the canvas covered → invisible).
+  // Returns a 1-color spec from the theme's grid bg when the user hasn't
+  // customized --bg-app (so the canvas keeps its current look until they do).
+  function appBgSpec(s) {
+    var id = THEMES[s.theme] ? s.theme : 'midnight';
+    var t = THEMES[id];
+    var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
+    var raw = overrides ? overrides['--bg-app'] : null;
+    if (raw) {
+      // a stored spec (object/array) or a hex — norm via GradientUI if present
+      if (typeof raw === 'object') return raw;
+      if (isHexColor(raw)) return { colors: [raw], dir: 'auto' };
+    }
+    return { colors: [t.grid.bg], dir: 'auto' };
+  }
+
   // boot + live-apply (browser only — the node path skips straight to
   // the module.exports below)
   var HAS_WINDOW = (typeof window !== 'undefined');
@@ -320,10 +339,11 @@
       apply: applyTheme,
       effectiveGrid: effectiveGrid,
       effectiveGridSpecs: effectiveGridSpecs,
+      appBgSpec: appBgSpec,
       pendingScheme: pendingScheme,
       isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
       customizable: CUSTOMIZABLE,
-      // v0.44: the canonical twin derivation — appearance.js's per-chat
+      // v0.45 ITEM 3: the canonical twin derivation — appearance.js's per-chat
       // #chat-root paint + any future consumer reuses THIS one function
       // (the same math formatter.js's fmtTwins mirrors; the node harness
       // asserts the parity).
