@@ -225,3 +225,46 @@ make/cmake, git — a full dev sandbox.
 | Setup cost | zero | HF login + ~4 min build | HF login only |
 | Isolation | device | one space per chat (≤2 free) | per-chat workspaces |
 | Sleeps after 48h idle | n/a | ✓ (auto-wake on next turn) | ✓ |
+
+---
+
+## v0.51 addendum — the runtime walls, measured live (2026-09-23)
+
+Three live experiments on the free tier (ScoobyBaby1999, plus a throwaway
+probe space) settled the Docker question for good:
+
+| Experiment | Result |
+|---|---|
+| **Slot-swap**: pause doomalaysocreate + Loom (all cpu-basic spaces paused), restart the converted docker space | **FAILS** — restart → 403 "You've reached your cpu-basic quota limit…", quota stays `current=1, limit=0`. The grandfathered slot is BOUND to the account, not transferable. The "pause it & wake mine" remedy is dead on free accounts. |
+| **ZeroGPU capability battery** (dedicated probe space) | **Root (uid 0)**, Debian 12. Preinstalled: gcc 12.2 / g++ / make 4.3 / cmake 3.25 / Node 20.20 + npm 10.8 / git 2.39 / Python 3.10 + pip 26. At runtime: **apt-get update + install WORK** (openjdk-17 installed and runs), **pip install works**, **Go toolchain downloads in 3.8 s** (go1.25, compile+run OK), **rustup installs the full Rust toolchain**. Fast egress (15 MB/s mirrors). |
+| **Create + convert + chat (own ZeroGPU)** | gradio+zero-a10g create → 122 files / 1.9 MB commit → BUILDING → RUNNING in **75 s** → real chat turn returns verbatim `uname` from inside the space + python output. |
+
+### The final shape (v0.51 picker)
+
+1. **⚡ ZeroGPU sandbox (own)** — the free path. 2 per free account (verified
+   email + 30-day account age). Everything the user asked for — root, bash,
+   compilers, package installs, on-demand Go/Rust/Java — minus only
+   Docker-in-Docker and install persistence (ephemeral: reinstall after a nap;
+   the persona tells the assistant to prefer fast reinstall paths).
+2. **🌍 Community workspace (shared Docker)** — the preinstalled-toolchain
+   experience (gcc/Go/Rust/Java 17/Node preinstalled, zero setup). The ONLY
+   runnable Docker runtime accessible to free users (the grandfathered
+   doomalaysocreate space, X-HF-Token gated).
+3. **📋 Pick an existing space** — scrollable, live stage badges, "managed
+   here" marker for spaces this engine holds tokens for.
+4. **🐳 Docker sandbox (own)** — PRO-badged: creation + full provisioning
+   works on every account (static→docker flip), but cpu-basic runtime is
+   PRO-gated since Jul-2026. Honest paused_quota note (no fake remedies);
+   one-tap fallbacks to ZeroGPU / community.
+
+### OAuth state (2026-09-23)
+
+- **HF (CIMD)**: start → 302 with PKCE + registered redirect ✓; HF accepts
+  the CIMD client_id ✓; callback state validation ✓. The consent click needs
+  a live human HF session (AWS WAF blocks headless logins — ~20 VLM attempts,
+  1 success rate). Manual token paste remains the always-works path.
+- **GitHub App** (`Iv23liDzVTw7zphxo5Hv`): client secret vault-configured ✓;
+  start → 302 to github.com/login/oauth/authorize with the REGISTERED
+  `http://localhost:8080/api/github/oauth/callback` ✓; bogus state → 400 ✓;
+  PAT connect via the sign-in-once path ✓. Full OAuth round-trip awaits a
+  real GitHub login (user's device — loopback IS production for the APK).

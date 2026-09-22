@@ -229,14 +229,14 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
                         if strings.Contains(msg, "ZeroGPU Spaces") || strings.Contains(msg, "limited to 2") {
                                 writeError(w, http.StatusPaymentRequired,
                                         "Free HF accounts can host 2 ZeroGPU sandboxes — you've used both. "+
-                                                "Reuse one of your spaces (Pick an existing space) or use the SHARED sandbox. "+
+                                                "Reuse one of your spaces (Pick an existing space) or use the community workspace. "+
                                                 "(PRO raises the cap to 10.)")
                                 return
                         }
                         if strings.Contains(msg, "PRO") || strings.Contains(msg, "subscription") {
                                 writeError(w, http.StatusPaymentRequired,
                                         "HF now requires PRO for this creation path (loophole closed): "+msg+
-                                                " — use the SHARED space option instead, or connect a PRO account")
+                                                " — use the community workspace instead, or connect a PRO account")
                                 return
                         }
                         writeError(w, http.StatusBadGateway, "create space: "+msg)
@@ -411,8 +411,9 @@ func (s *Server) handleHFSpaceDockerCreate(w http.ResponseWriter, r *http.Reques
         note := fmt.Sprintf("provisioned docker sandbox (%d files, %d KB) — sdk flipped static→docker", len(files), total/1024)
         switch state {
         case "paused_quota":
-                note += "; BUILT and READY, but HF gates cpu-basic runtime behind PRO on free accounts (Jul-2026 policy) — " +
-                        "pause another of your spaces to free the slot, upgrade to PRO, or use the ZeroGPU sandbox (free)"
+                note += "; BUILT and READY, but HF gates cpu-basic runtime behind PRO on free accounts (Jul-2026 policy). " +
+                        "The quota slot is bound — pausing other spaces does not free it (live-verified 2026-09-23). " +
+                        "It wakes on PRO upgrade; meanwhile use the ZeroGPU sandbox (free) or the community workspace"
         case "running":
                 note += "; booting — ready in ~5-10 min"
         default:
@@ -758,9 +759,9 @@ func (s *Server) handleHFSpaceRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHFSpacePause is POST /api/hf/space/pause?repo=user/name — pause a
-// Space, freeing the account's cpu-basic slot for another one (HF's own
-// remedy for the quota wall; live-verified 2026-09-23). The docker-sandbox
-// picker uses it in the paused_quota state: "pause <other space>, wake this".
+// Space. NOTE (live-verified 2026-09-23): pausing does NOT free a cpu-basic
+// slot on free accounts (the quota is bound) — this stays for explicit user
+// control (and PRO accounts, where slots are real).
 func (s *Server) handleHFSpacePause(w http.ResponseWriter, r *http.Request) {
         token := s.hfToken()
         if token == "" {

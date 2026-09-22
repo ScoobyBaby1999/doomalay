@@ -7,27 +7,25 @@
 //   3. Another Device  — deferred (mesh setup, future)
 //   4. Terminal/VM     — dynamic, device-dependent (Termux on Android).
 //
-// THE HF CHOOSER (v0.48 task 9 — three options):
-//   1. 🐳 HF Docker sandbox — the engine provisions the user's OWN
-//      full-toolchain Docker Space brick by brick (fork doomalay → their
-//      GitHub, create a static Space for free, ONE commit flips it to
-//      docker with the whole brain). Needs GitHub + HF — pressing it walks
-//      the connect panels one at a time (HF first, then GitHub).
-//      2 vCPU · 16 GB RAM · 1 GB internal storage · sleeps after 48h ·
-//      ~5 min wake. (HF gates cpu-basic runtime behind PRO on free accounts
-//      since Jul-2026 — the picker reports the paused_quota state honestly
-//      and offers the pause-swap remedy + the ZeroGPU fallback.)
-//   2. ⚡ HF ZeroGPU Sandbox — the guaranteed FREE path (2 per free account,
-//      verified email + 30-day-old account). Dynamic resources (NVIDIA RTX
-//      Pro 6000 Blackwell) · 1 GB internal storage · sleeps depending on
-//      usage · ~5 min wake. Needs an HF token.
+// THE HF CHOOSER (v0.51 — the live-verified rework):
+//   1. ⚡ HF ZeroGPU Sandbox — YOUR OWN free Linux sandbox (the verified
+//      free path: 2 per free account). Root, bash, gcc/g++/make/cmake,
+//      Node 20, Python, git preinstalled; apt/pip/npm installs; Go/Rust/
+//      Java on demand (live-verified 2026-09-23). Needs an HF token.
+//   2. 🌍 Community workspace — the SHARED full-toolchain Docker sandbox
+//      (doomalaysocreate, preinstalled gcc/Go/Rust/Java/Node). Instant,
+//      zero setup — your HF account is the key. RE-ADDED in v0.51: own
+//      Docker runtime is PRO-gated on free accounts (verified live: the
+//      cpu-basic slot is bound — pausing another space does NOT free it),
+//      so the shared space is the free Docker experience.
 //   3. 📋 Pick an existing space — the user's doomalay spaces, SCROLLABLE.
-//
-//   (The old "Shared sandbox" card is GONE from the UI — the engine keeps
-//   its endpoint so existing shared chats keep working.)
+//   4. 🐳 HF Docker sandbox (own) — demoted + PRO badge: creation + full
+//      provisioning works on every account (static→docker flip, verified),
+//      but cpu-basic RUNTIME is PRO-gated since Jul-2026. The Space is
+//      built and ready; it wakes on upgrade.
 //
 // Each option calls onPick(sandboxType, detail); for 'hf',
-// detail = {mode:'own', repo:'user/name'}.
+// detail = {mode:'own'|'shared', repo:'user/name'}.
 //
 // Exposes: window.SandboxPicker
 (function () {
@@ -155,17 +153,24 @@
         'A real Linux sandbox on Hugging Face — real bash, python, git, Node and build tools, package installs, and the full HF API to manage the space. Driven by this chat.</p>' +
       '<p id="hf-acct" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 16px">checking your HF connection…</p>' +
       '<div style="display:flex;flex-direction:column;gap:12px">' +
+        optionCard('hf-zero', '⚡', 'HF ZeroGPU Sandbox',
+          'Your own free Linux sandbox — runs FREE on every account (2 per free tier; verified email + account 30+ days old). ' +
+          'Root access: bash, python, git, Node 20, gcc/g++/make/cmake preinstalled; apt/pip/npm package installs; Go, Rust, Java on demand (verified live). ' +
+          'Dynamic resources (NVIDIA RTX Pro 6000 Blackwell GPU) · 1 GB internal storage · sleeps depending on usage · wakes in ~1 min. ' +
+          'Installs are ephemeral — reinstall after a nap.',
+          null, false, '<div id="zero-req" style="margin-top:10px"></div>') +
+        optionCard('hf-community', '🌍', 'Community workspace',
+          'The shared full-toolchain Docker sandbox — everything PREINSTALLED: gcc/g++/make/cmake, Go, Rust, Java 17, Node 20, git, python. ' +
+          'Zero setup, instant start: your HF account is the key. Workspaces are per-chat and ephemeral. ' +
+          'The best free Docker experience — your own Docker Space runtime is PRO-gated (verified live), this one runs for everyone.',
+          null, false, '<div id="community-req" style="margin-top:10px"></div>') +
+        optionCard('hf-pick', '📋', 'Pick an existing space',
+          'Reuse one of your doomalay spaces.', null) +
         optionCard('hf-docker', '🐳', 'HF Docker sandbox',
           'Your own full-toolchain Docker Space, provisioned automatically: 2 vCPU · 16 GB RAM · 1 GB internal storage · sleeps after 48h of inactivity · ~5 mins to wake. ' +
           'Capabilities: bash, python, git, Node, gcc/g++/make/cmake, Go, Rust, Java, qemu; pip/npm/apt installs; modify the Dockerfile/Gradio/app and manage the Space via the HF API. ' +
           'Also forks the doomalay source into your GitHub. Needs GitHub + Hugging Face (one at a time).',
-          null, false, '<div id="docker-req" style="margin-top:10px"></div>') +
-        optionCard('hf-zero', '⚡', 'HF ZeroGPU Sandbox',
-          'Your own Space on ZeroGPU — runs FREE on every account: Dynamic Resources (NVIDIA RTX Pro 6000 Blackwell GPU) · 1 GB internal storage · sleeps depending on usage · limit of 2 for the free tier (verified email + account 30+ days old) · ~5 mins to wake. ' +
-          'Same Linux sandbox + brain as the Docker flavor.',
-          null, false, '<div id="zero-req" style="margin-top:10px"></div>') +
-        optionCard('hf-pick', '📋', 'Pick an existing space',
-          'Reuse one of your doomalay spaces.', null) +
+          'PRO', false, '<div id="docker-req" style="margin-top:10px"></div>') +
       '</div>' +
       '<div id="hf-detail" style="margin-top:16px"></div>' +
       '</div>';
@@ -212,6 +217,11 @@
           zr.innerHTML = acct.connected ? okChip('HuggingFace connected')
                                         : warnChip('HF login required');
         }
+        var cr = contentEl.querySelector('#community-req');
+        if (cr) {
+          cr.innerHTML = acct.connected ? okChip('HuggingFace connected')
+                                        : warnChip('HF login required');
+        }
       });
     }).catch(function () {
       var el = contentEl.querySelector('#hf-acct');
@@ -223,8 +233,23 @@
         var type = card.dataset.sandbox;
         if (type === 'hf-docker') dockerFlow(onPick);
         else if (type === 'hf-zero') zeroFlow(onPick);
+        else if (type === 'hf-community') communityFlow(onPick, contentEl);
         else if (type === 'hf-pick') renderPick(detail, onPick);
       });
+    });
+  }
+
+  // ── option 2: the community workspace (shared Docker, re-added v0.51) ─
+  function communityFlow(onPick, contentEl) {
+    var detail = contentEl ? contentEl.querySelector('#hf-detail') : null;
+    getJSON('/api/hf/account').catch(function () { return { connected: false }; }).then(function (acct) {
+      if (!acct.connected) {
+        if (window.HFConnect) window.HFConnect.openConnectPanel({
+          onDone: function () { communityFlow(onPick, contentEl); }
+        });
+        return;
+      }
+      renderShared(detail || contentEl, onPick);
     });
   }
 
@@ -301,9 +326,11 @@
     });
   }
 
-  // the honest cpu-basic quota state: the Space is BUILT and READY, but HF
-  // gates its runtime. Offer HF's own remedy — pause another of the user's
-  // spaces holding the slot — plus the ZeroGPU fallback.
+  // the honest cpu-basic quota state (v0.51, live-verified): the Space is
+  // BUILT and READY, but HF gates its runtime behind PRO on free accounts —
+  // and the slot is BOUND: pausing another of the account's spaces does NOT
+  // free it (swap experiment 2026-09-23). No misleading remedies — PRO,
+  // ZeroGPU, or the community workspace.
   function renderQuotaPaused(prog, res, onPick) {
     if (!prog) return;
     prog.innerHTML =
@@ -313,55 +340,20 @@
         'Space built and ready — runtime is PRO-gated</div>' +
       '<p style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0;line-height:1.5">' +
         '<b>' + esc(res.repo) + '</b> was created and fully provisioned, but Hugging Face gates cpu-basic ' +
-        'runtime behind PRO on free accounts (since Jul 2026). It will wake the moment your account has a ' +
-        'free cpu-basic slot — pause another Space to free it, upgrade to PRO, or use the free ZeroGPU sandbox.</p>' +
+        'runtime behind PRO on free accounts (since Jul 2026). Pausing your other spaces does not free the ' +
+        'slot (the quota is bound, live-verified). It will wake the moment this account upgrades to PRO — ' +
+        'or use the free paths right now:</p>' +
+      '<div style="display:flex;gap:8px;margin-top:10px">' +
+        '<button id="hf-quota-zero" style="flex:1;padding:8px;border-radius:8px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer">⚡ use ZeroGPU (free)</button>' +
+        '<button id="hf-quota-shared" style="flex:1;padding:8px;border-radius:8px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer">🌍 community workspace</button>' +
       '</div>' +
-      '<div id="hf-quota-spaces" style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">checking your other spaces…</div>';
-    getJSON('/api/hf/spaces').then(function (data) {
-      var host = prog.querySelector('#hf-quota-spaces');
-      if (!host) return;
-      var running = (data.spaces || []).filter(function (sp) {
-        return sp.running && sp.repo !== res.repo;
-      });
-      if (!running.length) {
-        host.innerHTML = 'No other running doomalay spaces to pause. ' +
-          'Free path: the <b>⚡ HF ZeroGPU Sandbox</b> (2 free) — go back and pick it.';
-        return;
-      }
-      host.innerHTML = 'Your account\'s cpu-basic slot is held by:' +
-        running.map(function (sp) {
-          return '<div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface-1);' +
-            'border:1px solid var(--surface-2);border-radius:10px;padding:8px 12px;margin-top:6px">' +
-            '<span style="font-family:monospace;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + esc(sp.repo) + '</span>' +
-            '<button data-pause-repo="' + esc(sp.repo) + '" style="padding:5px 12px;border-radius:8px;' +
-              'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);' +
-              'font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer">pause it & wake mine</button>' +
-            '</div>';
-        }).join('');
-      host.querySelectorAll('[data-pause-repo]').forEach(function (b) {
-        b.addEventListener('click', function () {
-          b.disabled = true; b.textContent = 'pausing…';
-          postJSON('/api/hf/space/pause?repo=' + encodeURIComponent(b.dataset.pauseRepo), {})
-            .then(function () {
-              b.textContent = 'waking yours…';
-              return postJSON('/api/hf/space/restart?repo=' + encodeURIComponent(res.repo), {});
-            })
-            .then(function () {
-              if (window.toast) window.toast('switched the cpu-basic slot — waking ' + res.repo);
-              watchBuild(prog, res.repo, function () {
-                window.ConnectOverlay.close();
-                if (onPick) onPick('hf', { mode: 'own', repo: res.repo });
-              });
-            })
-            .catch(function (e) {
-              b.disabled = false; b.textContent = 'pause it & wake mine';
-              if (window.toast) window.toast(e.message || 'could not switch slots');
-            });
-        });
-      });
-    }).catch(function () {
-      var host = prog.querySelector('#hf-quota-spaces');
-      if (host) host.textContent = '';
+      '</div>';
+    var zb = prog.querySelector('#hf-quota-zero');
+    if (zb) zb.addEventListener('click', function () { zeroFlow(onPick); });
+    var sb = prog.querySelector('#hf-quota-shared');
+    if (sb) sb.addEventListener('click', function () {
+      var detail = prog.closest('#hf-detail');
+      communityFlow(onPick, detail ? detail.parentElement : null);
     });
   }
 
@@ -383,10 +375,10 @@
       '<div style="padding:24px">' +
       '<h2 style="font-size: calc(var(--ui-fs) + 2px);font-weight:600;color:var(--text-1);margin:0 0 6px">⚡ HF ZeroGPU Sandbox</h2>' +
       '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 14px;line-height:1.5">' +
-        'The engine creates a Space under your HF account on the ZeroGPU flavor — free on every account. ' +
-        'Dynamic Resources (NVIDIA RTX Pro 6000 Blackwell GPU) · 1 GB internal storage · sleeps depending on usage · ' +
-        'limit of 2 for the free tier (verified email + account 30+ days old) · ~5 mins to wake. ' +
-        'Same Linux sandbox + brain: bash, python, git, Node, build tools, package installs.</p>' +
+        'The engine creates a Space under your HF account on the ZeroGPU flavor — free on every account (2 per free tier; verified email + 30+ days). ' +
+        'Root Linux: bash, python, git, Node 20, gcc/g++/make/cmake preinstalled; apt/pip/npm installs; Go, Rust, Java install on demand. ' +
+        'Dynamic resources (NVIDIA RTX Pro 6000 Blackwell GPU) · 1 GB internal storage · sleeps depending on usage · wakes in ~1 min. ' +
+        'Installs are ephemeral — the assistant reinstalls what it needs after a nap.</p>' +
       '<div style="display:flex;gap:8px;margin-bottom:10px">' +
       '<input id="hf-zero-name" placeholder="doomalay-<auto>" style="flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-1);font-size:calc(var(--ui-small-fs));font-family:inherit" />' +
       '<button id="hf-zero-create" style="padding:9px 16px;border-radius:10px;background:var(--accent);color:var(--bg-app);border:none;font-size:calc(var(--ui-small-fs));font-weight:600;cursor:pointer">Create</button>' +
@@ -444,7 +436,8 @@
         '<span style="font-size:calc(var(--ui-small-fs));font-weight:600;color:var(--text-1)">' + esc(sh.repo) + '</span>' +
         stageBadge(sh) + '</div>' +
         '<p style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 10px">' +
-        'Community sandbox on the full build toolchain. Your HF account is the key. Workspaces are per-chat and ephemeral.</p>' +
+        'The community full-toolchain Docker sandbox — gcc/g++/make/cmake, Go, Rust, Java 17, Node 20, git and python PREINSTALLED. ' +
+        'Zero setup, instant start; your HF account is the key. Workspaces are per-chat and ephemeral — download anything you want to keep.</p>' +
         '<button id="hf-use-shared" style="width:100%;padding:10px;border-radius:10px;background:var(--accent);background-image:var(--accent-gradient,none);color:var(--on-accent);border:none;font-size:calc(var(--ui-small-fs));font-weight:600;cursor:pointer">Use the shared sandbox</button>' +
         '</div>';
       var btn = detail.querySelector('#hf-use-shared');
@@ -487,9 +480,9 @@
           var m = String(e.message || '');
           prog.innerHTML = '<span style="color:var(--err)">' + esc(m) + '</span>';
           if (m.indexOf('ZeroGPU') >= 0 || m.indexOf('2 ZeroGPU') >= 0) {
-            prog.innerHTML += '<br><span style="color:var(--text-3)">You have 2 own sandboxes already — use “Pick an existing space” or the SHARED sandbox.</span>';
+            prog.innerHTML += '<br><span style="color:var(--text-3)">You have 2 own sandboxes already — use “Pick an existing space” or the community workspace.</span>';
           } else if (m.indexOf('PRO') >= 0) {
-            prog.innerHTML += '<br><span style="color:var(--text-3)">The free creation path is blocked for your account — use the SHARED sandbox instead.</span>';
+            prog.innerHTML += '<br><span style="color:var(--text-3)">The free creation path is blocked for your account — use the community workspace instead.</span>';
           }
         }
       });
@@ -536,7 +529,8 @@
       var rows = (data.spaces || []).map(function (sp) {
         return '<div class="hf-pick-row" data-repo="' + esc(sp.repo) + '" style="display:flex;justify-content:space-between;align-items:center;' +
           'background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer">' +
-          '<span style="font-family:monospace;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + esc(sp.repo) + '</span>' +
+          '<span style="font-family:monospace;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2)">' + esc(sp.repo) +
+            (sp.managed ? ' <span style="font-size:10px;color:var(--ok);font-family:inherit">· managed here</span>' : '') + '</span>' +
           stageBadge(sp) + '</div>';
       }).join('');
       detail.innerHTML = rows
