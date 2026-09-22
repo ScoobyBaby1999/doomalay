@@ -244,10 +244,23 @@ async def _run_strands_agent(
         loop = asyncio.get_event_loop()
         fut = loop.run_in_executor(None, agent, messages[-1]["content"])
 
+        # v0.48 task 7 — the NO-STALL watchdog: every callback event
+        # (thinking delta, text delta, tool call/result) is ACTIVITY. A turn
+        # dies only when NOTHING happened for _IDLE_S (a truly dead agent — litellm
+        # dead-loop deadlock etc.) or at the _HARD_CAP_S ceiling. Long tool
+        # chains (sequential + parallel, hundreds of calls) keep resetting the
+        # idle clock and NEVER get killed.
+        _IDLE_S = 960          # > the 900s max LLM-call timeout (v0.46)
+        _HARD_CAP_S = 55 * 60  # absolute per-turn ceiling
+        _turn_t0 = time.monotonic()
+        _last_ev = time.monotonic()
+
         async def _pump():
+            nonlocal _last_ev
             while True:
                 try:
                     ev = callback.q.get_nowait()
+                    _last_ev = time.monotonic()
                     yield ev
                 except _queue.Empty:
                     if fut.done():
@@ -259,6 +272,17 @@ async def _run_strands_agent(
                             except _queue.Empty:
                                 return
                     else:
+                        _now = time.monotonic()
+                        if _now - _last_ev > _IDLE_S:
+                            yield {"type": "error", "error": "agent",
+                                   "message": f"turn stalled — no activity for {int(_now - _last_ev)}s"}
+                            yield {"type": "status", "state": "error", "usage": None}
+                            return
+                        if _now - _turn_t0 > _HARD_CAP_S:
+                            yield {"type": "error", "error": "agent",
+                                   "message": f"turn hard cap reached ({_HARD_CAP_S // 60} min)"}
+                            yield {"type": "status", "state": "error", "usage": None}
+                            return
                         await asyncio.sleep(0.05)
 
         try:
@@ -664,6 +688,124 @@ def _build_tools(workspace: str, web_search: bool,
                 return f"[error: {e}]"
 
         tools.append(shell)
+
+        # v0.48 task 7 — the HF-sandbox power tools: python_repl, install
+        # (pip/npm/apt with progress), parallel (concurrent shell commands).
+        # Same workspace + stripped env discipline as shell itself.
+        @strands_tool(name="python_repl", description=(
+            "Execute Python 3 code and return stdout + stderr. Runs in the "
+            "chat's workspace with a 300s cap. Prefer this over `python3 -c` "
+            "in the shell tool for anything non-trivial — write the code, "
+            "get the output."))
+        def python_repl(code: str) -> str:
+            import subprocess, tempfile
+            try:
+                with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
+                                                 dir=str(ws), prefix="repl_") as fh:
+                    fh.write(code)
+                    p = fh.name
+                try:
+                    result = subprocess.run(
+                        [sys.executable, p], cwd=str(ws), capture_output=True,
+                        text=True, timeout=300, env=_safe_env())
+                    output = result.stdout
+                    if result.stderr:
+                        output = (output + "\n[stderr]\n" if output else "") + result.stderr
+                    if not output.strip():
+                        output = "(no output)"
+                    if result.returncode != 0:
+                        output = f"Exit code: {result.returncode}\n{output}"
+                    return output[:50000]
+                finally:
+                    try:
+                        import os as _os
+                        _os.unlink(p)
+                    except Exception:
+                        pass
+            except Exception as e:
+                return f"[error: {e}]"
+        tools.append(python_repl)
+
+        @strands_tool(name="install", description=(
+            "Install a package into this sandbox with the right manager: "
+            "pip for Python packages, npm for Node packages, apt for system "
+            "packages. manager: 'auto' (default), 'pip', 'npm', or 'apt'. "
+            "Returns the install output (may take a few minutes)."))
+        def install(package: str, manager: str = "auto") -> str:
+            import subprocess
+            pkg = (package or "").strip()
+            if not pkg:
+                return "no package given"
+            m = (manager or "auto").strip().lower()
+            if m == "auto":
+                m = "npm" if (pkg.startswith(("@", "npm:", "node:")) or "/" in pkg) else "pip"
+            if m in ("pip", "pip3"):
+                cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", pkg]
+            elif m == "npm":
+                cmd = ["npm", "install", "--no-audit", "--no-fund", pkg]
+            elif m == "apt":
+                cmd = ["bash", "-lc",
+                       f"apt-get update -qq && apt-get install -y --no-install-recommends {pkg}"]
+            else:
+                return f"unknown manager '{manager}' (pip | npm | apt)"
+            try:
+                result = subprocess.run(cmd, cwd=str(ws), capture_output=True,
+                                        text=True, timeout=600, env=_safe_env())
+                output = result.stdout
+                if result.stderr:
+                    output = (output + "\n[stderr]\n" if output else "") + result.stderr
+                if not output.strip():
+                    output = "(no output)"
+                if result.returncode != 0:
+                    output = f"Exit code: {result.returncode}\n{output}"
+                return output[:50000]
+            except subprocess.TimeoutExpired:
+                return f"[error: install timed out after 600s: {pkg}]"
+            except FileNotFoundError:
+                return f"[error: manager not available in this sandbox ({m})]"
+            except Exception as e:
+                return f"[error: {e}]"
+        tools.append(install)
+
+        @strands_tool(name="parallel", description=(
+            "Run several bash commands CONCURRENTLY and return every result. "
+            "Give ONLY independent commands (they run at the same time, up "
+            "to 8 concurrently, 300s each) — use this to fan out builds, "
+            "tests, or fetches instead of chaining them one by one. "
+            "Input: {commands: [string, ...]}."))
+        def parallel(commands: list) -> str:
+            import subprocess
+            from concurrent.futures import ThreadPoolExecutor
+            cmds = [str(c).strip() for c in (commands or []) if str(c).strip()]
+            if not cmds:
+                return "no commands given"
+            if len(cmds) > 16:
+                return "too many commands (max 16 per call)"
+            env = _safe_env()
+
+            def _one(cmd):
+                try:
+                    r = subprocess.run(cmd, shell=True, cwd=str(ws),
+                                       capture_output=True, text=True,
+                                       timeout=300, env=env)
+                    out = r.stdout
+                    if r.stderr:
+                        out = (out + "\n[stderr]\n" if out else "") + r.stderr
+                    if not out.strip():
+                        out = "(no output)"
+                    return (f"exit {r.returncode}" if r.returncode else "ok"), out[:12000]
+                except subprocess.TimeoutExpired:
+                    return "timeout", "[error: timed out after 300s]"
+                except Exception as e:
+                    return "error", f"[error: {e}]"
+
+            with ThreadPoolExecutor(max_workers=min(8, len(cmds))) as pool:
+                results = list(pool.map(_one, cmds))
+            parts = []
+            for i, (cmd, (status, out)) in enumerate(zip(cmds, results)):
+                parts.append(f"-- [{i + 1}] $ {cmd}  ->  {status}\n{out}")
+            return "\n\n".join(parts)[:50000]
+        tools.append(parallel)
 
     # Web search + fetch (from brain/tools/web.py).
     try:

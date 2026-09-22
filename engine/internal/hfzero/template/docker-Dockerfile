@@ -1,0 +1,39 @@
+# Doomalay Docker Sandbox — the user's OWN full-toolchain HF Space (v0.47).
+#
+# Brick-by-brick committed by the engine (POST /api/hf/space/docker-create):
+# this image + app.py + the brain/ tree. Runs on free cpu-basic hardware:
+# 2 vCPU / 16 GB RAM / ephemeral disk / sleeps after 48h of inactivity
+# (~5 min rebuild on wake).
+#
+# Same recipe as the shared community space (scripts/shared_Dockerfile) and
+# platforms/hf-space/Dockerfile — full build toolchain + the brain.
+
+# Pin to bookworm: current python:3.11-slim is Debian trixie, which dropped
+# openjdk-17 (and would break the apt package list below).
+FROM python:3.11-slim-bookworm
+
+# ── full build toolchain (what the quick chat can never have) ───────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc g++ make cmake git ripgrep \
+    nodejs npm golang-go rustc cargo \
+    openjdk-17-jdk-headless \
+    qemu-system-x86 qemu-utils \
+    ca-certificates curl wget zip unzip jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── the brain (exact pins — Docker installs fresh, no image conflicts) ──────
+WORKDIR /app
+COPY brain/requirements.txt /app/brain/requirements.txt
+RUN cd /app/brain && pip install --no-cache-dir -r requirements.txt
+
+COPY app.py /app/app.py
+COPY brain/ /app/brain/
+
+# per-chat workspaces (ephemeral on the free tier; /data is persistent only
+# on storage-backed tiers — app.py falls back to /tmp automatically)
+ENV DOOMALAY_WORKSPACES_ROOT=/data/workspaces
+ENV PYTHONUNBUFFERED=1
+
+# HF's proxy targets app_port (README.md); 7860 is the convention.
+EXPOSE 7860
+CMD ["python", "app.py"]

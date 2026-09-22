@@ -210,7 +210,11 @@ def _get_token(env=None) -> str:
     is used for the api client ONLY; it must never appear in any output.
     """
     e = os.environ if env is None else (env or {})
-    return str(e.get("HF_TOKEN", "") or e.get("HUGGINGFACE_TOKEN", "") or "").strip()
+    # v0.48: DOOMALAY_HF_TOKEN first — the engine vault's name for the
+    # connect-flow token (remote.go fans it out as X-Env-DOOMALAY_HF_TOKEN);
+    # HF_TOKEN / HUGGINGFACE_TOKEN remain as aliases.
+    return str(e.get("DOOMALAY_HF_TOKEN", "") or e.get("HF_TOKEN", "")
+               or e.get("HUGGINGFACE_TOKEN", "") or "").strip()
 
 
 def _redact(text: str, secrets) -> str:
@@ -950,13 +954,293 @@ def _act_exists(api_factory, env, repo: str, repo_type: str) -> str:
     return _exc_msg("exists", info, [token])
 
 
+
+def _norm_repo(repo: str) -> str:
+    """v0.48: normalize a repo id — strip whitespace/slashes, keep the
+    classic `user/name` (or bare name) shape. Returns "" when empty."""
+    r = str(repo or "").strip().strip("/")
+    if r.startswith("spaces/"):
+        r = r[len("spaces/"):]
+    return r
+
+
+def _slugify_name(text: str) -> str:
+    """Repo-name-safe slug (lowercase, [a-z0-9-])."""
+    txt = unicodedata.normalize("NFKD", str(text or "")).encode(
+        "ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", "-", txt).strip("-")[:48]
+
+
+# ── v0.48 task 7: SPACE MANAGEMENT (raw HF REST — the same API the engine
+# uses). This is what gives the sandbox bot FULL control of its own Space:
+# create, commit files (edit the Dockerfile / README / app), restart, pause,
+# secrets, logs, read/list files, runtime snapshot.
+# ----------------------------------------------------------------------------
+
+_HF_BASE = "https://huggingface.co"
+
+
+def _hf_rest(method, api_path, token, body=None, ctype="application/json",
+             timeout=30):
+    """Raw HF REST call -> (status, text). NEVER raises; token never logged."""
+    import urllib.request, urllib.error
+    url = api_path if api_path.startswith("http") else _HF_BASE + api_path
+    data = None
+    if body is not None:
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    req = urllib.request.Request(url, method=method.upper())
+    req.add_header("Authorization", "Bearer " + (token or ""))
+    if data is not None:
+        req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req, data, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, e.read().decode("utf-8", "replace")
+        except Exception:
+            return e.code, ""
+    except Exception as exc:                       # network etc.
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
+def _space_snapshot(raw: str) -> str:
+    """Compact runtime snapshot from a /api/spaces/{repo} JSON body."""
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return raw[:400]
+    rt = d.get("runtime") or {}
+    hw = (rt.get("hardware") or {})
+    bits = [
+        f"repo: {d.get('id', '?')}",
+        f"sdk: {d.get('sdk', '?')}",
+        f"stage: {rt.get('stage', '?')}",
+        f"hardware: {hw.get('current') or hw.get('requested') or '?'}",
+    ]
+    err = rt.get("errorMessage")
+    if err:
+        bits.append(f"error: {err[:200]}")
+    doms = [x.get("domain") for x in (rt.get("domains") or []) if x.get("domain")]
+    if doms:
+        bits.append("url: https://" + doms[0])
+    return "\n".join(bits)
+
+
+def _act_space(api_factory, env, repo: str) -> str:
+    """One space's runtime snapshot (stage / hardware / quota error / URL)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space")
+    repo = _norm_repo(repo)
+    if not repo:
+        return "space: missing ? repo=user/name"
+    st, raw = _hf_rest("GET", f"/api/spaces/{repo}", token)
+    if st != 200:
+        return _redact(f"space lookup failed (HTTP {st}): {raw[:300]}", [token])
+    return _space_snapshot(raw)
+
+
+def _act_spaces(api_factory, env, limit: int) -> str:
+    """List the account's Spaces with live runtime stages."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("spaces")
+    who = _hf_rest("GET", "/api/whoami-v2", token)
+    if who[0] != 200:
+        return _redact(f"whoami failed (HTTP {who[0]}): {who[1][:200]}", [token])
+    try:
+        user = json.loads(who[1]).get("name", "")
+    except Exception:
+        return "spaces: could not parse whoami"
+    st, raw = _hf_rest("GET", f"/api/spaces?author={user}&limit=100", token)
+    if st != 200:
+        return _redact(f"list spaces failed (HTTP {st}): {raw[:300]}", [token])
+    try:
+        rows = json.loads(raw) or []
+    except Exception:
+        return "spaces: could not parse the list"
+    out = []
+    for sp in rows[:max(1, min(int(limit or 20), 100))]:
+        out.append(f"- {sp.get('id')} (sdk {sp.get('sdk', '?')}, "
+                   f"{'private' if sp.get('private') else 'public'})")
+    return f"{len(rows)} space(s) under {user}:\n" + "\n".join(out) if out \
+        else f"no spaces under {user}"
+
+
+def _act_space_create(api_factory, env, repo: str, sdk: str, private: bool) -> str:
+    """Create a Space. Defaults to sdk=static — the free path on every
+    account (commit a README with sdk:docker + a Dockerfile afterwards to
+    convert it to a Docker Space, HF's own README-sdk field semantics)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_create")
+    name = _slugify_name(repo or "") or f"doomalay-{_slugify_name(datetime.now(timezone.utc).strftime('%H%M%S'))}"
+    if "/" in repo:
+        name = repo.split("/", 1)[1]
+    body = {"type": "space", "name": name,
+            "sdk": (sdk or "static").strip().lower() or "static",
+            "private": bool(private)}
+    st, raw = _hf_rest("POST", "/api/repos/create", token, body)
+    if st != 200 and "already exists" not in raw and "already created" not in raw:
+        return _redact(f"space_create failed (HTTP {st}): {raw[:300]}", [token])
+    try:
+        url = json.loads(raw).get("url", f"https://huggingface.co/spaces/-/{name}")
+    except Exception:
+        url = f"https://huggingface.co/spaces/-/{name}"
+    note = ("created" if st == 200 else "already exists")
+    tip = (" Tip: commit README.md with `sdk: docker` + a Dockerfile to flip "
+           "it into a full Docker Space." if body["sdk"] == "static" else "")
+    return f"space {note}: {url}{tip}"
+
+
+def _act_space_commit(api_factory, env, repo: str, files_json: str,
+                      commit_message: str) -> str:
+    """Commit files to a Space (one NDJSON commit — the engine's own flow).
+    files_json: [{"path": "README.md", "content": "..."}, ...] — this is how
+    the bot edits its own Dockerfile / README / app code."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_commit")
+    repo = _norm_repo(repo)
+    if not repo:
+        return "space_commit: missing ? repo=user/name"
+    try:
+        files = json.loads(files_json or "[]")
+        if not isinstance(files, list) or not files:
+            raise ValueError("empty file list")
+    except Exception as exc:
+        return f"space_commit: files_json must be a JSON list of {{path, content}} — {exc}"
+    lines = [json.dumps({"key": "header", "value": {
+        "summary": commit_message or "doomalay agent commit",
+        "description": "committed by the doomalay hf tool"}})]
+    import base64
+    for f in files[:200]:
+        p = str(f.get("path", "")).strip()
+        c = f.get("content", "")
+        if not p:
+            continue
+        lines.append(json.dumps({"key": "file", "value": {
+            "path": p,
+            "content": base64.b64encode(str(c).encode()).decode(),
+            "encoding": "base64"}}))
+    st, raw = _hf_rest("POST", f"/api/spaces/{repo}/commit/main", token,
+                       ("\n".join(lines) + "\n").encode(),
+                       ctype="application/x-ndjson", timeout=120)
+    if st != 200:
+        return _redact(f"space_commit failed (HTTP {st}): {raw[:300]}", [token])
+    try:
+        d = json.loads(raw)
+        return f"committed {len(files)} file(s) to {repo}: {d.get('commitUrl', '')}"
+    except Exception:
+        return f"committed {len(files)} file(s) to {repo}"
+
+
+def _act_space_files(api_factory, env, repo: str) -> str:
+    """List a Space's files (root of main)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_files")
+    repo = _norm_repo(repo)
+    st, raw = _hf_rest("GET", f"/api/spaces/{repo}/tree/main", token)
+    if st != 200:
+        return _redact(f"space_files failed (HTTP {st}): {raw[:300]}", [token])
+    try:
+        rows = json.loads(raw) or []
+        return "\n".join(f"- {r.get('path', '?')} ({r.get('type', '?')})"
+                          for r in rows[:100]) or "(empty)"
+    except Exception:
+        return "space_files: could not parse the tree"
+
+
+def _act_space_read(api_factory, env, repo: str, path: str) -> str:
+    """Read one file from a Space (raw)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_read")
+    repo = _norm_repo(repo)
+    path = (path or "").strip().lstrip("/")
+    if not path:
+        return "space_read: missing path"
+    st, raw = _hf_rest("GET", f"/spaces/{repo}/raw/main/{path}", token,
+                       timeout=30)
+    if st != 200:
+        return _redact(f"space_read failed (HTTP {st}): {raw[:300]}", [token])
+    return raw[:20000]
+
+
+def _act_space_restart(api_factory, env, repo: str, factory: bool) -> str:
+    """Restart / wake a Space (factory=true rebuilds the container)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_restart")
+    repo = _norm_repo(repo)
+    fac = "true" if factory else "false"
+    st, raw = _hf_rest("POST", f"/api/spaces/{repo}/restart?factory={fac}",
+                       token, body={}, timeout=60)
+    if st not in (200, 201, 202):
+        return _redact(f"space_restart failed (HTTP {st}): {raw[:300]}", [token])
+    return (f"restart requested for {repo} (factory={fac}) — "
+            "first boot after sleep takes ~1-5 min")
+
+
+def _act_space_pause(api_factory, env, repo: str) -> str:
+    """Pause a Space (frees the account's cpu-basic slot for another)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_pause")
+    repo = _norm_repo(repo)
+    st, raw = _hf_rest("POST", f"/api/spaces/{repo}/pause", token, body={},
+                       timeout=60)
+    if st not in (200, 201, 202):
+        return _redact(f"space_pause failed (HTTP {st}): {raw[:300]}", [token])
+    return f"paused {repo} — the account's cpu-basic slot is free for another space"
+
+
+def _act_space_secret(api_factory, env, repo: str, key: str, value: str) -> str:
+    """Set a Space secret (never read one back — values are write-only)."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_secret")
+    repo = _norm_repo(repo)
+    key = (key or "").strip()
+    if not key:
+        return "space_secret: missing key (values are write-only — set only)"
+    st, raw = _hf_rest("POST", f"/api/spaces/{repo}/secrets", token,
+                       {"key": key, "value": value or ""}, timeout=30)
+    if st != 200:
+        return _redact(f"space_secret failed (HTTP {st}): {raw[:300]}", [token])
+    return f"secret '{key}' set on {repo} (values can never be read back)"
+
+
+def _act_space_logs(api_factory, env, repo: str, log_type: str,
+                    tail: int) -> str:
+    """Fetch the tail of a Space's run or build logs."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("space_logs")
+    repo = _norm_repo(repo)
+    lt = "build" if str(log_type).lower() == "build" else "run"
+    n = max(10, min(int(tail or 100), 500))
+    st, raw = _hf_rest("GET", f"/api/spaces/{repo}/logs/{lt}?tail={n}",
+                       token, timeout=30)
+    if st != 200:
+        return _redact(f"space_logs failed (HTTP {st}): {raw[:300]}", [token])
+    out = raw
+    if lt == "run" and not out.strip():
+        out = "(run log empty — the space may be sleeping or just built)"
+    return out[-15000:]
+
+
 # ── dispatcher: the single entry the strands surface calls ──────────────
 
 def run_action(action, *, workspace=None, state_dir=None, log=None,
                api_factory=None, env=None, path: str = "", repo: str = "",
                name: str = "", content: str = "", repo_type: str = "dataset",
                private=False, commit_message: str = "", summary: str = "",
-               limit: int = 20, upload=False) -> str:
+               limit: int = 20, upload=False, files_json: str = "",
+               key: str = "", value: str = "", tail: int = 100,
+               factory=False, sdk: str = "static") -> str:
     """Route an action. NEVER raises — every failure is an actionable string.
 
     api_factory/env are the two injection seams that keep this unit-testable
@@ -984,6 +1268,29 @@ def run_action(action, *, workspace=None, state_dir=None, log=None,
                                      private, commit_message)
         if action == "exists":
             return _act_exists(api_factory, env, repo, repo_type)
+        # v0.48 task 7 — space management (full control of the user's
+        # Spaces: create, commit/edit files, restart, pause, secrets, logs)
+        if action == "space":
+            return _act_space(api_factory, env, repo)
+        if action == "spaces":
+            return _act_spaces(api_factory, env, limit)
+        if action == "space_create":
+            return _act_space_create(api_factory, env, repo, sdk, private)
+        if action == "space_commit":
+            return _act_space_commit(api_factory, env, repo, files_json,
+                                     commit_message)
+        if action == "space_files":
+            return _act_space_files(api_factory, env, repo)
+        if action == "space_read":
+            return _act_space_read(api_factory, env, repo, path)
+        if action == "space_restart":
+            return _act_space_restart(api_factory, env, repo, factory)
+        if action == "space_pause":
+            return _act_space_pause(api_factory, env, repo)
+        if action == "space_secret":
+            return _act_space_secret(api_factory, env, repo, key, value)
+        if action == "space_logs":
+            return _act_space_logs(api_factory, env, repo, log_type, tail)
         if not action:
             return f"hf: missing action — {SHORT_HELP}"
         return f"Unknown action: {action!r}. {SHORT_HELP}"
@@ -1017,22 +1324,30 @@ def build(ctx) -> list:
         _log_fn = getattr(ctx, "log", None)
 
         @strands_tool_decorator(name="hf", description=(
-            "Publish chat results, workspace files, or generated reports to the "
-            "Hugging Face community library (datasets by default) using the "
-            "account's HF_TOKEN — use it whenever the user asks to upload, "
-            "publish, or share something to HuggingFace, or to check their HF "
-            "repos. Actions: whoami, list, publish (workspace file/dir/glob), "
-            "publish_text (generated report/csv/jsonl), dataset_card, exists, "
-            "help. Repos default to <username>/doomalay-<slug>; the token is "
-            "read from the environment and never displayed."
+            "The Hugging Face toolkit — publish chat results, workspace files, "
+            "or generated reports to the community library AND fully manage "
+            "the account's Spaces (create, edit files like the Dockerfile / "
+            "README / app, restart, pause, secrets, logs). Use it whenever "
+            "the user asks to upload/publish/share to HuggingFace, manage "
+            "their Space, or check their repos. Library actions: whoami, "
+            "list, publish, publish_text, dataset_card, exists. Space "
+            "actions: spaces (list), space (runtime snapshot), space_create "
+            "(static is free everywhere — commit README sdk:docker + "
+            "Dockerfile to flip it to Docker), space_commit (edit files), "
+            "space_files, space_read, space_restart, space_pause, "
+            "space_secret (write-only), space_logs, help. The token is read "
+            "from the environment and never displayed."
         ))
         def hf(action: str, path: str = "", repo: str = "", name: str = "",
                 content: str = "", repo_type: str = "dataset",
                 private: bool = False, commit_message: str = "",
-                summary: str = "", limit: int = 20, upload: bool = False) -> str:
-            """Publish to the Hugging Face community library.
-            action: whoami | list | publish | publish_text | dataset_card | exists | help
-            path: workspace-relative file, directory, or glob (publish; also feeds the card's structure section)
+                summary: str = "", limit: int = 20, upload: bool = False,
+                files_json: str = "", key: str = "", value: str = "",
+                tail: int = 100, factory: bool = False,
+                sdk: str = "static") -> str:
+            """Publish to the Hugging Face library + manage Spaces.
+            action: whoami | list | publish | publish_text | dataset_card | exists | spaces | space | space_create | space_commit | space_files | space_read | space_restart | space_pause | space_secret | space_logs | help
+            path: workspace-relative file/dir/glob (publish) OR the file path inside a Space (space_read)
             repo: HF repo id; default <username>/doomalay-<slug>
             name: file name for publish_text (slugged, extension kept)
             content: the text to publish (publish_text)
@@ -1040,14 +1355,21 @@ def build(ctx) -> list:
             private: create as a private repo (default False — the community library is public)
             commit_message: custom commit message
             summary: dataset-card one-liner (dataset_card)
-            limit: max repos to list (default 20)
+            limit: max repos/spaces to list (default 20)
             upload: for dataset_card — also upload the card into the repo as README.md
+            files_json: space_commit — JSON list [{"path": "...", "content": "..."}]
+            key / value: space_secret — the secret name + its value (write-only)
+            tail: space_logs — how many lines (default 100)
+            factory: space_restart — rebuild the container from scratch
+            sdk: space_create — gradio | static | docker (default static — free on every account)
             """
             return run_action(action, workspace=_ws, state_dir=_state, log=_log_fn,
                               path=path, repo=repo, name=name, content=content,
                               repo_type=repo_type, private=private,
                               commit_message=commit_message, summary=summary,
-                              limit=limit, upload=upload)
+                              limit=limit, upload=upload, files_json=files_json,
+                              key=key, value=value, tail=factory and 100 or tail,
+                              factory=factory, sdk=sdk)
 
         return [hf]
     except Exception:

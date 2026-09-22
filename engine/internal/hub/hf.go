@@ -207,6 +207,21 @@ func (c *HFClient) SearchDatasets(query string) ([]RepoCard, error) {
         return cards, nil
 }
 
+// escapeRepo shapes a repo id for a URL PATH position.
+//
+// v0.49 (task 4, live-verified 2026-09-22): HF now REJECTS %2F-escaped
+// repo ids on EVERY /api/datasets/* and /datasets/* endpoint —
+//      GET /api/datasets/User%2Fdoomalay-personas
+//      → 400 "Invalid repo name: … - repo name includes an url-encoded slash"
+// (reproduced without a token on resolve, tree, preupload, lfs batch and
+// commit). Raw "user/name" works everywhere (both repo types), so the
+// escape is retired: repo ids are [-_a-zA-Z0-9] + one slash — nothing
+// needs escaping. Kept as a function (not inlined away) so the call sites
+// stay greppable and a future escape need has one home.
+func escapeRepo(repo string) string {
+        return repo
+}
+
 // ListAuthorDatasets returns one account's dataset repos (≤100). v0.48:
 // the third discovery channel — the connected user's own datasets, so a
 // freshly posted repo shows up on the next refresh even if HF's search
@@ -366,8 +381,9 @@ func (c *HFClient) commitFiles(token, repo, message string, files []CommitFile, 
                         "encoding": "base64",
                 }})
         }
-        commitRepoPath := repo // raw user/name for both repo types — see the v0.48 note above
-        _, err = c.do("POST", "/api/"+repoType+"/"+commitRepoPath+"/commit/main", token, buf.Bytes(), "application/x-ndjson")
+        // v0.47: escapeRepo is now the identity (raw repo id everywhere) —
+        // %2F is rejected by both /api/spaces/* AND /api/datasets/*.
+        _, err = c.do("POST", "/api/"+repoType+"/"+escapeRepo(repo)+"/commit/main", token, buf.Bytes(), "application/x-ndjson")
         return err
 }
 
@@ -415,8 +431,10 @@ func (c *HFClient) preuploadTyped(token, repo string, files []CommitFile, repoTy
         if repoType == "" {
                 repoType = "datasets"
         }
-        repoPath := repo // raw user/name — see the v0.48 raw-repo note above
-        body, err := c.postJSON("/api/"+repoType+"/"+repoPath+"/preupload/main", token, payload)
+        // v0.47: raw repo ids everywhere — %2F is rejected by BOTH
+        // /api/spaces/* and /api/datasets/* ("repo name includes an
+        // url-encoded slash", live-verified 2026-09-22).
+        body, err := c.postJSON("/api/"+repoType+"/"+escapeRepo(repo)+"/preupload/main", token, payload)
         if err != nil {
                 return nil, err
         }

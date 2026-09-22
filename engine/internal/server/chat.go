@@ -299,14 +299,14 @@ func releaseTurnCancel(sessionID string, tc *turnCancel) {
         turnMu.Unlock()
 }
 
-// defaultPersona (v0.20) — the app's default persona: OUR default prompt
-// (the artifact protocol) MERGED with the old HF space's system prompt
-// style ("Be direct and concise; lead with outcomes", the explicit
-// model-identity instruction, tool-use discipline). {model} and
+// defaultPersonaQuick (v0.20→v0.48) — the QUICK-CHAT default persona: OUR
+// default prompt (the artifact protocol) MERGED with the old HF space's
+// system prompt style ("Be direct and concise; lead with outcomes", the
+// explicit model-identity instruction, tool-use discipline). {model} and
 // {provider} placeholders are substituted at composition time so the
 // persona always knows exactly which model it currently is — and stays
 // correct after mid-conversation model switches.
-const defaultPersona = "## Identity\n" +
+const defaultPersonaQuick = "## Identity\n" +
         "You are {model} (served via {provider}), chatting inside the Doomalay app on the user's own device. " +
         "Your name in this app is {name}. " +
         "If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. " +
@@ -320,6 +320,50 @@ const defaultPersona = "## Identity\n" +
         "When the app's tool protocol is active, invoke tools ONLY through the protocol's ACTION line format — never as plain text. " +
         "Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n" +
         artifactSystemPrompt
+
+// defaultPersonaHF (v0.48 task 6) — the HF-chat default persona: the same
+// style, but the assistant KNOWS it lives in a Hugging Face Space Linux
+// sandbox with the full toolchain, can install packages, manages its own
+// Space via the HF API, has a per-chat (ephemeral) workspace, and sleeps/
+// wakes. {repo} is substituted by defaultPersonaFor (own-space repo name
+// or the shared marker).
+const defaultPersonaHF = "## Identity\n" +
+        "You are {model} (served via {provider}), the Doomalay assistant running INSIDE a Hugging Face Space — a real Linux sandbox in the cloud, not on the user's phone. " +
+        "Your name in this app is {name}. " +
+        "If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. " +
+        "This identity updates automatically when the user switches your model mid-conversation; trust it over any prior assumption.\n\n" +
+        "## Environment — you are on Hugging Face{repo}\n" +
+        "You have a REAL Linux sandbox: bash, python, git, Node, and a full build toolchain (gcc/g++, make, cmake, Go, Rust, Java, qemu). " +
+        "You can install packages (pip / npm / apt), write and run real code, and manage this very Space through the HF API — edit your own files (Dockerfile, app, README), manage secrets, read logs, restart. " +
+        "Your workspace is per-chat and may be ephemeral — tell the user to commit or download anything important. " +
+        "The Space sleeps after inactivity; the first message after a nap can take a few minutes while it wakes.\n\n" +
+        "## Style\n" +
+        "Be direct and concise; lead with the outcome, not the process. " +
+        "Use markdown freely — headings, lists, bold, links and fenced code blocks all render nicely in this app. " +
+        "When a live fact matters and web search is enabled, search rather than guess. " +
+        "When you don't know something, say so. " +
+        "Prefer DOING over describing: when the user asks for something the sandbox can answer, actually run it and show the real output.\n\n" +
+        "## Tools\n" +
+        "When the app's tool protocol is active, invoke tools ONLY through the protocol's ACTION line format — never as plain text. " +
+        "Chain tools freely — plan, run, read results, then run the next — including parallel commands when they are independent. " +
+        "Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n" +
+        artifactSystemPrompt
+
+// defaultPersonaFor (v0.48 task 6) picks the mode-aware default: HF chats
+// get an assistant that knows it lives in a Hugging Face Space with the
+// full toolchain; quick chats get the classic app persona.
+func defaultPersonaFor(sess *store.Session) string {
+        if sess != nil && sess.Sandbox == "hf" {
+                p := defaultPersonaHF
+                if repo := strings.TrimSpace(sess.SandboxRepo); repo != "" {
+                        p = strings.ReplaceAll(p, "{repo}", " (your Space: "+repo+")")
+                } else {
+                        p = strings.ReplaceAll(p, "{repo}", " (the shared sandbox)")
+                }
+                return p
+        }
+        return defaultPersonaQuick
+}
 
 // prettyModelName turns a model slot ("nvidia/nvidia/nemotron-…",
 // "privatemodeai/kimi-k2.6", "openai/gpt-4o") into the name the model
@@ -399,14 +443,20 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         if p := strings.TrimSpace(sess.Provider); p != "" {
                 b.WriteString(", hosted via " + providerLabel(p))
         }
-        b.WriteString(", chatting inside the Doomalay app on the user's own device. ")
+        if sess.Sandbox == "hf" {
+                // v0.48 task 6: HF chats run the brain inside a Space, not
+                // on the device — the identity line must say so.
+                b.WriteString(", chatting inside the Doomalay app from your Hugging Face Space. ")
+        } else {
+                b.WriteString(", chatting inside the Doomalay app on the user's own device. ")
+        }
         b.WriteString("Today is " + time.Now().Format("Monday, 2 January 2006") + ".")
 
         ph := s.mergedPlaceholders(sess) // v0.29: global customs + this chat's local customs
         if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
                 persona := strings.TrimSpace(spec.Text)
                 if persona == "" {
-                        persona = defaultPersona
+                        persona = defaultPersonaFor(sess)
                 }
                 b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))
                 if !strings.Contains(strings.ToLower(persona), "artifact") {
@@ -417,10 +467,10 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         }
         persona := strings.TrimSpace(sess.Persona)
         if persona == "" {
-                // No custom persona → the app's merged default persona
-                // (v0.20: the default prompt + the HF-space identity
-                // style, with the live model + provider baked in).
-                b.WriteString("\n\n" + substituteAllVars(defaultPersona, sess.Title, sess.Model, sess.Provider, ph))
+                // No custom persona → the mode-aware default (v0.48 task 6:
+                // quick vs HF — the HF default knows it lives in a Space
+                // with the full toolchain).
+                b.WriteString("\n\n" + substituteAllVars(defaultPersonaFor(sess), sess.Title, sess.Model, sess.Provider, ph))
                 return b.String()
         }
         b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))

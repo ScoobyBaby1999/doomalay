@@ -809,11 +809,6 @@
     // checks the strip's buttons die the same death on Android.
     if (dockStripEl && dockStripEl.contains(target)) return true;
     if (dockToggleEl && dockToggleEl.contains(target)) return true;
-    // v0.45 ITEM 7: the HF connect button + its status pill
-    var hfBtn = document.getElementById('hf-btn');
-    if (hfBtn && hfBtn.contains(target)) return true;
-    var hfPill = document.getElementById('hf-space-pill');
-    if (hfPill && hfPill.contains(target)) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
@@ -909,14 +904,6 @@
     setTimeout(function () { settingsBtnEl.classList.remove('spinning'); }, 400);
     window.Settings.openInPanel(panel);
   });
-
-  // v0.45 ITEM 7: HF Space connect button → opens the OAuth + status flow
-  var hfBtnEl = document.getElementById('hf-btn');
-  if (hfBtnEl) {
-    hfBtnEl.addEventListener('click', function () {
-      if (window.HFConnect) window.HFConnect.openConnect();
-    });
-  }
 
   // Listen for custom action events (e.g. "reset-view" from Appearance page).
   window.addEventListener('doomalay:action', function (e) {

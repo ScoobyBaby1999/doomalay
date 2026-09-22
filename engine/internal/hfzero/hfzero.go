@@ -29,6 +29,9 @@ import (
 //go:embed template/app.py
 //go:embed template/requirements.txt
 //go:embed template/README.md
+//go:embed template/docker-app.py
+//go:embed template/docker-Dockerfile
+//go:embed template/docker-README.md
 var templateFS embed.FS
 
 //go:embed all:brain
@@ -83,6 +86,61 @@ func Files() ([]File, error) {
 // endpoint to report what it uploaded.
 func TotalBytes() (int, error) {
         files, err := Files()
+        if err != nil {
+                return 0, err
+        }
+        n := 0
+        for _, f := range files {
+                n += len(f.Content)
+        }
+        return n, nil
+}
+
+// DockerFiles returns the DOCKER-SDK variant manifest (v0.47 task 9): a
+// full-toolchain Dockerfile (gcc/go/rust/java/node/qemu) + the token-gated
+// app + the brain tree — the "HF Docker sandbox" the engine brick-by-brick
+// commits into a user-created cpu-basic Docker Space. Same brain embed as
+// the ZeroGPU flavor; only the wrapper files differ. NOTE: creating Docker
+// Spaces requires HF PRO on personal accounts (Oct-2025 policy) — the
+// engine tries and maps a 402 honestly (the ZeroGPU flavor is the free
+// fallback).
+func DockerFiles() ([]File, error) {
+        var out []File
+        for _, pair := range []struct{ src, dst string }{
+                {"template/docker-app.py", "app.py"},
+                {"template/docker-Dockerfile", "Dockerfile"},
+                {"template/docker-README.md", "README.md"},
+        } {
+                b, err := templateFS.ReadFile(pair.src)
+                if err != nil {
+                        return nil, err
+                }
+                out = append(out, File{Path: pair.dst, Content: b})
+        }
+        err := fs.WalkDir(brainFS, "brain", func(p string, d fs.DirEntry, err error) error {
+                if err != nil {
+                        return err
+                }
+                if d.IsDir() {
+                        return nil
+                }
+                b, err := brainFS.ReadFile(p)
+                if err != nil {
+                        return err
+                }
+                out = append(out, File{Path: p, Content: b})
+                return nil
+        })
+        if err != nil {
+                return nil, err
+        }
+        sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+        return out, nil
+}
+
+// DockerTotalBytes returns the aggregate size of DockerFiles().
+func DockerTotalBytes() (int, error) {
+        files, err := DockerFiles()
         if err != nil {
                 return 0, err
         }

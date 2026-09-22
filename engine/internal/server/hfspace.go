@@ -34,6 +34,7 @@
 package server
 
 import (
+        "bytes"
         "crypto/rand"
         "crypto/sha256"
         "encoding/base64"
@@ -51,13 +52,25 @@ import (
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
-// hfOAuthClientID is the public OAuth app's client_id (registered at
-// https://huggingface.co/settings/connected-applications — account-owner
-// action). Empty → the connect overlay offers token-paste instead (the
-// reliable path; OAuth is a bonus when configured).
-var hfOAuthClientID = getenvDefault("DOOMALAY_HF_OAUTH_CLIENT_ID", "")
+// hfOAuthClientID is the OAuth app's client_id.
+//
+// v0.47 (task 3): the default is a CIMD — a Client ID Metadata Document
+// (https://huggingface.co/docs/hub/oauth#automated-oauth-app-creation) —
+// served from OUR GitHub Pages. HF fetches the doc on first use and
+// auto-registers the "Doomalay" OAuth app; the flow is public (PKCE, no
+// client secret), and the doc registers port-less loopback redirect URIs
+// which match ANY local port (RFC 8252 §7.3) — exactly what an on-device
+// engine needs. Live-verified 2026-09-22: /oauth/authorize accepts this
+// client_id and serves the login page.
+// The user's own app (registered at huggingface.co/settings/clients, secret
+// 3894128e-…) has an UNKNOWN client_id — the CIMD replaces the need for it.
+// Override with DOOMALAY_HF_OAUTH_CLIENT_ID (a UUID-style client_id or
+// another CIMD URL both work).
+var hfOAuthClientID = getenvDefault("DOOMALAY_HF_OAUTH_CLIENT_ID",
+        "https://scoobybaby1999.github.io/doomalaysocreate/.well-known/oauth-cimd")
 
 var hfRedirectURI = getenvDefault("DOOMALAY_HF_OAUTH_REDIRECT", "")
 
@@ -126,15 +139,32 @@ func getenvDefault(key, def string) string {
 func (s *Server) handleHFAccount(w http.ResponseWriter, r *http.Request) {
         token := s.hfToken()
         user := ""
+        tokenKind := ""
         if token != "" {
-                hfCli := hub.NewHFClient("")
-                if u, err := hfCli.WhoAmI(token); err == nil {
+                // The hub service stores the verified username as the vault
+                // extra at connect time — read it FIRST (no network, always
+                // available) and only hit whoami to refresh (v0.47 task 8:
+                // "connected as" showed empty whenever whoami failed — e.g.
+                // an expired OAuth token or a network blip).
+                if s.hub != nil {
+                        user = s.hub.Username()
+                }
+                hfCli := s.hfClient()
+                if u, err := hfCli.WhoAmI(token); err == nil && u != "" {
                         user = u
+                }
+                // hf_oauth_* tokens (the CIMD sign-in path) expire after 8h
+                // with no refresh — flag them so the UI can offer reconnect.
+                if strings.HasPrefix(token, "hf_oauth") {
+                        tokenKind = "oauth"
+                } else {
+                        tokenKind = "token"
                 }
         }
         writeJSON(w, http.StatusOK, map[string]any{
                 "connected":   token != "",
                 "user":        user,
+                "auth":        tokenKind,
                 "shared_repo": sharedSpaceRepo,
                 "shared_url":  sharedSpaceBaseURL(),
                 "oauth":       hfOAuthClientID != "",
@@ -163,7 +193,7 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
                 name = "doomalay-" + randomState(6)
         }
 
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         user, err := hfCli.WhoAmI(token)
         if err != nil {
                 writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
@@ -246,9 +276,244 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
         s.writeSpaceInfo(w, token, repoID, fmt.Sprintf("created (%d files, %d KB)", len(files), total/1024))
 }
 
+// ── the DOCKER sandbox (v0.47 task 9) ──────────────────────────────────────
+
+// handleHFSpaceDockerCreate is POST /api/hf/space/docker-create {name?, fork?}
+//
+// The "HF Docker sandbox" — the engine builds the user's own full-toolchain
+// Space brick by brick, as if they had made it themselves:
+//  1. (optional, default on) fork the doomalay template repo into the user's
+//     GitHub — their own persistent copy of the source + the CI that can
+//     re-push the Space (GitHub Actions workflow_dispatch with their token
+//     as a repo secret).
+//  2. POST /api/repos/create {type: space, sdk: STATIC} — the Vite-blank
+//     trick (live-verified 2026-09-23): STATIC creation is free on every
+//     account, while direct docker/gradio creation is PRO-gated (402).
+//  3. Commit the embedded Docker template — README(sdk: docker) + the
+//     full-toolchain Dockerfile + token-gated app + the brain tree — ONE
+//     NDJSON commit whose README flip converts the Space to the docker SDK
+//     (HF honors the README sdk field on push; verified live).
+//  4. Set the DOOMALAY_SPACE_TOKEN secret (vault-held copy).
+//  5. Wake attempt + honest runtime state. Since Jul-2026 HF gates cpu-basic
+//     RUNTIME behind PRO too ("This includes converting an existing Static
+//     Space…", HF staff 2026-09-21): free accounts end paused_quota — the
+//     Space is built and ready, and runs the moment the account has a slot
+//     (PRO, or pause another of its spaces — HF's own suggested remedy).
+func (s *Server) handleHFSpaceDockerCreate(w http.ResponseWriter, r *http.Request) {
+        token := s.hfToken()
+        if token == "" {
+                writeError(w, http.StatusUnauthorized, "not connected to Hugging Face — connect first (Sign in with Hugging Face)")
+                return
+        }
+        var req struct {
+                Name string `json:"name"`
+                Fork *bool  `json:"fork"` // nil → fork when GitHub is connected
+        }
+        _ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+
+        hfCli := s.hfClient()
+        user, err := hfCli.WhoAmI(token)
+        if err != nil {
+                writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
+                return
+        }
+
+        // 1. The GitHub fork (best-effort, skippable): their own copy of the
+        //    source + a CI path to re-push the space from GitHub Actions.
+        forkNote := ""
+        wantFork := req.Fork == nil || *req.Fork
+        gh := s.githubToken()
+        if wantFork && gh != "" {
+                forked, ferr := githubForkRepo(gh, "ScoobyBaby1999", "doomalay")
+                if ferr != nil {
+                        forkNote = "fork skipped: " + ferr.Error()
+                } else {
+                        forkNote = "forked doomalay → " + forked
+                }
+        } else if wantFork {
+                forkNote = "fork skipped: not signed in to GitHub"
+        }
+
+        name := hfzero.SanitizeSpaceName(req.Name)
+        if name == "" {
+                name = "doomalay-" + randomState(6)
+        }
+        repoID := user + "/" + name
+
+        // 2. Create the space as STATIC (the Vite-blank trick): creation is
+        //    free on every account; the step-3 commit flips the SDK.
+        createBody := map[string]any{
+                "type": "space",
+                "name": name,
+                "sdk":  "static",
+                // PUBLIC deliberately (same reasoning as the ZeroGPU flavor):
+                // private spaces are not served at their public *.hf.space
+                // URL; the X-Space-Token gate is the security.
+                "private": false,
+        }
+        bodyBytes, _ := json.Marshal(createBody)
+        if _, err := hfCli.DoRaw("POST", "/api/repos/create", token, bodyBytes, "application/json"); err != nil {
+                msg := err.Error()
+                if !strings.Contains(msg, "already exists") && !strings.Contains(msg, "already created") {
+                        writeError(w, http.StatusBadGateway, "create space: "+msg)
+                        return
+                }
+        }
+
+        // 3. Brick by brick: the full-toolchain Dockerfile + app + brain.
+        files, err := hfzero.DockerFiles()
+        if err != nil {
+                writeError(w, http.StatusInternalServerError, "template: "+err.Error())
+                return
+        }
+        commitFiles := make([]hub.CommitFile, 0, len(files))
+        total := 0
+        for _, f := range files {
+                commitFiles = append(commitFiles, hub.CommitFile{Path: f.Path, Content: f.Content})
+                total += len(f.Content)
+        }
+        if err := hfCli.CommitFilesSpace(token, repoID, "doomalay: docker sandbox v0.48 (static→docker + full toolchain + brain)", commitFiles); err != nil {
+                writeError(w, http.StatusBadGateway, "upload files: "+err.Error())
+                return
+        }
+
+        // 4. Space token: random secret on the Space + a copy in our vault.
+        spaceToken := randomState(32)
+        secretBody, _ := json.Marshal(map[string]string{"key": "DOOMALAY_SPACE_TOKEN", "value": spaceToken})
+        if _, err := hfCli.DoRaw("POST", "/api/spaces/"+repoID+"/secrets", token, secretBody, "application/json"); err != nil {
+                writeError(w, http.StatusBadGateway, "set space secret: "+err.Error())
+                return
+        }
+        if err := s.vault.Set(spaceTokenEnvVar(repoID), "hf-space", spaceToken, repoID); err != nil {
+                writeError(w, http.StatusInternalServerError, "vault: "+err.Error())
+                return
+        }
+
+        // 5. Wake it (best-effort) and report the honest runtime state.
+        _ = hfRestartSpace(hfCli, token, repoID)
+        state := "unknown"
+        status, serr := hfSpaceStatus(hfCli, token, repoID)
+        if serr == nil {
+                switch {
+                case boolField(status, "quota_paused"):
+                        state = "paused_quota"
+                case boolField(status, "running"):
+                        state = "running"
+                case boolField(status, "building"):
+                        state = "building"
+                case boolField(status, "error"):
+                        state = "error"
+                default:
+                        state = strings.ToLower(stringField(status, "stage"))
+                }
+        }
+
+        note := fmt.Sprintf("provisioned docker sandbox (%d files, %d KB) — sdk flipped static→docker", len(files), total/1024)
+        switch state {
+        case "paused_quota":
+                note += "; BUILT and READY, but HF gates cpu-basic runtime behind PRO on free accounts (Jul-2026 policy) — " +
+                        "pause another of your spaces to free the slot, upgrade to PRO, or use the ZeroGPU sandbox (free)"
+        case "running":
+                note += "; booting — ready in ~5-10 min"
+        default:
+                note += "; build starting — first build ~5-10 min"
+        }
+        if forkNote != "" {
+                note += "; " + forkNote
+        }
+        resp := map[string]any{
+                "repo":  repoID,
+                "url":   hfzero.SpaceURL(repoID),
+                "note":  note,
+                "state": state,
+        }
+        if serr == nil {
+                for k, v := range status {
+                        resp[k] = v
+                }
+        } else {
+                resp["stage"] = "UNKNOWN"
+        }
+        writeJSON(w, http.StatusOK, resp)
+}
+
+// boolField/stringField: safe map[string]any getters.
+func boolField(m map[string]any, k string) bool {
+        v, _ := m[k].(bool)
+        return v
+}
+
+func stringField(m map[string]any, k string) string {
+        v, _ := m[k].(string)
+        return v
+}
+
+// githubForkRepo forks owner/repo as the token's user. Returns the fork's
+// full name. Idempotent: GitHub returns 202 with the EXISTING fork when one
+// is already there.
+func githubForkRepo(token, owner, repo string) (string, error) {
+        body, err := ghREST(token, "POST", "/repos/"+owner+"/"+repo+"/forks", nil)
+        if err != nil {
+                return "", err
+        }
+        var out struct {
+                FullName string `json:"full_name"`
+        }
+        _ = json.Unmarshal(body, &out)
+        if out.FullName == "" {
+                return owner + "/" + repo + " (fork status unknown)", nil
+        }
+        return out.FullName, nil
+}
+
+// ghREST is a minimal GitHub REST helper (netx transport, browser UA —
+// same house rules as the hub's HF client).
+func ghREST(token, method, path string, body []byte) ([]byte, error) {
+        var rdr io.Reader
+        if body != nil {
+                rdr = bytes.NewReader(body)
+        }
+        req, err := http.NewRequest(method, "https://api.github.com"+path, rdr)
+        if err != nil {
+                return nil, err
+        }
+        req.Header.Set("Authorization", "Bearer "+token)
+        req.Header.Set("Accept", "application/vnd.github+json")
+        req.Header.Set("User-Agent", "doomalay-engine/0.47")
+        resp, err := (&http.Client{Timeout: 20 * time.Second, Transport: netx.Transport()}).Do(req)
+        if err != nil {
+                return nil, err
+        }
+        defer resp.Body.Close()
+        out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+        if resp.StatusCode >= 300 {
+                msg := string(out)
+                if len(msg) > 200 {
+                        msg = msg[:200]
+                }
+                return nil, fmt.Errorf("github: HTTP %d: %s", resp.StatusCode, msg)
+        }
+        return out, nil
+}
+
+// handleGHAccount is GET /api/gh/account — the GitHub connection state
+// (v0.47 task 11: the connect-GitHub panel mirrors the HF one).
+func (s *Server) handleGHAccount(w http.ResponseWriter, r *http.Request) {
+        id, secret := s.ghOAuthCreds()
+        login, signed := s.accountInfo("github")
+        writeJSON(w, http.StatusOK, map[string]any{
+                "connected":    signed,
+                "user":         login,
+                "oauth":        id != "",
+                "client_id":    id,
+                "has_secret":   secret != "",
+                "redirect_uri": oauthRedirectURI(r),
+        })
+}
+
 // writeSpaceInfo responds with a space's repo/url/stage snapshot.
 func (s *Server) writeSpaceInfo(w http.ResponseWriter, token, repoID, note string) {
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         status, serr := hfSpaceStatus(hfCli, token, repoID)
         resp := map[string]any{
                 "repo": repoID,
@@ -274,7 +539,7 @@ func (s *Server) handleHFSpaceEnsure(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusUnauthorized, "not connected to Hugging Face")
                 return
         }
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         user, err := hfCli.WhoAmI(token)
         if err != nil {
                 writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
@@ -308,7 +573,7 @@ func (s *Server) handleHFSpacesList(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusUnauthorized, "not connected to Hugging Face")
                 return
         }
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         user, err := hfCli.WhoAmI(token)
         if err != nil {
                 writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
@@ -390,7 +655,7 @@ func (s *Server) handleHFShared(w http.ResponseWriter, r *http.Request) {
         }
         token := s.hfToken()
         if token != "" {
-                hfCli := hub.NewHFClient("")
+                hfCli := s.hfClient()
                 if st, err := hfSpaceStatus(hfCli, token, sharedSpaceRepo); err == nil {
                         for k, v := range st {
                                 resp[k] = v
@@ -414,7 +679,7 @@ func (s *Server) handleHFSpaceStatus(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusBadRequest, "missing repo")
                 return
         }
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         status, err := hfSpaceStatus(hfCli, token, repo)
         if err != nil {
                 writeError(w, http.StatusBadGateway, err.Error())
@@ -484,12 +749,35 @@ func (s *Server) handleHFSpaceRestart(w http.ResponseWriter, r *http.Request) {
                 return
         }
         repo := r.URL.Query().Get("repo")
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         if err := hfRestartSpace(hfCli, token, repo); err != nil {
                 writeError(w, http.StatusBadGateway, err.Error())
                 return
         }
         writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repo": repo})
+}
+
+// handleHFSpacePause is POST /api/hf/space/pause?repo=user/name — pause a
+// Space, freeing the account's cpu-basic slot for another one (HF's own
+// remedy for the quota wall; live-verified 2026-09-23). The docker-sandbox
+// picker uses it in the paused_quota state: "pause <other space>, wake this".
+func (s *Server) handleHFSpacePause(w http.ResponseWriter, r *http.Request) {
+        token := s.hfToken()
+        if token == "" {
+                writeError(w, http.StatusUnauthorized, "not connected to HF")
+                return
+        }
+        repo := r.URL.Query().Get("repo")
+        if repo == "" {
+                writeError(w, http.StatusBadRequest, "missing repo")
+                return
+        }
+        hfCli := s.hfClient()
+        if _, err := hfCli.DoRaw("POST", "/api/spaces/"+repo+"/pause", token, nil, ""); err != nil {
+                writeError(w, http.StatusBadGateway, "pause: "+err.Error())
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repo": repo, "paused": true})
 }
 
 // ── OAuth PKCE (v0.45, kept — active only when a client_id is configured) ──
@@ -523,7 +811,7 @@ func (s *Server) handleHFOAuthStart(w http.ResponseWriter, r *http.Request) {
         q.Set("client_id", hfOAuthClientID)
         q.Set("redirect_uri", redirectURI)
         q.Set("response_type", "code")
-        q.Set("scope", "openid profile email contribute-repos")
+        q.Set("scope", "openid profile write-repos manage-repos")
         q.Set("state", state)
         q.Set("code_challenge", challenge)
         q.Set("code_challenge_method", "S256")
@@ -553,7 +841,7 @@ func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusBadGateway, "token exchange failed: "+err.Error())
                 return
         }
-        hfCli := hub.NewHFClient("")
+        hfCli := s.hfClient()
         user, err := hfCli.WhoAmI(token)
         if err != nil {
                 writeError(w, http.StatusUnauthorized, "token rejected by HF: "+err.Error())
@@ -611,7 +899,11 @@ func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
 
 // ── HF REST helpers ────────────────────────────────────────────────────────
 
-// hfSpaceStatus GETs /api/spaces/{repo} → runtime stage snapshot.
+// hfSpaceStatus GETs /api/spaces/{repo} → runtime stage snapshot. Since
+// v0.48 it also parses runtime.errorMessage to distinguish a quota-paused
+// space ("Quota exceeded for flavor cpu-basic…" — cannot run on this
+// account without freeing a slot / PRO) from an ordinary sleeping space
+// (48h inactivity — wakes fine).
 func hfSpaceStatus(hf *hub.HFClient, token, repo string) (map[string]any, error) {
         body, err := hf.DoRaw("GET", "/api/spaces/"+repo, token, nil, "")
         if err != nil {
@@ -620,8 +912,9 @@ func hfSpaceStatus(hf *hub.HFClient, token, repo string) (map[string]any, error)
         var resp struct {
                 ID      string `json:"id"`
                 Runtime struct {
-                        Stage    string `json:"stage"`
-                        Hardware struct {
+                        Stage        string `json:"stage"`
+                        ErrorMessage string `json:"errorMessage"`
+                        Hardware     struct {
                                 Current string `json:"current"`
                         } `json:"hardware"`
                 } `json:"runtime"`
@@ -633,21 +926,35 @@ func hfSpaceStatus(hf *hub.HFClient, token, repo string) (map[string]any, error)
         if stage == "" {
                 stage = "NO_APP_FILE"
         }
-        return map[string]any{
-                "repo":     resp.ID,
-                "stage":    stage,
-                "hardware": resp.Runtime.Hardware.Current,
-                "running":  stage == "RUNNING" || stage == "RUNNING_BUILDING" || stage == "RUNNING_APP_STARTING",
-                "sleeping": stage == "PAUSED" || stage == "STOPPED",
-                "building": strings.HasPrefix(stage, "BUILDING") || strings.Contains(stage, "APP_STARTING"),
-                "error":    strings.Contains(stage, "ERROR"),
-        }, nil
+        quota := strings.Contains(resp.Runtime.ErrorMessage, "Quota exceeded")
+        out := map[string]any{
+                "repo":         resp.ID,
+                "stage":        stage,
+                "hardware":     resp.Runtime.Hardware.Current,
+                "running":      stage == "RUNNING" || stage == "RUNNING_BUILDING" || stage == "RUNNING_APP_STARTING",
+                "sleeping":     stage == "PAUSED" || stage == "STOPPED",
+                "building":     strings.HasPrefix(stage, "BUILDING") || strings.Contains(stage, "APP_STARTING"),
+                "error":        strings.Contains(stage, "ERROR"),
+                "quota_paused": quota,
+        }
+        if quota {
+                out["quota_error"] = resp.Runtime.ErrorMessage
+        }
+        return out, nil
 }
 
 // hfRestartSpace POSTs /api/spaces/{repo}/restart?factory=false.
 func hfRestartSpace(hf *hub.HFClient, token, repo string) error {
         _, err := hf.DoRaw("POST", "/api/spaces/"+repo+"/restart?factory=false", token, nil, "")
         return err
+}
+
+// hfClient builds an HF client on the CONFIGURED base (cfg.Hub.HFBase —
+// huggingface.co in production, the test mock in tests). v0.48: the
+// handlers used to hard-code NewHFClient("") which silently bypassed the
+// test mock (the docker-create suite caught it).
+func (s *Server) hfClient() *hub.HFClient {
+        return hub.NewHFClient(s.cfg.Hub.HFBase)
 }
 
 // hfToken reads the HF token from the vault.

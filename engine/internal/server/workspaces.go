@@ -1383,19 +1383,26 @@ type oauthPending struct {
         Expires  time.Time
 }
 
-// ghOAuthCreds: env override first (headless installs), then the vault.
+// ghOAuthCreds: env override first (headless installs), then the vault,
+// then the BUILT-IN default (v0.47 task 10/11: the user's "Doomalay
+// Workspaces" GitHub App client id — the secret is still vault/env only,
+// the user generates it on the app's settings page).
+const ghOAuthDefaultClientID = "Iv23liDzVTw7zphxo5Hv"
+
 func (s *Server) ghOAuthCreds() (id, secret string) {
         if id = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID")); id != "" {
                 return id, strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_SECRET"))
         }
-        if s.vault == nil {
-                return "", ""
+        if s.vault != nil {
+                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil {
+                        id = strings.TrimSpace(v)
+                }
+                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_SECRET"); err == nil {
+                        secret = strings.TrimSpace(v)
+                }
         }
-        if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil {
-                id = strings.TrimSpace(v)
-        }
-        if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_SECRET"); err == nil {
-                secret = strings.TrimSpace(v)
+        if id == "" {
+                id = ghOAuthDefaultClientID // no secret — start works, exchange can't
         }
         return id, secret
 }
@@ -1418,17 +1425,23 @@ func oauthRedirectURI(r *http.Request) string {
                         scheme = "http"
                 }
         }
-        return scheme + "://" + r.Host + "/api/workspaces/oauth/github/callback"
+        return scheme + "://" + r.Host + "/api/github/oauth/callback"
 }
 
 // handleGHOAuthStatus — is "Sign in with GitHub" wired up? (+ who's signed in)
+// v0.47: exposes client_id + has_secret separately — the client id ships
+// built-in (the user's GitHub App), but the SECRET is vault/env-only, so
+// the UI can offer "paste the secret once" before the sign-in button can
+// complete its token exchange.
 func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
         id, secret := s.ghOAuthCreds()
         login, signed := s.accountInfo("github")
         writeJSON(w, 200, map[string]any{
-                "configured": id != "" && secret != "",
-                "signed_in":  signed,
-                "login":      login,
+                "configured":   id != "" && secret != "",
+                "client_id":    id,
+                "has_secret":   secret != "",
+                "signed_in":    signed,
+                "login":        login,
                 // the URI to register in the GitHub App settings for THIS origin
                 "redirect_uri": oauthRedirectURI(r),
         })

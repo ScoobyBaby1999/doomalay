@@ -131,6 +131,8 @@ func (s *Server) routes() {
         // API endpoints (one per resource).
         s.mux.HandleFunc("GET /api/health", s.handleHealth)
         s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+        // v0.48 (task 5): dev-build-only shared public provider keys.
+        s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
         s.mux.HandleFunc("GET /api/models", s.handleModels)
         s.mux.HandleFunc("GET /api/templates", s.handleTemplates)
         s.mux.HandleFunc("GET /api/templates/{id}", s.handleTemplateGet)
@@ -242,6 +244,14 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hf/oauth/start", s.handleHFOAuthStart)
         s.mux.HandleFunc("GET /api/hf/oauth/callback", s.handleHFOAuthCallback)
         s.mux.HandleFunc("POST /api/hf/space/create", s.handleHFSpaceCreate)
+        // v0.47 (task 9): the Docker-sandbox builder (fork + brick-by-brick).
+        s.mux.HandleFunc("POST /api/hf/space/docker-create", s.handleHFSpaceDockerCreate)
+        // v0.48 (task 9): pause a Space — frees the account's cpu-basic slot
+        // (HF's own remedy for the quota wall; used by the docker-sandbox
+        // picker's paused_quota state).
+        s.mux.HandleFunc("POST /api/hf/space/pause", s.handleHFSpacePause)
+        // v0.47 (task 11): the GitHub connect panel's status endpoint.
+        s.mux.HandleFunc("GET /api/gh/account", s.handleGHAccount)
         s.mux.HandleFunc("POST /api/hf/space/ensure", s.handleHFSpaceEnsure)
         s.mux.HandleFunc("GET /api/hf/spaces", s.handleHFSpacesList)
         s.mux.HandleFunc("GET /api/hf/shared", s.handleHFShared)
@@ -287,6 +297,10 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/start", s.handleGHOAuthStart)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/callback", s.handleGHOAuthCallback)
+        // v0.47 (task 10): the GitHub App's registered redirect URLs use
+        // /api/github/oauth/callback (localhost:8123/:8080) — answer BOTH
+        // paths so the user's existing registration just works.
+        s.mux.HandleFunc("GET /api/github/oauth/callback", s.handleGHOAuthCallback)
         // v0.44 EXPLORE — the same repo surface, keyed by ?url= instead of
         // a stored workspace id (the brain's explore tool: ANY repo URL,
         // no connect step)

@@ -176,6 +176,15 @@ func (rb *RemoteBrain) applyAuth(req *http.Request, env map[string]string) {
         for k, v := range e {
                 req.Header.Set("X-Env-"+k, v)
         }
+        // v0.48 task 7: alias DOOMALAY_HF_TOKEN → HF_TOKEN so the brain's
+        // HF-facing code (dt_hf, libraries reading the canonical name)
+        // always sees the connect-flow token. The brain's own dt_hf reads
+        // DOOMALAY_HF_TOKEN first; the alias covers everything else.
+        if v, ok := e["DOOMALAY_HF_TOKEN"]; ok && v != "" {
+                if _, have := e["HF_TOKEN"]; !have {
+                        req.Header.Set("X-Env-HF_TOKEN", v)
+                }
+        }
 }
 
 // Chat proxies one agent turn to the remote brain — same SSE event stream

@@ -36,7 +36,11 @@
 (function () {
   'use strict';
 
-  var DEFAULT_PERSONA =
+  // v0.48 task 6: the default persona is MODE-AWARE — quick chats get the
+  // classic app persona; HF chats get an assistant that knows it lives in
+  // a Hugging Face Space Linux sandbox with the full toolchain. Mirrors
+  // engine chat.go (defaultPersonaQuick / defaultPersonaHF).
+  var DEFAULT_PERSONA_QUICK =
     '## Identity\n' +
     'You are {model} (served via {provider}), chatting inside the Doomalay app on the user\'s own device. ' +
     'Your name in this app is {name}. ' +
@@ -63,6 +67,50 @@
     '- The artifact block must contain the COMPLETE file, never truncated.\n' +
     '- Keep the spoken answer short and mention the attached file name.\n' +
     '- Regular markdown (headings, lists, bold, links, code blocks) is rendered nicely — use it freely.';
+
+  var DEFAULT_PERSONA_HF =
+    '## Identity\n' +
+    'You are {model} (served via {provider}), the Doomalay assistant running INSIDE a Hugging Face Space — a real Linux sandbox in the cloud, not on the user\'s phone. ' +
+    'Your name in this app is {name}. ' +
+    'If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. ' +
+    'This identity updates automatically when the user switches your model mid-conversation; trust it over any prior assumption.\n\n' +
+    '## Environment — you are on Hugging Face (this chat\'s Space)\n' +
+    'You have a REAL Linux sandbox: bash, python, git, Node, and a full build toolchain (gcc/g++, make, cmake, Go, Rust, Java, qemu). ' +
+    'You can install packages (pip / npm / apt), write and run real code, and manage this very Space through the HF API — edit your own files (Dockerfile, app, README), manage secrets, read logs, restart. ' +
+    'Your workspace is per-chat and may be ephemeral — tell the user to commit or download anything important. ' +
+    'The Space sleeps after inactivity; the first message after a nap can take a few minutes while it wakes.\n\n' +
+    '## Style\n' +
+    'Be direct and concise; lead with the outcome, not the process. ' +
+    'Use markdown freely — headings, lists, bold, links and fenced code blocks all render nicely in this app. ' +
+    'When a live fact matters and web search is enabled, search rather than guess. ' +
+    'When you don\'t know something, say so. ' +
+    'Prefer DOING over describing: when the user asks for something the sandbox can answer, actually run it and show the real output.\n\n' +
+    '## Tools\n' +
+    'When the app\'s tool protocol is active, invoke tools ONLY through the protocol\'s ACTION line format — never as plain text. ' +
+    'Chain tools freely — plan, run, read results, then run the next — including parallel commands when they are independent. ' +
+    'Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n' +
+    '## Artifacts\n' +
+    'You are chatting inside the Doomalay app, which has an artifact system.\n' +
+    'When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n' +
+    'Artifact format (a fenced code block whose info string starts with "artifact"):\n' +
+    '  ```artifact file=<filename.ext>\n  <the complete file content as plain text>\n  ```\n' +
+    'For binary file types (e.g. .docx, .xlsx, .pdf, .zip, images) provide the bytes base64-encoded instead:\n' +
+    '  ```artifact file=<filename> encoding=base64\n  <base64 payload>\n  ```\n' +
+    'Rules:\n' +
+    '- Prefer text formats when the user has no strong preference (.md, .txt, .json, .csv, .html, code files, config files).\n' +
+    '- Use a real, descriptive filename with the correct extension.\n' +
+    '- The artifact block must contain the COMPLETE file, never truncated.\n' +
+    '- Keep the spoken answer short and mention the attached file name.\n' +
+    '- Regular markdown (headings, lists, bold, links, code blocks) is rendered nicely — use it freely.';
+
+  // kept for backwards compat: the quick-chat default (what DEFAULT_PERSONA
+  // always meant before v0.48)
+  var DEFAULT_PERSONA = DEFAULT_PERSONA_QUICK;
+
+  // defaultPersonaFor(mode) — mode-aware default ('hf' → the HF persona).
+  function defaultPersonaFor(mode) {
+    return mode === 'hf' ? DEFAULT_PERSONA_HF : DEFAULT_PERSONA_QUICK;
+  }
 
   // ── state for the open chat ───────────────────────────────────────
   var cur = null;         // { sessionId, name, model, provider }
@@ -131,7 +179,10 @@
         sessionId: sessionId,
         name: (opts && opts.name) || (sess && sess.Title) || 'chat',
         model: (opts && opts.model) || (sess && sess.Model) || '',
-        provider: (opts && opts.provider) || (sess && sess.Provider) || ''
+        provider: (opts && opts.provider) || (sess && sess.Provider) || '',
+        // v0.48 task 6: mode-aware default persona (quick vs HF)
+        sandbox: (sess && sess.Sandbox) || (opts && opts.sandbox) || 'quick',
+        sandboxRepo: (sess && sess.SandboxRepo) || ''
       };
       legacyPersona = (sess && sess.Persona) || '';
       personas = [];
@@ -418,7 +469,7 @@
         wrap.className = 'art-cm-host';
         host.appendChild(wrap);
         cm = CodeMirror(wrap, {
-          value: String(p.text || '').trim() ? p.text : DEFAULT_PERSONA,
+          value: String(p.text || '').trim() ? p.text : defaultPersonaFor(cur && cur.sandbox),
           mode: 'markdown', lineNumbers: true, lineWrapping: true,
           theme: 'doomalay', viewportMargin: 60
         });
@@ -481,12 +532,12 @@
 
     var defBtn = el.querySelector('#pe-default');
     if (defBtn) defBtn.addEventListener('click', function () {
-      if (cm) { cm.setValue(DEFAULT_PERSONA); markDirty(); }
+      if (cm) { cm.setValue(defaultPersonaFor(cur && cur.sandbox)); markDirty(); }
     });
 
     var dlBtn = el.querySelector('#pe-dl');
     if (dlBtn) dlBtn.addEventListener('click', function () {
-      var text = cm ? cm.getValue() : (p.text || DEFAULT_PERSONA);
+      var text = cm ? cm.getValue() : (p.text || defaultPersonaFor(cur && cur.sandbox));
       var safe = (p.name || 'persona').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
       var blob = new Blob([text], { type: 'text/markdown' });
       var url = URL.createObjectURL(blob);
@@ -858,6 +909,9 @@
     backClose: function () { var p = PV(); return p ? p.back() : false; },
     isOpen: function () { var p = PV(); return !!(p && p.viewDepth && p.viewDepth()); },
     DEFAULT_PERSONA: DEFAULT_PERSONA,
+    DEFAULT_PERSONA_QUICK: DEFAULT_PERSONA_QUICK,
+    DEFAULT_PERSONA_HF: DEFAULT_PERSONA_HF,
+    defaultPersonaFor: defaultPersonaFor,
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,
     substituteAll: substituteAll,

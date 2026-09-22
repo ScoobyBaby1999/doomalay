@@ -49,6 +49,17 @@
     var validation = {};
     var opened = false;
 
+    // v0.48 task 5: dev-build flag → the "use public key" pill. Probed
+    // once per open; the pill starts hidden and unhides the moment the
+    // probe lands (release builds keep it hidden forever).
+    var devMode = null;
+    fetch('/api/capabilities').then(function (r) { return r.json(); })
+      .then(function (c) {
+        devMode = !!c.dev;
+        var el = document.getElementById('prov-devkey');
+        if (el && devMode) el.style.display = '';
+      }).catch(function () {});
+
     // Fetch the provider catalog + current keys, then render.
     // v0.20: the engine now NEVER blocks /api/models on the network —
     // cold boots return the STATIC provider cards instantly
@@ -203,7 +214,15 @@
       }
       return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Cloud Providers</h2>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+        // v0.48 task 5: dev-build-only "use public key" pill (hidden until
+        // the /api/capabilities probe confirms dev — see open()). Re-renders
+        // keep the state via devMode.
+        '<button id="prov-devkey" style="display:' + (devMode ? '' : 'none') + ';padding:6px 12px;border-radius:10px;' +
+          'background:rgba(var(--notice-rgb),0.12);border:1px solid rgba(var(--notice-rgb),0.35);color:var(--notice);' +
+          'font-size: var(--ui-small-fs);font-weight:600;font-family:inherit;cursor:pointer">use public key</button>' +
         '<button id="prov-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
+        '</div>' +
         '</div>';
     }
 
@@ -332,6 +351,40 @@
 
       // Close
       contentEl.querySelector('#prov-close').addEventListener('click', window.ConnectOverlay.close);
+
+      // v0.48 task 5: the dev-only "use public key" pill — installs the
+      // assistant's shared public provider keys (release builds never see
+      // the button; the engine 404s the endpoint anyway).
+      var devBtn = contentEl.querySelector('#prov-devkey');
+      if (devBtn) devBtn.addEventListener('click', function () {
+        devBtn.disabled = true; devBtn.textContent = 'installing…';
+        fetch('/api/dev/use-public-keys', { method: 'POST' })
+          .then(function (r) {
+            if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(function (d) {
+            devBtn.textContent = 'use public key'; devBtn.disabled = false;
+            if (window.toast) window.toast('✓ public keys installed (' + ((d.installed || []).length) + ') — validating…');
+            // refresh keys + models exactly like a manual save
+            fetch('/api/keys').then(function (r) { return r.json(); }).then(function (k) {
+              keys = k || {};
+              revalidated = false;
+              render();
+              backgroundRevalidate();
+            }).catch(function () {});
+            fetch('/api/models').then(function (r) { return r.json(); }).then(function (m) {
+              if (!m) return;
+              providers = m.providers || providers;
+              catalogModels = m.models || catalogModels;
+              render();
+            }).catch(function () {});
+          })
+          .catch(function (e) {
+            devBtn.textContent = 'use public key'; devBtn.disabled = false;
+            if (window.toast) window.toast(e.message || 'could not install the public keys');
+          });
+      });
 
       wireSlider(contentEl);
 

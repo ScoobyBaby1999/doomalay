@@ -638,6 +638,66 @@ func newMockHF(t *testing.T) *mockHF {
 
 // mockDeriveTags parses "- <tag>" lines out of the README frontmatter —
 // the same way the real hub derives dataset tags.
+// mockCommit applies one NDJSON commit to a mock repo (the verified HF
+// shape: header line + file/lfsFile lines). v0.47: split out of the mux
+// handler so the shared POST /api/datasets/ dispatcher stays readable.
+func mockCommit(w http.ResponseWriter, m *mockHF, repo string, r *http.Request) {
+        body, _ := io.ReadAll(r.Body)
+        m.mu.Lock()
+        m.commits = append(m.commits, string(body))
+        rp, ok := m.repos[repo]
+        m.mu.Unlock()
+        if !ok {
+                w.WriteHeader(http.StatusNotFound)
+                return
+        }
+        var err error
+        for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+                if line == "" {
+                        continue
+                }
+                var op struct {
+                        Key   string `json:"key"`
+                        Value struct {
+                                Summary  string `json:"summary"`
+                                Path     string `json:"path"`
+                                Content  string `json:"content"`
+                                Encoding string `json:"encoding"`
+                                Oid      string `json:"oid"`
+                                Size     int    `json:"size"`
+                        } `json:"value"`
+                }
+                if err = json.Unmarshal([]byte(line), &op); err != nil {
+                        break
+                }
+                switch op.Key {
+                case "file":
+                        content := []byte(op.Value.Content)
+                        if op.Value.Encoding == "base64" {
+                                content, err = base64.StdEncoding.DecodeString(op.Value.Content)
+                                if err != nil {
+                                        break
+                                }
+                        }
+                        m.mu.Lock()
+                        rp.files[op.Value.Path] = content
+                        m.mu.Unlock()
+                case "lfsFile":
+                        m.mu.Lock()
+                        rp.files[op.Value.Path] = m.lfs[op.Value.Oid]
+                        m.mu.Unlock()
+                }
+        }
+        if err != nil {
+                w.WriteHeader(http.StatusBadRequest)
+                return
+        }
+        m.mu.Lock()
+        defer m.mu.Unlock()
+        mockDeriveTags(rp)
+        writeMockJSON(w, map[string]any{"commitUrl": "/" + repo + "/commit/mocksha"})
+}
+
 func mockDeriveTags(rp *mockRepo) {
         readme, ok := rp.files["README.md"]
         if !ok {

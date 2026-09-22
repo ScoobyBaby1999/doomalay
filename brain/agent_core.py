@@ -937,6 +937,30 @@ def _guarded_shell(tool_use=None, **kwargs):
                 "content": [{"text": f"Shell error: {exc}"}]}
 
 
+def _safe_subprocess_env() -> dict:
+    """v0.48 task 7: the shell tool's secret-stripped subprocess env, as a
+    shared helper (shell / python_repl / install / parallel all use it).
+    Strips every *_API_KEY / *_SECRET / *_TOKEN / *_PASSWORD / *_KEY var
+    plus the known sensitive names — the agent's own subprocesses must
+    never be able to print the vault's secrets."""
+    _SECRET_SUFFIXES = ("_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD",
+                        "_KEY", "_ROTATION_SECRET", "_ENCRYPTION_KEY")
+    safe_env = {}
+    for k, v in os.environ.items():
+        if any(k.upper().endswith(s) for s in _SECRET_SUFFIXES):
+            continue
+        if k.upper() in ("CRITIQUE_TOKEN", "CRITIQUE_ROTATION_SECRET",
+                         "ENCRYPTION_KEY", "APP_SECRET",
+                         "HF_CLIENT_SECRET", "GITHUB_CLIENT_SECRET",
+                         "HF_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+            continue
+        safe_env[k] = v
+    safe_env.setdefault("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
+    safe_env.setdefault("HOME", "/tmp")
+    safe_env.setdefault("TERM", "dumb")
+    return safe_env
+
+
 class _DoomalayLiveToolHooks:
     """v0.43 — live tool pills from Strands' typed hook events.
 
@@ -981,7 +1005,18 @@ class _DoomalayLiveToolHooks:
         return str(get("toolUseId", "")), str(get("name", "tool")), dict(get("input", {}) or {})
 
     # ── hook callbacks ──────────────────────────────────────────────────
+    def _touch_activity(self) -> None:
+        """v0.48 task 7: mark the adapter's turn as ACTIVE (a tool event just
+        fired) -- the turn() inactivity watchdog reads this."""
+        try:
+            act = getattr(self._adapter, "_activity", None)
+            if act is not None:
+                act["t"] = time.time()
+        except Exception:
+            pass
+
     def _on_before_tool(self, event) -> None:
+        self._touch_activity()
         try:
             tu = getattr(event, "tool_use", None) or {}
             tu_id, name, inp = self._tu_fields(tu)
@@ -995,6 +1030,7 @@ class _DoomalayLiveToolHooks:
             pass
 
     def _on_after_tool(self, event) -> None:
+        self._touch_activity()
         try:
             tu = getattr(event, "tool_use", None) or {}
             tu_id, name, _inp = self._tu_fields(tu)
@@ -1269,6 +1305,146 @@ class StrandsAdapter(BaseAdapter):
                 },
             }
             tools.append(shell_mod)
+
+        # 1.5 v0.48 task 7 — the HF-sandbox power tools: python_repl,
+        # install (pip/npm/apt with progress), parallel (concurrent shell).
+        # These maximize what the sandbox bot can DO: run real python, add
+        # packages on demand, and fan independent commands out concurrently.
+        if 'strands_tool_decorator' in dir():
+            try:
+                @strands_tool_decorator(name="python_repl", description=(
+                    "Execute Python 3 code and return stdout + stderr. Runs "
+                    "in the chat's workspace with a 300s cap. Prefer this "
+                    "over `python3 -c` in the shell tool for anything "
+                    "non-trivial — write the code, get the output."
+                ))
+                def python_repl(code: str) -> str:
+                    """Run Python code in the workspace; return the output."""
+                    import subprocess, tempfile
+                    workdir = str(getattr(_thread_local, "workspace", Path.cwd()))
+                    with tempfile.NamedTemporaryFile(
+                            "w", suffix=".py", delete=False,
+                            dir=workdir, prefix="repl_") as fh:
+                        fh.write(code)
+                        path = fh.name
+                    try:
+                        result = subprocess.run(
+                            [sys.executable, path], cwd=workdir,
+                            capture_output=True, text=True, timeout=300,
+                            env=_safe_subprocess_env())
+                        output = result.stdout
+                        if result.stderr:
+                            output = (output + "\n" if output else "") + result.stderr
+                        if not output.strip():
+                            output = "(no output)"
+                        if result.returncode != 0:
+                            output = f"Exit code: {result.returncode}\n{output}"
+                        return output[:50000]
+                    except subprocess.TimeoutExpired:
+                        return "Python timed out after 300s"
+                    except Exception as exc:
+                        return f"Python error: {exc}"
+                    finally:
+                        try: os.unlink(path)
+                        except Exception: pass
+                tools.append(python_repl)
+            except Exception:
+                pass
+
+            try:
+                @strands_tool_decorator(name="install", description=(
+                    "Install a package into this sandbox with the right "
+                    "manager: pip for Python packages, npm for Node packages, "
+                    "apt for system packages. manager: 'auto' (default), "
+                    "'pip', 'npm', or 'apt'. Returns the install output."
+                ))
+                def install(package: str, manager: str = "auto") -> str:
+                    """pip/npm/apt install with progress output."""
+                    import subprocess
+                    workdir = str(getattr(_thread_local, "workspace", Path.cwd()))
+                    pkg = package.strip()
+                    if not pkg:
+                        return "no package given"
+                    m = (manager or "auto").strip().lower()
+                    if m == "auto":
+                        looks_npm = pkg.startswith(("@", "npm:", "node:")) or "/" in pkg
+                        m = "npm" if looks_npm else "pip"
+                    if m in ("pip", "pip3"):
+                        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", pkg]
+                    elif m == "npm":
+                        cmd = ["npm", "install", "--no-audit", "--no-fund", pkg]
+                    elif m == "apt":
+                        cmd = ["bash", "-lc",
+                               f"apt-get update -qq && apt-get install -y --no-install-recommends {pkg}"]
+                    else:
+                        return f"unknown manager '{manager}' (pip | npm | apt)"
+                    try:
+                        result = subprocess.run(
+                            cmd, cwd=workdir, capture_output=True, text=True,
+                            timeout=600, env=_safe_subprocess_env())
+                        output = result.stdout
+                        if result.stderr:
+                            output = (output + "\n" if output else "") + result.stderr
+                        if not output.strip():
+                            output = "(no output)"
+                        if result.returncode != 0:
+                            output = f"Exit code: {result.returncode}\n{output}"
+                        return output[:50000]
+                    except subprocess.TimeoutExpired:
+                        return f"install timed out after 600s: {pkg}"
+                    except FileNotFoundError:
+                        return f"manager not available in this sandbox ({m})"
+                    except Exception as exc:
+                        return f"install error: {exc}"
+                tools.append(install)
+            except Exception:
+                pass
+
+            try:
+                @strands_tool_decorator(name="parallel", description=(
+                    "Run several bash commands CONCURRENTLY and return every "
+                    "result. Give ONLY independent commands (they run at the "
+                    "same time, up to 8 concurrently, 300s each) — use this "
+                    "to fan out builds, tests, or fetches instead of chaining "
+                    "them one by one. Input: {commands: [string, ...]}."
+                ))
+                def parallel(commands: list) -> str:
+                    """Run independent shell commands concurrently."""
+                    import subprocess
+                    from concurrent.futures import ThreadPoolExecutor
+                    workdir = str(getattr(_thread_local, "workspace", Path.cwd()))
+                    cmds = [str(c).strip() for c in (commands or []) if str(c).strip()]
+                    if not cmds:
+                        return "no commands given"
+                    if len(cmds) > 16:
+                        return "too many commands (max 16 per call)"
+                    env = _safe_subprocess_env()
+
+                    def _one(cmd: str) -> str:
+                        try:
+                            r = subprocess.run(
+                                cmd, shell=True, cwd=workdir,
+                                capture_output=True, text=True, timeout=300, env=env)
+                            out = r.stdout
+                            if r.stderr:
+                                out = (out + "\n" if out else "") + r.stderr
+                            if not out.strip():
+                                out = "(no output)"
+                            return f"exit {r.returncode}" if r.returncode else "ok", out[:12000]
+                        except subprocess.TimeoutExpired:
+                            return "timeout", "timed out after 300s"
+                        except Exception as exc:
+                            return "error", str(exc)[:500]
+
+                    with ThreadPoolExecutor(max_workers=min(8, len(cmds))) as pool:
+                        results = list(pool.map(_one, cmds))
+                    parts = []
+                    for i, (cmd, (status, out)) in enumerate(zip(cmds, results)):
+                        parts.append(f"── [{i + 1}] $ {cmd}  →  {status}\n{out}")
+                    return "\n\n".join(parts)[:50000]
+                tools.append(parallel)
+            except Exception:
+                pass
 
         # 2. File operations
         for mod_name in ("file_read", "file_write", "editor"):
@@ -1613,6 +1789,13 @@ class StrandsAdapter(BaseAdapter):
         # complete text (finalized by the trailing `status: idle` event).
         self._assistant_streamed = False
         self._assistant_streamed_text = ""
+        # v0.48 task 7 -- the NO-STALL activity clock: every streaming
+        # delta / thinking chunk / tool hook event touches it; the watchdog
+        # below only kills a turn that is IDLE past the threshold.
+        self._activity = {"t": time.time()}
+
+        def _touch():
+            self._activity["t"] = time.time()
 
         # Build a streaming callback handler: thinking text + content deltas
         # in real-time, plus mid-turn cost ceiling enforcement for conscious
@@ -1621,6 +1804,7 @@ class StrandsAdapter(BaseAdapter):
             reasoning = kw.get("reasoningText")
             if reasoning:
                 self._thinking_streamed = True
+                _touch()
                 emit({"type": "thinking", "text": reasoning})
             # ISSUE-2 (RESPONSIVE-FIX): capture content text deltas for
             # token-by-token streaming. Strands sends `data` (str) for each
@@ -1629,6 +1813,7 @@ class StrandsAdapter(BaseAdapter):
             if data:
                 self._assistant_streamed = True
                 self._assistant_streamed_text = (self._assistant_streamed_text or "") + data
+                _touch()
                 emit({"type": "assistant_delta", "text": data})
             # Cost ceiling check (conscious agents only)
             if sess is not None and getattr(sess, "conscious_id", None):
@@ -1651,22 +1836,21 @@ class StrandsAdapter(BaseAdapter):
             self.agent.callback_handler = _stream_callback
         except Exception:
             pass
-        # Run the agent call with a thread + timeout. The GIL means we can't
-        # hard-kill a blocking C extension call, but we CAN set a timeout and
-        # process whatever messages were produced so far (best-effort).
-        # After the timeout, we emit an error and move on — the daemon thread
-        # continues in the background but doesn't block the user.
+        # Run the agent call with a thread + the v0.48 NO-STALL WATCHDOG.
+        # The GIL means we can't hard-kill a blocking C extension call, but
+        # we CAN watch for ACTIVITY and only give up on a turn that is truly
+        # idle. The old flat 240s cap (v0.43) is dead: a legitimate chain of
+        # MANY tools — sequential + parallel, hundreds of calls, long
+        # installs — stays alive as long as it keeps producing streaming
+        # deltas, thinking chunks, or tool hook events (each touch resets
+        # self._activity). Only two things end a turn early:
+        #   * idle past _IDLE_TIMEOUT_S (nothing at all happened — dead),
+        #   * the _HARD_CAP_S absolute ceiling (runaway loop protection).
         import threading as _threading
         _agent_error: list = []
         _agent_done = {"done": False}
-        # v0.43: 90 → 240. The swarm wave spawns SUB-AGENT turns through this
-        # adapter (ctx.spawn → spawn_subagent → get_or_create); a tool-laden
-        # sub-agent turn (23 tools + system prompt) can legitimately run
-        # 60-120s on reasoning models — the old 90s cap killed every swarm
-        # agent mid-turn ("done" with empty text). 240s matches the swarm
-        # tool's per-agent cap ceiling. User-facing turns keep their own
-        # liveness signals (streaming deltas + the engine watchdog).
-        _TIMEOUT_S = 240
+        _IDLE_TIMEOUT_S = 300     # 5 min with ZERO activity -> stalled
+        _HARD_CAP_S = 55 * 60     # absolute per-turn ceiling
 
         def _run_agent():
             _sess = getattr(self, "_session", None)
@@ -1684,16 +1868,35 @@ class StrandsAdapter(BaseAdapter):
                 log_event("agent_call_error", error=str(e)[:300], error_type=type(e).__name__)
                 _agent_error.append(e)
 
-        _t = _threading.Thread(target=_run_agent, daemon=True)
-        _t.start()
-        _t.join(timeout=_TIMEOUT_S)
         _sess = getattr(self, "_session", None)
         _sid = getattr(_sess, "id", "?") if _sess else "?"
+        _t = _threading.Thread(target=_run_agent, daemon=True)
+        _t.start()
+        _turn_started = time.time()
+        while True:
+            _t.join(timeout=2.0)
+            if not _t.is_alive():
+                break
+            _now = time.time()
+            _idle = _now - float(self._activity.get("t", _turn_started))
+            if _idle > _IDLE_TIMEOUT_S:
+                log_event("agent_call_idle_timeout", session_id=_sid,
+                          idle_s=int(_idle), hard=False)
+                emit({"type": "error",
+                      "error": f"turn stalled — no activity for {int(_idle)}s"})
+                break
+            if _now - _turn_started > _HARD_CAP_S:
+                log_event("agent_call_hard_cap", session_id=_sid,
+                          cap_s=_HARD_CAP_S, idle_s=int(_idle))
+                emit({"type": "error",
+                      "error": f"turn hard cap reached ({_HARD_CAP_S // 60} min) — continuing with what we have"})
+                break
         if not _agent_done["done"]:
-            log_event("agent_call_timeout", session_id=_sid, timeout_s=_TIMEOUT_S)
-            emit({"type": "error",
-                  "error": f"model timed out ({_TIMEOUT_S}s) — try a different model"})
-            # Process whatever messages were produced so far (best-effort)
+            # The watchdog (or an exception) ended the turn early — the
+            # messages produced so far are processed below (best-effort);
+            # the daemon thread keeps running but never blocks the user.
+            log_event("agent_call_ended_early", session_id=_sid,
+                      done=_agent_done["done"], has_error=bool(_agent_error))
         if _agent_error:
             # Don't raise — emit the error and continue processing messages
             emit({"type": "error", "error": str(_agent_error[0])[:200]})

@@ -14,6 +14,7 @@ import (
         "io"
         "net/http"
         "net/http/httptest"
+        "net/url"
         "strings"
         "sync"
         "testing"
@@ -35,14 +36,25 @@ type mockHubHF struct {
         likes   map[string]bool
         commits []string
         srv     *httptest.Server
+
+        // v0.48: space bookkeeping — creation sdk (assert the Vite-blank
+        // trick: STATIC, not docker), secrets set, pause/restart calls, and
+        // the runtime snapshot GET /api/spaces/{repo} serves.
+        spaceSDK     map[string]string
+        spaceSecrets map[string]map[string]string
+        spaceCalls   map[string]int // repo -> pause+restart call count
+        spaceRuntime map[string]any // runtime object served for every space
 }
 
 func newMockHubHF(t *testing.T) *mockHubHF {
         t.Helper()
         m := &mockHubHF{
-                repos: map[string]map[string][]byte{},
-                tags:  map[string][]string{},
-                likes: map[string]bool{},
+                repos:        map[string]map[string][]byte{},
+                tags:         map[string][]string{},
+                likes:        map[string]bool{},
+                spaceSDK:     map[string]string{},
+                spaceSecrets: map[string]map[string]string{},
+                spaceCalls:   map[string]int{},
         }
         mux := http.NewServeMux()
 
@@ -72,25 +84,59 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 writeHubMockJSON(w, out)
         })
 
-        mux.HandleFunc("GET /api/datasets/{user}/{name}", func(w http.ResponseWriter, r *http.Request) {
+        // v0.47: repo ids now travel with a RAW slash ("user/name" — HF
+        // rejects %2F upstream), so single-segment wildcards no longer
+        // match. Prefix handlers parse the repo out of the path manually.
+        mux.HandleFunc("GET /api/datasets/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/datasets/"), "/")
+                if unesc, err := url.PathUnescape(rest); err == nil {
+                        rest = unesc
+                }
                 m.mu.Lock()
                 defer m.mu.Unlock()
-                if _, ok := m.repos[r.PathValue("user") + "/" + r.PathValue("name")]; !ok {
+                if i := strings.Index(rest, "/tree/main/"); i >= 0 {
+                        // tree listing (the index fallback)
+                        files, ok := m.repos[rest[:i]]
+                        if !ok {
+                                w.WriteHeader(http.StatusNotFound)
+                                return
+                        }
+                        prefix := strings.Trim(rest[i+len("/tree/main/"):], "/") + "/"
+                        var out []map[string]any
+                        for path := range files {
+                                if strings.HasPrefix(path, prefix) && !strings.Contains(strings.TrimPrefix(path, prefix), "/") {
+                                        out = append(out, map[string]any{"type": "file", "path": path, "size": len(files[path])})
+                                }
+                        }
+                        writeHubMockJSON(w, out)
+                        return
+                }
+                if _, ok := m.repos[rest]; !ok {
                         w.WriteHeader(http.StatusNotFound)
                         return
                 }
-                writeHubMockJSON(w, map[string]any{"id": r.PathValue("user") + "/" + r.PathValue("name"), "private": false})
+                writeHubMockJSON(w, map[string]any{"id": rest, "private": false})
         })
 
-        mux.HandleFunc("GET /datasets/{user}/{name}/resolve/main/{path...}", func(w http.ResponseWriter, r *http.Request) {
+        mux.HandleFunc("GET /datasets/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/datasets/"), "/")
+                i := strings.Index(rest, "/resolve/main/")
+                if i < 0 {
+                        w.WriteHeader(http.StatusNotFound)
+                        return
+                }
+                repo := rest[:i]
+                if unesc, err := url.PathUnescape(repo); err == nil {
+                        repo = unesc
+                }
                 m.mu.Lock()
                 defer m.mu.Unlock()
-                files, ok := m.repos[r.PathValue("user") + "/" + r.PathValue("name")]
+                files, ok := m.repos[repo]
                 if !ok {
                         w.WriteHeader(http.StatusNotFound)
                         return
                 }
-                body, ok := files[r.PathValue("path")]
+                body, ok := files[rest[i+len("/resolve/main/"):]]
                 if !ok {
                         w.WriteHeader(http.StatusNotFound)
                         return
@@ -104,13 +150,19 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                         Name         string `json:"name"`
                         Organization string `json:"organization"`
                         Private      bool   `json:"private"`
+                        SDK          string `json:"sdk"`
                 }
                 _ = json.NewDecoder(r.Body).Decode(&req)
-                if req.Type != "dataset" || req.Name == "" {
+                if (req.Type != "dataset" && req.Type != "space") || req.Name == "" {
                         w.WriteHeader(http.StatusBadRequest)
                         return
                 }
                 id := req.Name
+                if req.Type == "space" {
+                        // spaces live under the author's namespace (whoami
+                        // user = mockuser for "goodtoken")
+                        id = "mockuser/" + req.Name
+                }
                 if req.Organization != "" {
                         id = req.Organization + "/" + req.Name
                 }
@@ -118,87 +170,175 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 defer m.mu.Unlock()
                 if _, exists := m.repos[id]; exists {
                         w.WriteHeader(http.StatusConflict)
+                        w.Write([]byte(`{"error": "You already created this repo name"}`))
                         return
                 }
                 m.repos[id] = map[string][]byte{}
-                writeHubMockJSON(w, map[string]any{"url": "/api/datasets/" + id})
+                if req.Type == "space" {
+                        m.spaceSDK[id] = req.SDK
+                }
+                writeHubMockJSON(w, map[string]any{"url": "/api/" + req.Type + "s/" + id})
         })
 
-        // preupload: everything is a regular git file (the LFS path is covered
-        // by the hub package's own suite — route tests only need the commit).
-        mux.HandleFunc("POST /api/datasets/{user}/{name}/preupload/main", func(w http.ResponseWriter, r *http.Request) {
-                var req struct {
-                        Files []struct {
-                                Path string `json:"path"`
-                        } `json:"files"`
+        // v0.48: space management surface — commit (NDJSON), secrets,
+        // restart, pause, runtime snapshot, author listing.
+        mux.HandleFunc("POST /api/spaces/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/spaces/"), "/")
+                // NOTE: no outer lock — mockHubCommit locks internally
+                // (Go mutexes are not reentrant; an outer lock deadlocks).
+                switch {
+                case strings.HasSuffix(rest, "/commit/main"):
+                        mockHubCommit(w, m, strings.TrimSuffix(rest, "/commit/main"), r)
+                case strings.HasSuffix(rest, "/preupload/main"):
+                        var req struct {
+                                Files []struct {
+                                        Path string `json:"path"`
+                                } `json:"files"`
+                        }
+                        _ = json.NewDecoder(r.Body).Decode(&req)
+                        var files []map[string]any
+                        for _, f := range req.Files {
+                                files = append(files, map[string]any{"path": f.Path, "uploadMode": "regular"})
+                        }
+                        writeHubMockJSON(w, map[string]any{"files": files})
+                case strings.HasSuffix(rest, "/secrets"):
+                        repo := strings.TrimSuffix(rest, "/secrets")
+                        var req struct {
+                                Key   string `json:"key"`
+                                Value string `json:"value"`
+                        }
+                        _ = json.NewDecoder(r.Body).Decode(&req)
+                        m.mu.Lock()
+                        if m.spaceSecrets[repo] == nil {
+                                m.spaceSecrets[repo] = map[string]string{}
+                        }
+                        m.spaceSecrets[repo][req.Key] = req.Value
+                        m.mu.Unlock()
+                        writeHubMockJSON(w, map[string]any{})
+                case strings.HasSuffix(rest, "/restart"):
+                        repo := strings.TrimSuffix(rest, "/restart")
+                        m.mu.Lock()
+                        m.spaceCalls[repo+"#restart"]++
+                        m.mu.Unlock()
+                        writeHubMockJSON(w, map[string]any{"ok": true})
+                case strings.HasSuffix(rest, "/pause"):
+                        repo := strings.TrimSuffix(rest, "/pause")
+                        m.mu.Lock()
+                        m.spaceCalls[repo+"#pause"]++
+                        m.mu.Unlock()
+                        writeHubMockJSON(w, map[string]any{"ok": true})
+                default:
+                        w.WriteHeader(http.StatusNotFound)
                 }
-                _ = json.NewDecoder(r.Body).Decode(&req)
-                var files []map[string]any
-                for _, f := range req.Files {
-                        files = append(files, map[string]any{"path": f.Path, "uploadMode": "regular"})
-                }
-                writeHubMockJSON(w, map[string]any{"files": files})
         })
-
-        mux.HandleFunc("POST /api/datasets/{user}/{name}/commit/main", func(w http.ResponseWriter, r *http.Request) {
-                body, _ := io.ReadAll(r.Body)
+        mux.HandleFunc("GET /api/spaces/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/spaces/"), "/")
                 m.mu.Lock()
-                files, ok := m.repos[r.PathValue("user") + "/" + r.PathValue("name")]
-                m.mu.Unlock()
-                if !ok {
+                defer m.mu.Unlock()
+                rt := map[string]any{"stage": "NO_APP_FILE"}
+                if m.spaceRuntime != nil {
+                        rt = m.spaceRuntime
+                }
+                writeHubMockJSON(w, map[string]any{"id": rest, "sdk": m.spaceSDK[rest],
+                        "runtime": rt})
+        })
+
+        // ALL POST /api/datasets/* (preupload / commit / like) in ONE
+        // dispatcher (v0.47 raw-slash repos).
+        mux.HandleFunc("POST /api/datasets/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/datasets/"), "/")
+                switch {
+                case strings.HasSuffix(rest, "/preupload/main"):
+                        // preupload: everything is a regular git file (the LFS
+                        // path is covered by the hub package's own suite).
+                        var req struct {
+                                Files []struct {
+                                        Path string `json:"path"`
+                                } `json:"files"`
+                        }
+                        _ = json.NewDecoder(r.Body).Decode(&req)
+                        var files []map[string]any
+                        for _, f := range req.Files {
+                                files = append(files, map[string]any{"path": f.Path, "uploadMode": "regular"})
+                        }
+                        writeHubMockJSON(w, map[string]any{"files": files})
+
+                case strings.HasSuffix(rest, "/commit/main"):
+                        mockHubCommit(w, m, strings.TrimSuffix(rest, "/commit/main"), r)
+
+                case strings.HasSuffix(rest, "/like"):
+                        repo := strings.TrimSuffix(rest, "/like")
+                        m.mu.Lock()
+                        defer m.mu.Unlock()
+                        m.likes[repo] = true
+                        writeHubMockJSON(w, map[string]any{"liked": true})
+
+                default:
+                        w.WriteHeader(http.StatusNotFound)
+                }
+        })
+
+        mux.HandleFunc("DELETE /api/datasets/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/datasets/"), "/")
+                if !strings.HasSuffix(rest, "/like") {
                         w.WriteHeader(http.StatusNotFound)
                         return
                 }
-                for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-                        if line == "" {
-                                continue
-                        }
-                        var op struct {
-                                Key   string `json:"key"`
-                                Value struct {
-                                        Path     string `json:"path"`
-                                        Content  string `json:"content"`
-                                        Encoding string `json:"encoding"`
-                                } `json:"value"`
-                        }
-                        if err := json.Unmarshal([]byte(line), &op); err != nil {
-                                w.WriteHeader(http.StatusBadRequest)
-                                return
-                        }
-                        if op.Key != "file" {
-                                continue
-                        }
-                        content := []byte(op.Value.Content)
-                        if op.Value.Encoding == "base64" {
-                                content, _ = base64.StdEncoding.DecodeString(op.Value.Content)
-                        }
-                        m.mu.Lock()
-                        files[op.Value.Path] = content
-                        m.mu.Unlock()
-                }
                 m.mu.Lock()
                 defer m.mu.Unlock()
-                m.commits = append(m.commits, string(body))
-                mockHubDeriveTags(m, r.PathValue("user") + "/" + r.PathValue("name"))
-                writeHubMockJSON(w, map[string]any{"commitUrl": "/" + r.PathValue("user") + "/" + r.PathValue("name") + "/commit/mocksha"})
-        })
-
-        mux.HandleFunc("POST /api/datasets/{user}/{name}/like", func(w http.ResponseWriter, r *http.Request) {
-                m.mu.Lock()
-                defer m.mu.Unlock()
-                m.likes[r.PathValue("user") + "/" + r.PathValue("name")] = true
-                writeHubMockJSON(w, map[string]any{"liked": true})
-        })
-        mux.HandleFunc("DELETE /api/datasets/{user}/{name}/like", func(w http.ResponseWriter, r *http.Request) {
-                m.mu.Lock()
-                defer m.mu.Unlock()
-                m.likes[r.PathValue("user") + "/" + r.PathValue("name")] = false
+                m.likes[strings.TrimSuffix(rest, "/like")] = false
                 w.WriteHeader(http.StatusOK)
         })
 
         m.srv = httptest.NewServer(mux)
         t.Cleanup(m.srv.Close)
         return m
+}
+
+// mockHubCommit applies one NDJSON commit to a mock repo (the verified HF
+// shape: header + file lines). v0.47: split out of the shared POST
+// dispatcher so the routing stays readable.
+func mockHubCommit(w http.ResponseWriter, m *mockHubHF, repo string, r *http.Request) {
+        body, _ := io.ReadAll(r.Body)
+        m.mu.Lock()
+        files, ok := m.repos[repo]
+        m.mu.Unlock()
+        if !ok {
+                w.WriteHeader(http.StatusNotFound)
+                return
+        }
+        for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+                if line == "" {
+                        continue
+                }
+                var op struct {
+                        Key   string `json:"key"`
+                        Value struct {
+                                Path     string `json:"path"`
+                                Content  string `json:"content"`
+                                Encoding string `json:"encoding"`
+                        } `json:"value"`
+                }
+                if err := json.Unmarshal([]byte(line), &op); err != nil {
+                        w.WriteHeader(http.StatusBadRequest)
+                        return
+                }
+                if op.Key != "file" {
+                        continue
+                }
+                content := []byte(op.Value.Content)
+                if op.Value.Encoding == "base64" {
+                        content, _ = base64.StdEncoding.DecodeString(op.Value.Content)
+                }
+                m.mu.Lock()
+                files[op.Value.Path] = content
+                m.mu.Unlock()
+        }
+        m.mu.Lock()
+        defer m.mu.Unlock()
+        m.commits = append(m.commits, string(body))
+        mockHubDeriveTags(m, repo)
+        writeHubMockJSON(w, map[string]any{"commitUrl": "/" + repo + "/commit/mocksha"})
 }
 
 // mockHubDeriveTags parses "- <tag>" lines out of the README frontmatter.
@@ -373,7 +513,9 @@ func TestHubLibraries(t *testing.T) {
         if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
                 t.Fatalf("decode: %v", err)
         }
-        if len(got.Libraries) != 3 { // persona + template + skill (v0.48)
+        // v0.49 (rebase): 3 built-in libraries since the living-hub wave —
+        // persona + template + skill.
+        if len(got.Libraries) != 3 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}

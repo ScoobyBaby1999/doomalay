@@ -2157,7 +2157,9 @@
     var displayName = prettyModel(model);
     var head = 'You are ' + (displayName || 'an AI assistant') +
       (state.provider ? ', hosted via ' + state.provider : '') +
-      ", chatting inside the Doomalay app on the user's own device. Today is " +
+      (state.sandbox === 'hf'
+        ? ", chatting inside the Doomalay app from your Hugging Face Space. Today is "
+        : ", chatting inside the Doomalay app on the user's own device. Today is ") +
       new Date().toDateString() + '.';
     // v0.44 TEMPLATE PILL: PM turns compose the system message client-side
     // (they bypass the engine), so the METHOD TEMPLATE block is prepended
@@ -2185,8 +2187,12 @@
         ? window.Persona.substituteAll(personaText, state.chatName, model, state.provider)
         : substituteVars(personaText, model, state.provider);
     } else {
+      // v0.48 task 6: the default persona is mode-aware (quick vs HF)
+      var defPersona = (window.Persona && window.Persona.defaultPersonaFor)
+        ? window.Persona.defaultPersonaFor(state.sandbox)
+        : DEFAULT_PERSONA;
       sys += (window.Persona && window.Persona.substituteAll)
-        ? window.Persona.substituteAll(window.Persona.DEFAULT_PERSONA, state.chatName, model, state.provider)
+        ? window.Persona.substituteAll(defPersona, state.chatName, model, state.provider)
         : substituteVars(DEFAULT_PERSONA, model, state.provider);
       return sys; // the default persona carries the artifact protocol
     }
