@@ -83,8 +83,38 @@ class ToolContext:
     spawn_status: Callable[[str], dict] | None = None
     # log_event-compatible emitter: emit(event="...", **fields)
     emit: Callable[..., None] | None = None
+    # v0.44 WORKSPACES: the chat's bound cloud repos, engine-side rows —
+    # [{id, name, kind, host, owner, repo, url, branch, access,
+    #   sandbox_path}] (ids only; tokens live in the engine vault and the
+    # tools call the engine REST, like dt_artifact does). Empty in tests
+    # and workspace-less chats — tools degrade to actionable messages.
+    workspaces: list = field(default_factory=list)
     # Resolved at call time so a missing memory_layer never breaks imports.
     _memory: Any = None
+
+    def workspace_by_ref(self, ref: str) -> dict | None:
+        """Resolve a bound workspace by id, owner/repo, name or URL suffix.
+
+        The single name-resolution path every workspace-aware tool shares
+        (case-insensitive; suffix match handles 'doomalay' → the full
+        'ScoobyBaby1999/doomalay' name).
+        """
+        if not ref or not self.workspaces:
+            return None
+        r = str(ref).strip().lower().rstrip("/")
+        for ws in self.workspaces:
+            if str(ws.get("id", "")).lower() == r:
+                return ws
+        for ws in self.workspaces:
+            name = str(ws.get("name", "")).lower()
+            or_slash = f"{str(ws.get('owner', '')).lower()}/{str(ws.get('repo', '')).lower()}"
+            if name == r or or_slash == r:
+                return ws
+        for ws in self.workspaces:
+            name = str(ws.get("name", "")).lower()
+            if name.endswith("/" + r) or str(ws.get("repo", "")).lower() == r:
+                return ws
+        return None
 
     # ── helpers ────────────────────────────────────────────────────────
     def state_dir(self) -> Path:

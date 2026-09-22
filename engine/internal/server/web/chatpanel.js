@@ -1466,6 +1466,11 @@
       if (chevron) chevron.style.transform = 'rotate(' + (state.dropdownOpen ? '90deg' : '0deg') + ')';
       // v0.26: the header reads the static expand/collapse metadata line.
       if (summaryEl) summaryEl.textContent = type.summaryLine(state);
+      // v0.44: the +workspace pill re-binds when the session lands late
+      // (the pill badge fetches the bound count for THIS session id).
+      if (state._wsPill && window.Workspace && window.Workspace.setPillSession) {
+        state._wsPill = window.Workspace.setPillSession(state._wsPill, state.sessionId);
+      }
     };
     if (row) row.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('#pill-row, #util-row, #chat-header-meters')) return;
@@ -1513,6 +1518,17 @@
         else window.Artifacts.toast('connect a model first');
       });
       pillRow.appendChild(art);
+
+      // v0.44 (user spec #3): THE +WORKSPACE PILL — cloud repos bound to
+      // THIS chat. Opens the workspace picker (bound list + connect flow:
+      // URL/token, create-repo, my-repos). The pill badge = bound count.
+      if (window.Workspace && window.Workspace.pill) {
+        var wspill = window.Workspace.pill(state.sessionId);
+        pillRow.appendChild(wspill);
+        // the session can land AFTER the first render (model connect
+        // flow) — the header toggle rebinds it via state._wsPill
+        state._wsPill = wspill;
+      }
 
       // v0.19→v0.26: THE PERSONA PILL — opens the chat's persona LIST
       // (multi-persona Sheet: add / rename / delete / activation modes).

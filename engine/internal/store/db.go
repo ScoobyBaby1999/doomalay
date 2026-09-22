@@ -14,18 +14,18 @@
 package store
 
 import (
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
-	"time"
+        "database/sql"
+        "fmt"
+        "os"
+        "path/filepath"
+        "time"
 
-	_ "modernc.org/sqlite"
+        _ "modernc.org/sqlite"
 )
 
 // DB wraps the sql.DB connection.
 type DB struct {
-	*sql.DB
+        *sql.DB
 }
 
 // Open opens (or creates) the SQLite database at dataDir/doomalay.db.
@@ -36,27 +36,27 @@ type DB struct {
 // (SQLite doesn't encrypt by default) but only the user can read them.
 // For full at-rest encryption, a future phase can use SQLCipher.
 func Open(dataDir string) (*DB, error) {
-	path := filepath.Join(dataDir, "doomalay.db")
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_busy_timeout=5000", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping %s: %w", path, err)
-	}
-	// SECURITY: tighten file perms to 0600 (SQLite creates 0644 by default).
-	// Also the WAL + SHM files. Best-effort — ignore errors (the dir is already 0700).
-	_ = os.Chmod(path, 0o600)
-	_ = os.Chmod(path+"-wal", 0o600)
-	_ = os.Chmod(path+"-shm", 0o600)
-	return &DB{db}, nil
+        path := filepath.Join(dataDir, "doomalay.db")
+        dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_busy_timeout=5000", path)
+        db, err := sql.Open("sqlite", dsn)
+        if err != nil {
+                return nil, fmt.Errorf("open %s: %w", path, err)
+        }
+        db.SetMaxOpenConns(1) // SQLite serializes writes; one conn avoids SQLITE_BUSY.
+        if err := db.Ping(); err != nil {
+                return nil, fmt.Errorf("ping %s: %w", path, err)
+        }
+        // SECURITY: tighten file perms to 0600 (SQLite creates 0644 by default).
+        // Also the WAL + SHM files. Best-effort — ignore errors (the dir is already 0700).
+        _ = os.Chmod(path, 0o600)
+        _ = os.Chmod(path+"-wal", 0o600)
+        _ = os.Chmod(path+"-shm", 0o600)
+        return &DB{db}, nil
 }
 
 // Migrate creates the schema if missing. Idempotent.
 func (db *DB) Migrate() error {
-	const schema = `
+        const schema = `
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id              TEXT PRIMARY KEY,
   title           TEXT NOT NULL DEFAULT 'New Chat',
@@ -121,6 +121,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
   provider    TEXT,
   created_at  REAL NOT NULL,
   updated_at  REAL NOT NULL
+);
+
+-- v0.44: per-chat workspace bindings (a chat can hold MANY cloud repos).
+CREATE TABLE IF NOT EXISTS session_workspaces (
+  session_id   TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  created_at   REAL NOT NULL,
+  PRIMARY KEY (session_id, workspace_id)
 );
 
 CREATE TABLE IF NOT EXISTS chat_artifacts (
@@ -188,6 +196,18 @@ CREATE TABLE IF NOT EXISTS hub_items (
 		// v0.44: the template pill's active method template (JSON
 		// blob {id, name, brief} — "" = none).
 		{"chat_sessions", "template_id", "ALTER TABLE chat_sessions ADD COLUMN template_id TEXT"},
+		// v0.44: the workspaces wave — the bare v0.17 workspaces
+		// table grows the cloud-repo columns (host kind, owner/repo,
+		// access level, token vault key, default branch, meta JSON).
+		{"workspaces", "name", "ALTER TABLE workspaces ADD COLUMN name TEXT"},
+		{"workspaces", "kind", "ALTER TABLE workspaces ADD COLUMN kind TEXT"},
+		{"workspaces", "host", "ALTER TABLE workspaces ADD COLUMN host TEXT"},
+		{"workspaces", "owner", "ALTER TABLE workspaces ADD COLUMN owner TEXT"},
+		{"workspaces", "repo", "ALTER TABLE workspaces ADD COLUMN repo TEXT"},
+		{"workspaces", "access", "ALTER TABLE workspaces ADD COLUMN access TEXT"},
+		{"workspaces", "token_env", "ALTER TABLE workspaces ADD COLUMN token_env TEXT"},
+		{"workspaces", "default_branch", "ALTER TABLE workspaces ADD COLUMN default_branch TEXT"},
+		{"workspaces", "meta", "ALTER TABLE workspaces ADD COLUMN meta TEXT"},
 	}
 	for _, m := range migrations {
 		if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
@@ -199,50 +219,50 @@ CREATE TABLE IF NOT EXISTS hub_items (
 
 // GetSetting reads one app_settings value ("" when absent).
 func (db *DB) GetSetting(key string) (string, error) {
-	var v string
-	err := db.QueryRow("SELECT value FROM app_settings WHERE key = ?", key).Scan(&v)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return v, err
+        var v string
+        err := db.QueryRow("SELECT value FROM app_settings WHERE key = ?", key).Scan(&v)
+        if err == sql.ErrNoRows {
+                return "", nil
+        }
+        return v, err
 }
 
 // SetSetting upserts one app_settings value.
 func (db *DB) SetSetting(key, value string) error {
-	_, err := db.Exec(`INSERT INTO app_settings (key, value, updated_at)
+        _, err := db.Exec(`INSERT INTO app_settings (key, value, updated_at)
                 VALUES (?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		key, value, float64(time.Now().UnixMilli())/1000.0)
-	return err
+                key, value, float64(time.Now().UnixMilli())/1000.0)
+        return err
 }
 
 // DeleteSetting removes one app_settings row (idempotent).
 func (db *DB) DeleteSetting(key string) error {
-	_, err := db.Exec("DELETE FROM app_settings WHERE key = ?", key)
-	return err
+        _, err := db.Exec("DELETE FROM app_settings WHERE key = ?", key)
+        return err
 }
 
 // ensureColumn adds a column to a table if it doesn't exist yet (SQLite has
 // no ADD COLUMN IF NOT EXISTS).
 func (db *DB) ensureColumn(table, col, ddl string) error {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notNull int
-		var dfltValue any
-		var pk int
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
-			return err
-		}
-		if name == col {
-			return nil // already exists
-		}
-	}
-	_, err = db.Exec(ddl)
-	return err
+        rows, err := db.Query("PRAGMA table_info(" + table + ")")
+        if err != nil {
+                return err
+        }
+        defer rows.Close()
+        for rows.Next() {
+                var cid int
+                var name, ctype string
+                var notNull int
+                var dfltValue any
+                var pk int
+                if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+                        return err
+                }
+                if name == col {
+                        return nil // already exists
+                }
+        }
+        _, err = db.Exec(ddl)
+        return err
 }

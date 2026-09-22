@@ -70,6 +70,7 @@ async def run_turn(
     deep_research: bool = False,
     mode: str = "auto",
     history: list = None,
+    workspaces: list = None,
 ) -> AsyncIterator[dict]:
     """Run one chat turn. Yields events as dicts.
 
@@ -96,7 +97,8 @@ async def run_turn(
 
     # Build the system prompt.
     if not system_prompt:
-        system_prompt = _build_system_prompt(model, mode, workspace, web_search, deep_research)
+        system_prompt = _build_system_prompt(model, mode, workspace, web_search, deep_research,
+                                            workspaces=workspaces)
 
     # Build messages (include history if provided).
     messages = list(history) if history else []
@@ -115,6 +117,7 @@ async def run_turn(
             effort=effort,
             workspace=workspace,
             web_search=web_search,
+            workspaces=workspaces,
         ):
             yield ev
     else:
@@ -131,7 +134,8 @@ async def run_turn(
 
 
 async def _run_strands_agent(
-    *, session_id, messages, model, base_url, api_key, system_prompt, effort, workspace, web_search
+    *, session_id, messages, model, base_url, api_key, system_prompt, effort, workspace, web_search,
+    workspaces=None,
 ) -> AsyncIterator[dict]:
     """Full Strands agent with all tools. V0: fresh per turn, callback-only events."""
     yield {"type": "status", "state": "running", "usage": None}
@@ -187,7 +191,8 @@ async def _run_strands_agent(
         # Build the tools.
         tools = _build_tools(workspace, web_search, session_id=session_id,
                              callback=callback, model=model,
-                             llm_info=(litellm_id, litellm_base or "", api_key))
+                             llm_info=(litellm_id, litellm_base or "", api_key),
+                             workspaces=workspaces)
 
         # V0 FIX: fresh Agent per turn. Never reuse.
         # v0.38 MEMORY: the agent is pre-seeded with the conversation
@@ -576,7 +581,8 @@ def _run_subagent_inner(task: str, model: str, workspace: str,
 def _build_tools(workspace: str, web_search: bool,
                  session_id: str = "", callback=None,
                  model: str = "",
-                 llm_info: "tuple[str, str, str] | None" = None) -> list:
+                 llm_info: "tuple[str, str, str] | None" = None,
+                 workspaces: list = None) -> list:
     """Build the full tool suite for the Strands agent.
 
     Tools ported from the old c-branch:
@@ -761,6 +767,7 @@ def _build_tools(workspace: str, web_search: bool,
             model=model or None,
             emit=_dt_progress,
             spawn=_dt_spawn,
+            workspaces=list(workspaces) if workspaces else [],
         )
         dt_tools = dt_registry.load_doomalay_tools(ctx)
         if dt_tools:
@@ -781,7 +788,8 @@ def _build_tools(workspace: str, web_search: bool,
     return tools
 
 
-def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool) -> str:
+def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool,
+                        workspaces: list = None) -> str:
     """Build the system prompt for the agent."""
     parts = [f"You are Doomalay, an autonomous AI assistant running via {model}."]
 
@@ -795,6 +803,23 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
     if workspace:
         parts.append(f"Your workspace is at: {workspace}")
         parts.append("Use the shell tool to explore it (ls, cat, git status, etc.).")
+
+    # v0.44 WORKSPACES: the chat's bound cloud repos — the model must know
+    # they exist and which access tier each carries, or it will guess.
+    if workspaces:
+        rows = []
+        for ws in workspaces:
+            acc = str(ws.get("access") or "read")
+            rows.append(f"- {ws.get('name')} [{ws.get('kind')}] access={acc} "
+                        f"(workspace ref: {ws.get('id')} or '{ws.get('owner')}/{ws.get('repo')}')")
+        parts.append(
+            "CONNECTED CLOUD WORKSPACES (this chat's repos — act on them "
+            "with the workspace tool, explore with the explore tool):\n"
+            + "\n".join(rows)
+            + "\naccess=read → browse/tree/read/grep only; partial → fork+PR "
+            "flows; full → direct file writes (API commits). The tools "
+            "route through the engine, which holds the credentials."
+        )
 
     if web_search:
         parts.append("Web search is enabled. Use web_search and web_fetch tools when you need current information.")
@@ -830,14 +855,23 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "- artifact: create AND surgically EDIT (find/replace, line splices, "
         "inserts, dry_run) the REAL chat artifacts — including files made in "
         "earlier turns; write deliverables HERE, not just as chat text\n"
+        "- workspace: act on this chat's CONNECTED cloud repos (GitHub/"
+        "Gitea/GitLab/any forge) — tree, ls, read (head/tail/line ranges), "
+        "grep, write files as API commits (full access), fork, clone, "
+        "create repos, issues/pulls/releases/actions/discussions views\n"
+        "- explore: the UNBOUNDED repo explorer — give it ANY repo URL (no "
+        "connect needed): full tree walks, batch file reads, grep, history, "
+        "releases, CI runs, issues; paginated, no artificial caps\n"
         "- hf: publish results/datasets to the HuggingFace community library\n"
         "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
         "analysis, compare (Stooq)\n"
         "Rules: fresh info → rtsearch (never answer from memory what it can "
         "verify); tasks/time → timemgr; journaling → djournal; non-trivial "
         "goal → socreate (parallelize with swarm); market questions → "
-        "stocks; files the user should keep → artifact. Unsure what a tool "
-        "offers? Call it with action='help' first."
+        "stocks; files the user should keep → artifact; repo questions "
+        "(structure, issues, releases, CI, code search) → workspace or "
+        "explore — they reach ANY repo URL, not just connected ones. "
+        "Unsure what a tool offers? Call it with action='help' first."
     )
 
     parts.append("When you use a tool, explain what you're doing and why. Be concise but complete.")

@@ -251,6 +251,12 @@
     list(sessionId).then(function (items) {
       if (!root.isConnected || currentSession !== sessionId) return;
       renderTree(listEl, items, sessionId);
+      // v0.44: the CLOUD WORKSPACES section — bound repos appear as lazy
+      // trees under the local artifacts (never downloaded; rows fetch on
+      // demand from the forge via the engine).
+      if (window.Workspace && window.Workspace.renderCloudSection) {
+        try { window.Workspace.renderCloudSection(listEl, sessionId); } catch (e) {}
+      }
     }).catch(function (e) {
       listEl.style.overflow = 'auto';
       listEl.style.padding = '12px 14px';

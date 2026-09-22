@@ -715,6 +715,25 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 brainReq["history"] = brainHistory
         }
 
+        // v0.44 WORKSPACES: the chat's bound cloud repos ride the turn so
+        // the brain's workspace/explore tools can act on them (ids only —
+        // tokens stay in the engine vault; the tools call back via REST).
+        {
+                bound, err := s.db.ListSessionWorkspaces(sessionID)
+                if err == nil && len(bound) > 0 {
+                        rows := make([]map[string]any, 0, len(bound))
+                        for _, ws := range bound {
+                                rows = append(rows, map[string]any{
+                                        "id": ws.ID, "name": ws.Name, "kind": ws.Kind,
+                                        "host": ws.Host, "owner": ws.Owner, "repo": ws.Repo,
+                                        "url": ws.RepoURL, "branch": ws.Branch,
+                                        "access": ws.Access, "sandbox_path": ws.SandboxPath,
+                                })
+                        }
+                        brainReq["workspaces"] = rows
+                }
+        }
+
         // Stream from the brain, OR the direct LLM proxy if brain is down.
         // v0.16: the streaming client has no wall-clock cap (reasoning models
         // think for minutes) — this per-turn timeout is the backstop that

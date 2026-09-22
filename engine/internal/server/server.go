@@ -12,6 +12,7 @@ import (
         "net"
         "net/http"
         "net/url"
+        "path/filepath"
         "runtime"
         "strconv"
         "strings"
@@ -19,6 +20,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -235,6 +237,43 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hf/space/status", s.handleHFSpaceStatus)
         s.mux.HandleFunc("GET /api/hf/space/logs", s.handleHFSpaceLogs)
         s.mux.HandleFunc("POST /api/hf/space/restart", s.handleHFSpaceRestart)
+
+        // ── v0.44 WORKSPACES (cloud repos for quick chat) ──────────────
+        s.mux.HandleFunc("POST /api/workspaces/connect", s.handleWorkspacesConnect)
+        s.mux.HandleFunc("GET /api/workspaces", s.handleWorkspacesList)
+        s.mux.HandleFunc("GET /api/workspaces/{id}", s.handleWorkspaceGet)
+        s.mux.HandleFunc("DELETE /api/workspaces/{id}", s.handleWorkspaceDelete)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/bind", s.handleWorkspaceBind)
+        s.mux.HandleFunc("DELETE /api/workspaces/{id}/bind", s.handleWorkspaceUnbind)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/token", s.handleWorkspaceToken)
+        s.mux.HandleFunc("GET /api/workspaces/{id}/tree", s.handleWorkspaceTree)
+        s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleWorkspaceFile)
+        s.mux.HandleFunc("GET /api/workspaces/{id}/readme", s.handleWorkspaceReadme)
+        s.mux.HandleFunc("GET /api/workspaces/{id}/grep", s.handleWorkspaceGrep)
+        s.mux.HandleFunc("GET /api/workspaces/{id}/view/{what}", s.handleWorkspaceView)
+        s.mux.HandleFunc("PUT /api/workspaces/{id}/file", s.handleWorkspacePutFile)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/fork", s.handleWorkspaceFork)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/clone", s.handleWorkspaceClone)
+        s.mux.HandleFunc("POST /api/workspaces/create-repo", s.handleWorkspaceCreateRepo)
+        s.mux.HandleFunc("GET /api/workspaces/licenses", s.handleWorkspaceLicenses)
+        s.mux.HandleFunc("GET /api/workspaces/gitignores", s.handleWorkspaceGitignores)
+        s.mux.HandleFunc("GET /api/workspaces/discover", s.handleWorkspaceDiscover)
+        s.mux.HandleFunc("GET /api/workspaces/resolve", s.handleWorkspaceResolve)
+        s.mux.HandleFunc("GET /api/sessions/{id}/workspaces", s.handleSessionWorkspacesList)
+        s.mux.HandleFunc("POST /api/sessions/{id}/workspaces", s.handleSessionWorkspaceBind)
+        s.mux.HandleFunc("DELETE /api/sessions/{id}/workspaces/{wid}", s.handleSessionWorkspaceUnbind)
+        // v0.44 EXPLORE — the same repo surface, keyed by ?url= instead of
+        // a stored workspace id (the brain's explore tool: ANY repo URL,
+        // no connect step)
+        s.mux.HandleFunc("GET /api/explore/tree", s.handleWorkspaceTree)
+        s.mux.HandleFunc("GET /api/explore/file", s.handleWorkspaceFile)
+        s.mux.HandleFunc("GET /api/explore/files", s.handleExploreFiles)
+        s.mux.HandleFunc("GET /api/explore/readme", s.handleWorkspaceReadme)
+        s.mux.HandleFunc("GET /api/explore/grep", s.handleWorkspaceGrep)
+        s.mux.HandleFunc("GET /api/explore/view/{what}", s.handleWorkspaceView)
+        s.mux.HandleFunc("GET /api/explore/repo", s.handleWorkspaceResolve)
+        // the forge generic-git adapter needs the clone root wired once
+        forge.SetGenericCloneDir(filepath.Join(s.cfg.DataDir, "workspaces"))
 
         // Embedded PWA (serves web/dist at /).
         distFS, _ := fs.Sub(webFS, "web")

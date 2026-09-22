@@ -817,6 +817,7 @@ async def chat(request: Request):
                 deep_research=body.get("deep_research", False),
                 mode=body.get("mode", "auto"),
                 history=body.get("history", []),
+                workspaces=body.get("workspaces", []),
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"
