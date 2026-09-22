@@ -168,3 +168,49 @@ instantly disconnects". Tokens are also re-asked per form (no global account).
   RW/account: only this account) + how client id/secret get set securely +
   revoking the compromised PAT.
 - Commit + rebase + push + worklog.
+
+# v0.48 — THE LIVING HUB (public library that actually works)
+
+User report: "the hub doesn't display any of the templates I posted on HF
+datasets (superpowers, etc.) and the app doesn't come with our deep research
+template pre-installed. The library should dynamically fetch and display the
+datasets templates and personas on the fly. Nothing static."
+
+Three root causes found (all fixed):
+
+1. DISCOVERY WAS TAG-ONLY — the superpowers corpus carries topical tags
+   (agent-skills, prompt-engineering…), no doomalay-template tag, so
+   ListReposByTag never saw it. Fix: discovery unions three channels —
+   tag ∪ name-search ("doomalay-*" by anyone) ∪ the connected account's own
+   datasets. Nothing static: a freshly posted dataset shows on refresh.
+2. LAYOUT LOCK-IN — itemsFromRepo understood only items/index.json. Fix:
+   scan.go, a multi-layout repo scanner (hub-native index → items/ tree
+   fallback → root *.jsonl corpora {template|skill|persona, file,
+   description, content} → personas/ templates/ skills/ dir trees), with
+   JSON-array user-template expansion and "<jsonl>#<key>[:<child>]"
+   payload refs. One shared per-repo scan cache serves every library type.
+3. %2F ESCAPING 400s — live-probed: EVERY repo-bearing HF dataset endpoint
+   (card/tree/resolve/preupload/commit/LFS) now rejects url-encoded slashes.
+   Every FetchFile/GetRepo/ListTree/commit/like 400'd — alone enough to make
+   the hub show NOTHING against real HF. Fix: raw user/name everywhere.
+
+Plus:
+- SKILL LIBRARY (third registry entry): the corpus's 19 SKILL.md rows → 15
+  skills, browsable + downloadable; a downloaded skill lands in the template
+  sheet as a methodology brief (hubitem → saveFromHub).
+- DEEP RESEARCH PRE-INSTALLED: "Default Deep Research" (8-stage: decompose →
+  search terms → source scan → verify → synthesize → gap check → refine →
+  assemble w/ Confidence + References) added to DEFAULT_TEMPLATES, and
+  seed_defaults' early-return (which froze upgraded installs at their
+  original catalog) replaced with per-name reconcile. The sheet also renders
+  the pinned engine row + "Yours" + hub downloads even when the brain is
+  down (a notice, not a dead end).
+- DOWNLOADS FOLLOW THE USER: GET /api/hub/{type}/downloads lists engine-side
+  downloads (payload included); the sheet merges templates AND skills,
+  deduped against the brain list + localStorage "Yours".
+- Live redteamed against the real ScoobyBaby1999/doomalay-superpowers:
+  11 templates (6 orchestrator + 5 expanded user templates), 15 skills,
+  empty personas dataset (no error), corpus downloads by row + child refs,
+  agent-browser walkthrough: sheet groups (Deep research / Superpowers
+  flows / Flows / Yours) + hub pills (Personas / Skills 15 / Templates 11)
+  + SKILL.md detail view.

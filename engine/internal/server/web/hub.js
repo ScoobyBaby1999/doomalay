@@ -40,7 +40,7 @@
   SORTS.forEach(function (s) { SORT_SUB[s.key] = s.sub; });
 
   // the library pills' glyphs — future registry types fall back to 📚
-  var LIB_ICONS = { persona: '🎭', template: '🧩' };
+  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠' };
   function libIcon(type) { return LIB_ICONS[type] || '📚'; }
 
   // The served Item carries no local-state flags — the web tracks what

@@ -116,6 +116,17 @@
   }
   function readUserTemplates() { return readJSON(USER_KEY, []); }
 
+  // v0.48: only localStorage copies are removable from the sheet —
+  // engine-merged hub rows (source 'hub' but not in the store) have no
+  // local copy to remove; the button would be a lying no-op.
+  function inUserStore(id) {
+    var list = readUserTemplates();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === id) return true;
+    }
+    return false;
+  }
+
   // saveFromHub — a hub download lands here (hubitem.js type=template).
   // payload is the template JSON (or markdown). Stored entries carry the
   // same shape as the brain index so the sheet treats them identically.
@@ -192,7 +203,7 @@
     var parts = [e.id, e.name, e.task_type, (e.tags || []).join(' ')];
     var hay = String(parts.join(' ')).toLowerCase().replace(/[_\-]+/g, ' ');
     if (e.kind === 'engine' || e.id === 'deep-research') return 'Deep research';
-    if (e.kind === 'user' && e.source === 'hub') return 'Yours';
+    if ((e.kind === 'user' || e.kind === 'skill') && e.source === 'hub') return 'Yours';
     if (hay.indexOf('superpower') >= 0) return 'Superpowers flows';
     if (hay.indexOf('research') >= 0 || hay.indexOf('paper') >= 0 ||
         hay.indexOf('lesson') >= 0 || hay.indexOf('deep') >= 0 ||
@@ -263,27 +274,64 @@
     if (!cur || cur.loading) return;
     cur.loading = true;
     updateList();
-    fetch('/api/templates').then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (!cur) return;
-        cur.loading = false;
-        var tpls = (d && d.templates) || [];
-        // tolerate the OLD brain shape (raw DEFAULT_TEMPLATES: no id) by
-        // deriving id = task_type — the engine proxy is always the new
-        // brain, but a stale APK brain keeps the sheet alive.
-        for (var i = 0; i < tpls.length; i++) {
-          if (!tpls[i].id) tpls[i].id = String(tpls[i].task_type || slug(tpls[i].name));
-          if (!tpls[i].kind) tpls[i].kind = 'flow';
-        }
-        cur.items = tpls;
-        updateList();
-      })
-      .catch(function (e) {
-        if (!cur) return;
-        cur.loading = false;
-        cur.err = (e && e.message) || 'the library could not be reached';
-        updateList();
-      });
+    // v0.48: the sheet is three libraries in one — the brain's templates
+    // plus the hub's downloaded templates AND skills (engine hub_items:
+    // they follow the account across devices and reinstalls, unlike the
+    // localStorage "Yours" copy which is per-browser).
+    Promise.all([
+      fetch('/api/templates').then(function (r) { return r.json(); }),
+      hubDownloads('template'),
+      hubDownloads('skill')
+    ]).then(function (res) {
+      if (!cur) return;
+      cur.loading = false;
+      var tpls = (res[0] && res[0].templates) || [];
+      // tolerate the OLD brain shape (raw DEFAULT_TEMPLATES: no id) by
+      // deriving id = task_type — the engine proxy is always the new
+      // brain, but a stale APK brain keeps the sheet alive.
+      for (var i = 0; i < tpls.length; i++) {
+        if (!tpls[i].id) tpls[i].id = String(tpls[i].task_type || slug(tpls[i].name));
+        if (!tpls[i].kind) tpls[i].kind = 'flow';
+      }
+      if (!tpls.length) cur.err = 'unavailable'; // brain down — soft notice, rows below still render
+      mergeHubDownloads(tpls, (res[1] && res[1].items) || [], (res[2] && res[2].items) || []);
+      cur.items = tpls;
+      updateList();
+    }).catch(function (e) {
+      if (!cur) return;
+      cur.loading = false;
+      cur.err = (e && e.message) || 'the library could not be reached';
+      updateList();
+    });
+  }
+
+  function hubDownloads(type) {
+    return fetch('/api/hub/' + type + '/downloads')
+      .then(function (r) { return r.json(); })
+      .catch(function () { return { items: [] }; }); // offline / old engine — the sheet still works
+  }
+
+  // mergeHubDownloads appends the engine-stored hub downloads (templates
+  // and skills) to the brain list, deduping against the brain entries and
+  // the localStorage "Yours" copies (which stay authoritative — they are
+  // the user-editable ones).
+  function mergeHubDownloads(tpls, hubRows, skillRows) {
+    var have = {};
+    for (var i = 0; i < tpls.length; i++) have[tpls[i].id] = 1;
+    var mine = readUserTemplates();
+    for (var u = 0; u < mine.length; u++) have[mine[u].id] = 1;
+    function add(rows, kind) {
+      for (var r = 0; r < rows.length; r++) {
+        var entry = normalizeHubPayload(rows[r].item, rows[r].payload);
+        if (!entry || have[entry.id]) continue;
+        entry.kind = kind;
+        entry.source = 'hub';
+        have[entry.id] = 1;
+        tpls.push(entry);
+      }
+    }
+    add(hubRows, 'user');
+    add(skillRows, 'skill');
   }
 
   // ── rendering ───────────────────────────────────────────────────────
@@ -380,25 +428,32 @@
       if (matches(all[i], q)) filtered.push(all[i]);
     }
 
-    // loading / empty / error states (honest — never fake rows)
+    // loading / empty / error states (honest — never fake rows).
+    // v0.48: a brain outage is a NOTICE, not a dead end — the pinned
+    // deep-research row, "Yours" and hub downloads still render below it
+    // (the user's rule: the app always comes with deep research).
     if (cur.loading) {
       return '<div class="ts-empty">loading the template library…</div>';
     }
-    if (cur.items && cur.items.length === 0 && !cur.err) {
-      cur.err = 'unavailable';
-    }
+    var notice = '';
     if (cur.err) {
-      return (
-        '<div class="ts-empty">' +
-          '<div class="ts-empty-title">template library unavailable</div>' +
-          '<div class="ts-empty-sub">the brain service is not running (or returned nothing) — start it and tap ⟳ refresh. ' +
-          'Downloaded templates ("Yours") still work, and the hub library can be browsed with ⌂.</div>' +
-          '<div class="ts-empty-actions">' +
-            '<button class="ts-act" data-act="refresh">⟳ retry</button>' +
-            '<button class="ts-act" data-act="hub">⌂ hub library</button>' +
-          '</div>' +
-        '</div>'
-      );
+      if (!filtered.length && !cur.q) {
+        return (
+          '<div class="ts-empty">' +
+            '<div class="ts-empty-title">template library unavailable</div>' +
+            '<div class="ts-empty-sub">the brain service is not running (or returned nothing) — start it and tap ⟳ refresh. ' +
+            'Downloaded templates ("Yours") still work, and the hub library can be browsed with ⌂.</div>' +
+            '<div class="ts-empty-actions">' +
+              '<button class="ts-act" data-act="refresh">⟳ retry</button>' +
+              '<button class="ts-act" data-act="hub">⌂ hub library</button>' +
+            '</div>' +
+          '</div>'
+        );
+      }
+      if (filtered.length) {
+        notice = '<div class="ts-notice">⚠ the brain library is unreachable — the built-in rows, your templates and your hub downloads still work. ' +
+          '<button class="ts-act" data-act="refresh">⟳ retry</button></div>';
+      }
     }
     if (!filtered.length) {
       return '<div class="ts-empty">no templates match "' + esc(cur.q) + '"</div>';
@@ -421,7 +476,7 @@
         ' <span class="ts-group-n">' + rows.length + '</span></div>';
       for (var r = 0; r < rows.length; r++) out += rowHTML(rows[r]);
     }
-    return out;
+    return notice + out;
   }
 
   function rowHTML(e) {
@@ -538,7 +593,7 @@
             (active ? '⧉ active — tap to keep' : (e.kind === 'engine' ? '⧉ use deep research' : '⧉ use this template')) +
           '</button>' +
           (isFav(e.id) ? '' : '<button id="ts-fav" class="pv-btn" title="Favorite this template">★ favorite</button>') +
-          (e.source === 'hub' ? '<button id="ts-del" class="pv-btn" title="Remove from your templates">✕ remove</button>' : '') +
+          (e.source === 'hub' && inUserStore(e.id) ? '<button id="ts-del" class="pv-btn" title="Remove from your templates">✕ remove</button>' : '') +
         '</div>' +
       '</div>'
     );

@@ -190,16 +190,50 @@ func (c *HFClient) ListReposByTag(tag string) ([]RepoCard, error) {
         return cards, nil
 }
 
-// escapeRepo URL-escapes a repo id ("user/name") so it survives as ONE path
-// segment — Go's ServeMux and huggingface.co both decode %2F (the Python
-// client quotes repo ids the same way).
-func escapeRepo(repo string) string {
-        return strings.ReplaceAll(repo, "/", "%2F")
+// SearchDatasets returns dataset repos whose id matches a search query
+// (≤100). v0.48: the hub's second discovery channel — datasets named
+// "doomalay-*" are found even when they carry no doomalay-* tag (the
+// superpowers corpus was published with topical tags only, which is why
+// tag-only discovery never saw it).
+func (c *HFClient) SearchDatasets(query string) ([]RepoCard, error) {
+        body, err := c.getJSON("/api/datasets?search="+urlQueryEscape(query)+"&limit=100", "")
+        if err != nil {
+                return nil, err
+        }
+        var cards []RepoCard
+        if err := json.Unmarshal(body, &cards); err != nil {
+                return nil, fmt.Errorf("hf: datasets by search: %w", err)
+        }
+        return cards, nil
 }
+
+// ListAuthorDatasets returns one account's dataset repos (≤100). v0.48:
+// the third discovery channel — the connected user's own datasets, so a
+// freshly posted repo shows up on the next refresh even if HF's search
+// index lags behind it.
+func (c *HFClient) ListAuthorDatasets(author string) ([]RepoCard, error) {
+        body, err := c.getJSON("/api/datasets?author="+urlQueryEscape(author)+"&limit=100", "")
+        if err != nil {
+                return nil, err
+        }
+        var cards []RepoCard
+        if err := json.Unmarshal(body, &cards); err != nil {
+                return nil, fmt.Errorf("hf: datasets by author: %w", err)
+        }
+        return cards, nil
+}
+
+// v0.48 NOTE — RAW REPO IDS: every repo-bearing HF dataset endpoint
+// (card /api/datasets/{repo}, tree, resolve, preupload, commit, LFS batch)
+// now 400s "repo name includes an url-encoded slash" on %2F-escaped ids
+// (live-probed 2026-09-22; both forms tested — raw gets through, %2F dies).
+// The v0.31-era claim that "huggingface.co decodes %2F" no longer holds, so
+// every path below carries the raw "user/name". This alone made the hub
+// display NOTHING against real HF (every FetchFile 400'd).
 
 // GetRepo fetches one dataset card; (nil, nil) when the repo is missing.
 func (c *HFClient) GetRepo(repo string) (*RepoCard, error) {
-        body, err := c.getJSON("/api/datasets/"+escapeRepo(repo), "")
+        body, err := c.getJSON("/api/datasets/"+repo, "")
         if err != nil {
                 if IsNotFound(err) {
                         return nil, nil
@@ -216,7 +250,7 @@ func (c *HFClient) GetRepo(repo string) (*RepoCard, error) {
 // FetchFile downloads one file from a repo's main branch (redirects to the
 // CDN are followed by the Go client automatically).
 func (c *HFClient) FetchFile(repo, path string) ([]byte, error) {
-        return c.getJSON("/datasets/"+escapeRepo(repo)+"/resolve/main/"+path, "")
+        return c.getJSON("/datasets/"+repo+"/resolve/main/"+path, "")
 }
 
 // TreeEntry is one repo tree listing entry (the index fallback).
@@ -228,7 +262,7 @@ type TreeEntry struct {
 
 // ListTree lists a directory inside a repo's main branch (non-recursive).
 func (c *HFClient) ListTree(repo, dir string) ([]TreeEntry, error) {
-        body, err := c.getJSON("/api/datasets/"+escapeRepo(repo)+"/tree/main"+dir, "")
+        body, err := c.getJSON("/api/datasets/"+repo+"/tree/main"+dir, "")
         if err != nil {
                 return nil, err
         }
@@ -332,10 +366,7 @@ func (c *HFClient) commitFiles(token, repo, message string, files []CommitFile, 
                         "encoding": "base64",
                 }})
         }
-        commitRepoPath := escapeRepo(repo)
-        if repoType == "spaces" {
-                commitRepoPath = repo // raw slash — %2F 400s on /api/spaces/*
-        }
+        commitRepoPath := repo // raw user/name for both repo types — see the v0.48 note above
         _, err = c.do("POST", "/api/"+repoType+"/"+commitRepoPath+"/commit/main", token, buf.Bytes(), "application/x-ndjson")
         return err
 }
@@ -384,13 +415,7 @@ func (c *HFClient) preuploadTyped(token, repo string, files []CommitFile, repoTy
         if repoType == "" {
                 repoType = "datasets"
         }
-        // v0.46: /api/spaces/* REJECTS %2F-escaped repo names ("repo name
-        // includes an url-encoded slash" — live-verified); only datasets
-        // tolerates escaping. Spaces paths take the raw user/name.
-        repoPath := escapeRepo(repo)
-        if repoType == "spaces" {
-                repoPath = repo
-        }
+        repoPath := repo // raw user/name — see the v0.48 raw-repo note above
         body, err := c.postJSON("/api/"+repoType+"/"+repoPath+"/preupload/main", token, payload)
         if err != nil {
                 return nil, err
@@ -437,7 +462,7 @@ func (c *HFClient) uploadLFS(token, repo string, files []CommitFile) error {
                 payload.Objects = append(payload.Objects, obj{Oid: oid, Size: len(f.Content)})
                 content[oid] = f.Content
         }
-        lfsRepo := escapeRepo(repo)
+        lfsRepo := repo // raw — see the v0.48 raw-repo note above
         body, err := c.do("POST", "/datasets/"+lfsRepo+".git/info/lfs/objects/batch", token,
                 mustJSONBytes(payload), "application/vnd.git-lfs+json")
         if err != nil {
@@ -487,13 +512,13 @@ func (c *HFClient) uploadLFS(token, repo string, files []CommitFile) error {
 // LikeRepo likes a dataset repo (repo-level — per-item hearts live in the
 // metrics sidecars; the like is the publisher-facing signal).
 func (c *HFClient) LikeRepo(token, repo string) error {
-        _, err := c.do("POST", "/api/datasets/"+escapeRepo(repo)+"/like", token, nil, "")
+        _, err := c.do("POST", "/api/datasets/"+repo+"/like", token, nil, "")
         return err
 }
 
 // UnlikeRepo removes the like (404 = not liked — fine).
 func (c *HFClient) UnlikeRepo(token, repo string) error {
-        _, err := c.do("DELETE", "/api/datasets/"+escapeRepo(repo)+"/like", token, nil, "")
+        _, err := c.do("DELETE", "/api/datasets/"+repo+"/like", token, nil, "")
         var hfErr *HFError
         if err != nil && errors.As(err, &hfErr) && hfErr.Status == http.StatusNotFound {
                 return nil

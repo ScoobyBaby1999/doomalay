@@ -224,6 +224,7 @@ func (s *Server) routes() {
         // hearts, and the HF token connect flow.
         s.mux.HandleFunc("GET /api/hub/libraries", s.handleHubLibraries)
         s.mux.HandleFunc("GET /api/hub/{type}/items", s.handleHubItems)
+        s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
         s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)
         s.mux.HandleFunc("GET /api/hub/{type}/png/{repo}/{id}", s.handleHubPNG)
         s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)

@@ -281,7 +281,11 @@
         // v0.44 TEMPLATE PILL: a downloaded TEMPLATE lands in the local
         // user-template library (templatesheet.js "Yours") — it is then
         // selectable from the composer's ⧉ template pill like any other.
-        if (cur.type === 'template' && window.TemplateSheet && window.TemplateSheet.saveFromHub) {
+        // v0.48: downloaded SKILLS join it (a SKILL.md is a usable
+        // methodology brief for the turn — the sheet's buildBrief handles
+        // markdown payloads).
+        if ((cur.type === 'template' || cur.type === 'skill') &&
+            window.TemplateSheet && window.TemplateSheet.saveFromHub) {
           window.TemplateSheet.saveFromHub(cur.item, cur.payload);
         }
         cur.panel.replaceView(buildView());
