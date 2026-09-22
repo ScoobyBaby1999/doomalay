@@ -13,6 +13,8 @@ import (
 
         "github.com/gorilla/websocket"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -765,11 +767,139 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                         s.emit(pipe, sessionID, "status", `{"state":"idle","usage":null}`, "")
                 }
         }()
-        if s.brain != nil && s.brain.Healthy() {
+        // v0.46 THE HF CHAT: sandbox=hf sessions route through the user's HF
+        // Space sandbox (own or shared) — the full remote brain (real bash/
+        // python/git/npm toolchain). Falls back to the direct pipeline with a
+        // visible progress note when the space is unreachable/unconfigured.
+        if rb := s.remoteBrainFor(sess); rb != nil {
+                s.streamFromRemoteBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal, rb)
+        } else if sess.Sandbox == "hf" {
+                if b, jerr := json.Marshal(map[string]any{
+                        "type": "progress", "session_id": sessionID,
+                        "message": "HF sandbox not configured (connect Hugging Face in the Hub panel, or pick a space via Sandbox → Hugging Face) — running this turn on the direct pipeline",
+                }); jerr == nil {
+                        _ = pipe.send(b)
+                }
+                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, &terminal)
+        } else if s.brain != nil && s.brain.Healthy() {
                 s.streamFromBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal)
         } else {
                 s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, &terminal)
         }
+}
+
+// remoteBrainFor resolves the RemoteBrain for an HF-chat session (v0.46).
+//   - sandbox_mode "own" + SandboxRepo → per-repo client (token from the
+//     vault: HF_SPACE_<OWNER>_<NAME>, minted at create time)
+//   - sandbox_mode "shared" (or repo empty) → the shared community space,
+//     auth = the user's own HF token (needs an HF connection)
+//
+// Returns nil when the session isn't HF-routed or can't be (no token, no
+// repo) — the caller falls back with an explanatory progress event.
+func (s *Server) remoteBrainFor(sess *store.Session) *brain.RemoteBrain {
+        if sess == nil || sess.Sandbox != "hf" {
+                return nil
+        }
+        env := map[string]string{}
+        if s.vault != nil {
+                env = s.vault.AsEnv()
+        }
+        mode := sess.SandboxMode
+        if mode == "" {
+                // Legacy/edge: sandbox=hf without a mode. Own-repo if we have a
+                // token for the session's repo, else shared.
+                mode = "shared"
+                if sess.SandboxRepo != "" {
+                        if tk, _, err := s.vault.Get(spaceTokenEnvVar(sess.SandboxRepo)); err == nil && tk != "" {
+                                mode = "own"
+                        }
+                }
+        }
+        if mode == "own" {
+                repo := sess.SandboxRepo
+                if repo == "" {
+                        return nil
+                }
+                s.remoteMu.RLock()
+                rb := s.remotes[repo]
+                s.remoteMu.RUnlock()
+                if rb != nil {
+                        rb.SetEnv(env)
+                        return rb
+                }
+                tk, _, err := s.vault.Get(spaceTokenEnvVar(repo))
+                if err != nil || tk == "" {
+                        return nil
+                }
+                url := hfzero.SpaceURL(repo)
+                if url == "" {
+                        return nil
+                }
+                rb = brain.NewRemoteBrain(repo, url, tk, env)
+                s.remoteMu.Lock()
+                s.remotes[repo] = rb
+                s.remoteMu.Unlock()
+                return rb
+        }
+        // shared
+        s.remoteMu.RLock()
+        rb := s.sharedBrain
+        s.remoteMu.RUnlock()
+        if rb != nil {
+                rb.SetEnv(env)
+                return rb
+        }
+        if s.hfToken() == "" {
+                return nil // shared needs the user's HF token — not connected
+        }
+        url := sharedSpaceBaseURL()
+        if url == "" {
+                return nil
+        }
+        rb = brain.NewSharedRemoteBrain(sharedSpaceRepo, url, s.hfToken, env)
+        s.remoteMu.Lock()
+        s.sharedBrain = rb
+        s.remoteMu.Unlock()
+        return rb
+}
+
+// streamFromRemoteBrain routes one turn through an HF Space sandbox (v0.46
+// — THE HF CHAT). Same event stream as the local brain path; on failure it
+// degrades to the direct pipeline with a visible explanation (the quick-chat
+// guarantee: the message still gets answered).
+func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool, rb *brain.RemoteBrain) {
+        // The remote sandbox scopes workspaces itself (sanitized session_id →
+        // /data|/tmp/doomalay-workspaces/<id>) — never send device paths.
+        delete(brainReq, "workspace")
+        delete(brainReq, "workspaces")
+
+        // First turn on this space (or it slept — HF gc's after 48h idle):
+        // wake it with a patient probe so the user sees WHY it's slow.
+        if !rb.Healthy() {
+                if b, jerr := json.Marshal(map[string]any{
+                        "type": "progress", "session_id": sessionID,
+                        "message": "waking the HF sandbox (up to a minute if it slept)…",
+                }); jerr == nil {
+                        _ = pipe.send(b)
+                }
+                rb.ProbeTimeout(75 * time.Second)
+        }
+
+        events, errs, err := rb.Chat(ctx, brainReq)
+        if err != nil {
+                rb.MarkUnhealthy()
+                if b, jerr := json.Marshal(map[string]any{
+                        "type": "progress", "session_id": sessionID,
+                        "message": "HF sandbox unreachable (" + err.Error() + ") — running this turn on the engine's direct pipeline",
+                }); jerr == nil {
+                        _ = pipe.send(b)
+                }
+                tplID, _ := brainReq["template_id"].(string)
+                tplBrief, _ := brainReq["template_brief"].(string)
+                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, terminal)
+                return
+        }
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
 }
 
 // streamFromBrain proxies the chat turn through the Python brain (full

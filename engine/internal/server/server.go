@@ -16,6 +16,7 @@ import (
         "runtime"
         "strconv"
         "strings"
+        "sync"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
@@ -40,6 +41,12 @@ type Server struct {
         mux     *http.ServeMux
         httpSrv *http.Server
         hub     *hub.Service
+        // v0.46: HF-chat remote brains (one per own Space, keyed by repo) +
+        // the shared community sandbox client. Lazily built; refreshed on
+        // vault changes (SetEnv fans out to all of them).
+        remoteMu    sync.RWMutex
+        remotes     map[string]*brain.RemoteBrain
+        sharedBrain *brain.RemoteBrain
 }
 
 // New constructs the server and registers all routes.
@@ -58,7 +65,7 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
                 llm.SetGitHubToken(vault.AsEnv()["GITHUB_TOKEN"])
         }
 
-        s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux()}
+        s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
         // v0.31: the hub service (local store + vault + HF client). Nil-DB
         // safe for the pathological test boot (routes would 500, not panic).
         s.hub = hub.NewService(cfg.Hub.HFBase, db, vault)
@@ -234,6 +241,10 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hf/oauth/start", s.handleHFOAuthStart)
         s.mux.HandleFunc("GET /api/hf/oauth/callback", s.handleHFOAuthCallback)
         s.mux.HandleFunc("POST /api/hf/space/create", s.handleHFSpaceCreate)
+        s.mux.HandleFunc("POST /api/hf/space/ensure", s.handleHFSpaceEnsure)
+        s.mux.HandleFunc("GET /api/hf/spaces", s.handleHFSpacesList)
+        s.mux.HandleFunc("GET /api/hf/shared", s.handleHFShared)
+        s.mux.HandleFunc("GET /api/hf/account", s.handleHFAccount)
         s.mux.HandleFunc("GET /api/hf/space/status", s.handleHFSpaceStatus)
         s.mux.HandleFunc("GET /api/hf/space/logs", s.handleHFSpaceLogs)
         s.mux.HandleFunc("POST /api/hf/space/restart", s.handleHFSpaceRestart)

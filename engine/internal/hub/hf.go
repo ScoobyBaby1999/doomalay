@@ -71,6 +71,13 @@ type HFError struct {
 }
 
 func (e *HFError) Error() string {
+        body := e.Body
+        if len(body) > 200 {
+                body = body[:200]
+        }
+        if body != "" {
+                return fmt.Sprintf("hf: HTTP %d from %s: %s", e.Status, e.Path, body)
+        }
         return fmt.Sprintf("hf: HTTP %d from %s", e.Status, e.Path)
 }
 
@@ -325,13 +332,17 @@ func (c *HFClient) commitFiles(token, repo, message string, files []CommitFile, 
                         "encoding": "base64",
                 }})
         }
-        _, err = c.do("POST", "/api/"+repoType+"/"+escapeRepo(repo)+"/commit/main", token, buf.Bytes(), "application/x-ndjson")
+        commitRepoPath := escapeRepo(repo)
+        if repoType == "spaces" {
+                commitRepoPath = repo // raw slash — %2F 400s on /api/spaces/*
+        }
+        _, err = c.do("POST", "/api/"+repoType+"/"+commitRepoPath+"/commit/main", token, buf.Bytes(), "application/x-ndjson")
         return err
 }
 
 // preuploadType is the repo-type-aware preupload (datasets vs spaces).
 func (c *HFClient) preuploadType(token, repo string, files []CommitFile, repoType string) (map[string]string, error) {
-        return c.preupload(token, repo, files)
+        return c.preuploadTyped(token, repo, files, repoType)
 }
 
 // DoRaw is the public shim over the private do() — v0.45 ITEM 7: the Spaces
@@ -345,6 +356,12 @@ func (c *HFClient) DoRaw(method, path, token string, body []byte, contentType st
 
 // preupload asks the server each file's upload mode ("regular" vs "lfs").
 func (c *HFClient) preupload(token, repo string, files []CommitFile) (map[string]string, error) {
+        return c.preuploadTyped(token, repo, files, "datasets")
+}
+
+// preuploadTyped hits /api/{repoType}/{repo}/preupload/main (v0.46 FIX: the
+// v0.45 variant hard-coded /api/datasets/ — every Space upload 400'd).
+func (c *HFClient) preuploadTyped(token, repo string, files []CommitFile, repoType string) (map[string]string, error) {
         type preFile struct {
                 Path   string `json:"path"`
                 Size   int    `json:"size"`
@@ -364,7 +381,17 @@ func (c *HFClient) preupload(token, repo string, files []CommitFile) (map[string
                         Sample: base64.StdEncoding.EncodeToString(sample),
                 })
         }
-        body, err := c.postJSON("/api/datasets/"+escapeRepo(repo)+"/preupload/main", token, payload)
+        if repoType == "" {
+                repoType = "datasets"
+        }
+        // v0.46: /api/spaces/* REJECTS %2F-escaped repo names ("repo name
+        // includes an url-encoded slash" — live-verified); only datasets
+        // tolerates escaping. Spaces paths take the raw user/name.
+        repoPath := escapeRepo(repo)
+        if repoType == "spaces" {
+                repoPath = repo
+        }
+        body, err := c.postJSON("/api/"+repoType+"/"+repoPath+"/preupload/main", token, payload)
         if err != nil {
                 return nil, err
         }
@@ -410,7 +437,8 @@ func (c *HFClient) uploadLFS(token, repo string, files []CommitFile) error {
                 payload.Objects = append(payload.Objects, obj{Oid: oid, Size: len(f.Content)})
                 content[oid] = f.Content
         }
-        body, err := c.do("POST", "/datasets/"+escapeRepo(repo)+".git/info/lfs/objects/batch", token,
+        lfsRepo := escapeRepo(repo)
+        body, err := c.do("POST", "/datasets/"+lfsRepo+".git/info/lfs/objects/batch", token,
                 mustJSONBytes(payload), "application/vnd.git-lfs+json")
         if err != nil {
                 return err

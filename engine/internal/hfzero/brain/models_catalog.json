@@ -1,0 +1,234 @@
+{
+  "//": "Logical-model catalog: a stable logical name -> ORDERED (provider, model)",
+  "//1": "candidates. route_judge tries candidates best-first (live-verified slots are",
+  "//2": "ordered first) and bounces to the next on any failure. Curated 2026-06 from",
+  "//3": "live testing. Tiers below are organisational only; any request can name any",
+  "//4": "logical model or a physical 'provider/model' slot directly.",
+
+  "logical_models": {
+    "kimi-k2.6": {
+      "//": "Augmented 2026-06: added opencode-zen/opencode-go as lowest-priority fallback candidates.",
+      "//1": "Privatemode AI added 2026-06: confidential computing proxy, 256K context, vision+tool calling.",
+      "family": "kimi-k2",
+      "candidates": [
+        {"provider": "nvidia", "model": "moonshotai/kimi-k2.6", "ctx": 262144},
+        {"provider": "cloudflare", "model": "@cf/moonshotai/kimi-k2.6", "ctx": 262144},
+        {"provider": "openrouter", "model": "moonshotai/kimi-k2.6:free", "ctx": 262144},
+        {"provider": "opencode-zen", "model": "kimi-k2.6", "ctx": 131072},
+        {"provider": "opencode-go", "model": "kimi-k2.6", "ctx": 131072},
+        {"provider": "privatemodeai", "model": "kimi-k2.6", "ctx": 256000}
+      ]
+    },
+    "deepseek-v4-flash": {
+      "//": "Primary DeepSeek (2026-06). Augmented with opencode-zen/opencode-go fallback.",
+      "family": "deepseek-v4-flash",
+      "candidates": [
+        {"provider": "nvidia", "model": "deepseek-ai/deepseek-v4-flash", "ctx": 262144},
+        {"provider": "github-models", "model": "deepseek/deepseek-v3-0324", "ctx": 8000},
+        {"provider": "opencode-zen", "model": "deepseek-v4-flash", "ctx": 131072},
+        {"provider": "opencode-go", "model": "deepseek-v4-flash", "ctx": 131072}
+      ]
+    },
+    "deepseek-v4-pro": {
+      "//": "DEMOTED 2026-06: queue >1k, ReadTimeout-prone. Prefer deepseek-v4-flash.",
+      "family": "deepseek-v4",
+      "candidates": [
+        {"provider": "nvidia", "model": "deepseek-ai/deepseek-v4-pro", "ctx": 163840},
+        {"provider": "opencode-zen", "model": "deepseek-v4-pro", "ctx": 131072},
+        {"provider": "opencode-go", "model": "deepseek-v4-pro", "ctx": 131072}
+      ]
+    },
+    "deepseek-v3": {
+      "family": "deepseek-v3",
+      "candidates": [
+        {"provider": "github-models", "model": "deepseek/deepseek-v3-0324", "ctx": 8000}
+      ]
+    },
+    "glm-5.1": {
+      "family": "glm",
+      "candidates": [
+        {"provider": "nvidia", "model": "z-ai/glm-5.1", "ctx": 131072},
+        {"provider": "opencode-zen", "model": "glm-5.1", "ctx": 131072},
+        {"provider": "opencode-go", "model": "glm-5.1", "ctx": 131072}
+      ]
+    },
+    "glm-5.2": {
+      "family": "glm",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "glm-5.2", "ctx": 131072},
+        {"provider": "opencode-go", "model": "glm-5.2", "ctx": 131072}
+      ]
+    },
+    "nemotron-ultra": {
+      "family": "nemotron-3",
+      "candidates": [
+        {"provider": "nvidia", "model": "nvidia/nemotron-3-ultra-550b-a55b", "ctx": 131072},
+        {"provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "ctx": 131072}
+      ]
+    },
+    "deepseek-r1": {
+      "family": "deepseek-r1",
+      "candidates": [
+        {"provider": "github-models", "model": "deepseek/DeepSeek-R1-0528", "ctx": 8000}
+      ]
+    },
+    "nemotron-120b": {
+      "family": "nemotron-3-120b",
+      "candidates": [
+        {"provider": "cloudflare", "model": "@cf/nvidia/nemotron-3-120b-a12b", "ctx": 262144}
+      ]
+    },
+
+    "llama-3.3-70b": {
+      "family": "llama-3.3-70b",
+      "candidates": [
+        {"provider": "cloudflare", "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "ctx": 24000},
+        {"provider": "github-models", "model": "meta/llama-3.3-70b-instruct", "ctx": 8000}
+      ]
+    },
+    "gpt-oss-120b": {
+      "family": "gpt-oss",
+      "candidates": [
+        {"provider": "cloudflare", "model": "@cf/openai/gpt-oss-120b", "ctx": 128000},
+        {"provider": "privatemodeai", "model": "gpt-oss-120b", "ctx": 128000}
+      ]
+    },
+    "phi-4-reasoning": {
+      "family": "phi-4",
+      "candidates": [
+        {"provider": "github-models", "model": "microsoft/Phi-4-reasoning", "ctx": 8000}
+      ]
+    },
+    "step-flash": {
+      "family": "step-3.7",
+      "candidates": [
+        {"provider": "nvidia", "model": "stepfun-ai/step-3.7-flash", "ctx": 131072}
+      ]
+    },
+    "gemma-4": {
+      "family": "gemma-4",
+      "candidates": [
+        {"provider": "nvidia", "model": "google/gemma-4-31b-it", "ctx": 131072},
+        {"provider": "openrouter", "model": "google/gemma-4-31b-it:free", "ctx": 96000},
+        {"provider": "cloudflare", "model": "@cf/google/gemma-4-26b-a4b-it", "ctx": 262144},
+        {"provider": "privatemodeai", "model": "gemma-4-31b", "ctx": 256000}
+      ]
+    },
+
+    "//roster-2026-06": "Additions below all live-probed OK (docs/ROSTER-2026-06.md); all stronger than gemma-4.",
+    "qwen3.5-397b": {
+      "family": "qwen3.5-397b",
+      "candidates": [
+        {"provider": "nvidia", "model": "qwen/qwen3.5-397b-a17b", "ctx": 262144}
+      ]
+    },
+    "qwen3.5-122b": {
+      "family": "qwen3.5-122b",
+      "candidates": [
+        {"provider": "nvidia", "model": "qwen/qwen3.5-122b-a10b", "ctx": 262144}
+      ]
+    },
+    "llama-4-maverick": {
+      "family": "llama-4-maverick",
+      "candidates": [
+        {"provider": "nvidia", "model": "meta/llama-4-maverick-17b-128e-instruct", "ctx": 262144}
+      ]
+    },
+    "minimax-m2.7": {
+      "family": "minimax-m2",
+      "candidates": [
+        {"provider": "nvidia", "model": "minimaxai/minimax-m2.7", "ctx": 262144},
+        {"provider": "opencode-zen", "model": "minimax-m2.7", "ctx": 131072},
+        {"provider": "opencode-go", "model": "minimax-m2.7", "ctx": 131072}
+      ]
+    },
+    "mistral-medium-3.5": {
+      "family": "mistral-medium-3.5",
+      "candidates": [
+        {"provider": "nvidia", "model": "mistralai/mistral-medium-3.5-128b", "ctx": 131072}
+      ]
+    },
+    "mistral-small-4": {
+      "family": "mistral-small-4",
+      "candidates": [
+        {"provider": "nvidia", "model": "mistralai/mistral-small-4-119b-2603", "ctx": 131072}
+      ]
+    },
+
+    "//opencode-models": "OpenCode Zen/Go model entries. Auto-synced at boot from /v1/models.",
+    "deepseek-v4-flash-free": {
+      "family": "deepseek-v4-flash",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "deepseek-v4-flash-free", "ctx": 131072}
+      ]
+    },
+    "big-pickle": {
+      "family": "big-pickle",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "big-pickle", "ctx": 131072}
+      ]
+    },
+    "nemotron-3-ultra-free": {
+      "family": "nemotron-3",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "nemotron-3-ultra-free", "ctx": 131072}
+      ]
+    },
+    "mimo-v2.5-free": {
+      "family": "mimo-v2",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "mimo-v2.5-free", "ctx": 131072}
+      ]
+    },
+    "north-mini-code-free": {
+      "family": "north-mini-code",
+      "candidates": [
+        {"provider": "opencode-zen", "model": "north-mini-code-free", "ctx": 131072}
+      ]
+    },
+    "kimi-k2.7-code": {
+      "family": "kimi-k2",
+      "candidates": [
+        {"provider": "opencode-go", "model": "kimi-k2.7-code", "ctx": 131072}
+      ]
+    },
+    "mimo-v2.5": {
+      "family": "mimo-v2",
+      "candidates": [
+        {"provider": "opencode-go", "model": "mimo-v2.5", "ctx": 131072}
+      ]
+    },
+    "mimo-v2.5-pro": {
+      "family": "mimo-v2",
+      "candidates": [
+        {"provider": "opencode-go", "model": "mimo-v2.5-pro", "ctx": 131072}
+      ]
+    },
+    "minimax-m3": {
+      "family": "minimax-m2",
+      "candidates": [
+        {"provider": "opencode-go", "model": "minimax-m3", "ctx": 131072}
+      ]
+    },
+    "qwen3.7-max": {
+      "family": "qwen3.7",
+      "candidates": [
+        {"provider": "opencode-go", "model": "qwen3.7-max", "ctx": 131072}
+      ]
+    },
+    "qwen3.7-plus": {
+      "family": "qwen3.7",
+      "candidates": [
+        {"provider": "opencode-go", "model": "qwen3.7-plus", "ctx": 131072}
+      ]
+    },
+    "qwen3.6-plus": {
+      "family": "qwen3.6",
+      "candidates": [
+        {"provider": "nvidia", "model": "qwen/qwen3.5-122b-a10b", "ctx": 262144},
+        {"provider": "opencode-zen", "model": "qwen3.6-plus", "ctx": 131072},
+        {"provider": "opencode-go", "model": "qwen3.6-plus", "ctx": 131072}
+      ]
+    }
+  }
+}

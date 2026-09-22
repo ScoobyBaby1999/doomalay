@@ -276,6 +276,10 @@
         id: chatId,
         sessionId: sessionData && sessionData.ID ? sessionData.ID : null,
         sandbox: (sessionData && (sessionData.Sandbox || sessionData.sandbox)) || (icon && icon.sandbox) || '',
+        // v0.46: HF-chat routing (shared | own + repo) — session wins, icon
+        // is the fallback for fresh chats.
+        sandboxMode: (sessionData && (sessionData.SandboxMode || sessionData.sandbox_mode)) || (icon && icon.sandboxMode) || '',
+        sandboxRepo: (sessionData && (sessionData.SandboxRepo || sessionData.sandbox_repo)) || (icon && icon.sandboxRepo) || '',
         model: (sessionData && (sessionData.Model || sessionData.model)) || (icon && icon.model) || '',
         provider: (sessionData && (sessionData.Provider || sessionData.provider)) || (icon && icon.provider) || '',
         effort: (sessionData && (sessionData.Effort || sessionData.effort)) || 'med',
@@ -2052,14 +2056,33 @@
       scrollEl: null,
       msgContainer: null,
 
-      applySandbox: function (sandboxType) {
+      applySandbox: function (sandboxType, detail) {
         state.sandbox = sandboxType;
+        // v0.46: the HF detail (mode + repo) rides the session + the icon
+        // state so reloads restore the routing.
+        if (sandboxType === 'hf' && detail && (detail.mode === 'shared' || detail.mode === 'own')) {
+          state.sandboxMode = detail.mode;
+          state.sandboxRepo = detail.mode === 'own' ? (detail.repo || '') : '';
+        } else if (sandboxType !== 'hf') {
+          state.sandboxMode = '';
+          state.sandboxRepo = '';
+        }
         if (icon) {
           icon.sandbox = sandboxType;
+          icon.sandboxMode = state.sandboxMode || '';
+          icon.sandboxRepo = state.sandboxRepo || '';
           if (typeof icon.setSandbox === 'function') icon.setSandbox(sandboxType);
           if (typeof icon.save === 'function') icon.save();
         }
-        updateSession(icon, state, { sandbox: sandboxType });
+        var patch = { sandbox: sandboxType };
+        if (sandboxType === 'hf') {
+          patch.sandbox_mode = state.sandboxMode || (detail && detail.mode) || 'shared';
+          patch.sandbox_repo = state.sandboxRepo || (detail && detail.repo) || '';
+        } else {
+          patch.sandbox_mode = '';
+          patch.sandbox_repo = '';
+        }
+        updateSession(icon, state, patch);
         renderHost(bodyEl, icon, state, panel);
       },
 
@@ -2912,6 +2935,10 @@
     return {
       title: icon.name,
       sandbox: state.sandbox,
+      // v0.46: HF-chat routing — the mode + own-space repo ride creation
+      // (the PATCH in applySandbox covers later switches).
+      sandbox_mode: state.sandbox === 'hf' ? (state.sandboxMode || 'shared') : '',
+      sandbox_repo: state.sandbox === 'hf' ? (state.sandboxRepo || '') : '',
       model: state.model,
       provider: state.provider,
       effort: state.effort || 'med',
@@ -2941,6 +2968,9 @@
         state.sessionId = data.ID;
         icon._sessionData = data;
         if (!state.sandbox && data.Sandbox) state.sandbox = data.Sandbox;
+        // v0.46: restore the HF routing detail.
+        if (data.SandboxMode && data.Sandbox === 'hf') state.sandboxMode = data.SandboxMode;
+        if (data.SandboxRepo !== undefined && data.Sandbox === 'hf') state.sandboxRepo = data.SandboxRepo || '';
         if (!state.model && data.Model) state.model = data.Model;
         if (!state.provider && data.Provider) state.provider = data.Provider;
         if (data.SlidingWindow) state.slidingWindow = data.SlidingWindow;
@@ -4153,6 +4183,9 @@
         if (patch && patch.model) icon.model = patch.model;
         if (patch && patch.provider) icon.provider = patch.provider;
         if (patch && patch.sandbox) icon.sandbox = patch.sandbox;
+        // v0.46: remember the HF routing detail too.
+        if (patch && patch.sandbox_mode) icon.sandboxMode = patch.sandbox_mode;
+        if (patch && patch.sandbox_repo !== undefined) icon.sandboxRepo = patch.sandbox_repo;
         if (typeof icon.save === 'function') icon.save();
       }
       return;

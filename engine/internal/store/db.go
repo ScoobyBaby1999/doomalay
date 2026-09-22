@@ -168,53 +168,58 @@ CREATE TABLE IF NOT EXISTS hub_items (
   PRIMARY KEY (type, id)
 );
 `
-	_, err := db.Exec(schema)
-	if err != nil {
-		return err
-	}
-	// v0.13: sandbox column added for chat_sessions (older installs
-	// created the table without it). Idempotent column adds for any
-	// field introduced after first release.
-	migrations := []struct{ table, col, ddl string }{
-		{"chat_sessions", "sandbox", "ALTER TABLE chat_sessions ADD COLUMN sandbox TEXT"},
-		// v0.19: per-chat persona (the editable system prompt /
-		// identity for this chat's bot).
-		{"chat_sessions", "persona", "ALTER TABLE chat_sessions ADD COLUMN persona TEXT"},
-		// v0.21: auto-compact state (summary of the turns folded out
-		// of the model's context + the event seq it covers).
-		{"chat_sessions", "compact_summary", "ALTER TABLE chat_sessions ADD COLUMN compact_summary TEXT"},
-		{"chat_sessions", "compact_seq", "ALTER TABLE chat_sessions ADD COLUMN compact_seq INTEGER DEFAULT 0"},
-		// v0.26: the multi-persona system — personas is a JSON array
-		// of {id,name,text,mode,trigger}; placeholders is the chat's
-		// custom {key} map.
-		{"chat_sessions", "personas", "ALTER TABLE chat_sessions ADD COLUMN personas TEXT"},
-		{"chat_sessions", "placeholders", "ALTER TABLE chat_sessions ADD COLUMN placeholders TEXT"},
-		// v0.28: per-chat compaction controls (the mind panel owns
-		// them) — enabled by default, arms at 70% context fill.
-		{"chat_sessions", "compact_enabled", "ALTER TABLE chat_sessions ADD COLUMN compact_enabled INTEGER DEFAULT 1"},
-		{"chat_sessions", "compact_threshold", "ALTER TABLE chat_sessions ADD COLUMN compact_threshold INTEGER DEFAULT 70"},
-		// v0.44: the template pill's active method template (JSON
-		// blob {id, name, brief} — "" = none).
-		{"chat_sessions", "template_id", "ALTER TABLE chat_sessions ADD COLUMN template_id TEXT"},
-		// v0.44: the workspaces wave — the bare v0.17 workspaces
-		// table grows the cloud-repo columns (host kind, owner/repo,
-		// access level, token vault key, default branch, meta JSON).
-		{"workspaces", "name", "ALTER TABLE workspaces ADD COLUMN name TEXT"},
-		{"workspaces", "kind", "ALTER TABLE workspaces ADD COLUMN kind TEXT"},
-		{"workspaces", "host", "ALTER TABLE workspaces ADD COLUMN host TEXT"},
-		{"workspaces", "owner", "ALTER TABLE workspaces ADD COLUMN owner TEXT"},
-		{"workspaces", "repo", "ALTER TABLE workspaces ADD COLUMN repo TEXT"},
-		{"workspaces", "access", "ALTER TABLE workspaces ADD COLUMN access TEXT"},
-		{"workspaces", "token_env", "ALTER TABLE workspaces ADD COLUMN token_env TEXT"},
-		{"workspaces", "default_branch", "ALTER TABLE workspaces ADD COLUMN default_branch TEXT"},
-		{"workspaces", "meta", "ALTER TABLE workspaces ADD COLUMN meta TEXT"},
-	}
-	for _, m := range migrations {
-		if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
-			return err
-		}
-	}
-	return nil
+        _, err := db.Exec(schema)
+        if err != nil {
+                return err
+        }
+        // v0.13: sandbox column added for chat_sessions (older installs
+        // created the table without it). Idempotent column adds for any
+        // field introduced after first release.
+        migrations := []struct{ table, col, ddl string }{
+                {"chat_sessions", "sandbox", "ALTER TABLE chat_sessions ADD COLUMN sandbox TEXT"},
+                // v0.19: per-chat persona (the editable system prompt /
+                // identity for this chat's bot).
+                {"chat_sessions", "persona", "ALTER TABLE chat_sessions ADD COLUMN persona TEXT"},
+                // v0.21: auto-compact state (summary of the turns folded out
+                // of the model's context + the event seq it covers).
+                {"chat_sessions", "compact_summary", "ALTER TABLE chat_sessions ADD COLUMN compact_summary TEXT"},
+                {"chat_sessions", "compact_seq", "ALTER TABLE chat_sessions ADD COLUMN compact_seq INTEGER DEFAULT 0"},
+                // v0.26: the multi-persona system — personas is a JSON array
+                // of {id,name,text,mode,trigger}; placeholders is the chat's
+                // custom {key} map.
+                {"chat_sessions", "personas", "ALTER TABLE chat_sessions ADD COLUMN personas TEXT"},
+                {"chat_sessions", "placeholders", "ALTER TABLE chat_sessions ADD COLUMN placeholders TEXT"},
+                // v0.28: per-chat compaction controls (the mind panel owns
+                // them) — enabled by default, arms at 70% context fill.
+                {"chat_sessions", "compact_enabled", "ALTER TABLE chat_sessions ADD COLUMN compact_enabled INTEGER DEFAULT 1"},
+                {"chat_sessions", "compact_threshold", "ALTER TABLE chat_sessions ADD COLUMN compact_threshold INTEGER DEFAULT 70"},
+                // v0.44: the template pill's active method template (JSON
+                // blob {id, name, brief} — "" = none).
+                {"chat_sessions", "template_id", "ALTER TABLE chat_sessions ADD COLUMN template_id TEXT"},
+                // v0.46: HF chat — sandbox=hf sessions carry the space routing:
+                // sandbox_mode ("shared" | "own") + sandbox_repo ("user/name"
+                // for own spaces; "" for shared).
+                {"chat_sessions", "sandbox_mode", "ALTER TABLE chat_sessions ADD COLUMN sandbox_mode TEXT"},
+                {"chat_sessions", "sandbox_repo", "ALTER TABLE chat_sessions ADD COLUMN sandbox_repo TEXT"},
+                // v0.44: the workspaces wave — the bare v0.17 workspaces
+                // table grows the cloud-repo columns (host kind, owner/repo,
+                // access level, token vault key, default branch, meta JSON).
+                {"workspaces", "name", "ALTER TABLE workspaces ADD COLUMN name TEXT"},
+                {"workspaces", "kind", "ALTER TABLE workspaces ADD COLUMN kind TEXT"},
+                {"workspaces", "host", "ALTER TABLE workspaces ADD COLUMN host TEXT"},
+                {"workspaces", "owner", "ALTER TABLE workspaces ADD COLUMN owner TEXT"},
+                {"workspaces", "repo", "ALTER TABLE workspaces ADD COLUMN repo TEXT"},
+                {"workspaces", "access", "ALTER TABLE workspaces ADD COLUMN access TEXT"},
+                {"workspaces", "token_env", "ALTER TABLE workspaces ADD COLUMN token_env TEXT"},
+                {"workspaces", "default_branch", "ALTER TABLE workspaces ADD COLUMN default_branch TEXT"},
+                {"workspaces", "meta", "ALTER TABLE workspaces ADD COLUMN meta TEXT"},
+        }
+        for _, m := range migrations {
+                if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
+                        return err
+                }
+        }
+        return nil
 }
 
 // GetSetting reads one app_settings value ("" when absent).

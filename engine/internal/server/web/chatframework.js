@@ -107,11 +107,11 @@
         {
           key: 'sandbox',
           filled: !!st.sandbox,
-          title: st.sandbox ? (SANDBOX_LABELS[st.sandbox] || st.sandbox) : '+ Sandbox',
+          title: st.sandbox ? (window.SandboxLabel ? window.SandboxLabel(st) : (SANDBOX_LABELS[st.sandbox] || st.sandbox)) : '+ Sandbox',
           sub: st.sandbox ? 'tap to change' : 'tap to connect',
           icon: st.sandbox ? (SANDBOX_ICONS[st.sandbox] || '⚡') : '🔌',
           onTap: function () {
-            window.SandboxPicker.open(function (t) { ctx.applySandbox(t); });
+            window.SandboxPicker.open(function (t, d) { ctx.applySandbox(t, d); });
           }
         },
         {
@@ -134,9 +134,11 @@
         {
           id: 'pill-sandbox',
           label: (SANDBOX_ICONS[ctx.state.sandbox] || '⚡') + ' ' +
-                 (SANDBOX_LABELS[ctx.state.sandbox] || ctx.state.sandbox || 'Sandbox'),
+                 ((window.SandboxLabel && ctx.state.sandbox === 'hf')
+                   ? window.SandboxLabel(ctx.state)
+                   : (SANDBOX_LABELS[ctx.state.sandbox] || ctx.state.sandbox || 'Sandbox')),
           onTap: function () {
-            window.SandboxPicker.open(function (t) { ctx.applySandbox(t); });
+            window.SandboxPicker.open(function (t, d) { ctx.applySandbox(t, d); });
           }
         },
         {
@@ -189,6 +191,18 @@
   // Shared pretty-label helpers (the host + types both use these).
   var SANDBOX_LABELS = { quick: 'Quick Chat', hf: 'Hugging Face', device: 'Another Device', terminal: 'Termux' };
   var SANDBOX_ICONS = { quick: '⚡', hf: '🤗', device: '🔗', terminal: '⌨️' };
+  // v0.46: HF chats show WHICH sandbox — shared or the own space's name.
+  window.SandboxLabel = function (state) {
+    if (!state || state.sandbox !== 'hf') {
+      return state && state.sandbox ? (SANDBOX_LABELS[state.sandbox] || state.sandbox) : '';
+    }
+    if (state.sandboxMode === 'own') {
+      var repo = String(state.sandboxRepo || '');
+      var short = repo.indexOf('/') >= 0 ? repo.split('/').slice(1).join('/') : repo;
+      return 'HF · ' + (short || 'own space');
+    }
+    return 'HF · shared';
+  };
   var providerLabels = {};
   var catalogPromise = null;
   var labelsLoaded = false;   // v0.16: settled — callers can avoid re-render loops

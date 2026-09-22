@@ -165,3 +165,63 @@ up with RAG (same `delegate`/tool pattern: `stocks {"symbol": "AAPL"}`).
 | Huge tool chains (20+ Python tools) | ❌ | partial | ✅ |
 | Orchestrator + templates | ❌ | ❌ | ✅ |
 | RAG + Graphiti | 🚧 next | 🚧 | ✅ (memory + datasets) |
+
+---
+
+## v0.46 UPDATE — THE HF CHAT IS LIVE (the ZeroGPU paywall hack)
+
+*"Make the HF chat option functional instead of just quick chat… if HF space
+docker repo cloning is gated by a paywall we must find a hack to allow users
+to create and clone our setup — one per chat or specific chats share the
+same space, user can choose."*
+
+### The paywall (empirically mapped, 2026-09-22, free account)
+
+| Path | Result |
+|------|--------|
+| `POST /api/spaces/{repo}/duplicate` (Docker SDK) | ❌ PRO-gated |
+| `POST /api/repos/create` sdk=docker (public OR private) | ❌ PRO-gated |
+| `POST /api/repos/create` sdk=gradio, hardware=cpu-basic | ❌ PRO-gated |
+| `POST /api/repos/create` sdk=gradio, **hardware=zero-a10g** | ✅ **FREE** |
+| `POST /api/repos/create` sdk=static | ✅ free (no server) |
+| Downgrade an existing space to cpu-basic | ❌ PRO-gated |
+| **Quota**: free accounts host **2 ZeroGPU spaces** (PRO: 10) | — |
+
+### The hack (verified end-to-end on the free tier)
+
+The ZeroGPU runtime's only extra demand is *"a @spaces.GPU function detected
+during startup"* — which is a `/startup-report` POST the `spaces` package
+fires from `gradio.one_launch()` at `demo.launch()`. The template
+(`engine/internal/hfzero/`) defines one never-called `@spaces.GPU` noop and
+fires `spaces.zero.client.startup_report()` manually from a FastAPI
+lifespan — the space then serves the brain's FastAPI on :7860 (7860
+HARDCODED: the container's $PORT=7861 is the platform proxy). Container
+reality (probed): uid 0, Debian 12, Python 3.10, Node 20 + npm, gcc/g++/
+make/cmake, git — a full dev sandbox.
+
+### What shipped (all live-verified)
+
+- **Own spaces**: engine creates a token-gated gradio+zero-a10g Space under
+  the user's account, uploads the embedded brain (122 files), sets the
+  DOOMALAY_SPACE_TOKEN secret, and routes that chat's turns through it
+  (RemoteBrain, same /chat SSE protocol as the local brain).
+- **Shared space**: doomalaysocreate upgraded in place (legacy on branch
+  `legacy-2026-09`) — current brain + full toolchain (gcc/go/rust/java/
+  node) behind X-HF-Token auth (any valid HF user) + per-chat workspaces
+  + concurrency cap.
+- **Per-chat choice**: sandbox picker → HF → Shared | Create own | Pick
+  existing; session carries sandbox_mode + sandbox_repo; fallback to the
+  direct pipeline with a visible progress note whenever the space is
+  unreachable.
+- **Brain hardening**: model-aware LLM timeouts (the flat 60s killed
+  reasoning turns from shared egress IPs), py3.10 StrEnum shim.
+
+### The port matrix, updated
+
+| Capability | Quick chat | HF chat (own space) | HF chat (shared) |
+|---|---|---|---|
+| Real bash / files / git / build tools | ✗ | ✓ (your private sandbox) | ✓ (community) |
+| Python agent (Strands + 15 dt-tools + swarm) | ✗ | ✓ | ✓ |
+| Setup cost | zero | HF login + ~4 min build | HF login only |
+| Isolation | device | one space per chat (≤2 free) | per-chat workspaces |
+| Sleeps after 48h idle | n/a | ✓ (auto-wake on next turn) | ✓ |

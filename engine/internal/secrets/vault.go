@@ -103,11 +103,23 @@ func IsAllowed(envVar string) bool {
         // (12 lowercase hex from crypto/rand — see store.newWorkspaceID), so
         // the pattern can't be abused to shadow a real provider env var or
         // to smuggle an arbitrary name through the HTTP keys API.
-        return workspaceTokenRe.MatchString(envVar)
+        if workspaceTokenRe.MatchString(envVar) {
+                return true
+        }
+        // v0.46: HF-space sandbox tokens — HF_SPACE_<OWNER>_<NAME>, written
+        // ONLY by the engine's space-create flow (the repo id comes from
+        // HF's own API on that path, never from a raw client payload; the
+        // keys API re-checks via IsAllowed so users can't inject arbitrary
+        // shapes: the name segment matches HF's repo charset).
+        return hfSpaceTokenRe.MatchString(envVar)
 }
 
 // workspaceTokenRe: WORKSPACE_ + exactly 12 lowercase hex.
 var workspaceTokenRe = regexp.MustCompile(`^WORKSPACE_[a-f0-9]{12}$`)
+
+// hfSpaceTokenRe: HF_SPACE_ + owner + "_" + name — uppercase of the repo id
+// (owner/name with "/" → "_"). Owner/name: HF repo charset [A-Za-z0-9-_].
+var hfSpaceTokenRe = regexp.MustCompile(`^HF_SPACE_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+$`)
 
 // ProviderFor returns the provider name for an env var, or "".
 func ProviderFor(envVar string) string {

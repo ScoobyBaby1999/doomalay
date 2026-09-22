@@ -1,61 +1,88 @@
-// hfspace.go — v0.45 ITEM 7: Hugging Face Spaces create-from-scratch flow.
+// hfspace.go — v0.46: the HF-chat sandbox manager (THE ZEROGPU PAYWALL HACK).
 //
-// The user spec: "import the HF chat doomalaysocreate space into this app and
-// enable the user to connect to hf space -> redirect to login -> redirect to
-// screen where user presses pill to allow access to clone, create spaces,
-// then we clone a space for the user in the background -> redirect back to app."
+// USER SPEC: "make the HF chat option functional instead of just quick chat,
+// using our previously developed HF space — upgraded to function better.
+// If HF space docker repo cloning is gated by a paywall we must find a hack
+// to allow users to create and clone our setup — either one per chat or
+// specific chats share the same space, user can choose."
 //
-// HF's duplicate API is PAID-only for Docker-SDK Spaces (PRO/Team/Enterprise).
-// This module implements the FREE-TIER WORKAROUND: create a brand-new Space
-// repo + upload the Dockerfile + brain/ + engine/ source files via the HF
-// commit API. The Space's Dockerfile builds the engine from source on first
-// run (no binary upload needed). Every user gets real bash/python/docker on
-// the free cpu-basic tier.
+// THE HACK (researched + verified live 2026-09-22 on a FREE account):
+//   - POST /api/spaces/{repo}/duplicate            → PRO-gated (Docker SDK)
+//   - POST /api/repos/create sdk=docker|gradio     → PRO-gated on cpu-basic
+//   - POST /api/repos/create sdk=gradio hardware=zero-a10g → FREE ✓
+//   - ZeroGPU runtime demands "a @spaces.GPU function detected during
+//     startup" — satisfied by the template's noop + manual
+//     spaces.zero.client.startup_report() (see engine/internal/hfzero).
+//   - The ZeroGPU container is a full dev sandbox (uid 0, Debian 12,
+//     Python 3.10, Node 20 + npm, gcc/g++/make/cmake, git) — verified live.
 //
-// Flow:
-//   1. OAuth PKCE: GET /api/hf/oauth/start → redirect to HF /oauth/authorize
-//      (scopes: openid profile email contribute-repos). HF redirects back to
-//      GET /api/hf/oauth/callback?code=… → engine exchanges code+verifier
-//      for an access token at /oauth/token, stores it in the vault.
-//   2. Create the Space: POST /api/hf/space/create {name} →
-//      hf.CreateSpace + upload Dockerfile + README + brain/ + engine/ sources.
-//   3. Probe status: GET /api/hf/space/{repo}/status → runtime.stage.
-//   4. Stream logs: GET /api/hf/space/{repo}/logs → SSE proxy of HF logs.
-//   5. Restart (wake a sleeping space): POST /api/hf/space/{repo}/restart.
+// FLOW (own space):
+//   1. User connects HF (token paste in the Hub panel / OAuth when a client
+//      id is configured) → vault DOOMALAY_HF_TOKEN.
+//   2. POST /api/hf/space/create {name?} → create gradio+zero-a10g Space
+//      (private) → commit the embedded template (app.py + requirements +
+//      README + brain/) → set the DOOMALAY_SPACE_TOKEN secret → vault.
+//   3. The Space builds (pip deps, ~3-6 min) — poll /api/hf/space/status.
+//   4. Chats with sandbox=hf + sandbox_repo=<repo> stream through the
+//      RemoteBrain (brain/remote.go) — same /chat SSE protocol as the
+//      local brain, with X-Space-Token auth.
 //
-// The token NEVER reaches the PWA (vault rule). All HF calls are engine-side.
+// SHARED MODE (no setup at all): chats with sandbox=hf and no repo use the
+// shared community Space (default ScoobyBaby1999/doomalaysocreate — the
+// upgraded original). Auth = the user's own HF token (X-HF-Token) so only
+// real HF users can drive it.
 package server
 
 import (
         "crypto/rand"
         "crypto/sha256"
         "encoding/base64"
+        "encoding/hex"
         "encoding/json"
         "fmt"
         "io"
         "net/http"
         "net/url"
         "os"
+        "sort"
         "strings"
         "sync"
         "time"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
 )
 
 // hfOAuthClientID is the public OAuth app's client_id (registered at
-// https://huggingface.co/settings/connected-applications). For now we use the
-// implicit flow fallback: the user can also paste a PAT. TODO: register the
-// app + set this via env DOOMALAY_HF_OAUTH_CLIENT_ID.
+// https://huggingface.co/settings/connected-applications — account-owner
+// action). Empty → the connect overlay offers token-paste instead (the
+// reliable path; OAuth is a bonus when configured).
 var hfOAuthClientID = getenvDefault("DOOMALAY_HF_OAUTH_CLIENT_ID", "")
 
-// hfRedirectURI is where HF sends the user back after login. For the desktop/
-// PWA it's the engine's own /api/hf/oauth/callback. For the Android APK it's
-// an intent:// URL (handled by the app's deep-link filter).
 var hfRedirectURI = getenvDefault("DOOMALAY_HF_OAUTH_REDIRECT", "")
 
-// pkceStore holds the in-flight PKCE verifiers (keyed by state). A verifier
-// is consumed exactly once on callback (or expires after 10 min).
+// sharedSpaceRepo is the community sandbox every app install may use via the
+// user's own HF token (configurable: DOOMALAY_HF_SHARED_SPACE / --hf-shared).
+var sharedSpaceRepo = getenvDefault("DOOMALAY_HF_SHARED_SPACE", "ScoobyBaby1999/doomalaysocreate")
+
+// sharedSpaceURLOverride lets tests (and self-hosters) point the shared
+// client at an arbitrary base URL instead of the computed hf.space subdomain.
+var sharedSpaceURLOverride = getenvDefault("DOOMALAY_HF_SHARED_URL", "")
+
+// sharedSpaceBaseURL is the shared sandbox's engine-facing base URL.
+func sharedSpaceBaseURL() string {
+        if sharedSpaceURLOverride != "" {
+                return strings.TrimSuffix(sharedSpaceURLOverride, "/")
+        }
+        return hfzero.SpaceURL(sharedSpaceRepo)
+}
+
+// spaceTokenEnvVar is the vault key for a space's auth token.
+func spaceTokenEnvVar(repo string) string {
+        return "HF_SPACE_" + strings.ToUpper(strings.ReplaceAll(repo, "/", "_"))
+}
+
+// pkceStore holds in-flight PKCE verifiers (keyed by state, one-shot, 10min).
 var pkceStore = struct {
         sync.Mutex
         m map[string]*pkceEntry
@@ -64,7 +91,7 @@ var pkceStore = struct {
 type pkceEntry struct {
         verifier  string
         created   time.Time
-        onSuccess string // where to redirect the browser after token exchange
+        onSuccess string
 }
 
 func init() {
@@ -93,160 +120,49 @@ func getenvDefault(key, def string) string {
         return def
 }
 
-// (osGetenv indirection removed — use os.Getenv directly)
+// ── account ────────────────────────────────────────────────────────────────
 
-// ── OAuth PKCE ──────────────────────────────────────────────────────────────
-
-// handleHFOAuthStart is GET /api/hf/oauth/start?redirect=<app-path>
-// Redirects the browser to HF's authorize endpoint with a PKCE challenge.
-func (s *Server) handleHFOAuthStart(w http.ResponseWriter, r *http.Request) {
-        if hfOAuthClientID == "" {
-                writeError(w, http.StatusServiceUnavailable, "HF OAuth client_id not configured (set DOOMALAY_HF_OAUTH_CLIENT_ID). Falling back to token-paste in Hub → Publish.")
-                return
+// handleHFAccount is GET /api/hf/account — connection state + shared info.
+func (s *Server) handleHFAccount(w http.ResponseWriter, r *http.Request) {
+        token := s.hfToken()
+        user := ""
+        if token != "" {
+                hfCli := hub.NewHFClient("")
+                if u, err := hfCli.WhoAmI(token); err == nil {
+                        user = u
+                }
         }
-        // PKCE: 43-128 char random verifier → S256 challenge
-        verifier, err := randomPKCEVerifier(64)
-        if err != nil {
-                writeError(w, http.StatusInternalServerError, "PKCE verifier: "+err.Error())
-                return
-        }
-        challenge := pkceS256Challenge(verifier)
-        state := randomState(24)
-        redirect := r.URL.Query().Get("redirect")
-        if redirect == "" {
-                redirect = "/"
-        }
-        pkceStore.Lock()
-        pkceStore.m[state] = &pkceEntry{verifier: verifier, created: time.Now(), onSuccess: redirect}
-        pkceStore.Unlock()
-
-        redirectURI := hfRedirectURI
-        if redirectURI == "" {
-                // derive from the request (the engine's own callback)
-                redirectURI = schemeHost(r) + "/api/hf/oauth/callback"
-        }
-        q := url.Values{}
-        q.Set("client_id", hfOAuthClientID)
-        q.Set("redirect_uri", redirectURI)
-        q.Set("response_type", "code")
-        q.Set("scope", "openid profile email contribute-repos")
-        q.Set("state", state)
-        q.Set("code_challenge", challenge)
-        q.Set("code_challenge_method", "S256")
-        http.Redirect(w, r, "https://huggingface.co/oauth/authorize?"+q.Encode(), http.StatusFound)
+        writeJSON(w, http.StatusOK, map[string]any{
+                "connected":   token != "",
+                "user":        user,
+                "shared_repo": sharedSpaceRepo,
+                "shared_url":  sharedSpaceBaseURL(),
+                "oauth":       hfOAuthClientID != "",
+        })
 }
 
-// handleHFOAuthCallback is GET /api/hf/oauth/callback?code=…&state=…
-// Exchanges the code for an access token, stores it, redirects to the app.
-func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
-        code := r.URL.Query().Get("code")
-        state := r.URL.Query().Get("state")
-        if code == "" || state == "" {
-                writeError(w, http.StatusBadRequest, "missing code or state")
-                return
-        }
-        pkceStore.Lock()
-        entry, ok := pkceStore.m[state]
-        if ok {
-                delete(pkceStore.m, state) // one-shot
-        }
-        pkceStore.Unlock()
-        if !ok {
-                writeError(w, http.StatusBadRequest, "unknown or expired state (retry)")
-                return
-        }
-        // exchange code+verifier for token
-        token, err := hfExchangeCode(code, entry.verifier, schemeHost(r)+"/api/hf/oauth/callback")
-        if err != nil {
-                writeError(w, http.StatusBadGateway, "token exchange failed: "+err.Error())
-                return
-        }
-        // verify + fetch whoami
-        hfCli := hub.NewHFClient("")
-        user, err := hfCli.WhoAmI(token)
-        if err != nil {
-                writeError(w, http.StatusUnauthorized, "token rejected by HF: "+err.Error())
-                return
-        }
-        // store the token in the vault (the hub reads DOOMALAY_HF_TOKEN)
-        if err := s.vault.Set(hub.TokenEnvVar, "huggingface", token, ""); err != nil {
-                writeError(w, http.StatusInternalServerError, "vault store: "+err.Error())
-                return
-        }
-        // redirect back to the app (with the username so the UI can show it)
-        dest := entry.onSuccess
-        if !strings.HasPrefix(dest, "/") {
-                dest = "/"
-        }
-        q := url.Values{}
-        q.Set("hf_connected", "1")
-        q.Set("hf_user", user)
-        http.Redirect(w, r, dest+"?"+q.Encode(), http.StatusFound)
-}
+// ── space create (THE HACK) ────────────────────────────────────────────────
 
-// hfExchangeCode swaps the authorization code for an access token (PKCE).
-func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
-        body := url.Values{
-                "grant_type":    {"authorization_code"},
-                "code":          {code},
-                "code_verifier": {verifier},
-                "redirect_uri":  {redirectURI},
-                "client_id":     {hfOAuthClientID},
-        }.Encode()
-        req, err := http.NewRequest("POST", "https://huggingface.co/oauth/token", strings.NewReader(body))
-        if err != nil {
-                return "", err
-        }
-        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-        req.Header.Set("User-Agent", "doomalay-engine/0.45")
-        cli := &http.Client{Timeout: 15 * time.Second}
-        resp, err := cli.Do(req)
-        if err != nil {
-                return "", err
-        }
-        defer resp.Body.Close()
-        out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-        if resp.StatusCode != 200 {
-                return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(out))
-        }
-        var tok struct {
-                AccessToken string `json:"access_token"`
-                TokenType   string `json:"token_type"`
-                ExpiresIn   int    `json:"expires_in"`
-        }
-        if err := json.Unmarshal(out, &tok); err != nil {
-                return "", err
-        }
-        if tok.AccessToken == "" {
-                return "", fmt.Errorf("empty access_token in response")
-        }
-        return tok.AccessToken, nil
-}
-
-// ── Space create-from-scratch ───────────────────────────────────────────────
-
-// handleHFSpaceCreate is POST /api/hf/space/create
-// Body: {"name": "doomalay-abc123", "shared": false}
-// Creates a new Docker-SDK Space in the user's namespace + uploads the
-// Dockerfile + brain/ + engine/ sources. Returns the repo id + initial status.
+// handleHFSpaceCreate is POST /api/hf/space/create {name?}
+// Creates a PRIVATE gradio Space on zero-a10g hardware (free tier — the
+// verified loophole), uploads the embedded template + brain, sets the space
+// token secret. Returns {repo, url, stage, files, bytes}.
 func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
         token := s.hfToken()
         if token == "" {
-                writeError(w, http.StatusUnauthorized, "not connected to HF (connect first)")
+                writeError(w, http.StatusUnauthorized, "not connected to Hugging Face — connect in the Hub panel (token) or via the HF connect overlay")
                 return
         }
         var req struct {
-                Name   string `json:"name"`
-                Shared bool   `json:"shared"`
+                Name string `json:"name"`
         }
-        if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
-                writeError(w, http.StatusBadRequest, "bad body: "+err.Error())
-                return
-        }
-        name := strings.TrimSpace(req.Name)
+        _ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req)
+
+        name := hfzero.SanitizeSpaceName(req.Name)
         if name == "" {
                 name = "doomalay-" + randomState(6)
         }
+
         hfCli := hub.NewHFClient("")
         user, err := hfCli.WhoAmI(token)
         if err != nil {
@@ -254,27 +170,237 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
                 return
         }
         repoID := user + "/" + name
-        // 1. create the Space repo (free tier — creating a Docker Space is free;
-        //    only DUPLICATING one is paid, which is why we build from scratch)
-        if err := hfCreateSpace(hfCli, token, user, name); err != nil {
-                writeError(w, http.StatusBadGateway, "create space: "+err.Error())
+
+        // 1. Create the Space — gradio SDK on ZeroGPU hardware (the free path).
+        //    A 402-style PRO error here means HF closed the loophole; surface it
+        //    honestly with the shared-space fallback hint.
+        createBody := map[string]any{
+                "type":     "space",
+                "name":     name,
+                "sdk":      "gradio",
+                "hardware": "zero-a10g",
+                // PUBLIC — deliberately. Private spaces are NOT served at their
+                // public *.hf.space URL (live-verified: engine→space got HF's 404
+                // page), and the RemoteBrain has no cookie auth. The X-Space-Token
+                // gate in the template IS the security: every stateful route 401s
+                // without the secret minted at create time (vault-held). The brain
+                // code is public in the repo anyway.
+                "private": false,
+        }
+        bodyBytes, _ := json.Marshal(createBody)
+        if _, err := hfCli.DoRaw("POST", "/api/repos/create", token, bodyBytes, "application/json"); err != nil {
+                msg := err.Error()
+                // v0.46: ADOPT an existing space — creation is idempotent. The owner
+                // retrying (or a half-finished earlier run) just gets the files
+                // re-committed + the secret re-set below.
+                if !strings.Contains(msg, "already exists") && !strings.Contains(msg, "already created") {
+                        // v0.46 quota reality (live-verified): free accounts get TWO
+                        // ZeroGPU spaces. Point the user at reuse + shared instead.
+                        if strings.Contains(msg, "ZeroGPU Spaces") || strings.Contains(msg, "limited to 2") {
+                                writeError(w, http.StatusPaymentRequired,
+                                        "Free HF accounts can host 2 ZeroGPU sandboxes — you've used both. "+
+                                                "Reuse one of your spaces (Pick an existing space) or use the SHARED sandbox. "+
+                                                "(PRO raises the cap to 10.)")
+                                return
+                        }
+                        if strings.Contains(msg, "PRO") || strings.Contains(msg, "subscription") {
+                                writeError(w, http.StatusPaymentRequired,
+                                        "HF now requires PRO for this creation path (loophole closed): "+msg+
+                                                " — use the SHARED space option instead, or connect a PRO account")
+                                return
+                        }
+                        writeError(w, http.StatusBadGateway, "create space: "+msg)
+                        return
+                }
+        }
+
+        // 2. Upload the template (app.py + requirements + README + brain/).
+        files, err := hfzero.Files()
+        if err != nil {
+                writeError(w, http.StatusInternalServerError, "template: "+err.Error())
                 return
         }
-        // 2. upload the Dockerfile + README + brain/ + engine/ sources (one commit)
-        if err := hfUploadSpaceFiles(hfCli, token, repoID); err != nil {
+        commitFiles := make([]hub.CommitFile, 0, len(files))
+        total := 0
+        for _, f := range files {
+                commitFiles = append(commitFiles, hub.CommitFile{Path: f.Path, Content: f.Content})
+                total += len(f.Content)
+        }
+        if err := hfCli.CommitFilesSpace(token, repoID, "doomalay: sandbox v0.46 (ZeroGPU template + brain)", commitFiles); err != nil {
                 writeError(w, http.StatusBadGateway, "upload files: "+err.Error())
                 return
         }
-        // 3. return the repo + initial status (BUILDING)
-        status, _ := hfSpaceStatus(hfCli, token, repoID)
-        writeJSON(w, http.StatusOK, map[string]any{
-                "repo":   repoID,
-                "name":   name,
-                "url":    "https://huggingface.co/spaces/" + repoID,
-                "status": status,
-                "shared": req.Shared,
-        })
+
+        // 3. Space token: random secret on the Space + a copy in our vault.
+        spaceToken := randomState(32)
+        secretBody, _ := json.Marshal(map[string]string{"key": "DOOMALAY_SPACE_TOKEN", "value": spaceToken})
+        if _, err := hfCli.DoRaw("POST", "/api/spaces/"+repoID+"/secrets", token, secretBody, "application/json"); err != nil {
+                writeError(w, http.StatusBadGateway, "set space secret: "+err.Error())
+                return
+        }
+        if err := s.vault.Set(spaceTokenEnvVar(repoID), "hf-space", spaceToken, repoID); err != nil {
+                writeError(w, http.StatusInternalServerError, "vault: "+err.Error())
+                return
+        }
+
+        s.writeSpaceInfo(w, token, repoID, fmt.Sprintf("created (%d files, %d KB)", len(files), total/1024))
 }
+
+// writeSpaceInfo responds with a space's repo/url/stage snapshot.
+func (s *Server) writeSpaceInfo(w http.ResponseWriter, token, repoID, note string) {
+        hfCli := hub.NewHFClient("")
+        status, serr := hfSpaceStatus(hfCli, token, repoID)
+        resp := map[string]any{
+                "repo": repoID,
+                "url":  hfzero.SpaceURL(repoID),
+                "note": note,
+        }
+        if serr == nil {
+                for k, v := range status {
+                        resp[k] = v
+                }
+        } else {
+                resp["stage"] = "UNKNOWN"
+        }
+        writeJSON(w, http.StatusOK, resp)
+}
+
+// handleHFSpaceEnsure is POST /api/hf/space/ensure {} — find the user's most
+// recent doomalay space (any stage) or create a fresh one. The chat picker's
+// "your own space" fast path.
+func (s *Server) handleHFSpaceEnsure(w http.ResponseWriter, r *http.Request) {
+        token := s.hfToken()
+        if token == "" {
+                writeError(w, http.StatusUnauthorized, "not connected to Hugging Face")
+                return
+        }
+        hfCli := hub.NewHFClient("")
+        user, err := hfCli.WhoAmI(token)
+        if err != nil {
+                writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
+                return
+        }
+        list, err := hfListUserSpaces(hfCli, token, user)
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "list spaces: "+err.Error())
+                return
+        }
+        // Prefer a space we hold a token for, newest first (id desc = created desc).
+        sort.Slice(list, func(i, j int) bool { return list[i].Repo > list[j].Repo })
+        for _, sp := range list {
+                if _, _, terr := s.vault.Get(spaceTokenEnvVar(sp.Repo)); terr == nil {
+                        s.writeSpaceInfo(w, token, sp.Repo, "reused")
+                        return
+                }
+        }
+        // No managed space — create one (reuse the create handler logic).
+        r2 := r.Clone(r.Context())
+        r2.Body = io.NopCloser(strings.NewReader("{}"))
+        r2.ContentLength = 2
+        s.handleHFSpaceCreate(w, r2)
+}
+
+// handleHFSpacesList is GET /api/hf/spaces — the user's doomalay spaces with
+// live stages + which ones this engine holds tokens for.
+func (s *Server) handleHFSpacesList(w http.ResponseWriter, r *http.Request) {
+        token := s.hfToken()
+        if token == "" {
+                writeError(w, http.StatusUnauthorized, "not connected to Hugging Face")
+                return
+        }
+        hfCli := hub.NewHFClient("")
+        user, err := hfCli.WhoAmI(token)
+        if err != nil {
+                writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
+                return
+        }
+        list, err := hfListUserSpaces(hfCli, token, user)
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "list: "+err.Error())
+                return
+        }
+        out := make([]map[string]any, 0, len(list))
+        for _, sp := range list {
+                row := map[string]any{
+                        "repo":     sp.Repo,
+                        "url":      hfzero.SpaceURL(sp.Repo),
+                        "sdk":      sp.SDK,
+                        "managed":  false,
+                        "stage":    sp.Stage,
+                        "running":  strings.HasPrefix(sp.Stage, "RUNNING"),
+                        "building": strings.HasPrefix(sp.Stage, "BUILDING") || strings.Contains(sp.Stage, "APP_STARTING"),
+                        "error":    strings.Contains(sp.Stage, "ERROR"),
+                        "sleeping": sp.Stage == "PAUSED" || sp.Stage == "STOPPED",
+                }
+                if _, _, terr := s.vault.Get(spaceTokenEnvVar(sp.Repo)); terr == nil {
+                        row["managed"] = true
+                }
+                out = append(out, row)
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"spaces": out, "user": user})
+}
+
+// hfSpaceListItem is one row of the user's space list.
+type hfSpaceListItem struct {
+        Repo  string
+        SDK   string
+        Stage string
+}
+
+// hfListUserSpaces lists the author's spaces, filtered to doomalay-ish names,
+// each annotated with its live stage (one status call each — bounded by how
+// many spaces a user realistically has).
+func hfListUserSpaces(hf *hub.HFClient, token, user string) ([]hfSpaceListItem, error) {
+        body, err := hf.DoRaw("GET", "/api/spaces?author="+user+"&limit=100", token, nil, "")
+        if err != nil {
+                return nil, err
+        }
+        var raw []struct {
+                ID  string `json:"id"`
+                SDK string `json:"sdk"`
+        }
+        if err := json.Unmarshal(body, &raw); err != nil {
+                return nil, err
+        }
+        out := make([]hfSpaceListItem, 0, len(raw))
+        for _, sp := range raw {
+                parts := strings.SplitN(sp.ID, "/", 2)
+                if len(parts) != 2 || !hfzero.IsDoomalaySpaceName(parts[1]) {
+                        continue
+                }
+                item := hfSpaceListItem{Repo: sp.ID, SDK: sp.SDK, Stage: "UNKNOWN"}
+                if st, err := hfSpaceStatus(hf, token, sp.ID); err == nil {
+                        if v, ok := st["stage"].(string); ok {
+                                item.Stage = v
+                        }
+                }
+                out = append(out, item)
+        }
+        return out, nil
+}
+
+// ── shared space ───────────────────────────────────────────────────────────
+
+// handleHFShared is GET /api/hf/shared — the community sandbox info + live stage.
+func (s *Server) handleHFShared(w http.ResponseWriter, r *http.Request) {
+        resp := map[string]any{
+                "repo": sharedSpaceRepo,
+                "url":  sharedSpaceBaseURL(),
+                "auth": "hf-token",
+        }
+        token := s.hfToken()
+        if token != "" {
+                hfCli := hub.NewHFClient("")
+                if st, err := hfSpaceStatus(hfCli, token, sharedSpaceRepo); err == nil {
+                        for k, v := range st {
+                                resp[k] = v
+                        }
+                }
+        }
+        writeJSON(w, http.StatusOK, resp)
+}
+
+// ── status / logs / restart (v0.45, kept) ──────────────────────────────────
 
 // handleHFSpaceStatus is GET /api/hf/space/status?repo=user/name
 func (s *Server) handleHFSpaceStatus(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +439,6 @@ func (s *Server) handleHFSpaceLogs(w http.ResponseWriter, r *http.Request) {
         if tail == "" {
                 tail = "50"
         }
-        // stream SSE
         w.Header().Set("Content-Type", "text/event-stream")
         w.Header().Set("Cache-Control", "no-cache")
         w.Header().Set("Connection", "keep-alive")
@@ -328,7 +453,7 @@ func (s *Server) handleHFSpaceLogs(w http.ResponseWriter, r *http.Request) {
                 return
         }
         req.Header.Set("Authorization", "Bearer "+token)
-        req.Header.Set("User-Agent", "doomalay-engine/0.45")
+        req.Header.Set("User-Agent", "doomalay-engine/0.46")
         cli := &http.Client{Timeout: 0}
         resp, err := cli.Do(req)
         if err != nil {
@@ -351,6 +476,7 @@ func (s *Server) handleHFSpaceLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHFSpaceRestart is POST /api/hf/space/restart?repo=user/name
+// (also wakes a sleeping Space).
 func (s *Server) handleHFSpaceRestart(w http.ResponseWriter, r *http.Request) {
         token := s.hfToken()
         if token == "" {
@@ -366,49 +492,138 @@ func (s *Server) handleHFSpaceRestart(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repo": repo})
 }
 
-// ── HF Spaces REST helpers (free-tier create + upload + status + restart) ──
+// ── OAuth PKCE (v0.45, kept — active only when a client_id is configured) ──
 
-// hfCreateSpace POSTs /api/repos/create with type=space, sdk=docker.
-func hfCreateSpace(hf *hub.HFClient, token, user, name string) error {
-        body := map[string]any{
-                "type":   "space",
-                "name":   name,
-                "private": true,
+// handleHFOAuthStart is GET /api/hf/oauth/start?redirect=<app-path>
+func (s *Server) handleHFOAuthStart(w http.ResponseWriter, r *http.Request) {
+        if hfOAuthClientID == "" {
+                writeError(w, http.StatusServiceUnavailable, "HF OAuth not configured (set DOOMALAY_HF_OAUTH_CLIENT_ID) — paste a token in the Hub panel instead")
+                return
         }
-        bodyBytes, _ := json.Marshal(body)
-        _, err := hf.DoRaw("POST", "/api/repos/create", token, bodyBytes, "application/json")
-        return err
+        verifier, err := randomPKCEVerifier(64)
+        if err != nil {
+                writeError(w, http.StatusInternalServerError, "PKCE verifier: "+err.Error())
+                return
+        }
+        challenge := pkceS256Challenge(verifier)
+        state := randomState(24)
+        redirect := r.URL.Query().Get("redirect")
+        if redirect == "" {
+                redirect = "/"
+        }
+        pkceStore.Lock()
+        pkceStore.m[state] = &pkceEntry{verifier: verifier, created: time.Now(), onSuccess: redirect}
+        pkceStore.Unlock()
+
+        redirectURI := hfRedirectURI
+        if redirectURI == "" {
+                redirectURI = schemeHost(r) + "/api/hf/oauth/callback"
+        }
+        q := url.Values{}
+        q.Set("client_id", hfOAuthClientID)
+        q.Set("redirect_uri", redirectURI)
+        q.Set("response_type", "code")
+        q.Set("scope", "openid profile email contribute-repos")
+        q.Set("state", state)
+        q.Set("code_challenge", challenge)
+        q.Set("code_challenge_method", "S256")
+        http.Redirect(w, r, "https://huggingface.co/oauth/authorize?"+q.Encode(), http.StatusFound)
 }
 
-// hfUploadSpaceFiles uploads the Dockerfile + README + entrypoint via the HF
-// Spaces commit API (one commit). The Dockerfile builds the engine from the
-// GitHub source on first run.
-func hfUploadSpaceFiles(hf *hub.HFClient, token, repo string) error {
-        files := []hub.CommitFile{
-                {Path: "README.md", Content: []byte(spaceReadme)},
-                {Path: "Dockerfile", Content: []byte(spaceDockerfile)},
-                {Path: "entrypoint.sh", Content: []byte(spaceEntrypoint)},
+// handleHFOAuthCallback is GET /api/hf/oauth/callback?code=…&state=…
+func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
+        code := r.URL.Query().Get("code")
+        state := r.URL.Query().Get("state")
+        if code == "" || state == "" {
+                writeError(w, http.StatusBadRequest, "missing code or state")
+                return
         }
-        return hf.CommitFilesSpace(token, repo, "doomalay: auto-create space", files)
+        pkceStore.Lock()
+        entry, ok := pkceStore.m[state]
+        if ok {
+                delete(pkceStore.m, state)
+        }
+        pkceStore.Unlock()
+        if !ok {
+                writeError(w, http.StatusBadRequest, "unknown or expired state (retry)")
+                return
+        }
+        token, err := hfExchangeCode(code, entry.verifier, schemeHost(r)+"/api/hf/oauth/callback")
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "token exchange failed: "+err.Error())
+                return
+        }
+        hfCli := hub.NewHFClient("")
+        user, err := hfCli.WhoAmI(token)
+        if err != nil {
+                writeError(w, http.StatusUnauthorized, "token rejected by HF: "+err.Error())
+                return
+        }
+        if err := s.vault.Set(hub.TokenEnvVar, "huggingface", token, user); err != nil {
+                writeError(w, http.StatusInternalServerError, "vault store: "+err.Error())
+                return
+        }
+        dest := entry.onSuccess
+        if !strings.HasPrefix(dest, "/") {
+                dest = "/"
+        }
+        q := url.Values{}
+        q.Set("hf_connected", "1")
+        q.Set("hf_user", user)
+        http.Redirect(w, r, dest+"?"+q.Encode(), http.StatusFound)
 }
 
-// hfSpaceStatus GETs /api/spaces/{ns}/{name} → runtime.stage.
+func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
+        body := url.Values{
+                "grant_type":    {"authorization_code"},
+                "code":          {code},
+                "code_verifier": {verifier},
+                "redirect_uri":  {redirectURI},
+                "client_id":     {hfOAuthClientID},
+        }.Encode()
+        req, err := http.NewRequest("POST", "https://huggingface.co/oauth/token", strings.NewReader(body))
+        if err != nil {
+                return "", err
+        }
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("User-Agent", "doomalay-engine/0.46")
+        cli := &http.Client{Timeout: 15 * time.Second}
+        resp, err := cli.Do(req)
+        if err != nil {
+                return "", err
+        }
+        defer resp.Body.Close()
+        out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+        if resp.StatusCode != 200 {
+                return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(out))
+        }
+        var tok struct {
+                AccessToken string `json:"access_token"`
+        }
+        if err := json.Unmarshal(out, &tok); err != nil {
+                return "", err
+        }
+        if tok.AccessToken == "" {
+                return "", fmt.Errorf("empty access_token in response")
+        }
+        return tok.AccessToken, nil
+}
+
+// ── HF REST helpers ────────────────────────────────────────────────────────
+
+// hfSpaceStatus GETs /api/spaces/{repo} → runtime stage snapshot.
 func hfSpaceStatus(hf *hub.HFClient, token, repo string) (map[string]any, error) {
-        // repo is "user/name" — HF's /api/spaces/{ns}/{name} expects the raw slash
-        // (NOT %2F — that returns 404). The HFClient.do URL-escapes paths via
-        // http.NewRequest which preserves the literal slash.
         body, err := hf.DoRaw("GET", "/api/spaces/"+repo, token, nil, "")
         if err != nil {
                 return nil, err
         }
         var resp struct {
-                ID       string `json:"id"`
-                Runtime  struct {
-                        Stage     string `json:"stage"`
-                        Hardware  struct {
+                ID      string `json:"id"`
+                Runtime struct {
+                        Stage    string `json:"stage"`
+                        Hardware struct {
                                 Current string `json:"current"`
                         } `json:"hardware"`
-                        GcTimeout any `json:"gcTimeout"`
                 } `json:"runtime"`
         }
         if err := json.Unmarshal(body, &resp); err != nil {
@@ -419,39 +634,35 @@ func hfSpaceStatus(hf *hub.HFClient, token, repo string) (map[string]any, error)
                 stage = "NO_APP_FILE"
         }
         return map[string]any{
-                "repo":      resp.ID,
-                "stage":     stage,
-                "hardware":  resp.Runtime.Hardware.Current,
-                "running":   stage == "RUNNING" || stage == "RUNNING_BUILDING" || stage == "RUNNING_APP_STARTING",
-                "sleeping":  stage == "PAUSED" || stage == "STOPPED",
-                "building":  strings.HasPrefix(stage, "BUILDING") || strings.Contains(stage, "APP_STARTING"),
-                "error":     strings.Contains(stage, "ERROR"),
+                "repo":     resp.ID,
+                "stage":    stage,
+                "hardware": resp.Runtime.Hardware.Current,
+                "running":  stage == "RUNNING" || stage == "RUNNING_BUILDING" || stage == "RUNNING_APP_STARTING",
+                "sleeping": stage == "PAUSED" || stage == "STOPPED",
+                "building": strings.HasPrefix(stage, "BUILDING") || strings.Contains(stage, "APP_STARTING"),
+                "error":    strings.Contains(stage, "ERROR"),
         }, nil
 }
 
-// hfRestartSpace POSTs /api/spaces/{ns}/{name}/restart?factory=true.
+// hfRestartSpace POSTs /api/spaces/{repo}/restart?factory=false.
 func hfRestartSpace(hf *hub.HFClient, token, repo string) error {
         _, err := hf.DoRaw("POST", "/api/spaces/"+repo+"/restart?factory=false", token, nil, "")
         return err
 }
 
-// hfDoRaw is a thin wrapper to call HFClient's private do() via a public shim.
-// We add a Space-aware method to HFClient via a small extension (see below).
-func hfDoRaw(hf *hub.HFClient, method, path, token string, body []byte, contentType string) ([]byte, error) {
-        return hf.DoRaw(method, path, token, body, contentType)
-}
-
 // hfToken reads the HF token from the vault.
 func (s *Server) hfToken() string {
-        v := s.vault.AsEnv()
-        if v == nil {
+        if s.vault == nil {
                 return ""
         }
-        return v[hub.TokenEnvVar]
+        key, _, err := s.vault.Get(hub.TokenEnvVar)
+        if err != nil {
+                return ""
+        }
+        return key
 }
 
-// schemeHost reconstructs the scheme://host of the incoming request (for the
-// OAuth redirect_uri — must match exactly what's registered at HF).
+// schemeHost reconstructs the scheme://host of the incoming request.
 func schemeHost(r *http.Request) string {
         scheme := "http"
         if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
@@ -464,7 +675,7 @@ func schemeHost(r *http.Request) string {
         return scheme + "://" + host
 }
 
-// randomPKCEVerifier generates a URL-safe random string of the given length.
+// randomPKCEVerifier generates a URL-safe random string.
 func randomPKCEVerifier(n int) (string, error) {
         b := make([]byte, n)
         if _, err := rand.Read(b); err != nil {
@@ -473,90 +684,31 @@ func randomPKCEVerifier(n int) (string, error) {
         return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// pkceS256Challenge returns the S256 code_challenge for a verifier.
 func pkceS256Challenge(verifier string) string {
         h := sha256.Sum256([]byte(verifier))
         return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-// randomState returns a short URL-safe random string for OAuth state.
+// randomState returns a short URL-safe random string.
 func randomState(n int) string {
         b := make([]byte, n)
         rand.Read(b)
-        return base64.RawURLEncoding.EncodeToString(b)[:n]
+        return hex.EncodeToString(b)[:n]
 }
 
-// ── the Space template files (uploaded on create) ──────────────────────────
-
-const spaceReadme = `---
-title: Doomalay
-emoji: 🤖
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 8080
-pinned: false
----
-
-# Doomalay Space (auto-created)
-
-This Space was created automatically by the Doomalay app. It runs the Go engine
-(which serves the PWA + proxies to the Python brain) and gives the user real
-bash, python, and a full build toolchain on the free cpu-basic tier.
-
-The engine builds from source on first run (Go + Python deps). Subsequent
-restarts use the cached build.
-`
-
-const spaceDockerfile = `# Doomalay HF Space — the App-Building Machine (auto-created)
-# Free tier: 2 vCPU / 16 GB RAM / 50 GB disk. Builds the Go engine + Python brain from source.
-FROM python:3.11-slim-bookworm
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ make cmake git ripgrep \
-    golang-go ca-certificates curl wget unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Clone the doomlay source (public mirror; for private repos set GITHUB_TOKEN
-# as a Space secret and the clone URL includes it)
-ARG DOOMALAY_REPO=https://github.com/ScoobyBaby1999/doomalay.git
-RUN git clone --depth 1 ${DOOMALAY_REPO} /app/doomalay || \
-    (echo "clone failed — using embedded fallback" && mkdir -p /app/doomalay)
-
-WORKDIR /app/doomalay
-
-# Build the Go engine
-RUN cd engine && go build -o /app/doomalay-engine ./cmd/doomalay || \
-    echo "go build failed — will retry on start"
-
-# Install Python brain deps
-RUN cd brain && pip install --no-cache-dir -r requirements.txt || \
-    echo "pip install failed — brain will be unavailable"
-
-ENV DOOMALAY_DATA_DIR=/data
-ENV MODE=hf-space
-ENV BRAIN_DIR=/app/doomalay/brain
-ENV PORT=8080
-
-VOLUME ["/data"]
-EXPOSE 8080
-
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-CMD ["/app/entrypoint.sh"]
-`
-
-const spaceEntrypoint = `#!/bin/bash
-set -e
-echo "Starting Doomalay HF Space (auto-created)..."
-cd /app/doomalay
-# retry the go build if it failed during image build
-if [ ! -f /app/doomalay-engine ]; then
-  echo "building engine..."
-  cd engine && go build -o /app/doomalay-engine ./cmd/doomalay && cd ..
-fi
-exec /app/doomalay-engine --port ${PORT:-8080} --bind 0.0.0.0
-`
+// fanOutRemoteEnv pushes the current vault keys to every live remote brain
+// (own spaces + shared) so HF-chat turns carry fresh provider keys.
+func (s *Server) fanOutRemoteEnv() {
+        if s.vault == nil {
+                return
+        }
+        env := s.vault.AsEnv()
+        s.remoteMu.RLock()
+        defer s.remoteMu.RUnlock()
+        for _, rb := range s.remotes {
+                rb.SetEnv(env)
+        }
+        if s.sharedBrain != nil {
+                s.sharedBrain.SetEnv(env)
+        }
+}

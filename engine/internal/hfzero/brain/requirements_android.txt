@@ -1,0 +1,19 @@
+# Android (Chaquopy) requirements — pure Python only, no C extensions.
+# Used by platforms/android/app/build.gradle.kts (Chaquopy pip block).
+# The full requirements.txt is for PC/Mac/Linux/HF Space (FastAPI, pydantic, lxml OK).
+#
+# v0.39: +fastapi (server.py is FastAPI — uvicorn alone couldn't serve it),
+# +strands-agents-tools (the tools package; without it the brain's /chat ran
+# with ZERO tools — the v0.38 discovery), +ssrfguard (SSRF guard used by the
+# web tools; missing import killed the whole tool suite silently).
+fastapi
+litellm==1.55.10
+strands-agents
+strands-agents-tools
+ssrfguard
+httpx
+duckduckgo-search
+beautifulsoup4
+PyGithub
+gitpython
+uvicorn

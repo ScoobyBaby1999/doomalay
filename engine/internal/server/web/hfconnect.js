@@ -195,9 +195,9 @@
   }
 
   // ── the logs view (live SSE stream) ────────────────────────────────────
-  function openLogs() {
-    if (!curSpace) return;
-    var repo = curSpace.repo;
+  function openLogs(repoOverride) {
+    var repo = repoOverride || (curSpace && curSpace.repo);
+    if (!repo) return;
     var html = '' +
       '<div style="padding:20px 16px;height:100%;display:flex;flex-direction:column">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
@@ -270,6 +270,11 @@
     openConnect: openConnect,
     statusPill: statusPill,
     openLogs: openLogs,
+    openLogsFor: function (repo) {
+      // v0.46: ad-hoc logs for any repo (the create-flow's "view logs" link)
+      curSpace = { repo: repo };
+      openLogs(repo);
+    },
     current: function () { return curSpace; }
   };
 })();
