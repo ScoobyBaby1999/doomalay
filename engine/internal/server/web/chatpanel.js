@@ -1414,7 +1414,7 @@
     var open = !!state.dropdownOpen;
     var summary = type.summaryLine(state);
     return (
-      '<div id="chat-header" style="flex-shrink:0;background:var(--surface-1);border-bottom:1px solid var(--surface-2);z-index:3">' +
+      '<div id="chat-header" style="flex-shrink:0;background:var(--bg-app);background-image:var(--bg-app-gradient,none);border-bottom:1px solid var(--surface-2);z-index:3">' +
         '<div id="chat-header-row" style="display:flex;align-items:center;gap:8px;padding:7px 12px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer">' +
           '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
           '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +

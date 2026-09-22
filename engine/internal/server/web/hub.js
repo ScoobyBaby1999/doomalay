@@ -340,6 +340,13 @@
           '<svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>' +
         '</span>' +
         '<div class="hub-fcols" id="hub-fcols">' + cols + '</div>' +
+        // v0.49 (user spec): "Add a filter by text next to most
+        // endorsements or most download…" — a compact filter box riding
+        // the sort row. It drives the SAME q as the big search (both
+        // stay in sync; the keyboard rule applies to both — only the
+        // body zone re-renders).
+        '<input id="hub-ftext" class="hub-ftext" type="text" inputmode="search"' +
+          ' placeholder="filter…" value="' + escAttr(c.q) + '" aria-label="filter by text">' +
       '</div>' +
       '<div class="hub-fsub" id="hub-fsub">' + esc(SORT_SUB[c.sort] || '') + '</div>'
     );
@@ -546,9 +553,31 @@
         searchTimer = setTimeout(function () {
           if (!cur) return;
           cur.q = searchInput.value;
+          syncFilterText();
           loadItems();
         }, 200);
       });
+    }
+
+    // v0.49: the filter-by-text box on the sort row — same q, same
+    // debounce, same keyboard guarantee. Both inputs mirror each other.
+    var ftextTimer = null;
+    var ftextInput = el.querySelector('#hub-ftext');
+    if (ftextInput) {
+      ftextInput.addEventListener('input', function () {
+        if (ftextTimer) clearTimeout(ftextTimer);
+        ftextTimer = setTimeout(function () {
+          if (!cur) return;
+          cur.q = ftextInput.value;
+          var si = q('#hub-search');
+          if (si && si !== ftextInput && si.value !== cur.q) si.value = cur.q;
+          loadItems();
+        }, 200);
+      });
+    }
+    function syncFilterText() {
+      var ft = q('#hub-ftext');
+      if (ft && ftextInput && ft !== ftextInput && ft.value !== cur.q) ft.value = cur.q;
     }
 
     // the filter columns (funnel row) — sort + subtext, surgical
@@ -609,6 +638,8 @@
         cur.page = 1;
         var si = q('#hub-search');
         if (si) si.value = '';
+        var ft = q('#hub-ftext');
+        if (ft) ft.value = '';
         updateLibs();
         updateTags();
         updateBody();

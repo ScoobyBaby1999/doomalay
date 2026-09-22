@@ -357,6 +357,32 @@
     rerenderView(); // v0.34: "inherit the global sizes again" snaps the sliders in place
   }
 
+  // v0.49 (user spec: "add an option to reset text sizes and background in
+  // the chat tweaks to default or inherent from global"): resetAll drops
+  // EVERY per-chat override — scheme, fmt slots, the three sizes AND the
+  // background (gradient/image/texture, uploaded assets included) — so
+  // the chat follows the global settings again.
+  function resetAll(state) {
+    touch(state);
+    delete state._tweaks.chatScheme;
+    delete state._tweaks.fmtOverrides;
+    SIZES.forEach(function (d) { delete state._tweaks[d.key]; });
+    if (state._tweaks.bg) {
+      if (state.sessionId) {
+        fetch('/api/sessions/' + state.sessionId + '/background', { method: 'DELETE' })
+          .catch(function () {});
+        fetch('/api/sessions/' + state.sessionId + '/texture', { method: 'DELETE' })
+          .catch(function () {});
+      }
+      delete state._tweaks.bg;
+    }
+    bgMode = 'gradient';
+    gradDraft = null;
+    apply(state);
+    persist(state);
+    rerenderView();
+  }
+
   // setBgColor — the public writer kept for external callers; v0.44
   // re-routes it through the gradient system (a 1-color spec IS the
   // solid — the stored blob is now always a gradient spec).
@@ -635,6 +661,7 @@
         var gradSpec = bgSpecFor(t);
         return (
           '<p class="pv-hint">this chat\'s own look — it starts as a copy of the global settings; anything you change here overrides them for <b>' + esc(icon.name) + '</b> only. Other chats keep the global look.</p>' +
+          '<button id="tweaks-reset-all" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin:2px 0 6px">↺ reset everything to the global look</button>' +
           sec('Chat Colors',
             '<p class="hint">The markdown color scheme for this chat\'s messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below.</p>' +
             (A.schemeChatSwatches ? A.schemeChatSwatches(e.chatScheme, 'chat') : '') +
@@ -681,13 +708,13 @@
             '</div>' +
             (bgSet ? '<button id="tweaks-bg-remove" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">' +
               (bgIsImage ? '✕ remove the background image' :
-               '✕ remove the background gradient') + '</button>' : '') +
+               '↺ inherit the global background again') + '</button>' : '') +
             '<p class="hint" id="tweaks-bg-status" style="margin:8px 0 0">' +
               (bgIsImage ? 'an image is set — it fills the panel behind the messages.' :
                bgIsGradient ? 'a gradient is set — ' + (t.bg.colors ? t.bg.colors.length : 0) +
                  ((t.bg.colors && t.bg.colors.length) === 1 ? ' color.' : ' colors.') +
                  (t.bg.texRev ? ' + texture.' : '.') :
-               'nothing set — this chat follows the app background.') + '</p>'
+               'nothing set — this chat follows the global background.') + '</p>'
           )
         );
       },
@@ -700,7 +727,27 @@
             for (var k in patch) setSize(state, k, patch[k]);
           });
         }
+        // v0.49 FIX (user-reported: "pressing a row or color to change
+        // doesn't open our color theme system"): the collapsed color
+        // rows' EXPAND toggles + per-row resets were wired only on the
+        // settings pages (appearance.js's drain) — the tweaks view never
+        // called the shared wirer, so tapping a color row here did
+        // NOTHING. Wire them natively now (idempotent — the flags live
+        // on the elements), plus the fmt gradient editors.
+        if (window.AppearanceUI) {
+          if (window.AppearanceUI.wireColorRows) window.AppearanceUI.wireColorRows(el);
+          if (window.AppearanceUI.wireFmtEditors) window.AppearanceUI.wireFmtEditors(el);
+        }
         var t0 = state._tweaks || {};
+
+        // v0.49 (user spec): the master reset — "reset text sizes and
+        // background … to default or inherit from global". One tap
+        // drops EVERY per-chat override (colors, sizes, background +
+        // the uploaded assets) so the chat follows the global look.
+        var resetAllBtn = el.querySelector('#tweaks-reset-all');
+        if (resetAllBtn) resetAllBtn.addEventListener('click', function () {
+          resetAll(state);
+        });
 
         // v0.44: the Background segment — gradient / image (the color
         // pill merged into the gradient editor: a 1-color spec IS the
@@ -885,6 +932,7 @@
     setSize: withState(setSize),
     resetColors: withState(resetColors),
     resetSizes: withState(resetSizes),
+    resetAll: withState(resetAll),
     setBgColor: withState(setBgColor),
     setBgGradient: withState(setBgGradient),
     clearBg: withState(clearBg),

@@ -413,8 +413,7 @@
           dotColor: { colors: [s.dotColor], dir: 'auto' },
           originColor: { colors: [s.originColor], dir: 'auto' } };
     return section('Grid Colors', '' +
-      '<p class="hint">The infinite canvas behind the chats. Left at the theme\u2019s palette until you pick your own — gradients (up to 15 colors, any direction or pattern) paint straight onto the canvas for horizontal / vertical / diagonal / radial sweeps.</p>' +
-      gridColorRow('bg', 'Background', g.bg) +
+      '<p class="hint">The infinite canvas behind the chats. The canvas BACKGROUND lives in Customize above (the “canvas background” row — gradients, patterns and textures included); these rows tint the lines, the dots and the origin marker. Left at the theme\u2019s palette until you pick your own.</p>' +
       gridColorRow('lineColor', 'Grid Lines', g.lineColor) +
       gridColorRow('dotColor', 'Dots', g.dotColor) +
       gridColorRow('originColor', 'Origin Marker', g.originColor) +
@@ -571,6 +570,18 @@
         // folds either (a COPY: wire() mutates the editor's live spec)
         spec = (G && G.norm) ? G.norm(stored) :
           { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
+        // v0.49: the CANVAS row keeps its stored texRev-free texture
+        // dataURL alive (norm carries it) — the canvas paints it; CSS
+        // twins strip it (theme.js), which is fine: --bg-panel has no
+        // CSS consumers anymore.
+      } else if (c.canvas && window.DoomTheme && window.DoomTheme.canvasBgSpec) {
+        // v0.49: the canvas row seeds from the RESOLVED canvas spec (the
+        // theme's grid bg when never customized — what the canvas paints
+        // right now), NOT the old --bg-panel CSS hex (which painted panels
+        // and had nothing to do with the canvas).
+        var cbRaw = window.DoomTheme.canvasBgSpec(s);
+        spec = (G && G.norm) ? G.norm(cbRaw) :
+          { colors: [String((cbRaw && cbRaw.colors) || [])[0] || '#0a0a0b'], dir: 'auto' };
       } else {
         // not customized: the theme's CURRENT computed hex, as a 1-color
         // spec (what the editor offers is what the app looks like now)
@@ -578,10 +589,15 @@
         var liveHex = /^#[0-9a-fA-F]{6}$/.test(live || '') ? live : '#000000';
         spec = { colors: [liveHex], dir: 'auto' };
       }
+      // v0.49: ONLY the canvas row offers the texture picker (bumpmaps —
+      // app.js's canvas renderer paints them with a real 'color'
+      // composite pass); every other theme var still hides it (static CSS
+      // consumers can't blend a texture).
+      var edOpts = { noTex: !c.canvas };
       queueEditorWire(pfx + '-gr', spec,
         function () { writeThemeVar(c.var, spec); },
         function () { writeThemeVar(c.var, spec); Settings.rerender(); });
-      var editorHtml = (G ? G.editor(pfx, spec, { noTex: true }) :
+      var editorHtml = (G ? G.editor(pfx, spec, edOpts) :
         '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>');
       var onReset = function () {
         var sR = Settings.getState();
@@ -598,13 +614,14 @@
       // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS var's override)
       rows += colorRowCollapsed({
         pfx: pfx,
-        label: c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : ''),
+        label: c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') +
+          (c.hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + c.hint + '</span>' : ''),
         spec: spec, editorHtml: editorHtml,
         onReset: onReset
       });
     });
     return section('Customize ' + (t.label || 'Theme'),
-      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — any var can stay a solid or grow into a gradient (up to 15 colors, any direction, the patterns included). Changes ride on top of the palette and persist for this theme only (each theme keeps its own customizations). ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
+      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — any var can stay a solid or grow into a gradient (up to 15 colors, any direction, the patterns included). The <b>canvas background</b> drives the infinite grid behind the app (textures included); the <b>overlay background</b> paints overlay screens + collapsible headers; <b>surfaces</b> paint the panels and cards. Changes persist for this theme only. ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
       rows +
       '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
@@ -670,7 +687,7 @@
           toggleRow('hideGridLines', 'Hide grid lines', s.hideGridLines) +
           toggleRow('hideDots', 'Hide dots', s.hideDots) +
           gridSlider('gridScatter', 'Scatter', s.gridScatter || 0, '0 = on-grid · 100 = up to ±60px displacement.') +
-          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '0 = uniform · 100 = ±50% radius/length.') +
+          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '0 = uniform · 100 = ±50%. Dots grow in every direction; grid lines vary BOTH length and thickness.') +
           gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '0 = axis-aligned · 100 = up to ±60°.') +
           '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )
@@ -816,7 +833,7 @@
         '<span class="app-switch-track" style="position:absolute;inset:0;background:' + (checked ? 'var(--accent)' : 'var(--surface-3)') +
         ';border-radius:12px;transition:background 0.15s"></span>' +
         '<span class="app-switch-thumb" style="position:absolute;top:2px;left:' + (checked ? '20px' : '2px') +
-        ';width:20px;height:20px;background:#fff;border-radius:50%;transition:left 0.15s"></span>' +
+        ';width:20px;height:20px;background:var(--on-accent);border-radius:50%;transition:left 0.15s"></span>' +
       '</label>' +
     '</div>';
   }

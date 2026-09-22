@@ -108,28 +108,27 @@
       ? window.DoomTheme.effectiveGrid(window.Settings.getState())
       : window.Settings.getState();
     // v0.44: the SPEC view — the same resolver, returning each color as a
-    // gradient spec (legacy hexes fold into 1-color specs). Multi-color
-    // specs paint real canvas gradients for h / v / diag / diag2 /
-    // radial / auto; everything else (swirl, mesh, pat-*, tex) paints the
-    // SOLID first color (gridPaint documents why).
+    // gradient spec (legacy hexes fold into 1-color specs).
     const specs = (window.DoomTheme && window.DoomTheme.effectiveGridSpecs)
       ? window.DoomTheme.effectiveGridSpecs(window.Settings.getState())
       : null;
     // v0.25 guards (kept): canvas fillStyle REJECTS invalid values
-    // silently (the grid bug: a stale color stayed on screen when the
-    // value wasn't a real hex). Validate every SOLID fallback before it
-    // reaches the canvas; spec stops are validated inside gridPaint.
+    // silently. Validate every SOLID fallback before it reaches the
+    // canvas; spec stops are validated inside gridPaint.
     const HEX_RE = /^#[0-9a-fA-F]{6}$/;
-    // v0.45 ITEM 3: the canvas IS the app background — if the user has
-    // customized `--bg-app` (the "App background" row) with a gradient
-    // spec, paint THAT over the grid bg so the scrollable canvas itself
-    // carries the app background. theme.js exposes the resolved twin via
-    // DoomTheme.appBgSpec(); falls back to the grid bg spec when unset.
-    var appBgSpec = (window.DoomTheme && window.DoomTheme.appBgSpec)
-      ? window.DoomTheme.appBgSpec(window.Settings.getState())
+    // v0.49 REWORK (user spec: "The panel background color should be the
+    // one to determine the canvas background, not the app background
+    // setting… follows the complex gradients and bumpmaps very poorly"):
+    // the canvas background reads the CANVAS BG spec (the --bg-panel
+    // override; the theme's grid bg when never customized) and paints it
+    // at FULL fidelity — linear/radial/conic sweeps, the mesh multi-pass,
+    // every pattern, and TEXTURES (bumpmaps) blended with a real 'color'
+    // composite pass. See paintCanvasBackground.
+    const DT = window.DoomTheme || {};
+    var canvasSpec = (DT.canvasBgSpec || DT.appBgSpec)
+      ? (DT.canvasBgSpec || DT.appBgSpec)(window.Settings.getState())
       : (specs && specs.bg);
-    ctx.fillStyle = gridPaint(appBgSpec, (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b');
-    ctx.fillRect(0, 0, W, H);
+    paintCanvasBackground(canvasSpec, (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b');
 
     // v0.45 ITEM 6: grid quick options — read once per redraw.
     var st = window.Settings.getState();
@@ -162,21 +161,41 @@
       ctx.lineWidth = 1;
       ctx.beginPath();
       var lineIdx = 0;
+      // v0.49 (user spec: "for grid lines it should change both height
+      // and width, not just width"): when Size variation is on, each line
+      // renders as per-cell SEGMENTS centered on the intersections —
+      // the segment's LENGTH and THICKNESS both ride the variation (the
+      // dots' behavior, applied to lines). sizeVar 0 = full continuous
+      // lines exactly as before.
+      var segMode = sizeFrac > 0;
       for (let x = startX; x < W; x += scaledGrid) {
         // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
         var ix = Math.round((x + offsetX * scale) / scaledGrid);
         var h1 = hashCell(ix, 0);
         var dx = scatterPx * (h1 - 0.5) * 2;
         var rot = rotDeg * (hashCell(ix, 1) - 0.5) * 2;  // radians
-        var lw = 1 * (1 + sizeFrac * (hashCell(ix, 2) - 0.5) * 2);
+        var lwBase = 1 * (1 + sizeFrac * (hashCell(ix, 2) - 0.5) * 2);
         ctx.save();
         ctx.translate(x + dx, 0);
         ctx.rotate(rot * Math.PI / 180);
-        ctx.lineWidth = Math.max(0.3, lw);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(0, H);
-        ctx.stroke();
+        if (!segMode) {
+          ctx.lineWidth = Math.max(0.3, lwBase);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(0, H);
+          ctx.stroke();
+        } else {
+          for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
+            var iyS = Math.round((y + offsetY * scale) / scaledGrid);
+            var segLen = scaledGrid * (1 + sizeFrac * (hashCell(ix + 5, iyS) - 0.5) * 2);
+            var segW = Math.max(0.3, 1 * (1 + sizeFrac * (hashCell(ix + 9, iyS) - 0.5) * 2));
+            ctx.lineWidth = segW;
+            ctx.beginPath();
+            ctx.moveTo(0, y - segLen / 2);
+            ctx.lineTo(0, y + segLen / 2);
+            ctx.stroke();
+          }
+        }
         ctx.restore();
         lineIdx++;
       }
@@ -185,15 +204,28 @@
         var h2 = hashCell(0, iy);
         var dy = scatterPx * (h2 - 0.5) * 2;
         var rot2 = rotDeg * (hashCell(1, iy) - 0.5) * 2;
-        var lw2 = 1 * (1 + sizeFrac * (hashCell(2, iy) - 0.5) * 2);
+        var lw2Base = 1 * (1 + sizeFrac * (hashCell(2, iy) - 0.5) * 2);
         ctx.save();
         ctx.translate(0, y + dy);
         ctx.rotate(rot2 * Math.PI / 180);
-        ctx.lineWidth = Math.max(0.3, lw2);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(W, 0);
-        ctx.stroke();
+        if (!segMode) {
+          ctx.lineWidth = Math.max(0.3, lw2Base);
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(W, 0);
+          ctx.stroke();
+        } else {
+          for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
+            var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
+            var segLen2 = scaledGrid * (1 + sizeFrac * (hashCell(ixS, iy + 5) - 0.5) * 2);
+            var segW2 = Math.max(0.3, 1 * (1 + sizeFrac * (hashCell(ixS, iy + 9) - 0.5) * 2));
+            ctx.lineWidth = segW2;
+            ctx.beginPath();
+            ctx.moveTo(x2 - segLen2 / 2, 0);
+            ctx.lineTo(x2 + segLen2 / 2, 0);
+            ctx.stroke();
+          }
+        }
         ctx.restore();
       }
     }
@@ -232,6 +264,206 @@
     }
   }
 
+  // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────
+  // Full-fidelity spec → viewport paint (the reported bug: "the panel
+  // background setting follows the complex gradients and bumpmaps very
+  // poorly and inaccurately"). The background is VIEWPORT-FIXED (it never
+  // scrolls with pan/zoom), so every aesthetic paints directly with
+  // canvas primitives — no tiling math, exact geometry:
+  //   auto/h/v/diag/diag2/radial → the gradient sweeps (as before)
+  //   swirl                       → a REAL conic sweep (createConicGradient,
+  //                                guarded — falls back to solid)
+  //   mesh                        → the base linear + 4 soft radials (multi-pass)
+  //   pat-navy / pinstripe / gingham / sunburst / checker → drawn band-by-band
+  //   tex (the bumpmap)           → the image, cover-fit, then the gradient
+  //                                painted OVER it with globalCompositeOperation
+  //                                'color' — the same blend contract the CSS
+  //                                side uses (background-blend-mode: color)
+  // While a texture is still loading the gradient paints alone; the
+  // onload triggers one repaint (update()).
+  var texCache = {};   // dataURL → { img, ready }
+  function texImageFor(url) {
+    if (!url || typeof url !== 'string') return null;
+    var e = texCache[url];
+    if (e) return e.ready ? e.img : null;
+    var img = new Image();
+    e = { img: img, ready: false };
+    texCache[url] = e;
+    img.onload = function () { e.ready = true; update(); };
+    img.onerror = function () { e.dead = true; };
+    img.src = url;
+    return null;
+  }
+
+  function validStopsOf(spec) {
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    if (!spec || !Array.isArray(spec.colors)) return [];
+    return spec.colors.filter(function (c) { return HEX_RE.test(c); });
+  }
+  // shade helpers for the single-color pattern synths (mirror uikit's)
+  function shadeHex(hex, amt) {   // amt > 0 lighten, < 0 darken (0..1)
+    var m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+    if (!m) return hex;
+    var n = parseInt(m[1], 16);
+    var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    var f = function (v) {
+      v = Math.round(amt >= 0 ? v + (255 - v) * amt : v * (1 + amt));
+      return Math.max(0, Math.min(255, v));
+    };
+    return '#' + ((1 << 24) + (f(r) << 16) + (f(g) << 8) + f(b)).toString(16).slice(1);
+  }
+  function rgbaStr(hex, a) {
+    var m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+    if (!m) return hex;
+    var n = parseInt(m[1], 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+
+  // bgGradientPass — the linear/radial/conic sweeps shared by the bg and
+  // (via gridPaint) the strokes. Returns a fillable style or null.
+  function bgGradientPass(stops, dir, angle) {
+    if (stops.length < 2 || W <= 0 || H <= 0) return null;
+    var g = null;
+    var half = Math.hypot(W, H) / 2;
+    if (dir === 'h') g = ctx.createLinearGradient(0, 0, W, 0);
+    else if (dir === 'v') g = ctx.createLinearGradient(0, 0, 0, H);
+    else if (dir === 'diag2') g = ctx.createLinearGradient(0, 0, W, H);
+    else if (dir === 'radial') g = ctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, half);
+    else if (dir === 'swirl') {
+      // v0.49: a real conic sweep when the browser has it
+      if (typeof ctx.createConicGradient === 'function') {
+        g = ctx.createConicGradient(240 * Math.PI / 180, W * 0.55, H * 0.45);
+      } else return null;
+    } else { // 'diag' + 'auto'
+      var ang = (dir === 'auto' || typeof angle !== 'number') ? 135 : angle;
+      if (ang === 135) g = ctx.createLinearGradient(0, H, W, 0);
+      else {
+        var rad = (ang - 135) * Math.PI / 180;
+        var c = Math.cos(rad), s = Math.sin(rad);
+        var dx = (c + s) / Math.SQRT2, dy = (s - c) / Math.SQRT2;
+        g = ctx.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half, W / 2 + dx * half, H / 2 + dy * half);
+      }
+    }
+    for (var i = 0; i < stops.length; i++) g.addColorStop(i / (stops.length - 1), stops[i]);
+    return g;
+  }
+
+  function paintCanvasBackground(spec, fallbackHex) {
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    var stops = validStopsOf(spec);
+    var dir = (spec && spec.dir) || 'auto';
+    var texUrl = (spec && typeof spec.tex === 'string') ? spec.tex : '';
+    var texImg = texImageFor(texUrl);
+    if (!stops.length && !texImg) {
+      // nothing valid — the legacy hex path
+      ctx.fillStyle = HEX_RE.test(spec == null ? '' : String(spec)) ? String(spec) : fallbackHex;
+      if (spec && Array.isArray(spec.colors) && HEX_RE.test(fallbackHex)) ctx.fillStyle = fallbackHex;
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    // the TEXTURE pass (bumpmap): cover-fit the image, then paint the
+    // gradient/pattern over it with 'color' — hue+sat of the gradient,
+    // luminance of the bumpmap (the CSS blend contract).
+    if (texImg) {
+      var ir = texImg.width / texImg.height;
+      var vr = W / H;
+      var dw, dh;
+      if (ir > vr) { dh = H; dw = H * ir; } else { dw = W; dh = W / ir; }
+      ctx.drawImage(texImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.globalCompositeOperation = 'color';
+    }
+    // ── the gradient / pattern passes ──
+    var c = stops.length ? stops : ['#0a0a0b'];
+    var c0 = c[0];
+    var c1 = c.length > 1 ? c[1] : null;
+    var paintPlain = function () {   // the sweep (or solid) over everything
+      var g = bgGradientPass(c, dir, spec && spec.angle);
+      ctx.fillStyle = g || c0;
+      ctx.fillRect(0, 0, W, H);
+    };
+    if (dir === 'mesh') {
+      // base linear + 4 soft radials — the exact uikit recipe
+      var base = c.length > 1 ? c[c.length - 1] : shadeHex(c0, -0.2);
+      ctx.fillStyle = bgGradientPass([c0, base], 'diag', 160) || base;
+      ctx.fillRect(0, 0, W, H);
+      var spots = [[0.20, 0.25], [0.80, 0.15], [0.75, 0.80], [0.15, 0.85]];
+      var fades = [0.55, 0.50, 0.55, 0.50];
+      for (var i = 0; i < 4; i++) {
+        var rg = ctx.createRadialGradient(W * spots[i][0], H * spots[i][1], 0,
+          W * spots[i][0], H * spots[i][1], Math.max(W, H) * fades[i]);
+        rg.addColorStop(0, c[i % c.length]);
+        rg.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = rg;
+        ctx.fillRect(0, 0, W, H);
+      }
+    } else if (dir === 'pat-navy') {
+      var n2 = c1 || shadeHex(c0, -0.18);
+      ctx.fillStyle = c0;
+      ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(-Math.PI / 4);   // CSS 45deg axis → stripes ⟂ to it
+      var span = Math.hypot(W, H);
+      for (var b = -span; b < span; b += 28) {
+        ctx.fillStyle = n2;
+        ctx.fillRect(b, -span, 14, span * 2);
+      }
+      ctx.restore();
+    } else if (dir === 'pat-pinstripe') {
+      var p2 = c1 || shadeHex(c0, 0.18);
+      ctx.fillStyle = bgGradientPass([c0, p2], 'diag', 160) || c0;
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = rgbaStr(c0, 0.35);
+      ctx.lineWidth = 1;
+      for (var px = 9; px < W; px += 18) {
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, H);
+        ctx.stroke();
+      }
+    } else if (dir === 'pat-gingham') {
+      var g2 = c1 || c0;
+      var g3 = c.length > 2 ? c[2] : shadeHex(c0, 0.30);
+      ctx.fillStyle = g3;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = rgbaStr(c0, 0.55);
+      for (var gy = 0; gy < H; gy += 80) ctx.fillRect(0, gy, W, 40);
+      ctx.fillStyle = rgbaStr(g2, 0.35);
+      for (var gx = 0; gx < W; gx += 80) ctx.fillRect(gx, 0, 40, H);
+    } else if (dir === 'pat-sunburst') {
+      var s2 = c1 || shadeHex(c0, 0.18);
+      var cx = W / 2, cy = H;
+      var span2 = Math.hypot(W, H);
+      ctx.fillStyle = c0;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = s2;
+      for (var a = 0; a < 360; a += 30) {
+        var r0 = a * Math.PI / 180, r1 = (a + 15) * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(r0) * span2, cy + Math.sin(r0) * span2);
+        ctx.lineTo(cx + Math.cos(r1) * span2, cy + Math.sin(r1) * span2);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (dir === 'pat-checker') {
+      var k2 = c1 || shadeHex(c0, -0.18);
+      ctx.fillStyle = c0;
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = k2;
+      for (var cy2 = 0, row = 0; cy2 < H; cy2 += 32, row++) {
+        for (var cx2 = ((row % 2) ? 32 : 0); cx2 < W; cx2 += 64) {
+          ctx.fillRect(cx2, cy2, 32, 32);
+        }
+      }
+    } else {
+      paintPlain();
+    }
+    if (texImg) {
+      ctx.globalCompositeOperation = 'source-over';   // restore
+    }
+  }
+
   // ── v0.44 gridPaint — spec-or-hex → a canvas paint style ──────────
   // The four grid colors may hold gradient specs (Settings keys written
   // by the appearance GradientUI editors; theme.js resolves legacy
@@ -263,35 +495,11 @@
     const stops = spec.colors.filter(function (c) { return HEX_RE.test(c); });
     if (!stops.length) return fallbackHex;      // nothing valid → caller's
     if (stops.length < 2 || W <= 0 || H <= 0) return stops[0];
-    const dir = spec.dir || 'auto';
-    let g = null;
-    const half = Math.hypot(W, H) / 2;
-    if (dir === 'h') {
-      g = ctx.createLinearGradient(0, 0, W, 0);
-    } else if (dir === 'v') {
-      g = ctx.createLinearGradient(0, 0, 0, H);
-    } else if (dir === 'diag2') {
-      g = ctx.createLinearGradient(0, 0, W, H);
-    } else if (dir === 'radial') {
-      g = ctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, half);
-    } else if (dir === 'diag' || dir === 'auto') {
-      const angle = (dir === 'auto' || typeof spec.angle !== 'number') ? 135 : spec.angle;
-      if (angle === 135) {
-        g = ctx.createLinearGradient(0, H, W, 0);
-      } else {
-        // the default (0,H)→(W,0) direction = (1,−1)/√2; rotate it by
-        // (angle−135)° about the viewport center, spanning the diagonal
-        const rad = (angle - 135) * Math.PI / 180;
-        const c = Math.cos(rad), s = Math.sin(rad);
-        const dx = (c + s) / Math.SQRT2, dy = (s - c) / Math.SQRT2;
-        g = ctx.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half,
-          W / 2 + dx * half, H / 2 + dy * half);
-      }
-    }
-    if (!g) return stops[0];                    // swirl / mesh / pat-* → solid
-    for (let i = 0; i < stops.length; i++) {
-      g.addColorStop(i / (stops.length - 1), stops[i]);
-    }
+    // v0.49: the shared sweep pass (linear / radial / custom-angle diag /
+    // CONIC swirl — createConicGradient when the browser has it)
+    var g = bgGradientPass(stops, spec.dir || 'auto',
+      (typeof spec.angle === 'number') ? spec.angle : undefined);
+    if (!g) return stops[0];   // mesh / pat-* strokes → solid (bg paints them full)
     return g;
   }
 

@@ -188,7 +188,7 @@
           '<button class="hf-log-tab" data-type="run" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11px;cursor:pointer">run logs</button>' +
           '<button class="hf-log-tab" data-type="build" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;cursor:pointer">build logs</button>' +
         '</div>' +
-        '<pre id="hf-log-stream" style="flex:1;overflow-y:auto;background:var(--bg-panel);color:var(--ok);' +
+        '<pre id="hf-log-stream" style="flex:1;overflow-y:auto;background:var(--surface-2);background-image:var(--surface-2-gradient,none);color:var(--ok);' +
           'padding:12px;border-radius:8px;font-size:11px;font-family:monospace;line-height:1.5;' +
           'white-space:pre-wrap;word-break:break-word;margin:0"></pre>' +
       '</div>';

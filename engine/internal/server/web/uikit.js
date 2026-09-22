@@ -363,15 +363,34 @@
           break;
         }
         case 'pat-checker': {
-          var k2 = c.length > 1 ? c[1] : darken(c[0], 18);
-          layer = 'repeating-conic-gradient(' + c[0] + ' 0 25%, ' + k2 +
-            ' 0 50%) 0 0 / 32px 32px';
+          // v0.49 FIX (the reported "checker doesn't work"): the old recipe
+          // appended `0 0 / 32px 32px` — position/size are only legal in the
+          // background SHORTHAND, not in background-image, so every
+          // var-twin consumer (`background-image: var(--X-gradient)`) saw an
+          // INVALID declaration and dropped it — nothing painted, anywhere.
+          // The fix: a self-tiling SVG data-URL. It is valid in
+          // background-image AND border-image AND <img>/canvas, and tiles by
+          // default (background-repeat: repeat) — no size companion needed.
+          // v0.49.1: SINGLE-QUOTED url — consumers paste css() into HTML
+          // style="..." attributes, where a double-quoted url would
+          // terminate the attribute (live-caught in the browser redteam).
+          var kA = c[0];
+          var kB = c.length > 1 ? c[1] : darken(c[0], 18);
+          var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+            '<rect width="32" height="32" fill="' + kA + '"/>' +
+            '<rect width="16" height="16" fill="' + kB + '"/>' +
+            '<rect x="16" y="16" width="16" height="16" fill="' + kB + '"/>' +
+            '</svg>';
+          layer = "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
           break;
         }
         default: // 'auto'
           layer = 'linear-gradient(135deg, ' + stops + ')';
       }
-      if (hasTex) layer += ', url("' + s.tex + '")';
+      // v0.49.1: single-quoted url layers — css() flows into HTML
+      // style="..." attributes (tweaks preview, hub publish), where a
+      // double-quoted url would terminate the attribute.
+      if (hasTex) layer += ", url('" + s.tex + "')";
       return layer;
     },
 
@@ -769,16 +788,24 @@
         'linear-gradient(#123456)');
       eq('css.sunburst', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-sunburst' }),
         'repeating-conic-gradient(from 0deg at 50% 100%, #aabbcc 0deg 15deg, #ccbbaa 15deg 30deg)');
+      // v0.49: the checker is a self-tiling SVG data-URL (position/size
+      // suffixes are invalid in background-image — the old bug)
       eq('css.checker', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'pat-checker' }),
-        'repeating-conic-gradient(#aabbcc 0 25%, #ccbbaa 0 50%) 0 0 / 32px 32px');
-      ok('css.checkerTile', G.css({ colors: ['#a', '#b'], dir: 'pat-checker' })
-        .indexOf(' 0 0 / 32px 32px') > 0);
+        "url('data:image/svg+xml," + encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+          '<rect width="32" height="32" fill="#aabbcc"/>' +
+          '<rect width="16" height="16" fill="#ccbbaa"/>' +
+          '<rect x="16" y="16" width="16" height="16" fill="#ccbbaa"/></svg>') + "')");
+      ok('css.checkerSingleColor', G.css({ colors: ['#aabbcc'], dir: 'pat-checker' })
+        .indexOf("url('data:image/svg+xml") === 0);
+      ok('css.checkerNoShorthandSuffix', G.css({ colors: ['#a', '#b'], dir: 'pat-checker' })
+        .indexOf(' 0 0 / ') < 0);
 
       // tex layering
       eq('css.tex', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'auto', tex: 'data:image/jpeg;base64,ZZ==' }),
-        'linear-gradient(135deg, #aabbcc, #ccbbaa), url("data:image/jpeg;base64,ZZ==")');
+        'linear-gradient(135deg, #aabbcc, #ccbbaa), url(\'data:image/jpeg;base64,ZZ==\')');
       eq('css.tex1Color', G.css({ colors: ['#aabbcc'], dir: 'auto', tex: 'data:image/png;base64,Q' }),
-        'linear-gradient(135deg, #aabbcc, #aabbcc), url("data:image/png;base64,Q")');
+        "linear-gradient(135deg, #aabbcc, #aabbcc), url('data:image/png;base64,Q')");
 
       // solid + twins
       eq('solid.first', G.solid(['#112233', '#445566']), '#112233');

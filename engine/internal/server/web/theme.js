@@ -20,9 +20,12 @@
 //                    the triplet; always from twins.solid — the old
 //                    hex-only regex path is gone)
 // TEXTURE (spec.tex) may ride in STORAGE but is NEVER applied on theme
-// vars: the consumers of these vars are static CSS rules that can't
-// safely switch background-blend-mode:color per-var — texture is a
-// chat-background / hub-design feature (tweaks.js / hubpublish.js).
+// CSS vars: the consumers of these vars are static CSS rules that can't
+// safely switch background-blend-mode:color per-var. v0.49 EXCEPTION:
+// the CANVAS BACKGROUND (--bg-panel override) keeps its tex in storage —
+// app.js's canvas renderer paints it with a real 'color' composite pass
+// (canvasBgSpec returns the RAW spec; deriveTwins still strips tex for
+// the CSS twins, which --bg-panel no longer has anyway).
 // GRID colors follow the same spec upgrade: Settings bg/lineColor/
 // dotColor/originColor may hold spec objects (legacy hexes still work —
 // norm() folds them); effectiveGridSpecs(s) resolves the specs for
@@ -143,22 +146,34 @@
     return THEMES[id].scheme;
   }
 
-  // the customizable variables (v0.26 theme customization) and their
-  // -rgb triplet partners (auto-derived when overridden)
+  // v0.26→v0.49: the customizable variables and their -rgb triplet
+  // partners (auto-derived when overridden). v0.49 SEMANTIC REWORK
+  // (user spec): "Panel background" is now CANVAS BACKGROUND — it drives
+  // the infinite grid canvas (app.js renderGrid), not any DOM panel;
+  // "App background" is now OVERLAY BACKGROUND — overlay screens,
+  // collapsible headers, scrims and sticky bars. Panels/cards/bubbles
+  // are SURFACES (--surface-1). `hint` rides to the settings row.
   var RGB_PAIRS = {
     '--accent': '--accent-rgb', '--accent-2': '--accent-2-rgb', '--accent-3': '--accent-3-rgb',
-    '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb'
+    '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb',
+    '--bg-app': '--bg-app-rgb', '--surface-1': '--surface-1-rgb', '--surface-2': '--surface-2-rgb'
   };
   var CUSTOMIZABLE = [
-    { var: '--bg-app', label: 'App background', rgb: false },
-    { var: '--bg-panel', label: 'Panel background', rgb: false },
-    { var: '--surface-1', label: 'Surface (cards)', rgb: false },
-    { var: '--surface-2', label: 'Surface raised', rgb: false },
-    { var: '--border', label: 'Borders', rgb: false },
-    { var: '--text-1', label: 'Primary text', rgb: false },
-    { var: '--accent', label: 'Accent 1', rgb: true },
-    { var: '--accent-2', label: 'Accent 2', rgb: true },
-    { var: '--accent-3', label: 'Accent 3', rgb: true }
+    { var: '--bg-panel', label: 'Canvas background', rgb: false,
+      hint: 'the infinite grid canvas · gradients, patterns + textures', canvas: true },
+    { var: '--bg-app', label: 'Overlay background', rgb: false,
+      hint: 'overlay screens · collapsible headers · scrims' },
+    { var: '--surface-1', label: 'Surface', rgb: false,
+      hint: 'panels · cards · bubbles' },
+    { var: '--surface-2', label: 'Surface raised', rgb: false,
+      hint: 'inputs · hover · raised cards' },
+    { var: '--border', label: 'Borders', rgb: false,
+      hint: 'hairlines + outlines' },
+    { var: '--text-1', label: 'Primary text', rgb: false,
+      hint: 'body text · gradients paint the titles' },
+    { var: '--accent', label: 'Accent 1', rgb: true, hint: 'the primary accent · user bubbles' },
+    { var: '--accent-2', label: 'Accent 2', rgb: true, hint: 'the adjacent accent' },
+    { var: '--accent-3', label: 'Accent 3', rgb: true, hint: 'the third accent' }
   ];
 
   function applyTheme(s) {
@@ -177,6 +192,11 @@
     var prevKeys = docEl._themeOverrideKeys || [];
     prevKeys.forEach(function (k) { docEl.style.removeProperty(k); });
     docEl._themeOverrideKeys = [];
+    // v0.49: gradient TEXT — when the --text-1 override paints a real
+    // gradient, flag the root so index.html's [data-text-grad] rules
+    // clip the prominent titles/headings to it (body text keeps the
+    // solid first color — gradient body text would be unreadable noise).
+    var textGrad = false;
     if (overrides) {
       Object.keys(overrides).forEach(function (k) {
         // v0.44: the override value may be a hex (legacy) or a gradient
@@ -187,6 +207,7 @@
         docEl.style.setProperty(k, twins.solid);
         docEl.style.setProperty(k + '-gradient', twins.grad);
         docEl._themeOverrideKeys.push(k, k + '-gradient');
+        if (k === '--text-1' && twins.grad !== 'none') textGrad = true;
         // auto-derive the -rgb triplet (rgba() composition needs it) —
         // ALWAYS from the SOLID twin (a gradient's stops can't compose
         // rgba(); the first color is the canonical tint, v0.26 contract)
@@ -196,8 +217,17 @@
           docEl.style.setProperty(pair, triplet);
           docEl._themeOverrideKeys.push(pair);
         }
+        // v0.49: --on-accent — the text color that stays readable ON the
+        // accent fill (user bubbles, accent buttons). Derived from the
+        // accent SOLID's luminance; the theme default is white.
+        if (k === '--accent') {
+          docEl.style.setProperty('--on-accent', onColorFor(twins.solid));
+          docEl._themeOverrideKeys.push('--on-accent');
+        }
       });
     }
+    if (textGrad) docEl.setAttribute('data-text-grad', '1');
+    else docEl.removeAttribute('data-text-grad');
 
     // 2. chat markdown scheme — only when the user hasn't pinned their own
     //    (a non-default scheme OR any per-slot override = pinned)
@@ -224,10 +254,14 @@
     var sm = (typeof s.smallTextSize === 'number') ? s.smallTextSize : 50; // 0-100 → 9.5-15px
     document.documentElement.style.setProperty('--ui-small-fs', (9.5 + (sm / 100) * 5.5).toFixed(1) + 'px');
 
-    // 4. Android status bar tint — needs a REAL hex (no var() in meta)
+    // 4. Android status bar tint — needs a REAL hex (no var() in meta).
+    //    v0.49: prefers the CANVAS background solid (the canvas is the
+    //    top-of-screen surface); falls back to the grid bg hex.
     var meta = document.getElementById('meta-theme-color');
     if (meta) {
-      meta.setAttribute('content', effectiveGrid(s).bg);
+      var cbSpec = canvasBgSpec(s);
+      var cbHex = (cbSpec && Array.isArray(cbSpec.colors)) ? solidOf(cbSpec, '') : '';
+      meta.setAttribute('content', isHexColor(cbHex) ? cbHex : effectiveGrid(s).bg);
     }
 
     // 5. re-tint the default chatbot family so canvas-drawn arrows/icons
@@ -305,23 +339,39 @@
     };
   }
 
-  // v0.45 ITEM 3: appBgSpec — the resolved gradient spec for the "App
-  // background" customizable var. The canvas (app.js renderGrid) reads THIS
-  // so the scrollable grid itself carries the app background (previously
-  // --bg-app painted the body, which the canvas covered → invisible).
-  // Returns a 1-color spec from the theme's grid bg when the user hasn't
-  // customized --bg-app (so the canvas keeps its current look until they do).
-  function appBgSpec(s) {
+  // v0.45 ITEM 3 → v0.49 REWORK: canvasBgSpec — the resolved gradient
+  // spec for the CANVAS background. The user spec: "The panel background
+  // color should be the one to determine the canvas background, not the
+  // app background setting" — so the canvas reads the --bg-panel
+  // OVERRIDE (raw spec, texture included — the canvas can paint it) and
+  // falls back to the theme's grid bg when the user hasn't customized.
+  // (The old appBgSpec read --bg-app; it survives as an alias for one
+  // release so any stray consumer keeps working.)
+  function canvasBgSpec(s) {
     var id = THEMES[s.theme] ? s.theme : 'midnight';
     var t = THEMES[id];
     var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
-    var raw = overrides ? overrides['--bg-app'] : null;
+    var raw = overrides ? overrides['--bg-panel'] : null;
     if (raw) {
       // a stored spec (object/array) or a hex — norm via GradientUI if present
       if (typeof raw === 'object') return raw;
       if (isHexColor(raw)) return { colors: [raw], dir: 'auto' };
     }
     return { colors: [t.grid.bg], dir: 'auto' };
+  }
+
+  // v0.49: onColorFor(hex) — white or near-black, whichever stays readable
+  // on the given fill (relative luminance, the WCAG-ish quick check).
+  function onColorFor(hex) {
+    var m = /^#([0-9a-fA-F]{6})$/.exec(String(hex == null ? '' : hex));
+    if (!m) return '#ffffff';
+    var h = m[1];
+    var r = parseInt(h.slice(0, 2), 16) / 255;
+    var g = parseInt(h.slice(2, 4), 16) / 255;
+    var b = parseInt(h.slice(4, 6), 16) / 255;
+    var lin = function (c) { return (c <= 0.03928) ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    var L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    return (L > 0.45) ? '#10131a' : '#ffffff';
   }
 
   // boot + live-apply (browser only — the node path skips straight to
@@ -339,7 +389,9 @@
       apply: applyTheme,
       effectiveGrid: effectiveGrid,
       effectiveGridSpecs: effectiveGridSpecs,
-      appBgSpec: appBgSpec,
+      canvasBgSpec: canvasBgSpec,
+      appBgSpec: canvasBgSpec,   // v0.49 alias (old name, same contract)
+      onColorFor: onColorFor,
       pendingScheme: pendingScheme,
       isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
       customizable: CUSTOMIZABLE,
@@ -364,6 +416,8 @@
       gridSpecFor: gridSpecFor,
       effectiveGridSpecs: effectiveGridSpecs,
       effectiveGrid: effectiveGrid,
+      canvasBgSpec: canvasBgSpec,
+      onColorFor: onColorFor,
       isHexColor: isHexColor
     };
   }

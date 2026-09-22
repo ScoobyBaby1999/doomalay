@@ -131,18 +131,23 @@ eq('css pat-sunburst 2', G.css({ colors: [A, B], dir: 'pat-sunburst' }),
 has('css pat-sunburst 1 synth', G.css({ colors: [A], dir: 'pat-sunburst' }),
   'repeating-conic-gradient(from 0deg at 50% 100%, ' + A + ' 0deg 15deg, ' + lighten(A, 18) + ' 15deg 30deg)');
 
+// v0.49: the checker is a self-tiling SVG data-URL (the old `0 0 / 32px
+// 32px` suffix is invalid inside background-image — the reported bug)
 var checker = G.css({ colors: [A, B], dir: 'pat-checker' });
-eq('css pat-checker', checker, 'repeating-conic-gradient(' + A + ' 0 25%, ' + B + ' 0 50%) 0 0 / 32px 32px');
-ok('checker tile suffix', checker.endsWith(' 0 0 / 32px 32px'));
-has('css pat-checker 1 synth', G.css({ colors: [A], dir: 'pat-checker' }), darken(A, 18));
+has('css pat-checker svg tile', checker, 'data:image/svg+xml');
+has('css pat-checker base fill', checker, encodeURIComponent('fill="' + A + '"'));
+has('css pat-checker alt fill', checker, encodeURIComponent('fill="' + B + '"'));
+ok('checker no shorthand suffix', checker.indexOf(' 0 0 / ') < 0);
+has('css pat-checker 1 synth', G.css({ colors: [A], dir: 'pat-checker' }),
+  encodeURIComponent('fill="' + darken(A, 18) + '"'));
 
 // ── texture layering ───────────────────────────────────────────────
 var texed = G.css({ colors: [A, B], dir: 'auto', tex: TEX });
-eq('css tex exact', texed, 'linear-gradient(135deg, ' + A + ', ' + B + '), url("' + TEX + '")');
-ok('css tex ends with url()', texed.slice(-(('url("' + TEX + '")').length)) === 'url("' + TEX + '")');
+eq('css tex exact', texed, 'linear-gradient(135deg, ' + A + ', ' + B + "), url('" + TEX + "')");
+ok('css tex ends with url()', texed.slice(-(("url('" + TEX + "')").length)) === "url('" + TEX + "')");
 eq('css tex 1-color flat layer', G.css({ colors: [A], dir: 'v', tex: TEX }),
-  'linear-gradient(180deg, ' + A + ', ' + A + '), url("' + TEX + '")');
-has('css tex pattern dir keeps recipe', G.css({ colors: [A], dir: 'pat-navy', tex: TEX }), 'url("' + TEX + '")');
+  'linear-gradient(180deg, ' + A + ', ' + A + "), url('" + TEX + "')");
+has('css tex pattern dir keeps recipe', G.css({ colors: [A], dir: 'pat-navy', tex: TEX }), "url('" + TEX + "')");
 
 // ── solid / twins ──────────────────────────────────────────────────
 eq('solid first color', G.solid(['#112233', '#445566']), '#112233');

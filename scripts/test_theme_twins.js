@@ -328,7 +328,11 @@ has('page token wrapper', html, 'data-appr-render="r');
 has('page theme editor accent', html, 'id="tv-accent-gr"');
 has('page theme editor accent2', html, 'id="tv-accent-2-gr"');
 has('page theme editor bgapp', html, 'id="tv-bg-app-gr"');
-has('page grid editor bg', html, 'id="gc-bg-gr"');
+// v0.49: the canvas background moved into the Customize section (the
+// --bg-panel row — seeded from canvasBgSpec, texture-capable); the Grid
+// Colors section no longer carries its own Background row.
+has('page canvas bg editor (customize)', html, 'id="tv-bg-panel-gr"');
+lacks('page grid NO own bg row', html, 'id="gc-bg-gr"');
 has('page grid editor origin', html, 'id="gc-originColor-gr"');
 has('page fmt row a1', html, 'data-fmt-slot="a1"');
 has('page fmt row link', html, 'data-fmt-slot="link"');

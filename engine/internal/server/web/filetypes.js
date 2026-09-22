@@ -25,9 +25,9 @@
     web:     { icon: '🌐', color: 'var(--fmt-a1)' },
     config:  { icon: '⚙', color: 'var(--fmt-a2)' },
     sheet:   { icon: '📊', color: 'var(--fmt-a1)' },
-    binary:  { icon: 'BIN', color: '#71717a' },
-    archive: { icon: '🗜', color: '#71717a' },
-    image:   { icon: '🖼', color: '#71717a' },
+    binary:  { icon: 'BIN', color: 'var(--text-3)' },
+    archive: { icon: '🗜', color: 'var(--text-3)' },
+    image:   { icon: '🖼', color: 'var(--text-3)' },
     other:   { icon: '📄', color: 'var(--fmt-a2)' }
   };
 

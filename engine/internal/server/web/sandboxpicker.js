@@ -435,6 +435,67 @@
     return '<span style="font-size:11px;color:' + color + '">● ' + esc(label) + '</span>';
   }
 
+  function renderShared(detail, onPick) {
+    detail.innerHTML = '<p style="font-size:calc(var(--ui-small-fs));color:var(--text-3);margin:0 0 8px">checking the shared sandbox…</p>';
+    getJSON('/api/hf/shared').then(function (sh) {
+      detail.innerHTML =
+        '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+        '<span style="font-size:calc(var(--ui-small-fs));font-weight:600;color:var(--text-1)">' + esc(sh.repo) + '</span>' +
+        stageBadge(sh) + '</div>' +
+        '<p style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 10px">' +
+        'Community sandbox on the full build toolchain. Your HF account is the key. Workspaces are per-chat and ephemeral.</p>' +
+        '<button id="hf-use-shared" style="width:100%;padding:10px;border-radius:10px;background:var(--accent);background-image:var(--accent-gradient,none);color:var(--on-accent);border:none;font-size:calc(var(--ui-small-fs));font-weight:600;cursor:pointer">Use the shared sandbox</button>' +
+        '</div>';
+      var btn = detail.querySelector('#hf-use-shared');
+      if (btn) btn.addEventListener('click', function () {
+        window.ConnectOverlay.close();
+        if (onPick) onPick('hf', { mode: 'shared', repo: sh.repo });
+      });
+    }).catch(function (e) {
+      detail.innerHTML = '<p style="color:var(--err);font-size:calc(var(--ui-small-fs));margin:0">' + esc(e.message) + '</p>';
+    });
+  }
+
+  function renderOwn(detail, onPick) {
+    detail.innerHTML =
+      '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px">' +
+      '<p style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 10px">' +
+      'Creates a <b>private</b> Space under your HF account and uploads the Doomalay brain. ' +
+      'Free tier — no PRO needed (the engine uses the ZeroGPU creation path). Name it or leave blank for auto.</p>' +
+      '<div style="display:flex;gap:8px;margin-bottom:10px">' +
+      '<input id="hf-own-name" placeholder="doomalay-<auto>" style="flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-1);font-size:calc(var(--ui-small-fs));font-family:inherit" />' +
+      '<button id="hf-own-create" style="padding:9px 16px;border-radius:10px;background:var(--accent);background-image:var(--accent-gradient,none);color:var(--on-accent);border:none;font-size:calc(var(--ui-small-fs));font-weight:600;cursor:pointer">Create</button>' +
+      '</div>' +
+      '<div id="hf-own-progress" style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)"></div>' +
+      '</div>';
+    var btn = detail.querySelector('#hf-own-create');
+    if (btn) btn.addEventListener('click', function () {
+      var name = (detail.querySelector('#hf-own-name') || {}).value || '';
+      var prog = detail.querySelector('#hf-own-progress');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      if (prog) prog.textContent = 'creating the Space + uploading the brain (~2.3 MB)…';
+      postJSON('/api/hf/space/create', { name: name }).then(function (res) {
+        // created — watch the build, then use it
+        watchBuild(prog, res.repo, function () {
+          window.ConnectOverlay.close();
+          if (onPick) onPick('hf', { mode: 'own', repo: res.repo });
+        });
+      }).catch(function (e) {
+        btn.disabled = false; btn.textContent = 'Create';
+        if (prog) {
+          var m = String(e.message || '');
+          prog.innerHTML = '<span style="color:var(--err)">' + esc(m) + '</span>';
+          if (m.indexOf('ZeroGPU') >= 0 || m.indexOf('2 ZeroGPU') >= 0) {
+            prog.innerHTML += '<br><span style="color:var(--text-3)">You have 2 own sandboxes already — use “Pick an existing space” or the SHARED sandbox.</span>';
+          } else if (m.indexOf('PRO') >= 0) {
+            prog.innerHTML += '<br><span style="color:var(--text-3)">The free creation path is blocked for your account — use the SHARED sandbox instead.</span>';
+          }
+        }
+      });
+    });
+  }
+
   function watchBuild(prog, repo, done) {
     if (!prog) { done(); return; }
     var ticks = 0;

@@ -27,6 +27,7 @@
     --text-3-dim: #54545e;
     --accent: #a78bfa;      --accent-rgb: 167,139,250;
     --accent-2: #38bdf8;    --accent-2-rgb: 56,189,248;
+    --on-accent: #ffffff;    /* v0.49: text ON accent fills — theme.js re-derives it when Accent 1 is customized */
     --accent-3: #f472b6;    --accent-3-rgb: 244,114,182;
     --ok: #34d399;         --ok-rgb: 52,211,153;
     --warn: #fbbf24;       --warn-rgb: 251,191,36;
@@ -712,6 +713,10 @@
     border-radius: 12px;
     overflow: hidden;
   }
+  /* v0.49: the collapsible section headers are OVERLAY chrome — they
+     follow the Overlay background (--bg-app), one step darker than the
+     section body's surface (user spec: "surface or overlay background
+     to change the background of the overlay, the collapsible headers"). */
   .settings-section h3 {
     font-size: calc(var(--ui-fs) - 1px);
     font-weight: 700;
@@ -727,7 +732,8 @@
     gap: 10px;
     min-height: 48px;               /* v0.25: a real touch target */
     -webkit-tap-highlight-color: transparent;
-    background: var(--surface-1);
+    background: var(--bg-app);
+    background-image: var(--bg-app-gradient, none);
     transition: background 0.15s;
   }
   .settings-section h3:active { background: var(--surface-2); }
@@ -918,7 +924,12 @@
   }
   .msg-user {
     align-self: flex-end;
-    background: var(--border-strong); color: var(--text-1);
+    /* v0.49: user bubbles follow Accent 1 — the accent fill + gradient
+       twin + --on-accent text (derived from the accent's luminance,
+       theme.js). Was --border-strong (never customizable). */
+    background: var(--accent);
+    background-image: var(--accent-gradient, none);
+    color: var(--on-accent, #fff);
     padding: calc(10px * var(--chat-scale)) calc(14px * var(--chat-scale)); border-radius: 14px 14px 4px 14px;
     max-width: 86%;
   }
@@ -2316,7 +2327,9 @@
   #util-row .util-btn {
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    background: var(--bg-panel); border: 1px solid var(--surface-3);
+    background: var(--bg-app);   /* v0.49: overlay chrome (was --bg-panel) */
+    background-image: var(--bg-app-gradient, none);
+    border: 1px solid var(--surface-3);
     color: var(--text-3); padding: 5px 8px;
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
     box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.85);
@@ -2406,7 +2419,11 @@
   }
   .pub-head-bar {
     display: flex; align-items: center; gap: 10px; width: 100%;
-    padding: 11px 13px; background: transparent; border: none;
+    padding: 11px 13px;
+    /* v0.49: collapsible header = overlay chrome — Overlay background */
+    background: var(--bg-app);
+    background-image: var(--bg-app-gradient, none);
+    border: none;
     font-family: inherit; cursor: pointer; text-align: left;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2434,21 +2451,29 @@
   .pub-sub {
     font-size: var(--ui-small-fs); color: var(--text-3); letter-spacing: 0.2px;
   }
-  .hub-librow { display: flex; flex-direction: column; gap: 8px; }
+  /* v0.49 (user spec): the library pills stand as COLUMNS — side by
+     side, each a vertical tile (icon over label over count) — instead of
+     stacked full-width rows. */
+  .hub-librow { display: flex; flex-direction: row; gap: 8px; }
   .hub-libpill {
-    display: flex; align-items: center; gap: 10px; width: 100%;
-    min-height: 48px; padding: 9px 13px;
+    flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; min-height: 72px; padding: 10px 6px;
     background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
     border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
     box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
-    font-size: calc(var(--ui-fs) - 0.5px); font-weight: 700; text-align: left;
-    font-family: inherit; cursor: pointer; white-space: nowrap;
+    font-size: calc(var(--ui-small-fs)); font-weight: 700; text-align: center;
+    font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
-  .hub-libpill .dx-pill-ico { font-size: calc(var(--ui-fs) + 2px); flex-shrink: 0; }
+  .hub-libpill .dx-pill-ico { font-size: calc(var(--ui-fs) + 4px); flex-shrink: 0; line-height: 1; }
+  .hub-libpill .dx-pill-label {
+    white-space: normal; overflow: hidden; text-overflow: ellipsis;
+    max-width: 100%; line-height: 1.2;
+  }
   .hub-libpill-count {
-    margin-left: auto; font-size: var(--ui-small-fs); color: var(--text-3);
+    font-size: var(--ui-small-fs); color: var(--text-3);
     font-variant-numeric: tabular-nums; font-weight: 600; flex-shrink: 0;
   }
   .hub-libpill[data-on="1"] {
@@ -2465,12 +2490,14 @@
   }
   .hub-libpill-ghost { cursor: default; }
 
-  /* the sticky zone under the header: search + the filter columns */
+  /* the sticky zone under the header: search + the filter columns.
+     v0.49: overlay chrome — follows the OVERLAY background. */
   .hub-sticky {
     position: sticky; top: 0; z-index: 6;
     display: flex; flex-direction: column; gap: 7px;
     margin: 0 -14px; padding: 8px 14px;
-    background: var(--bg-panel);
+    background: var(--bg-app);
+    background-image: var(--bg-app-gradient, none);
     border-bottom: 1px solid var(--surface-2);
   }
   .hub-search {
@@ -2488,6 +2515,16 @@
   }
   .hub-funnel svg { width: 16px; height: 16px; fill: currentColor; }
   .hub-fcols { display: flex; flex: 1 1 auto; min-width: 0; }
+  /* v0.49 (user spec): the filter-by-text box BESIDE the sort columns */
+  .hub-ftext {
+    flex: 0 1 108px; min-width: 72px; box-sizing: border-box;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-left: 1px solid var(--surface-3);
+    color: var(--text-1); padding: 7px 9px; border-radius: 0 10px 10px 0 / 0 10px 10px 0;
+    outline: none; font-size: calc(var(--ui-small-fs) - 0.5px); font-family: inherit;
+    min-height: 100%;
+  }
+  .hub-ftext:focus { border-color: var(--accent); }
   .hub-fcol {
     flex: 1 1 0; min-width: 0; padding: 7px 2px;
     background: transparent; border: none; border-left: 1px solid var(--surface-3);
@@ -2943,25 +2980,33 @@
   /* inputs share the accent caret so typing feels like the theme */
   input, textarea { caret-color: var(--accent); }
 
-  /* ══ v0.45 ITEM 4: the gradient-twin sweep ═══════════════════════════
+  /* ══ v0.49 THE TWIN LAYER, FIXED ═══════════════════════════════════
      The twin system (theme.js) writes --X (solid) + --X-gradient (image
-     or 'none') for every customizable var. Consumers that set ONLY
-     `background: var(--X)` paint the solid and the gradient is invisible
-     — the reported "colors don't follow the gradient" bug. This block
-     layers the gradient twin over EVERY element whose background reads a
-     customizable surface/border var, so a user-set multi-color gradient
-     actually paints. Elements that don't customize (gradient='none') see
-     no change — `background-image: none` is the no-op. */
+     or 'none') for every customizable var. THE v0.45 BUG (user-reported:
+     "panel background / borders / accents do nothing"): consumers that
+     set the `background:`/`border:` SHORTHAND inline reset background-
+     image/border-image to none — and an INLINE declaration beats any
+     author stylesheet rule, so the v0.45 sweep's twin rules never
+     painted on inline-styled elements. THE FIX: author !important, which
+     outranks inline non-important declarations. With 'none' twins these
+     rules remain visual no-ops, so nothing changes until the user actually
+     sets a gradient. Selector inventory matches the codebase's exact
+     inline patterns (border:1px / 1px-with-space — enumerated by grep). */
   [style*="background: var(--surface-1)"],
-  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none); }
+  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none) !important; }
   [style*="background: var(--surface-2)"],
-  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none); }
-  [style*="background: var(--bg-panel)"],
-  [style*="background:var(--bg-panel)"] { background-image: var(--bg-panel-gradient, none); }
+  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none) !important; }
   [style*="background: var(--bg-app)"],
-  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none); }
-  /* the stylesheet-rule consumers (not inline) — cover the common cases */
-  .panel-header, .panel-body, #chat-panel, .msg-assistant, .msg-user,
+  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; }
+  [style*="background: var(--accent)"],
+  [style*="background:var(--accent)"] { background-image: var(--accent-gradient, none) !important; }
+  [style*="background: var(--accent-2)"],
+  [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; }
+  [style*="background: var(--accent-3)"],
+  [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; }
+  /* stylesheet-ruled surfaces (no inline style — no !important needed,
+     kept anyway for uniformity against future inline overrides) */
+  .panel-header, .panel-body, #chat-panel, .msg-assistant,
   .fmt-code, .fmt-pre, .artifact-card, .ts-row, .pv-btn, .pill, .chip,
   .kbd, .code-card, .bubble, .card, .modal, .sheet, .toolbar, .dock-strip,
   .settings-nav .tab, .gr-editor, .gr-swatches, .gr-tools {
@@ -2973,27 +3018,68 @@
   .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover {
     background-image: var(--surface-2-gradient, none);
   }
-  /* border twin — borders follow --border-gradient when set */
+  /* v0.49: the chat panel + settings pages are SURFACES — their gradient
+     rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints
+     the chrome: overlay screens, collapsible headers, sticky bars, the
+     util row (the overlay card itself is painted inline in
+     connectoverlay.js — background:var(--bg-app) — so the [style*] twin
+     rule catches it). */
+  .hub-sticky, .pub-head-bar, #util-row .util-btn {
+    background-image: var(--bg-app-gradient, none);
+  }
+  /* THE USER'S OWN BUBBLES follow Accent 1 (user spec: "the users own
+     texts … should follow theme colors") — the rule lives with the other
+     message bubbles above (accent fill + gradient twin + --on-accent). */
+  /* border twin — borders follow --border-gradient when set (the inline
+     `border:` shorthand's reset loses to !important). CAVEAT: border-image
+     ignores border-radius — square corners are the explicit gradient-border
+     look; solid borders (the default) are unaffected. The rounded
+     stylesheet-ruled elements below use the radius-safe double-background
+     trick instead. */
+  [style*="border:1px solid var(--border)"],
   [style*="border: 1px solid var(--border)"],
-  [style*="border:1px solid var(--border)"] {
-    border-image: var(--border-gradient, none) 1;
+  [style*="border:1.5px solid var(--border)"],
+  [style*="border:2px solid var(--border)"] {
+    border-image: var(--border-gradient, none) 1 !important;
   }
-  /* accent twins — pills/buttons that use --accent get the gradient */
-  [style*="background: var(--accent)"],
-  [style*="background:var(--accent)"] {
-    background-image: var(--accent-gradient, none);
+  /* RADIUS-SAFE gradient borders for stylesheet-ruled elements: layer 1
+     = the element's own surface gradient (clipped to the padding-box —
+     'none' falls back to the base background-color), layer 2 = the border
+     gradient clipped to the border-box. Corners stay round; 'none' twins
+     degrade to the plain solid look. */
+  .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
+  .color-row-banner, .color-row-reset {
+    background-image: var(--surface-2-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, border-box;
+    background-clip: padding-box, border-box;
   }
-  [style*="background: var(--accent-2)"],
-  [style*="background:var(--accent-2)"] {
-    background-image: var(--accent-2-gradient, none);
+  .settings-section {
+    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, border-box;
+    background-clip: padding-box, border-box;
   }
-  /* v0.45 ITEM 4 fix: --bg-app-rgb was referenced (L282, L1451) but never
-     defined — fell back to hardcoded 10,10,11 (Midnight) regardless of
-     theme. Derive it from the live --bg-app solid on :root so the rgba()
-     composition follows the theme/customization. */
-  :root {
-    --bg-app-rgb: 10,10,11;
+  /* v0.49 GRADIENT TEXT — when Primary text carries a gradient (theme.js
+     sets data-text-grad on :root), the PROMINENT text clips to it; body
+     text keeps the solid first color (readability first). */
+  [data-text-grad] .settings-section h3 span,
+  [data-text-grad] .pub-title,
+  [data-text-grad] .chatbot .name,
+  [data-text-grad] .hub-card-name,
+  [data-text-grad] .gatelock-title,
+  [data-text-grad] .panel-header .meta .name,
+  [data-text-grad] .wsx-title,
+  [data-text-grad] h1, [data-text-grad] h2, [data-text-grad] h3 {
+    background-image: var(--text-1-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
   }
+  /* v0.45 ITEM 4 fix (kept): --bg-app-rgb was referenced (L282, L1451)
+     but never defined — per-theme statics below; theme.js now also writes
+     the inline triplet when the user customizes --bg-app (which beats
+     these statics, like every other override). */
+  :root { --bg-app-rgb: 10,10,11; }   /* midnight default */
   [data-theme="nebula"]  { --bg-app-rgb: 11,9,18; }
   [data-theme="ember"]   { --bg-app-rgb: 15,10,8; }
   [data-theme="forest"]  { --bg-app-rgb: 8,13,10; }

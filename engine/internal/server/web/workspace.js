@@ -210,13 +210,16 @@
       '.wsc-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
         'color:var(--text-1);font-weight:500}' +
       '.wsc-size{flex-shrink:0;color:var(--text-3);font-size:calc(var(--ui-small-fs) - 1px)}' +
-      // file viewer / editor pages
-      '.wsv-pre{overflow:auto;margin:0;padding:12px;background:var(--bg-panel);' +
+      // file viewer / editor pages (v0.49 sweep: raised surfaces, not
+      // the canvas var — with the surface-2 gradient twin)
+      '.wsv-pre{overflow:auto;margin:0;padding:12px;background:var(--surface-2);' +
+        'background-image:var(--surface-2-gradient,none);' +
         'color:var(--text-1);font-family:ui-monospace,Menlo,Consolas,monospace;' +
         'font-size:calc(var(--ui-fs) - 2px);line-height:1.5;white-space:pre;' +
         '-webkit-overflow-scrolling:touch}' +
       '.wsv-ta{width:100%;box-sizing:border-box;border:none;outline:none;resize:none;' +
-        'min-height:240px;padding:12px;background:var(--bg-panel);color:var(--text-1);' +
+        'min-height:240px;padding:12px;background:var(--surface-2);' +
+        'background-image:var(--surface-2-gradient,none);color:var(--text-1);' +
         'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(var(--ui-fs) - 2px);' +
         'line-height:1.5;-webkit-overflow-scrolling:touch}';
     document.head.appendChild(s);
