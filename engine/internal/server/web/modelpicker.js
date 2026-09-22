@@ -27,7 +27,6 @@
       '<div style="padding:24px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Pick a model source</h2>' +
-      '<button id="mp-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
       '</div>' +
       '<p style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-3);margin:0 0 20px">Cloud needs an API key; local runs on your device. You can swap the exact model later from the header.</p>' +
       '<div style="display:flex;flex-direction:column;gap:12px">' +
@@ -43,8 +42,6 @@
     window.ConnectOverlay.open(html);
 
     var contentEl = window.ConnectOverlay.getContentEl();
-    var closeBtn = contentEl.querySelector('#mp-close');
-    if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
     contentEl.querySelectorAll('[data-model-type]').forEach(function (card) {
       card.addEventListener('click', function () {

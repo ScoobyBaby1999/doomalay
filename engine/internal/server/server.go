@@ -273,6 +273,19 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/sessions/{id}/workspaces", s.handleSessionWorkspacesList)
         s.mux.HandleFunc("POST /api/sessions/{id}/workspaces", s.handleSessionWorkspaceBind)
         s.mux.HandleFunc("DELETE /api/sessions/{id}/workspaces/{wid}", s.handleSessionWorkspaceUnbind)
+
+        // v0.46: global forge accounts (paste-once sign-in), GitHub App
+        // OAuth (web flow + auto refresh), device-storage workspaces, and
+        // per-workspace branch selections.
+        s.mux.HandleFunc("GET /api/workspaces/accounts", s.handleWorkspaceAccountsList)
+        s.mux.HandleFunc("POST /api/workspaces/accounts", s.handleWorkspaceAccountSet)
+        s.mux.HandleFunc("DELETE /api/workspaces/accounts", s.handleWorkspaceAccountDelete)
+        s.mux.HandleFunc("POST /api/workspaces/device", s.handleWorkspaceDevice)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/branches", s.handleWorkspaceBranches)
+        s.mux.HandleFunc("GET /api/workspaces/oauth/github/status", s.handleGHOAuthStatus)
+        s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
+        s.mux.HandleFunc("GET /api/workspaces/oauth/github/start", s.handleGHOAuthStart)
+        s.mux.HandleFunc("GET /api/workspaces/oauth/github/callback", s.handleGHOAuthCallback)
         // v0.44 EXPLORE — the same repo surface, keyed by ?url= instead of
         // a stored workspace id (the brain's explore tool: ANY repo URL,
         // no connect step)

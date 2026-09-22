@@ -33,15 +33,30 @@
 //      GET/POST /api/sessions/{id}/workspaces  bound list / bind {workspace_id}
 //      DELETE /api/sessions/{id}/workspaces/{wid}
 //
+// v0.46 additions (edits A7/A8/A10/A11/A12):
+//      GET/POST/DELETE /api/workspaces/accounts   global forge sign-in
+//                   (list never returns secrets; POST verifies + stores)
+//      POST   /api/workspaces/device              device-storage row
+//      POST   /api/workspaces/{id}/branches       {branches[], primary}
+//      GET    /api/workspaces/oauth/github/status     (+ redirect_uri hint)
+//      POST   /api/workspaces/oauth/github/config     {client_id, secret}
+//      GET    /api/workspaces/oauth/github/start      → 302 GitHub authorize
+//      GET    /api/workspaces/oauth/github/callback   code→token→vault
+//
 // SECURITY: connect/resolve run forge.Recognize + forge.ProbeHost +
 // forge.GuardURL (SSRF); tokens ride the vault (WORKSPACE_<id>), never the
 // DB; every response is JSON with the access level attached.
 package server
 
 import (
+        "context"
+        "crypto/rand"
+        "encoding/hex"
         "encoding/json"
         "fmt"
+        "io"
         "net/http"
+        "net/url"
         "os"
         "os/exec"
         "path/filepath"
@@ -73,7 +88,7 @@ func (s *Server) wsToken(w *store.Workspace) string {
         if k := s.vault.AsEnv(); k != nil {
                 switch w.Kind {
                 case "github":
-                        return firstNonEmpty(k["GITHUB_PAT"], k["GITHUB_TOKEN"])
+                        return firstNonEmpty(s.githubToken(), k["GITHUB_TOKEN"])
                 case "gitea":
                         return k["GITEA_TOKEN"]
                 }
@@ -115,6 +130,18 @@ func apiBaseFor(kind, host string) string {
 
 // wsJSON writes a workspace with live access + meta decoded.
 func (s *Server) wsJSON(w http.ResponseWriter, status int, ws *store.Workspace, extra map[string]any) {
+        out := s.wsShape(ws)
+        for k, v := range extra {
+                out[k] = v
+        }
+        writeJSON(w, status, out)
+}
+
+// wsShape is the wire form of one workspace — meta DECODED (the v0.46 UI
+// reads meta.branches / meta.device / meta.display_path from list
+// responses; the raw string blob double-encodes and broke the picker's
+// branch badges + the drawer's branch switcher).
+func (s *Server) wsShape(ws *store.Workspace) map[string]any {
         out := map[string]any{
                 "id": ws.ID, "name": ws.Name, "kind": ws.Kind, "host": ws.Host,
                 "owner": ws.Owner, "repo": ws.Repo, "repo_url": ws.RepoURL,
@@ -126,10 +153,7 @@ func (s *Server) wsJSON(w http.ResponseWriter, status int, ws *store.Workspace, 
         if m := ws.MetaJSON(); m != nil {
                 out["meta"] = m
         }
-        for k, v := range extra {
-                out[k] = v
-        }
-        writeJSON(w, status, out)
+        return out
 }
 
 // loadWS fetches the workspace or writes the 404 itself.
@@ -351,12 +375,14 @@ func (s *Server) globalToken(kind string) string {
         if s.vault == nil {
                 return ""
         }
-        env := s.vault.AsEnv()
         switch kind {
         case "github":
-                return firstNonEmpty(env["GITHUB_PAT"], env["GITHUB_TOKEN"])
+                // v0.46: the OAuth path may need a refresh_token round-trip before
+                // the access token is usable — githubToken handles it (and falls
+                // back to a plain stored PAT with no expiry metadata).
+                return firstNonEmpty(s.githubToken(), s.vault.AsEnv()["GITHUB_TOKEN"])
         case "gitea":
-                return env["GITEA_TOKEN"]
+                return s.vault.AsEnv()["GITEA_TOKEN"]
         }
         return ""
 }
@@ -385,7 +411,12 @@ func (s *Server) handleWorkspacesList(w http.ResponseWriter, r *http.Request) {
         if list == nil {
                 list = []*store.Workspace{}
         }
-        writeJSON(w, 200, map[string]any{"workspaces": list})
+        // v0.46: decode meta per row (the UI reads meta.branches etc.)
+        shapes := make([]map[string]any, 0, len(list))
+        for _, ws := range list {
+                shapes = append(shapes, s.wsShape(ws))
+        }
+        writeJSON(w, 200, map[string]any{"workspaces": shapes})
 }
 
 func (s *Server) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
@@ -463,7 +494,13 @@ func (s *Server) handleSessionWorkspacesList(w http.ResponseWriter, r *http.Requ
         if list == nil {
                 list = []*store.Workspace{}
         }
-        writeJSON(w, 200, map[string]any{"workspaces": list})
+        // v0.46: decode meta per row (the drawer's branch switcher reads
+        // meta.branches from THIS response)
+        shapes := make([]map[string]any, 0, len(list))
+        for _, ws := range list {
+                shapes = append(shapes, s.wsShape(ws))
+        }
+        writeJSON(w, 200, map[string]any{"workspaces": shapes})
 }
 
 func (s *Server) handleSessionWorkspaceBind(w http.ResponseWriter, r *http.Request) {
@@ -552,20 +589,34 @@ func (s *Server) handleWorkspaceToken(w http.ResponseWriter, r *http.Request) {
                 return
         }
         var req struct {
-                Token string `json:"token"`
+                Token      string `json:"token"`
+                UseAccount bool   `json:"use_account"` // v0.46: reuse the saved global sign-in
         }
-        if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
-                writeError(w, 400, "token is required")
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
                 return
         }
         if s.vault == nil {
                 writeError(w, 500, "vault not initialized")
                 return
         }
+        token := strings.TrimSpace(req.Token)
+        if token == "" && req.UseAccount {
+                // the global account token for this workspace's forge kind
+                token = s.globalToken(ws.Kind)
+                if token == "" {
+                        writeError(w, 400, "no saved "+ws.Kind+" account — sign in or paste a token")
+                        return
+                }
+        }
+        if token == "" {
+                writeError(w, 400, "token is required")
+                return
+        }
         if ws.TokenEnv == "" {
                 ws.TokenEnv = "WORKSPACE_" + ws.ID
         }
-        if err := s.vault.Set(ws.TokenEnv, ws.Kind, strings.TrimSpace(req.Token), ""); err != nil {
+        if err := s.vault.Set(ws.TokenEnv, ws.Kind, token, ""); err != nil {
                 writeError(w, 500, "vault: "+err.Error())
                 return
         }
@@ -1165,4 +1216,558 @@ func (s *Server) wsErr(w http.ResponseWriter, err error) {
                 return
         }
         writeError(w, 502, err.Error())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v0.46 — GLOBAL FORGE ACCOUNTS + GITHUB APP OAUTH + DEVICE WORKSPACES
+//
+// User spec (edits A7/A8/A11/A12): paste a token ONCE (or "Sign in with
+// GitHub" and never paste anything) — it is encrypted into the vault
+// instantly and every form reuses it. The GitHub App web flow exchanges
+// code→token engine-side; expiring tokens (recommended setting) refresh
+// themselves via refresh_token. Device-storage workspaces are PWA-owned
+// (FileSystemHandle in IndexedDB) — the engine only tracks the row so it
+// appears in the global list and binds per chat.
+// ═══════════════════════════════════════════════════════════════════════
+
+// accountExtra is the JSON blob riding a vault entry's EXTRA field (also
+// encrypted at rest — see vault.Entry).
+type accountExtra struct {
+        Login        string `json:"login,omitempty"`
+        RefreshToken string `json:"refresh_token,omitempty"`
+        ExpiresAt    int64  `json:"expires_at,omitempty"` // unix seconds
+}
+
+func accountEnv(kind string) string {
+        switch kind {
+        case "github":
+                return "GITHUB_PAT"
+        case "gitea":
+                return "GITEA_TOKEN"
+        }
+        return ""
+}
+
+// accountInfo: (login, signedIn) for a forge kind — never the secret.
+func (s *Server) accountInfo(kind string) (string, bool) {
+        env := accountEnv(kind)
+        if env == "" || s.vault == nil {
+                return "", false
+        }
+        _, extra, err := s.vault.Get(env)
+        if err != nil {
+                return "", false
+        }
+        var ae accountExtra
+        _ = json.Unmarshal([]byte(extra), &ae)
+        return ae.Login, true
+}
+
+// handleWorkspaceAccountsList — which forges have a saved sign-in.
+func (s *Server) handleWorkspaceAccountsList(w http.ResponseWriter, r *http.Request) {
+        id, secret := s.ghOAuthCreds()
+        out := []map[string]any{}
+        for _, kind := range []string{"github", "gitea"} {
+                login, signed := s.accountInfo(kind)
+                row := map[string]any{"kind": kind, "signed_in": signed, "login": login}
+                if kind == "github" {
+                        row["oauth_configured"] = id != "" && secret != ""
+                }
+                out = append(out, row)
+        }
+        writeJSON(w, 200, map[string]any{"accounts": out})
+}
+
+// handleWorkspaceAccountSet — save (or replace) a forge token ONCE. The
+// token is verified against the forge, then stored encrypted with the
+// account login in the extra blob. It is NEVER returned by any API.
+func (s *Server) handleWorkspaceAccountSet(w http.ResponseWriter, r *http.Request) {
+        var req struct {
+                Kind  string `json:"kind"`
+                Token string `json:"token"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        req.Kind = strings.TrimSpace(req.Kind)
+        req.Token = strings.TrimSpace(req.Token)
+        env := accountEnv(req.Kind)
+        if env == "" {
+                writeError(w, 400, "kind must be github or gitea")
+                return
+        }
+        if req.Token == "" {
+                writeError(w, 400, "token is required")
+                return
+        }
+        if s.vault == nil {
+                writeError(w, 500, "vault not initialized")
+                return
+        }
+        login, err := forgeLoginFor(req.Kind, req.Token)
+        if err != nil {
+                writeError(w, 401, "token rejected: "+err.Error())
+                return
+        }
+        extra, _ := json.Marshal(accountExtra{Login: login})
+        if err := s.vault.Set(env, req.Kind, req.Token, string(extra)); err != nil {
+                writeError(w, 500, "vault: "+err.Error())
+                return
+        }
+        writeJSON(w, 200, map[string]any{"saved": true, "kind": req.Kind, "login": login})
+}
+
+// handleWorkspaceAccountDelete — sign out of a forge (removes the vault key).
+func (s *Server) handleWorkspaceAccountDelete(w http.ResponseWriter, r *http.Request) {
+        env := accountEnv(r.URL.Query().Get("kind"))
+        if env == "" {
+                writeError(w, 400, "kind must be github or gitea")
+                return
+        }
+        if s.vault != nil {
+                _ = s.vault.Delete(env)
+        }
+        writeJSON(w, 200, map[string]any{"deleted": true})
+}
+
+// forgeLoginFor verifies a token by fetching the forge's /user.
+func forgeLoginFor(kind, token string) (string, error) {
+        var endpoint string
+        switch kind {
+        case "github":
+                endpoint = "https://api.github.com/user"
+        case "gitea":
+                endpoint = "https://gitea.com/api/v1/user"
+        default:
+                return "", fmt.Errorf("unsupported kind %s", kind)
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+        defer cancel()
+        req, _ := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+        req.Header.Set("Authorization", "Bearer "+token)
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("User-Agent", "doomalay-engine")
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return "", err
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode == 401 || resp.StatusCode == 403 {
+                return "", fmt.Errorf("unauthorized (HTTP %d)", resp.StatusCode)
+        }
+        if resp.StatusCode != 200 {
+                return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+        }
+        var u struct {
+                Login string `json:"login"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&u); err != nil {
+                return "", err
+        }
+        if u.Login == "" {
+                return "", fmt.Errorf("forge returned no login")
+        }
+        return u.Login, nil
+}
+
+// ── GitHub App OAuth (web flow) ──────────────────────────────────────────
+
+var oauthStates = struct {
+        sync.Mutex
+        m map[string]oauthPending
+}{m: map[string]oauthPending{}}
+
+type oauthPending struct {
+        Redirect string
+        Expires  time.Time
+}
+
+// ghOAuthCreds: env override first (headless installs), then the vault.
+func (s *Server) ghOAuthCreds() (id, secret string) {
+        if id = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID")); id != "" {
+                return id, strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_SECRET"))
+        }
+        if s.vault == nil {
+                return "", ""
+        }
+        if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil {
+                id = strings.TrimSpace(v)
+        }
+        if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_SECRET"); err == nil {
+                secret = strings.TrimSpace(v)
+        }
+        return id, secret
+}
+
+// oauthRedirectURI derives the callback from the request origin — works on
+// localhost (GitHub allows http for loopback), cloudflare tunnels (HTTPS,
+// X-Forwarded-Proto), and any LAN/origin the PWA is served from.
+func oauthRedirectURI(r *http.Request) string {
+        scheme := ""
+        if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+                scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
+        }
+        if scheme == "" {
+                if r.TLS != nil {
+                        scheme = "https"
+                } else if strings.HasPrefix(r.Host, "127.0.0.1") ||
+                        strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "[::1]") {
+                        scheme = "http"
+                } else {
+                        scheme = "http"
+                }
+        }
+        return scheme + "://" + r.Host + "/api/workspaces/oauth/github/callback"
+}
+
+// handleGHOAuthStatus — is "Sign in with GitHub" wired up? (+ who's signed in)
+func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
+        id, secret := s.ghOAuthCreds()
+        login, signed := s.accountInfo("github")
+        writeJSON(w, 200, map[string]any{
+                "configured": id != "" && secret != "",
+                "signed_in":  signed,
+                "login":      login,
+                // the URI to register in the GitHub App settings for THIS origin
+                "redirect_uri": oauthRedirectURI(r),
+        })
+}
+
+// handleGHOAuthConfig — store the GitHub App client pair (encrypted).
+func (s *Server) handleGHOAuthConfig(w http.ResponseWriter, r *http.Request) {
+        var req struct {
+                ClientID     string `json:"client_id"`
+                ClientSecret string `json:"client_secret"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        req.ClientID = strings.TrimSpace(req.ClientID)
+        req.ClientSecret = strings.TrimSpace(req.ClientSecret)
+        if req.ClientID == "" || req.ClientSecret == "" {
+                writeError(w, 400, "client_id and client_secret are required")
+                return
+        }
+        if s.vault == nil {
+                writeError(w, 500, "vault not initialized")
+                return
+        }
+        if err := s.vault.Set("GITHUB_OAUTH_CLIENT_ID", "github", req.ClientID, ""); err != nil {
+                writeError(w, 500, "vault: "+err.Error())
+                return
+        }
+        if err := s.vault.Set("GITHUB_OAUTH_CLIENT_SECRET", "github", req.ClientSecret, ""); err != nil {
+                writeError(w, 500, "vault: "+err.Error())
+                return
+        }
+        writeJSON(w, 200, map[string]any{"configured": true,
+                "redirect_uri": oauthRedirectURI(r)})
+}
+
+func randHex(n int) string {
+        b := make([]byte, n)
+        _, _ = rand.Read(b)
+        return hex.EncodeToString(b)
+}
+
+// handleGHOAuthStart — redirect the user to GitHub's authorize page.
+func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
+        id, secret := s.ghOAuthCreds()
+        if id == "" || secret == "" {
+                writeError(w, 400, "GitHub sign-in isn't configured yet — add the GitHub App client id/secret first (or paste a token as the manual method)")
+                return
+        }
+        redirect := r.URL.Query().Get("redirect")
+        // same-origin paths only — never let the flow bounce elsewhere
+        if redirect == "" || !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+                redirect = "/"
+        }
+        state := randHex(16)
+        oauthStates.Lock()
+        now := time.Now()
+        for k, v := range oauthStates.m {
+                if now.After(v.Expires) {
+                        delete(oauthStates.m, k)
+                }
+        }
+        oauthStates.m[state] = oauthPending{Redirect: redirect, Expires: now.Add(10 * time.Minute)}
+        oauthStates.Unlock()
+        u := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(id) +
+                "&redirect_uri=" + url.QueryEscape(oauthRedirectURI(r)) +
+                "&state=" + url.QueryEscape(state)
+        http.Redirect(w, r, u, http.StatusFound)
+}
+
+func popOAuthState(state string) (oauthPending, bool) {
+        oauthStates.Lock()
+        defer oauthStates.Unlock()
+        p, ok := oauthStates.m[state]
+        if ok {
+                delete(oauthStates.m, state)
+        }
+        if !ok || time.Now().After(p.Expires) {
+                return oauthPending{}, false
+        }
+        return p, true
+}
+
+// ghTokenExchange — the code→token (or refresh→token) POST.
+func ghTokenExchange(ctx context.Context, form url.Values) (access, refresh string, expiresIn int64, err error) {
+        req, _ := http.NewRequestWithContext(ctx, "POST",
+                "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("User-Agent", "doomalay-engine")
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return "", "", 0, err
+        }
+        defer resp.Body.Close()
+        var out struct {
+                AccessToken      string `json:"access_token"`
+                RefreshToken     string `json:"refresh_token"`
+                ExpiresIn        int64  `json:"expires_in"`
+                Error            string `json:"error"`
+                ErrorDescription string `json:"error_description"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+                return "", "", 0, err
+        }
+        if out.Error != "" {
+                if out.ErrorDescription != "" {
+                        return "", "", 0, fmt.Errorf("%s", out.ErrorDescription)
+                }
+                return "", "", 0, fmt.Errorf("%s", out.Error)
+        }
+        if out.AccessToken == "" {
+                return "", "", 0, fmt.Errorf("github returned no access token")
+        }
+        return out.AccessToken, out.RefreshToken, out.ExpiresIn, nil
+}
+
+// handleGHOAuthCallback — GitHub bounces here with ?code&state; exchange,
+// store encrypted, and send the user back to the PWA.
+func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
+        q := r.URL.Query()
+        backTo := func(suffix string) {
+                http.Redirect(w, r, "/?"+suffix, http.StatusFound)
+        }
+        if e := q.Get("error"); e != "" {
+                backTo("gh_error=" + url.QueryEscape(e))
+                return
+        }
+        pending, ok := popOAuthState(q.Get("state"))
+        if !ok {
+                writeError(w, 400, "stale or unknown sign-in state — start the sign-in again")
+                return
+        }
+        if q.Get("code") == "" {
+                backTo("gh_error=" + url.QueryEscape("missing code"))
+                return
+        }
+        id, secret := s.ghOAuthCreds()
+        if id == "" || secret == "" {
+                writeError(w, 400, "GitHub sign-in isn't configured")
+                return
+        }
+        if s.vault == nil {
+                writeError(w, 500, "vault not initialized")
+                return
+        }
+        ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+        defer cancel()
+        form := url.Values{
+                "client_id":     {id},
+                "client_secret": {secret},
+                "code":          {q.Get("code")},
+                "redirect_uri":  {oauthRedirectURI(r)},
+        }
+        access, refresh, expiresIn, err := ghTokenExchange(ctx, form)
+        if err != nil {
+                backTo("gh_error=" + url.QueryEscape(err.Error()))
+                return
+        }
+        ae := accountExtra{RefreshToken: refresh}
+        if expiresIn > 0 {
+                ae.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
+        }
+        // who signed in? (best-effort — a /user hiccup must not fail the flow)
+        if login, err := forgeLoginFor("github", access); err == nil {
+                ae.Login = login
+        }
+        extra, _ := json.Marshal(ae)
+        if err := s.vault.Set("GITHUB_PAT", "github", access, string(extra)); err != nil {
+                writeError(w, 500, "vault: "+err.Error())
+                return
+        }
+        suffix := "gh_connected=1"
+        if ae.Login != "" {
+                suffix += "&gh_login=" + url.QueryEscape(ae.Login)
+        }
+        http.Redirect(w, r, pending.Redirect+suffix, http.StatusFound)
+}
+
+// ghRefreshMu serializes refresh exchanges (a swarm of parallel forge calls
+// could otherwise stampede the token endpoint).
+var ghRefreshMu sync.Mutex
+
+// githubToken — GITHUB_PAT with automatic refresh when the OAuth minted
+// token is near/past expiry and a refresh_token exists.
+func (s *Server) githubToken() string {
+        if s.vault == nil {
+                return ""
+        }
+        tok, extra, err := s.vault.Get("GITHUB_PAT")
+        if err != nil || tok == "" {
+                return ""
+        }
+        var ae accountExtra
+        _ = json.Unmarshal([]byte(extra), &ae)
+        if ae.ExpiresAt == 0 || ae.RefreshToken == "" ||
+                time.Now().Unix() < ae.ExpiresAt-60 {
+                return tok // plain PAT or still fresh
+        }
+        ghRefreshMu.Lock()
+        defer ghRefreshMu.Unlock()
+        // re-read — another goroutine may have refreshed while we waited
+        if tok2, extra2, err2 := s.vault.Get("GITHUB_PAT"); err2 == nil {
+                tok, extra = tok2, extra2
+        }
+        _ = json.Unmarshal([]byte(extra), &ae)
+        if ae.ExpiresAt == 0 || ae.RefreshToken == "" ||
+                time.Now().Unix() < ae.ExpiresAt-60 {
+                return tok
+        }
+        id, secret := s.ghOAuthCreds()
+        if id == "" || secret == "" {
+                return tok // can't refresh without the app pair
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+        defer cancel()
+        form := url.Values{
+                "client_id":     {id},
+                "client_secret": {secret},
+                "grant_type":    {"refresh_token"},
+                "refresh_token": {ae.RefreshToken},
+        }
+        access, refresh, expiresIn, err := ghTokenExchange(ctx, form)
+        if err != nil {
+                return tok // stale-but-maybe-working beats nothing
+        }
+        ae.RefreshToken = firstNonEmpty(refresh, ae.RefreshToken)
+        if expiresIn > 0 {
+                ae.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
+        }
+        newExtra, _ := json.Marshal(ae)
+        if err := s.vault.Set("GITHUB_PAT", "github", access, string(newExtra)); err == nil {
+                return access
+        }
+        return tok
+}
+
+// ── device-storage workspaces (item 11) ─────────────────────────────────
+
+var deviceNameRe = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// handleWorkspaceDevice — register a device-storage workspace. The PWA owns
+// the FileSystemHandle (IndexedDB, keyed by the returned id); the engine
+// tracks the row so it lists globally and binds per chatbot.
+func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
+        var req struct {
+                Name      string `json:"name"`
+                Path      string `json:"path"` // display path (informational)
+                SessionID string `json:"session_id"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        req.Name = strings.TrimSpace(req.Name)
+        if req.Name == "" {
+                writeError(w, 400, "name is required")
+                return
+        }
+        slug := deviceNameRe.ReplaceAllString(strings.ToLower(req.Name), "-")
+        slug = strings.Trim(slug, "-")
+        if slug == "" {
+                slug = "device"
+        }
+        meta, _ := json.Marshal(map[string]any{
+                "device": true, "display_path": strings.TrimSpace(req.Path),
+        })
+        ws := &store.Workspace{
+                Kind: "device", Host: "device", Owner: "this device",
+                Repo: slug, Name: req.Name, Access: forge.AccessFull,
+                Meta: string(meta),
+        }
+        if err := s.db.CreateWorkspace(ws); err != nil {
+                writeError(w, 500, "store: "+err.Error())
+                return
+        }
+        if req.SessionID != "" {
+                if err := s.db.BindWorkspace(req.SessionID, ws.ID); err != nil {
+                        writeError(w, 500, "store: "+err.Error())
+                        return
+                }
+        }
+        s.wsJSON(w, 200, ws, map[string]any{"device": true})
+}
+
+// handleWorkspaceBranches — persist the branch selection for a connected
+// repo (the my-repos flow): primary rides ws.Branch, the full set rides
+// meta.branches (the agent + drawer's branch switcher read both).
+func (s *Server) handleWorkspaceBranches(w http.ResponseWriter, r *http.Request) {
+        ws := s.loadWS(w, r)
+        if ws == nil {
+                return
+        }
+        var req struct {
+                Branches []string `json:"branches"`
+                Primary  string   `json:"primary"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        if len(req.Branches) == 0 {
+                writeError(w, 400, "branches (at least one) is required")
+                return
+        }
+        if len(req.Branches) > 20 {
+                writeError(w, 400, "max 20 branches per workspace")
+                return
+        }
+        seen := map[string]bool{}
+        clean := make([]string, 0, len(req.Branches))
+        for _, b := range req.Branches {
+                b = strings.TrimSpace(b)
+                if b == "" || seen[b] || strings.Contains(b, "..") || strings.ContainsAny(b, " \t~^:") {
+                        continue
+                }
+                seen[b] = true
+                clean = append(clean, b)
+        }
+        if len(clean) == 0 {
+                writeError(w, 400, "no valid branch names")
+                return
+        }
+        primary := strings.TrimSpace(req.Primary)
+        if primary == "" || !seen[primary] {
+                primary = clean[0]
+        }
+        meta := ws.MetaJSON()
+        if meta == nil {
+                meta = map[string]any{}
+        }
+        meta["branches"] = clean
+        metaJSON, _ := json.Marshal(meta)
+        ws.Meta = string(metaJSON)
+        ws.Branch = primary
+        if err := s.db.UpdateWorkspace(ws); err != nil {
+                writeError(w, 500, "store: "+err.Error())
+                return
+        }
+        s.wsJSON(w, 200, ws, map[string]any{"branches": clean, "primary": primary})
 }

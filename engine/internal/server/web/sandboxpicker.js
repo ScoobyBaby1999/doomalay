@@ -82,7 +82,6 @@
       '<div style="padding:24px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Choose a model and sandbox and go!</h2>' +
-      '<button id="sb-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
       '</div>' +
       '<p style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-3);margin:0 0 20px">Pick a runtime for this chat. Each sandbox has different capabilities.</p>' +
       '<div style="display:flex;flex-direction:column;gap:12px">' +
@@ -103,8 +102,6 @@
     window.ConnectOverlay.open(html);
 
     var contentEl = window.ConnectOverlay.getContentEl();
-    var closeBtn = contentEl.querySelector('#sb-close');
-    if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
     contentEl.querySelectorAll('[data-sandbox]').forEach(function (card) {
       card.addEventListener('click', function () {

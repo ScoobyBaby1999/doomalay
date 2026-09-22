@@ -1523,17 +1523,6 @@
       });
       pillRow.appendChild(art);
 
-      // v0.44 (user spec #3): THE +WORKSPACE PILL — cloud repos bound to
-      // THIS chat. Opens the workspace picker (bound list + connect flow:
-      // URL/token, create-repo, my-repos). The pill badge = bound count.
-      if (window.Workspace && window.Workspace.pill) {
-        var wspill = window.Workspace.pill(state.sessionId);
-        pillRow.appendChild(wspill);
-        // the session can land AFTER the first render (model connect
-        // flow) — the header toggle rebinds it via state._wsPill
-        state._wsPill = wspill;
-      }
-
       // v0.19→v0.26: THE PERSONA PILL — opens the chat's persona LIST
       // (multi-persona Sheet: add / rename / delete / activation modes).
       var per = document.createElement('button');
@@ -1568,6 +1557,17 @@
         openMindView(ctx.panel, icon, state);
       });
       pillRow.appendChild(mind);
+
+      // v0.46 (user edit A2): THE +WORKSPACE PILL MOVED after mind (was
+      // second in the row). v0.46 fix: the pill takes a LIVE session
+      // GETTER — the old captured-sid went stale when the session landed
+      // after render, and connects then silently skipped the bind (the
+      // "instantly disconnects" bug).
+      if (window.Workspace && window.Workspace.pill) {
+        var wspill = window.Workspace.pill(function () { return state.sessionId; });
+        pillRow.appendChild(wspill);
+        state._wsPill = wspill;
+      }
     }
 
     // Host utilities (v0.27: smaller, darker, stylized — same squared

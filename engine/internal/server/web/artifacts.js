@@ -257,6 +257,11 @@
       if (window.Workspace && window.Workspace.renderCloudSection) {
         try { window.Workspace.renderCloudSection(listEl, sessionId); } catch (e) {}
       }
+      // v0.46: device-storage workspaces (local FS handles) get their own
+      // drawer section — files read/write straight to disk.
+      if (window.Workspace && window.Workspace.renderDeviceSection) {
+        try { window.Workspace.renderDeviceSection(listEl, sessionId); } catch (e) {}
+      }
     }).catch(function (e) {
       listEl.style.overflow = 'auto';
       listEl.style.padding = '12px 14px';

@@ -97,3 +97,74 @@
 3. Final red-team pass (imitate real user, golden paths).
 4. Rebase + push.
 5. Create 15-min cron `webDevReview`.
+
+---
+
+# v0.46 — WORKSPACES WAVE FIXES (user edits A1–A12, 12 items)
+
+User feedback round on the v0.44/45 workspaces wave. Root-cause found live:
+the picker lists SESSION-BOUND workspaces but the pill can open BEFORE the
+engine session lands → connect skips the bind silently → "connects then
+instantly disconnects". Tokens are also re-asked per form (no global account).
+
+## Phase A — engine (Go): accounts, OAuth, device rows, branch sets
+- vault allowlist += GITHUB_OAUTH_CLIENT_ID / GITHUB_OAUTH_CLIENT_SECRET.
+  GITHUB_PAT extra JSON carries {login, refresh_token, expires_at} (encrypted).
+- New routes: GET/POST/DELETE /api/workspaces/accounts (global forge sign-in,
+  never returns secrets; POST verifies via /user and stores login);
+  POST /api/workspaces/device (kind=device row); POST /api/workspaces/{id}/branches
+  {branches[], primary} → ws.Branch + meta.branches;
+  GET /api/workspaces/oauth/github/{status,config,start,callback} — web-app
+  flow, state nonce (10-min TTL), auto token refresh via refresh_token.
+- globalToken(github) → githubToken() with refresh; chat.go brain payload
+  skips kind=device rows (PWA-only surface).
+- Redirect URI derived from request host; works on localhost (GitHub allows
+  http for 127.0.0.1) + trycloudflare tunnels + any origin the app is on.
+
+## Phase B — ConnectOverlay shell (items 1/3/4/6)
+- Card wrapper + STATIC X top-right on every instance (theme vars, one render
+  that survives content swaps). X closes the whole overlay.
+- pushPage/popPage nav stack + history.pushState per level; Android back
+  gesture / Esc pops ONE level; scrim tap = full close (legacy feel).
+- Theme sweep: scrim + shadows via color-mix on --bg-app (no rgba(0,0,0,…)).
+
+## Phase C — workspace.js rework (items 2/3/5/6/7/8/9/10/11)
+- Picker = GLOBAL list (fixes the disconnect bug): every workspace row shows
+  bound-state for THIS chat; tap toggles bind; + connect workspace pinned
+  sticky bottom row, slightly smaller; description per user copy.
+- Connect page: big option-list description REMOVED; cloud option gets a
+  formatted theme-colored block (host chips + access tier badges).
+- Sign-in-first pattern everywhere a token used to be asked (items 8/10):
+  row 1 = "Sign in with GitHub" (OAuth if configured, else saved-account
+  reuse), row 2 = manual token (smaller, secondary). Paste-once → vault.
+  sessionStorage resume completes the pending connect after OAuth redirect.
+- My repos: sign-in-first; repo rows get owner/repo nesting, varied icons
+  (public/fork/private), stars · language · updated meta, theme colors;
+  repo detail page: sync mode = entire repo | pick branches (checkboxes from
+  /view/branches?url=, multi-select, first = primary) → connect (branches
+  persist in meta.branches; drawer gets a branch switcher).
+- Create repo: uses the saved account / sign-in (no bare token field).
+- Device storage (item 11): showDirectoryPicker permission → suggested
+  "Doomalay/<chatbot>" subfolder or browse anywhere; FileSystemHandle in
+  IndexedDB keyed by workspace id; read/write viewer+editor; global row that
+  any chatbot can bind (sits above local-folder placeholder).
+- openCloudFile → overlay PAGE (kills the custom fullscreen div — item 1).
+
+## Phase D — chatpanel (item 2 + session race)
+- Pill order: artifacts → mind → persona → workspace (swap per spec).
+- Pill gets a LIVE session getter (fixes stale-null sid at click time).
+
+## Phase E — verify (live redteam)
+- go build + tests; node --check all touched JS; API redteam: accounts
+  set/list, connect w/o session (global persists), bind toggle, branches
+  route, device row, OAuth status/start (nonce + redirect) w/o secret,
+  rate-limit safe paths; agent-browser UI walkthrough of every screen;
+  theme audit grep: no hard-coded hex/rgb in workspace.js/hfconnect.js.
+
+## Phase F — docs + ship
+- docs/GITHUB_APP_SETUP.md: every-box guide for the GitHub App form
+  (name/homepage/redirect URIs/expire tokens ON/installation OAuth/webhook
+  OFF/permissions: Contents RW, Metadata R, Pull requests RW, Administration
+  RW/account: only this account) + how client id/secret get set securely +
+  revoking the compromised PAT.
+- Commit + rebase + push + worklog.

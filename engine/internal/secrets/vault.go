@@ -91,6 +91,12 @@ var PROVIDER_KEY_ALLOWLIST = map[string]string{
         "DOOMALAY_HF_TOKEN": "huggingface",
         "GITHUB_PAT":        "github", // for workspace cloning
         "GITEA_TOKEN":       "gitea",
+        // v0.46: the GitHub App (OAuth) credentials — the client pair the
+        // engine uses to run the user-authorization web flow. Stored like
+        // every other secret (encrypted at rest); the user token it minted
+        // still lives in GITHUB_PAT (refresh_token + expiry in its extra).
+        "GITHUB_OAUTH_CLIENT_ID":     "github",
+        "GITHUB_OAUTH_CLIENT_SECRET": "github",
 }
 
 // IsAllowed checks if an env var is in the allowlist.

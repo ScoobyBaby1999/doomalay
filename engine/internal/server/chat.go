@@ -720,19 +720,40 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         // v0.44 WORKSPACES: the chat's bound cloud repos ride the turn so
         // the brain's workspace/explore tools can act on them (ids only —
         // tokens stay in the engine vault; the tools call back via REST).
+        // v0.46: device-storage rows are PWA-only (the engine can't reach
+        // the PWA's FileSystemHandle) — they never ride the turn.
         {
                 bound, err := s.db.ListSessionWorkspaces(sessionID)
                 if err == nil && len(bound) > 0 {
                         rows := make([]map[string]any, 0, len(bound))
                         for _, ws := range bound {
-                                rows = append(rows, map[string]any{
+                                if ws.Kind == "device" {
+                                        continue
+                                }
+                                branches := []string{}
+                                if m := ws.MetaJSON(); m != nil {
+                                        if bs, ok := m["branches"].([]any); ok {
+                                                for _, b := range bs {
+                                                        if s, ok := b.(string); ok {
+                                                                branches = append(branches, s)
+                                                        }
+                                                }
+                                        }
+                                }
+                                row := map[string]any{
                                         "id": ws.ID, "name": ws.Name, "kind": ws.Kind,
                                         "host": ws.Host, "owner": ws.Owner, "repo": ws.Repo,
                                         "url": ws.RepoURL, "branch": ws.Branch,
                                         "access": ws.Access, "sandbox_path": ws.SandboxPath,
-                                })
+                                }
+                                if len(branches) > 0 {
+                                        row["branches"] = branches
+                                }
+                                rows = append(rows, row)
                         }
-                        brainReq["workspaces"] = rows
+                        if len(rows) > 0 {
+                                brainReq["workspaces"] = rows
+                        }
                 }
         }
 

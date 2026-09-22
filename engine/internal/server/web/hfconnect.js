@@ -45,7 +45,7 @@
           'and the full build toolchain on Hugging Face Spaces (free cpu-basic tier).' +
         '</p>' +
         '<button id="hf-connect-btn" style="width:100%;padding:14px;border-radius:12px;' +
-          'background:var(--accent);color:#fff;border:none;font-size:15px;font-weight:600;' +
+          'background:var(--accent);color:var(--bg-app);border:none;font-size:15px;font-weight:600;' +
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Connect via Hugging Face' +
         '</button>' +
@@ -149,7 +149,7 @@
       'background:var(--surface-1);color:var(--text-2);font-size:12px;font-weight:600;' +
       'font-family:inherit;cursor:pointer;backdrop-filter:blur(8px);' +
       '-webkit-backdrop-filter:blur(8px);transition:all 0.15s;' +
-      'box-shadow:0 2px 8px rgba(0,0,0,0.2)';
+      'box-shadow:0 2px 8px color-mix(in srgb, var(--bg-app) 75%, transparent)';
     pillEl.addEventListener('click', openLogs);
     // insert into the canvas container (next to the settings gear)
     var host = document.querySelector('.spatial-canvas') || document.body;
@@ -207,7 +207,7 @@
           '</div>' +
           '<div style="display:flex;gap:8px">' +
             '<button id="hf-wake-btn" style="padding:6px 12px;border-radius:8px;' +
-              'background:var(--accent);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer">Wake</button>' +
+              'background:var(--accent);color:var(--bg-app);border:none;font-size:12px;font-weight:600;cursor:pointer">Wake</button>' +
             '<button id="hf-logs-close" style="padding:6px 12px;border-radius:8px;' +
               'background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);font-size:12px;cursor:pointer">✕</button>' +
           '</div>' +
@@ -216,7 +216,7 @@
           '<button class="hf-log-tab" data-type="run" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11px;cursor:pointer">run logs</button>' +
           '<button class="hf-log-tab" data-type="build" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-3);font-size:11px;cursor:pointer">build logs</button>' +
         '</div>' +
-        '<pre id="hf-log-stream" style="flex:1;overflow-y:auto;background:#0a0a0b;color:#a3e635;' +
+        '<pre id="hf-log-stream" style="flex:1;overflow-y:auto;background:var(--bg-panel);color:var(--ok);' +
           'padding:12px;border-radius:8px;font-size:11px;font-family:monospace;line-height:1.5;' +
           'white-space:pre-wrap;word-break:break-word;margin:0"></pre>' +
       '</div>';
