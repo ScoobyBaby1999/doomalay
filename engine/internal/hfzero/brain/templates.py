@@ -1625,21 +1625,47 @@ DEFAULT_TEMPLATES: list[dict] = [
         ],
         "output_rules_obj": {"format": "markdown", "min_words": 300, "required_sections": ["Objectives", "Procedure", "Assessment"], "tone": "instructive, second-person imperative"},
     },
+    # 15. Default Deep Research — the old HF space's flagship, pre-installed
+    # per the user's v0.48 request ("the app doesn't come with our deep
+    # research template pre-installed"). Question-driven (vs Research
+    # Paper's outline-driven): decompose → search → verify → synthesize →
+    # critique gaps → refine → assemble with a confidence section.
+    {
+        "name": "Default Deep Research",
+        "description": "The classic deep-research pipeline: decompose the question, search the live web per sub-question, verify and read the sources, synthesize a fully-cited briefing, then critique the gaps and refine. Best for questions needing fresh, sourced answers.",
+        "task_type": "deep_research",
+        "task": "deep research briefing",
+        "kind": "deepresearch",
+        "tags": ["research", "web", "citations", "multi-stage"],
+        "stages": [
+            {"name": "decompose", "role": "planner", "instructions": "Break the prompt into 3-6 specific, researchable sub-questions. Output JSON array: [{\"question\": str, \"why\": str}]. Every sub-question must be answerable from public sources.", "inputs": ["prompt"], "max_tokens": 800},
+            {"name": "search_terms", "role": "planner", "instructions": "For each sub-question, propose 2-4 precise web search queries (different phrasings, English + other relevant languages). Output JSON: {\"queries\": [str]}. No duplicates.", "inputs": ["decompose"], "max_tokens": 600},
+            {"name": "source_scan", "role": "generator", "instructions": "Using the web search results, list the most authoritative sources per sub-question with a one-line relevance note. Output JSON array: [{\"url\": str, \"title\": str, \"note\": str}]. Prefer primary sources (.gov, .edu, official docs, peer-reviewed). DO NOT invent URLs — if uncertain, OMIT.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["decompose.{i}", "search_terms"], "max_tokens": 1200},
+            {"name": "verification", "role": "verifier", "instructions": "Check the proposed sources against fetched_sources. Drop paywalled, empty, or unreachable ones. Output JSON: {\"verified\": [...], \"dropped\": [...], \"reasons\": {str: str}}.", "inputs": ["source_scan.*", "fetched_sources"], "max_tokens": 1000},
+            {"name": "synthesis", "role": "generator", "instructions": "Write the research briefing: answer each sub-question in 150-300 words, grounded in the verified sources, citing them as [N]. Begin with '# <answer headline>' followed by '## <sub-question>' sections. NEVER invent citations.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["prompt", "decompose.{i}", "verification.verified", "fetched_sources"], "max_tokens": 2000},
+            {"name": "gap_check", "role": "critiquer", "instructions": "Identify unanswered or weakly-sourced parts of the synthesis. Output a bullet list of concrete gaps (which sub-question, what is missing, what source would fix it) or 'No gaps found'. No praise.", "inputs": ["synthesis.*", "verification.verified"], "max_tokens": 600},
+            {"name": "refine", "role": "transformer", "instructions": "Patch the gaps flagged by gap_check using fetched_sources. Add a '## Confidence' section rating each sub-question's answer (high/medium/low) with a one-line justification. Return the FULL briefing.", "inputs": ["synthesis.*", "gap_check", "fetched_sources"], "max_tokens": 2500},
+            {"name": "assemble", "role": "assembler", "instructions": "Assemble the final answer: the refined briefing followed by '## References' listing exactly the verified sources as [N] Author. \"Title\". Year. URL. Do NOT add new sources.", "inputs": ["refine", "verification.verified"], "max_tokens": 1200},
+        ],
+        "output_rules_obj": {"format": "markdown", "min_words": 800, "max_words": 4000, "required_sections": ["References", "Confidence"], "banned_phrases": ["clearly", "obviously", "everyone knows", "state-of-the-art"], "tone": "measured, citation-heavy, hedged where sources disagree"},
+    },
 ]
 
 
 
 
 def seed_defaults() -> int:
-    """Seed the default system templates if the templates table is empty.
-    Idempotent: only inserts if the table is empty. Returns the number of
-    templates inserted (0 if already seeded)."""
+    """Seed the default system templates.
+
+    Idempotent per NAME (not per table): a template is only inserted when
+    no system template of that name exists. v0.48 FIX — this used to
+    early-return when ANY system template existed, which froze upgraded
+    installs at whatever DEFAULT_TEMPLATES shipped with their original
+    build (Default Deep Research never seeded on them). Now every
+    restart reconciles the catalog: new defaults appear, existing rows
+    are never clobbered. Returns the number of templates inserted.
+    """
     db = _dbmod._db()
-    # Check if ANY system template exists (idempotent re-seed guard).
-    row = db.execute(
-        "SELECT COUNT(*) AS c FROM templates WHERE author_id = 'system'").fetchone()
-    if row and int(row["c"]) > 0:
-        return 0
     now = _iso_now()
     inserted = 0
     with _write_lock:
