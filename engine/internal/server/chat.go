@@ -1331,7 +1331,12 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 // Extract text/content for persistence.
                 var content string
                 switch evType {
-                case "thinking", "assistant_delta", "assistant", "tool_result", "title":
+                // v0.52: "hublist" — the bot-side hub cards (dt_hublib): the
+                // event's text is the FULL JSON payload ({summary, items}), so
+                // replay rebuilds the exact same box the live path rendered
+                // (unknown types persist EMPTY content — the box would vanish
+                // on reload without this line).
+                case "thinking", "assistant_delta", "assistant", "tool_result", "title", "hublist":
                         if t, ok := ev["text"].(string); ok {
                                 content = t
                         }

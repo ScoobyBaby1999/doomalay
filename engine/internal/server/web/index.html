@@ -1767,6 +1767,76 @@
   }
   .src-card-sub { color: var(--text-3); font-size: calc(var(--chat-fs) * 0.64); }
 
+  /* ── v0.52 dt_hublib: the PUBLIC HUB card box (the sources pattern, with
+     one-press download buttons). Theme variables ONLY — no hex anywhere. ── */
+  .hub-wrap {
+    align-self: stretch; max-width: 95%;
+    background: var(--bg-app); border: 1px solid var(--surface-2);
+    border-radius: 12px; padding: calc(8px * var(--chat-scale)) calc(10px * var(--chat-scale));
+  }
+  .hub-wrap > .hub-wrap-label {
+    display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+    list-style: none; margin-bottom: 0;
+    font-size: calc(9.5px * var(--chat-scale)); color: var(--text-3); letter-spacing: 0.8px;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-wrap[open] > .hub-wrap-label { margin-bottom: calc(6px * var(--chat-scale)); }
+  .hub-wrap .hub-wrap-label::-webkit-details-marker { display: none; }
+  .hub-count {
+    background: rgba(var(--accent-2-rgb), 0.14); color: var(--accent-2);
+    border-radius: 999px; padding: 0 7px; font-weight: 700; letter-spacing: 0;
+    font-size: calc(9px * var(--chat-scale));
+  }
+  .hub-chev { margin-left: auto; transition: transform 0.18s ease; color: var(--text-3); }
+  .hub-wrap[open] .hub-chev { transform: rotate(0deg); }
+  .hub-wrap:not([open]) .hub-chev { transform: rotate(-90deg); }
+  .hub-list { display: flex; flex-direction: column; gap: calc(5px * var(--chat-scale)); }
+  .hub-card {
+    display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
+    padding: calc(7px * var(--chat-scale)) calc(8px * var(--chat-scale)); border-radius: 10px;
+    background: var(--surface-2); border: 1px solid transparent;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer;
+    min-height: calc(44px * var(--chat-scale)); /* touch target */
+  }
+  .hub-card:active { background: var(--surface-3); }
+  .hub-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hub-card-ico {
+    width: calc(26px * var(--chat-scale)); height: calc(26px * var(--chat-scale)); border-radius: 7px; flex-shrink: 0;
+    background: rgba(var(--accent-2-rgb),0.1); border: 1px solid rgba(var(--accent-2-rgb),0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: calc(var(--chat-fs) * 0.72);
+  }
+  .hub-card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .hub-card-title {
+    color: var(--text-2); font-size: calc(var(--chat-fs) * 0.77); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-card-title .hub-have { color: var(--ok); }
+  .hub-card-sub {
+    color: var(--text-3); font-size: calc(var(--chat-fs) * 0.64);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-card-stats {
+    color: var(--text-3); font-size: calc(var(--chat-fs) * 0.58);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-dl {
+    flex-shrink: 0; width: calc(34px * var(--chat-scale)); height: calc(34px * var(--chat-scale));
+    border-radius: 9px; border: 1px solid rgba(var(--accent-2-rgb),0.35);
+    background: rgba(var(--accent-2-rgb),0.07); color: var(--accent-2);
+    font-size: calc(15px * var(--chat-scale)); font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, color 0.15s;
+  }
+  .hub-dl:active { background: rgba(var(--accent-2-rgb),0.2); }
+  .hub-dl:disabled { cursor: default; }
+  .hub-dl.hub-dld {
+    background: rgba(var(--ok-rgb),0.08); border-color: rgba(var(--ok-rgb),0.3);
+    color: var(--ok);
+  }
+
   /* in-chat search highlight */
   mark.chat-search-mark { background: rgba(250,204,21,0.35); color: inherit; border-radius: 3px; }
   mark.chat-search-mark.chat-search-current { background: rgba(250,204,21,0.85); color: #1a1a0e; font-weight: 700; }

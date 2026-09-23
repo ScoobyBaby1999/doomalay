@@ -329,10 +329,12 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
         // path's event vocabulary (the PM bridge and test seeds persist the
         // same types the engine itself writes; thinking was rejected with a
         // 400 while the WS path happily logs it).
-        case "user", "assistant", "assistant_delta", "assistant_complete", "thinking", "status", "error", "tool_use", "tool_result", "sources", "hide", "compact":
+        // v0.52: + hublist — the bot-side hub cards (dt_hublib browse
+        // results) persist through this endpoint too, same as tool pills.
+        case "user", "assistant", "assistant_delta", "assistant_complete", "thinking", "status", "error", "tool_use", "tool_result", "sources", "hide", "compact", "hublist":
                 // ok
         default:
-                writeError(w, 400, "type must be user|assistant|assistant_delta|thinking|status|error|tool_use|tool_result|sources|hide|compact")
+                writeError(w, 400, "type must be user|assistant|assistant_delta|thinking|status|error|tool_use|tool_result|sources|hide|compact|hublist")
                 return
         }
         persisted, err := s.db.AppendEvent(id, req.Type, req.Text, "")

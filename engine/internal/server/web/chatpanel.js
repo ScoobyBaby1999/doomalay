@@ -3429,6 +3429,28 @@
         state.messages.push(srcMsg);
         appendMessage(msgContainer, scrollEl, srcMsg, bodyEl, state._icon, state);
       }
+    } else if (type === 'hublist') {
+      // v0.52 dt_hublib: the bot browsed/downloaded the PUBLIC HUB — the
+      // results land as a collapsible card box (the sources pattern): one
+      // tappable row per item, each with a one-press ⤓ download button.
+      // LIVE events carry {summary, items} top-level; REPLAYED ones carry
+      // the same payload as JSON in text (the engine persists content=text)
+      // — both shapes render identically (hubitem.js's PM-lift pattern).
+      stampThinkEnd(state, evTsMs(ev));
+      var hitems = ev.items || [];
+      var hsum = ev.summary || '';
+      if (!hitems.length && ev.text) {
+        try {
+          var hp = JSON.parse(ev.text);
+          if (hp && hp.items) { hitems = hp.items; hsum = hsum || hp.summary || ''; }
+        } catch (e3) {}
+      }
+      if (hitems.length) {
+        var hubMsg = { role: 'hublist', items: hitems, summary: hsum, open: true, ts: evTsMs(ev) };
+        if (ev.i) hubMsg.ei = ev.i;
+        state.messages.push(hubMsg);
+        appendMessage(msgContainer, scrollEl, hubMsg, bodyEl, state._icon, state);
+      }
     } else if (type === 'hide') {
       // v0.37: an edit/delete/regenerate (this device or another) masked
       // engine events. Drop the matching messages from the local view —
@@ -3987,6 +4009,45 @@
       return '<details class="src-wrap" data-mi="' + mi + '"' + (srcOpen ? ' open' : '') + '>' +
         '<summary class="src-wrap-label"><span>SOURCES</span><span class="src-count">' + msg.sources.length + '</span><span class="src-chev">▾</span></summary>' +
         '<div class="src-list">' + items + '</div></details>';
+    } else if (msg.role === 'hublist') {
+      // v0.52 dt_hublib: the PUBLIC HUB card box — one row per found item
+      // with a ONE-PRESS download button (⤓ → engine POST → "Yours" in the
+      // template sheet). Tap a row (not the button) → the full hub item
+      // panel (hubitem.js). The box rides the same collapsible pattern
+      // as sources; open by default (a browse is a fresh result set).
+      var hitems = msg.items || [];
+      var hrows = '';
+      for (var hI = 0; hI < hitems.length; hI++) {
+        var hIt = hitems[hI] || {};
+        var hDl = !!hIt.downloaded;
+        var hTags = Array.isArray(hIt.tags) ? hIt.tags.join(' · ') : '';
+        hrows +=
+          '<div class="hub-card' + (hDl ? ' hub-card-dl' : '') + '" data-hub-card="1"' +
+            ' data-hub-type="' + escAttr(hIt.type || '') + '"' +
+            ' data-hub-repo="' + escAttr(hIt.repo || '') + '"' +
+            ' data-hub-id="' + escAttr(hIt.id || '') + '"' +
+            ' data-hub-name="' + escAttr(hIt.name || '') + '"' +
+            ' role="button" tabindex="0" aria-label="open ' + escAttr(hIt.name || 'item') + ' in the hub"' +
+          '>' +
+            '<span class="hub-card-ico">' + (hIt.type === 'template' ? '🧩' : '🛠') + '</span>' +
+            '<span class="hub-card-meta">' +
+              '<span class="hub-card-title">' + esc(hIt.name || 'item') + (hDl ? ' <span class="hub-have">✓</span>' : '') + '</span>' +
+              '<span class="hub-card-sub">' + esc(hIt.description || '') + '</span>' +
+              '<span class="hub-card-stats">♥ ' + (hIt.hearts || 0) + ' · ⤓ ' + (hIt.downloads || 0) +
+                (hTags ? ' · ' + esc(hTags) : '') + '</span>' +
+            '</span>' +
+            '<button class="hub-dl' + (hDl ? ' hub-dld' : '') + '" data-hub-dl="1"' +
+              (hDl ? ' disabled title="already downloaded — find it in the ⧉ sheet under Yours"' :
+                ' title="download" aria-label="download ' + escAttr(hIt.name || 'item') + '"') + '>' +
+              (hDl ? '✓' : '⤓') +
+            '</button>' +
+          '</div>';
+      }
+      var hOpen = msg.open !== undefined ? !!msg.open : true;
+      return '<details class="hub-wrap" data-mi="' + mi + '"' + (hOpen ? ' open' : '') + '>' +
+        '<summary class="hub-wrap-label"><span>' + esc((msg.summary || 'PUBLIC HUB').toUpperCase()) + '</span>' +
+        '<span class="hub-count">' + hitems.length + '</span><span class="hub-chev">▾</span></summary>' +
+        '<div class="hub-list">' + hrows + '</div></details>';
     }
     return '';
   }
@@ -4478,6 +4539,78 @@
         window.Artifacts.openEditor(st.sessionId, hit.id);
       }
     }).catch(function (err) { window.Artifacts.toast(err.message); });
+  });
+
+  // ── v0.52 hub cards: one-press download + row tap → the hub item panel ──
+  // (event delegation — fires for any live hublist box, replays included).
+  // The ⤓ button POSTs the SAME download the hub panel's button does, then
+  // lands the item in the local user-template library ("Yours" — skills and
+  // templates both, the v0.48 rule) so it follows the user across devices.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('button[data-hub-dl]');
+    if (btn) {
+      if (btn.disabled) return;
+      var card = btn.closest('[data-hub-card]');
+      if (!card) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var type = card.getAttribute('data-hub-type');
+      var repo = card.getAttribute('data-hub-repo');
+      var itemId = card.getAttribute('data-hub-id');
+      if (!type || !repo || !itemId) return;
+      btn.disabled = true;
+      btn.textContent = '·'; // busy dot
+      fetch('/api/hub/' + encodeURIComponent(type) + '/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: repo, id: itemId })
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; });
+      }).then(function (d) {
+        if (!d || d.error) throw new Error((d && d.error) || 'HTTP error');
+        if (window.TemplateSheet && window.TemplateSheet.saveFromHub &&
+            (type === 'template' || type === 'skill')) {
+          window.TemplateSheet.saveFromHub(d.item || {}, d.payload);
+        }
+        if (window.Hub && window.Hub.markDownloaded) {
+          window.Hub.markDownloaded(type, repo, itemId);
+        }
+        card.classList.add('hub-card-dl');
+        btn.textContent = '✓';
+        btn.classList.add('hub-dld');
+        btn.setAttribute('title', 'already downloaded — find it in the ⧉ sheet under Yours');
+        if (window.Hub && window.Hub.toast) window.Hub.toast('downloaded — ' + (card.getAttribute('data-hub-name') || 'item'));
+      }).catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = '⤓';
+        if (window.Hub && window.Hub.toast) window.Hub.toast(err.message || 'the download failed');
+      });
+      return;
+    }
+    // the card body (not the button) → the full hub item panel — the same
+    // detail view the Public Library opens (PNG header, description, the
+    // payload, endorse). The row is a [role=button] so keyboard users can
+    // focus + Enter it too.
+    var row = e.target.closest && e.target.closest('[data-hub-card]');
+    if (row && !e.target.closest('a, button')) {
+      var panel = window.ChatPanel && window.ChatPanel.current();
+      if (!panel || !window.HubItem || !window.HubItem.open) return;
+      var it = {
+        type: row.getAttribute('data-hub-type') || '',
+        repo: row.getAttribute('data-hub-repo') || '',
+        id: row.getAttribute('data-hub-id') || '',
+        name: row.getAttribute('data-hub-name') || ''
+      };
+      if (it.type && it.repo && it.id) window.HubItem.open(it.type, it);
+    }
+  });
+  // keyboard parity: Enter/Space on a focused hub card row opens the panel
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest && e.target.closest('[data-hub-card]');
+    if (!row || e.target.closest('button, a')) return;
+    e.preventDefault();
+    row.click();
   });
 
   // ── tool pill tap → expand/collapse (event delegation) ──────────

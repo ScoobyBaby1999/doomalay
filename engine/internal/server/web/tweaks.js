@@ -340,6 +340,36 @@
     persist(state);
   }
 
+  // ── v0.52: the Bot Library boxes (dt_hublib gating) ───────────────────
+  // Absent = ENABLED — every pre-boxes chat keeps full bot library access,
+  // and the tool re-reads the blob on EVERY call ("on the fly": flip a
+  // switch mid-conversation and the next hublib call obeys). Only these two
+  // keys may enter the blob through this path.
+  var BOX_KEYS = ['botTemplates', 'botSkills'];
+
+  function setBox(state, key, v) {
+    if (BOX_KEYS.indexOf(key) < 0) return;
+    touch(state);
+    state._tweaks[key] = !!v;
+    persist(state);
+  }
+
+  // a switch row in the shared appearance.js style — theme vars only.
+  function boxRow(key, label, hint, checked) {
+    return '<div class="setting-row" style="align-items:center;justify-content:space-between;gap:10px">' +
+      '<span style="min-width:0"><label>' + label + '</label>' +
+        (hint ? '<p class="hint" style="margin:2px 0 0">' + hint + '</p>' : '') + '</span>' +
+      '<label class="app-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">' +
+        '<input type="checkbox" data-box-key="' + key + '"' + (checked ? ' checked' : '') +
+          ' style="opacity:0;width:0;height:0;position:absolute">' +
+        '<span class="app-switch-track" style="position:absolute;inset:0;background:' + (checked ? 'var(--accent)' : 'var(--surface-3)') +
+          ';border-radius:12px;transition:background 0.15s"></span>' +
+        '<span class="app-switch-thumb" style="position:absolute;top:2px;left:' + (checked ? '20px' : '2px') +
+          ';width:20px;height:20px;background:var(--on-accent);border-radius:50%;transition:left 0.15s"></span>' +
+      '</label>' +
+    '</div>';
+  }
+
   function resetColors(state) {
     touch(state);
     delete state._tweaks.chatScheme;
@@ -683,6 +713,11 @@
             ) : '') +
             '<button data-action="tweaks-sizes-reset" data-scope="chat" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px;width:100%">inherit the global sizes again</button>'
           ) +
+          sec('Bot Library',
+            '<p class="hint">Whether this chat\'s bot may browse + download the PUBLIC HUB\'s community libraries (the hublib tool). Flips apply on the very next bot turn — no restart. Both default to on; a switch that was never touched stays on.</p>' +
+            boxRow('botTemplates', 'Templates', 'the bot can browse + download method templates from the hub', t.botTemplates !== false) +
+            boxRow('botSkills', 'Skills', 'the bot can browse + download methodology skills from the hub', t.botSkills !== false)
+          ) +
           sec('Background',
             '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +
             '<div class="tw-bgseg">' +
@@ -739,6 +774,20 @@
           if (window.AppearanceUI.wireFmtEditors) window.AppearanceUI.wireFmtEditors(el);
         }
         var t0 = state._tweaks || {};
+
+        // v0.52: the Bot Library boxes — flip the switch in place (track +
+        // thumb), write through setBox (strict whitelist → blob → engine).
+        el.querySelectorAll('input[data-box-key]').forEach(function (c) {
+          c.addEventListener('change', function () {
+            var on = c.checked;
+            setBox(state, c.getAttribute('data-box-key'), on);
+            var lab = c.parentElement;
+            var track = lab && lab.querySelector('.app-switch-track');
+            var thumb = lab && lab.querySelector('.app-switch-thumb');
+            if (track) track.style.background = on ? 'var(--accent)' : 'var(--surface-3)';
+            if (thumb) thumb.style.left = on ? '20px' : '2px';
+          });
+        });
 
         // v0.49 (user spec): the master reset — "reset text sizes and
         // background … to default or inherit from global". One tap

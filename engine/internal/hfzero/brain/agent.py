@@ -877,7 +877,12 @@ def _build_tools(workspace: str, web_search: bool,
         ws_path.mkdir(parents=True, exist_ok=True)
 
         def _dt_progress(event: str = "status", **fields):
-            """Best-effort live progress line (activity indicator) + oplog."""
+            """Best-effort live progress line (activity indicator) + oplog.
+
+            v0.52 dt_hublib: the chat_event pass-through — a tool hands a
+            FULL chat event (the hub item cards) to the turn's emit verbatim
+            instead of a status line; mirrors agent_core._emit_dt_progress.
+            """
             try:
                 import oplog
                 oplog.log_event(event, **fields)
@@ -886,6 +891,11 @@ def _build_tools(workspace: str, web_search: bool,
             if callback is None:
                 return
             try:
+                if event == "chat_event":
+                    ev = fields.get("ev")
+                    if isinstance(ev, dict) and ev.get("type"):
+                        callback._emit(ev)
+                    return
                 import agent_core
                 msg = agent_core._format_dt_progress(event, fields)
                 if msg:
@@ -1008,6 +1018,9 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "BEFORE starting work it covers\n"
         "- dtemplate: browse + run the template library (deep research, "
         "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input\n"
+        "- hublib: browse + download the PUBLIC HUB's community templates "
+        "and skills — search/popular, tappable one-press download cards for "
+        "the user, payload in hand to follow\n"
         "- artifact: create AND surgically EDIT (find/replace, line splices, "
         "inserts, dry_run) the REAL chat artifacts — including files made in "
         "earlier turns; write deliverables HERE, not just as chat text\n"

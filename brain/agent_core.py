@@ -95,6 +95,9 @@ AGENT_SYSTEM_PROMPT = (
     "- dtemplate: browse + run the template library (deep research, "
     "brainstorm, plan, SDD, TDD, debug, verify, redteam, research_paper…) "
     "on any input\n"
+    "- hublib: browse + download the PUBLIC HUB's community templates "
+    "and skills (search, popular/new, one-press download cards for the "
+    "user, payload in hand to follow)\n"
     "- artifact: create/edit/list REAL chat artifacts (files, folders, "
     "zips) in the engine's artifact store so the user can download them — "
     "write deliverables HERE, not just as chat text\n"
@@ -133,6 +136,8 @@ AGENT_SYSTEM_PROMPT = (
     "- Starting non-trivial work → skills(action='list') first; load the "
     "matching methodology (brainstorming/writing-plans/TDD/debugging/…).\n"
     "- Multi-stage deliverable (report/research/plan/red-team) → dtemplate.\n"
+    "- Community templates/skills (find/compare/get one, 'what's in the "
+    "hub', fresh methodologies) → hublib.\n"
     "- Market/quote/analysis questions → stocks.\n"
     "- ANY file the user should keep (report, csv, code, zip) → artifact "
     "(create it, then tell the user where it is).\n"
@@ -1735,6 +1740,14 @@ class StrandsAdapter(BaseAdapter):
         chatpanel.js ev.state==='running' branch) while the turn is open.
         Known event names render as short human lines; unknown ones degrade
         to "tool: <event>". Never raises — progress is strictly optional.
+
+        v0.52 dt_hublib: a tool may also send a FULL chat event through
+        this seam — ctx.emit("chat_event", ev={type, ...}). The hub item
+        cards ("hublist" boxes with one-press download) ride this path:
+        the ev dict is passed VERBATIM to the turn emit (the engine relays
+        every field + persists text= for replay) instead of collapsing
+        into a status line. Tools must build ev defensively; a malformed
+        one is dropped, never fatal.
         """
         try:
             log_event(event, **fields)
@@ -1744,6 +1757,11 @@ class StrandsAdapter(BaseAdapter):
         if em is None:
             return
         try:
+            if event == "chat_event":
+                ev = fields.get("ev")
+                if isinstance(ev, dict) and ev.get("type"):
+                    em(ev)
+                return
             msg = _format_dt_progress(event, fields)
             if msg:
                 em({"type": "status", "state": "running", "message": msg})
