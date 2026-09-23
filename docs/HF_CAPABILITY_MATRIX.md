@@ -268,3 +268,59 @@ probe space) settled the Docker question for good:
   `http://localhost:8080/api/github/oauth/callback` ✓; bogus state → 400 ✓;
   PAT connect via the sign-in-once path ✓. Full OAuth round-trip awaits a
   real GitHub login (user's device — loopback IS production for the APK).
+
+---
+
+## ZeroGPU capability probe — full matrix (2026-09-23, live-verified, fresh token)
+
+Method: throwaway ZeroGPU space (`doomalay-captest-*`), 3 probe rounds
+(startup matrix → followup with base64 sources → pip/npm/java diagnostics),
+results streamed to run logs via `CAPPROBE|` lines; space deleted after.
+
+### Verdict
+
+**ZeroGPU delivers everything the Docker question was about.** Per-user
+Dockerfile spaces are IMPOSSIBLE on free accounts (402 wall, re-verified
+with the fresh token — ANY cpu-basic creation incl. gradio SDK is
+PRO-gated), but ZeroGPU gives root + package installs + compilers +
+library downloads + serving + full egress. The v0.51 picker architecture
+(ZeroGPU own / community shared / pick existing) is correct as shipped.
+
+### Verified matrix (ZeroGPU, free tier)
+
+| Capability | Result | Detail |
+|---|---|---|
+| Root access | ✅ | `uid=0(root)` — full root |
+| OS / runtime | ✅ | Debian 12, Python 3.10.13, pip 26.2.1, Node 20.20.2, npm 10.8.2 |
+| Resources | ✅ | 16 cores, ~940 GB RAM visible (host view; cgroup-limited but generous) |
+| Preinstalled | ✅ | gcc/g++ 12.2.0, Make 4.3, cmake 3.25.1, git 2.39.5, bash 5.2, curl |
+| apt (root) | ✅ | update 1.5 s; install tree 1.5 s; **golang-1.19 in 4.2 s**; **rustc/llvm-14 in 8.4 s** |
+| Runtime pip | ✅ | rich 2.21.0; **strands-agents installs AND imports at runtime** |
+| Runtime npm | ✅ | leftpad installs; node require OK |
+| C compile+run | ✅ | gcc -O2, 35 ms, hello-world; binary runs as bg process |
+| Go / Rust / Java | ✅* | installable via apt per session (seconds); not preinstalled |
+| Own HTTP servers | ✅ | loopback + 0.0.0.0 both 200; node http server responds |
+| Egress | ✅ | HF/GitHub/PyPI/npm/arbitrary internet all reachable — no allowlist |
+| Storage | ⚠️ | /tmp + $HOME writable — ephemeral, no persistent /data |
+| Session caveat | ⚠️ | apt/pip installs vanish on container restart (reinstall = seconds) |
+| Docker-in-docker | ❌ | no docker CLI, no docker.sock |
+| QEMU | ❌ | absent on ZeroGPU (community space has it preinstalled) |
+
+### Quota walls (re-verified with fresh token)
+
+- cpu-basic creation (docker OR gradio SDK) → **402 PRO-gated** — the
+  Vite+blank→Dockerfile injection strategy is dead for free accounts.
+- zero-a10g creation → **200** (the loophole holds).
+- ZeroGPU cap: **2 per free account; paused spaces still count**.
+- Repo deletion: use `huggingface_hub.HfApi.delete_repo` (hand-rolled
+  `/api/repos/delete` shapes 404).
+- `firstdoobievault` still does not exist (404) — fresh-account matrix
+  blocked on manual signup (CAPTCHA + email verification are human-only).
+
+### Probe engineering notes
+
+- Bind :7860 FIRST (`prevent_thread_lock=True`), probes in a daemon
+  thread — import-time work = RUNTIME_ERROR (ZeroGPU startup check).
+- spaces-patched gradio 5.49.1 rejects `every=` on `.load()` events.
+- Log SSE: Python urllib unreliable (0 bytes); `curl -N` works.
+- CACHED image re-commits restart in ~1 min — fast probe iteration.
