@@ -16,14 +16,15 @@
 //          {"skill":    "<key>", "file": "...", "description": "...",
 //           "content": "<SKILL.md>"}
 //          {"persona":  "<key>", "file": "...", "content": "<.md>"}
+//          {"theme":    "<key>", "file": "...", "content": "<bundle>"}
 //      The kind comes from the row's key field (fallback: the filename).
 //      A template row whose content is a JSON ARRAY of user templates
 //      (e.g. superpowers_user_templates) expands to one item per entry —
 //      each stays individually downloadable.
 //
-//   3. DIRECTORY     personas/*.md, templates/*.json, or skills/<name>/
-//      SKILL.md trees (the agentskills.io layout) — for casually posted
-//      datasets with no corpus index at all.
+//   3. DIRECTORY     personas/*.md, templates/*.json, skills/<name>/
+//      SKILL.md trees (the agentskills.io layout), themes/*.doomtheme —
+//      for casually posted datasets with no corpus index at all.
 //
 // Payload refs for corpus rows are "<jsonl path>#<row key>" (plus
 // ":<child name>" for expanded array entries) — resolvePayload() is the
@@ -74,9 +75,12 @@ type corpusRow struct {
         Template    string `json:"template"`
         Skill       string `json:"skill"`
         Persona     string `json:"persona"`
+        Theme       string `json:"theme"`
         File        string `json:"file"`
         Description string `json:"description"`
         Content     string `json:"content"`
+        Icon        string `json:"icon"`
+        Collection  string `json:"collection"`
 }
 
 // scanRepoFresh probes one repo's layout and builds items per type.
@@ -156,6 +160,7 @@ func (s *Service) scanRepoFresh(card RepoCard) *scanEntry {
                 {"personas", "persona", ".md"},
                 {"templates", "template", ".json"},
                 {"skills", "skill", ".md"},
+                {"themes", "theme", ".doomtheme"},
         } {
                 list, err := s.hf.ListTree(card.ID, "/"+d.path)
                 if err != nil {
@@ -262,6 +267,8 @@ func (s *Service) scanCorpusLines(card RepoCard, path, body string, res *scanEnt
                                                 Author:      owner,
                                                 Repo:        card.ID,
                                                 Tags:        tags,
+                                                Icon:        SanitizeIcon(row.Icon),
+                                                Collection:  SanitizeCollection(row.Collection),
                                                 UpdatedAt:   card.LastModified,
                                                 File:        path + "#" + key + ":" + childName,
                                         }
@@ -279,6 +286,8 @@ func (s *Service) scanCorpusLines(card RepoCard, path, body string, res *scanEnt
                         Author:      owner,
                         Repo:        card.ID,
                         Tags:        tags,
+                        Icon:        SanitizeIcon(row.Icon),
+                        Collection:  SanitizeCollection(row.Collection),
                         UpdatedAt:   card.LastModified,
                         File:        path + "#" + key,
                 }
@@ -306,9 +315,13 @@ func classifyCorpusRow(row corpusRow, path string) (string, string) {
                 return "skill", row.Skill
         case row.Persona != "":
                 return "persona", row.Persona
+        case row.Theme != "":
+                return "theme", row.Theme
         }
         lower := strings.ToLower(path)
         switch {
+        case strings.Contains(lower, "theme"):
+                return "theme", row.File
         case strings.Contains(lower, "template"):
                 return "template", row.File
         case strings.Contains(lower, "skill"):
@@ -353,7 +366,7 @@ func (s *Service) resolvePayload(repo, ref string) (string, error) {
                 if json.Unmarshal([]byte(line), &row) != nil {
                         continue
                 }
-                if row.Template != key && row.Skill != key && row.Persona != key {
+                if row.Template != key && row.Skill != key && row.Persona != key && row.Theme != key {
                         continue
                 }
                 if child != "" {

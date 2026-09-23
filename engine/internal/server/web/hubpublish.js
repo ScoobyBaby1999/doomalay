@@ -118,6 +118,23 @@
     var panel = PV();
     if (!panel) { toast('open a chat first'); return; }
     prefill = prefill || {};
+    // v0.52 (user spec item 9): "publish my look" — opening the publisher
+    // on the THEME library prefills the form with the CURRENT look: the
+    // .doomtheme bundle (theme, gradients, photos, bump maps — everything)
+    // lands in the payload textarea, ready to share. The user can still
+    // edit the JSON before publishing.
+    if (type === 'theme' && window.LookIO && !prefill.payload) {
+      try {
+        prefill.payload = JSON.stringify(window.LookIO.bundle(), null, 2);
+        if (!prefill.name) {
+          var th = (window.Settings && window.Settings.getState().theme) || 'my';
+          prefill.name = String(th).replace(/-/g, ' ') + ' look';
+        }
+        if (!prefill.desc) {
+          prefill.desc = 'a full look bundle — theme, colors, gradients, photos and bump maps included';
+        }
+      } catch (e) { /* the form just starts empty */ }
+    }
     var GU = window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } };
     cur = {
       panel: panel,
@@ -125,6 +142,10 @@
       name: prefill.name || '',
       desc: prefill.desc || '',
       tags: [],
+      // v0.52 (user spec items 1+3): the optional card icon (the picker
+      // grid below) + the optional collection bunch this item joins.
+      icon: prefill.icon || '',
+      collection: prefill.collection || '',
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
       design: { kind: 'none', spec: { colors: GU.random(), dir: 'auto' } },
@@ -180,6 +201,21 @@
 
     var previewBg = previewBackground();
 
+    // v0.52: the icon picker — one optional glyph for the card's icon
+    // column (user spec item 3), and the BUNCH field (item 1): items
+    // sharing a collection id clamp into one grouped listing.
+    var iconGrid = '';
+    if (window.IconLib) {
+      var cells = '<button type="button" class="hp-icocell" data-icn=""' +
+        (c.icon ? '' : ' data-on="1"') + ' title="no icon">—</button>';
+      window.IconLib.NAMES.forEach(function (n) {
+        cells += '<button type="button" class="hp-icocell" data-icn="' + escAttr(n) + '"' +
+          (c.icon === n ? ' data-on="1"' : '') + ' title="' + escAttr(n) + '">' +
+          window.IconLib.svg(n, 19) + '</button>';
+      });
+      iconGrid = '<div class="hp-icogrid">' + cells + '</div>';
+    }
+
     // the essentials + card design collapse; the payload has the FOCUS
     // toggle that grows it to own the panel (the editor-page behavior)
     return (
@@ -200,6 +236,11 @@
             '<div class="pv-section-label">tags</div>' +
             (chips ? '<div class="hp-chips">' + chips + '</div>' : '') +
             '<input id="hp-tag-in" class="pv-input" placeholder="type a tag + enter (max ' + MAX_TAGS + ' × ' + MAX_TAG_LEN + ' chars)">' +
+            '<div class="pv-section-label">icon <span class="hp-opt">optional</span></div>' +
+            (iconGrid || '<p class="pv-hint" style="margin:0">the icon library is not available</p>') +
+            '<div class="pv-section-label">bunch / collection <span class="hp-opt">optional</span></div>' +
+            '<input id="hp-collection" class="pv-input" placeholder="e.g. superpowers-obra" value="' + escAttr(c.collection) + '">' +
+            '<p class="pv-hint" style="margin:4px 0 0">items sharing a bunch id render as ONE grouped listing — anyone\u2019s items can join a bunch.</p>' +
           '</div>' +
         '</div>' +
 
@@ -273,6 +314,18 @@
     if (desc) desc.addEventListener('input', function () { c.desc = desc.value; });
     var payload = el.querySelector('#hp-payload');
     if (payload) payload.addEventListener('input', function () { c.payload = payload.value; });
+
+    // v0.52: the bunch field + the icon picker grid (tap toggles; "—" = none)
+    var coll = el.querySelector('#hp-collection');
+    if (coll) coll.addEventListener('input', function () { c.collection = coll.value; });
+    el.querySelectorAll('[data-icn]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        c.icon = b.getAttribute('data-icn') || '';
+        el.querySelectorAll('[data-icn]').forEach(function (o) {
+          if (o === b) o.setAttribute('data-on', '1'); else o.removeAttribute('data-on');
+        });
+      });
+    });
 
     // collapsible sections — a class toggle + chev swap, no re-render
     el.querySelectorAll('[data-fold]').forEach(function (bar) {
@@ -448,7 +501,9 @@
       tags: cur.tags,
       design: designOut(),
       payload: cur.payload,
-      pngBase64: cur.pngBase64 || ''
+      pngBase64: cur.pngBase64 || '',
+      icon: cur.icon || '',
+      collection: cur.collection || ''
     }).then(function (d) {
       var item = d.item, repo = d.repo;
       toast('published to ' + repo);

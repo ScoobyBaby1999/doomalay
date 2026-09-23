@@ -50,3 +50,27 @@ distribute, sublicense, and/or sell copies, provided the copyright notice
 and this permission notice are included in all copies or substantial
 portions. The Superpowers port satisfies that notice obligation via this
 file and the preserved license text.
+
+## Lucide icon library (doomalay v0.52)
+
+The card icon set shipped in v0.52 — `engine/internal/server/web/icons.js`,
+the inline SVG glyphs used by the hub cards' icon column, the collection
+bunches, and the publish form's picker — is **derived from
+[Lucide][lucide] v1.47.0**, ISC License © 2025 Lucide Contributors.
+
+[lucide]: https://lucide.dev
+
+The glyphs are embedded as inline SVG (stroke `currentColor`, 24×24
+viewBox) so the whole set works offline from the single engine binary —
+no CDN, no network requests — and every icon follows the app theme for
+free. The corpus rows on the user's `doomalay-superpowers` HF dataset
+reference the same names (`lightbulb`, `bug`, `map`, `layers`, `flask`,
+`shield`, `zap`).
+
+### License
+
+Lucide is ISC licensed; the full license text is preserved verbatim at
+[`docs/licenses/lucide-LICENSE`](licenses/lucide-LICENSE). In summary:
+permission to use, copy, modify, and distribute the software is granted
+free of charge, "as is", without warranty of any kind, provided the
+copyright notice and this permission notice appear in all copies.

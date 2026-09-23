@@ -71,11 +71,13 @@
   }
 
   class ChatIcon extends GridIcon {
-    constructor({ id, name, family, iconIndex, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '', sessionId = '' }) {
+    constructor({ id, name, family, iconIndex, iconCustom, iconRev, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '', sessionId = '' }) {
       super({ id: id || newChatId(), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
       this.iconIndex = (typeof iconIndex === 'number') ? iconIndex : -1;
+      this.iconCustom = !!iconCustom;   // v0.52: a browsed image icon
+      this.iconRev = iconRev || 0;      // its engine rev (cache-bust)
       this.vx = vx;
       this.vy = vy;
       this.sandbox = sandbox;     // 'quick', 'hf', 'terminal', 'device'
@@ -115,7 +117,15 @@
       this._iconEl.innerHTML = '';
       this._iconEl.style.background = '';
 
-      if (this.iconIndex >= 0 && this.iconIndex < iconSet.length) {
+      // v0.52: the custom browsed icon outranks the family set
+      var custom = this.customIconURL();
+      if (custom) {
+        const img = document.createElement('img');
+        img.src = custom;
+        img.alt = this.name;
+        img.draggable = false;
+        this._iconEl.appendChild(img);
+      } else if (this.iconIndex >= 0 && this.iconIndex < iconSet.length) {
         const img = document.createElement('img');
         img.src = iconSet[this.iconIndex];
         img.alt = this.name;
@@ -159,6 +169,28 @@
       this._renderIcon();
     }
 
+    // v0.52 (user spec item 10): the CUSTOM chat icon — a square-cropped
+    // image the user browsed to, stored engine-side at
+    // /api/sessions/{sessionId}/icon?v=N. It outranks the family glyph;
+    // clearing it falls back to the family set / the name letter.
+    setCustomIcon(rev) {
+      this.iconCustom = true;
+      this.iconRev = (typeof rev === 'number') ? rev : (this.iconRev || 1);
+      this._renderIcon();
+      this.save();
+    }
+    clearCustomIcon() {
+      this.iconCustom = false;
+      this.iconRev = 0;
+      this._renderIcon();
+      this.save();
+    }
+    customIconURL() {
+      if (!this.iconCustom || !this.sessionId) return '';
+      return '/api/sessions/' + encodeURIComponent(this.sessionId) +
+        '/icon?v=' + (this.iconRev || 1);
+    }
+
     // v0.13: persist the icon's chat config (called by chatpanel after a
     // sandbox/model change so localStorage stays in sync).
     save() {
@@ -187,6 +219,10 @@
       return sub;
     }
     getAvatarHTML() {
+      // v0.52: the custom icon wins — the canvas node and every header
+      // avatar follow the same resolution order.
+      var custom = this.customIconURL();
+      if (custom) return '<img src="' + custom + '" alt="' + this.name + '">';
       const cfg = window.DoomalayConfig;
       const fam = (cfg && cfg.families && cfg.families[this.family]) || {};
       if (this.iconIndex >= 0 && fam.icons && this.iconIndex < fam.icons.length) {
@@ -206,6 +242,8 @@
       base.name = this.name;
       base.family = this.family;
       base.iconIndex = this.iconIndex;
+      base.iconCustom = !!this.iconCustom;   // v0.52: the browsed icon
+      base.iconRev = this.iconRev || 0;
       base.sandbox = this.sandbox;
       base.model = this.model;
       base.provider = this.provider;
@@ -219,6 +257,8 @@
         name: data.name,
         family: data.family,
         iconIndex: data.iconIndex,
+        iconCustom: !!data.iconCustom,   // v0.52: restored before the
+        iconRev: data.iconRev || 0,      // first _renderIcon paints
         x: data.x, y: data.y,
         vx: data.vx || 0, vy: data.vy || 0,
         radius: data.radius || 28,

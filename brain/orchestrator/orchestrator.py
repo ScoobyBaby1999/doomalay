@@ -69,17 +69,22 @@ STAGE_FAILURE_THRESHOLD = 2
 # cannot decompose further (would risk infinite tree growth).
 MAX_DECOMPOSITION_DEPTH = 1
 
-# Default max_tokens by role when the StageDef doesn't specify. Upper bounds, not
-# targets - thinking models spend part of the budget on reasoning traces, so these
-# sit at playground-grade levels; the per-provider limits.max_out clamp in call_slot
-# protects hosts with real per-request ceilings (e.g. GitHub Models).
+# Default max_tokens by role when the StageDef doesn't specify. v0.52
+# (user spec: "remove all max_token caps, make it unbounded or a
+# ridiculously high cap") — the superpowers port carries NO per-stage
+# caps and these role defaults are now effectively-unbounded budgets.
+# This is safe: scheduler.call_slot clamps to each provider's published
+# per-request limits.max_out (providers with real ceilings get clamped;
+# frontier models use their full window). VERIFIER stays lower — its
+# contract is a small JSON verdict, and a runaway verifier burning
+# 100k tokens is never what anyone wanted.
 _ROLE_DEFAULT_MAX_TOKENS = {
-    Role.PLANNER: 16384,
-    Role.GENERATOR: 16384,
-    Role.REVIEWER: 8192,
-    Role.TRANSFORMER: 16384,
-    Role.EXTRACTOR: 8192,
-    Role.VERIFIER: 1024,
+    Role.PLANNER: 131072,
+    Role.GENERATOR: 131072,
+    Role.REVIEWER: 131072,
+    Role.TRANSFORMER: 131072,
+    Role.EXTRACTOR: 131072,
+    Role.VERIFIER: 8192,
 }
 
 

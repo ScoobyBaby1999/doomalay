@@ -169,12 +169,18 @@
       return '<span class="hi-chip">#' + esc(t) + '</span>';
     }).join('');
 
+    // v0.52: the icon column (user spec item 3) rides the detail header too
+    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 22) : '';
+
     return (
       '<div class="hi-root">' +
         '<div class="hi-head' + (cur.folded ? ' folded' : '') + '" id="hi-head">' +
           '<div class="hi-head-bg" id="hi-head-bg" style="' + bgStyle + '"></div>' +
           '<div class="hi-head-body">' +
-            '<div class="hi-title">' + esc(it.name) + '</div>' +
+            '<div class="hi-titlerow">' +
+              (ico ? '<span class="hi-ico" aria-hidden="true">' + ico + '</span>' : '') +
+              '<div class="hi-title">' + esc(it.name) + '</div>' +
+            '</div>' +
             '<div class="hi-desc">' + esc(it.description || '—') + '</div>' +
             '<div class="hi-meta">by ' + esc(it.author || 'unknown') +
               (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') + '</div>' +
@@ -222,7 +228,7 @@
     var body = el.querySelector('#hi-body');
     if (body && cur.payload != null && window.Formatter) {
       var text = String(cur.payload || '');
-      if (cur.type === 'template') {
+      if (cur.type === 'template' || cur.type === 'theme') {
         var pretty = text;
         try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
         text = '```json\n' + pretty + '\n```';
@@ -287,6 +293,14 @@
         if ((cur.type === 'template' || cur.type === 'skill') &&
             window.TemplateSheet && window.TemplateSheet.saveFromHub) {
           window.TemplateSheet.saveFromHub(cur.item, cur.payload);
+        }
+        // v0.52 THEMES (user spec item 9): a downloaded THEME applies
+        // itself right away — a global bundle repaints the whole app
+        // (theme, gradients, photos, bump maps — the works); a chat
+        // bundle lands in the open chatbot. The magic-field validation
+        // inside LookIO keeps a malformed payload harmless.
+        if (cur.type === 'theme' && window.LookIO && window.LookIO.importText) {
+          window.LookIO.importText(cur.payload);
         }
         cur.panel.replaceView(buildView());
       })

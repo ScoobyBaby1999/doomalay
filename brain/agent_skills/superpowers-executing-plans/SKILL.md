@@ -1,15 +1,15 @@
 ---
 name: superpowers-executing-plans
-description: Use when executing an implementation plan in the current session as the implementer yourself — your human partner chose inline execution, or no sub-agent tool is available
+description: Use when executing an implementation plan in the current session as the implementer yourself — your human partner chose inline execution, or no subagent tool is available
 ---
 
 # Executing Plans
 
 Execute the plan yourself, task by task, in this session: no implementer
-sub-agent per task, no reviewer per task. One fresh-context review of the
+subagent per task, no reviewer per task. One fresh-context review of the
 whole branch at the end.
 
-**Why inline:** Sub-agent-driven development pays for a fresh implementer
+**Why inline:** Subagent-driven development pays for a fresh implementer
 and a fresh reviewer on every task, each re-reading the codebase from zero.
 Inline execution pays for one context (yours) plus one reviewer at the end.
 What it gives up is a fresh context per task and a second pair of eyes per
@@ -46,17 +46,18 @@ those, stop and ask.
 
 - You have a plan from superpowers-writing-plans and your human partner
   chose inline execution at the handoff.
-- Your harness has no sub-agent tool. Never fabricate a delegation; run
+- Your harness has no subagent tool (see the per-platform references in
+  `../using-superpowers/references/`). Never fabricate a dispatch; run
   the plan here.
 - Tasks are mostly independent — the same precondition as
-  superpowers-sub-agent-driven-development.
+  superpowers-subagent-driven-development.
 
 A fully specified plan makes inline execution transcription plus testing:
 it runs well on a mid-tier session model, and the one place the most
 capable model earns its cost is the final review, which this skill
-delegates separately. Tell your human partner so when they choose inline.
+dispatches separately. Tell your human partner so when they choose inline.
 
-Prefer superpowers-sub-agent-driven-development when your human partner
+Prefer superpowers-subagent-driven-development when your human partner
 wants a review gate on every task, or when the plan is long enough that
 its later tasks would run on a compacted context. Inline execution over a
 long plan still works — the ledger is what makes it recoverable — but the
@@ -76,7 +77,7 @@ digraph process {
         "Plan wrong? Rule and ledger. Code wrong? systematic-debugging" [shape=box];
         "Commit as the plan's commit steps say" [shape=box];
         "Completion contract met?" [shape=diamond];
-        "task-done: run tests, ledger the result; check the item off" [shape=box];
+        "task-done: run tests, ledger the result; mark todo complete" [shape=box];
     }
 
     "Setup: worktree, workspace + ledger, read plan + spec, pre-flight scan" [shape=box];
@@ -94,8 +95,8 @@ digraph process {
     "Step output matches plan's Expected?" -> "Commit as the plan's commit steps say" [label="yes, last step"];
     "Commit as the plan's commit steps say" -> "Completion contract met?";
     "Completion contract met?" -> "Work the steps in order: TDD, run every verification, read every output" [label="no - finish the task"];
-    "Completion contract met?" -> "task-done: run tests, ledger the result; check the item off" [label="yes"];
-    "task-done: run tests, ledger the result; check the item off" -> "More tasks remain?";
+    "Completion contract met?" -> "task-done: run tests, ledger the result; mark todo complete" [label="yes"];
+    "task-done: run tests, ledger the result; mark todo complete" -> "More tasks remain?";
     "More tasks remain?" -> "task-start: brief + BASE; read the brief" [label="yes"];
     "More tasks remain?" -> "Final whole-branch review (fresh reviewer if you have one)" [label="no"];
     "Final whole-branch review (fresh reviewer if you have one)" -> "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger";
@@ -113,18 +114,20 @@ partner's explicit consent.
 
 Conversation memory does not survive compaction. An inline executor that
 loses its place re-implements tasks whose commits already exist — the same
-failure as a controller re-delegating them, paid for in your own context.
-Track progress in a ledger file, not only in the plan checklist. The plan
-checklist is a live view; the ledger is the record.
+failure as a controller re-dispatching them, paid for in your own context.
+Track progress in a ledger file, not only in todos. Harness todos are a
+live view; the ledger is the record.
 
-The workspace and ledger are shared with superpowers-sub-agent-driven-development
+The workspace and ledger are shared with superpowers-subagent-driven-development
 — same directory, same format — so a plan can change executors mid-flight
 and the new one resumes from the same ledger.
 
-- Each plan owns a workspace: at skill start, create the plan's directory
-  `.superpowers/sdd/<plan-basename>/` inside the session workspace (git-ignored
-  scratch) — home to every artifact for THIS plan: ledger, briefs, review
-  packages. Another plan's directory is never yours to read or write.
+- Each plan owns a workspace: at skill start, run
+  `../subagent-driven-development/scripts/sdd-workspace PLAN_FILE` — it
+  prints the plan's git-ignored directory
+  (`<repo-root>/.superpowers/sdd/<plan-basename>/`), home to every
+  artifact for THIS plan: ledger, briefs, review packages. Another plan's
+  directory is never yours to read or write.
 - Check for this plan's ledger at `<workspace>/progress.md`. If its first
   line names your plan file, tasks with a `Task <N>: complete` line are
   DONE — do not redo them; resume at the first task without one. Their
@@ -138,7 +141,7 @@ and the new one resumes from the same ledger.
   if that happens, recover from `git log`.
 
 Read the plan once, note its context and Global Constraints, and create a
-plan-checklist item per task. If the plan names a Spec, read that too: the spec is the
+todo per task. If the plan names a Spec, read that too: the spec is the
 authority the plan argues from, and conflicts inside the plan resolve
 against it. A plan with no reachable spec gets a ledger note saying so —
 rulings made without one are provisional.
@@ -166,13 +169,12 @@ in the workspace and read its tail; read a brief, not the whole plan.
 
 ### 1. Take the task
 
-- Run the task-start step for the task: copy the task's full text from the
-  plan to `<workspace>/task-N-brief.md`, and record BASE
-  (`git rev-parse HEAD` — the commit the task's range is cut from).
+- Run this skill's `scripts/task-start PLAN_FILE N`. It prints the brief
+  path and BASE (the commit the task's range is cut from) in one call.
   Read the brief for every task, including ones you remember from setup:
   what you remember is a summary, the brief has the exact values,
   signatures, and test cases.
-- Mark the task's plan-checklist item in_progress.
+- Mark the task's todo in_progress.
 
 Every tool call is a turn that re-reads your whole context. Bookkeeping
 rides along with work — a ledger append in the same call as the commit,
@@ -209,8 +211,8 @@ in this session — not inferred from the diff looking right:
 
 - Every test the brief names exists and ran in this task, and you read
   the output.
-- The final test run for the task passed — the task-done step is that run,
-  and it writes the command and result into the ledger line.
+- The final test run for the task passed — `task-done` is that run, and
+  it writes the command and result into the ledger line.
 - Every `Expected:` line in the brief was compared against real output.
 - Every deviation from the brief has a `Ruling:` line in the ledger.
 
@@ -219,26 +221,26 @@ the claim. If any item is missing, the task is not complete: finish it.
 
 ### 4. Complete the task
 
-Run the task-done step: run the test command the brief names for the whole
-task, keep the full output in a workspace file (read its tail), and — only
-if it passes — append the completion line to the ledger:
+Run this skill's `scripts/task-done PLAN_FILE N BASE -- <test command>`
+with the test command the brief names for the whole task. It runs the
+tests, keeps the full output in the workspace, prints the tail, and — only
+if they pass — appends the completion line to the ledger:
 
 `Task <N>: complete (commits <base7>..<head7>, tests: <command> → <result>)`
 
 A failing run records nothing; the task is not complete. When it records,
-check the item off and take the next task.
+mark the todo complete and take the next task.
 
 ## Final Review
 
-Build the final review package yourself (MERGE_BASE = the commit the branch
-started from, e.g. `git merge-base main HEAD`): `git log --oneline`,
-`git diff --stat`, and `git diff -U10` for the range, redirected to ONE
-uniquely named workspace file — then review from that file.
+Run `../subagent-driven-development/scripts/review-package PLAN_FILE MERGE_BASE HEAD`
+(MERGE_BASE = the commit the branch started from, e.g.
+`git merge-base main HEAD`) and review from the file it prints.
 
-**With a sub-agent tool:** delegate the reviewer on the most capable
+**With a subagent tool:** dispatch the reviewer on the most capable
 available model — the whole-branch review is a judgment task — using
 superpowers-requesting-code-review's
-[code-reviewer.md](../superpowers-requesting-code-review/code-reviewer.md), with the
+[code-reviewer.md](../requesting-code-review/code-reviewer.md), with the
 package path, the plan and spec paths, the plan's Review Focus section
 verbatim if it has one (the input classes and failure modes the plan's
 tests do not exercise — the reviewer checks each deliberately), and a
@@ -248,9 +250,9 @@ explicitly; an omitted model inherits the session's, which may not be the
 most capable. This is the one fresh context the whole run buys. Do not
 skip it, and do not replace it with your own read of the diff.
 
-**Without a sub-agent tool:** read code-reviewer.md and perform that review
+**Without a subagent tool:** read code-reviewer.md and perform that review
 yourself against the package, as a separate pass after the last task's
-ledger line. Write `Final review: self-review (no sub-agent tool)` to the
+ledger line. Write `Final review: self-review (no subagent tool)` to the
 ledger, and say so in your final message: a self-review by the author is
 weaker than a fresh reviewer, and your human partner decides whether that
 is enough before merge.
@@ -278,7 +280,7 @@ second reviewer: write the test that reproduces the finding, watch it
 fail, make it pass, then run the whole suite. Record each in the ledger as
 `Final: fixed <finding> — <test name> RED→GREEN, suite <N>/<N>`. A fix
 without a test that failed first is not verified; a suite that is not
-green after the pass means the pass is not over. Do not delegate a
+green after the pass means the pass is not over. Do not dispatch a
 re-review: it would re-read a diff whose covering tests already answer
 "addressed" and whose suite run already answers "broke nothing".
 
@@ -313,7 +315,7 @@ Use superpowers-finishing-a-development-branch.
 | "Let me check in before the next task" | They chose inline to spend less. Progress prompts spend their time instead. Only the four stops stop you. |
 | "I read my own diff carefully; the final reviewer is redundant" | Same author, same blind spots. The reviewer is the only fresh context this run buys. |
 | "Tests should pass, the change was trivial" | "Should" is not evidence. The contract requires the command and its output. |
-| "Sub-agents are slow and expensive, I'll skip the final review too" | Inline already removed the per-task reviewers. One review of the whole branch is the floor, not the ceiling. |
+| "Subagents are slow and expensive, I'll skip the final review too" | Inline already removed the per-task reviewers. One review of the whole branch is the floor, not the ceiling. |
 | "The reviewer said Minor, so it's Minor" | The label graded the spec's silence. Grade what the person gets. Re-grade, then gate. |
 | "The fix is obvious, no need for a failing test first" | The failing test is the only proof the finding was real and is now gone. Without it you have a diff and a hope. |
 | "I'll fix the minors too while I'm in there" | Every minor you fix is a test, a fix, and a suite run your partner did not ask for. Ledger them; your partner decides. |
@@ -327,7 +329,7 @@ You: I'm using the executing-plans skill to implement this plan inline.
 [Read plan once: docs/superpowers/plans/feature-plan.md; spec read]
 [Resolve workspace: sdd-workspace docs/superpowers/plans/feature-plan.md — no ledger inside, fresh start]
 [Pre-flight scan: 2 shared-interface rows, 4 self-consistency rows, clean; written to ledger]
-[Add plan-checklist items for all tasks]
+[Create todos for all tasks]
 
 Task 1: Hook installation script
 
@@ -352,7 +354,7 @@ Task 2: Recovery modes
 
 ...
 
-[After all tasks: review-package plan MERGE_BASE HEAD; delegate code-reviewer, most capable model]
+[After all tasks: review-package plan MERGE_BASE HEAD; dispatch code-reviewer, most capable model]
 Reviewer: One Important finding — progress reporting interval hardcoded. Two Minor.
 [Re-grade: Important stands; minors → ledger as deferred]
 [Fix pass: test_progress_interval_configurable RED → extract PROGRESS_INTERVAL → GREEN; suite 12/12; commit]

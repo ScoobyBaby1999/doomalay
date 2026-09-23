@@ -200,9 +200,6 @@ You understand 1,2,3,6. Unclear on 4,5.
 ✅ "Understand 1,2,3,6. Need clarification on 4 and 5 before implementing."
 ```
 
-## Threaded Replies
+## GitHub Thread Replies
 
-When review feedback arrives as inline or numbered comments (a pasted review,
-a sub-agent's findings list, or "Fix 1-6"), respond to each finding in place,
-in the same order — not with one top-level summary that forces the reviewer
-to re-match your answers to their items.
+When replying to inline review comments on GitHub, reply in the comment thread (`gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`), not as a top-level PR comment.

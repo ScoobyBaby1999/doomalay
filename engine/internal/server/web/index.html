@@ -2489,7 +2489,9 @@
   }
   .pub-head-bar {
     display: flex; align-items: center; gap: 10px; width: 100%;
-    padding: 11px 13px;
+    /* v0.52 (user spec item 9): the header is COMPACT — less of the
+       library screen spent on chrome, more on the cards. */
+    padding: 7px 13px;
     /* v0.49: collapsible header = overlay chrome — Overlay background */
     background: var(--bg-app);
     background-image: var(--bg-app-gradient, none);
@@ -2498,7 +2500,7 @@
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .pub-title {
-    font-size: calc(var(--ui-fs) + 1px); font-weight: 800; letter-spacing: 0.4px;
+    font-size: var(--ui-fs); font-weight: 800; letter-spacing: 0.4px;
     color: var(--text-1);
   }
   .pub-status {
@@ -2514,7 +2516,7 @@
   .pub-chev { color: var(--text-3); font-size: var(--ui-small-fs); flex-shrink: 0;
     transition: transform 0.18s ease; }
   .pub-head.folded .pub-chev { transform: rotate(-90deg); }
-  .pub-head-body { display: flex; flex-direction: column; gap: 10px; padding: 0 13px 13px; }
+  .pub-head-body { display: flex; flex-direction: column; gap: 7px; padding: 0 13px 9px; }
   .pub-head.folded .pub-head-body { display: none; }
 
   /* "Browse the community for:" + the full-row library pills */
@@ -2523,12 +2525,24 @@
   }
   /* v0.49 (user spec): the library pills stand as COLUMNS — side by
      side, each a vertical tile (icon over label over count) — instead of
-     stacked full-width rows. */
-  .hub-librow { display: flex; flex-direction: row; gap: 8px; }
+     stacked full-width rows.
+     v0.52 (user spec item 9): FOUR columns don't fit an Android-native
+     screen — the row now SCROLLS horizontally (each tile keeps a sane
+     min-width instead of squishing to illegibility), the glyphs are
+     smaller, and the tiles themselves are shorter. */
+  .hub-librow {
+    display: flex; flex-direction: row; gap: 7px;
+    flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+    margin: 0 -4px; padding: 0 4px;
+  }
+  .hub-librow::-webkit-scrollbar { height: 3px; }
   .hub-libpill {
-    flex: 1 1 0; min-width: 0;
+    flex: 1 1 0; min-width: 74px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 4px; min-height: 72px; padding: 10px 6px;
+    gap: 3px; min-height: 54px; padding: 7px 6px;
     background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
     border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
     box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
@@ -2537,7 +2551,7 @@
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
-  .hub-libpill .dx-pill-ico { font-size: calc(var(--ui-fs) + 4px); flex-shrink: 0; line-height: 1; }
+  .hub-libpill .dx-pill-ico { font-size: var(--ui-fs); flex-shrink: 0; line-height: 1; }
   .hub-libpill .dx-pill-label {
     white-space: normal; overflow: hidden; text-overflow: ellipsis;
     max-width: 100%; line-height: 1.2;
@@ -2650,25 +2664,46 @@
     grid-template-columns: repeat(var(--hub-cols, 2), minmax(0, 1fr));
     gap: 10px;
   }
+  /* v0.52 (user spec items 3+4): cleaner cards — a REAL border, a shadow,
+     the text-pop scrim over any background art, the icon column left of
+     the name, and bigger ♥/⤓ stats. Everything rides theme vars. */
   .hub-card {
     position: relative; display: flex; flex-direction: column; justify-content: flex-end;
-    overflow: hidden; min-height: 138px; padding: 0; border-radius: 12px;
-    background: var(--surface-1); border: 1px solid var(--surface-2);
+    overflow: hidden; min-height: 148px; padding: 0; border-radius: 14px;
+    background: var(--surface-1); border: 1px solid var(--border-strong);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
     cursor: pointer; text-align: left; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .hub-card:active { background: var(--surface-2); }
+  .hub-card:active { background: var(--surface-2); transform: scale(0.985); }
   .hub-card-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
-  .hub-card-body {
-    position: relative; display: flex; flex-direction: column; gap: 2px; padding: 9px 10px;
+  .hub-card-fade {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(to top,
+      rgba(var(--surface-1-rgb), 0.97) 0%,
+      rgba(var(--surface-1-rgb), 0.86) 38%,
+      rgba(var(--surface-1-rgb), 0.34) 74%,
+      rgba(var(--surface-1-rgb), 0.05) 100%);
   }
+  .hub-card-body {
+    position: relative; display: flex; flex-direction: column; gap: 3px; padding: 10px 11px;
+  }
+  .hub-card-titlerow { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .hub-card-ico {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 9px;
+    background: rgba(var(--surface-2-rgb), 0.82); border: 1px solid var(--border);
+    color: var(--text-1);
+  }
+  .hub-card-ico .icl { display: block; }
   .hub-card-name {
-    font-size: var(--ui-fs); font-weight: 700; color: var(--text-1); line-height: 1.25;
+    flex: 1 1 auto; min-width: 0;
+    font-size: calc(var(--ui-fs) + 1px); font-weight: 800; color: var(--text-1); line-height: 1.22;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 4px rgba(0,0,0,0.35);
   }
   .hub-card-desc {
-    font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35;
+    font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35; font-weight: 500;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -2677,8 +2712,48 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .hub-card-foot {
-    display: flex; gap: 12px; margin-top: 3px; color: var(--text-3);
+    display: flex; gap: 14px; margin-top: 4px; color: var(--text-2);
     font-size: var(--ui-small-fs); font-variant-numeric: tabular-nums;
+  }
+  .hub-card-stat {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--text-2); font-weight: 600;
+    font-size: calc(var(--ui-small-fs) + 1px);
+  }
+  .hub-card-stat .icl { display: block; }
+  .hub-card-stat.on { color: var(--accent); }
+  .hub-card-stat[data-heart] { cursor: pointer; }
+  .hub-card-stat[data-heart]:active { transform: scale(0.92); }
+  /* the BUNCH card — one grouped listing; the surface style IS the signal */
+  .hub-card--bunch { border: 1px solid var(--accent); }
+  .hub-card--bunch .hub-card-ico {
+    background: rgba(var(--accent-rgb, 128,128,160), 0.16); color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* the bunch member view */
+  .hub-bunch-sec { margin: 0 0 14px; }
+  .hub-bunch-sec-h {
+    display: flex; align-items: center; gap: 6px;
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em;
+    margin: 0 0 8px;
+  }
+  .hub-bunch-sec-n {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 0 8px; color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .hub-bunch-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); border: 1px solid var(--accent);
+    color: var(--text-1); border-radius: 999px; padding: 2px 10px;
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
+  }
+  .hub-bunch-x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--surface-3); color: var(--text-2);
+    font-size: 10px; cursor: pointer;
   }
   .hub-empty {
     padding: 34px 18px; text-align: center; color: var(--text-3);
@@ -2697,6 +2772,21 @@
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hub-nav:disabled { opacity: 0.35; cursor: default; }
+  /* v0.52: the publish form's icon picker (item 3) */
+  .hp-icogrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+    gap: 6px; max-height: 168px; overflow-y: auto; padding: 2px;
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .hp-icocell {
+    display: flex; align-items: center; justify-content: center;
+    height: 40px; border-radius: 9px; background: var(--surface-2);
+    border: 1px solid transparent; color: var(--text-2); cursor: pointer;
+    font-family: inherit; font-size: var(--ui-small-fs);
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hp-icocell[data-on="1"] { border-color: var(--accent); color: var(--accent); background: var(--surface-3); }
+  .hp-opt { color: var(--text-3); font-weight: 400; }
 
   /* ── the item detail (hubitem.js) ─────────────────────────────────── */
   .hi-root { display: flex; flex-direction: column; min-height: 100%; gap: 12px; }
@@ -2710,7 +2800,16 @@
     position: relative; display: flex; flex-direction: column; gap: 3px;
     padding: 16px 14px 12px; min-height: 132px;
   }
+  .hi-titlerow { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .hi-ico {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 11px;
+    background: rgba(var(--surface-1-rgb), 0.55); border: 1px solid var(--border);
+    color: var(--text-1);
+  }
+  .hi-ico .icl { display: block; }
   .hi-title {
+    flex: 1 1 auto; min-width: 0;
     font-size: calc(var(--ui-fs) + 4px); font-weight: 800; color: var(--text-1);
     line-height: 1.2; text-shadow: 0 1px 8px rgba(0,0,0,0.5);
   }
@@ -2743,10 +2842,11 @@
     position: sticky; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
     margin-top: auto; display: flex; justify-content: flex-end; gap: 10px;
   }
+  /* v0.52 (user spec item 4): the heart + download fabs BIGGER */
   .hi-fab {
-    width: 42px; height: 42px; border-radius: 12px; background: var(--surface-2);
-    border: 1px solid var(--border-strong); color: var(--text-1); font-size: 17px;
-    cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    width: 54px; height: 54px; border-radius: 16px; background: var(--surface-2);
+    border: 1px solid var(--border-strong); color: var(--text-1); font-size: 22px;
+    cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
     display: flex; align-items: center; justify-content: center;
     font-family: inherit; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -3031,6 +3131,32 @@
   .tw-bgseg { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
   .tw-bgzone { display: flex; flex-direction: column; gap: 8px; }
 
+  /* v0.52: the tweaks CHAT ICON grid — the family glyph cells + the
+     letter + the custom image, all circular avatars (user spec item 10). */
+  .tw-icongrid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; }
+  .tw-iconcell {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--surface-2); border: 2px solid var(--border);
+    color: var(--text-1);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; overflow: hidden; flex-shrink: 0;
+    font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .tw-iconcell img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    pointer-events: none;
+  }
+  .tw-iconcell-letter {
+    font-size: calc(var(--ui-fs) + 6px); font-weight: 800; color: var(--text-1);
+    line-height: 1; pointer-events: none;
+  }
+  .tw-iconcell[data-on="1"] {
+    border-color: var(--accent-2);
+    box-shadow: 0 0 0 2px rgba(var(--accent-2-rgb), 0.35);
+  }
+
   /* the persona picker's heart badges (persona.js) ───────────────── */
   .pp-heart {
     position: absolute; right: 9px; bottom: 7px; z-index: 1;
@@ -3282,6 +3408,8 @@
      download/endorse buttons), hubpublish.js = publish + the Hugging
      Face connect flow. All views on the master panel's stack; persona.js
      links into them (library pill + publish pill) at click time. -->
+<script src="lookio.js"></script>
+<script src="icons.js"></script>
 <script src="hub.js"></script>
 <script src="hubitem.js"></script>
 <script src="hubpublish.js"></script>

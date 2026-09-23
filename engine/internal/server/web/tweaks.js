@@ -555,6 +555,51 @@
     }
   }
 
+  // ── v0.52: the CHAT ICON upload (user spec item 10) ──────────────
+  // The square-cropped icon bytes → the engine's rev'd icon row; the
+  // tweaks blob carries only {iconCustom:true, iconRev:N} (plus
+  // iconIndex for the built-in picks) so it stays tiny.
+  function uploadCustomIcon(state, blob) {
+    var mime = (blob && blob.type) || 'image/png';
+    if (mime.slice(0, 6) !== 'image/') mime = 'image/png';
+    return fetch('/api/sessions/' + state.sessionId + '/icon', {
+      method: 'PUT',
+      headers: { 'Content-Type': mime },
+      body: blob
+    }).then(function (r) {
+      if (!r.ok) throw new Error('upload failed (' + r.status + ')');
+      return r.json();
+    });
+  }
+
+  // iconCellsHTML — the built-in picks: the name letter (iconIndex -1,
+  // always available) + every glyph of the chat's CURRENT family set
+  // (families.json — the user's own default icon set drops in there).
+  function iconCellsHTML(icon) {
+    var cfg = window.DoomalayConfig;
+    var fam = (cfg && cfg.families && cfg.families[icon.family]) || {};
+    var icons = Array.isArray(fam.icons) ? fam.icons : [];
+    var out = '';
+    // the letter fallback — always first
+    var letterOn = (!icon.iconCustom && !(icon.iconIndex >= 0));
+    out += '<button type="button" class="tw-iconcell" data-iconidx="-1"' +
+      (letterOn && !icon.iconCustom ? ' data-on="1"' : '') +
+      ' title="the name letter"><span class="tw-iconcell-letter">' +
+      esc((icon.name || '?').charAt(0).toUpperCase()) + '</span></button>';
+    for (var i = 0; i < icons.length; i++) {
+      var on = (!icon.iconCustom && icon.iconIndex === i);
+      out += '<button type="button" class="tw-iconcell" data-iconidx="' + i + '"' +
+        (on ? ' data-on="1"' : '') + ' title="family icon ' + (i + 1) + '">' +
+        '<img src="' + icons[i] + '" alt=""></button>';
+    }
+    // the custom cell — reflects the engine-stored image when set
+    if (icon.iconCustom && icon.sessionId) {
+      out += '<button type="button" class="tw-iconcell" data-iconidx="custom" data-on="1"' +
+        ' title="your image"><img src="' + icon.customIconURL() + '" alt=""></button>';
+    }
+    return '<div class="tw-icongrid" id="tw-icongrid">' + out + '</div>';
+  }
+
   // ── attach — the chat host calls this on every render ─────────────
   function attach(state) {
     if (!state) return;
@@ -692,6 +737,19 @@
         return (
           '<p class="pv-hint">this chat\'s own look — it starts as a copy of the global settings; anything you change here overrides them for <b>' + esc(icon.name) + '</b> only. Other chats keep the global look.</p>' +
           '<button id="tweaks-reset-all" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin:2px 0 6px">↺ reset everything to the global look</button>' +
+          sec('Chat Icon',
+            '<p class="hint">The icon this chatbot wears on the grid and in the panel header — a built-in glyph, or any image from your library (square-cropped).</p>' +
+            iconCellsHTML(icon) +
+            '<button id="tweaks-icon-pick" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:8px">🖼 browse an image…</button>' +
+            '<input type="file" id="tweaks-icon-file" accept="image/*" style="display:none">' +
+            (icon.iconCustom
+              ? '<button id="tweaks-icon-remove" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer;width:100%;margin-top:6px">✕ back to the family icon</button>'
+              : '') +
+            '<p class="hint" id="tweaks-icon-status" style="margin:8px 0 0">' +
+              (icon.iconCustom
+                ? 'a custom image is set — it overrides the family glyph everywhere.'
+                : 'no custom image — the family glyph (or the name letter) shows.') + '</p>'
+          ) +
           sec('Chat Colors',
             '<p class="hint">The markdown color scheme for this chat\'s messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below.</p>' +
             (A.schemeChatSwatches ? A.schemeChatSwatches(e.chatScheme, 'chat') : '') +
@@ -787,6 +845,113 @@
             if (track) track.style.background = on ? 'var(--accent)' : 'var(--surface-3)';
             if (thumb) thumb.style.left = on ? '20px' : '2px';
           });
+        });
+
+        // v0.52 (user spec item 10): the CHAT ICON section — the built-in
+        // cells + the browse-image crop flow (the SAME CropUI pipeline the
+        // background uses, at aspect 1: the avatar clips circular).
+        var refreshHeaderAvatar = function () {
+          if (cur && cur.panel && cur.panel.avatarEl) {
+            cur.panel.avatarEl.innerHTML = icon.getAvatarHTML();
+          }
+        };
+        el.querySelectorAll('#tw-icongrid [data-iconidx]').forEach(function (cell) {
+          cell.addEventListener('click', function () {
+            var idx = cell.getAttribute('data-iconidx');
+            if (idx === 'custom') return; // the custom cell is a state, not a pick
+            var n = parseInt(idx, 10);
+            var done = function () {
+              icon.clearCustomIcon();               // falls back to the family set
+              if (!isNaN(n)) icon.iconIndex = n;    // -1 = the letter
+              icon._renderIcon();
+              touch(state);
+              state._tweaks.iconIndex = n;
+              delete state._tweaks.iconCustom;
+              delete state._tweaks.iconRev;
+              persist(state);
+              refreshHeaderAvatar();
+              rebuild();
+            };
+            // dropping a custom icon also drops its engine bytes
+            if (icon.iconCustom && state.sessionId) {
+              fetch('/api/sessions/' + state.sessionId + '/icon', { method: 'DELETE' })
+                .catch(function () {}).then(done, done);
+            } else done();
+          });
+        });
+        var iconPick = el.querySelector('#tweaks-icon-pick');
+        var iconFile = el.querySelector('#tweaks-icon-file');
+        var iconStatus = el.querySelector('#tweaks-icon-status');
+        if (iconPick && iconFile) {
+          iconPick.addEventListener('click', function () { iconFile.click(); });
+          iconFile.addEventListener('change', function () {
+            var f = iconFile.files && iconFile.files[0];
+            iconFile.value = '';
+            if (!f) return;
+            if (!window.CropUI) {
+              if (iconStatus) iconStatus.textContent = 'the cropper is not available';
+              return;
+            }
+            if (iconStatus) iconStatus.textContent = 'opening the cropper…';
+            var go = function () {
+              window.CropUI.open({
+                file: f,
+                aspect: 1,        // SQUARE — the avatar renders as a circle
+                maxEdge: 512,
+                onDone: function (b64, dims) {
+                  var blob = b64ToBlob(b64, 'image/png');
+                  if (!blob) {
+                    if (iconStatus) iconStatus.textContent = 'couldn\u2019t read that image — try another';
+                    return;
+                  }
+                  if (iconStatus) iconStatus.textContent = 'uploading…';
+                  uploadCustomIcon(state, blob).then(function (d) {
+                    var rev = (d && d.rev) || 1;
+                    icon.setCustomIcon(rev);
+                    touch(state);
+                    state._tweaks.iconCustom = true;
+                    state._tweaks.iconRev = rev;
+                    persist(state);
+                    refreshHeaderAvatar();
+                    rebuild();
+                    var ns = cur && cur.panel
+                      ? cur.panel.bodyEl.querySelector('#tweaks-icon-status') : null;
+                    if (ns) ns.textContent = 'custom icon set — cropped ' +
+                      dims.width + '\u00d7' + dims.height + '.';
+                  }).catch(function (err) {
+                    if (iconStatus) iconStatus.textContent = 'couldn\u2019t set that icon — ' +
+                      (err && err.message ? err.message : 'try another');
+                  });
+                },
+                onCancel: function () {
+                  if (iconStatus) iconStatus.textContent = 'crop canceled — nothing changed.';
+                },
+                onErr: function (msg) {
+                  if (iconStatus) iconStatus.textContent = msg || 'could not read that image';
+                }
+              });
+            };
+            if (state.sessionId) return go();
+            if (window.ChatPanel && window.ChatPanel.ensureSession) {
+              window.ChatPanel.ensureSession(state, go);
+            }
+          });
+        }
+        var iconRm = el.querySelector('#tweaks-icon-remove');
+        if (iconRm) iconRm.addEventListener('click', function () {
+          var done = function () {
+            icon.clearCustomIcon();
+            touch(state);
+            delete state._tweaks.iconCustom;
+            delete state._tweaks.iconRev;
+            persist(state);
+            refreshHeaderAvatar();
+            rebuild();
+          };
+          if (state.sessionId) {
+            fetch('/api/sessions/' + state.sessionId + '/icon', { method: 'DELETE' })
+              .catch(function () {}).then(done, done);
+          } else done();
         });
 
         // v0.49 (user spec): the master reset — "reset text sizes and

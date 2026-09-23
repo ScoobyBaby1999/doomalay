@@ -94,4 +94,16 @@ func init() {
                 PayloadExt: ".md",
                 Desc:       "Agent skills shared through Hugging Face datasets",
         })
+        // v0.52: THEMES — full look bundles (.doomtheme, the lookio.js
+        // format). A global bundle repaints the whole app on download;
+        // a chat bundle lands in the open chatbot. Payloads carry photos
+        // + bump maps as dataURLs, so the publish caps are type-raised
+        // (see server/hub.go).
+        Register(LibrarySpec{
+                Type:       "theme",
+                Label:      "Theme Library",
+                Tag:        "doomalay-theme",
+                PayloadExt: ".doomtheme",
+                Desc:       "Full look bundles — global themes and single-chat looks",
+        })
 }

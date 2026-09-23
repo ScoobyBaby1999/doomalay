@@ -13,8 +13,7 @@
       "inputs": [
         "prompt"
       ],
-      "instructions": "RED PHASE - write ONE minimal failing test, nothing else. The test: ONE behavior, a clear name that describes the behavior (never 'test1' or 'works'), real code paths (no mocks unless unavoidable - mock behavior is not behavior). Show the test code in a fenced block with its file path. State the production change that would make this test fail, BEFORE writing it. Show the exact run command. Do NOT write any implementation in this step - production code before a failing test is a violation of the Iron Law ('NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST'); if you already wrote some, say so and delete it. If this is a bugfix, the test reproduces the reported bug.",
-      "max_tokens": 3000
+      "instructions": "RED PHASE - write ONE minimal failing test, nothing else. The test: ONE behavior, a clear name that describes the behavior (never 'test1' or 'works'), real code paths (no mocks unless unavoidable - mock behavior is not behavior). Show the test code in a fenced block with its file path. State the production change that would make this test fail, BEFORE writing it. Show the exact run command. Do NOT write any implementation in this step - production code before a failing test is a violation of the Iron Law ('NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST'); if you already wrote some, say so and delete it. If this is a bugfix, the test reproduces the reported bug."
     },
     {
       "name": "verify_red",
@@ -22,8 +21,7 @@
       "inputs": [
         "red"
       ],
-      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=true ONLY IF the red phase shows: one minimal test with a clear behavior-describing name; a stated expected failure mode (feature missing, not a typo or import error - a test that ERRORS rather than FAILS must be fixed before proceeding); a concrete run command; NO implementation code yet. If implementation code already appeared in the red phase, pass=false (violating the letter of the rules is violating the spirit of the rules).",
-      "max_tokens": 1200
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=true ONLY IF the red phase shows: one minimal test with a clear behavior-describing name; a stated expected failure mode (feature missing, not a typo or import error - a test that ERRORS rather than FAILS must be fixed before proceeding); a concrete run command; NO implementation code yet. If implementation code already appeared in the red phase, pass=false (violating the letter of the rules is violating the spirit of the rules)."
     },
     {
       "name": "green",
@@ -32,8 +30,7 @@
         "red",
         "verify_red"
       ],
-      "instructions": "GREEN PHASE - write the MINIMAL code to make the test pass. Minimal means just enough: no features the test does not exercise, no refactoring of other code, no 'improvements' (YAGNI). Show the implementation code in a fenced block with its file path, then show the run command and the passing output, then run the project's full suite (a green run of the test you wrote is not a green suite - the task scope bounds the deliverable, not the verification) and report every failure by name, including ones you did not cause. If the test now fails for a different reason, fix the CODE, not the test.",
-      "max_tokens": 5000
+      "instructions": "GREEN PHASE - write the MINIMAL code to make the test pass. Minimal means just enough: no features the test does not exercise, no refactoring of other code, no 'improvements' (YAGNI). Show the implementation code in a fenced block with its file path, then show the run command and the passing output, then run the project's full suite (a green run of the test you wrote is not a green suite - the task scope bounds the deliverable, not the verification) and report every failure by name, including ones you did not cause. If the test now fails for a different reason, fix the CODE, not the test."
     },
     {
       "name": "verify_green",
@@ -41,8 +38,7 @@
       "inputs": [
         "green"
       ],
-      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=true ONLY IF: the implementation is minimal (no unrequested features or refactors); the covering test passes; the full project suite ran and its result is reported; output is pristine (no errors or warnings - noise in test output is a finding); the failure-first RED state is documented. pass=false if the suite was not run or failures were left unreported by name.",
-      "max_tokens": 1200
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=true ONLY IF: the implementation is minimal (no unrequested features or refactors); the covering test passes; the full project suite ran and its result is reported; output is pristine (no errors or warnings - noise in test output is a finding); the failure-first RED state is documented. pass=false if the suite was not run or failures were left unreported by name."
     },
     {
       "name": "refactor",
@@ -50,8 +46,7 @@
       "inputs": [
         "green"
       ],
-      "instructions": "REFACTOR PHASE (green only) - clean up WITHOUT adding behavior: remove duplication the change introduced, improve names to match what things do, extract helpers if genuinely shared. Show the refactored code and re-run the covering tests plus the suite to prove green is preserved. If the minimal green implementation needs no cleanup, say exactly that ('No refactor needed: <one-line reason>') - do not invent work. Never change behavior during refactor; tests stay green throughout.",
-      "max_tokens": 5000
+      "instructions": "REFACTOR PHASE (green only) - clean up WITHOUT adding behavior: remove duplication the change introduced, improve names to match what things do, extract helpers if genuinely shared. Show the refactored code and re-run the covering tests plus the suite to prove green is preserved. If the minimal green implementation needs no cleanup, say exactly that ('No refactor needed: <one-line reason>') - do not invent work. Never change behavior during refactor; tests stay green throughout."
     },
     {
       "name": "verify",
@@ -59,8 +54,7 @@
       "inputs": [
         "body"
       ],
-      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY Iron-Law violation appears in the final output: implementation shown before the failing test; the test was never shown failing; minimal-code rule broken (unrequested features); the full suite not run or failures unreported; refactor changed behavior. Otherwise pass=true.",
-      "max_tokens": 1500
+      "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY Iron-Law violation appears in the final output: implementation shown before the failing test; the test was never shown failing; minimal-code rule broken (unrequested features); the full suite not run or failures unreported; refactor changed behavior. Otherwise pass=true."
     }
   ],
   "output_rules": {

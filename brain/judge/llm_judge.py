@@ -29,10 +29,13 @@ if TYPE_CHECKING:
     from scheduler import SlotScheduler
 
 
-# Token budget per verifier call. Verifier outputs are tiny — one JSON
-# object — so this stays small. Cost-conscious for runs with many
-# llm_judges criteria.
-_VERIFIER_MAX_TOKENS = 200
+# Token budget per verifier call. v0.52 (user spec: "remove all max_token
+# caps"): 200 was clipping thinking-model verdicts mid-JSON — the judge
+# spent its trace budget before emitting the verdict. 4096 keeps a
+# verdict's headroom while staying cost-conscious for runs with many
+# llm_judges criteria; call_slot still clamps to hosts with lower
+# published ceilings.
+_VERIFIER_MAX_TOKENS = 4096
 
 
 async def run_llm_judges(

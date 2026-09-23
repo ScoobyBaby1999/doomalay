@@ -720,6 +720,21 @@
           '<button data-action="reset-view" style="background:var(--surface-2);border:1px solid var(--border);' +
           'color:var(--text-1);padding:10px 16px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;' +
           'cursor:pointer;width:100%">Reset View (zoom 1×, pan to origin)</button>'
+        ) +
+        // v0.52 (user spec item 8): the LOOK BUNDLE — export the entire
+        // settings state (photos + bump maps included — they are dataURLs
+        // inside the gradient specs) as ONE .doomtheme file; a friend
+        // imports it and their app looks 1:1 the same.
+        section('My Look', '' +
+          '<p class="hint">Export everything — theme, colors, gradients, photos, bump maps, sizes, names — ' +
+          'as one .doomtheme file. Send it to a friend; they import it and their app looks exactly like yours.</p>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-action="export-look" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
+          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤓ Export my look</button>' +
+          '<button data-action="import-look" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
+          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤒ Import a look</button>' +
+          '</div>' +
+          '<p class="hint" style="margin-top:8px">Publish it to the Public Library from the hub Themes tab to share with everyone.</p>'
         )
       );
     }
@@ -734,6 +749,15 @@
       if (d.action === 'chat-scheme' && d.data.scheme) window.ChatTweaks.setScheme(d.data.scheme);
       else if (d.action === 'chat-colors-reset') window.ChatTweaks.resetColors();
       else if (d.action === 'tweaks-sizes-reset') window.ChatTweaks.resetSizes();
+      return;
+    }
+    // v0.52: the look bundle actions (lookio.js)
+    if (d.action === 'export-look') {
+      if (window.LookIO) window.LookIO.exportLook();
+      return;
+    }
+    if (d.action === 'import-look') {
+      if (window.LookIO) window.LookIO.pickImport();
       return;
     }
     if (d.action === 'set-theme' && d.data && d.data.theme) {

@@ -3,7 +3,7 @@ name: superpowers-dispatching-parallel-agents
 description: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
 ---
 
-# Delegating Parallel Agents
+# Dispatching Parallel Agents
 
 ## Overview
 
@@ -11,7 +11,7 @@ You delegate tasks to specialized agents with isolated context. By precisely cra
 
 When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
 
-**Core principle:** Delegate one agent per independent problem domain. Let them work concurrently.
+**Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
 
 ## When to Use
 
@@ -23,12 +23,12 @@ digraph when_to_use {
     "One agent per problem domain" [shape=box];
     "Can they work in parallel?" [shape=diamond];
     "Sequential agents" [shape=box];
-    "Parallel delegation" [shape=box];
+    "Parallel dispatch" [shape=box];
 
     "Multiple failures?" -> "Are they independent?" [label="yes"];
     "Are they independent?" -> "Single agent investigates all" [label="no - related"];
     "Are they independent?" -> "Can they work in parallel?" [label="yes"];
-    "Can they work in parallel?" -> "Parallel delegation" [label="yes"];
+    "Can they work in parallel?" -> "Parallel dispatch" [label="yes"];
     "Can they work in parallel?" -> "Sequential agents" [label="no - shared state"];
 }
 ```
@@ -63,18 +63,18 @@ Each agent gets:
 - **Constraints:** Don't change other code
 - **Expected output:** Summary of what you found and fixed
 
-### 3. Delegate in Parallel
+### 3. Dispatch in Parallel
 
-Issue all three sub-agent delegations in the same response — they run in parallel:
+Issue all three subagent dispatches in the same response — they run in parallel:
 
 ```text
-delegate(task="Fix agent-tool-abort.test.ts failures")
-delegate(task="Fix batch-completion-behavior.test.ts failures")
-delegate(task="Fix tool-approval-race-conditions.test.ts failures")
+Subagent (general-purpose): "Fix agent-tool-abort.test.ts failures"
+Subagent (general-purpose): "Fix batch-completion-behavior.test.ts failures"
+Subagent (general-purpose): "Fix tool-approval-race-conditions.test.ts failures"
 # All three run concurrently.
 ```
 
-Multiple delegate calls in one response = parallel execution. One per response = sequential.
+Multiple dispatch calls in one response = parallel execution. One per response = sequential.
 
 ### 4. Review and Integrate
 
@@ -144,7 +144,7 @@ Return: Summary of what you found and what you fixed.
 
 **Decision:** Independent domains - abort logic separate from batch completion separate from race conditions
 
-**Delegate:**
+**Dispatch:**
 ```
 Agent 1 → Fix agent-tool-abort.test.ts
 Agent 2 → Fix batch-completion-behavior.test.ts

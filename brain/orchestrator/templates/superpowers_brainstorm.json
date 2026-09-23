@@ -14,8 +14,7 @@
       "instructions": "Classify the request in the prompt using the superpowers three-path model. Output JSON {\"path\": \"spike|bounded|architectural\", \"reason\": str, \"clarifying_questions\": [str]}. RULES: spike = a feasibility question whose output is an answer, not kept code. bounded = a well-scoped change to a flow that ALREADY exists in the repo (a new flag, small endpoint, one-file fix) - if there is no existing flow to change, it is NOT bounded. architectural = new projects, new subsystems, restructuring how components fit, or interfaces others depend on. When in doubt between two paths, take the HEAVIER one (the ratchet is one-way: hidden complexity upgrades the path mid-task; nothing downgrades). Include 1-5 clarifying questions about purpose, constraints, and success criteria - only the ones that matter, one at a time in the final output. Return ONLY a single JSON object.",
       "inputs": [
         "prompt"
-      ],
-      "max_tokens": 1200
+      ]
     },
     {
       "name": "approach_seeds",
@@ -24,8 +23,7 @@
       "inputs": [
         "prompt",
         "classify"
-      ],
-      "max_tokens": 800
+      ]
     },
     {
       "name": "approaches",
@@ -39,8 +37,7 @@
         "prompt",
         "classify",
         "approach_seeds.approaches.{i}"
-      ],
-      "max_tokens": 2500
+      ]
     },
     {
       "name": "design",
@@ -50,8 +47,7 @@
         "prompt",
         "classify",
         "approaches.*"
-      ],
-      "max_tokens": 7000
+      ]
     },
     {
       "name": "spec_review",
@@ -59,8 +55,7 @@
       "instructions": "Self-review the design/spec with fresh eyes, superpowers style. Output bulleted findings ONLY (no rewrite). Check: (1) Placeholder scan - any 'TBD', 'TODO', incomplete sections, vague requirements? (2) Internal consistency - do sections contradict each other; does the architecture match the feature descriptions? (3) Scope check - focused enough for a single implementation plan, or does it need decomposition into sub-projects? (4) Ambiguity check - could any requirement be interpreted two different ways? (5) Intent check - does the design preserve the user's intended outcome, constraints, success criteria; are assumptions separated from what they said? (6) HARD-GATE check - does the output actually STOP at approval (no implementation steps started)?",
       "inputs": [
         "body"
-      ],
-      "max_tokens": 3000
+      ]
     },
     {
       "name": "revise",
@@ -69,8 +64,7 @@
       "inputs": [
         "body",
         "spec_review"
-      ],
-      "max_tokens": 8000
+      ]
     },
     {
       "name": "verify",
@@ -78,8 +72,7 @@
       "instructions": "Output JSON {\"pass\": bool, \"reason\": str}. pass=false if ANY of: the output implements code instead of presenting a design; no approval gate before implementation; path classification is missing or obviously wrong (new project labeled bounded); placeholders ('TBD', 'TODO') remain; approaches were not explored for the architectural path. Otherwise pass=true.",
       "inputs": [
         "body"
-      ],
-      "max_tokens": 1500
+      ]
     }
   ],
   "output_rules": {

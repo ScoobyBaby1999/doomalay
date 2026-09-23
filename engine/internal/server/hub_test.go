@@ -513,9 +513,8 @@ func TestHubLibraries(t *testing.T) {
         if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
                 t.Fatalf("decode: %v", err)
         }
-        // v0.49 (rebase): 3 built-in libraries since the living-hub wave —
-        // persona + template + skill.
-        if len(got.Libraries) != 3 {
+        // v0.52: 4 built-in libraries — persona + template + skill + theme.
+        if len(got.Libraries) != 4 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}
@@ -527,7 +526,8 @@ func TestHubLibraries(t *testing.T) {
         }
         if byType["persona"].Tag != "doomalay-persona" || byType["persona"].PayloadExt != ".md" ||
                 byType["template"].Tag != "doomalay-template" || byType["template"].PayloadExt != ".json" ||
-                byType["skill"].Tag != "doomalay-skill" || byType["skill"].PayloadExt != ".md" {
+                byType["skill"].Tag != "doomalay-skill" || byType["skill"].PayloadExt != ".md" ||
+                byType["theme"].Tag != "doomalay-theme" || byType["theme"].PayloadExt != ".doomtheme" {
                 t.Fatalf("specs = %+v", byType)
         }
 }

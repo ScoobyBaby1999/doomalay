@@ -191,6 +191,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/sessions/{id}/texture", s.handleSessionTextureGet)
         s.mux.HandleFunc("PUT /api/sessions/{id}/texture", s.handleSessionTexturePut)
         s.mux.HandleFunc("DELETE /api/sessions/{id}/texture", s.handleSessionTextureDelete)
+        // v0.52: the chat's custom icon (user spec item 10 — tweaks'
+        // "chat icon" section: built-in default set + browse-image crop)
+        s.mux.HandleFunc("GET /api/sessions/{id}/icon", s.handleSessionIconGet)
+        s.mux.HandleFunc("PUT /api/sessions/{id}/icon", s.handleSessionIconPut)
+        s.mux.HandleFunc("DELETE /api/sessions/{id}/icon", s.handleSessionIconDelete)
         // v0.15: frontend-driven turns (the PrivateMode SDK bridge chats
         // directly from the WebView — the engine can't speak PM's encrypted
         // protocol) append their events here so history + replay stay exact.
@@ -225,6 +230,8 @@ func (s *Server) routes() {
         // items, downloads, endorsements, publishing, the persona-picker
         // hearts, and the HF token connect flow.
         s.mux.HandleFunc("GET /api/hub/libraries", s.handleHubLibraries)
+        s.mux.HandleFunc("GET /api/hub/collections", s.handleHubCollections)
+        s.mux.HandleFunc("GET /api/hub/collections/{id}/items", s.handleHubCollectionItems)
         s.mux.HandleFunc("GET /api/hub/{type}/items", s.handleHubItems)
         s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
         s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)

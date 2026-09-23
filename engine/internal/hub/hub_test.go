@@ -43,15 +43,20 @@ func TestRegistryBuiltins(t *testing.T) {
         }
         found := 0
         for _, s := range All() {
-                if s.Type == "persona" || s.Type == "template" || s.Type == "skill" {
+                if s.Type == "persona" || s.Type == "template" || s.Type == "skill" || s.Type == "theme" {
                         found++
                 }
         }
-        if found != 3 {
+        if found != 4 {
                 t.Fatalf("All() = %+v", All())
         }
         if _, err := Get("skill"); err != nil { // v0.48: the third built-in library
                 t.Fatalf("skill missing from registry: %v", err)
+        }
+        if th, err := Get("theme"); err != nil { // v0.52: the fourth — look bundles
+                t.Fatalf("theme missing from registry: %v", err)
+        } else if th.Tag != "doomalay-theme" || th.PayloadExt != ".doomtheme" {
+                t.Fatalf("theme spec = %+v", th)
         }
 }
 

@@ -1,6 +1,6 @@
 ---
 name: superpowers-diagnosing-superpowers
-description: Use when a superpowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report, for the current session or a past one identified by id or path
+description: Use when a superpowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report for the superpowers maintainers, for the current session or a past one identified by id or path, on any harness.
 ---
 
 # Diagnosing Superpowers
@@ -18,7 +18,7 @@ never from memory.
 
 ## Workflow
 
-Add a plan-checklist item per step. Steps 5–7 run only on their stated condition.
+Create a todo per step. Steps 5–7 run only on their stated condition.
 
 1. **Problem intake.** Ask one question at a time until you can write a
    statement naming the session(s), the turn range if known, what your
@@ -26,42 +26,39 @@ Add a plan-checklist item per step. Steps 5–7 run only on their stated conditi
    (wall-clock, tokens, repeated actions, one specific action). "It took
    too long" is a complaint, not a problem statement. Note whether the
    goal is a superpowers bug report.
-2. **Locate.** Resolve each session to its transcript with verified
-   provenance (in doomalay, chat history is fetched by session id; in a
-   repo-backed workspace, read the session files on disk). Confirm a past
-   session by quoting its
+2. **Locate.** Resolve each session to verified absolute filesystem paths using
+   `references/session-discovery.md`. Confirm a past session by quoting its
    first prompt and timestamp, and list every candidate you rejected with the
-   reason, or "none". Enumerate sub-agent transcripts. Create
-   `diagnosing-superpowers/<session-id>/` in the session workspace, tell your
-   partner the path, and fill a `case.md` there, following provenance rules for
-   environment and skill observations.
+   reason, or "none". Enumerate subagent transcripts. Create
+   `~/.superpowers/diagnosing-superpowers/<session-id>/`, tell your
+   partner the path, and fill `templates/case.md` there, following its
+   provenance rules for environment and skill observations.
 3. **Triage.** Read the region around the reported problem yourself. Then
-   delegate one analyst sub-agent per dimension in parallel, each given the
-   case file path and one dimension to analyze: `skill-timeline`,
-   `plan-adherence`, `repeated-work`, `stumbles`,
-   `quality-evidence`, `request-conflicts`, `cost-and-time`.
+   dispatch one analyst subagent per dimension in parallel, each given the
+   case file path, `prompts/analyst-common.md`, and one dimension file from
+   `prompts/`: `skill-timeline.md`,
+   `plan-adherence.md`, `repeated-work.md`, `stumbles.md`,
+   `quality-evidence.md`, `request-conflicts.md`, `cost-and-time.md`.
    Split a dimension by turn range when the transcript is long. Discard
    any returned finding without `path:line`.
-4. **Report.** Fill every section of the report in order (sessions, timeline,
-   per-dimension findings with `path:line`, coverage, and §7 superpowers
-   involvement), write
+4. **Report.** Fill every section of `templates/report.md` in order, write
    it to the workspace, show it, and give the path. Check what cited content
    actually proves and preserve the supporting case; a symlink alias is not a
    redundant copy.
-5. **Issue filing** — when report §7 says possible or likely, or your
-   partner asks. Search the repo's open and closed issues for the symptoms.
-   Show matches and suggest adding the
-   report to the closest. If none match, draft the issue text, write
+5. **GitHub issues** — when report §7 says possible or likely, or your
+   partner asks. Search open and closed issues for the symptoms per
+   `references/github-issues.md`. Show matches and suggest adding the
+   report to the closest. If none match, fill `templates/issue.md`, write
    it to the workspace, show the exact text, and create the issue only
-   after approval. If a bundle exists, give
-   your partner its path to attach.
+   after approval. `gh` cannot attach files; if a bundle exists, give
+   your partner its path to attach in the browser.
 6. **Export** — only when your partner asks for a bundle; never build one
    unprompted. If the intake goal was a bug report, say once that a
    scrubbed bundle is available on request, then wait. Ask the redaction
    level, stating what each includes: skeleton (no tool-result bodies),
-   evidence (bodies only for cited events), full. Build the bundle, delegate
-   a scrub pass, then a scrub audit pass, repeating both until the audit
-   returns CLEAN.
+   evidence (bodies only for cited events), full. Build the bundle per
+   `templates/bundle-README.md`, dispatch `prompts/scrub.md`, then
+   `prompts/scrub-audit.md`, repeating both until the audit returns CLEAN.
    Complete the bundle template's evidence check and reconciliation before
    showing the final scrub log, file list, and privacy and evidence outcomes.
    Archive (`zip -r` or `tar -czf`) only after approval. With the archive
@@ -69,7 +66,7 @@ Add a plan-checklist item per step. Steps 5–7 run only on their stated conditi
    say scrubbing can miss things: they must review every file before sharing.
 7. **Similar sessions** — when asked. Turn confirmed findings into a
    signature, list candidates by mtime and size, find marker line numbers,
-   delegate one similar-session analysis per candidate in parallel, and
+   dispatch `prompts/similar-session.md` per candidate in parallel, and
    append report §9.
 
 ## Quick reference
@@ -88,14 +85,13 @@ yourself in step 3 and which findings to lead with in the verdict.
 
 ## Hard rules
 
-- **Context safety.** One transcript line can be a megabyte. Read tails and
-   grep for markers — never load a whole session file into context; do this on
-  every session file, every time.
+- **Context safety.** One transcript line can be a megabyte. Follow
+  `references/context-safety.md` on every session file, every time.
 - **Read-only.** Never modify, move, or delete a session file.
-- **Exact paths to sub-agents.** A sub-agent's "current session" is its
+- **Exact paths to subagents.** A subagent's "current session" is its
   own. Pass absolute paths and ids.
-- **Human prompts only.** System prompts, bootstrap blocks, and tool results
-  are not your partner's words. In a sub-agent transcript, "user" is the
+- **Human prompts only.** Hook output, system reminders, and tool results
+  are not your partner's words. In a subagent transcript, "user" is the
   parent agent.
 - **No superpowers diagnosis.** Report §7 states involvement and stops.
   Never name a defect in a skill or propose a change. Your partner

@@ -40,7 +40,7 @@
   SORTS.forEach(function (s) { SORT_SUB[s.key] = s.sub; });
 
   // the library pills' glyphs — future registry types fall back to 📚
-  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠' };
+  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨' };
   function libIcon(type) { return LIB_ICONS[type] || '📚'; }
 
   // The served Item carries no local-state flags — the web tracks what
@@ -199,6 +199,7 @@
         cur.stale = false;
         cur.tags = collectTags(cur.items);
         if (isTop()) { updateLibs(); updateTags(); updateBody(); }
+        loadCollections(refresh);
       })
       .catch(function (e) {
         if (!cur || cur.seq !== seq) return;
@@ -208,6 +209,61 @@
         cur.page = 1;
         if (isTop()) { toast(cur.err); updateTags(); updateBody(); }
       });
+  }
+
+  // v0.52: the bunches for the current q — they ride the grid's first
+  // slots. Shares the items' refresh so one ⟳ refreshes both.
+  function loadCollections(refresh) {
+    if (!cur) return;
+    var seq = cur.colSeq = (cur.colSeq || 0) + 1;
+    cur.bunchLoading = true;
+    if (isTop()) updateBody();
+    var qs = [];
+    if (cur.q) qs.push('q=' + encodeURIComponent(cur.q));
+    if (refresh) qs.push('refresh=1');
+    api('GET', '/api/hub/collections?' + qs.join('&'))
+      .then(function (d) {
+        if (!cur || cur.colSeq !== seq) return;
+        cur.bunchLoading = false;
+        cur.collections = (d && d.collections) || [];
+        if (isTop()) updateBody();
+      })
+      .catch(function () {
+        if (!cur || cur.colSeq !== seq) return;
+        cur.bunchLoading = false;
+        cur.collections = [];
+        if (isTop()) updateBody();
+      });
+  }
+
+  // v0.52: open a bunch — the cross-library member list.
+  function loadBunch(id) {
+    if (!cur) return;
+    cur.bunch = id;
+    cur.bunchGroups = null;
+    cur.bunchLoading = true;
+    cur.page = 1;
+    if (isTop()) { updateFilters(); updateBody(); }
+    api('GET', '/api/hub/collections/' + encodeURIComponent(id) + '/items')
+      .then(function (d) {
+        if (!cur || cur.bunch !== id) return;
+        cur.bunchLoading = false;
+        cur.bunchGroups = (d && d.groups) || [];
+        if (isTop()) updateBody();
+      })
+      .catch(function (e) {
+        if (!cur || cur.bunch !== id) return;
+        cur.bunchLoading = false;
+        cur.bunchGroups = [];
+        if (isTop()) { toast(e.message || 'the bunch could not be reached'); updateBody(); }
+      });
+  }
+
+  function leaveBunch() {
+    if (!cur) return;
+    cur.bunch = '';
+    cur.bunchGroups = null;
+    if (isTop()) { updateFilters(); updateBody(); }
   }
 
   function collectTags(items) {
@@ -348,7 +404,12 @@
         '<input id="hub-ftext" class="hub-ftext" type="text" inputmode="search"' +
           ' placeholder="filter…" value="' + escAttr(c.q) + '" aria-label="filter by text">' +
       '</div>' +
-      '<div class="hub-fsub" id="hub-fsub">' + esc(SORT_SUB[c.sort] || '') + '</div>'
+      '<div class="hub-fsub" id="hub-fsub">' +
+        (c.bunch
+          ? '<span class="hub-bunch-chip">bunch: ' + esc(c.bunch) +
+              ' <span class="hub-bunch-x" id="hub-bunch-x" role="button" tabindex="0" aria-label="leave the bunch">✕</span></span>'
+          : esc(SORT_SUB[c.sort] || '')) +
+      '</div>'
     );
   }
 
@@ -364,6 +425,26 @@
 
   function bodyHTML() {
     var c = cur;
+    // v0.52: the BUNCH view — the member list across libraries, one
+    // section per type, each card opening the item detail as usual.
+    if (c.bunch) {
+      var groups = c.bunchGroups || [];
+      if (c.bunchLoading) return '<div class="art-loading">loading the bunch…</div>';
+      if (!groups.length) {
+        return '<div class="hub-empty">the bunch “' + esc(c.bunch) + '” has no members anymore</div>';
+      }
+      var out = '';
+      groups.forEach(function (g) {
+        out += '<div class="hub-bunch-sec">' +
+          '<div class="hub-bunch-sec-h">' + libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
+            ' <span class="hub-bunch-sec-n">' + g.items.length + '</span></div>' +
+          '<div class="hub-grid" style="--hub-cols:' + clampCols(c.grid, c.width) + '">' +
+            g.items.map(cardHTML).join('') +
+          '</div>' +
+        '</div>';
+      });
+      return out;
+    }
     var eff = clampCols(c.grid, c.width);
     c.eff = eff;
     var per = eff * c.grid.rows;
@@ -373,15 +454,19 @@
     c.page = page;
 
     if (c.loading && !c.items) return '<div class="art-loading">loading the library…</div>';
-    if (!items.length) {
+    if (!items.length && !(c.collections || []).length) {
       return '<div class="hub-empty">' +
         (c.err ? esc(c.err) :
           'nothing here' + (c.q ? ' for “' + esc(c.q) + '”' : '') +
           ' — try another search, another tag, or publish something below') +
         '</div>';
     }
+    // the bunch cards ride the SAME grid, first (they match the current
+    // q — loadCollections shares it).
+    var bunches = c.bunchLoading ? [] : (c.collections || []);
     return (
       '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
+          bunches.map(collectionCardHTML).join('') +
           items.slice((page - 1) * per, page * per).map(cardHTML).join('') +
       '</div>' +
       '<div class="hub-pager">' +
@@ -402,24 +487,97 @@
     '</span>';
   }
 
+  // ── v0.52: themed stat glyphs (bigger ♥ / ⤓ — user spec item 4). The
+  // heart FILLS when hearted (fill=currentColor over the stroke).
+  function statIcon(name, filled) {
+    var I = window.IconLib;
+    if (!I || !I.has(name)) return '';
+    var s = I.svg(name, 17);
+    if (filled) s = s.replace('fill="none"', 'fill="currentColor"');
+    return s;
+  }
+  function heartGlyph(on) { return statIcon('heart', on) || (on ? '♥' : '♡'); }
+  function dlGlyph() { return statIcon('download', false) || '⤓'; }
+
+  function findItem(id) {
+    if (!cur) return null;
+    var i, j;
+    if (cur.items) {
+      for (i = 0; i < cur.items.length; i++) {
+        if (cur.items[i].id === id) return cur.items[i];
+      }
+    }
+    // v0.52: bunch members live in their groups, not cur.items
+    var groups = cur.bunchGroups || [];
+    for (i = 0; i < groups.length; i++) {
+      var items = groups[i].items || [];
+      for (j = 0; j < items.length; j++) {
+        if (items[j].id === id) return items[j];
+      }
+    }
+    return null;
+  }
+
   function cardHTML(it) {
     var sub = it.description ||
       (it.tags || []).map(function (t) { return '#' + t; }).join(' ') ||
       '—';
+    // v0.52 (user spec item 3): the icon COLUMN left of the name —
+    // optional; no icon renders exactly the pre-v0.52 layout.
+    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 20) : '';
+    var hearted = isHearted(it.type || (cur && cur.type), it.repo, it.id);
     return (
       '<button class="hub-card" data-item="' + escAttr(it.id) + '">' +
         '<span class="hub-card-bg" data-bgcard="1"></span>' +
+        '<span class="hub-card-fade"></span>' +
         '<span class="hub-card-body">' +
-          '<span class="hub-card-name">' + esc(it.name) + '</span>' +
+          '<span class="hub-card-titlerow">' +
+            (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
+            '<span class="hub-card-name">' + esc(it.name) + '</span>' +
+          '</span>' +
           '<span class="hub-card-desc">' + esc(sub) + '</span>' +
           '<span class="hub-card-author">by ' + esc(it.author || 'unknown') + '</span>' +
           '<span class="hub-card-foot">' +
-            '<span>♥ ' + (it.hearts || 0) + '</span>' +
-            '<span>⤓ ' + (it.downloads || 0) + '</span>' +
+            '<span class="hub-card-stat' + (hearted ? ' on' : '') + '" data-heart="1" role="button"' +
+              ' tabindex="0" aria-label="endorse">' + heartGlyph(hearted) + '<b>' + (it.hearts || 0) + '</b></span>' +
+            '<span class="hub-card-stat">' + dlGlyph() + '<b>' + (it.downloads || 0) + '</b></span>' +
           '</span>' +
         '</span>' +
       '</button>'
     );
+  }
+
+  // v0.52 (user spec item 1): the BUNCH card — one grouped listing for a
+  // whole collection. Distinct surface style (no bg art): the members are
+  // the art. Tap opens the cross-library member view.
+  function collectionCardHTML(b) {
+    var I = window.IconLib;
+    var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22)
+      : (I ? I.svg('package', 22) : '');
+    var bits = [];
+    var byType = b.byType || {};
+    Object.keys(byType).forEach(function (t) {
+      bits.push(byType[t] + ' ' + (shortType(t)) + (byType[t] === 1 ? '' : 's'));
+    });
+    return (
+      '<button class="hub-card hub-card--bunch" data-bunch="' + escAttr(b.id) + '">' +
+        '<span class="hub-card-body">' +
+          '<span class="hub-card-titlerow">' +
+            (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
+            '<span class="hub-card-name">' + esc(b.id) + '</span>' +
+          '</span>' +
+          '<span class="hub-card-desc">' + esc(b.members + ' bundled items — ' + bits.join(' · ')) + '</span>' +
+          '<span class="hub-card-foot">' +
+            '<span class="hub-card-stat">' + heartGlyph(false) + '<b>' + (b.hearts || 0) + '</b></span>' +
+            '<span class="hub-card-stat">' + dlGlyph() + '<b>' + (b.downloads || 0) + '</b></span>' +
+          '</span>' +
+        '</span>' +
+      '</button>'
+    );
+  }
+
+  function shortType(t) {
+    return { persona: 'persona', template: 'template', skill: 'skill', theme: 'theme' }[t] || t;
   }
 
   // The card's background layer: a v0.44 design SPEC (the shared
@@ -626,7 +784,8 @@
     if (!c.auth) loadAuth();
   }
 
-  // library pills — switching reloads the items for that type
+  // library pills — switching reloads the items for that type (and
+  // leaves any open bunch — the pill is the way back to a library grid)
   function wireLibs(root) {
     (root || (cur && cur.panel ? cur.panel.bodyEl : document)).querySelectorAll('[data-lib]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -636,12 +795,16 @@
         cur.tag = '';
         cur.q = '';
         cur.page = 1;
+        cur.bunch = '';
+        cur.bunchGroups = null;
+        cur.collections = null;
         var si = q('#hub-search');
         if (si) si.value = '';
         var ft = q('#hub-ftext');
         if (ft) ft.value = '';
         updateLibs();
         updateTags();
+        updateFilters();
         updateBody();
         loadItems();
       });
@@ -704,18 +867,63 @@
       });
     });
 
-    // cards → item detail
+    // cards → item detail · v0.52: bunch cards → the member view, and the
+    // card hearts endorse DIRECTLY (user spec item 6: every heart is live —
+    // downloaded items toggle their endorsement right on the card; the
+    // engine still 400-guards endorse-before-download, so a heart on a
+    // not-yet-downloaded item opens the detail where the download lives).
     var items = c.items || [];
     host.querySelectorAll('[data-item]').forEach(function (b) {
       var id = b.getAttribute('data-item');
-      var it = null;
-      for (var i = 0; i < items.length; i++) if (items[i].id === id) { it = items[i]; break; }
+      var it = findItem(id) || (function () {
+        for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i];
+        return null;
+      })();
       if (!it) return;
       b.addEventListener('click', function () {
-        if (window.HubItem) window.HubItem.open(cur.type, it);
+        if (window.HubItem) window.HubItem.open(it.type || cur.type, it);
       });
       var bg = b.querySelector('[data-bgcard]');
       if (bg) paintCardBg(bg, it);
+    });
+
+    host.querySelectorAll('[data-bunch]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        loadBunch(b.getAttribute('data-bunch'));
+      });
+    });
+
+    var bunchX = host.querySelector('#hub-bunch-x') || q('#hub-bunch-x');
+    if (bunchX) bunchX.addEventListener('click', function (e) {
+      e.stopPropagation();
+      leaveBunch();
+    });
+
+    host.querySelectorAll('[data-heart]').forEach(function (h) {
+      h.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!cur) return;
+        var card = h.closest('[data-item]');
+        if (!card) return;
+        var it = findItem(card.getAttribute('data-item'));
+        if (!it) return;
+        var type = it.type || cur.type;
+        if (!isDownloaded(type, it.repo, it.id)) {
+          if (window.HubItem) window.HubItem.open(type, it);
+          else toast('download the item before endorsing it');
+          return;
+        }
+        var on = !isHearted(type, it.repo, it.id);
+        api('POST', '/api/hub/' + encodeURIComponent(type) +
+            (on ? '/endorse' : '/unendorse'), { repo: it.repo, id: it.id })
+          .then(function (d) {
+            setHearted(type, it.repo, it.id, on);
+            if (d && d.item) refreshItem(d.item);
+            toast(on ? 'endorsed ♥' : 'endorsement removed');
+            if (isTop()) updateBody();
+          })
+          .catch(function (e2) { toast((e2 && e2.message) || 'could not endorse'); });
+      });
     });
   }
 
@@ -750,6 +958,11 @@
       width: 0,
       folded: false,
       eff: 0,
+      bunch: '',
+      bunchGroups: null,
+      bunchLoading: false,
+      collections: null,
+      colSeq: 0,
       _onResize: null
     };
     panel.pushView(buildView());

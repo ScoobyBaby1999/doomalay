@@ -23,8 +23,12 @@ import (
 )
 
 const (
-        hubPublishMaxBytes = 12 << 20 // raw JSON body (pngBase64 + payload + overhead)
-        hubPayloadMaxBytes = 64 << 10 // payload text (a persona .md / template .json)
+        hubPublishMaxBytes = 26 << 20 // raw JSON body (pngBase64 + payload + overhead); themes carry photo dataURLs
+        hubPayloadMaxBytes = 64 << 10  // payload text (a persona .md / template .json)
+        // v0.52: a THEME payload is a full look bundle — theme, gradients,
+        // photos and bump maps as dataURLs inside the JSON — so it rides
+        // the same generous cap the web importer allows (lookio.js: 24MB).
+        hubThemePayloadMaxBytes = 24 << 20
         hubPNGMaxBytes     = 6 << 20  // card background PNG
 )
 
@@ -88,6 +92,33 @@ func (s *Server) handleHubItems(w http.ResponseWriter, r *http.Request) {
                 return
         }
         writeJSON(w, http.StatusOK, map[string]any{"type": typ, "items": items, "total": len(items)})
+}
+
+// handleHubCollections is GET /api/hub/collections?q= (refresh=1 bypasses
+// the remote cache) — the collection BUNCHES derived across every library
+// (v0.52 user spec: many templates + skills clamp into one listing; the
+// member list itself comes from each library's items, matched client-side
+// on the item.collection field).
+func (s *Server) handleHubCollections(w http.ResponseWriter, r *http.Request) {
+        refresh := r.URL.Query().Get("refresh") == "1"
+        bunches, err := s.hub.Collections(r.URL.Query().Get("q"), refresh)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"collections": bunches, "total": len(bunches)})
+}
+
+// handleHubCollectionItems is GET /api/hub/collections/{id}/items — the
+// bunch's member items grouped per library (the sectioned member view
+// the hub opens when a bunch card is tapped).
+func (s *Server) handleHubCollectionItems(w http.ResponseWriter, r *http.Request) {
+        groups, err := s.hub.CollectionItems(r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 }
 
 // handleHubItem is GET /api/hub/{type}/item/{repo}/{id} — {item, payload}
@@ -212,7 +243,7 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
         }
         body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hubPublishMaxBytes))
         if err != nil {
-                writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (12MB cap)")
+                writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (26MB cap)")
                 return
         }
         var req hub.PublishRequest
@@ -224,8 +255,8 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusBadRequest, "name is required")
                 return
         }
-        if len(req.Payload) > hubPayloadMaxBytes {
-                writeError(w, http.StatusBadRequest, "payload too large (64KB cap)")
+        if len(req.Payload) > hubPayloadMaxBytes && !(typ == "theme" && len(req.Payload) <= hubThemePayloadMaxBytes) {
+                writeError(w, http.StatusBadRequest, "payload too large (64KB cap; 24MB for themes)")
                 return
         }
         if b, err := base64.StdEncoding.DecodeString(req.PNGBase64); err == nil && len(b) > hubPNGMaxBytes {

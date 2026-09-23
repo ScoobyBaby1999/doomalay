@@ -15,8 +15,7 @@
       "inputs": [
         "prompt"
       ],
-      "instructions": "Extract EVERY completion/status claim in the work under review. Output JSON {\"claims\": [{\"claim\": str, \"claimed_by\": str, \"proving_command\": str, \"evidence_shown\": bool}]}. A claim is ANY positive statement about work state: 'tests pass', 'build succeeds', 'bug fixed', 'requirements met', 'agent completed', 'all 14 tasks done', 'the migration ran'. For each, name the command that would PROVE it (the test command, the build command, the reproduction of the original symptom, the line-by-line requirements checklist) and whether the claim already carries fresh evidence in the text. Implications of success count as claims; so do paraphrases. Return ONLY a single JSON object with the top-level key \"claims\".",
-      "max_tokens": 2500
+      "instructions": "Extract EVERY completion/status claim in the work under review. Output JSON {\"claims\": [{\"claim\": str, \"claimed_by\": str, \"proving_command\": str, \"evidence_shown\": bool}]}. A claim is ANY positive statement about work state: 'tests pass', 'build succeeds', 'bug fixed', 'requirements met', 'agent completed', 'all 14 tasks done', 'the migration ran'. For each, name the command that would PROVE it (the test command, the build command, the reproduction of the original symptom, the line-by-line requirements checklist) and whether the claim already carries fresh evidence in the text. Implications of success count as claims; so do paraphrases. Return ONLY a single JSON object with the top-level key \"claims\"."
     },
     {
       "name": "evidence",
@@ -29,8 +28,7 @@
         "over": "claims.claims",
         "max_parallel": 3
       },
-      "instructions": "Judge ONE claim. Output JSON {\"pass\": bool, \"reason\": str}. The Gate Function: pass=true ONLY if this claim is backed by FRESH evidence in the work itself - the verification command was run AND its full output is shown AND the output actually confirms the claim (test output shows 0 failures, not 'should pass'; build exit 0, not 'logs look good'; the original symptom re-tested, not 'code changed so probably fixed'). pass=false for: previous-run evidence, 'should'/'probably'/'seems', agent-reported success without a diff or output, partial checks extrapolated, linter-passing offered as build evidence. In reason, state exactly what evidence exists or is missing.",
-      "max_tokens": 1000
+      "instructions": "Judge ONE claim. Output JSON {\"pass\": bool, \"reason\": str}. The Gate Function: pass=true ONLY if this claim is backed by FRESH evidence in the work itself - the verification command was run AND its full output is shown AND the output actually confirms the claim (test output shows 0 failures, not 'should pass'; build exit 0, not 'logs look good'; the original symptom re-tested, not 'code changed so probably fixed'). pass=false for: previous-run evidence, 'should'/'probably'/'seems', agent-reported success without a diff or output, partial checks extrapolated, linter-passing offered as build evidence. In reason, state exactly what evidence exists or is missing."
     },
     {
       "name": "gaps",
@@ -39,8 +37,7 @@
         "claims",
         "evidence.*"
       ],
-      "instructions": "Bulleted findings ONLY. For every claim the evidence stage failed: the claim, why the evidence does not support it (previous run / no output / extrapolation / 'should' wording), and the exact command that must run to close the gap. Flag red-flag wording found anywhere in the work ('should', 'probably', 'seems', satisfaction expressed before verification - 'Great!', 'Perfect!', 'Done!' with nothing run). Flag the regression-test pattern: a 'fixed' claim with no red-green evidence (test written, watched fail, fix, watched pass). If every claim passed, emit bullets only for red-flag wording, or the single bullet 'All claims carry fresh evidence; no red-flag wording found.'",
-      "max_tokens": 3000
+      "instructions": "Bulleted findings ONLY. For every claim the evidence stage failed: the claim, why the evidence does not support it (previous run / no output / extrapolation / 'should' wording), and the exact command that must run to close the gap. Flag red-flag wording found anywhere in the work ('should', 'probably', 'seems', satisfaction expressed before verification - 'Great!', 'Perfect!', 'Done!' with nothing run). Flag the regression-test pattern: a 'fixed' claim with no red-green evidence (test written, watched fail, fix, watched pass). If every claim passed, emit bullets only for red-flag wording, or the single bullet 'All claims carry fresh evidence; no red-flag wording found.'"
     },
     {
       "name": "verdict",
@@ -50,8 +47,7 @@
         "evidence.*",
         "gaps"
       ],
-      "instructions": "Produce the verification report. Structure: '## Verification verdict' - one paragraph stating the actual state of the work in evidence terms (what is PROVEN vs what is merely CLAIMED - state the claim only WITH the evidence, state actual status with evidence when it disagrees); '## Verified claims' - a table (claim | proving command | result) for every passing claim; '## Unverified claims' - a table (claim | what is missing | the command to run) for every failing one; '## Red flags' - the wording findings; '## Gate decision' - 'PASS: accept the completion claim' only if every claim is verified and no red flags remain, otherwise 'FAIL: do not accept - <the one-line reason>'. NEVER soften: a claim without fresh evidence is not 'mostly fine', it is unverified. The Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE - violating the letter of this rule is violating the spirit of this rule.",
-      "max_tokens": 4000
+      "instructions": "Produce the verification report. Structure: '## Verification verdict' - one paragraph stating the actual state of the work in evidence terms (what is PROVEN vs what is merely CLAIMED - state the claim only WITH the evidence, state actual status with evidence when it disagrees); '## Verified claims' - a table (claim | proving command | result) for every passing claim; '## Unverified claims' - a table (claim | what is missing | the command to run) for every failing one; '## Red flags' - the wording findings; '## Gate decision' - 'PASS: accept the completion claim' only if every claim is verified and no red flags remain, otherwise 'FAIL: do not accept - <the one-line reason>'. NEVER soften: a claim without fresh evidence is not 'mostly fine', it is unverified. The Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE - violating the letter of this rule is violating the spirit of this rule."
     }
   ],
   "output_rules": {

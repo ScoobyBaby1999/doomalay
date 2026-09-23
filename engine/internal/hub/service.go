@@ -727,6 +727,8 @@ type PublishRequest struct {
         Design      Design   `json:"design"`
         Payload     string   `json:"payload"`
         PNGBase64   string   `json:"pngBase64"`
+        Icon        string   `json:"icon"`       // v0.52: optional card icon (Lucide-style kebab name)
+        Collection  string   `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
 }
 
 // Publish uploads an item under the connected user's per-type dataset repo
@@ -768,8 +770,10 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 ID: id, Type: spec.Type, Name: name,
                 Description: strings.TrimSpace(req.Description),
                 Author:      user, Repo: repo,
-                Tags:      SanitizeTags(req.Tags),
-                CreatedAt: now, UpdatedAt: now,
+                Tags:       SanitizeTags(req.Tags),
+                Icon:       SanitizeIcon(req.Icon),
+                Collection: SanitizeCollection(req.Collection),
+                CreatedAt:  now, UpdatedAt: now,
                 Design: normalizeDesign(req.Design),
                 File:   "items/" + id + spec.PayloadExt,
         }
