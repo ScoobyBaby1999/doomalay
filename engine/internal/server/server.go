@@ -304,6 +304,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/start", s.handleGHOAuthStart)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/callback", s.handleGHOAuthCallback)
+        // v0.55: the device-code flow — the production GitHub sign-in for
+        // distributed builds (secretless: no client secret ships, no callback
+        // URL needed; works for every user of a shipped install).
+        s.mux.HandleFunc("POST /api/workspaces/oauth/github/device/start", s.handleGHDeviceStart)
+        s.mux.HandleFunc("GET /api/workspaces/oauth/github/device/status", s.handleGHDeviceStatus)
         // v0.47 (task 10): the GitHub App's registered redirect URLs use
         // /api/github/oauth/callback (localhost:8123/:8080) — answer BOTH
         // paths so the user's existing registration just works.

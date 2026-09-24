@@ -1,25 +1,40 @@
 # GitHub App Setup — the "Sign in with GitHub" flow (workspaces)
 
 This guide fills **every box** of the GitHub App creation form
-(https://github.com/settings/apps/new) for doomalay's one-tap workspace
-sign-in, and explains how to replace the compromised token securely.
+(https://github.com/settings/apps/new) for doomalay's sign-in, and explains
+the production auth model (v0.55: secretless device flow).
 
 ---
 
-## 0. First: kill the compromised token (do this NOW)
+## 0. How the production sign-in works (v0.55 — read this first)
 
-The PAT currently used for testing is compromised (it also sits in a git
-remote URL, which is visible to any process on the machine):
+**The goal:** any friend installs the app and signs in with ONE login, no
+setup, no keys. **The constraint (verified live 2026-09-24):** GitHub's
+redirect flow always requires the app's client secret at the token
+exchange — even with PKCE (GitHub's Jul 2025 PKCE changelog: *"GitHub does
+not distinguish between public and confidential clients"*; a live probe
+with a valid client_id + code_verifier and no secret returns
+`incorrect_client_credentials`). A distributed app can never ship that
+secret without leaking it to every install.
 
-1. GitHub → your avatar → **Settings → Developer settings →
-   Personal access tokens** → find the token → **Delete**.
-2. Remove it from any remote: `git remote set-url origin
-   https://github.com/ScoobyBaby1999/doomalay.git` (no token in the URL —
-   use a credential helper or SSH instead).
-3. In the app: settings → keys → delete `GITHUB_PAT` if you pasted it there,
-   or run the engine with a fresh vault.
+**The answer:** the **device flow** — GitHub's only secretless grant (the
+same flow the `gh` CLI uses). The user taps *Sign in with GitHub*, gets a
+one-time code (`WDJB-MJHT`-style), enters it at
+`https://github.com/login/device`, presses **Authorize**, and the engine
+(polling in the background) stores the token in that device's encrypted
+vault. No secret exists anywhere, no callback URL registration is needed,
+and it works on every origin/port/tunnel a friend's install might use.
 
-OAuth (below) replaces pasted PATs entirely for the sign-in flow.
+What each party holds:
+
+| Piece | Who holds it | Secret? |
+|---|---|---|
+| Client ID | ships inside the app (public by design) | no |
+| Client secret | **nobody — you never paste it anywhere** | (unused) |
+| User token | each user's own encrypted device vault | yes, per-user |
+
+The one-tap **redirect** flow still exists as an optional extra for
+self-hosted installs that set `DOOMALAY_GH_CLIENT_SECRET` (see §4).
 
 ---
 
@@ -32,11 +47,11 @@ Create GitHub App) and fill in:
 |---|---|---|
 | **GitHub App name** | `Doomalay Workspaces` | Shown to users on the authorize screen. Anything you like. |
 | **Homepage URL** | `https://github.com/ScoobyBaby1999/doomalay` | The app's website — the repo is fine. |
-| **Identifying and authorizing users → Redirect URI** | **add one per origin you use** (see §2) | GitHub bounces the user back here after they press Authorize. Up to 10 allowed. |
-| ☐ Allow wildcard matching | **leave OFF** | We control the exact origins; wildcards are a token-leak footgun. |
-| ☑ **Expire user authorization tokens** | **CHECK IT** | Gives a `refresh_token`; tokens die in 8h and the engine refreshes them automatically (already implemented). This is the single most important security box. |
-| ☑ **Request user authorization (OAuth) during installation** | **CHECK IT** | Install + authorize in one pass — fewer taps. |
-| ☐ Enable Device Flow | leave OFF | We use the web flow, not TV-style codes. |
+| **Identifying and authorizing users → Callback URL** | optional (leave empty is fine) | Only used by the OPTIONAL one-tap redirect flow (§4). The device flow needs NO callback URL. |
+| ☐ Allow wildcard matching | leave OFF | Only relevant if you add callback URLs. |
+| ☐ **Expire user authorization tokens** | **LEAVE UNCHECKED** | v0.55 CHANGE (was: check it). The refresh grant requires the client secret — which secretless installs don't have. With expiry ON, friends' tokens would die after 8h with no way to refresh. With it OFF, a token lives until the user revokes it (github.com/settings/applications). |
+| ☑ **Request user authorization (device flow)** | **CHECK IT** | THE production path. Without this checkbox the engine's device flow gets `device_flow_disabled` from GitHub. |
+| ☑ **Request user authorization (OAuth) during installation** | CHECK IT | Install + authorize in one pass — fewer taps. |
 | **Setup URL / Redirect on update** | leave empty | No post-install screen needed. |
 | **Webhook → Active** | **leave OFF** | We poll the API; no inbound webhook = no webhook secret to protect, no public URL needed. |
 | **Repository permissions → Contents** | **Read and write** | File trees, file reads, commits (the editor's "commit" button). |
@@ -45,77 +60,73 @@ Create GitHub App) and fill in:
 | **Repository permissions → Administration** | **Read and write** | "create new repo" as the signed-in user. |
 | **Account permissions** | none needed | We don't touch emails/profile beyond the login (which needs no extra permission). |
 | **Subscribe to events** | none | No webhooks. |
-| **Where can this GitHub App be installed** | **Only on this account** | Private app for you. Switch to "Any account" only if you ever ship publicly. |
+| **Where can this GitHub App be installed** | **Any account** | v0.55 CHANGE (was: only this account). Friends must be able to authorize the app from THEIR accounts — "Only on this account" blocks them. |
 
 Press **Create GitHub App**.
 
 After creation, on the app's page:
 - Note the **App ID** (not needed by the engine, just for reference).
-- Copy the **Client ID** (shown near the top, `Iv1.…` or `Iw1.…`).
-- **Generate a new client secret** (bottom of the page) → copy it — it is
-  shown **once**.
+- Copy the **Client ID** (shown near the top, `Iv…`) — this is the ONLY
+  value the app needs. Send it to the engine builder; it ships as
+  `ghOAuthDefaultClientID` in `engine/internal/server/workspaces.go`.
+- **Client secret: do NOT generate one.** Nothing needs it. (If you ever
+  generate one for a self-hosted redirect setup, keep it on that server
+  only — never in the app, the repo, or a chat.)
 
-## 2. Redirect URIs — one per origin
+## 2. What users see (all implemented)
 
-The engine derives the callback from the origin the app is served on, and
-tells you the exact URI: open the app and visit
-`/api/workspaces/oauth/github/status` — the `redirect_uri` field is what
-GitHub needs. Typical set (add the ones you use):
+1. Friend installs the app → workspace picker → **＋ connect workspace** →
+   GitHub (or the connect panel directly).
+2. **Sign in with GitHub** → the app shows a one-time code with **copy**
+   and **open github ↗** buttons (opens `github.com/login/device`).
+3. Friend enters the code on GitHub, presses **Authorize** → the panel
+   flips to `✓ connected as @friend` within a couple of seconds.
+4. The token rides that device's encrypted vault (AES-256-GCM) — same
+   storage as every other key in the app. Revocable any time at
+   `github.com/settings/applications`.
 
-| Origin | Redirect URI to register |
-|---|---|
-| This device (PWA on the engine host) | `http://127.0.0.1:8123/api/workspaces/oauth/github/callback` and `http://localhost:8123/api/workspaces/oauth/github/callback` |
-| Android device hosting the engine | `http://<phone-LAN-IP>:8123/api/workspaces/oauth/github/callback` — **GitHub only accepts http for localhost/127.0.0.1**, so use a tunnel (below) for the phone |
-| Cloudflare tunnel | `https://<your-tunnel>.trycloudflare.com/api/workspaces/oauth/github/callback` |
-| Any HTTPS domain you host on | `https://<domain>/api/workspaces/oauth/github/callback` |
+No setup, no secret, no callback registration — identical experience for
+you and every friend.
 
-The state nonce expires in 10 minutes and is single-use; the callback
-refuses stale/unknown states.
+## 3. Why this is more secure than shipping a secret
 
-## 3. Give the engine the client pair (secure, no redeploys)
+- **No secret to leak** — the thing that compromised the old pair (a
+  secret visible in the repo/agent environment) structurally cannot
+  recur: the secret doesn't exist.
+- **Per-user tokens** — each friend's token is their own, scoped by the
+  app's permissions and revocable by them alone.
+- **Encrypted at rest** — vault-only (AES-256-GCM, `0600` master key).
+- **No pasting** — the token never transits a clipboard or a chat.
 
-Two ways, pick one:
+## 4. OPTIONAL: the one-tap redirect flow (self-hosted installs only)
 
-**A. From the app (vault-stored, encrypted at rest):**
+If you run the engine on a fixed origin (a domain, a tunnel) and want the
+smoothest UX — tap, GitHub page, back — set BOTH:
 
 ```bash
-curl -X POST http://127.0.0.1:8123/api/workspaces/oauth/github/config \
-  -H 'Content-Type: application/json' \
-  -d '{"client_id":"Iv1.xxxx","client_secret":"xxxx"}'
+DOOMALAY_GH_CLIENT_ID=Iv…      # the app's client id
+DOOMALAY_GH_CLIENT_SECRET=…    # the client secret (server-only!)
 ```
 
-The pair is AES-256-GCM encrypted in the engine vault
-(`~/.local/share/doomalay/secrets.json`) — never plaintext, never in the DB.
+(or POST them once to `/api/workspaces/oauth/github/config` on that
+install — stored encrypted in that install's vault).
 
-**B. Environment (headless / CI):** start the engine with
-`DOOMALAY_GH_CLIENT_ID` and `DOOMALAY_GH_CLIENT_SECRET` set. Env wins over
-the vault.
+Then register the callback URL for that origin (the exact value is shown
+at `GET /api/workspaces/oauth/github/status` → `redirect_uri`), e.g.
+`https://<your-domain>/api/github/oauth/callback`. On such installs the
+connect panel automatically uses the one-tap redirect; everywhere else it
+uses the device flow. The v0.52 yellow "one-time OAuth setup" box was
+removed — the device flow made it unnecessary, and a per-device secret
+paste could never work for distributed installs anyway.
 
-Then the workspace picker's "Sign in with GitHub" becomes one tap:
-redirect → GitHub → **Authorize** → back in the app, signed in. The token
-(expires in 8h) + refresh token are stored encrypted; the engine refreshes
-automatically — no repeated prompts.
-
-## 4. Why this is more secure than the old PAT
-
-- **No pasting** — the token never transits your clipboard or the chat.
-- **Expiring** — 8h lifetime with auto-refresh (vs a PAT that lives for
-  months/forever).
-- **Scoped** — only Contents/Metadata/PRs/Administration on repos you
-  install it on; revocable per-installation from GitHub in one click.
-- **Encrypted at rest** — vault-only (AES-256-GCM, `0600` master key).
-- **Rotate anytime** — regenerate the client secret on GitHub, re-POST the
-  config. User tokens minted by the old secret die on their next refresh.
-
-The manual token path still exists ("or paste a token instead") for
+The manual token path also still exists ("or paste a token instead") for
 self-hosted forges and as a fallback — same vault treatment.
 
-## 5. What the user sees (all implemented)
+## 5. Troubleshooting
 
-1. Workspace pill → picker → **＋ connect workspace** → any option.
-2. "Sign in with GitHub" (big row) — one tap, GitHub page, press
-   **Authorize**, back in the app: `✓ signed in as @you`.
-3. Connect flows reuse it everywhere — `my repos`, `create new repo`,
-   cloud URL connects. Token prompt never appears again.
-4. Device storage workspaces, branch picking, and the drawer's branch
-   switcher work alongside with no token prompts at all.
+| Symptom | Cause / fix |
+|---|---|
+| `device_flow_disabled: Device Flow must be explicitly enabled for this App` | The GitHub App settings page → check **Request user authorization (device flow)** → save. |
+| Start works but the code "expires" immediately | You likely have a stale flow; press Sign in again for a fresh code (codes live 15 min). |
+| `incorrect_client_credentials` on a redirect sign-in | A secret was configured on that install but is wrong — regenerate it, or unset `DOOMALAY_GH_CLIENT_SECRET` to fall back to the device flow. |
+| Friend can't see the app / authorize fails | The GitHub App is set to "Only on this account" — switch to **Any account** (§1). |

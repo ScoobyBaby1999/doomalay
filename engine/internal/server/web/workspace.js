@@ -340,12 +340,18 @@
           // park what we were doing, let the OAuth redirect, resume after
           try { sessionStorage.setItem('ws-oauth-resume', '1'); } catch (e) {}
           window.location.href = '/api/workspaces/oauth/github/start?redirect=%2F';
+        } else if (kind === 'github' && window.GHConnect) {
+          // v0.55: no secret on this install → the GitHub connect panel runs
+          // the secretless device-code flow (a one-time code entered at
+          // github.com/login/device) — works for every user, zero setup.
+          // The manual token box still lives inside that panel too.
+          window.GHConnect.openConnectPanel({ onDone: function () { if (onSignedIn) onSignedIn(); } });
         } else {
           openManual();
           var sub = el.querySelector('#' + ctx + '-signin-sub');
           if (sub && kind === 'github') {
-            sub.textContent = 'the one-tap sign-in needs a quick one-time setup ' +
-              '(a GitHub App) — paste a token for now, it works the same.';
+            sub.textContent = 'one-tap sign-in isn\u2019t available here — ' +
+              'paste a token for now, it works the same.';
           }
         }
       });

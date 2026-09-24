@@ -1,20 +1,27 @@
-// ghconnect.js — v0.48 (task 11): the GitHub connect panel.
+// ghconnect.js — v0.55: the GitHub connect panel.
 //
-// Mirrors hfconnect.js exactly (user spec: "reuse the HF connect panel
-// pattern for a GitHub equivalent with OAuth auto-connect + optional manual
-// token paste"):
-//   1. big "Sign in with GitHub" button → GET /api/workspaces/oauth/github/
-//      start (the Doomalay GitHub App — client id ships built-in);
-//   2. when the OAuth secret isn't configured yet: a one-time "OAuth setup"
-//      box (paste the GitHub App client secret → POST /api/workspaces/oauth/
-//      github/config) — the panel shows the exact redirect URI to register;
+// THE PRODUCTION SIGN-IN (v0.55): GitHub has no public-client redirect flow
+// (the code exchange always demands the client secret — shipping it inside
+// a distributed app would leak it to every install). So "Sign in with
+// GitHub" now auto-picks:
+//   1. secret configured on this install (env/vault — self-hosters) → the
+//      one-tap REDIRECT flow (GET /api/workspaces/oauth/github/start);
+//   2. otherwise → the DEVICE-CODE flow (POST /api/workspaces/oauth/github/
+//      device/start): a one-time code to enter at github.com/login/device,
+//      the engine polls GitHub in the background, the token lands in this
+//      device's encrypted vault. NO secret anywhere, no setup, works the
+//      same for every user of a shipped build (same flow the gh CLI uses).
 //   3. "Optional manual method" — paste-token box (POST /api/workspaces/
-//      accounts {kind:"github", token}, verified against api.github.com/user);
+//      accounts {kind:"github", token});
 //   4. "get token ↗" link → https://github.com/settings/tokens.
 //
+// The v0.52 yellow "one-time OAuth setup" box is GONE by design: it stored
+// the secret per-device, which could never work for friends' installs —
+// the device flow made it unnecessary.
+//
 // Two hosts, same builder: openConnectPanel (ConnectOverlay page) and
-// connectPanelView (master-panel view) — the sandbox picker's Docker option
-// ("sign in to HF first, then GitHub") opens the overlay one.
+// connectPanelView (master-panel view) — the workspace picker's GitHub row
+// (no secret configured) opens the overlay one.
 //
 // Exposes: window.GHConnect = { openConnectPanel, connectPanelView, account }
 (function () {
@@ -25,11 +32,6 @@
   }
 
   function bodyHTML(acct) {
-    // v0.52: the setup box is ALWAYS in the DOM (hidden unless the secret
-    // is missing) — the panel-view host renders before the account probe
-    // answers, and wire()'s refresh() then shows/hides it live. The
-    // overlay host (which renders AFTER the probe) pre-sets visibility.
-    var secretNeeded = acct ? !acct.has_secret : true;
     return '' +
       '<div style="padding:26px 22px">' +
         '<div id="ghc-state" style="margin-bottom:16px"></div>' +
@@ -38,32 +40,11 @@
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Sign in with GitHub</button>' +
         '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
-          'One tap: you\'ll be redirected to github.com to log in and authorize ' +
-          'the Doomalay app — the token is acquired automatically and stored in ' +
-          'the engine\'s encrypted vault. We never see your password.</p>' +
-        '<div id="ghc-setup" style="margin:16px 0 0;padding:14px;border-radius:10px;' +
-          'background:rgba(var(--notice-rgb),0.10);border:1px solid rgba(var(--notice-rgb),0.35)' +
-          (secretNeeded ? '' : ';display:none') + '">' +
-          '<div style="font-size:12px;font-weight:700;color:var(--notice);margin-bottom:6px">' +
-            '🔐 one-time OAuth setup — paste the client secret once</div>' +
-          '<p style="font-size:12px;color:var(--text-3);margin:0 0 8px;line-height:1.5">' +
-            'Sign-in needs the Doomalay GitHub App <b style="color:var(--text-2)">client secret</b> to finish its ' +
-            'token exchange. Paste it <b style="color:var(--text-2)">once per install</b> — it is encrypted into ' +
-            'this device\'s vault and <b style="color:var(--ok)">never leaves the device</b> (it is NOT shipped ' +
-            'inside the app and no one else can read it from here). The box disappears once saved.' +
-            ' <span id="ghc-cid">App client id: <code style="color:var(--text-2);font-size:11px">' +
-            ((acct && acct.client_id) || 'built-in') + '</code></span> · redirect URI this install answers:' +
-            ' <code id="ghc-ruri" style="color:var(--text-2);font-size:11px;word-break:break-all">' +
-            ((acct && acct.redirect_uri) || '…') + '</code></p>' +
-          '<div style="display:flex;gap:8px">' +
-            '<input id="ghc-secret" type="password" placeholder="GitHub App client secret" autocomplete="off" style="flex:1;' +
-              'padding:10px 12px;border-radius:10px;border:1px solid var(--border);' +
-              'background:var(--surface-2);color:var(--text-1);font-size:13px;font-family:inherit;outline:none">' +
-            '<button id="ghc-save-secret" style="padding:10px 14px;border-radius:10px;' +
-              'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);' +
-              'font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">save</button>' +
-          '</div>' +
-        '</div>' +
+          'One login: you\'ll get a short one-time code to enter at ' +
+          '<b style="color:var(--text-2)">github.com/login/device</b> (the page opens for you) — ' +
+          'GitHub shows the Doomalay app, you press <b style="color:var(--text-2)">Authorize</b>, ' +
+          'and the token is acquired automatically into the engine\'s encrypted vault. ' +
+          'No secrets, no setup, works the same for everyone. We never see your password.</p>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
             'letter-spacing:0.06em;margin-bottom:10px">Optional manual method</div>' +
@@ -97,6 +78,89 @@
     }
   }
 
+  // paintDeviceUI — the "enter this code" panel of the device flow. The
+  // poll loop flips it to connected/expired/error as GitHub answers.
+  function paintDeviceUI(stateEl, d) {
+    if (!stateEl) return;
+    var uri = d.verification_uri || 'https://github.com/login/device';
+    stateEl.innerHTML = '' +
+      '<div style="padding:16px;border-radius:12px;background:var(--surface-2);' +
+        'border:1px solid var(--border-strong)">' +
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">' +
+          'step 1 — enter this code at <b style="color:var(--text-2)">' + uri.replace(/^https?:\/\//, '') + '</b>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+          '<span id="ghc-devcode" style="font-size:26px;font-weight:700;letter-spacing:0.12em;' +
+            'color:var(--text-1);font-family:inherit">' + (d.user_code || '…') + '</span>' +
+          '<button id="ghc-copy" style="padding:7px 12px;border-radius:10px;background:var(--surface-2);' +
+            'color:var(--text-1);border:1px solid var(--border-strong);font-size:12px;font-weight:600;' +
+            'font-family:inherit;cursor:pointer">copy</button>' +
+          '<button id="ghc-open" style="padding:7px 12px;border-radius:10px;background:var(--accent);' +
+            'color:var(--bg-app);border:none;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">' +
+            'open github ↗</button>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-3);line-height:1.5">' +
+          'step 2 — press <b style="color:var(--text-2)">Authorize</b> on the GitHub page. ' +
+          '<span id="ghc-wait" style="color:var(--accent-2)">waiting for you…</span></div>' +
+      '</div>';
+    var copy = stateEl.querySelector('#ghc-copy');
+    if (copy) copy.addEventListener('click', function () {
+      var code = (stateEl.querySelector('#ghc-devcode') || {}).textContent || '';
+      var done = function () { copy.textContent = 'copied ✓'; setTimeout(function () { copy.textContent = 'copy'; }, 1400); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(done, done);
+      } else { done(); }
+    });
+    var open = stateEl.querySelector('#ghc-open');
+    if (open) open.addEventListener('click', function () {
+      window.open(uri, '_blank');
+    });
+  }
+
+  // runDeviceFlow — start the device grant and poll the engine's status
+  // endpoint until it resolves. onDone(login) fires exactly on success.
+  function runDeviceFlow(el, errEl, stateEl, btn, onDone) {
+    btn.disabled = true; btn.textContent = 'starting…';
+    errEl.textContent = '';
+    fetch('/api/workspaces/oauth/github/device/start', { method: 'POST' })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+        return r.json();
+      })
+      .then(function (d) {
+        paintDeviceUI(stateEl, d);
+        var poll = null;
+        var stop = function () {
+          if (poll) { clearInterval(poll); poll = null; }
+          btn.disabled = false; btn.textContent = 'Sign in with GitHub';
+        };
+        poll = setInterval(function () {
+          fetch('/api/workspaces/oauth/github/device/status')
+            .then(function (r) { return r.json(); })
+            .then(function (st) {
+              if (st.status === 'connected') {
+                stop();
+                paintState(stateEl, { connected: true, user: st.login || 'unknown' });
+                if (window.toast) window.toast('signed in to GitHub as ' + (st.login || '?') + ' — token saved encrypted');
+                if (onDone) onDone(st.login || '');
+              } else if (st.status === 'expired') {
+                stop();
+                errEl.textContent = 'the code expired before authorization — press Sign in with GitHub for a fresh one';
+              } else if (st.status === 'error') {
+                stop();
+                errEl.textContent = st.error || 'GitHub refused the sign-in';
+              }
+              // pending | idle (a newer flow replaced ours?) → keep waiting
+            })
+            .catch(function () { /* transient — the next tick retries */ });
+        }, 2500);
+      })
+      .catch(function (e) {
+        btn.disabled = false; btn.textContent = 'Sign in with GitHub';
+        errEl.textContent = e.message || 'could not start the device flow';
+      });
+  }
+
   function wire(el, onDone) {
     var errEl = el.querySelector('#ghc-err');
     var stateEl = el.querySelector('#ghc-state');
@@ -104,54 +168,23 @@
     var refresh = function () {
       account().then(function (a) {
         paintState(stateEl, a);
-        var btn = el.querySelector('#ghc-oauth');
-        if (btn && !a.has_secret) {
-          btn.title = 'needs the one-time OAuth setup below (client secret)';
-        }
-        // v0.52: live-toggle the setup box + refresh its id/URI hints —
-        // the panel-view host renders before the probe answers.
-        var box = el.querySelector('#ghc-setup');
-        if (box) box.style.display = a.has_secret ? 'none' : '';
-        var cid = el.querySelector('#ghc-cid code');
-        if (cid && a.client_id) cid.textContent = a.client_id;
-        var ruri = el.querySelector('#ghc-ruri');
-        if (ruri && a.redirect_uri) ruri.textContent = a.redirect_uri;
       }).catch(function () {});
     };
     refresh();
 
     var oauth = el.querySelector('#ghc-oauth');
     if (oauth) oauth.addEventListener('click', function () {
-      oauth.disabled = true; oauth.textContent = 'Redirecting…';
-      window.location.href = '/api/workspaces/oauth/github/start?redirect=/';
-    });
-
-    var saveSecret = el.querySelector('#ghc-save-secret');
-    if (saveSecret) saveSecret.addEventListener('click', function () {
-      var sec = (el.querySelector('#ghc-secret').value || '').trim();
-      if (!sec) { errEl.textContent = 'paste the client secret first'; return; }
-      errEl.textContent = '';
-      saveSecret.disabled = true; saveSecret.textContent = 'saving…';
-      // v0.52: client_id omitted — the engine keeps the built-in app id
-      // (or the previously saved one). The secret itself is the only
-      // sensitive half of the pair, and it goes vault-only.
-      fetch('/api/workspaces/oauth/github/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_secret: sec })
-      }).then(function (r) {
-        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
-        return r.json();
-      }).then(function () {
-        saveSecret.disabled = false; saveSecret.textContent = 'save';
-        errEl.textContent = '';
-        if (window.toast) window.toast('OAuth secret saved (encrypted on this device) — sign in works now');
-        // hide the setup box (re-render state)
-        var box = el.querySelector('#ghc-setup');
-        if (box) box.style.display = 'none';
-      }).catch(function (e) {
-        saveSecret.disabled = false; saveSecret.textContent = 'save';
-        errEl.textContent = e.message || 'could not save the secret';
+      // v0.55: secret configured (self-hosted install) → one-tap redirect;
+      // otherwise → the secretless device flow (works for everyone).
+      account().then(function (a) {
+        if (a && a.has_secret) {
+          oauth.disabled = true; oauth.textContent = 'Redirecting…';
+          window.location.href = '/api/workspaces/oauth/github/start?redirect=/';
+        } else {
+          runDeviceFlow(el, errEl, stateEl, oauth, onDone);
+        }
+      }).catch(function () {
+        runDeviceFlow(el, errEl, stateEl, oauth, onDone);
       });
     });
 
@@ -187,20 +220,11 @@
 
   function openConnectPanel(opts) {
     opts = opts || {};
-    account().then(function (acct) {
-      window.ConnectOverlay.open(bodyHTML(acct), {
-        onSwap: function () {
-          var root = document.getElementById('ghc-oauth');
-          wire(root ? root.parentElement : document, opts.onDone);
-        }
-      });
-    }).catch(function () {
-      window.ConnectOverlay.open(bodyHTML(null), {
-        onSwap: function () {
-          var root = document.getElementById('ghc-oauth');
-          wire(root ? root.parentElement : document, opts.onDone);
-        }
-      });
+    window.ConnectOverlay.open(bodyHTML(null), {
+      onSwap: function () {
+        var root = document.getElementById('ghc-oauth');
+        wire(root ? root.parentElement : document, opts.onDone);
+      }
     });
   }
 
@@ -209,9 +233,6 @@
     return {
       title: 'connect github',
       render: function () {
-        // rendered async-ish: the panel view renders synchronously, so this
-        // builds the no-account variant; wire() refreshes the state + the
-        // setup box visibility immediately after mount.
         return bodyHTML(null);
       },
       onMount: function (el) { wire(el, opts.onDone); }

@@ -508,6 +508,7 @@ func (s *Server) handleGHAccount(w http.ResponseWriter, r *http.Request) {
                 "oauth":        id != "",
                 "client_id":    id,
                 "has_secret":   secret != "",
+                "device_flow":  id != "", // v0.55: secretless device-code path
                 "redirect_uri": oauthRedirectURI(r),
         })
 }

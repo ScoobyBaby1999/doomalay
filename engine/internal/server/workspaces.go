@@ -42,6 +42,8 @@
 //      POST   /api/workspaces/oauth/github/config     {client_id, secret}
 //      GET    /api/workspaces/oauth/github/start      → 302 GitHub authorize
 //      GET    /api/workspaces/oauth/github/callback   code→token→vault
+//      POST   /api/workspaces/oauth/github/device/start  v0.55 device flow
+//      GET    /api/workspaces/oauth/github/device/status (poller state)
 //
 // SECURITY: connect/resolve run forge.Recognize + forge.ProbeHost +
 // forge.GuardURL (SSRF); tokens ride the vault (WORKSPACE_<id>), never the
@@ -1451,9 +1453,9 @@ func oauthRedirectURI(r *http.Request) string {
 
 // handleGHOAuthStatus — is "Sign in with GitHub" wired up? (+ who's signed in)
 // v0.47: exposes client_id + has_secret separately — the client id ships
-// built-in (the user's GitHub App), but the SECRET is vault/env-only, so
-// the UI can offer "paste the secret once" before the sign-in button can
-// complete its token exchange.
+// built-in (the user's GitHub App). v0.55: device_flow marks the secretless
+// device-code path, available whenever a client id exists (always, on a
+// shipped build) — the UI falls back to it when has_secret is false.
 func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
         id, secret := s.ghOAuthCreds()
         login, signed := s.accountInfo("github")
@@ -1461,6 +1463,7 @@ func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
                 "configured":   id != "" && secret != "",
                 "client_id":    id,
                 "has_secret":   secret != "",
+                "device_flow":  id != "", // v0.55: secretless path, always available
                 "signed_in":    signed,
                 "login":        login,
                 // the URI to register in the GitHub App settings for THIS origin
@@ -1525,11 +1528,11 @@ func randHex(n int) string {
 func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
         id, secret := s.ghOAuthCreds()
         if id == "" || secret == "" {
-                // v0.52: name the exact fix — the one-time OAuth setup box in
-                // the GitHub connect panel (or env DOOMALAY_GH_CLIENT_SECRET
-                // on headless installs). The old message read like a bug; it
-                // is the deliberate secretless-by-default state.
-                writeError(w, 400, "GitHub sign-in needs its one-time setup: open the GitHub connect panel and paste the GitHub App client secret into the yellow \"one-time OAuth setup\" box (it is stored encrypted on this device, never in the app) — or paste a token as the manual method")
+                // v0.55: the one-tap redirect needs the app secret, which a
+                // distributed build can never ship (it would leak to every
+                // install). Secretless installs use the device-code flow —
+                // the connect panel's sign-in button starts it automatically.
+                writeError(w, 400, "GitHub sign-in on this install uses the device-code flow (no client secret configured) — press the Sign in with GitHub button in the connect panel and enter the shown code at github.com/login/device. To enable the one-tap redirect instead, set DOOMALAY_GH_CLIENT_SECRET (self-hosted installs only)")
                 return
         }
         redirect := r.URL.Query().Get("redirect")
@@ -1592,8 +1595,11 @@ func ghTokenExchange(ctx context.Context, form url.Values) (access, refresh stri
                 return "", "", 0, err
         }
         if out.Error != "" {
+                // v0.55: keep BOTH halves — the poller keys on the machine code
+                // (authorization_pending / slow_down / expired_token), humans get
+                // the description.
                 if out.ErrorDescription != "" {
-                        return "", "", 0, fmt.Errorf("%s", out.ErrorDescription)
+                        return "", "", 0, fmt.Errorf("%s (%s)", out.ErrorDescription, out.Error)
                 }
                 return "", "", 0, fmt.Errorf("%s", out.Error)
         }
@@ -1731,6 +1737,225 @@ func (s *Server) githubToken() string {
                 return access
         }
         return tok
+}
+
+// ══ GitHub device flow (v0.55) — THE production sign-in path ═════════════
+//
+// THE WHY (researched live 2026-09-24, pinned by probe + docs): GitHub has
+// NO public-client redirect flow. Even with PKCE (added Jul 2025) the
+// authorization-code exchange demands the client_secret — probed against
+// the live endpoint: valid client_id + code_verifier without the secret →
+// `incorrect_client_credentials`, and the PKCE changelog itself says
+// "GitHub does not distinguish between public and confidential clients".
+// A distributed build can therefore never ship a working one-tap redirect
+// sign-in without leaking its secret into every install.
+//
+// The device flow is GitHub's one secretless grant (the same flow the gh
+// CLI uses): the engine POSTs just the client_id to
+// github.com/login/device/code, shows the user a one-time code to enter
+// at github.com/login/device, and polls the token endpoint with
+// client_id + device_code + the device grant type — NO secret, NO client
+// secret anywhere, NO callback URL, NO per-origin redirect registration.
+// Works for every user of a shipped build with zero setup; the app just
+// needs "Device Flow" enabled on its GitHub App settings page (and
+// "Expire user authorization tokens" OFF, since the refresh grant would
+// need the secret).
+
+var ghDeviceCodeEndpoint = "https://github.com/login/device/code"
+
+// ghDevicePending is one in-flight device flow. The poller goroutine owns
+// the writes to Status/Login/Err; readers (the status endpoint) only peek
+// under the store lock.
+type ghDevicePending struct {
+        DeviceCode      string
+        UserCode        string
+        VerificationURI string
+        Interval        time.Duration
+        Deadline        time.Time
+
+        Status string // "pending" | "connected" | "expired" | "error"
+        Login  string
+        Err    string
+}
+
+var ghDeviceStore = struct {
+        sync.Mutex
+        cur *ghDevicePending
+}{}
+
+// handleGHDeviceStart — POST /api/workspaces/oauth/github/device/start.
+// Calls GitHub's device endpoint with the (public, built-in) client id and
+// hands the user_code to the UI; a background poller then waits for the
+// user to authorize at github.com/login/device.
+func (s *Server) handleGHDeviceStart(w http.ResponseWriter, r *http.Request) {
+        id, _ := s.ghOAuthCreds()
+        if id == "" {
+                writeError(w, 400, "no GitHub App client id configured (set DOOMALAY_GH_CLIENT_ID)")
+                return
+        }
+        ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+        defer cancel()
+        form := url.Values{"client_id": {id}}
+        req, _ := http.NewRequestWithContext(ctx, "POST", ghDeviceCodeEndpoint,
+                strings.NewReader(form.Encode()))
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("User-Agent", "doomalay-engine")
+        resp, err := oauthHTTP.Do(req)
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "device flow start failed: "+err.Error())
+                return
+        }
+        defer resp.Body.Close()
+        var out struct {
+                DeviceCode       string `json:"device_code"`
+                UserCode         string `json:"user_code"`
+                VerificationURI  string `json:"verification_uri"`
+                ExpiresIn        int    `json:"expires_in"`
+                Interval         int    `json:"interval"`
+                Error            string `json:"error"`
+                ErrorDescription string `json:"error_description"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+                writeError(w, http.StatusBadGateway, "device flow start: bad response: "+err.Error())
+                return
+        }
+        if out.Error != "" {
+                msg := out.Error
+                if out.ErrorDescription != "" {
+                        msg = out.ErrorDescription + " (" + out.Error + ")"
+                }
+                if out.Error == "device_flow_disabled" {
+                        msg = "Device Flow is not enabled for the GitHub App " + id + " — open the app's settings on GitHub (Developer settings → GitHub Apps → the app) and CHECK \"Device Flow\", then try again"
+                }
+                writeError(w, http.StatusBadGateway, msg)
+                return
+        }
+        if out.DeviceCode == "" || out.UserCode == "" {
+                writeError(w, http.StatusBadGateway, "device flow start: incomplete response")
+                return
+        }
+        interval := time.Duration(out.Interval) * time.Second
+        if interval < time.Second {
+                interval = time.Second
+        }
+        deadline := time.Now().Add(15 * time.Minute)
+        if out.ExpiresIn > 0 {
+                deadline = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
+        }
+        ghDeviceStore.Lock()
+        p := &ghDevicePending{
+                DeviceCode: out.DeviceCode, UserCode: out.UserCode,
+                VerificationURI: out.VerificationURI, Interval: interval,
+                Deadline: deadline, Status: "pending",
+        }
+        ghDeviceStore.cur = p
+        ghDeviceStore.Unlock()
+
+        go s.pollGHDevice(p, id)
+
+        writeJSON(w, 200, map[string]any{
+                "user_code":        p.UserCode,
+                "verification_uri": p.VerificationURI,
+                "expires_in":       out.ExpiresIn,
+                "interval":         int(interval.Seconds()),
+        })
+}
+
+// pollGHDevice — background poller for one device flow. GitHub's device
+// grant: poll the token endpoint no faster than `interval`, treat
+// slow_down as +5s, stop on success/expiry/replacement. The token lands
+// in the vault exactly like the redirect flow's (same GITHUB_PAT +
+// accountExtra shape) so githubToken() picks it up identically.
+func (s *Server) pollGHDevice(p *ghDevicePending, clientID string) {
+        t := time.NewTimer(p.Interval)
+        defer t.Stop()
+        for {
+                <-t.C
+                ghDeviceStore.Lock()
+                replaced := ghDeviceStore.cur != p
+                stale := time.Now().After(p.Deadline)
+                ghDeviceStore.Unlock()
+                if replaced {
+                        return
+                }
+                if stale {
+                        ghDeviceStore.Lock()
+                        p.Status = "expired"
+                        ghDeviceStore.Unlock()
+                        return
+                }
+                ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+                // NOTE: no client_secret, no code_verifier — the device grant is
+                // GitHub's only secretless exchange (see the block comment above).
+                form := url.Values{
+                        "client_id":  {clientID},
+                        "device_code": {p.DeviceCode},
+                        "grant_type": {"urn:ietf:params:oauth:grant-type:device_code"},
+                }
+                access, refresh, expiresIn, err := ghTokenExchange(ctx, form)
+                cancel()
+                if err == nil {
+                        ae := accountExtra{RefreshToken: refresh}
+                        if expiresIn > 0 {
+                                ae.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
+                        }
+                        if login, lerr := forgeLoginFor("github", access); lerr == nil {
+                                ae.Login = login
+                        }
+                        extra, _ := json.Marshal(ae)
+                        if verr := s.vault.Set("GITHUB_PAT", "github", access, string(extra)); verr != nil {
+                                ghDeviceStore.Lock()
+                                p.Status = "error"
+                                p.Err = "vault: " + verr.Error()
+                                ghDeviceStore.Unlock()
+                                return
+                        }
+                        ghDeviceStore.Lock()
+                        p.Status = "connected"
+                        p.Login = ae.Login
+                        ghDeviceStore.Unlock()
+                        return
+                }
+                msg := err.Error()
+                switch {
+                case strings.Contains(msg, "authorization_pending"):
+                        t.Reset(p.Interval)
+                case strings.Contains(msg, "slow_down"):
+                        p.Interval += 5 * time.Second
+                        t.Reset(p.Interval)
+                case strings.Contains(msg, "expired_token"):
+                        ghDeviceStore.Lock()
+                        p.Status = "expired"
+                        ghDeviceStore.Unlock()
+                        return
+                default:
+                        ghDeviceStore.Lock()
+                        p.Status = "error"
+                        p.Err = msg
+                        ghDeviceStore.Unlock()
+                        return
+                }
+        }
+}
+
+// handleGHDeviceStatus — GET /api/workspaces/oauth/github/device/status.
+// The UI polls this while the user enters the code at github.com/login/device.
+func (s *Server) handleGHDeviceStatus(w http.ResponseWriter, r *http.Request) {
+        ghDeviceStore.Lock()
+        defer ghDeviceStore.Unlock()
+        if ghDeviceStore.cur == nil {
+                writeJSON(w, 200, map[string]any{"status": "idle"})
+                return
+        }
+        p := ghDeviceStore.cur
+        writeJSON(w, 200, map[string]any{
+                "status":           p.Status,
+                "user_code":        p.UserCode,
+                "verification_uri": p.VerificationURI,
+                "login":            p.Login,
+                "error":            p.Err,
+        })
 }
 
 // ── device-storage workspaces (item 11) ─────────────────────────────────

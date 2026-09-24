@@ -22,6 +22,7 @@ import (
         "net/url"
         "strings"
         "testing"
+        "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -127,9 +128,9 @@ func TestGHOAuthConfigSecretOnly(t *testing.T) {
         }
 }
 
-// TestGHOAuthStartNeedsSetup — the pre-setup state must fail with a
-// message that NAMES the one-time box (the old "isn't configured yet"
-// read like a bug).
+// TestGHOAuthStartNeedsSetup — without a secret the one-tap redirect
+// must fail with a message that NAMES the device-code flow (the
+// v0.55 production path for secretless installs).
 func TestGHOAuthStartNeedsSetup(t *testing.T) {
         s := seedOAuthServer(t)
         req := httptest.NewRequest("GET", "/api/workspaces/oauth/github/start?redirect=/", nil)
@@ -142,8 +143,8 @@ func TestGHOAuthStartNeedsSetup(t *testing.T) {
                 Error string `json:"error"`
         }
         _ = json.Unmarshal(rec.Body.Bytes(), &body)
-        if !strings.Contains(body.Error, "one-time") || !strings.Contains(body.Error, "client secret") {
-                t.Fatalf("start error does not point at the one-time setup box: %q", body.Error)
+        if !strings.Contains(body.Error, "device-code flow") || !strings.Contains(body.Error, "github.com/login/device") {
+                t.Fatalf("start error does not point at the device flow: %q", body.Error)
         }
 }
 
@@ -260,5 +261,138 @@ func TestHFExchangeCodeRoundTrip(t *testing.T) {
         hfTokenEndpoint = srv.URL + "/definitely-not-a-path"
         if _, err := hfExchangeCode("c0de", "v", "r"); err == nil {
                 t.Fatal("exchange against a dead path must fail")
+        }
+}
+
+// TestGHDeviceFlowRoundTrip — the v0.55 production path. A local fake
+// GitHub serves both halves: POST /login/device/code and the device-grant
+// polling on /login/oauth/access_token (authorization_pending once, then
+// the token). Pins the contract that makes shipped builds work for
+// everyone: the poll carries client_id + device_code + the device grant
+// type and NO client_secret.
+func TestGHDeviceFlowRoundTrip(t *testing.T) {
+        var pollCalls int
+        var sawSecret string
+        // a fresh fake: the device endpoints + /user (no redirect exchange —
+        // the redirect path is covered by TestGHOAuthFullRoundTrip)
+        mux := http.NewServeMux()
+        mux.HandleFunc("POST /login/device/code", func(w http.ResponseWriter, r *http.Request) {
+                if err := r.ParseForm(); err != nil || r.Form.Get("client_id") == "" {
+                        w.WriteHeader(400)
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"device_code":"dev_code_40_chars_xxxxxxxxxxxxxxxx","user_code":"WDJB-MJHT","verification_uri":"/login/device","expires_in":900,"interval":1}`))
+        })
+        mux.HandleFunc("POST /login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
+                if err := r.ParseForm(); err != nil {
+                        w.WriteHeader(400)
+                        return
+                }
+                // the device grant must ride client_id + device_code ONLY —
+                // a client_secret in the poll would leak the app pair.
+                sawSecret = r.Form.Get("client_secret")
+                if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" ||
+                        r.Form.Get("client_id") == "" || r.Form.Get("device_code") == "" {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.Write([]byte(`{"error":"invalid_request","error_description":"bad device grant form"}`))
+                        return
+                }
+                pollCalls++
+                if pollCalls == 1 {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.Write([]byte(`{"error":"authorization_pending","error_description":"user has not yet entered the code"}`))
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"access_token":"gho_dev123","expires_in":0}`))
+        })
+        mux.HandleFunc("GET /user", func(w http.ResponseWriter, r *http.Request) {
+                if r.Header.Get("Authorization") != "Bearer gho_dev123" {
+                        w.WriteHeader(401)
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"login":"devcat"}`))
+        })
+        fake := httptest.NewServer(mux)
+        t.Cleanup(fake.Close)
+
+        oldDev, oldAPI, oldTok := ghDeviceCodeEndpoint, forgeAPIBase, ghTokenEndpoint
+        ghDeviceCodeEndpoint = fake.URL + "/login/device/code"
+        forgeAPIBase, ghTokenEndpoint = fake.URL, fake.URL+"/login/oauth/access_token"
+        t.Cleanup(func() {
+                ghDeviceCodeEndpoint, forgeAPIBase, ghTokenEndpoint = oldDev, oldAPI, oldTok
+        })
+        // reset the shared store so a prior test's flow can't shadow this one
+        ghDeviceStore.Lock()
+        ghDeviceStore.cur = nil
+        ghDeviceStore.Unlock()
+
+        s := seedOAuthServer(t)
+
+        // 1. start — the engine relays the user_code + verification_uri
+        start := httptest.NewRequest("POST", "/api/workspaces/oauth/github/device/start", nil)
+        recStart := httptest.NewRecorder()
+        s.mux.ServeHTTP(recStart, start)
+        if recStart.Code != 200 {
+                t.Fatalf("device start HTTP %d: %s", recStart.Code, recStart.Body.String())
+        }
+        var d struct {
+                UserCode        string `json:"user_code"`
+                VerificationURI string `json:"verification_uri"`
+                Interval        int    `json:"interval"`
+        }
+        if err := json.Unmarshal(recStart.Body.Bytes(), &d); err != nil {
+                t.Fatalf("device start json: %v", err)
+        }
+        if d.UserCode != "WDJB-MJHT" || !strings.Contains(d.VerificationURI, "/login/device") {
+                t.Fatalf("device start = %+v — bad code/uri", d)
+        }
+
+        // 2. poll the status endpoint until the background poller resolves
+        //    (interval=1s: pending → connected within a few seconds)
+        var st struct {
+                Status string `json:"status"`
+                Login  string `json:"login"`
+        }
+        deadline := time.Now().Add(15 * time.Second)
+        for time.Now().Before(deadline) {
+                req := httptest.NewRequest("GET", "/api/workspaces/oauth/github/device/status", nil)
+                rec := httptest.NewRecorder()
+                s.mux.ServeHTTP(rec, req)
+                if rec.Code != 200 {
+                        t.Fatalf("device status HTTP %d", rec.Code)
+                }
+                if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+                        t.Fatalf("device status json: %v", err)
+                }
+                if st.Status == "connected" || st.Status == "error" || st.Status == "expired" {
+                        break
+                }
+                time.Sleep(300 * time.Millisecond)
+        }
+        if st.Status != "connected" {
+                t.Fatalf("device status = %q (login %q), want connected", st.Status, st.Login)
+        }
+        if st.Login != "devcat" {
+                t.Fatalf("device login = %q, want devcat", st.Login)
+        }
+
+        // 3. the secretless contract: the poll must not carry a secret
+        if sawSecret != "" {
+                t.Fatalf("device poll carried client_secret %q — the device grant must be secretless", sawSecret)
+        }
+
+        // 4. the token landed in the vault, same shape as the redirect flow
+        tok, extra, err := s.vault.Get("GITHUB_PAT")
+        if err != nil || tok != "gho_dev123" {
+                t.Fatalf("vault GITHUB_PAT = %q (err %v), want gho_dev123", tok, err)
+        }
+        var ae struct {
+                Login string `json:"login"`
+        }
+        if err := json.Unmarshal([]byte(extra), &ae); err != nil || ae.Login != "devcat" {
+                t.Fatalf("vault extra = %s (err %v) — login missing", extra, err)
         }
 }
