@@ -320,7 +320,7 @@
 
       return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
-        '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || 'var(--border-strong)') + ';display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size: var(--ui-small-fs);flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
+        '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || 'var(--border-strong)') + ';display:flex;align-items:center;justify-content:center;color:var(--on-brand,#fff);font-weight:700;font-size: var(--ui-small-fs);flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
         '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
         '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1)">' + (cfg.label || name) + '</span>' +
@@ -339,7 +339,7 @@
         // nested same-color boxes the user flagged).
         '<div style="display:flex;gap:6px">' +
         '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
-        '<button data-save="' + name + '" style="background:var(--border-strong);border:none;color:var(--text-1);padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
+        '<button data-save="' + name + '" style="background:var(--accent);border:none;color:var(--on-accent,#fff);padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
         '</div>' +
         (needAccount
           ? '<div style="display:flex;gap:6px;margin-top:6px">' +

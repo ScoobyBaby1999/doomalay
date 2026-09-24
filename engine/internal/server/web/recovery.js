@@ -74,7 +74,7 @@
         '<h2 style="font-size: calc(var(--ui-fs) + 3px);margin:0 0 6px">Doomalay hit a snag</h2>' +
         '<p style="font-size: calc(var(--ui-small-fs) + 0.5px);color:var(--text-3);margin:0 0 18px;line-height:1.5">' + reason +
         ' Your chats and keys are safe on this device — reload usually fixes it.</p>' +
-        '<button id="rc-reload" style="background:var(--border-strong);border:none;color:var(--text-1);padding:10px 18px;' +
+        '<button id="rc-reload" style="background:var(--accent);border:none;color:var(--on-accent,#fff);padding:10px 18px;' +
         'border-radius:9px;font-size:13.5px;font-family:inherit;cursor:pointer;margin:0 5px">Reload app</button>' +
         '<button id="rc-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:10px 18px;' +
         'border-radius:9px;font-size:13.5px;font-family:inherit;cursor:pointer;margin:0 5px">Reset app data</button>' +

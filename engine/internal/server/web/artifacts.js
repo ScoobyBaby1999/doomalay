@@ -899,7 +899,7 @@
       var e = entries[i];
       var mi = FT.info(e.name || '');
       html += '<div class="vw-arch-row" data-vw-member="' + escAttr2(e.name) + '">' +
-        '<span class="vw-arch-ico" style="color:' + (mi.color || '#71717a') + '">' + (mi.icon || '📄') + '</span>' +
+        '<span class="vw-arch-ico" style="color:' + (mi.color || 'var(--text-3)') + '">' + (mi.icon || '📄') + '</span>' +
         '<span class="vw-arch-name">' + esc(e.name) + '</span>' +
         '<span class="vw-arch-size">' + FT.humanBytes(e.size || 0) + '</span>' +
         '</div>';

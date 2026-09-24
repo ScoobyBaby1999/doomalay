@@ -180,7 +180,8 @@
   var RGB_PAIRS = {
     '--accent': '--accent-rgb', '--accent-2': '--accent-2-rgb', '--accent-3': '--accent-3-rgb',
     '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb',
-    '--bg-app': '--bg-app-rgb', '--surface-1': '--surface-1-rgb', '--surface-2': '--surface-2-rgb'
+    '--bg-app': '--bg-app-rgb', '--surface-1': '--surface-1-rgb', '--surface-2': '--surface-2-rgb',
+    '--bg-panel': '--bg-panel-rgb'
   };
   var CUSTOMIZABLE = [
     { var: '--bg-panel', label: 'Canvas background', rgb: false,
@@ -236,6 +237,14 @@
         docEl.style.setProperty(k, twins.solid);
         docEl.style.setProperty(k + '-gradient', twins.grad);
         docEl._themeOverrideKeys.push(k, k + '-gradient');
+        // v0.57: --border-strong rides the SAME sweep as --border when the
+        // user overrides it (same family of color → same underlying field;
+        // the chatbot icon tiles + badges follow the palette). No twin is
+        // written when the border is solid (base themes stay flat).
+        if (k === '--border' && twins.grad !== 'none') {
+          docEl.style.setProperty('--border-strong-gradient', twins.grad);
+          docEl._themeOverrideKeys.push('--border-strong-gradient');
+        }
         if (k === '--text-1' && twins.grad !== 'none') textGrad = true;
         // auto-derive the -rgb triplet (rgba() composition needs it) —
         // ALWAYS from the SOLID twin (a gradient's stops can't compose
@@ -257,6 +266,36 @@
     }
     if (textGrad) docEl.setAttribute('data-text-grad', '1');
     else docEl.removeAttribute('data-text-grad');
+
+    // v0.57: --bg-panel-rgb — derived EVERY apply (base themes included):
+    // the scrim family (overlay scrim, chat scrim, media viewers) composes
+    // rgba(var(--bg-panel-rgb), α) so the veils darken the AUTHENTIC canvas
+    // color instead of leaking the user's overlay-background var.
+    var panelTriplet = hexTriplet(
+      getComputedStyle(docEl).getPropertyValue('--bg-panel'));
+    if (panelTriplet) {
+      docEl.style.setProperty('--bg-panel-rgb', panelTriplet);
+      docEl._themeOverrideKeys.push('--bg-panel-rgb');
+    }
+    // v0.57: --veil-ink — the layer system's veil direction, derived from
+    // the RESOLVED text color's luminance: light text → BLACK ink (the veil
+    // darkens loud patterns so light text reads), dark text (light themes)
+    // → WHITE ink (the veil calms toward bright). Read from the computed
+    // --text-1 so a Primary-text override flips the veils live too.
+    var t1 = getComputedStyle(docEl).getPropertyValue('--text-1').trim();
+    var inkM = /^#([0-9a-fA-F]{6})$/.exec(t1);
+    if (inkM) {
+      var t1Lum = (function (h) {
+        var r = parseInt(h.slice(0, 2), 16) / 255;
+        var g = parseInt(h.slice(2, 4), 16) / 255;
+        var b = parseInt(h.slice(4, 6), 16) / 255;
+        var lin = function (c) { return (c <= 0.03928) ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      })(inkM[1]);
+      docEl.style.setProperty('--veil-ink', (t1Lum > 0.45) ? '#000000' : '#ffffff');
+      docEl.style.setProperty('--veil-ink-rgb', (t1Lum > 0.45) ? '0, 0, 0' : '255, 255, 255');
+      docEl._themeOverrideKeys.push('--veil-ink', '--veil-ink-rgb');
+    }
 
     // 2. chat markdown scheme — only when the user hasn't pinned their own
     //    (a non-default scheme OR any per-slot override = pinned)

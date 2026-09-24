@@ -135,7 +135,7 @@
         }
       } catch (e) { /* the form just starts empty */ }
     }
-    var GU = window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } };
+    var GU = window.GradientUI || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } };
     cur = {
       panel: panel,
       type: type || 'persona',
@@ -297,7 +297,7 @@
       return 'background-image:' + css +
         ((spec.tex && GU.BLENDED) ? ';background-blend-mode:color' : '');
     }
-    var colors = (spec && spec.colors.length) ? spec.colors : ['#38bdf8', '#a78bfa'];
+    var colors = (spec && spec.colors.length) ? spec.colors : ['var(--accent)', 'var(--accent-2)'];
     return 'background-image:linear-gradient(135deg,' + colors.join(',') + ')';
   }
 
@@ -382,7 +382,7 @@
         var k = b.getAttribute('data-desg');
         if (k === c.design.kind) return;
         if (k === 'gradient' && !(c.design.spec && c.design.spec.colors && c.design.spec.colors.length)) {
-          c.design.spec = { colors: (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2), dir: 'auto' };
+          c.design.spec = { colors: (window.GradientUI || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } }).random(2), dir: 'auto' };
         }
         if (k !== 'image') c.pngBase64 = '';
         c.design.kind = k;
@@ -411,7 +411,7 @@
     // contract)
     var reroll = el.querySelector('#hp-reroll');
     if (reroll) reroll.addEventListener('click', function () {
-      var rnd = (window.GradientUI || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
+      var rnd = (window.GradientUI || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } }).random();
       var spec = c.design.spec || (c.design.spec = {});
       spec.colors = rnd;
       if (!spec.dir) spec.dir = 'auto';
@@ -478,7 +478,7 @@
     var GU = window.GradientUI;
     if (!GU || !cur.design.spec || !cur.design.spec.colors || !cur.design.spec.colors.length) {
       // no editor (or an empty spec) — the deterministic random pair
-      var fallback = (GU || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random();
+      var fallback = (GU || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } }).random();
       return { kind: 'gradient', colors: fallback, dir: 'auto' };
     }
     var n = GU.norm(cur.design.spec);

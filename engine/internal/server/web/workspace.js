@@ -96,28 +96,28 @@
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.wsx-conn:active{background:rgba(var(--accent-2-rgb),0.10)}' +
       '.wsx-acts{display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 10px 48px}' +
-      '.wsx-act{background:var(--surface-2);border:1px solid var(--surface-3);color:var(--text-2);' +
+      '.wsx-act{background-color:var(--surface-2);border:1px solid var(--surface-3);color:var(--text-2);' +
         'padding:6px 10px;border-radius:9px;font-size:var(--ui-small-fs);font-family:inherit;' +
         'cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.wsx-act.primary{color:var(--accent-2);border-color:rgba(var(--accent-2-rgb),0.5)}' +
       '.wsx-act.danger{color:var(--err);border-color:rgba(var(--err-rgb),0.4)}' +
       '.wsx-field{margin:10px 16px 0}' +
       '.wsx-label{font-size:var(--ui-small-fs);color:var(--text-3);margin-bottom:5px;font-weight:600}' +
-      '.wsx-input{width:100%;box-sizing:border-box;background:var(--surface-2);' +
+      '.wsx-input{width:100%;box-sizing:border-box;background-color:var(--surface-2);' +
         'border:1px solid var(--border);border-radius:10px;color:var(--text-1);' +
         'padding:10px 12px;font-size:var(--ui-fs);font-family:inherit;outline:none}' +
       '.wsx-input:focus{border-color:var(--accent-2)}' +
-      '.wsx-select{width:100%;background:var(--surface-2);border:1px solid var(--border);' +
+      '.wsx-select{width:100%;background-color:var(--surface-2);border:1px solid var(--border);' +
         'border-radius:10px;color:var(--text-1);padding:10px 12px;font-size:var(--ui-fs);' +
         'font-family:inherit;outline:none}' +
       '.wsx-go{display:block;width:calc(100% - 32px);margin:16px 16px 8px;padding:12px;' +
-        'border-radius:12px;border:none;background:var(--accent-2);color:var(--bg-app);' +
+        'border-radius:12px;border:none;background:var(--accent-2);color:var(--bg-app);background-image:var(--accent-2-gradient,none);background-attachment:fixed;' +
         'font-size:var(--ui-fs);font-weight:700;font-family:inherit;cursor:pointer;' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.wsx-go:disabled{opacity:0.5}' +
       '.wsx-opt{display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 12px;' +
         'margin:6px 12px;border-radius:12px;cursor:pointer;' +
-        'border:1px solid var(--surface-3);background:var(--surface-1);' +
+        'border:1px solid var(--surface-3);background-color:var(--surface-1);' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.wsx-opt:active{background:var(--surface-2)}' +
       '.wsx-opt .wsx-mid{font-weight:600}' +
@@ -199,7 +199,7 @@
       '.wsc-sec{margin:10px 4px 2px;padding:7px 10px 5px;border-top:1px solid var(--surface-2);' +
         'font-size:var(--ui-small-fs);font-weight:700;color:var(--text-3);letter-spacing:0.4px;' +
         'display:flex;align-items:center;gap:6px}' +
-      '.wsc-brsel{margin-left:auto;background:var(--surface-2);color:var(--text-2);' +
+      '.wsc-brsel{margin-left:auto;background-color:var(--surface-2);color:var(--text-2);' +
         'border:1px solid var(--surface-3);border-radius:7px;font-size:calc(var(--ui-small-fs) - 2px);' +
         'font-family:inherit;padding:2px 4px;outline:none}' +
       '.wsc-row{position:relative;display:flex;align-items:center;gap:6px;min-height:44px;' +
@@ -213,7 +213,7 @@
       // file viewer / editor pages (v0.49 sweep: raised surfaces, not
       // the canvas var — with the surface-2 gradient twin)
       '.wsv-pre{overflow:auto;margin:0;padding:12px;background:var(--surface-2);' +
-        'background-image:var(--surface-2-gradient,none);' +
+        'background-image:var(--surface-2-gradient,none);background-attachment:fixed;' +
         'color:var(--text-1);font-family:ui-monospace,Menlo,Consolas,monospace;' +
         'font-size:calc(var(--ui-fs) - 2px);line-height:1.5;white-space:pre;' +
         '-webkit-overflow-scrolling:touch}' +

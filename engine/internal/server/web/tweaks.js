@@ -642,7 +642,7 @@
       return spec;
     }
     if (!gradDraft) {
-      var rnd = (GU || { random: function () { return ['#38bdf8', '#a78bfa']; } }).random(2);
+      var rnd = (GU || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } }).random(2);
       gradDraft = { colors: rnd, dir: 'auto', texRev: null };
     }
     return gradDraft;
@@ -653,7 +653,7 @@
   // engine URL layer + blend, 1-color plain → background-color, else css.
   function bgPreviewStyle(spec, state) {
     var GU = window.GradientUI;
-    if (!GU) return 'background-image:linear-gradient(135deg,#38bdf8,#a78bfa)';
+    if (!GU) return 'background-image:linear-gradient(135deg,var(--accent),var(--accent-2))';
     if (spec.tex && typeof spec.tex === 'string') {
       // a picked texture waiting for its upload — show it inline
       var inlineCss = GU.css(spec);

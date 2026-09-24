@@ -232,7 +232,7 @@
       '.mb-hrow .mb-ctx,.mb-hrow .mb-price{font-size:calc(var(--ui-small-fs) - 2px)}' +
       // the "show more" pagination row (v0.34.1: the .mb-availpair row is
       // GONE — the avail pair folded into the main pill grid, see filterRow)
-      '.mb-more{display:block;width:100%;box-sizing:border-box;background:var(--surface-1);border:1px dashed var(--border);color:var(--text-2);font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;padding:11px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-more{display:block;width:100%;box-sizing:border-box;background-color:var(--surface-1);border:1px dashed var(--border);color:var(--text-2);font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;padding:11px;border-radius:10px;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
       '.mb-more:hover{color:var(--text-1);border-color:var(--border-strong)}' +
       // v0.32.3 F5: reduced-motion users get no transform theatrics.
       '@media (prefers-reduced-motion: reduce){' +
@@ -762,7 +762,7 @@
 
     function searchBox() {
       return '<div style="margin-bottom:10px">' +
-        '<input id="mb-search" type="text" inputmode="search" autocomplete="off" spellcheck="false" aria-label="Search models" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
+        '<input id="mb-search" type="text" inputmode="search" autocomplete="off" spellcheck="false" aria-label="Search models" placeholder="Search models, providers, capabilities…" value="' + escAttr(search) + '" style="width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:10px 12px;border-radius:10px;font-size:13px;font-family:inherit;outline:none" />' +
         '</div>';
     }
 
@@ -1324,7 +1324,7 @@
       var detailStrip = '';
       if (expanded) {
         var strip =
-          '<div style="padding:10px 14px;border-top:1px solid var(--surface-2);background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:7px">';
+          '<div style="padding:10px 14px;border-top:1px solid var(--surface-2);background:color-mix(in srgb, var(--bg-app) 14%, transparent);display:flex;flex-direction:column;gap:7px">';
         if (g.description) {
           strip += '<div style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45">' + escHTML(g.description) + '</div>';
         }
@@ -1615,7 +1615,7 @@
           '</div>';
       };
 
-      var html = '<div class="mb-detail" data-nodrag style="border-top:1px solid var(--surface-2);padding:12px;display:flex;flex-direction:column;gap:12px;background:rgba(0,0,0,0.14)">';
+      var html = '<div class="mb-detail" data-nodrag style="border-top:1px solid var(--surface-2);padding:12px;display:flex;flex-direction:column;gap:12px;background:color-mix(in srgb, var(--bg-app) 14%, transparent)">';
 
       // ── Benchmarks (Artificial Analysis) with animated bars ──
       if (bm.intelligence || bm.agentic || bm.coding) {
@@ -1707,7 +1707,7 @@
       var ca = (la.attributes || {}).capabilities || [];
       var cb = (lb.attributes || {}).capabilities || [];
 
-      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:12px">';
+      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:color-mix(in srgb, var(--bg-app) 14%, transparent);display:flex;flex-direction:column;gap:12px">';
 
       // ── Header: names + provider dots, ✕ closes (unpins both) ──
       var hostsOf = function (lm) {
@@ -1928,7 +1928,7 @@
           '</div>';
       };
       var fmtP = function (v) { return v === null ? '—' : (v === 0 ? 'free' : '$' + v + '/M'); };
-      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:rgba(0,0,0,0.14);display:flex;flex-direction:column;gap:10px">' +
+      var html = '<div class="mb-compare" data-nodrag style="border:1px solid rgba(var(--accent-rgb),0.40);border-radius:12px;padding:12px;margin-bottom:10px;background:color-mix(in srgb, var(--bg-app) 14%, transparent);display:flex;flex-direction:column;gap:10px">' +
         '<div style="display:flex;align-items:center;gap:8px">' +
         '<span style="font-size:11px;color:var(--accent);flex-shrink:0">⚖</span>' +
         '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-1);flex:1">Provider compare</span>' +

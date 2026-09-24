@@ -570,7 +570,7 @@
       // the manual-override dropdown (absolute inside #chat-root — the
       // panel's transform hijacks position:fixed; see openSendMenu)
       '#send-menu { position:absolute; z-index:2600; width:268px; padding:4px;',
-      '  background:var(--surface-1); border:1px solid var(--border); border-radius:12px;',
+      '  background-color:var(--surface-1); border:1px solid var(--border); border-radius:12px;',
       '  box-shadow:0 10px 30px rgba(0,0,0,.24);',
       '  opacity:0; transform:translateY(6px); transition:opacity .14s ease, transform .14s ease; }',
       '#send-menu.open { opacity:1; transform:translateY(0); }',
@@ -1012,10 +1012,10 @@
           // Sticky input bar — stays visible while scrolled.
           // v0.34: the input rides the chat scale too (typing in the size
           // you read); the textarea grows to at most ~3× its min height.
-          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1);border-top:1px solid var(--surface-2);padding:calc(10px * var(--chat-scale,1)) 16px calc(12px * var(--chat-scale,1));z-index:2">' +
+          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-2);border-top:1px solid var(--surface-3);padding:calc(10px * var(--chat-scale,1)) 16px calc(12px * var(--chat-scale,1));z-index:2">' +
           '<div id="chat-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>' +
           '<div style="display:flex;gap:8px">' +
-            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-1);border:1px solid var(--border);color:var(--text-1);padding:calc(10px * var(--chat-scale,1)) calc(12px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);font-family:inherit;resize:none;outline:none;min-height:calc(40px * var(--chat-scale,1));max-height:calc(120px * var(--chat-scale,1));line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
+            '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:calc(10px * var(--chat-scale,1)) calc(12px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);font-family:inherit;resize:none;outline:none;min-height:calc(40px * var(--chat-scale,1));max-height:calc(120px * var(--chat-scale,1));line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +
             // v0.42 THE SEND CLUSTER: the main #chat-send button (id kept —
             // other code queries it) is now an ICON over a tiny label, one
             // 44px tap target painted entirely by SendMode.sync; the chevron
@@ -1435,7 +1435,7 @@
     var open = !!state.dropdownOpen;
     var summary = type.summaryLine(state);
     return (
-      '<div id="chat-header" style="flex-shrink:0;background:color-mix(in srgb, var(--bg-app) 38%, transparent);border-bottom:1px solid var(--surface-2);z-index:3">' +
+      '<div id="chat-header" style="flex-shrink:0;border-bottom:1px solid var(--surface-2);z-index:3">' +
         '<div id="chat-header-row" style="display:flex;align-items:center;gap:8px;padding:7px 12px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer">' +
           '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
           '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
@@ -1519,7 +1519,11 @@
           b.id = p.id;
           b.textContent = p.label;
           b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
-            'background:rgba(' + tone[2] + ',0.07);border:1px solid rgba(' + tone[2] + ',0.5);color:var(' + tone[1] + ');' +
+            // v0.57: 0.16 tint (was 0.07 — washed out invisible on bright
+            // gradient bands; the sweep's finding) + the veil behind via the
+            // surface-2 catcher keeps the tone readable anywhere.
+            'background:rgba(' + tone[2] + ',0.16);border:1px solid rgba(' + tone[2] + ',0.5);color:var(' + tone[1] + ');' +
+            'text-shadow:var(--text-shadow);' +
             'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
             'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';

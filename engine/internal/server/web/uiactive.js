@@ -35,7 +35,7 @@
       '.dd-active-dot {' +
       '  position:relative; display:inline-flex; align-items:center; justify-content:center;' +
       '  width:18px; height:18px; border-radius:50%; flex-shrink:0;' +
-      '  background:' + GREEN + '; color:#06251a; font-size: calc(var(--ui-small-fs) - 1px); font-weight:800;' +
+      '  background:' + GREEN + '; color:var(--on-ok,#06251a); font-size: calc(var(--ui-small-fs) - 1px); font-weight:800;' +
       '  box-shadow:0 0 0 3px rgba(var(--ok-rgb),0.18);' +
       '  margin-left:6px; line-height:1;' +
       '}' +

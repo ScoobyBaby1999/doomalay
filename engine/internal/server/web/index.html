@@ -41,6 +41,30 @@
        themes override with deeper mixes for contrast on pale surfaces) */
     --persona-tint: #a78bfa;  --persona-rgb: 167,139,250;
     --template-tint: #4ade80; --template-rgb: 74,222,128;
+    /* v0.57 THE VEILS — the layer system's hierarchy tokens. Every CARD on a
+       big surface is a window into the surface's continuous field PLUS a
+       translucent veil: the pattern still shows through (seamless — one
+       underlying gradient per the user spec) but the card reads as a
+       CALMER, distinct layer. The veil INK is LUMINANCE-AWARE (theme.js
+       derives --veil-ink from the text color: light text → black ink,
+       dark text → white ink) so the veil always RESTORES text contrast,
+       whatever the user does to --bg-app / --bg-panel (a bright overlay
+       background under a bright veil washed the text out — the first
+       sweep round's finding). */
+    --veil-ink: #000000;
+    --veil-ink-rgb: 0, 0, 0;
+    --veil-card: color-mix(in srgb, var(--veil-ink) 36%, transparent);
+    --veil-head: color-mix(in srgb, var(--veil-ink) 48%, transparent);
+    --veil-head-strong: color-mix(in srgb, var(--veil-ink) 72%, transparent);
+    /* v0.57 the text safety net — a soft veil-ink-colored shadow under
+       text on the big surfaces. Invisible on well-contrasted themes,
+       rescues readability when a user gradient carries a bright/white
+       stop under the text (the sweep's finding). */
+    --text-shadow: 0 1px 3px rgba(var(--veil-ink-rgb), 0.4), 0 0 8px rgba(var(--veil-ink-rgb), 0.2);
+    /* v0.57 chrome constants (like --on-accent): the glyph on a BRAND-color
+       disc stays white whatever the theme; the ✓ on an ok-dot stays near-black. */
+    --on-brand: #ffffff;
+    --on-ok: #06251a;
     /* text sizes (v0.24 sizing page) */
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
     --chat-scale: 1;   /* v0.34: chat-fs ÷ 16px — everything in the message
@@ -325,7 +349,7 @@
   /* ── Long-press dropdown menu ──────────────────────────────── */
   #menu {
     position: fixed;
-    background: #1a1a20;
+    background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 6px;
@@ -372,7 +396,7 @@
     right: max(16px, env(safe-area-inset-right));
     width: 44px;
     height: 44px;
-    background: rgba(20, 20, 24, 0.8);
+    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -386,7 +410,7 @@
     transition: background 0.15s, transform 0.1s;
   }
   #settings-btn:active {
-    background: rgba(40, 40, 48, 0.9);
+    background: color-mix(in srgb, var(--surface-2) 80%, transparent);
     transform: scale(0.92);
   }
   #settings-btn svg {
@@ -416,7 +440,7 @@
     right: calc(max(16px, env(safe-area-inset-right)) + 52px); /* gear 44px + 8px gap */
     width: 44px;
     height: 44px;
-    background: rgba(20, 20, 24, 0.8);
+    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -436,7 +460,7 @@
     touch-action: manipulation;
   }
   #dock-toggle:active {
-    background: rgba(40, 40, 48, 0.9);
+    background: color-mix(in srgb, var(--surface-2) 80%, transparent);
     transform: scale(0.92);
   }
   #dock-strip {
@@ -453,7 +477,7 @@
   .dock-btn {
     width: 44px;
     height: 44px;
-    background: rgba(20, 20, 24, 0.8);
+    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -467,14 +491,14 @@
     touch-action: manipulation;
   }
   .dock-btn:active {
-    background: rgba(40, 40, 48, 0.9);
+    background: color-mix(in srgb, var(--surface-2) 80%, transparent);
     transform: scale(0.92);
   }
   /* v0.41 polish: hover lift + accent tint for pointer users (touch
      keeps the :active scale — this is desktop-only delight). */
   @media (hover: hover) {
     .dock-btn:hover, #dock-toggle:hover {
-      background: rgba(40, 40, 48, 0.92);
+      background: color-mix(in srgb, var(--surface-2) 82%, transparent);
       border-color: rgba(var(--accent-rgb), 0.45);
     }
     .dock-btn:hover svg { fill: var(--accent); }
@@ -650,7 +674,7 @@
   #chat-scrim {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.4);
+    background: rgba(var(--bg-panel-rgb), 0.4);
     z-index: 1900;
     opacity: 0;
     pointer-events: none;
@@ -702,7 +726,7 @@
   .settings-nav::-webkit-scrollbar { display: none; }
   .settings-nav .tab {
     background: transparent;
-    border: 1px solid transparent;
+    border: 1px solid rgba(var(--text-3-rgb), 0.25);
     color: var(--text-3);
     padding: 8px 16px;
     font-size: calc(var(--ui-fs) - 1px);
@@ -761,10 +785,11 @@
     gap: 10px;
     min-height: 48px;               /* v0.25: a real touch target */
     -webkit-tap-highlight-color: transparent;
-    background: color-mix(in srgb, var(--bg-app) 38%, transparent);
-    transition: background 0.15s;
+    /* v0.57: the header background is OWNED by the layer-system rule
+       (the bg-app field window + --veil-head) — no flat repaint here
+       (it would double-tint under the veil layers). */
+    transition: background-image 0.15s;
   }
-  .settings-section h3:active { background: color-mix(in srgb, var(--bg-app) 62%, transparent); }
   .settings-section h3 .chevron {
     font-size: var(--ui-micro-fs);
     color: var(--text-3);
@@ -849,7 +874,7 @@
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
   .color-row-reset:hover {
-    background: var(--surface-3);
+    background-color: var(--surface-3);
     color: var(--text-1);
     border-color: var(--accent);
   }
@@ -874,7 +899,7 @@
     overflow: visible;
   }
   /* v0.45 ITEM 6: the toggle switch (hide lines / hide dots) */
-  .app-switch input:checked ~ .app-switch-track { background: var(--accent) !important; }
+  .app-switch input:checked ~ .app-switch-track { background: var(--accent) !important; background-image: var(--accent-gradient, none) !important; background-attachment: fixed !important; }
   .app-switch input:checked ~ .app-switch-thumb { left: 20px !important; }
   .app-switch input:focus-visible ~ .app-switch-track {
     outline: 2px solid var(--accent);
@@ -954,9 +979,13 @@
     align-self: flex-end;
     /* v0.49: user bubbles follow Accent 1 — the accent fill + gradient
        twin + --on-accent text (derived from the accent's luminance,
-       theme.js). Was --border-strong (never customizable). */
+       theme.js). Was --border-strong (never customizable).
+       v0.57: attachment fixed — every bubble is a window into ONE accent
+       field (the old local copy squeezed the whole gradient per bubble —
+       the tiling bug the user reported). */
     background: var(--accent);
     background-image: var(--accent-gradient, none);
+    background-attachment: fixed;
     color: var(--on-accent, #fff);
     padding: calc(10px * var(--chat-scale)) calc(14px * var(--chat-scale)); border-radius: 14px 14px 4px 14px;
     max-width: 86%;
@@ -1060,7 +1089,7 @@
     display: flex; align-items: center; justify-content: center;
     transition: background .12s ease, border-color .12s ease, transform .12s ease;
   }
-  .chat-find-btn:hover { background: var(--surface-3); border-color: var(--border-strong); }
+  .chat-find-btn:hover { background-color: var(--surface-3); border-color: var(--border-strong); }
   .chat-find-btn:active { transform: scale(0.94); }
 
   /* ══ v0.40 — MODEL-GONE RECOVERY CHIPS ════════════════════════════
@@ -1361,7 +1390,7 @@
   }
   /* v0.44 var-twin: the step number chip layers the accent gradient
      over its tint (no-op while the accent is a solid) */
-  .ts-stage-n { background-image: var(--accent-gradient, none); }
+  .ts-stage-n { background-image: var(--accent-gradient, none); background-attachment: fixed; }
   .ts-stage-name { font-size: calc(var(--ui-fs) - 2px); font-weight: 700; color: var(--text-1); }
   .ts-stage-fo { font-size: var(--ui-micro-fs); color: var(--accent-2); font-weight: 600; margin-top: 4px; }
   .ts-stage-ins { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5; margin-top: 6px; }
@@ -1458,7 +1487,7 @@
     cursor: pointer; background: var(--surface-1);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .fmt-yt-thumb { position: relative; padding-top: 56.25%; background: #0a0a10; }
+  .fmt-yt-thumb { position: relative; padding-top: 56.25%; background: color-mix(in srgb, var(--bg-panel) 90%, #000); }
   .fmt-yt-thumbimg {
     position: absolute; inset: 0; width: 100%; height: 100%;
     object-fit: cover; display: block;
@@ -1481,7 +1510,7 @@
   /* the fullscreen pinch-zoom overlay (MediaZoom in formatter.js) */
   #media-zoom {
     position: fixed; inset: 0; z-index: 9999; display: none;
-    background: rgba(8,8,12,0.94); touch-action: none;
+    background: rgba(var(--bg-panel-rgb), 0.94); touch-action: none;
   }
   #media-zoom.open { display: flex; align-items: center; justify-content: center; }
   #media-zoom #mz-img {
@@ -1514,7 +1543,7 @@
   }
   .fmt-codehead {
     display: flex; align-items: center; gap: calc(8px * var(--chat-scale));
-    background: #17171f; padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
+    background: color-mix(in srgb, var(--bg-panel) 82%, #000); padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
     border-bottom: 1px solid var(--surface-3);
   }
   .fmt-codelang {
@@ -1636,7 +1665,7 @@
     animation: cwd-pulse 0.9s ease-in-out infinite;
   }
   /* v0.44 var-twin: the working dots follow the accent gradient */
-  .cwd i { background-image: var(--accent-gradient, none); }
+  .cwd i { background-image: var(--accent-gradient, none); background-attachment: fixed; }
   .cwd i:nth-child(2) { animation-delay: 0.12s; }
   .cwd i:nth-child(3) { animation-delay: 0.24s; }
   .cwd i:nth-child(4) { animation-delay: 0.36s; }
@@ -1952,7 +1981,7 @@
     padding: 11px 12px; margin-bottom: 9px; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .art-row:active { background: #181822; }
+  .art-row:active { background-color: var(--surface-3); }
   .art-row-ico { font-size: 19px; flex-shrink: 0; width: 24px; text-align: center; }
   .art-row-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .art-row-name { color: var(--text-1); font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2149,7 +2178,7 @@
     position: absolute; left: 0; right: 0; bottom: 0;
     display: flex; align-items: center; gap: 8px;
     padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-    background: #1a1420;
+    background: color-mix(in srgb, var(--warn) 14%, var(--surface-1));
     border-top: 1px solid rgba(var(--err-rgb),0.35);
     transform: translateY(110%); opacity: 0;
     transition: transform 0.22s cubic-bezier(0.32,0.72,0,1), opacity 0.2s;
@@ -2189,7 +2218,7 @@
 
   /* CodeMirror theme — doomalay (matches the fmt scheme) */
   .cm-s-doomalay.CodeMirror { background: var(--surface-1); color: var(--text-1); }
-  .cm-s-doomalay .CodeMirror-gutters { background: #101018; border-right: 1px solid var(--surface-2); }
+  .cm-s-doomalay .CodeMirror-gutters { background: color-mix(in srgb, var(--bg-panel) 88%, #000); border-right: 1px solid var(--surface-2); }
   .cm-s-doomalay .CodeMirror-linenumber { color: var(--text-3-dim); }
   .cm-s-doomalay .CodeMirror-cursor { border-left: 2px solid var(--fmt-a1); }
   .cm-s-doomalay .CodeMirror-selected { background: rgba(var(--accent-2-rgb),0.13); }
@@ -2365,7 +2394,7 @@
   .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--accent); }
   /* v0.44 var-twin: the primary action layers the accent gradient over
      its tint (no-op while the accent is a solid) */
-  .pv-btn-primary { background-image: var(--accent-gradient, none); }
+  .pv-btn-primary { background-image: var(--accent-gradient, none); background-attachment: fixed; }
 
   /* ══ v0.27→v0.56 — chat header pills: equal proportions, theme tones ══
      One row of peers: sandbox · model · artifacts · persona · mind —
@@ -2417,11 +2446,11 @@
   #util-row .util-btn {
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    /* v0.56: the util pills no longer repaint the OVERLAY background —
-       they sit INSIDE the chat header (itself a veil over the panel's
-       continuous surface field); repainting --bg-app here tiled a same-var
-       box inside a same-var box. Their own solid + hairline is enough. */
-    background: var(--bg-app);
+    /* v0.57: the util pills are Layer-3 chrome — the SURFACE-2 material
+       (they ride the surface-2 field via the Layer-3 group above; the old
+       --bg-app repaint tiled a same-var box inside a same-var box and
+       stayed flat when the overlay background carried a gradient). */
+    background: var(--surface-2);
     border: 1px solid var(--surface-3);
     color: var(--text-3); padding: 5px 8px;
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
@@ -2432,7 +2461,7 @@
     /* v0.56: no more ALL-CAPS on the util pills (user spec: remove
        capitalisation from text beneath pills). */
   }
-  #util-row .util-btn:active { background: var(--surface-2); color: var(--text-2); }
+  #util-row .util-btn:active { background-color: var(--surface-3); color: var(--text-2); }
 
   /* ══ v0.27 — the header METERS: context ring + per-chat cost ══
      The usage panel's context bar, duplicated as two tiny front-facing
@@ -2547,10 +2576,9 @@
     display: flex; align-items: center; gap: 10px; width: 100%;
     /* v0.52 (user spec item 9): the header is COMPACT — less of the
        library screen spent on chrome, more on the cards.
-       v0.56: a VEIL, not a repaint of the overlay background — the
-       dock's own glass field flows through (no nested same-var box). */
+       v0.57: the background is OWNED by the layer-system header rule
+       (the bg-app field window + --veil-head — no flat repaint). */
     padding: 5px 6px;
-    background: color-mix(in srgb, var(--bg-app) 38%, transparent);
     border-radius: 12px;
     border: none;
     font-family: inherit; cursor: pointer; text-align: left;
@@ -2753,7 +2781,7 @@
     cursor: pointer; text-align: left; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .hub-card:active { background: var(--surface-2); transform: scale(0.985); }
+  .hub-card:active { background-color: var(--surface-2); transform: scale(0.985); }
   .hub-card-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
   .hub-card-fade {
     position: absolute; inset: 0; pointer-events: none;
@@ -3079,6 +3107,7 @@
      from here. A no-op while accent-2 is a solid. */
   .dx-pill[data-on="1"]:not([data-tone]) {
     background-image: var(--accent-2-gradient, none);
+    background-attachment: fixed;
   }
   .dx-pill--sm { padding: 3px 9px; min-height: 26px;
     font-size: calc(var(--ui-small-fs) - 1.5px); }
@@ -3157,7 +3186,7 @@
   .crop-ui {
     position: fixed; inset: 0; z-index: 9500;
     display: flex; flex-direction: column;
-    background: rgba(6,6,10,0.97);
+    background: rgba(var(--bg-panel-rgb), 0.97);
   }
   .crop-top {
     display: flex; align-items: center; gap: 10px;
@@ -3304,10 +3333,33 @@
      v0.56 THE CONTINUOUS FIELD: every rule below also pins
      `background-attachment: fixed` — one shared field per var, so nested
      boxes never restart the gradient (the tiling fix). */
+  /* ══ v0.57 THE LAYER SYSTEM ═══════════════════════════════════════
+     One continuous field per var (background-attachment: fixed — anchored
+     to the transformed panel / overlay card = the user's "crop everything
+     that uses that color onto the panel" model) + VEILS for hierarchy:
+       Layer 1 — big surfaces (the panel itself): the full field, no veil.
+       Layer 2 — cards on surfaces: the same field window + --veil-card +
+                 the border ring → seamless AND calm.
+       Layer 3 — pills/tabs/inputs: the SURFACE-2 field (a different
+                 material — never surface-1: same-field pills vanish).
+       Headers — the bg-app field window + --veil-head (the v0.49
+                 "overlay background = headers/scrims" semantics).
+     Inline catchers first (author !important beats the inline `background:`
+     shorthand's image reset), then the stylesheet groups. */
+  /* — inline catchers — Layer 2 cards get the veil + the surface-1 field */
   [style*="background: var(--surface-1)"],
-  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--surface-1)"] {
+    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
+      var(--surface-1-gradient, none) !important;
+    background-attachment: fixed, fixed !important;
+  }
+  /* — inline catchers — Layer 3 pills/inputs: the veil + the surface-2 field */
   [style*="background: var(--surface-2)"],
-  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--surface-2)"] {
+    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
+      var(--surface-2-gradient, none) !important;
+    background-attachment: fixed, fixed !important;
+  }
   [style*="background: var(--bg-app)"],
   [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--accent)"],
@@ -3316,22 +3368,59 @@
   [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--accent-3)"],
   [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; background-attachment: fixed !important; }
-  /* stylesheet-ruled surfaces (no inline style — no !important needed,
-     kept anyway for uniformity against future inline overrides).
-     v0.56: `background-attachment: fixed` — the continuous field. */
-  .panel-header, .panel-body, #chat-panel, .msg-assistant,
-  .fmt-code, .fmt-pre, .artifact-card, .ts-row, .pv-btn, .pill, .chip,
-  .kbd, .code-card, .bubble, .card, .modal, .sheet, .toolbar, .dock-strip,
-  .settings-nav .tab, .gr-editor, .gr-swatches, .gr-tools {
+  /* v0.57: border-strong backgrounds (chatbot icon tiles, badges) ride the
+     border sweep — theme.js derives --border-strong-gradient whenever the
+     border is overridden (same family of color → same underlying field). */
+  [style*="background: var(--border-strong)"],
+  [style*="background:var(--border-strong)"] { background-image: var(--border-strong-gradient, none) !important; background-attachment: fixed !important; }
+
+  /* — Layer 1: the big surfaces. The full field, NO veil (these ARE the
+     panel — the canvas's own material) — but the TEXT safety net rides
+     here (a user gradient can carry a white stop under the text). */
+  #chat-panel, .panel-header, .panel-body {
     background-image: var(--surface-1-gradient, none);
     background-attachment: fixed;
+    text-shadow: var(--text-shadow);
   }
-  /* surface-2 consumers (raised cards, inputs, hovers) */
+
+  /* — Layer 2: cards on surfaces. 3 layers: the veil (top, padding-box),
+     the surface-1 field (padding-box), the border ring (border-box). All
+     fixed → windows into the SAME field the panel paints (seamless), the
+     veil calms them (hierarchy + readability on loud patterns). 'none'
+     twins keep the plain solid look; default themes get a subtle 24%
+     overlay-background tint — barely visible, but the boundary reads. */
+  .settings-section, .hub-card, .pv-row, .msg-assistant, .ts-row,
+  .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
+  .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
+  .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
+  .cv-section, .mb-more, .wsx-opt, .src-wrap, .hub-wrap {
+    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
+      var(--surface-1-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
+    text-shadow: var(--text-shadow);
+  }
+
+  /* — Layer 3: pills / tabs / chips / inputs / small buttons — the
+     SURFACE-2 material (a different field than the cards behind them,
+     so they always read as raised chrome) + the veil (calm enough that
+     their labels read on loud patterns). Includes the untyped inputs
+     the input[type=text] selector misses. */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
-  .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover {
-    background-image: var(--surface-2-gradient, none);
-    background-attachment: fixed;
+  .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover,
+  .err-switch, .chat-jump, .ts-chip, .art-rename-input, .art-sheet-input,
+  .art-toast, .hub-searchico, .hub-libpill, .hub-bunch-sec-n,
+  .hub-bunch-chip, .hub-nav, .hp-icocell, .hi-fab, .hp-color, .hp-mini,
+  .hp-pick, .dx-pill, .gr-color, .gr-mini, .crop-btn, .hp-focus-btn,
+  .tw-iconcell, .chat-find-chip, .sm-ghost, #chat-send-more, .gr-dir,
+  .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
+  .wsc-brsel, .kbd, .pv-btn, .gr-editor, .gr-swatches, .gr-tools,
+  #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn {
+    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
+      var(--surface-2-gradient, none);
+    background-attachment: fixed, fixed;
   }
   /* v0.49: the chat panel + settings pages are SURFACES — their gradient
      rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints
@@ -3361,32 +3450,40 @@
   [style*="border:2px solid var(--border)"] {
     border-image: var(--border-gradient, none) 1 !important;
   }
-  /* RADIUS-SAFE gradient borders for stylesheet-ruled elements: layer 1
-     = the element's own surface gradient (clipped to the padding-box —
-     'none' falls back to the base background-color), layer 2 = the border
-     gradient clipped to the border-box. Corners stay round; 'none' twins
-     degrade to the plain solid look. v0.56: both layers ride the fixed
-     field (2 layers guaranteed — the border twin is single-layer now, so
-     the old layer-count leak that painted the whole box as a border is
-     dead). .color-row-banner is OUT (its inline preview must stay local). */
+  /* RADIUS-SAFE gradient borders for the Layer-3 chrome: the veil, the
+     surface-2 field, then the border ring. Corners stay round; 'none'
+     twins degrade to the plain solid look. .color-row-banner is OUT
+     (its inline preview stays local). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
   .color-row-reset {
-    background-image: var(--surface-2-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
-    background-attachment: fixed, fixed;
+    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
+      var(--surface-2-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
   }
-  .settings-section {
-    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
+  /* v0.57 HEADERS — the bg-app field window + the head veil (the v0.49
+     "overlay background = overlay screens · collapsible headers · scrims"
+     semantics made real: headers SAMPLE the overlay gradient — a window,
+     not a flat tint — so they vary with position like every other window;
+     'none' twins leave the plain veil look). The :active press deepens the
+     veil without dropping the image. */
+  .settings-section h3, #chat-header, .pub-head-bar {
+    background-image: linear-gradient(var(--veil-head), var(--veil-head)),
+      var(--bg-app-gradient, none);
     background-attachment: fixed, fixed;
+    text-shadow: var(--text-shadow);
   }
-  .hub-card {
-    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
-    background-attachment: fixed, fixed;
+  .settings-section h3:active {
+    background-image: linear-gradient(var(--veil-head-strong), var(--veil-head-strong)),
+      var(--bg-app-gradient, none);
+  }
+  /* v0.57: the overlay screen's text safety net — the overlay card's
+     content rides whatever --bg-app the user chose (a bright mesh under
+     gray text was unreadable; the sweep's finding). Inherits to every
+     overlay screen's content. */
+  #connect-overlay {
+    text-shadow: var(--text-shadow);
   }
   /* v0.49 GRADIENT TEXT — when Primary text carries a gradient (theme.js
      sets data-text-grad on :root), the PROMINENT text clips to it; body

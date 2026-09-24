@@ -113,9 +113,15 @@
     scrimEl = document.createElement('div');
     scrimEl.style.cssText =
       'position:absolute;inset:0;' +
-      // v0.46: theme-safe scrim — mixes the app bg toward black so light
-      // themes get a softer veil instead of a hard-coded rgba(0,0,0,.5).
-      'background:color-mix(in srgb, var(--bg-app) 55%, #000);' +
+      // v0.57 THE BLEED FIX (user spec: "the background and the app should
+      // still be visible with the overlay screen rendered on top instead
+      // of the current leakage of colors"): the scrim no longer paints the
+      // user-customizable OVERLAY background (--bg-app — its color washed
+      // the whole screen outside the card = the leak). It now composes
+      // rgba(var(--bg-panel-rgb), 0.55) — a TRANSLUCENT dark veil of the
+      // CANVAS color (theme.js derives the triplet every apply), so the
+      // authentic app shows through, darkened + blurred.
+      'background:rgba(var(--bg-panel-rgb), 0.55);' +
       'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
       'opacity:0;transition:opacity 0.25s ease;';
     cardEl = document.createElement('div');
@@ -128,7 +134,7 @@
       // --bg-app gradient over it.
       'background:var(--bg-app);border:1px solid var(--surface-2);' +
       'border-radius:16px;box-shadow:0 16px 48px ' +
-      'color-mix(in srgb, var(--bg-app) 40%, #000);' +
+      'rgba(var(--bg-panel-rgb), 0.5);' +
       'opacity:0;transform:scale(0.95) translateY(10px);' +
       'transition:opacity 0.25s ease, transform 0.25s ease;';
     contentEl = document.createElement('div');

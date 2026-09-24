@@ -64,7 +64,7 @@
           '<p style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-1);margin:0 0 4px">' + rec.label + '</p>' +
           (rec.note ? '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 10px">' + rec.note + '</p>' : '') +
           (ollamaRunning
-            ? '<button data-model="' + rec.id + '" style="background:var(--border-strong);border:none;color:var(--text-1);padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;width:100%">Use ' + rec.id + '</button>'
+            ? '<button data-model="' + rec.id + '" style="background:var(--accent);border:none;color:var(--on-accent,#fff);padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;width:100%">Use ' + rec.id + '</button>'
             : '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err);margin:0">Install Ollama first (see below), then run: <code style="background:var(--bg-app);padding:2px 6px;border-radius:4px">ollama pull ' + rec.id + '</code></p>'
           ) +
           '</div>';

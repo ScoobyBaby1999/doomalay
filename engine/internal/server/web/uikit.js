@@ -81,7 +81,7 @@
       'margin-right:2px;user-select:none}',
       // dir + pattern pills — v0.54: the active state is the app's
       // accent tint (matching .dx-pill[data-on]) instead of flat surface
-      '.gr-dir{border:1px solid var(--border);background:var(--surface-2);',
+      '.gr-dir{border:1px solid var(--border);background-color:var(--surface-2);',
       'color:var(--text-3);border-radius:9px;padding:4px 10px;',
       'font-size:calc(var(--ui-small-fs) - 2px);min-height:30px;',
       'font-family:inherit;cursor:pointer;line-height:1.2;',
