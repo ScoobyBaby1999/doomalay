@@ -40,11 +40,16 @@
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Sign in with GitHub</button>' +
         '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
-          'One login: you\'ll get a short one-time code to enter at ' +
-          '<b style="color:var(--text-2)">github.com/login/device</b> (the page opens for you) — ' +
-          'GitHub shows the Doomalay app, you press <b style="color:var(--text-2)">Authorize</b>, ' +
-          'and the token is acquired automatically into the engine\'s encrypted vault. ' +
-          'No secrets, no setup, works the same for everyone. We never see your password.</p>' +
+          'One login: you\'ll get a short <b style="color:var(--text-2)">one-time ' +
+          'code</b> — not a password — to enter at ' +
+          '<b style="color:var(--text-2)">github.com/login/device</b> (the page opens for you). ' +
+          'GitHub\'s own note there ("staff will never ask you for this code") is its ' +
+          'standard phishing guard — the code only confirms this sign-in and can\'t ' +
+          'be reused. The app asks for <b style="color:var(--text-2)">repository access ' +
+          'only</b>: read/write your code, open pull requests. No account settings, ' +
+          'no profile, no emails. Press <b style="color:var(--text-2)">Authorize</b> and the ' +
+          'token is acquired automatically into the engine\'s encrypted vault. ' +
+          'We never see your password.</p>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
             'letter-spacing:0.06em;margin-bottom:10px">Optional manual method</div>' +
@@ -87,7 +92,7 @@
       '<div style="padding:16px;border-radius:12px;background:var(--surface-2);' +
         'border:1px solid var(--border-strong)">' +
         '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">' +
-          'step 1 — enter this code at <b style="color:var(--text-2)">' + uri.replace(/^https?:\/\//, '') + '</b>' +
+          'step 1 — enter this one-time code (not a password) at <b style="color:var(--text-2)">' + uri.replace(/^https?:\/\//, '') + '</b>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
           '<span id="ghc-devcode" style="font-size:26px;font-weight:700;letter-spacing:0.12em;' +
@@ -100,7 +105,8 @@
             'open github ↗</button>' +
         '</div>' +
         '<div style="font-size:12px;color:var(--text-3);line-height:1.5">' +
-          'step 2 — press <b style="color:var(--text-2)">Authorize</b> on the GitHub page. ' +
+          'step 2 — press <b style="color:var(--text-2)">Authorize</b> on the GitHub page ' +
+          '(repository access only). ' +
           '<span id="ghc-wait" style="color:var(--accent-2)">waiting for you…</span></div>' +
       '</div>';
     var copy = stateEl.querySelector('#ghc-copy');

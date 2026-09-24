@@ -250,6 +250,10 @@ func (s *Server) routes() {
         // v0.45 ITEM 7: HF Spaces OAuth + create-from-scratch + status/logs/restart
         s.mux.HandleFunc("GET /api/hf/oauth/start", s.handleHFOAuthStart)
         s.mux.HandleFunc("GET /api/hf/oauth/callback", s.handleHFOAuthCallback)
+        // v0.59: the HF device flow — the gateway-safe sign-in (no redirect
+        // URI at all; the UI picks it whenever the origin isn't loopback).
+        s.mux.HandleFunc("POST /api/hf/oauth/device/start", s.handleHFDeviceStart)
+        s.mux.HandleFunc("GET /api/hf/oauth/device/status", s.handleHFDeviceStatus)
         s.mux.HandleFunc("POST /api/hf/space/create", s.handleHFSpaceCreate)
         // v0.47 (task 9): the Docker-sandbox builder (fork + brick-by-brick).
         s.mux.HandleFunc("POST /api/hf/space/docker-create", s.handleHFSpaceDockerCreate)

@@ -37,6 +37,7 @@ import (
         "bytes"
         "crypto/rand"
         "crypto/sha256"
+        "context"
         "encoding/base64"
         "encoding/hex"
         "encoding/json"
@@ -916,6 +917,268 @@ func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
                 return "", fmt.Errorf("empty access_token in response")
         }
         return tok.AccessToken, nil
+}
+
+
+// ── OAuth device flow (v0.59) ──────────────────────────────────────────────
+//
+// THE GATEWAY BUG (live 2026-09-25): the redirect flow above sends the
+// user's browser to redirect_uri = <engine origin>/api/hf/oauth/callback.
+// When the app is served through a proxy/gateway that rewrites Host (the
+// zai-web preview does), schemeHost(r) reconstructs http://localhost:8080 —
+// and after authorizing, HF throws the browser at port 8080 on the USER'S
+// machine, which is a DIFFERENT install ("a whole other instance, not my
+// account"). HF's redirect rules (docs, verified live) make this worse:
+// https redirect URIs must match EXACTLY (a gateway origin can't be
+// pre-registered), and embedding the authorize page is impossible
+// (x-frame-options: SAMEORIGIN — probed). HF's own docs offer the way out:
+// a DEVICE-CODE grant needs no redirect URI and no browser on the device
+// running the engine — the same shape as GitHub's device flow (v0.55).
+// The UI picks per origin: loopback (localhost:*) → one-tap redirect, still
+// the smoothest when the engine is directly reachable; anything else
+// (gateway, LAN IP, tunnel) → this device flow.
+//
+// Live-verified 2026-09-25 against real HF with the CIMD client_id:
+//   POST /oauth/device → {"device_code":"…","user_code":"Q0UK-PVSI",
+//                         "verification_uri":"https://hf.co/oauth/device",
+//                         "expires_in":300}          (no interval → RFC
+//   default 5s); the token poll is secretless (public app + grant
+//   urn:ietf:params:oauth:grant-type:device_code) and answers
+//   {"error":"authorization_pending","error_description":"Device code
+//   pending, not yet approved"} until the user confirms at hf.co.
+
+var hfDeviceCodeEndpoint = "https://huggingface.co/oauth/device"
+
+var hfDeviceStore = struct {
+        sync.Mutex
+        cur *hfDevicePending
+}{}
+
+type hfDevicePending struct {
+        DeviceCode      string
+        UserCode        string
+        VerificationURI string
+        Interval        time.Duration
+        Deadline        time.Time
+        Status          string // pending | connected | expired | error
+        User            string
+        Err             string
+}
+
+// handleHFDeviceStart is POST /api/hf/oauth/device/start.
+func (s *Server) handleHFDeviceStart(w http.ResponseWriter, r *http.Request) {
+        if hfOAuthClientID == "" {
+                writeError(w, http.StatusServiceUnavailable, "HF OAuth not configured (set DOOMALAY_HF_OAUTH_CLIENT_ID) — paste a token in the Hub panel instead")
+                return
+        }
+        ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+        defer cancel()
+        form := url.Values{
+                "client_id": {hfOAuthClientID},
+                "scope":     {"openid profile write-repos manage-repos"},
+        }
+        req, _ := http.NewRequestWithContext(ctx, "POST", hfDeviceCodeEndpoint,
+                strings.NewReader(form.Encode()))
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("User-Agent", "doomalay-engine")
+        resp, err := oauthHTTP.Do(req)
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "device flow start failed: "+err.Error())
+                return
+        }
+        defer resp.Body.Close()
+        var out struct {
+                DeviceCode       string `json:"device_code"`
+                UserCode         string `json:"user_code"`
+                VerificationURI  string `json:"verification_uri"`
+                ExpiresIn        int    `json:"expires_in"`
+                Interval         int    `json:"interval"`
+                Error            string `json:"error"`
+                ErrorDescription string `json:"error_description"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+                writeError(w, http.StatusBadGateway, "device flow start: bad response: "+err.Error())
+                return
+        }
+        if out.Error != "" {
+                msg := out.Error
+                if out.ErrorDescription != "" {
+                        msg = out.ErrorDescription + " (" + out.Error + ")"
+                }
+                writeError(w, http.StatusBadGateway, msg)
+                return
+        }
+        if out.DeviceCode == "" || out.UserCode == "" {
+                writeError(w, http.StatusBadGateway, "device flow start: incomplete response")
+                return
+        }
+        if out.VerificationURI == "" {
+                out.VerificationURI = "https://hf.co/oauth/device"
+        }
+        // HF omits `interval` (probed) → the RFC 8628 default of 5s.
+        interval := time.Duration(out.Interval) * time.Second
+        if interval <= 0 {
+                interval = 5 * time.Second
+        }
+        deadline := time.Now().Add(5 * time.Minute)
+        if out.ExpiresIn > 0 {
+                deadline = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
+        }
+        hfDeviceStore.Lock()
+        p := &hfDevicePending{
+                DeviceCode: out.DeviceCode, UserCode: out.UserCode,
+                VerificationURI: out.VerificationURI, Interval: interval,
+                Deadline: deadline, Status: "pending",
+        }
+        hfDeviceStore.cur = p
+        hfDeviceStore.Unlock()
+
+        go s.pollHFDevice(p, hfOAuthClientID)
+
+        writeJSON(w, 200, map[string]any{
+                "user_code":        p.UserCode,
+                "verification_uri": p.VerificationURI,
+                "expires_in":       out.ExpiresIn,
+                "interval":         int(interval.Seconds()),
+        })
+}
+
+// pollHFDevice — background poller for one HF device flow (mirrors
+// pollGHDevice). No secret, no PKCE — the device_code is the one-shot
+// bearer and it only ever lives engine-side. On success the token lands
+// in the vault exactly like the redirect flow's (same TokenEnvVar shape)
+// so hfToken() picks it up identically.
+func (s *Server) pollHFDevice(p *hfDevicePending, clientID string) {
+        t := time.NewTimer(p.Interval)
+        defer t.Stop()
+        for {
+                <-t.C
+                hfDeviceStore.Lock()
+                replaced := hfDeviceStore.cur != p
+                stale := time.Now().After(p.Deadline)
+                hfDeviceStore.Unlock()
+                if replaced {
+                        return
+                }
+                if stale {
+                        hfDeviceStore.Lock()
+                        p.Status = "expired"
+                        hfDeviceStore.Unlock()
+                        return
+                }
+                ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+                access, err := hfDeviceExchange(ctx, p.DeviceCode, clientID)
+                cancel()
+                if err == nil {
+                        user := ""
+                        if u, uerr := s.hfClient().WhoAmI(access); uerr == nil {
+                                user = u
+                        }
+                        if verr := s.vault.Set(hub.TokenEnvVar, "huggingface", access, user); verr != nil {
+                                hfDeviceStore.Lock()
+                                p.Status = "error"
+                                p.Err = "vault: " + verr.Error()
+                                hfDeviceStore.Unlock()
+                                return
+                        }
+                        hfDeviceStore.Lock()
+                        p.Status = "connected"
+                        p.User = user
+                        hfDeviceStore.Unlock()
+                        return
+                }
+                msg := err.Error()
+                switch {
+                case strings.Contains(msg, "authorization_pending"):
+                        t.Reset(p.Interval)
+                case strings.Contains(msg, "slow_down"):
+                        p.Interval += 5 * time.Second
+                        t.Reset(p.Interval)
+                case strings.Contains(msg, "expired_token"):
+                        hfDeviceStore.Lock()
+                        p.Status = "expired"
+                        hfDeviceStore.Unlock()
+                        return
+                case strings.Contains(msg, "access_denied"):
+                        hfDeviceStore.Lock()
+                        p.Status = "error"
+                        p.Err = "the request was denied on the HF page — start again if that wasn't you"
+                        hfDeviceStore.Unlock()
+                        return
+                default:
+                        hfDeviceStore.Lock()
+                        p.Status = "error"
+                        p.Err = msg
+                        hfDeviceStore.Unlock()
+                        return
+                }
+        }
+}
+
+// hfDeviceExchange polls the HF token endpoint with the device grant.
+// Mirrors ghTokenExchange's parsing: the error rides the JSON body
+// (authorization_pending et al. — HF answers 400, but a 200-with-error is
+// parsed the same way), and the poller keys on the machine codes inside
+// the message while humans get the description.
+func hfDeviceExchange(ctx context.Context, deviceCode, clientID string) (string, error) {
+        body := url.Values{
+                "grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+                "device_code": {deviceCode},
+                "client_id":   {clientID},
+        }.Encode()
+        req, err := http.NewRequestWithContext(ctx, "POST", hfTokenEndpoint, strings.NewReader(body))
+        if err != nil {
+                return "", err
+        }
+        req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+        req.Header.Set("User-Agent", "doomalay-engine")
+        resp, err := oauthHTTP.Do(req)
+        if err != nil {
+                return "", err
+        }
+        defer resp.Body.Close()
+        var out struct {
+                AccessToken      string `json:"access_token"`
+                Error            string `json:"error"`
+                ErrorDescription string `json:"error_description"`
+        }
+        raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+        if err := json.Unmarshal(raw, &out); err != nil {
+                if resp.StatusCode != 200 {
+                        return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
+                }
+                return "", err
+        }
+        if out.Error != "" {
+                if out.ErrorDescription != "" {
+                        return "", fmt.Errorf("%s (%s)", out.ErrorDescription, out.Error)
+                }
+                return "", fmt.Errorf("%s", out.Error)
+        }
+        if out.AccessToken == "" {
+                return "", fmt.Errorf("HF returned no access token (HTTP %d)", resp.StatusCode)
+        }
+        return out.AccessToken, nil
+}
+
+// handleHFDeviceStatus is GET /api/hf/oauth/device/status — the UI polls
+// this while the user enters the code at hf.co/oauth/device.
+func (s *Server) handleHFDeviceStatus(w http.ResponseWriter, r *http.Request) {
+        hfDeviceStore.Lock()
+        defer hfDeviceStore.Unlock()
+        if hfDeviceStore.cur == nil {
+                writeJSON(w, 200, map[string]any{"status": "idle"})
+                return
+        }
+        p := hfDeviceStore.cur
+        writeJSON(w, 200, map[string]any{
+                "status":           p.Status,
+                "user_code":        p.UserCode,
+                "verification_uri": p.VerificationURI,
+                "user":             p.User,
+                "error":            p.Err,
+        })
 }
 
 // ── HF REST helpers ────────────────────────────────────────────────────────

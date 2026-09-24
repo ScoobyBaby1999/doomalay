@@ -57,12 +57,26 @@ Create GitHub App) and fill in:
 | **Repository permissions → Contents** | **Read and write** | File trees, file reads, commits (the editor's "commit" button). |
 | **Repository permissions → Metadata** | **Read-only** (auto-required) | Mandatory companion of every other repo permission. |
 | **Repository permissions → Pull requests** | **Read and write** | Fork + PR flows (partial access tier). |
-| **Repository permissions → Administration** | **Read and write** | "create new repo" as the signed-in user. |
+| **Repository permissions → Administration** | **No access** (v0.59 CHANGE — was Read and write) | Only needed for the in-app "create new repo" button. Left OFF so the authorize screen shows pure repo access (code + PRs) — the smallest grant that covers everything else. If you want in-app repo creation, flip it to Read and write later; the app detects the 403 and explains. |
 | **Account permissions** | none needed | We don't touch emails/profile beyond the login (which needs no extra permission). |
 | **Subscribe to events** | none | No webhooks. |
 | **Where can this GitHub App be installed** | **Any account** | v0.55 CHANGE (was: only this account). Friends must be able to authorize the app from THEIR accounts — "Only on this account" blocks them. |
 
 Press **Create GitHub App**.
+
+> **Already created the app with the old (larger) permission set?** Open
+> its settings → *Permissions & events* → Repository permissions → set
+> **Administration** to *No access* → Save. That's the whole change —
+> reducing a permission does not require re-authorization.
+
+### Why a GitHub App (not an OAuth App)
+
+You may wonder whether "I made an App, not an OAuth" caused the scary
+permissions screen — it's the opposite. An **OAuth App** only has the
+classic coarse scopes (`repo` = *full control of ALL your repositories,
+including private ones*). A **GitHub App** is the fine-grained kind: it
+lists exactly Contents / Pull requests / Metadata (all repository-level,
+zero account-level) and nothing more. That's why the guide uses one.
 
 After creation, on the app's page:
 - Note the **App ID** (not needed by the engine, just for reference).
@@ -79,11 +93,20 @@ After creation, on the app's page:
 
 1. Friend installs the app → workspace picker → **＋ connect workspace** →
    GitHub (or the connect panel directly).
-2. **Sign in with GitHub** → the app shows a one-time code with **copy**
-   and **open github ↗** buttons (opens `github.com/login/device`).
-3. Friend enters the code on GitHub, presses **Authorize** → the panel
+2. **Sign in with GitHub** → the app shows a one-time code (NOT a password)
+   with **copy** and **open github ↗** buttons (opens
+   `github.com/login/device`).
+3. About the warning on GitHub's code page: github.com/login/device
+   displays a standard anti-phishing note ("GitHub staff will never ask
+   you for this code") because that page exists to catch phishing sites
+   that abuse device codes. It is not a comment on the app's access level.
+   The code only confirms this one sign-in and cannot be reused.
+4. The authorize screen lists the app's permissions — **repository
+   access only** (Contents, Pull requests, Metadata). No account
+   permissions of any kind.
+5. Friend enters the code on GitHub, presses **Authorize** → the panel
    flips to `✓ connected as @friend` within a couple of seconds.
-4. The token rides that device's encrypted vault (AES-256-GCM) — same
+6. The token rides that device's encrypted vault (AES-256-GCM) — same
    storage as every other key in the app. Revocable any time at
    `github.com/settings/applications`.
 

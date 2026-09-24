@@ -25,6 +25,7 @@ import (
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -394,5 +395,137 @@ func TestGHDeviceFlowRoundTrip(t *testing.T) {
         }
         if err := json.Unmarshal([]byte(extra), &ae); err != nil || ae.Login != "devcat" {
                 t.Fatalf("vault extra = %s (err %v) — login missing", extra, err)
+        }
+}
+
+
+// TestHFDeviceFlowRoundTrip — the v0.59 gateway-safe HF sign-in. A local
+// fake HF serves all three halves: POST /oauth/device (start), the
+// device-grant polling on /oauth/token (authorization_pending once, then
+// the token), and /api/whoami-v2 (the account lookup). Pins the
+// secretless poll form and the vault write (same TokenEnvVar shape as the
+// redirect flow, so hfToken() picks it up identically).
+func TestHFDeviceFlowRoundTrip(t *testing.T) {
+        var pollCalls int
+        var sawSecret string
+        mux := http.NewServeMux()
+        mux.HandleFunc("POST /oauth/device", func(w http.ResponseWriter, r *http.Request) {
+                if err := r.ParseForm(); err != nil || r.Form.Get("client_id") == "" {
+                        w.WriteHeader(400)
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                // interval:1 → fast polls so the test resolves in seconds
+                w.Write([]byte(`{"device_code":"hf_dev_code_1234","user_code":"HF42-CODE","verification_uri":"https://hf.co/oauth/device","expires_in":300,"interval":1}`))
+        })
+        mux.HandleFunc("POST /oauth/token", func(w http.ResponseWriter, r *http.Request) {
+                if err := r.ParseForm(); err != nil {
+                        w.WriteHeader(400)
+                        return
+                }
+                // the device grant must carry client_id + device_code ONLY — a
+                // secret (or a code_verifier) has no business in this poll.
+                sawSecret = r.Form.Get("client_secret")
+                if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" ||
+                        r.Form.Get("client_id") == "" || r.Form.Get("device_code") == "" {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.Write([]byte(`{"error":"invalid_request","error_description":"bad device grant form"}`))
+                        return
+                }
+                pollCalls++
+                if pollCalls == 1 {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.Write([]byte(`{"error":"authorization_pending","error_description":"Device code pending, not yet approved"}`))
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"access_token":"hf_oauth_dev1"}`))
+        })
+        mux.HandleFunc("GET /api/whoami-v2", func(w http.ResponseWriter, r *http.Request) {
+                if r.Header.Get("Authorization") != "Bearer hf_oauth_dev1" {
+                        w.WriteHeader(401)
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"type":"user","name":"devhug"}`))
+        })
+        fake := httptest.NewServer(mux)
+        t.Cleanup(fake.Close)
+
+        oldDev, oldTok := hfDeviceCodeEndpoint, hfTokenEndpoint
+        hfDeviceCodeEndpoint = fake.URL + "/oauth/device"
+        hfTokenEndpoint = fake.URL + "/oauth/token"
+        t.Cleanup(func() { hfDeviceCodeEndpoint, hfTokenEndpoint = oldDev, oldTok })
+        // the poller's WhoAmI rides the hub client → point it at the fake too
+        hfDeviceStore.Lock()
+        hfDeviceStore.cur = nil
+        hfDeviceStore.Unlock()
+
+        s := seedOAuthServer(t)
+        s.cfg.Hub.HFBase = fake.URL
+
+        // 1. start — the engine relays the user_code + verification_uri
+        start := httptest.NewRequest("POST", "/api/hf/oauth/device/start", nil)
+        recStart := httptest.NewRecorder()
+        s.mux.ServeHTTP(recStart, start)
+        if recStart.Code != 200 {
+                t.Fatalf("device start HTTP %d: %s", recStart.Code, recStart.Body.String())
+        }
+        var d struct {
+                UserCode        string `json:"user_code"`
+                VerificationURI string `json:"verification_uri"`
+                Interval        int    `json:"interval"`
+        }
+        if err := json.Unmarshal(recStart.Body.Bytes(), &d); err != nil {
+                t.Fatalf("device start json: %v", err)
+        }
+        if d.UserCode != "HF42-CODE" || !strings.Contains(d.VerificationURI, "hf.co") {
+                t.Fatalf("device start = %+v — bad code/uri", d)
+        }
+        if d.Interval != 1 {
+                t.Fatalf("device interval = %d, want 1 (mock-driven)", d.Interval)
+        }
+
+        // 2. poll the status endpoint until the background poller resolves
+        var st struct {
+                Status string `json:"status"`
+                User   string `json:"user"`
+                Error  string `json:"error"`
+        }
+        deadline := time.Now().Add(15 * time.Second)
+        for time.Now().Before(deadline) {
+                req := httptest.NewRequest("GET", "/api/hf/oauth/device/status", nil)
+                rec := httptest.NewRecorder()
+                s.mux.ServeHTTP(rec, req)
+                if rec.Code != 200 {
+                        t.Fatalf("device status HTTP %d", rec.Code)
+                }
+                if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+                        t.Fatalf("device status json: %v", err)
+                }
+                if st.Status == "connected" || st.Status == "error" || st.Status == "expired" {
+                        break
+                }
+                time.Sleep(300 * time.Millisecond)
+        }
+        if st.Status != "connected" {
+                t.Fatalf("device status = %q (user %q, err %q), want connected", st.Status, st.User, st.Error)
+        }
+        if st.User != "devhug" {
+                t.Fatalf("device user = %q, want devhug", st.User)
+        }
+
+        // 3. the secretless contract: the poll must not carry a secret
+        if sawSecret != "" {
+                t.Fatalf("device poll carried client_secret %q — the grant must be secretless", sawSecret)
+        }
+
+        // 4. the token landed in the vault, same shape as the redirect flow
+        tok, extra, err := s.vault.Get(hub.TokenEnvVar)
+        if err != nil || tok != "hf_oauth_dev1" {
+                t.Fatalf("vault %s = %q (err %v), want hf_oauth_dev1", hub.TokenEnvVar, tok, err)
+        }
+        if extra != "devhug" {
+                t.Fatalf("vault extra = %q, want devhug", extra)
         }
 }

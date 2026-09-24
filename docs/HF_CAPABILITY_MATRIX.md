@@ -263,6 +263,14 @@ probe space) settled the Docker question for good:
   the CIMD client_id ✓; callback state validation ✓. The consent click needs
   a live human HF session (AWS WAF blocks headless logins — ~20 VLM attempts,
   1 success rate). Manual token paste remains the always-works path.
+  **2026-09-25 v0.59:** the redirect flow is now LOOPBACK-ONLY (proxies that
+  rewrite Host collapse the origin to localhost:8080 → the post-auth redirect
+  lands on the user's machine = a different install). Non-loopback origins
+  (gateway/preview/LAN/tunnel) use HF's DEVICE flow instead —
+  POST /oauth/device with the CIMD client_id works secretless (live-probed:
+  user_code + hf.co/oauth/device, 5-min expiry, poll grant
+  `urn:ietf:params:oauth:grant-type:device_code`, `authorization_pending`
+  shape). No redirect URI involved at all.
 - **GitHub App** (`Iv23liDzVTw7zphxo5Hv`): client secret vault-configured ✓;
   start → 302 to github.com/login/oauth/authorize with the REGISTERED
   `http://localhost:8080/api/github/oauth/callback` ✓; bogus state → 400 ✓;

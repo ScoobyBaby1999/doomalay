@@ -528,6 +528,13 @@ func (c *Client) ghCreateRepo(ctx context.Context, name, desc, license, gitignor
         }
         data, err := c.do(ctx, "POST", "https://api.github.com/user/repos", token, b, "application/json", maxListBody)
         if err != nil {
+                // v0.59: the GitHub App ships with REPO-ONLY permissions by design
+                // (the user asked for the smallest possible grant) — repo creation
+                // needs the OPTIONAL "Administration" permission, which is off by
+                // default. Name it instead of surfacing a bare 403.
+                if IsForbidden(err) {
+                        return nil, fmt.Errorf("creating repos needs the optional Administration permission, which the Doomalay GitHub App leaves OFF by default (repo-only access) — enable it in the app's settings on GitHub (Developer settings → GitHub Apps → permissions → Repository permissions → Administration: Read and write), or create the repo directly on github.com and add it as a workspace: %w", err)
+                }
                 return nil, err
         }
         if err := json.Unmarshal(data, &m); err != nil {

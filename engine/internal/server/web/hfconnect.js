@@ -12,9 +12,10 @@
 //     the sandbox picker's connect button are THE SAME panel.
 //
 // Layout (user spec, in order):
-//   1. big "Connect Hugging Face" button → GET /api/hf/oauth/start (the
-//      doomalaysocreate OAuth app auto-acquires a write/read token — no
-//      manual steps);
+//   1. big "Connect Hugging Face" button → the origin-picked flow (v0.59:
+//      loopback → one-tap redirect; gateway/preview/LAN/tunnel → the device
+//      flow — a one-time code at hf.co/oauth/device, no redirect back
+//      needed, the app notices the authorization by itself);
 //   2. "Optional manual method" — paste-token textbox + connect
 //      (POST /api/hub/auth/connect {token});
 //   3. "get token ↗" link → https://huggingface.co/settings/tokens.
@@ -23,7 +24,8 @@
 // Wake button (used by the sandbox picker's build-failure "view logs" link).
 //
 // Exposes: window.HFConnect = { openConnectPanel, connectPanelView,
-//                               openLogs, openLogsFor, current, account }
+//                               openLogs, openLogsFor, current, account,
+//                               _runDeviceFlow (test hook) }
 (function () {
   'use strict';
 
@@ -47,9 +49,12 @@
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Connect Hugging Face</button>' +
         '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
-          'One tap: you\'ll be redirected to huggingface.co to log in and allow ' +
-          'Doomalay — the token (read + write to your Spaces) is acquired ' +
-          'automatically and stored in the engine\'s encrypted vault. ' +
+          'One login, no keys. When the app runs on this device you\'ll be ' +
+          'redirected to huggingface.co and come straight back. Through a ' +
+          'gateway or preview URL you\'ll get a short one-time code to enter at ' +
+          '<b style="color:var(--text-2)">hf.co/oauth/device</b> — the app ' +
+          'notices the authorization by itself, nothing redirects back. ' +
+          'The token is stored in the engine\'s encrypted vault. ' +
           'We never see your password.</p>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
@@ -85,6 +90,98 @@
     }
   }
 
+  // v0.59: is the app served straight from this device's engine? Only then
+  // can HF's redirect land back on THIS engine — anything else (gateway,
+  // preview URL, LAN IP, tunnel) needs the device flow.
+  function isLoopbackOrigin() {
+    var h = (window.location.hostname || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+  }
+
+  // paintDeviceUI — the "enter this code" panel of the HF device flow (the
+  // same shape as GitHub's, ghconnect.js). The poll loop flips it to
+  // connected/expired/error as HF answers.
+  function paintDeviceUI(stateEl, d) {
+    if (!stateEl) return;
+    var uri = d.verification_uri || 'https://hf.co/oauth/device';
+    stateEl.innerHTML = '' +
+      '<div style="padding:16px;border-radius:12px;background:var(--surface-2);' +
+        'border:1px solid var(--border-strong)">' +
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">' +
+          'step 1 — enter this one-time code (not a password) at <b style="color:var(--text-2)">' + uri.replace(/^https?:\/\//, '') + '</b>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+          '<span id="hfc-devcode" style="font-size:26px;font-weight:700;letter-spacing:0.12em;' +
+            'color:var(--text-1);font-family:inherit">' + (d.user_code || '…') + '</span>' +
+          '<button id="hfc-copy" style="padding:7px 12px;border-radius:10px;background:var(--surface-2);' +
+            'color:var(--text-1);border:1px solid var(--border-strong);font-size:12px;font-weight:600;' +
+            'font-family:inherit;cursor:pointer">copy</button>' +
+          '<button id="hfc-open" style="padding:7px 12px;border-radius:10px;background:var(--accent);' +
+            'color:var(--bg-app);border:none;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">' +
+            'open hf.co ↗</button>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-3);line-height:1.5">' +
+          'step 2 — log in and press <b style="color:var(--text-2)">Confirm</b> on the HF page. ' +
+          '<span id="hfc-wait" style="color:var(--accent-2)">waiting for you…</span></div>' +
+      '</div>';
+    var copy = stateEl.querySelector('#hfc-copy');
+    if (copy) copy.addEventListener('click', function () {
+      var code = (stateEl.querySelector('#hfc-devcode') || {}).textContent || '';
+      var done = function () { copy.textContent = 'copied ✓'; setTimeout(function () { copy.textContent = 'copy'; }, 1400); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(done, done);
+      } else { done(); }
+    });
+    var open = stateEl.querySelector('#hfc-open');
+    if (open) open.addEventListener('click', function () {
+      window.open(uri, '_blank');
+    });
+  }
+
+  // runDeviceFlow — start the HF device grant and poll the engine's status
+  // endpoint until it resolves. onDone(user) fires exactly on success.
+  function runDeviceFlow(errEl, stateEl, btn, onDone) {
+    btn.disabled = true; btn.textContent = 'starting…';
+    errEl.textContent = '';
+    fetch('/api/hf/oauth/device/start', { method: 'POST' })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+        return r.json();
+      })
+      .then(function (d) {
+        paintDeviceUI(stateEl, d);
+        var poll = null;
+        var stop = function () {
+          if (poll) { clearInterval(poll); poll = null; }
+          btn.disabled = false; btn.textContent = 'Connect Hugging Face';
+        };
+        poll = setInterval(function () {
+          fetch('/api/hf/oauth/device/status')
+            .then(function (r) { return r.json(); })
+            .then(function (st) {
+              if (st.status === 'connected') {
+                stop();
+                paintState(stateEl, { connected: true, user: st.user || 'unknown', auth: 'oauth' });
+                if (window.toast) window.toast('connected to Hugging Face as ' + (st.user || '?') + ' — token saved encrypted');
+                if (onDone) onDone(st.user || '');
+              } else if (st.status === 'expired') {
+                stop();
+                errEl.textContent = 'the code expired (5 minutes) — press Connect Hugging Face for a fresh one';
+              } else if (st.status === 'error') {
+                stop();
+                errEl.textContent = st.error || 'Hugging Face refused the sign-in';
+              }
+              // pending | idle (a newer flow replaced ours?) → keep waiting
+            })
+            .catch(function () { /* transient — the next tick retries */ });
+        }, 2500);
+      })
+      .catch(function (e) {
+        btn.disabled = false; btn.textContent = 'Connect Hugging Face';
+        errEl.textContent = e.message || 'could not start the device flow';
+      });
+  }
+
   function wireConnectBody(el, onDone) {
     var errEl = el.querySelector('#hfc-err');
     var stateEl = el.querySelector('#hfc-state');
@@ -93,8 +190,14 @@
 
     var oauth = el.querySelector('#hfc-oauth');
     if (oauth) oauth.addEventListener('click', function () {
-      oauth.disabled = true; oauth.textContent = 'Redirecting…';
-      window.location.href = '/api/hf/oauth/start?redirect=/';
+      // v0.59: origin picks the flow — loopback can catch the redirect,
+      // everything else (gateway/preview/LAN/tunnel) uses the device flow.
+      if (isLoopbackOrigin()) {
+        oauth.disabled = true; oauth.textContent = 'Redirecting…';
+        window.location.href = '/api/hf/oauth/start?redirect=/';
+      } else {
+        runDeviceFlow(errEl, stateEl, oauth, onDone);
+      }
     });
 
     var link = el.querySelector('#hfc-gettoken');
@@ -244,6 +347,7 @@
       curSpace = { repo: repo };
       openLogs(repo);
     },
-    current: function () { return curSpace; }
+    current: function () { return curSpace; },
+    _runDeviceFlow: runDeviceFlow // test hook (browser red-team)
   };
 })();
