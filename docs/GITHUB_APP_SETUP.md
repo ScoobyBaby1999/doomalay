@@ -69,6 +69,8 @@ After creation, on the app's page:
 - Copy the **Client ID** (shown near the top, `Iv…`) — this is the ONLY
   value the app needs. Send it to the engine builder; it ships as
   `ghOAuthDefaultClientID` in `engine/internal/server/workspaces.go`.
+  **Wired as of v0.58: `Iv23li3qm665pDrDO1Nh`** (the current app, Device
+  Flow verified live against `github.com/login/device/code`).
 - **Client secret: do NOT generate one.** Nothing needs it. (If you ever
   generate one for a self-hosted redirect setup, keep it on that server
   only — never in the app, the repo, or a chat.)

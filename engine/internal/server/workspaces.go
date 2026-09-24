@@ -1390,10 +1390,14 @@ type oauthPending struct {
 }
 
 // ghOAuthCreds: env override first (headless installs), then the vault,
-// then the BUILT-IN default (v0.47 task 10/11: the user's "Doomalay
-// Workspaces" GitHub App client id — the secret is still vault/env only,
-// the user generates it on the app's settings page).
-const ghOAuthDefaultClientID = "Iv23liDzVTw7zphxo5Hv"
+// then the BUILT-IN default — the "Doomalay Workspaces" GitHub App client
+// id (public by design; GitHub App ids are not secrets). v0.58: the
+// user's NEW app, created per docs/GITHUB_APP_SETUP.md §1 with Device
+// Flow ☑ / Expire tokens ☐ / Any account, verified live (device/code
+// returns a user_code). The old app (Iv23liDzVTw7zphxo5Hv) is compromised
+// and deleted. NO secret ships anywhere: the device flow is the
+// production grant, the redirect flow stays env/vault-optional.
+const ghOAuthDefaultClientID = "Iv23li3qm665pDrDO1Nh"
 
 // v0.52 OAuth egress plumbing: every OAuth/token-exchange call rides the
 // netx transport (system resolver → DNS-over-HTTPS fallback). The live
