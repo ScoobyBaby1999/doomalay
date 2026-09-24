@@ -268,6 +268,11 @@ probe space) settled the Docker question for good:
   `http://localhost:8080/api/github/oauth/callback` ✓; bogus state → 400 ✓;
   PAT connect via the sign-in-once path ✓. Full OAuth round-trip awaits a
   real GitHub login (user's device — loopback IS production for the APK).
+  **2026-09-25 superseded:** that app is compromised/deleted; v0.55+ is
+  secretless device flow, and v0.58 wires the NEW app
+  `Iv23li3qm665pDrDO1Nh` (Device Flow ☑ verified live — device/code
+  returns a user_code; no secret exists anywhere; see
+  docs/GITHUB_APP_SETUP.md).
 
 ---
 

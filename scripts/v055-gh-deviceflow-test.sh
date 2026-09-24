@@ -1,16 +1,18 @@
 #!/bin/bash
-# v055-gh-deviceflow-test.sh — RED-TEAM the v0.55 GitHub device flow UI.
+# v055-gh-deviceflow-test.sh — RED-TEAM the GitHub device flow UI
+#          (updated for v0.58: the NEW app Iv23li3qm665pDrDO1Nh).
 #
 # Boots the freshly built engine, then:
 #   API:   /api/gh/account exposes device_flow; /oauth/github/start (no
 #          secret) names the device flow in its 400.
 #   LIVE:  the sign-in button POSTs device/start against REAL github.com
-#          with the built-in (old) app id → GitHub answers
-#          device_flow_disabled (the old app never enabled it) → the panel
-#          must surface the friendly "check Device Flow in the app
-#          settings" error. That exercises the whole live chain: route →
-#          netx egress → JSON parse → error copy. (The happy path is
-#          covered by TestGHDeviceFlowRoundTrip against a mock GitHub.)
+#          with the built-in NEW app id (Device Flow verified enabled) →
+#          GitHub returns a REAL user_code → the panel must show the big
+#          code (XXXX-XXXX), the copy button, the open-github link and
+#          the waiting line. That exercises the whole live chain: route →
+#          netx egress → JSON parse → device UI render. (The full
+#          authorize→token round-trip is covered by
+#          TestGHDeviceFlowRoundTrip against a mock GitHub.)
 #   UI:    the v0.52 yellow "one-time OAuth setup" box is GONE.
 set -u
 DATA=/tmp/doomalay-v055gh
@@ -67,18 +69,25 @@ check "$SECRET_INPUT" "absent" "no secret input rendered"
 BTN=$(ev "document.getElementById('ghc-oauth') ? document.getElementById('ghc-oauth').textContent.trim() : ''")
 check "$BTN" "Sign in with GitHub" "sign-in button present"
 
-# click → live device/start against REAL github.com (old app id → expect the
-# helpful device_flow_disabled copy)
+# click → live device/start against REAL github.com (NEW app id, Device
+# Flow ON → expect the REAL device-code UI)
 ev "document.getElementById('ghc-oauth').click()" >/dev/null
-sleep 5
+sleep 6
 ERR=$(ev "(document.getElementById('ghc-err')||{}).textContent || ''")
-has "$ERR" "Device Flow" "live device/start surfaces GitHub's device_flow_disabled"
-has "$ERR" "Iv23liDzVTw7zphxo5Hv" "error names the built-in client id"
-BTN2=$(ev "document.getElementById('ghc-oauth') ? (document.getElementById('ghc-oauth').disabled ? 'disabled' : document.getElementById('ghc-oauth').textContent.trim()) : 'gone'")
-check "$BTN2" "Sign in with GitHub" "button re-enabled after the error"
+check "$ERR" "" "no error on live device/start (new app)"
+CODE=$(ev "(document.getElementById('ghc-devcode')||{}).textContent || ''")
+check "$(ev "/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test('$CODE') ? 'ok' : 'bad'")" "ok" "live device code shown (got '$CODE')"
+OPEN=$(ev "var captured=''; window.open=function(u){captured=u;return null}; (document.getElementById('ghc-open')||{click:function(){}}).click(); captured")
+has "$OPEN" "github.com/login/device" "open-github button opens github.com/login/device (got '$OPEN')"
+STEP1=$(ev "document.body.innerText.match(/enter this code at[^\\n]*/)||['']")
+has "$STEP1" "github.com/login/device" "step-1 line names the entry URL"
+COPY=$(ev "document.getElementById('ghc-copy') ? 'present' : 'absent'")
+check "$COPY" "present" "copy-code button present"
+WAIT=$(ev "(document.getElementById('ghc-wait')||{}).textContent || ''")
+has "$WAIT" "waiting" "waiting line shown while the poller runs"
 
-agent-browser screenshot /home/z/my-project/download/gh-deviceflow-v055.png >/dev/null 2>&1
-echo "screenshot: download/gh-deviceflow-v055.png"
+agent-browser screenshot /home/z/my-project/download/gh-deviceflow-v058.png >/dev/null 2>&1
+echo "screenshot: download/gh-deviceflow-v058.png"
 
 echo "────────────────────────────────"
 echo "PASS=$PASS FAIL=$FAIL"
