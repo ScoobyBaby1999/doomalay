@@ -196,6 +196,11 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // v0.44: the template pill's active method template (JSON
                 // blob {id, name, brief} — "" = none).
                 {"chat_sessions", "template_id", "ALTER TABLE chat_sessions ADD COLUMN template_id TEXT"},
+                // v0.52 THE 3 PILLS: per-chat auto-search toggles — the
+                // [template|+] / [skills|+] pill label press flips these;
+                // the turn builder gates the template/skills tools on them.
+                {"chat_sessions", "template_auto", "ALTER TABLE chat_sessions ADD COLUMN template_auto INTEGER DEFAULT 0"},
+                {"chat_sessions", "skills_auto", "ALTER TABLE chat_sessions ADD COLUMN skills_auto INTEGER DEFAULT 0"},
                 // v0.46: HF chat — sandbox=hf sessions carry the space routing:
                 // sandbox_mode ("shared" | "own") + sandbox_repo ("user/name"
                 // for own spaces; "" for shared).

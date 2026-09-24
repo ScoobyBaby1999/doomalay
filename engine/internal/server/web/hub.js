@@ -309,6 +309,10 @@
     if (!cur) return '';
     return (
       '<div class="hub-root">' +
+        // v0.52: the chat-connection pill — the library's ONLY binding to
+        // a chat (decoupled by default: "no chat" unless a chatbot opened
+        // it). Tap → the merged all-chats overlay in pick mode.
+        '<div class="hub-chatrow">' + chatPillHTML() + '</div>' +
         headHTML() +
         '<div class="hub-sticky">' +
           '<input id="hub-search" class="hub-search" type="text" inputmode="search"' +
@@ -673,6 +677,23 @@
     if (!cur) return;
     var c = cur;
 
+    // v0.52: the chat-connection pill + the NEUTRAL header. While the
+    // library view is up, the panel header stops showing the HOST
+    // chat's avatar/sub (the library is not bound to it) — a library
+    // glyph + "community library" ride instead. The panel's root
+    // restore puts the chat's values back when the view pops.
+    wireChatPill(el);
+    try {
+      var p = c.panel;
+      if (p && p.avatarEl && p.subEl) {
+        c._savedAvatar = p.avatarEl.innerHTML;
+        c._savedSub = p.subEl.textContent;
+        c._hadHeader = true;
+        p.avatarEl.innerHTML = '📚';
+        p.subEl.textContent = 'community library';
+      }
+    } catch (e) {}
+
     // measure now that the view is in the DOM — the clamp may disagree
     // with what the render assumed; a surgical body update fixes it.
     var gridEl = el.querySelector('#hub-grid');
@@ -932,15 +953,138 @@
       window.removeEventListener('resize', cur._onResize);
       cur._onResize = null;
     }
+    // v0.52: restore the header the hub neutralized (the panel's own
+    // root-restore also re-puts the stashed values; this covers the
+    // closeView-without-pop edge).
+    try {
+      var p = PV();
+      if (p && p.avatarEl && cur && cur._hadHeader) {
+        p.avatarEl.innerHTML = cur._savedAvatar || '';
+        p.subEl.textContent = cur._savedSub || '';
+      }
+    } catch (e) {}
     cur = null;
   }
 
+  // ── v0.52: the chat connection (user item 5) ────────────────────
+  // The public library is DECOUPLED from chats: it opens with NO chat
+  // connected (canvas entry) or with the launching chatbot's chat
+  // already connected (pill entry points). The pill row at the top of
+  // the view shows the connection; tapping it opens the merged
+  // all-chats overlay in PICK mode (ChatsView.openPicker) — picking a
+  // row updates the pill (and every library action that targets a
+  // chat). chat: {sessionId, title, name, avatarHTML} | null.
+
+  function deriveChatFromPanel() {
+    var c = window.ChatPanel && window.ChatPanel.current();
+    if (!c || !c.panel || !c.panel.isOpen || !c.panel.isOpen()) return null;
+    if (!c.icon || c.icon.type !== 'chat') return null;
+    var sid = (c.state && c.state.sessionId) || c.icon.sessionId || '';
+    var title = (c.icon && c.icon.name) || '';
+    var avatar = (c.icon && c.icon.getAvatarHTML) ? c.icon.getAvatarHTML() : '';
+    if (!sid && !title) return null;
+    return { sessionId: sid, title: title, name: title, avatarHTML: avatar };
+  }
+
+  function chatPillHTML() {
+    var c = cur && cur.chat;
+    var out = '';
+    if (c && (c.sessionId || c.title)) {
+      var label = esc(c.title || c.sessionId);
+      if (c.name && c.name !== c.title) label += ' · ' + esc(c.name);
+      out = '<button type="button" id="hub-chatpill" class="hub-chatpill" aria-label="connected chat: ' +
+        escAttr(label) + ' — tap to change" title="tap to connect a different chat">' +
+        '<span class="hub-chatpill-ico">' + (c.avatarHTML || '💬') + '</span>' +
+        '<span class="hub-chatpill-label">' + label + '</span>' +
+        '<span class="hub-chatpill-chev" aria-hidden="true">▾</span></button>';
+    } else {
+      out = '<button type="button" id="hub-chatpill" class="hub-chatpill hub-chatpill--none"' +
+        ' aria-label="no chat connected — tap to connect one" title="tap to connect a chat">' +
+        '<span class="hub-chatpill-ico">📚</span>' +
+        '<span class="hub-chatpill-label">no chat</span>' +
+        '<span class="hub-chatpill-chev" aria-hidden="true">▾</span></button>';
+    }
+    // v0.52: the LOCAL library companion — templates/skills downloaded
+    // from the hub land in the local user library (templatesheet.js
+    // "Yours"); this ghost pill opens THAT browser with activation
+    // wired to the current chat (the old ⧉ pill's path, kept alive).
+    if (cur && (cur.type === 'template' || cur.type === 'skill')) {
+      out += '<button type="button" id="hub-locallib" class="hub-chatpill hub-chatpill--none"' +
+        ' title="your downloaded ' + esc(cur.type) + 's — browse + use them in this chat">' +
+        '<span class="hub-chatpill-ico">' + (cur.type === 'skill' ? '🛠' : '⧉') + '</span>' +
+        '<span class="hub-chatpill-label">local ' + esc(cur.type) + 's</span></button>';
+    }
+    return out;
+  }
+
+  function wireChatPill(root) {
+    var pill = root.querySelector('#hub-chatpill');
+    if (pill) pill.addEventListener('click', function () {
+      if (!window.ChatsView || !window.ChatsView.openPicker) {
+        toast('the all-chats view is not available');
+        return;
+      }
+      window.ChatsView.openPicker(function (pick) {
+        if (!cur) return;
+        cur.chat = {
+          sessionId: pick.session_id || '',
+          title: pick.title || '',
+          name: pick.title || '',
+          avatarHTML: ''
+        };
+        // the icon avatar comes from the canvas icon when it exists
+        try {
+          var icon = (window.doomalay && window.doomalay.findIconForSession)
+            ? window.doomalay.findIconForSession(cur.chat.sessionId) : null;
+          if (icon && icon.getAvatarHTML) cur.chat.avatarHTML = icon.getAvatarHTML();
+          if (icon && icon.name) cur.chat.name = icon.name;
+        } catch (e) {}
+        paintChatPill(root);
+        toast('library connected to ' + (cur.chat.title || 'the chat'));
+      });
+    });
+    // v0.52: the local-library ghost pill — the downloaded templates/
+    // skills browser, with activation wired to the current chat.
+    var local = root.querySelector('#hub-locallib');
+    if (local) local.addEventListener('click', function () {
+      if (!window.TemplateSheet) { toast('the local library is not available'); return; }
+      window.TemplateSheet.open({
+        active: '',
+        onActivate: function (tpl) {
+          if (window.ChatPanel && window.ChatPanel.applyTemplate) {
+            window.ChatPanel.applyTemplate(tpl);
+          } else if (window.Artifacts && window.Artifacts.toast) {
+            window.Artifacts.toast('open a chat first');
+          }
+        }
+      });
+    });
+  }
+
+  function paintChatPill(root) {
+    var old = root.querySelector('#hub-chatpill');
+    if (!old) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = chatPillHTML();
+    var fresh = tmp.firstElementChild;
+    if (fresh) old.parentNode.replaceChild(fresh, old);
+    wireChatPill(root);
+  }
+
   // ── entry ────────────────────────────────────────────────────────
-  function open(type) {
+  function open(type, opts) {
     var panel = PV();
     if (!panel) { toast('open a chat first'); return; }
+    opts = opts || {};
+    var chat = null;
+    if (opts.chat) {
+      chat = opts.chat; // explicit — {sessionId,title,name,avatarHTML} (or null-no-chat)
+    } else if (opts.chat === undefined) {
+      chat = deriveChatFromPanel(); // legacy callers: connect the hosting chat
+    } // opts.chat === null → explicitly NO chat (the canvas entry)
     cur = {
       panel: panel,
+      chat: chat, // v0.52: null (no chat) | {sessionId,title,name,avatarHTML}
       libraries: [],
       libErr: '',
       type: type || null,
@@ -1007,6 +1151,11 @@
 
   window.Hub = {
     open: open,
+    // v0.52: the connected chat (null when the library is unbound) —
+    // the chat toolbar's [template|+] / [skills|+] buttons and any
+    // "apply to this chat" action read this.
+    chat: function () { return cur ? cur.chat : null; },
+    setChat: function (chat) { if (cur) { cur.chat = chat || null; } },
     markStale: markStale,
     refreshItem: refreshItem,
     isDownloaded: isDownloaded,

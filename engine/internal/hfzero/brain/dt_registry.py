@@ -184,20 +184,30 @@ def discover() -> list[Path]:
     return sorted(TOOLS_DIR.glob("dt_*.py"))
 
 
-def load_doomalay_tools(ctx: ToolContext, strands_tool_decorator=None) -> list:
+def load_doomalay_tools(ctx: ToolContext, strands_tool_decorator=None, exclude=None) -> list:
     """Build every dt_* tool. Broken modules are skipped, never fatal.
 
     Returns a list ready to extend the StrandsAdapter tools list. When
     strands_tool_decorator is given it is NOT used here — each module
     imports the decorator itself inside build() (so the registry stays
     strands-free and unit-testable).
+
+    v0.52 THE 3 PILLS: `exclude` is a list of PRIMARY tool names (the
+    dt module TOOL_NAMES, e.g. ["dtemplate", "skills"]) whose modules
+    are skipped entirely — the per-chat auto-search pills gate their
+    libraries (agent.py _build_tools passes the disabled ones).
     """
     tools: list = []
     built: list[str] = []
     failed: dict[str, str] = {}
+    skip = {str(n).strip().lower() for n in (exclude or [])}
     for path in discover():
         try:
             mod = _import_dt_module(path)
+            _names = getattr(mod, "TOOL_NAMES", None) or [path.stem[3:]]
+            _prim = {str(n).strip().lower() for n in (_names if isinstance(_names, list) else [_names])}
+            if skip & _prim:
+                continue  # v0.52: a disabled pill dropped this library
             built_list = mod.build(ctx)
             if built_list:
                 tools.extend(built_list[:MAX_DT_TOOLS])

@@ -2516,50 +2516,26 @@
     // composer). See chatpanel.js ~L2289 (tools gate) + brain/agent.py
     // default flip.
 
-    // v0.44 THE TEMPLATE PILL (user spec: "change the deep research pill
-    // entirely to a template pill…"): ⌖ deep research became ⧉ template —
-    // the sheet (templatesheet.js) owns browsing/favorites/hub. The pill's
-    // label carries the active template's short name; deep research stays
-    // reachable as one of the default templates (engine-native pipeline).
-    var tb = document.createElement('button');
-    var tplActive = state.deepResearch || !!state.template;
-    var tplName = state.template ? state.template.name
-      : (state.deepResearch ? 'deep research' : 'template');
-    tb.textContent = '⧉ ' + tplName;
-    tb.title = 'Method templates — browse the library';
-    tb.setAttribute('aria-label', 'Method templates — browse the library');
-    tb.style.cssText = capBtnStyle(tplActive, 'var(--accent)');
-    tb.addEventListener('click', function () {
-      if (!window.TemplateSheet) {
-        if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the template sheet is not available');
-        return;
-      }
-      window.TemplateSheet.open({
-        active: tplActive ? (state.template ? state.template.id : 'deep-research') : '',
-        onActivate: function (tpl) {
-          if (tpl && tpl.deepResearch) {
-            state.deepResearch = true;
-            state.template = null;
-          } else if (tpl && tpl.brief) {
-            state.template = { id: tpl.id, name: tpl.name, brief: tpl.brief };
-            state.deepResearch = false;
-            state.webSearch = false;
-          } else {
-            state.template = null;
-            state.deepResearch = false;
-          }
-          persistCaps(state, icon);
-          // The composer DOM was stashed while the sheet was open — the
-          // root-restored listener repaints the toolbar + chip from state.
-          state._tplPending = true;
-        }
-      });
-    });
-    bar.appendChild(tb);
+    // v0.52 THE 3 PILLS (user item 6): the toolbar is [effort · x] +
+    // [⧉ template | +] + [🛠 skills | +]. TWO hotboxes per pill:
+    //   · the LABEL press toggles the chat's auto-search cap
+    //     (template_auto / skills_auto — PATCHed via persistCaps; the
+    //     engine gates the template/skills tools + prompt lines on them,
+    //     so ON = the assistant browses + uses the library by itself)
+    //   · the + press opens the PUBLIC LIBRARY with THIS chat connected
+    //     (Hub.open('template'|'skill', {chat}))
+    // The + is DYNAMIC: it shows the name of the template/skill in use
+    // THIS turn (tool_use/tool_result events — see paintSegPlus), the
+    // active manual template shows persistently, and an unused slot is
+    // just '+'. The old whole-pill ⧉ template browse action is replaced
+    // by the + (the sheet stays reachable via the library's Yours rows).
+    bar.appendChild(segPill(bodyEl, state, icon, 'template'));
+    bar.appendChild(segPill(bodyEl, state, icon, 'skills'));
 
     syncTemplateChip(bodyEl, state, icon);
 
-    if (anyActive || (state.effort && state.effort !== 'med')) {
+    if (anyActive || (state.effort && state.effort !== 'med') ||
+        state.templateAuto || state.skillsAuto) {
       var clear = document.createElement('button');
       clear.textContent = 'clear';
       clear.style.cssText = 'background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;flex-shrink:0';
@@ -2570,6 +2546,8 @@
         state.webSearch = false;
         state.deepResearch = false;
         state.template = null; // v0.44: the active template clears with the rest
+        state.templateAuto = false; // v0.52: the pill toggles reset too
+        state.skillsAuto = false;
         persistCaps(state, icon);
         renderToolbar(bar, state, levels, icon, bodyEl);
       });
@@ -2794,6 +2772,193 @@
       ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
+  // ── v0.52 THE 3 PILLS — the segmented [label | +] builders ──────────
+  // Two hotboxes per pill (user item 6):
+  //   [⧉ template | +]   label press → toggle template_auto (the chat's
+  //                       auto-search cap; ON lights the pill up)
+  //                       + press     → the public library with THIS chat
+  //                       connected (Hub.open('template', {chat}))
+  //   [🛠 skills | +]     same shape for the skills library
+  // The + label is DYNAMIC: the in-use template/skill name for the
+  // current turn (state._turnTemplate/_turnSkill, fed by tool events),
+  // the active manual template persistently, else just '+'.
+  function segPlusLabel(state, kind) {
+    if (kind === 'template') {
+      if (state.template && state.template.name) return shortCap(state.template.name);
+      if (state._turnTemplate) return shortCap(state._turnTemplate);
+      return '+';
+    }
+    if (state._turnSkill) return shortCap(state._turnSkill);
+    return '+';
+  }
+
+  function shortCap(name) {
+    var s = String(name || '').trim();
+    if (!s) return '+';
+    if (s.length > 12) s = s.slice(0, 11) + '…';
+    return s;
+  }
+
+  function segPill(bodyEl, state, icon, kind) {
+    var isTpl = kind === 'template';
+    var active = isTpl ? !!(state.templateAuto || state.template || state.deepResearch)
+                       : !!state.skillsAuto;
+    var glyph = isTpl ? '⧉' : '🛠';
+    var label = isTpl ? 'template' : 'skills';
+
+    var wrap = document.createElement('div');
+    wrap.id = 'seg-' + kind;
+    wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
+      'border:1px solid ' + (active ? 'rgba(var(--accent-rgb),0.55)' : 'var(--border)') + ';' +
+      'background:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      'border-radius:999px;overflow:hidden';
+
+    var lab = document.createElement('button');
+    lab.id = 'seg-' + kind + '-label';
+    lab.textContent = glyph + ' ' + label;
+    lab.setAttribute('aria-pressed', active ? 'true' : 'false');
+    lab.title = isTpl
+      ? 'template auto-search — ON: the assistant browses + uses the template library by itself'
+      : 'skills auto-search — ON: the assistant loads methodology skills by itself';
+    lab.style.cssText = 'border:none;background:transparent;color:' +
+      (active ? 'var(--accent)' : 'var(--text-3)') +
+      ';padding:4px 8px 4px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+      'white-space:nowrap;-webkit-tap-highlight-color:transparent';
+    lab.addEventListener('click', function () {
+      if (isTpl) {
+        state.templateAuto = !state.templateAuto;
+      } else {
+        state.skillsAuto = !state.skillsAuto;
+      }
+      persistCaps(state, icon);
+      renderToolbar(bodyEl.querySelector('#chat-toolbar'), state,
+        state._effortLevels, icon, bodyEl);
+    });
+
+    var plus = document.createElement('button');
+    plus.id = 'seg-' + kind + '-plus';
+    plus.textContent = segPlusLabel(state, kind);
+    plus.title = isTpl
+      ? 'open the template library — the public library, this chat connected'
+      : 'open the skills library — the public library, this chat connected';
+    plus.setAttribute('aria-label', plus.title);
+    plus.style.cssText = 'border:none;border-left:1px solid ' +
+      (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
+      'background:transparent;color:' +
+      ((isTpl ? (state.template || state._turnTemplate) : state._turnSkill)
+        ? 'var(--accent)' : 'var(--text-3)') +
+      ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
+      'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+      '-webkit-tap-highlight-color:transparent';
+    plus.addEventListener('click', function () {
+      if (!window.Hub) {
+        if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the library is not available');
+        return;
+      }
+      // the public library with THIS chat connected (user item 5+6): the
+      // hub's chat pill reads `chat_1 · <bot name>` from the start.
+      var chat = null;
+      var c = window.ChatPanel && window.ChatPanel.current();
+      if (c && c.icon) {
+        chat = {
+          sessionId: state.sessionId || (c.icon && c.icon.sessionId) || '',
+          title: c.icon.name || '',
+          name: c.icon.name || '',
+          avatarHTML: (c.icon && c.icon.getAvatarHTML) ? c.icon.getAvatarHTML() : ''
+        };
+      }
+      window.Hub.open(isTpl ? 'template' : 'skill', { chat: chat });
+    });
+
+    wrap.appendChild(lab);
+    wrap.appendChild(plus);
+    return wrap;
+  }
+
+  // paintSegPlus — the LIVE half of the dynamic +: tool events call this
+  // to swap the + segment's text without re-rendering the toolbar (the
+  // turn is streaming; a full re-render would drop it).
+  function paintSegPlus(bodyEl, state) {
+    if (!bodyEl || !state) return;
+    var tp = bodyEl.querySelector('#seg-template-plus');
+    if (tp) {
+      var nl = segPlusLabel(state, 'template');
+      if (tp.textContent !== nl) tp.textContent = nl;
+      tp.style.color = ((state.template || state._turnTemplate) && nl !== '+')
+        ? 'var(--accent)' : 'var(--text-3)';
+    }
+    var sp = bodyEl.querySelector('#seg-skills-plus');
+    if (sp) {
+      var nl2 = segPlusLabel(state, 'skills');
+      if (sp.textContent !== nl2) sp.textContent = nl2;
+      sp.style.color = (state._turnSkill && nl2 !== '+') ? 'var(--accent)' : 'var(--text-3)';
+    }
+  }
+
+  // turnTemplateHint — feed the dynamic + from tool events (user item 6:
+  // "the + icon should change dynamically to the name of the template/
+  // skill that is currently being used. This updates dynamically as the
+  // templates or skills being used that turn").
+  //   template_show (direct)  → the summary IS the template id
+  //   dtemplate (brain)       → the tool_result text names the template
+  //   skills (brain)          → "=== SKILL LOADED: <name> ==="
+  function turnTemplateHint(bodyEl, state, ev) {
+    if (!state || !ev) return;
+    var name = (ev.name || '').toLowerCase();
+    var text = String(ev.text || ev.summary || '');
+    var dirty = false;
+    if (name === 'template_show') {
+      var id = String(ev.summary || '').trim();
+      if (id) { state._turnTemplate = id; dirty = true; }
+    } else if (name === 'template_list' || name === 'templates') {
+      // browsing alone doesn't count as using one
+    } else if (name === 'dtemplate') {
+      var m = text.match(/TEMPLATE\s+([\w.-]+)\s*\(/) || text.match(/template[\"']?\s*[:=]\s*[\"']?([\w.-]+)/i);
+      if (m) { state._turnTemplate = m[1]; dirty = true; }
+    } else if (name === 'skills' || name === 'skill') {
+      var m2 = text.match(/SKILL LOADED:\s*([\w.-]+)/);
+      if (m2) { state._turnSkill = m2[1]; dirty = true; }
+    }
+    if (dirty) paintSegPlus(bodyEl, state);
+  }
+
+  // applyTemplate — the public activation seam (v0.52): the hub's local
+  // library rows (and any future surface) activate a method template in
+  // the CURRENT chat through the exact path the old ⧉ pill used.
+  function applyTemplate(tpl) {
+    var c = currentCtx;
+    if (!c || !c.state) {
+      if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('open a chat first');
+      return;
+    }
+    var state = c.state, icon = c.icon;
+    if (tpl && tpl.deepResearch) {
+      state.deepResearch = true;
+      state.template = null;
+    } else if (tpl && tpl.brief) {
+      state.template = { id: tpl.id, name: tpl.name, brief: tpl.brief };
+      state.deepResearch = false;
+      state.webSearch = false;
+    } else {
+      state.template = null;
+      state.deepResearch = false;
+    }
+    persistCaps(state, icon);
+    // v0.52 FIX: the old flow always came from the template SHEET (a
+    // stacked view — its pop fired 'doomalay:root-restored', which
+    // repaints the toolbar + chip). Called with NO view open (the hub's
+    // activation while the chat root is showing), nothing fired and the
+    // toolbar stayed stale until the next repaint. Repaint NOW when the
+    // root is visible; otherwise the root-restored listener does it.
+    if (c.panel && c.panel.viewDepth && c.panel.viewDepth() === 0) {
+      state._tplPending = false;
+      buildToolbar(c.bodyEl, state, icon, c.type);
+      syncTemplateChip(c.bodyEl, state, icon);
+    } else {
+      state._tplPending = true;
+    }
+  }
+
   // ── v0.44 THE ACTIVE-TEMPLATE CHIP (inside the sticky input bar) ───
   // A one-line, removable '⧉ <name> ✕' banner pinned above the toolbar —
   // the edit-banner DOM mechanics (insert as the inputbar's first child,
@@ -2853,6 +3018,10 @@
         template: state.template ? JSON.stringify({
           id: state.template.id, name: state.template.name, brief: state.template.brief
         }) : '',
+        // v0.52 THE 3 PILLS: the [template|+] / [skills|+] label toggles —
+        // the engine gates the template/skills tools on these.
+        template_auto: !!state.templateAuto,
+        skills_auto: !!state.skillsAuto,
         sliding_window: state.slidingWindow || 40
       })
     }).catch(function (e) { console.error('persist caps failed', e); });
@@ -2950,6 +3119,10 @@
       effort: state.effort || 'med',
       web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
       deep_research: !!state.deepResearch,
+      // v0.52 THE 3 PILLS: the auto-search toggles ride creation too (the
+      // PATCH in the pill press covers later flips).
+      template_auto: !!state.templateAuto,
+      skills_auto: !!state.skillsAuto,
       // v0.44: the active method template blob (see persistCaps).
       template: state.template ? JSON.stringify({
         id: state.template.id, name: state.template.name, brief: state.template.brief
@@ -2986,6 +3159,10 @@
         // tools after every reload (the state defaulted them to off).
         if (typeof data.WebSearch === 'boolean') state.webSearch = data.WebSearch;
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
+        // v0.52 THE 3 PILLS: restore the auto-search toggles (the
+        // [template|+] / [skills|+] label press state).
+        if (typeof data.TemplateAuto === 'boolean') state.templateAuto = data.TemplateAuto;
+        if (typeof data.SkillsAuto === 'boolean') state.skillsAuto = data.SkillsAuto;
         // v0.44: restore the active method template (the persisted blob
         // {id, name, brief} — engine column template_id, PATCHed by
         // persistCaps; deep research restores via the flag above).
@@ -3396,6 +3573,11 @@
       if ((!pay.name || pay.summary === undefined) && pay.text) {
         try { pay = JSON.parse(pay.text); } catch (e) {}
       }
+      // v0.52 THE 3 PILLS: the dynamic + tracks the template/skill the
+      // model reaches for THIS turn (the tool_use half — template_show's
+      // summary IS the id; the brain's tool_use has the name only, its
+      // tool_result below carries the named markers).
+      turnTemplateHint(bodyEl, state, pay);
       var tuMsg = { role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay, ts: evTsMs(ev) };
       if (ev.i) tuMsg.ei = ev.i;
       state.messages.push(tuMsg);
@@ -3407,6 +3589,10 @@
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
       }
+      // v0.52 THE 3 PILLS: the brain's tool_result texts carry the named
+      // markers ("=== SKILL LOADED: <name> ===", "TEMPLATE <id> (…)" —
+      // the tool_use half had an empty summary there).
+      turnTemplateHint(bodyEl, state, pay2);
       var trMsg = { role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2, ts: evTsMs(ev) };
       if (ev.i) trMsg.ei = ev.i;
       state.messages.push(trMsg);
@@ -4404,6 +4590,13 @@
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var input = bodyEl.querySelector('#chat-input');
 
+    // v0.52 THE 3 PILLS: a fresh turn resets the dynamic + — the name
+    // only shows while a template/skill is used THIS turn (turnTemplateHint
+    // re-fills it from the tool events as the turn runs).
+    state._turnTemplate = null;
+    state._turnSkill = null;
+    paintSegPlus(bodyEl, state);
+
     // v0.37: an edit was committed — drop the banner WITHOUT restoring,
     // mask the replaced events, then proceed as a normal send.
     if (state._editStash) {
@@ -4668,6 +4861,10 @@
   }, true);
 
   window.ChatPanel = {
+    // v0.52: the public activation seam — the hub's local-library rows
+    // (templatesheet) and any surface with a resolved template activate
+    // it in the CURRENT chat through the exact path the old ⧉ pill used.
+    applyTemplate: applyTemplate,
     render: render,
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },

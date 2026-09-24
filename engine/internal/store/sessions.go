@@ -53,6 +53,15 @@ type Session struct {
         // switch and restores it on reload — the engine only stores and
         // echoes it back.
         TemplateID string
+        // v0.52 THE 3 PILLS (user item 6): per-chat auto-search toggles.
+        // TemplateAuto=true → the turn's toolset includes the template
+        // library tools (template_list/template_show direct; dtemplate in
+        // the brain) so the model can browse + apply templates on its
+        // own. SkillsAuto=true → the skills methodology tools ride too.
+        // Default false: the pills start disabled; the [template|+]/
+        // [skills|+] label press flips them.
+        TemplateAuto bool
+        SkillsAuto   bool
         // v0.46 HF CHAT: sandbox="hf" sessions route their turns through a
         // remote brain on an HF Space. SandboxMode picks the shape:
         //   "shared" → the community Space (auth: user's HF token)
@@ -77,14 +86,16 @@ INSERT INTO chat_sessions
    web_template, deep_template, deep_mode, judge_count, judge_template,
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
    workspace_id, persona, personas, placeholders, manually_renamed, compact_summary, compact_seq,
-   compact_enabled, compact_threshold, template_id, sandbox_mode, sandbox_repo, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+   compact_enabled, compact_threshold, template_id, template_auto, skills_auto,
+   sandbox_mode, sandbox_repo, created_at, updated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
                 s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
                 s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
-                s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
+                s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.TemplateAuto, s.SkillsAuto,
+                s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
         return err
 }
 
@@ -99,14 +110,14 @@ UPDATE chat_sessions SET
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
   routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, manually_renamed=?,
   compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?,
-  sandbox_mode=?, sandbox_repo=?, updated_at=?
+  template_auto=?, skills_auto=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
                 s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed,
                 s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID,
-                s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
+                s.TemplateAuto, s.SkillsAuto, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
         return err
 }
 
@@ -144,6 +155,7 @@ func (db *DB) GetSession(id string) (*Session, error) {
         var compactSeq sql.NullInt64
         var compactEnabled, compactThreshold sql.NullInt64
         var templateID sql.NullString
+        var templateAuto, skillsAuto sql.NullInt64
         var sandboxMode, sandboxRepo sql.NullString
         err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
@@ -151,14 +163,14 @@ SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_resea
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
        workspace_id, persona, personas, placeholders, manually_renamed,
        compact_summary, compact_seq, compact_enabled, compact_threshold, template_id,
-       sandbox_mode, sandbox_repo, created_at, updated_at
+       template_auto, skills_auto, sandbox_mode, sandbox_repo, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
                 &s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
                 &s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
                 &s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
                 &s.WorkspaceID, &persona, &personas, &placeholders, &mr,
                 &compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID,
-                &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
+                &templateAuto, &skillsAuto, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
         if err == sql.ErrNoRows {
                 return nil, nil
         }
@@ -199,6 +211,13 @@ FROM chat_sessions WHERE id=?`, id).Scan(
         // v0.44: the template pill's active-template blob (JSON string).
         if templateID.Valid {
                 s.TemplateID = templateID.String
+        }
+        // v0.52: the auto-search toggles (absent on pre-migration rows = off).
+        if templateAuto.Valid {
+                s.TemplateAuto = templateAuto.Int64 != 0
+        }
+        if skillsAuto.Valid {
+                s.SkillsAuto = skillsAuto.Int64 != 0
         }
         // v0.46: HF-chat routing (sandbox=hf).
         if sandboxMode.Valid {

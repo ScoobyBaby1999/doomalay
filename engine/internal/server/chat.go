@@ -689,6 +689,11 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 "mode":          sess.Mode,
                 "web_search":    sess.WebSearch || true, // v0.45 ITEM 2: default-on (pill removed)
                 "deep_research": sess.DeepResearch,
+                // v0.52 THE 3 PILLS: the auto-search toggles ride the brain
+                // turn (the brain gates dtemplate/skills + the system-prompt
+                // lines on them).
+                "template_auto": sess.TemplateAuto,
+                "skills_auto":   sess.SkillsAuto,
                 // v0.19: persona system — the per-turn system message is
                 // identity + the chat's persona (or the default prompt).
                 "system_prompt": s.systemPromptFor(sess),
@@ -1085,6 +1090,14 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // system block.
                 TemplateID:    tplID,
                 TemplateBrief: tplBrief,
+                // v0.52 THE 3 PILLS: the per-chat auto-search toggles —
+                // TemplateAuto gates the template ACTION tools on the
+                // direct path (off = the tools are not offered, so the
+                // model cannot burn turns browsing a library the user
+                // disabled). SkillsAuto rides for the brain path (direct
+                // chats have no skills tooling).
+                TemplateAuto: sess.TemplateAuto,
+                SkillsAuto:   sess.SkillsAuto,
         }
         // v0.44 SELF-ENABLE: the template ACTION tools need the brain URL
         // ("" on the APK → they degrade honestly). The brain may be

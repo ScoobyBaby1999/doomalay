@@ -728,6 +728,16 @@
     // (materializing an icon if the grid has none) + optional jump to a
     // specific engine event (scrollIntoView + find-hit pulse).
     openChatBySession,
+    // v0.52: the canvas icon bound to an engine session id (the hub's
+    // chat-connection pill asks for the icon's avatar + name after a
+    // pick in the all-chats overlay). null when no icon carries it.
+    findIconForSession: function (sid) {
+      if (!sid) return null;
+      for (const bot of world.entities) {
+        if (bot.sessionId === sid) return bot;
+      }
+      return null;
+    },
     resetView: function () {
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();
@@ -1391,17 +1401,10 @@
       if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
     });
 
-    // v0.41: Search glyph → GLOBAL CHAT SEARCH (globalsearch.js). Same
-    // ride-the-panel pattern as the hub: the view lives on the master
-    // panel's stack whether a chat is open or not.
-    const dockSearchBtn = dockStripEl.querySelector('#dock-search');
-    if (dockSearchBtn) dockSearchBtn.addEventListener('click', function () {
-      if (window.GlobalSearch) window.GlobalSearch.open();
-    });
-
-    // v0.42: Chats glyph → THE ALL-CHATS INDEX (chatsview.js). Every
-    // conversation most-recently-active-first with previews — the same
-    // ride-the-panel pattern as search + the hub.
+    // v0.52: ONE chats glyph — the merged all-chats index + global search
+    // (chatsview.js). The separate ⌕ glyph is gone (user item 4: "they
+    // serve almost the same purpose"); GlobalSearch.open() delegates to
+    // the same view, so the keys.js shortcut is unchanged.
     const dockChatsBtn = dockStripEl.querySelector('#dock-chats');
     if (dockChatsBtn) dockChatsBtn.addEventListener('click', function () {
       if (window.ChatsView) window.ChatsView.open();
@@ -1411,22 +1414,27 @@
     // row's ◈ pill — the SAME open path the pill had: the hub view
     // rides the master panel's view stack (panel.js pushView + the
     // slide-up animation).
+    // v0.52 (user item 5): the library is DECOUPLED from chats. Opened
+    // from the canvas it carries NO chat connection ({chat:null} — the
+    // pill reads "no chat"); opened from an already-open chat panel it
+    // still auto-connects that chatbot's chat.
     const dockLibraryBtn = dockStripEl.querySelector('#dock-library');
     if (dockLibraryBtn) dockLibraryBtn.addEventListener('click', function () {
       if (!window.Hub) return;
-      // A chat panel is already up → the pill's exact path applies.
+      // A chat panel is already up → the pill's exact path applies
+      // (Hub.open derives + connects THIS chat).
       var cur = window.ChatPanel && window.ChatPanel.current();
       if (cur && cur.panel && cur.panel.isOpen()) { window.Hub.open(); return; }
       // From the bare canvas (the dock sits under an open panel's scrim,
-      // so this is the only other case) — open the current chat's panel
-      // first, then push the hub view on top of it.
+      // so this is the only other case) — open a host panel first, then
+      // push the hub view on top of it with NO chat connected.
       var icon = (cur && cur.icon) || null;
       if (!icon) {
         for (const e of world.entities) { if (e.type === 'chat') { icon = e; break; } }
       }
       if (!icon) { window.Hub.open(); return; }  // toasts "open a chat first"
       openChatPanelFor(icon);
-      window.Hub.open();
+      window.Hub.open(undefined, { chat: null });
     });
   }
 

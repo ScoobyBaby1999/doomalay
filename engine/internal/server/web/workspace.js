@@ -1683,7 +1683,9 @@
     var b = document.createElement('button');
     b.id = 'pill-workspace';
     b.className = 'pill-workspace';
-    b.innerHTML = '▣ <span id="pill-workspace-count">0</span>';
+    // v0.52 (user item 7): the pill reads "▣ + workspace <count>" — the
+    // icon-only form didn't say what it does.
+    b.innerHTML = '▣ + workspace <span id="pill-workspace-count">0</span>';
     b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
       'background:rgba(var(--accent-2-rgb),0.06);border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2);' +
       'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +

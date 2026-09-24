@@ -818,6 +818,11 @@ async def chat(request: Request):
                 mode=body.get("mode", "auto"),
                 history=body.get("history", []),
                 workspaces=body.get("workspaces", []),
+                # v0.52 THE 3 PILLS: per-chat auto-search toggles (the
+                # [template|+] / [skills|+] label press) — gate the
+                # dtemplate/skills tools + their system-prompt lines.
+                template_auto=body.get("template_auto", False),
+                skills_auto=body.get("skills_auto", False),
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"

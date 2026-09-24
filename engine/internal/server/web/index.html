@@ -2481,6 +2481,26 @@
      from --hub-cols (clamped so a column never drops under ~150px). */
   .hub-root { display: flex; flex-direction: column; gap: 10px; }
 
+  /* v0.52: the chat-connection pill (the library's only binding to a
+     chat — "no chat" by default; tap → the all-chats picker) */
+  .hub-chatrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .hub-chatpill {
+    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+    padding: 6px 12px; margin: 0; font: inherit; cursor: pointer;
+    font-size: var(--ui-small-fs); font-weight: 600; color: var(--text-1);
+    background: var(--surface-1); border: 1px solid var(--surface-2);
+    border-radius: 999px; transition: border-color .16s ease, background .16s ease;
+    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.55);
+  }
+  .hub-chatpill:hover { border-color: rgba(var(--accent-rgb), .45); }
+  .hub-chatpill:active { background: rgba(var(--accent-rgb), .10); }
+  .hub-chatpill-ico { display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; font-size: 14px; flex-shrink: 0; }
+  .hub-chatpill-ico img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+  .hub-chatpill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hub-chatpill-chev { color: var(--text-3); font-size: calc(var(--ui-micro-fs) + 1px); flex-shrink: 0; }
+  .hub-chatpill--none { color: var(--text-3); font-style: italic; }
+
   /* the collapsible header (title bar + everything-but-the-grid) */
   .pub-head {
     border: 1px solid var(--surface-2); border-radius: 14px 11px 13px 12px / 12px 13px 11px 14px;
@@ -3313,14 +3333,11 @@
   <button class="dock-btn" id="dock-library" title="Hub library" aria-label="Hub library">
     <svg viewBox="0 0 24 24"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg>
   </button>
-  <!-- v0.42: the all-chats index — every conversation, most recently
-       active first, with a one-line preview of where it left off -->
-  <button class="dock-btn" id="dock-chats" title="All chats" aria-label="All chats">
+  <!-- v0.52: the all-chats index + global search MERGED — one 💬 glyph
+       (empty query → every conversation; typing → live search across
+       every transcript). The separate ⌕ glyph is gone. -->
+  <button class="dock-btn" id="dock-chats" title="All chats — browse & search" aria-label="All chats — browse and search">
     <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
-  </button>
-  <!-- v0.41: global chat search — the transcript across every chat -->
-  <button class="dock-btn" id="dock-search" title="Search all chats" aria-label="Search all chats">
-    <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
   </button>
 </div>
 

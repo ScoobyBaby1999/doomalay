@@ -25,7 +25,11 @@
   }
 
   function bodyHTML(acct) {
-    var secretNeeded = acct && !acct.has_secret;
+    // v0.52: the setup box is ALWAYS in the DOM (hidden unless the secret
+    // is missing) — the panel-view host renders before the account probe
+    // answers, and wire()'s refresh() then shows/hides it live. The
+    // overlay host (which renders AFTER the probe) pre-sets visibility.
+    var secretNeeded = acct ? !acct.has_secret : true;
     return '' +
       '<div style="padding:26px 22px">' +
         '<div id="ghc-state" style="margin-bottom:16px"></div>' +
@@ -37,25 +41,29 @@
           'One tap: you\'ll be redirected to github.com to log in and authorize ' +
           'the Doomalay app — the token is acquired automatically and stored in ' +
           'the engine\'s encrypted vault. We never see your password.</p>' +
-        (secretNeeded ?
-          '<div style="margin:16px 0 0;padding:14px;border-radius:10px;' +
-            'background:rgba(var(--notice-rgb),0.10);border:1px solid rgba(var(--notice-rgb),0.35)">' +
-            '<div style="font-size:12px;font-weight:700;color:var(--notice);margin-bottom:6px">' +
-              'one-time OAuth setup</div>' +
-            '<p style="font-size:12px;color:var(--text-3);margin:0 0 8px;line-height:1.5">' +
-              'Sign-in needs the Doomalay GitHub App client secret (once per install; ' +
-              'it stays in the vault). Redirect URI this install answers:' +
-              ' <code style="color:var(--text-2);font-size:11px;word-break:break-all">' +
-              (acct.redirect_uri || '') + '</code></p>' +
-            '<div style="display:flex;gap:8px">' +
-              '<input id="ghc-secret" type="password" placeholder="client secret" autocomplete="off" style="flex:1;' +
-                'padding:10px 12px;border-radius:10px;border:1px solid var(--border);' +
-                'background:var(--surface-2);color:var(--text-1);font-size:13px;font-family:inherit;outline:none">' +
-              '<button id="ghc-save-secret" style="padding:10px 14px;border-radius:10px;' +
-                'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);' +
-                'font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">save</button>' +
-            '</div>' +
-          '</div>' : '') +
+        '<div id="ghc-setup" style="margin:16px 0 0;padding:14px;border-radius:10px;' +
+          'background:rgba(var(--notice-rgb),0.10);border:1px solid rgba(var(--notice-rgb),0.35)' +
+          (secretNeeded ? '' : ';display:none') + '">' +
+          '<div style="font-size:12px;font-weight:700;color:var(--notice);margin-bottom:6px">' +
+            '🔐 one-time OAuth setup — paste the client secret once</div>' +
+          '<p style="font-size:12px;color:var(--text-3);margin:0 0 8px;line-height:1.5">' +
+            'Sign-in needs the Doomalay GitHub App <b style="color:var(--text-2)">client secret</b> to finish its ' +
+            'token exchange. Paste it <b style="color:var(--text-2)">once per install</b> — it is encrypted into ' +
+            'this device\'s vault and <b style="color:var(--ok)">never leaves the device</b> (it is NOT shipped ' +
+            'inside the app and no one else can read it from here). The box disappears once saved.' +
+            ' <span id="ghc-cid">App client id: <code style="color:var(--text-2);font-size:11px">' +
+            ((acct && acct.client_id) || 'built-in') + '</code></span> · redirect URI this install answers:' +
+            ' <code id="ghc-ruri" style="color:var(--text-2);font-size:11px;word-break:break-all">' +
+            ((acct && acct.redirect_uri) || '…') + '</code></p>' +
+          '<div style="display:flex;gap:8px">' +
+            '<input id="ghc-secret" type="password" placeholder="GitHub App client secret" autocomplete="off" style="flex:1;' +
+              'padding:10px 12px;border-radius:10px;border:1px solid var(--border);' +
+              'background:var(--surface-2);color:var(--text-1);font-size:13px;font-family:inherit;outline:none">' +
+            '<button id="ghc-save-secret" style="padding:10px 14px;border-radius:10px;' +
+              'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-strong);' +
+              'font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">save</button>' +
+          '</div>' +
+        '</div>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
             'letter-spacing:0.06em;margin-bottom:10px">Optional manual method</div>' +
@@ -100,6 +108,14 @@
         if (btn && !a.has_secret) {
           btn.title = 'needs the one-time OAuth setup below (client secret)';
         }
+        // v0.52: live-toggle the setup box + refresh its id/URI hints —
+        // the panel-view host renders before the probe answers.
+        var box = el.querySelector('#ghc-setup');
+        if (box) box.style.display = a.has_secret ? 'none' : '';
+        var cid = el.querySelector('#ghc-cid code');
+        if (cid && a.client_id) cid.textContent = a.client_id;
+        var ruri = el.querySelector('#ghc-ruri');
+        if (ruri && a.redirect_uri) ruri.textContent = a.redirect_uri;
       }).catch(function () {});
     };
     refresh();
@@ -116,20 +132,23 @@
       if (!sec) { errEl.textContent = 'paste the client secret first'; return; }
       errEl.textContent = '';
       saveSecret.disabled = true; saveSecret.textContent = 'saving…';
+      // v0.52: client_id omitted — the engine keeps the built-in app id
+      // (or the previously saved one). The secret itself is the only
+      // sensitive half of the pair, and it goes vault-only.
       fetch('/api/workspaces/oauth/github/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: 'Iv23liDzVTw7zphxo5Hv', client_secret: sec })
+        body: JSON.stringify({ client_secret: sec })
       }).then(function (r) {
         if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
         return r.json();
       }).then(function () {
         saveSecret.disabled = false; saveSecret.textContent = 'save';
         errEl.textContent = '';
-        if (window.toast) window.toast('OAuth secret saved — sign in works now');
+        if (window.toast) window.toast('OAuth secret saved (encrypted on this device) — sign in works now');
         // hide the setup box (re-render state)
-        var box = el.querySelector('#ghc-secret');
-        if (box) box.parentElement.parentElement.style.display = 'none';
+        var box = el.querySelector('#ghc-setup');
+        if (box) box.style.display = 'none';
       }).catch(function (e) {
         saveSecret.disabled = false; saveSecret.textContent = 'save';
         errEl.textContent = e.message || 'could not save the secret';

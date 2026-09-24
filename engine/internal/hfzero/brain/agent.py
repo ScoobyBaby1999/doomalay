@@ -71,6 +71,8 @@ async def run_turn(
     mode: str = "auto",
     history: list = None,
     workspaces: list = None,
+    template_auto: bool = False,   # v0.52: the [template|+] pill
+    skills_auto: bool = False,     # v0.52: the [skills|+] pill
 ) -> AsyncIterator[dict]:
     """Run one chat turn. Yields events as dicts.
 
@@ -98,7 +100,8 @@ async def run_turn(
     # Build the system prompt.
     if not system_prompt:
         system_prompt = _build_system_prompt(model, mode, workspace, web_search, deep_research,
-                                            workspaces=workspaces)
+                                            workspaces=workspaces,
+                                            template_auto=template_auto, skills_auto=skills_auto)
 
     # Build messages (include history if provided).
     messages = list(history) if history else []
@@ -118,6 +121,8 @@ async def run_turn(
             workspace=workspace,
             web_search=web_search,
             workspaces=workspaces,
+            template_auto=template_auto,
+            skills_auto=skills_auto,
         ):
             yield ev
     else:
@@ -135,7 +140,7 @@ async def run_turn(
 
 async def _run_strands_agent(
     *, session_id, messages, model, base_url, api_key, system_prompt, effort, workspace, web_search,
-    workspaces=None,
+    workspaces=None, template_auto=False, skills_auto=False,
 ) -> AsyncIterator[dict]:
     """Full Strands agent with all tools. V0: fresh per turn, callback-only events."""
     yield {"type": "status", "state": "running", "usage": None}
@@ -203,10 +208,18 @@ async def _run_strands_agent(
         callback = _StreamCallback()
 
         # Build the tools.
+        # v0.52 THE 3 PILLS: the per-chat auto-search toggles — a disabled
+        # pill drops its dt tool from the registry (and its system-prompt
+        # line below), so the model can't browse a library the user off.
+        _exclude = []
+        if not template_auto:
+            _exclude.append("dtemplate")
+        if not skills_auto:
+            _exclude.append("skills")
         tools = _build_tools(workspace, web_search, session_id=session_id,
                              callback=callback, model=model,
                              llm_info=(litellm_id, litellm_base or "", api_key),
-                             workspaces=workspaces)
+                             workspaces=workspaces, exclude=_exclude)
 
         # V0 FIX: fresh Agent per turn. Never reuse.
         # v0.38 MEMORY: the agent is pre-seeded with the conversation
@@ -620,7 +633,8 @@ def _build_tools(workspace: str, web_search: bool,
                  session_id: str = "", callback=None,
                  model: str = "",
                  llm_info: "tuple[str, str, str] | None" = None,
-                 workspaces: list = None) -> list:
+                 workspaces: list = None, template_auto: bool = False,
+                 skills_auto: bool = False, exclude: list = None) -> list:
     """Build the full tool suite for the Strands agent.
 
     Tools ported from the old c-branch:
@@ -935,7 +949,7 @@ def _build_tools(workspace: str, web_search: bool,
             spawn=_dt_spawn,
             workspaces=list(workspaces) if workspaces else [],
         )
-        dt_tools = dt_registry.load_doomalay_tools(ctx)
+        dt_tools = dt_registry.load_doomalay_tools(ctx, exclude=exclude)
         if dt_tools:
             # v0.44 UNBOUNDED SWARM: sub-agents KEEP the swarm tool — nested
             # fan-out (a sub-agent swarming its own sub-agents) is exactly
@@ -955,7 +969,8 @@ def _build_tools(workspace: str, web_search: bool,
 
 
 def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool,
-                        workspaces: list = None) -> str:
+                        workspaces: list = None, template_auto: bool = False,
+                        skills_auto: bool = False) -> str:
     """Build the system prompt for the agent."""
     parts = [f"You are Doomalay, an autonomous AI assistant running via {model}."]
 
@@ -997,44 +1012,52 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
     # tools exist and reach for them first (the user's mandate: "tools u must
     # use"). Without this block the model improvises text answers for jobs
     # that have dedicated tools.
-    parts.append(
-        "TOOL-FIRST DISCIPLINE — you have purpose-built tools; USE THEM:\n"
+    # v0.52 THE 3 PILLS: the skills + dtemplate lines ride only when the
+    # chat's auto-search pills are on (the tools themselves are excluded
+    # from the registry in _build_tools — the prompt must not advertise
+    # what isn't there).
+    _discipline_lines = [
         "- swarm: fan a list of tasks out to PARALLEL sub-agents at once (the "
         "swarm node — prefer over repeated delegate calls whenever 2+ "
-        "independent sub-tasks exist)\n"
+        "independent sub-tasks exist)",
         "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
         "question, searches, fetches pages, refines queries over rounds, "
         "synthesizes a cited brief. Use for ANY current-events question "
-        "instead of guessing from training data\n"
+        "instead of guessing from training data",
         "- timemgr: the time manager — tasks with priorities/deadlines/"
         "subtasks, natural dates ('tomorrow', 'next friday'), templates, "
-        "pomodoro, today board, stats\n"
+        "pomodoro, today board, stats",
         "- djournal: the rich journal — mood/tags/highlights/gratitude, "
-        "search, week/month reviews with trends + streaks, prompts, export\n"
+        "search, week/month reviews with trends + streaks, prompts, export",
         "- socreate: the 10x productivity creation loop — start(goal) → plan "
-        "→ execute steps (sub-agents) → critique → iterate until done\n"
-        "- skills: browse + load the 17 methodology skills (brainstorming, "
-        "writing-plans, TDD, systematic-debugging, verification…) — load one "
-        "BEFORE starting work it covers\n"
-        "- dtemplate: browse + run the template library (deep research, "
-        "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input\n"
+        "→ execute steps (sub-agents) → critique → iterate until done",
+        ("- skills: browse + load the 17 methodology skills (brainstorming, "
+         "writing-plans, TDD, systematic-debugging, verification…) — load one "
+         "BEFORE starting work it covers") if skills_auto else None,
+        ("- dtemplate: browse + run the template library (deep research, "
+         "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input") if template_auto else None,
         "- hublib: browse + download the PUBLIC HUB's community templates "
         "and skills — search/popular, tappable one-press download cards for "
-        "the user, payload in hand to follow\n"
+        "the user, payload in hand to follow",
         "- artifact: create AND surgically EDIT (find/replace, line splices, "
         "inserts, dry_run) the REAL chat artifacts — including files made in "
-        "earlier turns; write deliverables HERE, not just as chat text\n"
+        "earlier turns; write deliverables HERE, not just as chat text",
         "- workspace: act on this chat's CONNECTED cloud repos (GitHub/"
         "Gitea/GitLab/any forge) — tree, ls, read (head/tail/line ranges), "
         "grep, write files as API commits (full access), fork, clone, "
-        "create repos, issues/pulls/releases/actions/discussions views\n"
+        "create repos, issues/pulls/releases/actions/discussions views",
         "- explore: the UNBOUNDED repo explorer — give it ANY repo URL (no "
         "connect needed): full tree walks, batch file reads, grep, history, "
-        "releases, CI runs, issues; paginated, no artificial caps\n"
-        "- hf: publish results/datasets to the HuggingFace community library\n"
+        "releases, CI runs, issues; paginated, no artificial caps",
+        "- hf: publish results/datasets to the HuggingFace community library",
         "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
-        "analysis, compare (Stooq)\n"
-        "Rules: fresh info → rtsearch (never answer from memory what it can "
+        "analysis, compare (Stooq)",
+    ]
+    _discipline_lines = [ln for ln in _discipline_lines if ln]
+    parts.append(
+        "TOOL-FIRST DISCIPLINE — you have purpose-built tools; USE THEM:\n"
+        + "\n".join(_discipline_lines)
+        + "\nRules: fresh info → rtsearch (never answer from memory what it can "
         "verify); tasks/time → timemgr; journaling → djournal; non-trivial "
         "goal → socreate (parallelize with swarm); market questions → "
         "stocks; files the user should keep → artifact; repo questions "

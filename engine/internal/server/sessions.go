@@ -50,6 +50,10 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 // v0.44: the template pill's active method template (JSON
                 // blob {id, name, brief}; "" = none).
                 TemplateID string `json:"template"`
+                // v0.52 THE 3 PILLS: per-chat auto-search toggles (the
+                // [template|+] / [skills|+] label press).
+                TemplateAuto bool `json:"template_auto"`
+                SkillsAuto   bool `json:"skills_auto"`
                 // v0.46: HF-chat routing (sandbox="hf"): "shared" | "own" + the
                 // own space's "user/name" repo.
                 SandboxMode string `json:"sandbox_mode"`
@@ -116,6 +120,9 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 Routing:       req.Routing,
                 WorkspaceID:   req.WorkspaceID,
                 TemplateID:    req.TemplateID,
+                // v0.52: the auto-search pill toggles.
+                TemplateAuto: req.TemplateAuto,
+                SkillsAuto:   req.SkillsAuto,
                 // v0.46: HF-chat routing.
                 SandboxMode: req.SandboxMode,
                 SandboxRepo: req.SandboxRepo,
@@ -269,6 +276,15 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 } else {
                         sess.TemplateID = v
                 }
+        }
+        // v0.52 THE 3 PILLS: the [template|+] / [skills|+] label toggles —
+        // per-chat auto-search flags the turn builder gates the
+        // template/skills tools on.
+        if v, ok := req["template_auto"].(bool); ok {
+                sess.TemplateAuto = v
+        }
+        if v, ok := req["skills_auto"].(bool); ok {
+                sess.SkillsAuto = v
         }
         if err := s.db.UpdateSession(sess); err != nil {
                 writeError(w, 500, "update: "+err.Error())

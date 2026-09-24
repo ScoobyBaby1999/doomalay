@@ -720,7 +720,9 @@ func (s *Server) handleHFSpaceLogs(w http.ResponseWriter, r *http.Request) {
         }
         req.Header.Set("Authorization", "Bearer "+token)
         req.Header.Set("User-Agent", "doomalay-engine/0.46")
-        cli := &http.Client{Timeout: 0}
+        // v0.52: netx transport — the logs proxy is an outbound call too
+        // (the bare client died on devices with a broken local resolver).
+        cli := &http.Client{Timeout: 0, Transport: netx.Transport()}
         resp, err := cli.Do(req)
         if err != nil {
                 fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
@@ -839,7 +841,14 @@ func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
         }
         token, err := hfExchangeCode(code, entry.verifier, schemeHost(r)+"/api/hf/oauth/callback")
         if err != nil {
-                writeError(w, http.StatusBadGateway, "token exchange failed: "+err.Error())
+                // v0.52: a resolver-shaped failure is confusing as a bare
+                // Post error — name the egress path so the user (and the
+                // logs) see the engine re-routed around the device DNS.
+                msg := err.Error()
+                if strings.Contains(msg, "lookup ") && strings.Contains(msg, ":53") {
+                        msg += " (device DNS refused the engine — the DNS-over-HTTPS fallback will carry the retry)"
+                }
+                writeError(w, http.StatusBadGateway, "token exchange failed: "+msg)
                 return
         }
         hfCli := s.hfClient()
@@ -862,6 +871,16 @@ func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
         http.Redirect(w, r, dest+"?"+q.Encode(), http.StatusFound)
 }
 
+// hfExchangeCode — the OAuth code→token POST. v0.52: rides the netx
+// transport (system resolver → DNS-over-HTTPS fallback). THE live bug of
+// v0.51: this was a bare http.Client, so on devices whose /etc/resolv.conf
+// names a dead local resolver ([::1]:53 refused) the exchange failed with
+// `token exchange failed: Post "https://huggingface.co/oauth/token": dial
+// tcp: lookup huggingface.co on [::1]:53: … connection refused` even
+// though the browser flow itself worked. hfTokenEndpoint is a var so tests
+// can point it at a local httptest server.
+var hfTokenEndpoint = "https://huggingface.co/oauth/token"
+
 func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
         body := url.Values{
                 "grant_type":    {"authorization_code"},
@@ -870,13 +889,13 @@ func hfExchangeCode(code, verifier, redirectURI string) (string, error) {
                 "redirect_uri":  {redirectURI},
                 "client_id":     {hfOAuthClientID},
         }.Encode()
-        req, err := http.NewRequest("POST", "https://huggingface.co/oauth/token", strings.NewReader(body))
+        req, err := http.NewRequest("POST", hfTokenEndpoint, strings.NewReader(body))
         if err != nil {
                 return "", err
         }
         req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
         req.Header.Set("User-Agent", "doomalay-engine/0.46")
-        cli := &http.Client{Timeout: 15 * time.Second}
+        cli := &http.Client{Timeout: 15 * time.Second, Transport: netx.Transport()}
         resp, err := cli.Do(req)
         if err != nil {
                 return "", err

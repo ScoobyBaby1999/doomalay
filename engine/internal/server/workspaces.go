@@ -66,6 +66,7 @@ import (
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -1332,11 +1333,14 @@ func (s *Server) handleWorkspaceAccountDelete(w http.ResponseWriter, r *http.Req
 }
 
 // forgeLoginFor verifies a token by fetching the forge's /user.
+// v0.52: rides the netx transport — the pure-Go resolver on Android dies
+// on broken /etc/resolv.conf entries (::1 etc.); netx falls back to
+// DNS-over-HTTPS so verification works where the default client can't.
 func forgeLoginFor(kind, token string) (string, error) {
         var endpoint string
         switch kind {
         case "github":
-                endpoint = "https://api.github.com/user"
+                endpoint = forgeAPIBase + "/user"
         case "gitea":
                 endpoint = "https://gitea.com/api/v1/user"
         default:
@@ -1348,7 +1352,7 @@ func forgeLoginFor(kind, token string) (string, error) {
         req.Header.Set("Authorization", "Bearer "+token)
         req.Header.Set("Accept", "application/json")
         req.Header.Set("User-Agent", "doomalay-engine")
-        resp, err := http.DefaultClient.Do(req)
+        resp, err := oauthHTTP.Do(req)
         if err != nil {
                 return "", err
         }
@@ -1388,6 +1392,23 @@ type oauthPending struct {
 // Workspaces" GitHub App client id — the secret is still vault/env only,
 // the user generates it on the app's settings page).
 const ghOAuthDefaultClientID = "Iv23liDzVTw7zphxo5Hv"
+
+// v0.52 OAuth egress plumbing: every OAuth/token-exchange call rides the
+// netx transport (system resolver → DNS-over-HTTPS fallback). The live
+// bug: hfExchangeCode/ghTokenExchange used bare http.Clients, so on
+// devices whose /etc/resolv.conf points at a dead local resolver
+// ("nameserver ::1" — observed on the user's device) the exchange died
+// with `lookup huggingface.co on [::1]:53: connection refused` while
+// everything routed through netx kept working. Base URLs are vars so
+// tests can point them at a local httptest server.
+var (
+        forgeAPIBase    = "https://api.github.com"
+        ghTokenEndpoint = "https://github.com/login/oauth/access_token"
+
+        // oauthHTTP: netx-dialed, no global timeout (per-request contexts
+        // carry the deadlines).
+        oauthHTTP = &http.Client{Transport: netx.Transport()}
+)
 
 func (s *Server) ghOAuthCreds() (id, secret string) {
         if id = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID")); id != "" {
@@ -1448,6 +1469,10 @@ func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGHOAuthConfig — store the GitHub App client pair (encrypted).
+// v0.52: client_id may be empty → the built-in default (the shipped app id)
+// or the previously saved one is kept; only the secret is REQUIRED. That
+// makes the one-time setup box a pure secret paste for the common case
+// (the id ships with the app — it is public, the secret is not).
 func (s *Server) handleGHOAuthConfig(w http.ResponseWriter, r *http.Request) {
         var req struct {
                 ClientID     string `json:"client_id"`
@@ -1459,9 +1484,20 @@ func (s *Server) handleGHOAuthConfig(w http.ResponseWriter, r *http.Request) {
         }
         req.ClientID = strings.TrimSpace(req.ClientID)
         req.ClientSecret = strings.TrimSpace(req.ClientSecret)
-        if req.ClientID == "" || req.ClientSecret == "" {
-                writeError(w, 400, "client_id and client_secret are required")
+        if req.ClientSecret == "" {
+                writeError(w, 400, "client_secret is required (client_id is optional — the app's built-in id is used)")
                 return
+        }
+        if req.ClientID == "" {
+                // keep the saved id when there is one, else the built-in
+                if s.vault != nil {
+                        if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil && strings.TrimSpace(v) != "" {
+                                req.ClientID = strings.TrimSpace(v)
+                        }
+                }
+                if req.ClientID == "" {
+                        req.ClientID = ghOAuthDefaultClientID
+                }
         }
         if s.vault == nil {
                 writeError(w, 500, "vault not initialized")
@@ -1489,7 +1525,11 @@ func randHex(n int) string {
 func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
         id, secret := s.ghOAuthCreds()
         if id == "" || secret == "" {
-                writeError(w, 400, "GitHub sign-in isn't configured yet — add the GitHub App client id/secret first (or paste a token as the manual method)")
+                // v0.52: name the exact fix — the one-time OAuth setup box in
+                // the GitHub connect panel (or env DOOMALAY_GH_CLIENT_SECRET
+                // on headless installs). The old message read like a bug; it
+                // is the deliberate secretless-by-default state.
+                writeError(w, 400, "GitHub sign-in needs its one-time setup: open the GitHub connect panel and paste the GitHub App client secret into the yellow \"one-time OAuth setup\" box (it is stored encrypted on this device, never in the app) — or paste a token as the manual method")
                 return
         }
         redirect := r.URL.Query().Get("redirect")
@@ -1527,13 +1567,16 @@ func popOAuthState(state string) (oauthPending, bool) {
 }
 
 // ghTokenExchange — the code→token (or refresh→token) POST.
+// v0.52: netx transport (see oauthHTTP above) — the Android pure-Go
+// resolver could not reach github.com on devices with a dead local
+// nameserver; the DoH fallback now carries the exchange.
 func ghTokenExchange(ctx context.Context, form url.Values) (access, refresh string, expiresIn int64, err error) {
         req, _ := http.NewRequestWithContext(ctx, "POST",
-                "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
+                ghTokenEndpoint, strings.NewReader(form.Encode()))
         req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
         req.Header.Set("Accept", "application/json")
         req.Header.Set("User-Agent", "doomalay-engine")
-        resp, err := http.DefaultClient.Do(req)
+        resp, err := oauthHTTP.Do(req)
         if err != nil {
                 return "", "", 0, err
         }
@@ -1619,7 +1662,17 @@ func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
         if ae.Login != "" {
                 suffix += "&gh_login=" + url.QueryEscape(ae.Login)
         }
-        http.Redirect(w, r, pending.Redirect+suffix, http.StatusFound)
+        // v0.52 FIX (found by TestGHOAuthFullRoundTrip): the suffix used to
+        // be appended RAW to the redirect path — "/" + "gh_connected=1" =
+        // "/gh_connected=1", a PATH with no query, so the PWA's landing
+        // listener (URLSearchParams) never matched and the browser sat on
+        // a bogus URL instead of the app with the success toast. Glue the
+        // query on properly (HF's callback already did this).
+        sep := "?"
+        if strings.Contains(pending.Redirect, "?") {
+                sep = "&"
+        }
+        http.Redirect(w, r, pending.Redirect+sep+suffix, http.StatusFound)
 }
 
 // ghRefreshMu serializes refresh exchanges (a swarm of parallel forge calls
