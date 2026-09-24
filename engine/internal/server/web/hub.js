@@ -132,16 +132,18 @@
     return 'linear-gradient(135deg, ' + hsl(h1, s1, l1) + ', ' + hsl(h2, s1, l1 + 8) + ')';
   }
 
-  // ── grid prefs (cols 1–5 × rows 3–10, default 2×5) ───────────────
+  // ── grid prefs (cols 1–5 × rows 3–100, default 2×10) ──────────
+  // v0.56 (user spec): "change the max rows from 10 to 100, and have
+  // the default be 10".
   function readGrid() {
     try {
       var g = JSON.parse(localStorage.getItem(GRID_KEY));
       if (g && typeof g.cols === 'number' && typeof g.rows === 'number' &&
-          g.cols >= 1 && g.cols <= 5 && g.rows >= 3 && g.rows <= 10) {
+          g.cols >= 1 && g.cols <= 5 && g.rows >= 3 && g.rows <= 100) {
         return { cols: g.cols | 0, rows: g.rows | 0 };
       }
     } catch (e) {}
-    return { cols: 2, rows: 5 };
+    return { cols: 2, rows: 10 };
   }
   function saveGrid(g) { try { localStorage.setItem(GRID_KEY, JSON.stringify(g)); } catch (e) {} }
 
@@ -305,6 +307,12 @@
     return v;
   }
 
+  // v0.56 (user spec item 9): the sort pills' ICONS — the old text
+  // columns (recent / downloads / endorsements / relevant + the filter
+  // funnel + the redundant filter-by-text box) are GONE; the freed space
+  // rides the search row as little icon buttons.
+  var SORT_ICONS = { recent: 'zap', downloads: 'download', hearts: 'heart', relevant: 'sparkles' };
+
   function renderHTML() {
     if (!cur) return '';
     return (
@@ -313,47 +321,84 @@
         // a chat (decoupled by default: "no chat" unless a chatbot opened
         // it). Tap → the merged all-chats overlay in pick mode.
         '<div class="hub-chatrow">' + chatPillHTML() + '</div>' +
-        headHTML() +
-        '<div class="hub-sticky">' +
-          '<input id="hub-search" class="hub-search" type="text" inputmode="search"' +
-            ' placeholder="search name, description, tags…" value="' + escAttr(cur.q) + '"' +
-            ' aria-label="search the library">' +
-          filtersHTML() +
-        '</div>' +
+        topDockHTML() +
+        headBodyHTML() +
         '<div class="hub-bodyzone" id="hub-bodyzone">' + bodyHTML() + '</div>' +
       '</div>'
     );
   }
 
-  // the COLLAPSIBLE header — everything that isn't the grid (or the
-  // search bar) lives here: title + HF status + "Browse the community
-  // for:" + the full-row library pills + the grid steppers + publish +
-  // the tag pills.
-  function headHTML() {
+  // v0.56 (user spec item 9): THE TOP DOCK — the pinned library chrome.
+  // When you scroll, the collapsed "Public Library" header pill stays
+  // pinned and the search bar + sort icons collapse to a round search
+  // icon; tapping it expands the row again (and focuses the input). The
+  // dock blends with the panel behind (surface-1 glass + blur) — NOT the
+  // overlay background (user spec: "not use the overlay background color
+  // and use something else. Something that would blend with the rest of
+  // the background").
+  function topDockHTML() {
     var c = cur;
     var status = '<span class="pub-status" id="pub-status">' + statusHTML() + '</span>';
+    var ico = (window.IconLib && window.IconLib.has('search'))
+      ? window.IconLib.svg('search', 15) : '⌕';
     return (
-      '<div class="pub-head' + (c.folded ? ' folded' : '') + '" id="pub-head">' +
-        // a div, NOT a button: the bar carries the status's own disconnect
-        // button — the HTML parser drops nested <button>s silently
+      '<div class="hub-topdock" id="hub-topdock">' +
         '<div class="pub-head-bar" id="pub-head-toggle" role="button" tabindex="0"' +
           ' aria-expanded="' + (!c.folded) + '">' +
           '<span class="pub-title">Public Library</span>' +
           status +
           '<span class="pub-chev" aria-hidden="true">' + (c.folded ? '▸' : '▾') + '</span>' +
         '</div>' +
-        '<div class="pub-head-body">' +
-          '<div class="pub-sub">Browse the community for:</div>' +
-          '<div class="hub-librow" id="hub-libs">' + libsHTML() + '</div>' +
-          '<div class="hub-ctlrow">' +
-            stepper('cols', c.grid.cols, 1, 5) +
-            stepper('rows', c.grid.rows, 3, 10) +
-            '<button class="hub-publish" id="hub-publish">＋ publish</button>' +
-          '</div>' +
-          '<div class="hub-pillrow" id="hub-tags">' + tagsHTML() + '</div>' +
+        '<div class="hub-dockrow" id="hub-dockrow">' +
+          '<button type="button" class="hub-searchico" id="hub-searchico" aria-label="Search the library" title="Search">' + ico + '</button>' +
+          '<input id="hub-search" class="hub-search" type="text" inputmode="search"' +
+            ' placeholder="search name, description, tags…" value="' + escAttr(cur.q) + '"' +
+            ' aria-label="search the library">' +
+          sortIconsHTML() +
         '</div>' +
-      '</div>'
-    );
+        '<div class="hub-fsub" id="hub-fsub">' + fsubHTML() + '</div>' +
+      '</div>');
+  }
+
+  function sortIconsHTML() {
+    var c = cur;
+    var out = '';
+    SORTS.forEach(function (s) {
+      var g = (window.IconLib && window.IconLib.has(SORT_ICONS[s.key]))
+        ? window.IconLib.svg(SORT_ICONS[s.key], 15) : '';
+      out += '<button type="button" class="hub-sortico" data-sort="' + escAttr(s.key) + '"' +
+        (s.key === c.sort ? ' data-on="1"' : '') +
+        ' title="' + escAttr(s.label + ' — ' + s.sub) + '" aria-label="sort by ' + escAttr(s.label) + '">' +
+        g + '</button>';
+    });
+    return '<div class="hub-sortrow" id="hub-sortrow">' + out + '</div>';
+  }
+
+  function fsubHTML() {
+    var c = cur;
+    if (c.bunch) {
+      return '<span class="hub-bunch-chip">bunch: ' + esc(c.bunch) +
+        ' <span class="hub-bunch-x" id="hub-bunch-x" role="button" tabindex="0" aria-label="leave the bunch">✕</span></span>';
+    }
+    return esc(SORT_SUB[c.sort] || '');
+  }
+
+  // the collapsible header body — everything that ISN'T the pinned dock:
+  // "Browse the community for:" + the full-row library pills + the grid
+  // steppers + publish + the tag pills. Folds under the pinned bar.
+  function headBodyHTML() {
+    var c = cur;
+    return (
+      '<div class="pub-head-body' + (c.folded ? ' folded' : '') + '" id="pub-head-body">' +
+        '<div class="pub-sub">Browse the community for:</div>' +
+        '<div class="hub-librow" id="hub-libs">' + libsHTML() + '</div>' +
+        '<div class="hub-ctlrow">' +
+          stepper('cols', c.grid.cols, 1, 5) +
+          stepper('rows', c.grid.rows, 3, 100) +
+          '<button class="hub-publish" id="hub-publish">＋ publish</button>' +
+        '</div>' +
+        '<div class="hub-pillrow" id="hub-tags">' + tagsHTML() + '</div>' +
+      '</div>');
   }
 
   function libsHTML() {
@@ -386,36 +431,11 @@
       ' <button type="button" data-disconnect="1" title="disconnect the Hugging Face token">disconnect</button>';
   }
 
-  function filtersHTML() {
-    var c = cur;
-    var cols = '';
-    SORTS.forEach(function (s) {
-      cols += '<button type="button" class="hub-fcol" data-sort="' + escAttr(s.key) + '"' +
-        (s.key === c.sort ? ' data-on="1"' : '') + ' title="' + escAttr(s.sub) + '">' +
-        esc(s.label) + '</button>';
-    });
-    return (
-      '<div class="hub-filters">' +
-        '<span class="hub-funnel" aria-hidden="true">' +
-          '<svg viewBox="0 0 24 24"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>' +
-        '</span>' +
-        '<div class="hub-fcols" id="hub-fcols">' + cols + '</div>' +
-        // v0.49 (user spec): "Add a filter by text next to most
-        // endorsements or most download…" — a compact filter box riding
-        // the sort row. It drives the SAME q as the big search (both
-        // stay in sync; the keyboard rule applies to both — only the
-        // body zone re-renders).
-        '<input id="hub-ftext" class="hub-ftext" type="text" inputmode="search"' +
-          ' placeholder="filter…" value="' + escAttr(c.q) + '" aria-label="filter by text">' +
-      '</div>' +
-      '<div class="hub-fsub" id="hub-fsub">' +
-        (c.bunch
-          ? '<span class="hub-bunch-chip">bunch: ' + esc(c.bunch) +
-              ' <span class="hub-bunch-x" id="hub-bunch-x" role="button" tabindex="0" aria-label="leave the bunch">✕</span></span>'
-          : esc(SORT_SUB[c.sort] || '')) +
-      '</div>'
-    );
-  }
+  // v0.49 → v0.56 RETIRED: the filter row (funnel + the 4 text sort
+  // columns + the filter-by-text box) is gone — the sort columns are
+  // ICONS riding the search row now (sortIconsHTML) and the text filter
+  // duplicated the search bar (user spec: "remove the unnecessary
+  // filter").
 
   function tagsHTML() {
     var c = cur;
@@ -466,8 +486,12 @@
         '</div>';
     }
     // the bunch cards ride the SAME grid, first (they match the current
-    // q — loadCollections shares it).
-    var bunches = c.bunchLoading ? [] : (c.collections || []);
+    // q — loadCollections shares it). v0.56 (user spec): a bunch only
+    // lands in libraries its members ACTUALLY have — superpowers with no
+    // theme files stops appearing in Themes.
+    var bunches = c.bunchLoading ? [] : (c.collections || []).filter(function (b) {
+      return ((b && b.byType) || {})[c.type] > 0;
+    });
     return (
       '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
           bunches.map(collectionCardHTML).join('') +
@@ -554,6 +578,9 @@
   // v0.52 (user spec item 1): the BUNCH card — one grouped listing for a
   // whole collection. Distinct surface style (no bg art): the members are
   // the art. Tap opens the cross-library member view.
+  // v0.56 (user spec): a polished BADGE rides the title row — the
+  // bundle's first tag (from the engine's most-common-member-tag rollup),
+  // bright accent-2 text, width fits the text up to a cap then ellipsizes.
   function collectionCardHTML(b) {
     var I = window.IconLib;
     var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22)
@@ -563,6 +590,8 @@
     Object.keys(byType).forEach(function (t) {
       bits.push(byType[t] + ' ' + (shortType(t)) + (byType[t] === 1 ? '' : 's'));
     });
+    var badge = (b.tag || '').trim()
+      ? '<span class="hub-bunch-badge">#' + esc(String(b.tag).trim()) + '</span>' : '';
     return (
       '<button class="hub-card hub-card--bunch" data-bunch="' + escAttr(b.id) + '">' +
         '<span class="hub-card-fade"></span>' +   // v0.54: the same scrim — uniform cards
@@ -570,6 +599,7 @@
           '<span class="hub-card-titlerow">' +
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
             '<span class="hub-card-name">' + esc(b.id) + '</span>' +
+            badge +
           '</span>' +
           '<span class="hub-card-desc">' + esc(b.members + ' bundled items — ' + bits.join(' · ')) + '</span>' +
           '<span class="hub-card-foot">' +
@@ -656,16 +686,34 @@
   }
   function updateFilters() {
     var c = cur;
-    var cols = q('#hub-fcols');
-    if (cols) {
-      cols.querySelectorAll('[data-sort]').forEach(function (b) {
+    // v0.56: the sort ICONS (the old #hub-fcols text columns are gone) —
+    // surgical data-on swap + the fsub line (bunch chip or sort hint).
+    var root = (cur && cur.panel) ? cur.panel.bodyEl : null;
+    if (root) {
+      root.querySelectorAll('[data-sort]').forEach(function (b) {
         if (b.getAttribute('data-sort') === c.sort) b.setAttribute('data-on', '1');
         else b.removeAttribute('data-on');
       });
     }
     var sub = q('#hub-fsub');
-    if (sub) sub.textContent = SORT_SUB[c.sort] || '';
+    if (sub) sub.innerHTML = fsubHTML();
+    wireBunchX(sub);
   }
+  // wireBunchX — the ✕ on the bunch chip (it can land in the dock's fsub
+  // after a surgical updateFilters — v0.56).
+  function wireBunchX(scope) {
+    var host = scope && scope.querySelectorAll ? scope : (cur && cur.panel ? cur.panel.bodyEl : document);
+    var bunchX = (scope && scope.querySelector && scope.querySelector('#hub-bunch-x')) ||
+      (host.querySelector ? host.querySelector('#hub-bunch-x') : null);
+    if (bunchX && !bunchX._bunchWired) {
+      bunchX._bunchWired = 1;
+      bunchX.addEventListener('click', function (e) {
+        e.stopPropagation();
+        leaveBunch();
+      });
+    }
+  }
+
   function updateBody() {
     var z = zone();
     if (!z) return;
@@ -704,15 +752,16 @@
     }
 
     // the collapsible header — a class toggle, no re-render (the bar is
-    // a div: the disconnect button inside forbids a nested <button>)
+    // a div: the disconnect button inside forbids a nested <button>).
+    // v0.56: the bar lives in the pinned dock; the BODY folds below it.
     var toggle = el.querySelector('#pub-head-toggle');
     if (toggle) {
       var fold = function () {
-        var head = q('#pub-head');
+        var head = q('#pub-head-body');
         if (!head) return;
         c.folded = !c.folded;
         head.classList.toggle('folded', c.folded);
-        var chev = head.querySelector('.pub-chev');
+        var chev = q('.pub-chev');
         if (chev) chev.textContent = c.folded ? '▸' : '▾';
         toggle.setAttribute('aria-expanded', String(!c.folded));
       };
@@ -720,6 +769,38 @@
       toggle.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fold(); }
       });
+    }
+
+    // v0.56 (user spec item 9): THE SCRUNCH — on scroll, the pinned dock
+    // collapses its search row to a round search icon; tapping the icon
+    // (or scrolling back to the top) expands it again.
+    var rootEl = el.querySelector('.hub-root') || el;
+    var searchico = el.querySelector('#hub-searchico');
+    var setScrunch = function (on) {
+      if (!rootEl) return;
+      if (on) rootEl.classList.add('scrunch');
+      else rootEl.classList.remove('scrunch');
+    };
+    if (searchico) {
+      searchico.addEventListener('click', function () {
+        setScrunch(false);
+        var si = q('#hub-search');
+        if (si) { si.focus(); si.select(); }
+      });
+    }
+    if (!c._onHubScroll) {
+      c._onHubScroll = function () {
+        if (!cur || !cur.panel || !cur.panel.bodyEl) return;
+        var st = cur.panel.bodyEl.scrollTop;
+        // v0.56: never scrunch while the user is TYPING or has a query —
+        // focusing the input can fire a scroll event (scrollIntoView),
+        // which immediately re-scrunched the dock the tap just expanded.
+        var si = q('#hub-search');
+        var typing = si && (document.activeElement === si ||
+          String(si.value || '').length > 0);
+        setScrunch(st > 24 && !typing);
+      };
+      c.panel.bodyEl.addEventListener('scroll', c._onHubScroll, { passive: true });
     }
 
     // search (200ms debounce — the model-browser pattern). The input
@@ -733,34 +814,16 @@
         searchTimer = setTimeout(function () {
           if (!cur) return;
           cur.q = searchInput.value;
-          syncFilterText();
           loadItems();
         }, 200);
       });
     }
 
-    // v0.49: the filter-by-text box on the sort row — same q, same
-    // debounce, same keyboard guarantee. Both inputs mirror each other.
-    var ftextTimer = null;
-    var ftextInput = el.querySelector('#hub-ftext');
-    if (ftextInput) {
-      ftextInput.addEventListener('input', function () {
-        if (ftextTimer) clearTimeout(ftextTimer);
-        ftextTimer = setTimeout(function () {
-          if (!cur) return;
-          cur.q = ftextInput.value;
-          var si = q('#hub-search');
-          if (si && si !== ftextInput && si.value !== cur.q) si.value = cur.q;
-          loadItems();
-        }, 200);
-      });
-    }
-    function syncFilterText() {
-      var ft = q('#hub-ftext');
-      if (ft && ftextInput && ft !== ftextInput && ft.value !== cur.q) ft.value = cur.q;
-    }
+    // v0.56: the filter-by-text box is GONE (it duplicated the search
+    // bar — user spec: "remove the unnecessary filter").
 
-    // the filter columns (funnel row) — sort + subtext, surgical
+    // the sort ICONS — surgical, same data-sort contract as the old
+    // text columns
     el.querySelectorAll('[data-sort]').forEach(function (b) {
       b.addEventListener('click', function () {
         if (!cur) return;
@@ -769,6 +832,7 @@
         loadItems();
       });
     });
+    wireBunchX(el.querySelector('#hub-fsub'));
 
     // library pills + tags + the body zone (cards / pager / publish /
     // steppers all live inside the zones these wire)
@@ -822,8 +886,6 @@
         cur.collections = null;
         var si = q('#hub-search');
         if (si) si.value = '';
-        var ft = q('#hub-ftext');
-        if (ft) ft.value = '';
         updateLibs();
         updateTags();
         updateFilters();
@@ -915,11 +977,9 @@
       });
     });
 
-    var bunchX = host.querySelector('#hub-bunch-x') || q('#hub-bunch-x');
-    if (bunchX) bunchX.addEventListener('click', function (e) {
-      e.stopPropagation();
-      leaveBunch();
-    });
+    // v0.56: the bunch chip's ✕ lives in the dock's fsub — wired by
+    // wireBunchX (called from wire() + updateFilters); the old duplicate
+    // wiring here double-bound the same element on every body update.
 
     host.querySelectorAll('[data-heart]').forEach(function (h) {
       h.addEventListener('click', function (e) {
@@ -953,6 +1013,11 @@
     if (cur && cur._onResize) {
       window.removeEventListener('resize', cur._onResize);
       cur._onResize = null;
+    }
+    // v0.56: the scrunch scroll listener rides the panel body — remove it
+    if (cur && cur._onHubScroll && cur.panel && cur.panel.bodyEl) {
+      cur.panel.bodyEl.removeEventListener('scroll', cur._onHubScroll);
+      cur._onHubScroll = null;
     }
     // v0.52: restore the header the hub neutralized (the panel's own
     // root-restore also re-puts the stashed values; this covers the
@@ -1117,7 +1182,7 @@
     // is fixed in chatpanel.js (the repaint defers while views are
     // stacked); this is the belt under the suspenders.
     setTimeout(function () {
-      if (cur && cur.panel && isTop() && !q('#pub-head')) {
+      if (cur && cur.panel && isTop() && !q('#hub-topdock')) {
         cur.panel.replaceView(buildView());
       }
     }, 650);

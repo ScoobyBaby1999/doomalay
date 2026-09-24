@@ -1405,6 +1405,27 @@
     }
   }
 
+  // ── v0.56: chat metadata pill TONES ─────────────────────────────
+  // The header pills used to ALL paint the same hardcoded green (--ok)
+  // — "the pills of the chat metadata are all first color and don't
+  // follow". Each pill now carries its OWN theme color (the pill id →
+  // [color var, rgb-triplet var]): sandbox→accent, model→accent-2,
+  // template→template tint, skills→persona tint; the dedicated pills
+  // below keep their assigned accents.
+  var PILL_TONES = [
+    [/^pill-sandbox/, '--accent', '--accent-rgb'],
+    [/^pill-model/, '--accent-2', '--accent-2-rgb'],
+    [/^pill-template/, '--template-tint', '--template-rgb'],
+    [/^pill-skills/, '--persona-tint', '--persona-rgb'],
+    [/^pill-quick/, '--accent', '--accent-rgb']
+  ];
+  function pillToneFor(id) {
+    for (var i = 0; i < PILL_TONES.length; i++) {
+      if (PILL_TONES[i][0].test(String(id || ''))) return PILL_TONES[i];
+    }
+    return [null, '--accent', '--accent-rgb'];
+  }
+
   // ── The pinned collapsible header (arrow + summary + meters + dropdown) ──
   // v0.27: the far right of the row carries the METERS — the context
   // ring (the usage panel's context bar, miniaturized: fills 0→100%, and
@@ -1414,7 +1435,7 @@
     var open = !!state.dropdownOpen;
     var summary = type.summaryLine(state);
     return (
-      '<div id="chat-header" style="flex-shrink:0;background:var(--bg-app);background-image:var(--bg-app-gradient,none);border-bottom:1px solid var(--surface-2);z-index:3">' +
+      '<div id="chat-header" style="flex-shrink:0;background:color-mix(in srgb, var(--bg-app) 38%, transparent);border-bottom:1px solid var(--surface-2);z-index:3">' +
         '<div id="chat-header-row" style="display:flex;align-items:center;gap:8px;padding:7px 12px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer">' +
           '<button id="header-chevron" aria-label="Show chat controls" style="flex-shrink:0;background:transparent;border:none;color:var(--text-3);font-size: calc(var(--ui-small-fs) - 1px);cursor:pointer;padding:5px 4px;transition:transform 0.2s;transform:rotate(' + (open ? '90deg' : '0deg') + ')">▶</button>' +
           '<div id="chat-header-summary" style="flex:1;min-width:0;font-size: calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + (complete ? 'var(--text-2)' : 'var(--text-3)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(summary) + '</div>' +
@@ -1493,11 +1514,12 @@
       var pills = type.pills(ctx);
       for (var i = 0; i < pills.length; i++) {
         (function (p) {
+          var tone = pillToneFor(p.id);
           var b = document.createElement('button');
           b.id = p.id;
           b.textContent = p.label;
           b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
-            'background:rgba(var(--ok-rgb),0.06);border:1px solid rgba(var(--ok-rgb),0.55);color:var(--ok);' +
+            'background:rgba(' + tone[2] + ',0.07);border:1px solid rgba(' + tone[2] + ',0.5);color:var(' + tone[1] + ');' +
             'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
             'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';

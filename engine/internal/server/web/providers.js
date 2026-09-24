@@ -37,7 +37,11 @@
   var FREE_ORDER = ['opencode', 'privatemodeai', 'nvidia', 'openrouter', 'cloudflare', 'groq', 'together', 'mistral'];
   var PAID_ORDER = ['anthropic', 'openai', 'deepseek'];
 
-  var GOLD = 'var(--warn)';
+  // v0.56 (user spec item 7): the free/paid split follows the THEME
+  // accents (the old gold/green read as hardcoded): Free → --accent-2,
+  // Paid → --accent-3, the Get-API-key link → --accent.
+  var GOLD = 'var(--accent-3)';
+  var FREEC = 'var(--accent-2)';
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
   function open(onPick, opts) {
@@ -221,23 +225,26 @@
         '<button id="prov-devkey" style="display:' + (devMode ? '' : 'none') + ';padding:6px 12px;border-radius:10px;' +
           'background:rgba(var(--notice-rgb),0.12);border:1px solid rgba(var(--notice-rgb),0.35);color:var(--notice);' +
           'font-size: var(--ui-small-fs);font-weight:600;font-family:inherit;cursor:pointer">use public key</button>' +
-        '<button id="prov-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
+        // v0.56: the in-page ✕ is GONE — the overlay's static chrome ✕
+        // (top-right, now a naked glyph) already closes this screen; the
+        // old duplicate rendered directly beneath it.
         '</div>' +
         '</div>';
     }
 
     // ── The Free ⇄ Paid slider (iPhone segmented feel) ────────────
     // Tap anywhere to flip, or drag the thumb — it slides smoothly and
-    // the colors crossfade: emerald for Free, gold for Paid.
+    // the colors crossfade. v0.56: accent-2 for Free, accent-3 for Paid
+    // (theme colors — the old ok/warn read as hardcoded gold/green).
     function slider() {
       var isFree = activeTab === 'free';
       var thumbLeft = isFree ? '3px' : 'calc(50% + 1px)';
-      var thumbBg = isFree ? 'rgba(var(--ok-rgb),0.16)' : 'rgba(var(--warn-rgb),0.16)';
-      var thumbBorder = isFree ? 'rgba(var(--ok-rgb),0.45)' : 'rgba(var(--warn-rgb),0.5)';
-      var freeColor = isFree ? 'var(--ok)' : 'var(--text-3)';
+      var thumbBg = isFree ? 'rgba(var(--accent-2-rgb),0.16)' : 'rgba(var(--accent-3-rgb),0.16)';
+      var thumbBorder = isFree ? 'rgba(var(--accent-2-rgb),0.45)' : 'rgba(var(--accent-3-rgb),0.5)';
+      var freeColor = isFree ? FREEC : 'var(--text-3)';
       var paidColor = isFree ? 'var(--text-3)' : GOLD;
       return '<div id="fp-slider" style="position:relative;height:38px;border-radius:19px;background:var(--surface-1);border:1px solid var(--surface-2);cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:pan-y">' +
-        '<div id="fp-thumb" style="position:absolute;top:3px;left:' + thumbLeft + ';width:calc(50% - 4px);height:calc(100% - 8px);border-radius:16px;background:' + thumbBg + ';border:1px solid ' + thumbBorder + ';box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:left 0.3s ' + EASE + ',background 0.3s ease,border-color 0.3s ease"></div>' +
+        '<div id="fp-thumb" style="position:absolute;top:3px;left:' + thumbLeft + ';width:calc(50% - 4px);height:calc(100% - 8px);border-radius:16px;background:' + thumbBg + ';border:1px solid ' + thumbBorder + ';box-shadow:0 2px 8px rgba(var(--bg-app-rgb),0.35);transition:left 0.3s ' + EASE + ',background 0.3s ease,border-color 0.3s ease"></div>' +
         '<span id="fp-label-free" style="position:absolute;left:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:' + freeColor + ';transition:color 0.3s ease;pointer-events:none">Free</span>' +
         '<span id="fp-label-paid" style="position:absolute;right:0;width:50%;height:100%;display:flex;align-items:center;justify-content:center;font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:' + paidColor + ';transition:color 0.3s ease;pointer-events:none">Paid</span>' +
         '</div>';
@@ -318,7 +325,7 @@
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
         '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1)">' + (cfg.label || name) + '</span>' +
         activeDot +
-        (cfg.free_tier ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--ok);background:rgba(var(--ok-rgb),0.15);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + GOLD + ';background:rgba(var(--warn-rgb),0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
+        (cfg.free_tier ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + FREEC + ';background:rgba(var(--accent-2-rgb),0.14);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + GOLD + ';background:rgba(var(--accent-3-rgb),0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
         (isActive ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--ok);background:rgba(var(--ok-rgb),0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(var(--ok-rgb),0.3)">Active</span>' : '') +
         valHTML +
         '</div>' +
@@ -326,31 +333,34 @@
         '</div>' +
         '</div>' +
         valReasonBlock +
-        // Key input (disabled once a key is saved — paste new to replace)
+        // Key input (disabled once a key is saved — paste new to replace).
+        // v0.56: inputs paint SURFACE RAISED (the old --bg-app fill made
+        // them the same color as the overlay panel behind — the 2-level
+        // nested same-color boxes the user flagged).
         '<div style="display:flex;gap:6px">' +
-        '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
+        '<input type="password" placeholder="' + (isActive ? 'key saved (paste new to replace)' : cfg.env_var) + '" id="key-' + name + '" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
         '<button data-save="' + name + '" style="background:var(--border-strong);border:none;color:var(--text-1);padding:8px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">' + (isActive ? 'Update' : 'Save') + '</button>' +
         '</div>' +
         (needAccount
           ? '<div style="display:flex;gap:6px;margin-top:6px">' +
-            '<input type="text" placeholder="' + (cfg.extra_env_var || 'Account ID') + ' (required)" id="acct-' + name + '" style="flex:1;background:var(--bg-app);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
+            '<input type="text" placeholder="' + (cfg.extra_env_var || 'Account ID') + ' (required)" id="acct-' + name + '" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:8px 10px;border-radius:6px;font-size:12px;font-family:monospace;outline:none;min-width:0">' +
             '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);align-self:center;flex-shrink:0">' + (keys[cfg.extra_env_var] && keys[cfg.extra_env_var].has_key ? '✓ saved' : '') + '</span>' +
             '</div>'
           : '') +
         useHTML +
-        // Gold "Get API key" link → opens the REAL browser (v0.14: no more
+        // v0.56: the Get-API-key link follows the PRIMARY accent (the old
+        // gold read as hardcoded) — opens the REAL browser (v0.14: no more
         // in-app embedding). A waiting hint appears on the card — the user
         // copies the key in the browser and pastes it right here.
-        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:' + GOLD + ';margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
-        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:' + GOLD + ';background:rgba(var(--warn-rgb),0.08);border:1px solid rgba(var(--warn-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
+        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--accent);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
+        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
         '</div>';
     }
 
     function wireEvents() {
       var contentEl = window.ConnectOverlay.getContentEl();
 
-      // Close
-      contentEl.querySelector('#prov-close').addEventListener('click', window.ConnectOverlay.close);
+      // v0.56: #prov-close is GONE (the overlay chrome ✕ owns closing).
 
       // v0.48 task 5: the dev-only "use public key" pill — installs the
       // assistant's shared public provider keys (release builds never see
@@ -463,9 +473,9 @@
         if (!animate) thumb.style.transition = 'none';
         else thumb.style.transition = 'left 0.3s ' + EASE + ',background 0.3s ease,border-color 0.3s ease';
         thumb.style.left = isFree ? '3px' : 'calc(50% + 1px)';
-        thumb.style.background = isFree ? 'rgba(var(--ok-rgb),0.16)' : 'rgba(var(--warn-rgb),0.16)';
-        thumb.style.borderColor = isFree ? 'rgba(var(--ok-rgb),0.45)' : 'rgba(var(--warn-rgb),0.5)';
-        labelFree.style.color = isFree ? 'var(--ok)' : 'var(--text-3)';
+        thumb.style.background = isFree ? 'rgba(var(--accent-2-rgb),0.16)' : 'rgba(var(--accent-3-rgb),0.16)';
+        thumb.style.borderColor = isFree ? 'rgba(var(--accent-2-rgb),0.45)' : 'rgba(var(--accent-3-rgb),0.5)';
+        labelFree.style.color = isFree ? FREEC : 'var(--text-3)';
         labelPaid.style.color = isFree ? 'var(--text-3)' : GOLD;
         // Re-render the list after the thumb settles.
         setTimeout(render, 180);

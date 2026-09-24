@@ -325,8 +325,9 @@
         '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1)">' + t.label + '</span>' +
         '</button>';
     });
-    html += '</div>' +
-      '<p class="hint" style="margin:2px 0 0">The theme retints the whole app — panels, pills, chat accents, grid. Each pairs with a matching chat scheme; pick a different one below if you like.</p>';
+    html += '</div>';
+    // v0.56: no intro hint (user spec — remove the text descriptions in
+    // theme / customize; the swatches are self-descriptive).
     return html;
   }
 
@@ -462,7 +463,8 @@
           dotColor: { colors: [s.dotColor], dir: 'auto' },
           originColor: { colors: [s.originColor], dir: 'auto' } };
     return section('Grid Colors', '' +
-      '<p class="hint">The infinite canvas behind the chats. The canvas BACKGROUND lives in Customize above (the “canvas background” row — gradients, patterns and textures included); these rows tint the lines, the dots and the origin marker. Left at the theme\u2019s palette until you pick your own.</p>' +
+      // v0.56: no intro hint (user spec); the per-row labels carry the
+      // meaning — lines, dots, origin marker.
       gridColorRow('lineColor', 'Grid Lines', g.lineColor) +
       gridColorRow('dotColor', 'Dots', g.dotColor) +
       gridColorRow('originColor', 'Origin Marker', g.originColor) +
@@ -678,7 +680,9 @@
       });
     });
     return section('Customize ' + (t.label || 'Theme'),
-      '<p class="hint">Tune <b>' + (t.label || 'this theme') + '</b> itself — any var can stay a solid or grow into a gradient (up to 15 colors, any direction, the patterns included). The <b>canvas background</b> drives the infinite grid behind the app (textures included); the <b>overlay background</b> paints overlay screens + collapsible headers; <b>surfaces</b> paint the panels and cards. Changes persist for this theme only. ' + (customCount ? customCount + ' var' + (customCount > 1 ? 's' : '') + ' customized so far.' : '') + '</p>' +
+      // v0.56: no intro hint (user spec — keep ONLY the per-row hints that
+      // describe what changes around and beneath each row; those ride the
+      // row labels via c.hint below).
       rows +
       '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
@@ -709,7 +713,7 @@
         themeCustomizeSection() +
         gridSection() +
         section('Chat Colors', '' +
-          '<p class="hint">The markdown color scheme for messages — a family of 2–3 adjacent hues. Pick a preset, or fine-tune every slot below: each may stay a solid or grow into a gradient (multi-color slots paint gradient TEXT in headings, emphasis, bold and links).</p>' +
+          // v0.56: no intro hint (user spec); the per-row hints stay.
           schemeSwatches() +
           fmtColorRow('a1', 'Accent 1', 'headings · keywords') +
           fmtColorRow('a2', 'Accent 2', 'subheads · code') +
@@ -727,25 +731,24 @@
     icon: '📐',
     render: function (getState, setState) {
       var s = getState();
+      // v0.56 (user spec): NO descriptions anywhere in Sizing — the
+      // sliders + their live value displays are self-descriptive.
       return (
         section('Text Size', '' +
-          '<p class="hint">Every piece of text in the app scales through one of three sizes — no more 30-variable tweakfests.</p>' +
-          sizeSlider('chatTextSize', 'Chat text', 'Message bubbles · 0 = 12px · 100 = 24px (replies, questions).') +
-          sizeSlider('uiTextSize', 'General text', 'Labels, buttons, headers, inputs · 0 = 12px · 100 = 17px.') +
-          sizeSlider('smallTextSize', 'Small text', 'Pills, thinking bubbles, hints, meta, tool cards · 0 = 9.5px · 100 = 15px.')
+          sizeSlider('chatTextSize', 'Chat text', '') +
+          sizeSlider('uiTextSize', 'General text', '') +
+          sizeSlider('smallTextSize', 'Small text', '')
         ) +
         section('Grid Size', '' +
-          rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5,
-            'Scales the grid spacing. 1× = default (48px). 5× = largest (240px), fewer squares.')
+          rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5, '')
         ) +
         // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
         section('Grid Effects', '' +
-          '<p class="hint">Quick tweaks for the canvas grid: hide the lines or dots, scatter them off-grid, vary their size, or rotate them. Scatter, size and rotation use a stable per-cell hash (the same cell always looks the same — no shimmer on pan/zoom).</p>' +
           toggleRow('hideGridLines', 'Hide grid lines', s.hideGridLines) +
           toggleRow('hideDots', 'Hide dots', s.hideDots) +
-          gridSlider('gridScatter', 'Scatter', s.gridScatter || 0, '0 = on-grid · 100 = up to ±60px displacement.') +
-          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '0 = uniform · 100 = ±50%. Dots grow in every direction; grid lines vary BOTH length and thickness.') +
-          gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '0 = axis-aligned · 100 = up to ±60°.') +
+          gridSlider('gridScatter', 'Scatter', s.gridScatter || 0, '') +
+          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '') +
+          gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '') +
           '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )
       );
@@ -757,6 +760,9 @@
     icon: '⚙️',
     render: function (getState, setState) {
       const s = getState();
+      // v0.56 (user spec): NO descriptions in General either — and the
+      // old "My Look" section is now IMPORT / EXPORT THEME (the buttons
+      // say what they do).
       return (
         section('Text', '' +
           selectRow('fontFamily', 'Font', s.fontFamily, [
@@ -766,7 +772,6 @@
           ])
         ) +
         section('Default Chat Names', '' +
-          '<p class="hint">Names used when creating new chatbots. One per line.</p>' +
           '<textarea data-setting-key="names" data-setting-transform="lines" rows="8" ' +
           'style="width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);' +
           'padding:8px 10px;border-radius:6px;font-size:calc(var(--ui-fs) - 1px);font-family:inherit;' +
@@ -782,16 +787,15 @@
         // settings state (photos + bump maps included — they are dataURLs
         // inside the gradient specs) as ONE .doomtheme file; a friend
         // imports it and their app looks 1:1 the same.
-        section('My Look', '' +
-          '<p class="hint">Export everything — theme, colors, gradients, photos, bump maps, sizes, names — ' +
-          'as one .doomtheme file. Send it to a friend; they import it and their app looks exactly like yours.</p>' +
+        // v0.56: renamed per user spec ("change the name of the my look pill
+        // to import/export theme").
+        section('Import / Export Theme', '' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
           '<button data-action="export-look" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
-          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤓ Export my look</button>' +
+          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤓ Export theme</button>' +
           '<button data-action="import-look" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
-          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤒ Import a look</button>' +
-          '</div>' +
-          '<p class="hint" style="margin-top:8px">Publish it to the Public Library from the hub Themes tab to share with everyone.</p>'
+          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤒ Import a theme</button>' +
+          '</div>'
         )
       );
     }

@@ -190,7 +190,11 @@
   html, body {
     width: 100%; height: 100%;
     overflow: hidden;
-    background: var(--bg-app);
+    /* v0.56 (user spec: "the canvas itself should be the background"): the
+       layer BENEATH the canvas paints the CANVAS background's own solid —
+       never the overlay color. The canvas paints the real gradient/pattern
+       over it; this only shows through pre-boot or canvas hiccups. */
+    background: var(--bg-panel);
     color: var(--text-1);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-user-select: none; user-select: none;
@@ -217,8 +221,16 @@
      the solid paints exactly as before:
        background-image: var(--X-gradient, none);
      The rules live AFTER their base rule so the base `background:`
-     shorthand (which resets background-image) can never clobber them. */
-  html, body { background-image: var(--bg-app-gradient, none); }
+     shorthand (which resets background-image) can never clobber them.
+     v0.56 THE CONTINUOUS FIELD: every BOX twin layer paints with
+     `background-attachment: fixed` — all boxes sharing var X become
+     WINDOWS into one continuous field (viewport-anchored; inside a
+     transformed ancestor — the chat panel, an overlay card — anchored to
+     that box, so each big panel reads as ONE big box and nested boxes
+     never restart the gradient. THE TILING FIX (user spec: "make them
+     act like one big box"). Small elements sample a tiny region — pills
+     stop looking like squeezed banners. NOT applied to text-clip rules
+     (gradient text needs its own local sweep) or per-row previews. */
 
   canvas {
     display: block;
@@ -690,22 +702,38 @@
   .settings-nav::-webkit-scrollbar { display: none; }
   .settings-nav .tab {
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     color: var(--text-3);
-    padding: 10px 14px;
+    padding: 8px 16px;
     font-size: calc(var(--ui-fs) - 1px);
-    font-weight: 600;
-    border-radius: 10px;
+    font-weight: 700;
+    border-radius: 999px;
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;                  /* v0.25: never squeeze tabs — scroll instead */
     font-family: inherit;
     -webkit-tap-highlight-color: transparent;
-    min-height: 40px;
+    min-height: 36px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
-  .settings-nav .tab.active {
-    background: var(--surface-2);
-    color: var(--text-1);
+  /* v0.56 (user spec: "make the pills look a bit better — more round,
+     brighter and differing colors"): fully-rounded pills, each page tinted
+     with its OWN theme accent — Colors→accent, Sizing→accent-2,
+     General→accent-3 (accent-3 finally gets real presence). */
+  .settings-nav .tab[data-page="appearance"].active {
+    background: rgba(var(--accent-rgb), 0.16);
+    border-color: rgba(var(--accent-rgb), 0.55);
+    color: var(--accent);
+  }
+  .settings-nav .tab[data-page="sizing"].active {
+    background: rgba(var(--accent-2-rgb), 0.14);
+    border-color: rgba(var(--accent-2-rgb), 0.5);
+    color: var(--accent-2);
+  }
+  .settings-nav .tab[data-page="general"].active {
+    background: rgba(var(--accent-3-rgb), 0.14);
+    border-color: rgba(var(--accent-3-rgb), 0.5);
+    color: var(--accent-3);
   }
   .settings-section {
     margin-bottom: 14px;
@@ -713,16 +741,17 @@
     border-radius: 12px;
     overflow: hidden;
   }
-  /* v0.49: the collapsible section headers are OVERLAY chrome — they
-     follow the Overlay background (--bg-app), one step darker than the
-     section body's surface (user spec: "surface or overlay background
-     to change the background of the overlay, the collapsible headers"). */
+  /* v0.49: the collapsible section headers were OVERLAY chrome (they
+     repainted --bg-app — nested same-var boxes tiled against the section
+     body). v0.56: headers are TRANSPARENT VEILS (user spec: "make them act
+     like one big box") — a translucent tone of the overlay color over the
+     section's own continuous surface field; the parent's gradient flows
+     through, the hairline separates. Also no more ALL-CAPS titles. */
   .settings-section h3 {
     font-size: calc(var(--ui-fs) - 1px);
     font-weight: 700;
     color: var(--text-1);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.15px;
     padding: 14px 16px;
     margin: 0;
     cursor: pointer;
@@ -732,11 +761,10 @@
     gap: 10px;
     min-height: 48px;               /* v0.25: a real touch target */
     -webkit-tap-highlight-color: transparent;
-    background: var(--bg-app);
-    background-image: var(--bg-app-gradient, none);
+    background: color-mix(in srgb, var(--bg-app) 38%, transparent);
     transition: background 0.15s;
   }
-  .settings-section h3:active { background: var(--surface-2); }
+  .settings-section h3:active { background: color-mix(in srgb, var(--bg-app) 62%, transparent); }
   .settings-section h3 .chevron {
     font-size: var(--ui-micro-fs);
     color: var(--text-3);
@@ -2339,37 +2367,24 @@
      its tint (no-op while the accent is a solid) */
   .pv-btn-primary { background-image: var(--accent-gradient, none); }
 
-  /* ══ v0.27→v0.33 — chat header pills: squared, matte, equal proportions ══
+  /* ══ v0.27→v0.56 — chat header pills: equal proportions, theme tones ══
      One row of peers: sandbox · model · artifacts · persona · mind —
      every pill flexes the same basis (18%), wraps when the container is
-     narrow. v0.33: the pills join the shared hand-drawn language (organic
-     corner sets + the offset sketch stroke) — matte, theme-following. */
+     narrow. v0.56 (user spec: "the pills of the chat metadata are all
+     first color and don't follow, it's broken in a broken way"): the old
+     v0.33 block force-flattened EVERY pill to the same matte surface +
+     text-2 with !important — the per-pill theme tones (chatpanel.js
+     PILL_TONES: sandbox→accent, model→accent-2, template→template tint,
+     skills→persona tint…) could never paint. The block now owns ONLY the
+     shared LAYOUT; colors + fills ride each pill's own theme tone. */
   #pill-row { flex-wrap: wrap; }
   #pill-row button, .pill-artifacts, #pill-persona, #pill-mind {
-    border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px !important;   /* less rounded, drawn */
-    flex: 1 1 18%; max-width: none !important;              /* equal proportions */
-    background: var(--surface-2) !important;              /* matte finish */
-    border: 1px solid var(--border) !important;
-    color: var(--text-2) !important;
-    box-shadow: 1px 1.5px 0 rgba(var(--surface-3-rgb), 0.9) !important;
-    justify-content: center !important;
-    padding: 7px 3px !important;
-    font-size: 10.5px !important;
-    min-width: 0 !important;
-    line-height: 1.2 !important;      /* one baseline for type/artifacts/persona/mind pills */
-    align-items: center !important;
-  }
-  #pill-row > button:nth-child(4n+2), #pill-row .pill-artifacts:nth-child(4n+2),
-  #pill-row #pill-persona:nth-child(4n+2), #pill-row #pill-mind:nth-child(4n+2) {
-    border-radius: 7px 10px 8px 9px / 10px 8px 9px 7px !important;
-  }
-  #pill-row > button:nth-child(4n+3), #pill-row .pill-artifacts:nth-child(4n+3),
-  #pill-row #pill-persona:nth-child(4n+3), #pill-row #pill-mind:nth-child(4n+3) {
-    border-radius: 10px 8px 9px 7px / 7px 9px 10px 8px !important;
-  }
-  #pill-row > button:nth-child(4n), #pill-row .pill-artifacts:nth-child(4n),
-  #pill-row #pill-persona:nth-child(4n), #pill-row #pill-mind:nth-child(4n) {
-    border-radius: 8px 9px 7px 10px / 9px 7px 10px 8px !important;
+    flex: 1 1 18%; max-width: none;              /* equal proportions */
+    justify-content: center;
+    padding: 7px 3px;
+    min-width: 0;
+    line-height: 1.2;      /* one baseline for type/artifacts/persona/mind pills */
+    align-items: center;
   }
   /* the search row: input takes ALL remaining width, arrows + counter
      pack to the right — on any screen width */
@@ -2402,8 +2417,11 @@
   #util-row .util-btn {
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; justify-content: center; gap: 5px;
-    background: var(--bg-app);   /* v0.49: overlay chrome (was --bg-panel) */
-    background-image: var(--bg-app-gradient, none);
+    /* v0.56: the util pills no longer repaint the OVERLAY background —
+       they sit INSIDE the chat header (itself a veil over the panel's
+       continuous surface field); repainting --bg-app here tiled a same-var
+       box inside a same-var box. Their own solid + hairline is enough. */
+    background: var(--bg-app);
     border: 1px solid var(--surface-3);
     color: var(--text-3); padding: 5px 8px;
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
@@ -2411,7 +2429,8 @@
     font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
     font-family: inherit; cursor: pointer; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent; line-height: 1.25;
-    text-transform: uppercase;
+    /* v0.56: no more ALL-CAPS on the util pills (user spec: remove
+       capitalisation from text beneath pills). */
   }
   #util-row .util-btn:active { background: var(--surface-2); color: var(--text-2); }
 
@@ -2506,26 +2525,39 @@
   .hub-chatpill-chev { color: var(--text-3); font-size: calc(var(--ui-micro-fs) + 1px); flex-shrink: 0; }
   .hub-chatpill--none { color: var(--text-3); font-style: italic; }
 
-  /* the collapsible header (title bar + everything-but-the-grid) */
-  .pub-head {
-    border: 1px solid var(--surface-2); border-radius: 14px 11px 13px 12px / 12px 13px 11px 14px;
-    background: var(--surface-1); overflow: hidden;
-    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.55);
+  /* ══ v0.56 — THE LIBRARY TOP DOCK (user spec item 9) ══════════════
+     The pinned chrome is ONE dock: the collapsed "Public Library"
+     header pill + the search row. On scroll the row collapses to a
+     round search icon (.hub-root.scrunch); tap (or back to top)
+     expands it. The dock BLENDS with the panel behind — surface-1
+     glass + backdrop blur, NOT the overlay background (user spec:
+     "not use the overlay background color … something that would blend
+     with the rest of the background"). Even, polished radii. */
+  .hub-topdock {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 11px 6px;
+    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    border: 1px solid var(--surface-2);
+    border-radius: 16px;
+    box-shadow: 0 4px 16px rgba(var(--bg-app-rgb), 0.28);
   }
   .pub-head-bar {
     display: flex; align-items: center; gap: 10px; width: 100%;
     /* v0.52 (user spec item 9): the header is COMPACT — less of the
-       library screen spent on chrome, more on the cards. */
-    padding: 7px 13px;
-    /* v0.49: collapsible header = overlay chrome — Overlay background */
-    background: var(--bg-app);
-    background-image: var(--bg-app-gradient, none);
+       library screen spent on chrome, more on the cards.
+       v0.56: a VEIL, not a repaint of the overlay background — the
+       dock's own glass field flows through (no nested same-var box). */
+    padding: 5px 6px;
+    background: color-mix(in srgb, var(--bg-app) 38%, transparent);
+    border-radius: 12px;
     border: none;
     font-family: inherit; cursor: pointer; text-align: left;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .pub-title {
-    font-size: var(--ui-fs); font-weight: 800; letter-spacing: 0.4px;
+    font-size: var(--ui-fs); font-weight: 800; letter-spacing: 0.3px;
     color: var(--text-1);
   }
   .pub-status {
@@ -2540,9 +2572,67 @@
   }
   .pub-chev { color: var(--text-3); font-size: var(--ui-small-fs); flex-shrink: 0;
     transition: transform 0.18s ease; }
-  .pub-head.folded .pub-chev { transform: rotate(-90deg); }
-  .pub-head-body { display: flex; flex-direction: column; gap: 7px; padding: 0 13px 9px; }
-  .pub-head.folded .pub-head-body { display: none; }
+  .pub-head-body.folded .pub-chev { transform: rotate(-90deg); }
+
+  /* the dock's search row: search icon + input + the 4 sort icons.
+     v0.56 (user spec): the search bar is ~1.5× SHORTER vertically. */
+  .hub-dockrow { display: flex; align-items: center; gap: 7px; }
+  .hub-searchico {
+    flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; color: var(--text-2); cursor: pointer;
+    font-family: inherit; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .hub-searchico .icl { display: block; }
+  .hub-searchico:hover { color: var(--accent); border-color: var(--accent); }
+  .hub-search {
+    flex: 1 1 auto; min-width: 0; box-sizing: border-box; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--text-1);
+    padding: 4px 11px; border-radius: 999px;
+    outline: none; min-height: 28px;
+    font-size: calc(var(--ui-fs) - 1px); font-family: inherit;
+  }
+  .hub-search:focus { border-color: var(--accent); }
+  /* the sort icons — little round buttons, the active one lit */
+  .hub-sortrow { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+  .hub-sortico {
+    width: 28px; height: 28px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 999px; color: var(--text-3);
+    cursor: pointer; font-family: inherit; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .hub-sortico .icl { display: block; }
+  .hub-sortico:hover { color: var(--text-1); background: var(--surface-2); }
+  .hub-sortico[data-on="1"] {
+    color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.12);
+    border-color: rgba(var(--accent-2-rgb), 0.5);
+  }
+  .hub-fsub {
+    font-size: var(--ui-micro-fs); color: var(--text-3);
+    padding: 0 4px 0; min-height: 14px;
+  }
+
+  /* THE SCRUNCH — scrolled: only the pinned bar + a round search icon.
+     Back to top (or tapping the icon) restores the full row. */
+  .hub-root.scrunch .hub-dockrow .hub-search,
+  .hub-root.scrunch .hub-dockrow .hub-sortrow,
+  .hub-root.scrunch #hub-fsub { display: none; }
+  .hub-root.scrunch .hub-searchico {
+    background: rgba(var(--accent-2-rgb), 0.12);
+    border-color: rgba(var(--accent-2-rgb), 0.5);
+    color: var(--accent-2);
+  }
+
+  /* the collapsible header body — under the dock, folds on the bar tap */
+  .pub-head-body { display: flex; flex-direction: column; gap: 7px; padding: 2px 13px 9px; }
+  .pub-head-body.folded { display: none; }
 
   /* "Browse the community for:" + the full-row library pills */
   .pub-sub {
@@ -2554,7 +2644,11 @@
      v0.52 (user spec item 9): FOUR columns don't fit an Android-native
      screen — the row now SCROLLS horizontally (each tile keeps a sane
      min-width instead of squishing to illegibility), the glyphs are
-     smaller, and the tiles themselves are shorter. */
+     smaller, and the tiles themselves are shorter.
+     v0.56 (user spec): even polished radii + the SELECTED pills read
+     FOUR different theme colors (persona purple / template green /
+     skill accent-3 / theme accent-2 — "when selected don't use theme
+     colors. Have them use 4 different theme colors"). */
   .hub-librow {
     display: flex; flex-direction: row; gap: 7px;
     flex-wrap: nowrap; overflow-x: auto;
@@ -2569,8 +2663,8 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 3px; min-height: 54px; padding: 7px 6px;
     background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
-    border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
-    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(var(--bg-app-rgb), 0.22);
     font-size: calc(var(--ui-small-fs)); font-weight: 700; text-align: center;
     font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -2597,63 +2691,17 @@
     background: rgba(var(--template-rgb), 0.12);
     border-color: rgba(var(--template-rgb), 0.55); color: var(--template-tint);
   }
+  /* v0.56: the remaining libraries get their OWN theme colors — skills
+     ride accent-3, themes ride accent-2 (four distinct tones total). */
+  .hub-libpill[data-tone="skill"][data-on="1"] {
+    background: rgba(var(--accent-3-rgb), 0.12);
+    border-color: rgba(var(--accent-3-rgb), 0.5); color: var(--accent-3);
+  }
   .hub-libpill-ghost { cursor: default; }
 
-  /* the sticky zone under the header: search + the filter columns.
-     v0.49: overlay chrome — follows the OVERLAY background. */
-  .hub-sticky {
-    position: sticky; top: 0; z-index: 6;
-    display: flex; flex-direction: column; gap: 7px;
-    margin: 0 -14px; padding: 8px 14px;
-    background: var(--bg-app);
-    background-image: var(--bg-app-gradient, none);
-    border-bottom: 1px solid var(--surface-2);
-  }
-  .hub-search {
-    width: 100%; box-sizing: border-box; background: var(--surface-2);
-    border: 1px solid var(--border); color: var(--text-1);
-    padding: 10px 12px; border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
-    outline: none; min-height: 40px;
-    font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit;
-  }
-  .hub-search:focus { border-color: var(--accent); }
-  .hub-filters { display: flex; align-items: stretch; }
-  .hub-funnel {
-    display: flex; align-items: center; justify-content: center;
-    width: 30px; flex-shrink: 0; color: var(--text-3);
-  }
-  .hub-funnel svg { width: 16px; height: 16px; fill: currentColor; }
-  .hub-fcols { display: flex; flex: 1 1 auto; min-width: 0; }
-  /* v0.49 (user spec): the filter-by-text box BESIDE the sort columns */
-  .hub-ftext {
-    flex: 0 1 108px; min-width: 72px; box-sizing: border-box;
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-left: 1px solid var(--surface-3);
-    color: var(--text-1); padding: 7px 9px; border-radius: 0 10px 10px 0 / 0 10px 10px 0;
-    outline: none; font-size: calc(var(--ui-small-fs) - 0.5px); font-family: inherit;
-    min-height: 100%;
-  }
-  .hub-ftext:focus { border-color: var(--accent); }
-  .hub-fcol {
-    flex: 1 1 0; min-width: 0; padding: 7px 2px;
-    background: transparent; border: none; border-left: 1px solid var(--surface-3);
-    color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 700;
-    letter-spacing: 0.2px; text-align: center; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-    font-family: inherit; cursor: pointer;
-    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s, color 0.15s;
-  }
-  .hub-fcol:first-child { border-left: none; }
-  .hub-fcol[data-on="1"] {
-    color: var(--accent-2);
-    background: rgba(var(--accent-2-rgb), 0.10);
-    box-shadow: inset 0 2px 0 rgba(var(--accent-2-rgb), 0.65);
-  }
-  .hub-fsub {
-    font-size: var(--ui-micro-fs); color: var(--text-3);
-    padding: 0 2px 1px 30px; min-height: 14px;
-  }
+  /* v0.49 → v0.56 RETIRED: the old .hub-sticky (search + filter columns
+     pinned at top:0) is replaced by THE TOP DOCK above — the pinned
+     "Public Library" bar + a search row that scrunches to a search icon. */
 
   /* tag pills (inside the collapsible header) — the shared .dx-pill */
   .hub-pillrow { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -2664,7 +2712,7 @@
     font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); font-weight: 600;
   }
   .hub-step {
-    width: 24px; height: 24px; border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
+    width: 24px; height: 24px; border-radius: 9px;
     background: var(--surface-2);
     border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
     font-family: inherit; cursor: pointer; line-height: 1;
@@ -2679,8 +2727,8 @@
     margin-left: auto; background: rgba(var(--accent-rgb), 0.14);
     border: 1px solid rgba(var(--accent-rgb), 0.45); color: var(--accent);
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
-    padding: 5px 12px; border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
-    box-shadow: 1px 1.5px 0 rgba(var(--accent-rgb), 0.30);
+    padding: 5px 12px; border-radius: 999px;
+    box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.22);
     font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2767,13 +2815,29 @@
   .hub-bunch-sec-h {
     display: flex; align-items: center; gap: 6px;
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
-    color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3); letter-spacing: 0.06em;
     margin: 0 0 8px;
   }
   .hub-bunch-sec-n {
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 999px; padding: 0 8px; color: var(--text-2);
     font-variant-numeric: tabular-nums;
+  }
+  /* v0.56 (user spec): THE BUNCH BADGE — pristine, bright, dynamic. Shows
+     the bundle's first tag; the width fits the text up to a cap, then the
+     text ellipsizes (never the layout). */
+  .hub-bunch-badge {
+    flex: 0 1 auto; min-width: 0;
+    display: inline-flex; align-items: center;
+    padding: 2px 8px; border-radius: 999px;
+    background: rgba(var(--accent-2-rgb), 0.16);
+    border: 1px solid rgba(var(--accent-2-rgb), 0.55);
+    color: var(--accent-2);
+    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 700;
+    letter-spacing: 0.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 46%;
+    text-shadow: 0 1px 4px rgba(var(--bg-app-rgb), 0.5);
   }
   .hub-bunch-chip {
     display: inline-flex; align-items: center; gap: 6px;
@@ -3236,51 +3300,61 @@
      outranks inline non-important declarations. With 'none' twins these
      rules remain visual no-ops, so nothing changes until the user actually
      sets a gradient. Selector inventory matches the codebase's exact
-     inline patterns (border:1px / 1px-with-space — enumerated by grep). */
+     inline patterns (border:1px / 1px-with-space — enumerated by grep).
+     v0.56 THE CONTINUOUS FIELD: every rule below also pins
+     `background-attachment: fixed` — one shared field per var, so nested
+     boxes never restart the gradient (the tiling fix). */
   [style*="background: var(--surface-1)"],
-  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none) !important; }
+  [style*="background:var(--surface-1)"] { background-image: var(--surface-1-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--surface-2)"],
-  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none) !important; }
+  [style*="background:var(--surface-2)"] { background-image: var(--surface-2-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--bg-app)"],
-  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; }
+  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--accent)"],
-  [style*="background:var(--accent)"] { background-image: var(--accent-gradient, none) !important; }
+  [style*="background:var(--accent)"] { background-image: var(--accent-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--accent-2)"],
-  [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; }
+  [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; background-attachment: fixed !important; }
   [style*="background: var(--accent-3)"],
-  [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; }
+  [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; background-attachment: fixed !important; }
   /* stylesheet-ruled surfaces (no inline style — no !important needed,
-     kept anyway for uniformity against future inline overrides) */
+     kept anyway for uniformity against future inline overrides).
+     v0.56: `background-attachment: fixed` — the continuous field. */
   .panel-header, .panel-body, #chat-panel, .msg-assistant,
   .fmt-code, .fmt-pre, .artifact-card, .ts-row, .pv-btn, .pill, .chip,
   .kbd, .code-card, .bubble, .card, .modal, .sheet, .toolbar, .dock-strip,
   .settings-nav .tab, .gr-editor, .gr-swatches, .gr-tools {
     background-image: var(--surface-1-gradient, none);
+    background-attachment: fixed;
   }
   /* surface-2 consumers (raised cards, inputs, hovers) */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
   .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover {
     background-image: var(--surface-2-gradient, none);
+    background-attachment: fixed;
   }
   /* v0.49: the chat panel + settings pages are SURFACES — their gradient
      rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints
-     the chrome: overlay screens, collapsible headers, sticky bars, the
-     util row (the overlay card itself is painted inline in
+     the overlay screens (the overlay card is painted inline in
      connectoverlay.js — background:var(--bg-app) — so the [style*] twin
-     rule catches it). */
-  .hub-sticky, .pub-head-bar, #util-row .util-btn {
-    background-image: var(--bg-app-gradient, none);
-  }
+     rule catches it).
+     v0.56: the collapsible headers + util pills NO LONGER repaint the
+     overlay background — nested same-var boxes tiled (user spec:
+     "make them act like one big box"). Headers are TRANSPARENT VEILS over
+     their parent's continuous field (see .settings-section h3 / #chat-header
+     / .pub-head-bar); the util pills paint their own tint only. */
   /* THE USER'S OWN BUBBLES follow Accent 1 (user spec: "the users own
      texts … should follow theme colors") — the rule lives with the other
      message bubbles above (accent fill + gradient twin + --on-accent). */
   /* border twin — borders follow --border-gradient when set (the inline
-     `border:` shorthand's reset loses to !important). CAVEAT: border-image
-     ignores border-radius — square corners are the explicit gradient-border
-     look; solid borders (the default) are unaffected. The rounded
-     stylesheet-ruled elements below use the radius-safe double-background
-     trick instead. */
+     `border:` shorthand's reset loses to !important). v0.56: theme.js
+     derives --border-gradient as a SINGLE-LAYER sweep (multi-layer pattern
+     recipes are invalid as border-image and used to leave borders on the
+     solid first color — "outlines don't follow the gradient"). CAVEAT:
+     border-image ignores border-radius — square corners are the explicit
+     gradient-border look; solid borders (the default) are unaffected. The
+     rounded stylesheet-ruled elements below use the radius-safe
+     double-background trick instead. */
   [style*="border:1px solid var(--border)"],
   [style*="border: 1px solid var(--border)"],
   [style*="border:1.5px solid var(--border)"],
@@ -3291,17 +3365,28 @@
      = the element's own surface gradient (clipped to the padding-box —
      'none' falls back to the base background-color), layer 2 = the border
      gradient clipped to the border-box. Corners stay round; 'none' twins
-     degrade to the plain solid look. */
+     degrade to the plain solid look. v0.56: both layers ride the fixed
+     field (2 layers guaranteed — the border twin is single-layer now, so
+     the old layer-count leak that painted the whole box as a border is
+     dead). .color-row-banner is OUT (its inline preview must stay local). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
-  .color-row-banner, .color-row-reset {
+  .color-row-reset {
     background-image: var(--surface-2-gradient, none), var(--border-gradient, none);
     background-origin: padding-box, border-box;
     background-clip: padding-box, border-box;
+    background-attachment: fixed, fixed;
   }
   .settings-section {
     background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
     background-origin: padding-box, border-box;
     background-clip: padding-box, border-box;
+    background-attachment: fixed, fixed;
+  }
+  .hub-card {
+    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, border-box;
+    background-clip: padding-box, border-box;
+    background-attachment: fixed, fixed;
   }
   /* v0.49 GRADIENT TEXT — when Primary text carries a gradient (theme.js
      sets data-text-grad on :root), the PROMINENT text clips to it; body

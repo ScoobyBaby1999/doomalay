@@ -140,6 +140,9 @@
     // v0.46 (user spec A4): THE STATIC ✕ — one render for every instance.
     // Overlay chrome, not page content: it survives replaceContent/pushPage
     // swaps. Pages keep their top-right 44px clear (see wsx-head padding).
+    // v0.56 (user spec: "make our overlay screens hardcoded X be smaller
+    // (x2 smaller) and not have a pill or background box, just a naked
+    // X"): 34px pill → a 17px naked glyph — no border, no fill, no ring.
     xEl = document.createElement('button');
     xEl.id = 'connect-overlay-x';
     xEl.type = 'button';
@@ -147,13 +150,12 @@
     xEl.title = 'close';
     xEl.textContent = '✕';
     xEl.style.cssText =
-      'position:absolute;top:8px;right:8px;z-index:6;width:34px;height:34px;' +
+      'position:absolute;top:7px;right:9px;z-index:6;width:17px;height:17px;' +
       'display:flex;align-items:center;justify-content:center;' +
-      'border-radius:12px;border:1px solid var(--surface-3);' +
-      'background:color-mix(in srgb, var(--surface-2) 88%, transparent);' +
-      'color:var(--text-2);font-size:15px;font-family:inherit;' +
+      'background:transparent;border:none;border-radius:0;padding:0;' +
+      'color:var(--text-3);font-size:13px;font-family:inherit;' +
       'cursor:pointer;-webkit-tap-highlight-color:transparent;' +
-      'touch-action:manipulation;padding:0;line-height:1;';
+      'touch-action:manipulation;line-height:1;';
     xEl.addEventListener('click', function (e) {
       e.stopPropagation();
       close();

@@ -25,10 +25,15 @@ import (
 // CollectionSummary is one bunch: N items (possibly across libraries)
 // sharing a collection id. The hub renders it as ONE grouped card that
 // opens the member list.
+// v0.56 (user spec): Tag carries the bunch's FIRST tag — the most common
+// leading tag among its members ("a pristine clean polished badge with a
+// bright text for bundles that dynamically displays the first tag or #
+// the bundle uses"). Empty = no badge.
 type CollectionSummary struct {
         ID        string         `json:"id"`
-        Icon      string         `json:"icon"`      // most common member icon ("" = no icon)
-        Sample    string         `json:"sample"`    // first member name (a display fallback)
+        Icon      string         `json:"icon"`   // most common member icon ("" = no icon)
+        Sample    string         `json:"sample"` // first member name (a display fallback)
+        Tag       string         `json:"tag"`    // most-common first member tag ("" = none)
         Members   int            `json:"members"`
         Hearts    int            `json:"hearts"`    // Σ member hearts
         Downloads int            `json:"downloads"` // Σ member downloads
@@ -47,6 +52,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                 sum   CollectionSummary
                 icons map[string]int
                 names []string
+                tags  map[string]int // v0.56: first-tag votes across members
         }
         bunches := map[string]*agg{}
 
@@ -62,7 +68,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                         a := bunches[id]
                         if a == nil {
-                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}}
+                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, tags: map[string]int{}}
                                 bunches[id] = a
                         }
                         a.sum.Members++
@@ -71,6 +77,11 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         a.sum.ByType[it.Type]++
                         if it.Icon != "" {
                                 a.icons[it.Icon]++
+                        }
+                        // v0.56: each member's FIRST tag votes once — the
+                        // most common becomes the bunch's badge tag.
+                        if len(it.Tags) > 0 {
+                                a.tags[it.Tags[0]]++
                         }
                         a.names = append(a.names, strings.ToLower(it.Name))
                         if a.sum.Sample == "" {
@@ -104,6 +115,15 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                 }
                 a.sum.Icon = best
+                // v0.56: the bunch tag — the members' most common FIRST tag
+                // (ties break alphabetically for determinism).
+                bestTag, bestTagN := "", 0
+                for t, n := range a.tags {
+                        if n > bestTagN || (n == bestTagN && t < bestTag) {
+                                bestTag, bestTagN = t, n
+                        }
+                }
+                a.sum.Tag = bestTag
                 out = append(out, a.sum)
         }
         sort.SliceStable(out, func(i, j int) bool {
@@ -120,8 +140,8 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
 
 // CollectionMembers is one library's slice of a bunch.
 type CollectionMembers struct {
-	Type  string `json:"type"`
-	Items []Item `json:"items"`
+        Type  string `json:"type"`
+        Items []Item `json:"items"`
 }
 
 // CollectionItems returns the members of one bunch grouped per library,
@@ -129,25 +149,25 @@ type CollectionMembers struct {
 // Unknown/empty ids return an empty set, never an error — the hub just
 // shows "nothing here".
 func (s *Service) CollectionItems(id string) ([]CollectionMembers, error) {
-	id = SanitizeCollection(id)
-	out := []CollectionMembers{}
-	if id == "" {
-		return out, nil
-	}
-	for _, spec := range All() {
-		items, err := s.Items(spec.Type, "", "hearts", "", false)
-		if err != nil {
-			continue
-		}
-		members := make([]Item, 0, 4)
-		for _, it := range items {
-			if SanitizeCollection(it.Collection) == id {
-				members = append(members, it)
-			}
-		}
-		if len(members) > 0 {
-			out = append(out, CollectionMembers{Type: spec.Type, Items: members})
-		}
-	}
-	return out, nil
+        id = SanitizeCollection(id)
+        out := []CollectionMembers{}
+        if id == "" {
+                return out, nil
+        }
+        for _, spec := range All() {
+                items, err := s.Items(spec.Type, "", "hearts", "", false)
+                if err != nil {
+                        continue
+                }
+                members := make([]Item, 0, 4)
+                for _, it := range items {
+                        if SanitizeCollection(it.Collection) == id {
+                                members = append(members, it)
+                        }
+                }
+                if len(members) > 0 {
+                        out = append(out, CollectionMembers{Type: spec.Type, Items: members})
+                }
+        }
+        return out, nil
 }

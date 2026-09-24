@@ -130,6 +130,30 @@
       parseInt(h.slice(4, 6), 16);
   }
 
+  // v0.56 deriveBorderTwins(raw) — the BORDER-SAFE twin. Root cause (user
+  // report: "outlines don't follow the gradient and display the first
+  // color" + "changing the borders option changes the entire scrollable
+  // box"): patterned recipes (mesh / checker / gingham / navy…) are
+  // MULTI-LAYER background-image values — invalid as a border-image
+  // (browsers drop the whole declaration → the solid stays) and, in the
+  // radius-safe double-background rules, the extra layers cycle the
+  // background-clip list and paint the WHOLE element. The border twin is
+  // therefore ALWAYS a single layer: a linear sweep of the full palette
+  // (the spec's angle when set, else 135°). Solid specs → 'none' (the
+  // plain border-color path, exactly as before).
+  function deriveBorderTwins(raw) {
+    var G = (typeof window !== 'undefined') ? window.GradientUI : null;
+    var spec = (G && G.norm) ? G.norm(raw)
+      : { colors: [String(raw == null ? '' : raw)], dir: 'auto' };
+    if (spec.tex) delete spec.tex;
+    var solid = spec.colors[0];
+    if (spec.colors.length < 2) return { solid: solid, css: solid, grad: 'none' };
+    var angle = (typeof spec.angle === 'number' && isFinite(spec.angle))
+      ? spec.angle : 135;
+    var css = 'linear-gradient(' + angle + 'deg, ' + spec.colors.join(', ') + ')';
+    return { solid: solid, css: css, grad: css };
+  }
+
   function isChatSchemePinned(s) {
     return !!((s.chatScheme && s.chatScheme !== 'teal') ||
       (s.fmtOverrides && Object.keys(s.fmtOverrides).length > 0));
@@ -203,7 +227,12 @@
         // spec — deriveTwins folds both into the var-TWIN pair and
         // setProperty writes --X (solid) + --X-gradient (image or 'none';
         // consumer rules in index.html layer it over the solid).
-        var twins = deriveTwins(overrides[k]);
+        // v0.56: --border uses the SINGLE-LAYER sweep twin (patterns are
+        // multi-layer values — invalid as border-image and leaky in the
+        // radius-safe double-background rules; see deriveBorderTwins).
+        var twins = (k === '--border')
+          ? deriveBorderTwins(overrides[k])
+          : deriveTwins(overrides[k]);
         docEl.style.setProperty(k, twins.solid);
         docEl.style.setProperty(k + '-gradient', twins.grad);
         docEl._themeOverrideKeys.push(k, k + '-gradient');
@@ -412,6 +441,7 @@
       themes: THEMES,
       legacyGrid: LEGACY_GRID,
       deriveTwins: deriveTwins,
+      deriveBorderTwins: deriveBorderTwins,
       hexTriplet: hexTriplet,
       gridSpecFor: gridSpecFor,
       effectiveGridSpecs: effectiveGridSpecs,
