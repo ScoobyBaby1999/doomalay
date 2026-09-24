@@ -1,36 +1,48 @@
-// hubitem.js — v0.31→v0.44 THE HUB: the item detail panel.
+// hubitem.js — v0.31→v0.58 THE HUB: the item detail panel ("lib · name").
 //
-// USER SPEC: press a card → a panel rendering the full item —
-// a COLLAPSIBLE header showing the PNG/gradient background (the image
-// fades 100% → 30% alpha top→bottom via a gradient overlay), title,
-// description, tags, favorites, downloads, author; the rest of the
-// space = the payload itself (personas: the actual .md text through
-// the app's existing markdown formatter; templates: the JSON rendered
-// as a formatted code block). TWO FLOATING ICONS at the bottom (a
-// small rounded-square box each): download + endorse.
+// USER SPEC (v0.58 pt 7): the detail page is the library's product page —
+// "lib · <name>" title, a crisp iPhone-style hero (the art shows through a
+// contrast scrim so the text never blends into the gradient), the payload
+// flowing straight from the title card, and TWO-TO-THREE big round FABs:
+// download (or re-publish EDIT once downloaded — pt 12), heart/endorse, and
+// for templates a USE button that applies it to the connected chat (pt 13).
+// Transient states ride the footer pill: "downloading…" / "endorsing…"
+// (held until done), and endorsing before download pops "download first"
+// instead of a dead button (pt 7).
 //
-// ENDORSEMENT RULE (enforced twice — the engine 400s "download the
-// item before endorsing it"): the heart button is DISABLED with a
-// "download first" tooltip until this session has downloaded the item
-// (window.Hub tracks it; a fresh page starts disabled and the engine
-// still guards). Endorse fills the heart + counts +1; a second tap
-// un-endorses.
+// USER SPEC (v0.58 pt 8): template payloads render through the ported
+// STAGE TREE (the template sheet's "simplified view" — stages as numbered
+// cards) with a [stages | raw] toggle; skills stay markdown, themes stay
+// pretty-printed JSON.
 //
-// Downloading a PERSONA also imports it into the chat that opened the
-// hub (GET session → append {id, name, text, mode:"inactive"} → PATCH
-// — the persona_set convention; new personas start inactive).
-// v0.44: downloading a TEMPLATE saves it into the local user-template
-// library (window.TemplateSheet.saveFromHub → "Yours" in the sheet).
+// ENDORSEMENT RULE (enforced twice — the engine 400s "download the item
+// before endorsing it"): the heart button renders LOCKED until the item
+// is downloaded; tapping it pops the "download first" footer pill (the
+// engine still guards).
 //
-// Data: GET /api/hub/{type}/item/{repo}/{id} (repo URL-encoded as ONE
-// path segment), POST /api/hub/{type}/download {repo,id},
-// POST /api/hub/{type}/endorse|/unendorse {repo,id}.
+// Downloading a PERSONA imports it into the connected chat; a TEMPLATE or
+// SKILL lands in the local user library (TemplateSheet "Yours"); a THEME
+// applies itself immediately (LookIO).
+//
+// Data: GET /api/hub/{type}/item/{repo}/{id} (now + hearted/downloaded
+// booleans so fresh sessions render correct states), POST
+// /api/hub/{type}/download {repo,id}, POST /api/hub/{type}/endorse|
+// unendorse {repo,id}.
 //
 // Exposes: window.HubItem = { open }
 (function () {
   'use strict';
 
-  var cur = null; // { panel, type, item, payload, downloaded, hearted, folded }
+  var cur = null; // { panel, type, item, payload, downloaded, hearted, folded, busy }
+
+  // v0.58 (pt 8): the template payload view toggle — [stages | raw],
+  // remembered per install (stages by default: the formatted view is the
+  // point of the port).
+  var TPLVIEW_KEY = 'doomalay.hi.tplview.v1';
+  function readTplView() {
+    try { return localStorage.getItem(TPLVIEW_KEY) === 'raw' ? 'raw' : 'stages'; } catch (e) { return 'stages'; }
+  }
+  function saveTplView(v) { try { localStorage.setItem(TPLVIEW_KEY, v); } catch (e) {} }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -53,8 +65,8 @@
   }
 
   var toastTimer = null;
-  function toast(msg) {
-    if (window.Hub && window.Hub.toast) { window.Hub.toast(msg); return; }
+  function toast(msg, opts) {
+    if (window.Hub && window.Hub.toast) { window.Hub.toast(msg, opts); return; }
     var t = document.getElementById('hubitem-toast');
     if (!t) {
       t = document.createElement('div');
@@ -67,7 +79,9 @@
     t.textContent = msg;
     t.style.opacity = '1';
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.style.opacity = '0'; }, 1900);
+    if (!(opts && opts.hold)) {
+      toastTimer = setTimeout(function () { t.style.opacity = '0'; }, (opts && opts.ms) || 1900);
+    }
   }
 
   function api(method, path, body) {
@@ -107,7 +121,8 @@
   }
 
   function buildView() {
-    return view('hub · ' + (cur.item.name || 'item'), function () { return renderHTML(); },
+    // v0.58 (pt 7): "hub · name" → "lib · name".
+    return view('lib · ' + (cur.item.name || 'item'), function () { return renderHTML(); },
       function (el) { wire(el); },
       function () { cur = null; });
   }
@@ -121,7 +136,17 @@
         if (!cur) return;
         cur.item = d.item || cur.item;
         cur.payload = d.payload != null ? d.payload : '';
-        cur.panel.replaceView(buildView());
+        // v0.58: the served heart/download booleans seed the session maps —
+        // a FRESH page now renders correct endorse/download states.
+        if (d.hearted != null && cur.item) {
+          cur.hearted = !!d.hearted;
+          if (window.Hub) window.Hub.setHearted(cur.type, cur.item.repo, cur.item.id, !!d.hearted);
+        }
+        if (d.downloaded && cur.item) {
+          cur.downloaded = true;
+          if (window.Hub) window.Hub.markDownloaded(cur.type, cur.item.repo, cur.item.id);
+        }
+        cur.panel.replaceView(buildView(), { keepScroll: true });
       })
       .catch(function (e) {
         if (!cur) return;
@@ -133,13 +158,10 @@
   function renderHTML() {
     if (!cur) return '';
     var it = cur.item;
+    var isTpl = cur.type === 'template';
 
-    // the header background: a PNG (image at full opacity at the top
-    // fading to ~30% at the bottom — the gradient overlay sits OVER
-    // the image), the item's v0.44 design SPEC (the shared gradient
-    // system: dir / angle / an optional texture dataURL blended in —
-    // legacy rows without dir render exactly as before, the 135°
-    // sweep), or the deterministic id gradient.
+    // the header background: a PNG (fading under the veil), the item's
+    // gradient design SPEC, or the deterministic id gradient.
     var bgStyle = '';
     var d = it.design || {};
     if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
@@ -147,18 +169,14 @@
       if (GU) {
         var css = GU.css({ colors: d.colors, dir: d.dir, angle: d.angle, tex: d.tex });
         if (css.charAt(0) === '#') {
-          bgStyle = 'background-color:' + css + ';';  // 1 stop + no tex = a solid
+          bgStyle = 'background-color:' + css + ';';
         } else {
-          // headFade OVER the gradient; the tex rides as the css bottom
-          // layer with blend 'color' (the uikit BLENDED contract)
-          bgStyle = 'background-image:' + headFade() + ',' + css + ';' +
-            ((d.tex && GU.BLENDED) ? 'background-blend-mode:color;' : '');
+          bgStyle = 'background-image:' + css + ';';
         }
       } else {
-        // no uikit — the v0.33 render
         bgStyle = (d.colors.length === 1)
           ? 'background-color:' + d.colors[0] + ';'
-          : 'background-image:' + headFade() + ',linear-gradient(135deg,' + d.colors.join(',') + ');';
+          : 'background-image:linear-gradient(135deg,' + d.colors.join(',') + ');';
       }
     } else if (d.kind !== 'png') {
       bgStyle = 'background-image:' + (window.Hub && window.Hub.idGradient
@@ -169,13 +187,15 @@
       return '<span class="hi-chip">#' + esc(t) + '</span>';
     }).join('');
 
-    // v0.52: the icon column (user spec item 3) rides the detail header too
-    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 22) : '';
+    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 24) : '';
+    var stageN = isTpl && it.stageCount > 0
+      ? '<span class="hi-stagen">~' + it.stageCount + ' stages</span>' : '';
 
     return (
-      '<div class="hi-root">' +
+      '<div class="hi-root" data-tone="' + escAttr(cur.type) + '">' +
         '<div class="hi-head' + (cur.folded ? ' folded' : '') + '" id="hi-head">' +
           '<div class="hi-head-bg" id="hi-head-bg" style="' + bgStyle + '"></div>' +
+          '<div class="hi-head-scrim" aria-hidden="true"></div>' +
           '<div class="hi-head-body">' +
             '<div class="hi-titlerow">' +
               (ico ? '<span class="hi-ico" aria-hidden="true">' + ico + '</span>' : '') +
@@ -184,10 +204,10 @@
             '<div class="hi-desc">' + esc(it.description || '—') + '</div>' +
             '<div class="hi-meta">by ' + esc(it.author || 'unknown') +
               (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') + '</div>' +
-            (chips ? '<div class="hi-chips">' + chips + '</div>' : '') +
+            (chips ? '<div class="hi-chips">' + chips + stageN + '</div>' : '') +
             '<div class="hi-counts">' +
-              '<span>♥ ' + (it.hearts || 0) + '</span>' +
-              '<span>⤓ ' + (it.downloads || 0) + '</span>' +
+              '<span>' + hiGlyph('heart') + '<b>' + (it.hearts || 0) + '</b></span>' +
+              '<span>' + hiGlyph('download') + '<b>' + (it.downloads || 0) + '</b></span>' +
             '</div>' +
           '</div>' +
           '<span class="hi-fold-ico">' + (cur.folded ? '▸' : '▾') + '</span>' +
@@ -196,19 +216,31 @@
           (cur.payload == null ? '<div class="art-loading">loading the payload…</div>' : '') +
         '</div>' +
         '<div class="hi-fabs">' +
-          '<button class="hi-fab" id="hi-dl" title="download" aria-label="download">⤓</button>' +
-          '<button class="hi-fab' + (cur.hearted ? ' on' : '') + '" id="hi-heart"' +
-            (cur.downloaded ? ' title="endorse"' : ' disabled title="download first"') +
-            ' aria-label="endorse">' + (cur.hearted ? '♥' : '♡') + '</button>' +
+          (isTpl
+            ? '<button class="hi-fab hi-fab--use" id="hi-use" title="use this template" aria-label="use this template">' +
+                hiGlyph('play') + '</button>'
+            : '') +
+          '<button class="hi-fab" id="hi-dl" title="' +
+            (isTpl && cur.downloaded ? 're-publish with edits' : 'download') +
+            '" aria-label="' + (isTpl && cur.downloaded ? 're-publish with edits' : 'download') + '">' +
+            (isTpl && cur.downloaded ? hiGlyph('pen-line') : hiGlyph('download')) + '</button>' +
+          '<button class="hi-fab hi-fab--heart' + (cur.hearted ? ' on' : '') +
+            (cur.downloaded ? '' : ' locked') + '" id="hi-heart"' +
+            (cur.downloaded ? ' title="endorse"' : ' title="download first"') +
+            ' aria-label="endorse">' + hiGlyph('heart', cur.hearted) + '</button>' +
         '</div>' +
       '</div>'
     );
   }
 
-  function headFade() {
-    // rgba(var(--surface-1-rgb), 0) → rgba(var(--surface-1-rgb), 0.7):
-    // the image shows 100% at the top and ~30% at the bottom.
-    return 'linear-gradient(to bottom,rgba(var(--surface-1-rgb),0) 0%,rgba(var(--surface-1-rgb),0.7) 100%)';
+  // v0.58: the detail glyphs — real IconLib SVGs (the old text ⤓/♥ DOS
+  // glyphs are gone), filled hearts when on.
+  function hiGlyph(name, filled) {
+    var I = window.IconLib;
+    if (!I || !I.has(name)) return { heart: '♥', download: '⤓', 'pen-line': '✎', play: '▶' }[name] || '';
+    var s = I.svg(name, 26);
+    if (filled) s = s.replace('fill="none"', 'fill="currentColor"');
+    return s;
   }
 
   // ── wiring ───────────────────────────────────────────────────────
@@ -223,22 +255,9 @@
       if (ico) ico.textContent = head.classList.contains('folded') ? '▸' : '▾';
     });
 
-    // the payload — the app's own markdown pipeline (templates get
-    // their JSON pretty-printed into a highlighted code block)
-    var body = el.querySelector('#hi-body');
-    if (body && cur.payload != null && window.Formatter) {
-      var text = String(cur.payload || '');
-      if (cur.type === 'template' || cur.type === 'theme') {
-        var pretty = text;
-        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
-        text = '```json\n' + pretty + '\n```';
-      }
-      try {
-        window.Formatter.renderInto(body, text, { mode: 'full' });
-      } catch (e) {
-        body.textContent = text;
-      }
-    }
+    // the payload render: templates → the STAGE TREE or raw (the toggle),
+    // skills/personas → markdown, themes → pretty JSON.
+    renderPayload(el);
 
     // the PNG header (probed — onerror keeps the id gradient)
     var it = cur.item;
@@ -247,9 +266,7 @@
       var url = '/api/hub/' + encodeURIComponent(cur.type) + '/png/' +
         encodeURIComponent(it.repo) + '/' + encodeURIComponent(it.id);
       var probe = new Image();
-      probe.onload = function () {
-        bgEl.style.backgroundImage = headFade() + ',url("' + url + '")';
-      };
+      probe.onload = function () { bgEl.style.backgroundImage = 'url("' + url + '")'; };
       probe.onerror = function () {
         bgEl.style.backgroundImage = (window.Hub && window.Hub.idGradient)
           ? window.Hub.idGradient(it.id) : 'none';
@@ -257,14 +274,124 @@
       probe.src = url;
     }
 
-    var dl = el.querySelector('#hi-dl');
-    if (dl) dl.addEventListener('click', function () { doDownload(); });
+    // v0.58 (pt 13): USE — apply the template to the library's connected
+    // chat (erroring "connect a chat first" when unbound).
+    var use = el.querySelector('#hi-use');
+    if (use) use.addEventListener('click', function () { doUse(); });
 
+    // v0.58 (pt 12): downloaded templates swap ⤓ for the EDIT (re-publish)
+    // fab; everything else keeps the plain download.
+    var dl = el.querySelector('#hi-dl');
+    if (dl) dl.addEventListener('click', function () {
+      if (cur.type === 'template' && cur.downloaded && window.HubPublish) { doEdit(); return; }
+      doDownload();
+    });
+
+    // v0.58 (pt 7): the LOCKED heart still answers a tap — the footer pill
+    // explains the download-first rule (the engine 400-guards regardless).
     var heart = el.querySelector('#hi-heart');
     if (heart) heart.addEventListener('click', function () {
-      if (!cur || heart.disabled) return;
+      if (!cur) return;
+      if (!cur.downloaded) {
+        toast('download first — endorsing needs a download', { ms: 2400 });
+        return;
+      }
       if (cur.hearted) doUnendorse(); else doEndorse();
     });
+  }
+
+  // the payload body — mode per type (v0.58 pt 8: templates get the ported
+  // stage tree + a raw toggle; skills markdown; themes as before). The
+  // toggle is (re)wired here — renderPayload owns everything inside #hi-body.
+  function renderPayload(el) {
+    var body = el.querySelector('#hi-body');
+    if (!body || cur.payload == null) return;
+    var text = String(cur.payload || '');
+    if (cur.type === 'template') {
+      var stages = parseStages(text);
+      if (stages && stages.length) {
+        var mode = readTplView();
+        var seg =
+          '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="payload view">' +
+            '<button type="button" data-view="stages"' + (mode === 'stages' ? ' class="on"' : '') + '>stages</button>' +
+            '<button type="button" data-view="raw"' + (mode === 'raw' ? ' class="on"' : '') + '>raw</button>' +
+          '</div></div>';
+        if (mode === 'stages') {
+          body.innerHTML = seg + stageTreeHTML(stages);
+        } else {
+          // renderInto replaces its target — the raw block renders into its
+          // own wrapper so the toggle row above survives.
+          body.innerHTML = seg + '<div class="hi-rawwrap" id="hi-rawwrap"></div>';
+          var wrap = body.querySelector('#hi-rawwrap');
+          try { window.Formatter.renderInto(wrap, jsonFence(text), { mode: 'full' }); }
+          catch (e) { if (wrap) wrap.textContent = text; }
+        }
+        var seg2 = body.querySelector('.hi-viewseg');
+        if (seg2) seg2.querySelectorAll('[data-view]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            saveTplView(b.getAttribute('data-view'));
+            renderPayload(el);
+          });
+        });
+        return;
+      }
+    }
+    body.innerHTML = '';
+    if (cur.type === 'theme') {
+      try {
+        window.Formatter.renderInto(body, jsonFence(text), { mode: 'full' });
+      } catch (e) { body.textContent = text; }
+      return;
+    }
+    // skills + personas: the markdown pipeline (a SKILL.md is markdown)
+    try {
+      window.Formatter.renderInto(body, text, { mode: 'full' });
+    } catch (e) {
+      body.textContent = text;
+    }
+  }
+
+  function jsonFence(text) {
+    var pretty = text;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
+    return '```json\n' + pretty + '\n```';
+  }
+
+  // v0.58: parse a template payload's stages (same shape the sheet uses).
+  function parseStages(text) {
+    try {
+      var raw = JSON.parse(text);
+      if (raw && typeof raw === 'object' && Array.isArray(raw.stages) && raw.stages.length) {
+        return raw.stages;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // v0.58 (pt 8): the ported "simplified view" — the template sheet's stage
+  // tree markup (its CSS is global), one numbered card per stage.
+  function stageTreeHTML(stages) {
+    var out = '<div class="ts-detail-body hi-stages">';
+    for (var i = 0; i < stages.length; i++) {
+      var st = stages[i] || {};
+      var fo = st.fanout && typeof st.fanout === 'object'
+        ? '<div class="ts-stage-fo">fan-out over ' + esc(st.fanout.over || 'items') +
+          ' · max ' + esc(st.fanout.max_parallel || 1) + ' parallel</div>' : '';
+      out += (
+        '<div class="ts-stage">' +
+          '<div class="ts-stage-head"><span class="ts-stage-n">' + (i + 1) + '</span>' +
+            '<span class="ts-stage-name">' + esc(st.name || 'stage ' + (i + 1)) + '</span>' +
+            (st.role ? '<span class="ts-chip">' + esc(st.role) + '</span>' : '') +
+          '</div>' + fo +
+          (st.instructions ? '<div class="ts-stage-ins">' + esc(st.instructions) + '</div>' : '') +
+        '</div>'
+      );
+    }
+    return out + '</div>';
+  }
+  function wireStageTree(body) {
+    // future interactivity (expand/collapse per stage) — the tree is
+    // static for now, matching the sheet's detail view.
   }
 
   // ── actions ───────────────────────────────────────────────────────
@@ -272,6 +399,7 @@
     if (!cur || cur.busy) return;
     cur.busy = true;
     var it = cur.item;
+    toast('downloading…', { hold: true });   // v0.58: the transient footer state
     api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/download',
         { repo: it.repo, id: it.id })
       .then(function (d) {
@@ -302,7 +430,7 @@
         if (cur.type === 'theme' && window.LookIO && window.LookIO.importText) {
           window.LookIO.importText(cur.payload);
         }
-        cur.panel.replaceView(buildView());
+        cur.panel.replaceView(buildView(), { keepScroll: true });
       })
       .catch(function (e) {
         if (!cur) return;
@@ -311,9 +439,55 @@
       });
   }
 
+  // v0.58 (pt 12): EDIT — re-publish a downloaded template. The publish
+  // form arrives pre-filled (info + card visuals + payload) and refuses an
+  // unedited re-publish (HubPublish's dirty guard).
+  function doEdit() {
+    if (!cur || !window.HubPublish) return;
+    var it = cur.item;
+    window.HubPublish.open('template', {
+      name: it.name || '',
+      desc: it.description || '',
+      tags: (it.tags || []).slice(),
+      icon: it.icon || '',
+      design: it.design || null,
+      payload: cur.payload != null ? cur.payload : '',
+      stageCount: it.stageCount || 0,
+      collection: it.collection || '',
+      editOf: { type: 'template', repo: it.repo, id: it.id, name: it.name }
+    });
+  }
+
+  // v0.58 (pt 13): USE — apply the template to the library's connected
+  // chat. The engine's deep-research builtin flips the deepResearch flag
+  // (the real pipeline); every other template applies its methodology brief.
+  function doUse() {
+    if (!cur) return;
+    var chat = window.Hub && window.Hub.chat ? window.Hub.chat() : null;
+    if (!chat) { toast('connect a chat first — tap the chat pill', { ms: 2400 }); return; }
+    var it = cur.item;
+    var tpl = null;
+    if (it.repo === 'doomalay/builtin' && it.id === 'deep-research') {
+      tpl = { id: 'deep-research', name: 'deep research', deepResearch: true, brief: '' };
+    } else if (window.TemplateSheet && window.TemplateSheet.normalizeHubPayload) {
+      var entry = window.TemplateSheet.normalizeHubPayload(it, cur.payload);
+      if (entry) {
+        tpl = { id: entry.id, name: entry.name, brief: window.TemplateSheet.buildBrief(entry) };
+      }
+    }
+    if (!tpl || !(tpl.brief || tpl.deepResearch)) { toast('this template has no usable body'); return; }
+    if (window.ChatPanel && window.ChatPanel.applyTemplate) {
+      window.ChatPanel.applyTemplate(tpl);
+      toast('template applied — ' + tpl.name);
+    } else {
+      toast('no chat panel to apply it to');
+    }
+  }
+
   function doEndorse() {
     if (!cur) return;
     var it = cur.item;
+    toast('endorsing…', { hold: true });      // v0.58: the transient footer state
     api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/endorse',
         { repo: it.repo, id: it.id })
       .then(function (d) {
@@ -325,7 +499,7 @@
           window.Hub.refreshItem(cur.item);
         }
         toast('endorsed ♥');
-        cur.panel.replaceView(buildView());
+        cur.panel.replaceView(buildView(), { keepScroll: true });
       })
       .catch(function (e) {
         toast(e.message || 'could not endorse');
@@ -346,7 +520,7 @@
           window.Hub.refreshItem(cur.item);
         }
         toast('endorsement removed');
-        cur.panel.replaceView(buildView());
+        cur.panel.replaceView(buildView(), { keepScroll: true });
       })
       .catch(function (e) {
         toast(e.message || 'could not un-endorse');

@@ -133,7 +133,10 @@ func (s *Server) handleHubItem(w http.ResponseWriter, r *http.Request) {
                 hubWriteItemErr(w, err)
                 return
         }
-        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload})
+        // v0.58: overlay the local heart/download state so fresh sessions
+        // render correct endorse/download states.
+        hearted, downloaded := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": downloaded})
 }
 
 // handleHubPNG is GET /api/hub/{type}/png/{repo}/{id} — the card image
@@ -179,7 +182,8 @@ func (s *Server) handleHubDownload(w http.ResponseWriter, r *http.Request) {
                 hubWriteItemErr(w, err)
                 return
         }
-        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload})
+        hearted, _ := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": true})
 }
 
 // handleHubDownloads is GET /api/hub/{type}/downloads — the local
@@ -198,7 +202,7 @@ func (s *Server) handleHubDownloads(w http.ResponseWriter, r *http.Request) {
         }
         out := make([]map[string]any, 0, len(rows))
         for _, row := range rows {
-                out = append(out, map[string]any{"item": row.Item, "payload": row.Payload})
+                out = append(out, map[string]any{"item": row.Item, "payload": row.Payload, "hearted": row.Hearted, "downloaded": true})
         }
         writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -229,7 +233,7 @@ func (s *Server) handleHubEndorse(endorse bool) http.HandlerFunc {
                         hubWriteItemErr(w, err)
                         return
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"ok": true, "item": item})
+                writeJSON(w, http.StatusOK, map[string]any{"ok": true, "item": item, "hearted": endorse, "downloaded": true})
         }
 }
 
@@ -268,7 +272,8 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
                 hubWriteItemErr(w, err)
                 return
         }
-        writeJSON(w, http.StatusOK, map[string]any{"item": item, "repo": item.Repo})
+        hearted, _ := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "repo": item.Repo, "hearted": hearted, "downloaded": true})
 }
 
 // handleHubPersonaHeart is POST /api/hub/persona/heart {id,name} — the

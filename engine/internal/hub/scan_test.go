@@ -67,11 +67,11 @@ func TestScanCorpusLayout(t *testing.T) {
         if err != nil {
                 t.Fatalf("templates: %v", err)
         }
-        if len(tpls) != 3 { // brainstorm + 2 expanded user templates
+        if len(tpls) != 4 { // brainstorm + 2 expanded user templates + the v0.58 deep-research builtin
                 for _, it := range tpls {
                         t.Logf("  %s | %s", it.Name, it.File)
                 }
-                t.Fatalf("want 3 templates from the corpus, got %d", len(tpls))
+                t.Fatalf("want 4 templates from the corpus (3 + builtin), got %d", len(tpls))
         }
 
         bs := findByName(tpls, "Superpowers Brainstorm")
@@ -157,8 +157,8 @@ func TestScanCorpusIsFoundWithoutTags(t *testing.T) {
                         t.Fatalf("non-doomalay repo leaked into the library: %+v", it)
                 }
         }
-        if len(tpls) != 3 {
-                t.Fatalf("want 3 templates (convention repo only), got %d", len(tpls))
+        if len(tpls) != 4 { // 3 corpus templates + the deep-research builtin
+                t.Fatalf("want 4 templates (convention repo only + builtin), got %d", len(tpls))
         }
 }
 

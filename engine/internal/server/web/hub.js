@@ -30,6 +30,14 @@
   'use strict';
 
   var GRID_KEY = 'doomalay.hubgrid.v1';
+  // v0.58 (user spec pt 4): the show-bundles toggle — ON by default. ON
+  // shows the bunch cards and HIDES their member items; OFF hides the
+  // bunch cards and shows every individual item.
+  var BUNDLES_KEY = 'doomalay.hubbundles.v1';
+  function readBundles() {
+    try { return localStorage.getItem(BUNDLES_KEY) !== '0'; } catch (e) { return true; }
+  }
+  function saveBundles(on) { try { localStorage.setItem(BUNDLES_KEY, on ? '1' : '0'); } catch (e) {} }
   var SORTS = [
     { key: 'recent',    label: 'recent',       sub: 'newest updates first' },
     { key: 'downloads', label: 'downloads',    sub: 'most downloaded first' },
@@ -42,6 +50,15 @@
   // the library pills' glyphs — future registry types fall back to 📚
   var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨' };
   function libIcon(type) { return LIB_ICONS[type] || '📚'; }
+
+  // v0.58 (user spec pts 1 + 8): each browsed library has ONE tone pair that
+  // ALL the library chrome follows (publish pill, focused search, sort icons,
+  // the bunch chip, the my-xyz pill). The tones are THEME VARS (persona /
+  // template tints; skills ride accent-3; themes ride accent-2) — the CSS
+  // maps .hub-root[data-tone] → --hub-tone / --hub-tone-rgb.
+  function mineLabel(type) {
+    return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes' }[type] || 'my items';
+  }
 
   // The served Item carries no local-state flags — the web tracks what
   // THIS session downloaded / hearted so the item detail can enable the
@@ -77,7 +94,10 @@
   }
 
   var toastTimer = null;
-  function toast(msg) {
+  // v0.58 (user spec pt 7): toast(msg, {hold}) — the transient footer pill.
+  // hold keeps it on screen (a "downloading…" / "endorsing…" state) until a
+  // later normal toast swaps the text and fades; ms tunes the dwell.
+  function toast(msg, opts) {
     var t = document.getElementById('hub-toast');
     if (!t) {
       t = document.createElement('div');
@@ -89,8 +109,10 @@
     }
     t.textContent = msg;
     t.style.opacity = '1';
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.style.opacity = '0'; }, 1900);
+    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+    if (!(opts && opts.hold)) {
+      toastTimer = setTimeout(function () { t.style.opacity = '0'; }, (opts && opts.ms) || 1900);
+    }
   }
 
   // fetch wrapper — rejects with Error(message) + .status, so callers
@@ -123,13 +145,19 @@
     return h;
   }
   function hsl(h, s, l) { return 'hsl(' + (h % 360) + ', ' + s + '%, ' + l + '%)'; }
-  function idGradient(id) {
+  // v0.58: idColors — the two hashed stops behind idGradient, split out so
+  // the bundle FLAG can paint its solid from the same deterministic hash.
+  function idColors(id) {
     var h = hashStr(String(id || ''));
     var h1 = Math.abs(h) % 360;
     var h2 = (h1 + 40 + (Math.abs(h >> 8) % 80)) % 360;
     var s1 = 60 + Math.abs(h >> 4) % 21;
     var l1 = 45 + Math.abs(h >> 12) % 21;
-    return 'linear-gradient(135deg, ' + hsl(h1, s1, l1) + ', ' + hsl(h2, s1, l1 + 8) + ')';
+    return [hsl(h1, s1, l1), hsl(h2, s1, l1 + 8)];
+  }
+  function idGradient(id) {
+    var c = idColors(id);
+    return 'linear-gradient(135deg, ' + c[0] + ', ' + c[1] + ')';
   }
 
   // ── grid prefs (cols 1–5 × rows 3–100, default 2×10) ──────────
@@ -201,6 +229,7 @@
         cur.stale = false;
         cur.tags = collectTags(cur.items);
         if (isTop()) { updateLibs(); updateTags(); updateBody(); }
+        seedLocalState(cur.type);   // v0.58: light up downloaded/hearted states
         loadCollections(refresh);
       })
       .catch(function (e) {
@@ -211,6 +240,30 @@
         cur.page = 1;
         if (isTop()) { toast(cur.err); updateTags(); updateBody(); }
       });
+  }
+
+  // v0.58: seed the session's downloaded/hearted maps from the engine's
+  // local rows (the served list carries no per-user state; without this a
+  // fresh page shows dead hearts on items the user already has).
+  function seedLocalState(type) {
+    if (!type) return;
+    api('GET', '/api/hub/' + encodeURIComponent(type) + '/downloads')
+      .then(function (d) {
+        var changed = false;
+        ((d && d.items) || []).forEach(function (r) {
+          if (!r || !r.item) return;
+          if (!isDownloaded(type, r.item.repo, r.item.id)) {
+            markDownloaded(type, r.item.repo, r.item.id);
+            changed = true;
+          }
+          if (r.hearted && !isHearted(type, r.item.repo, r.item.id)) {
+            setHearted(type, r.item.repo, r.item.id, true);
+            changed = true;
+          }
+        });
+        if (changed && isTop() && cur && cur.type === type) updateBody();
+      })
+      .catch(function () {});
   }
 
   // v0.52: the bunches for the current q — they ride the grid's first
@@ -316,7 +369,7 @@
   function renderHTML() {
     if (!cur) return '';
     return (
-      '<div class="hub-root">' +
+      '<div class="hub-root" data-tone="' + escAttr(cur.type || '') + '">' +
         // v0.52: the chat-connection pill — the library's ONLY binding to
         // a chat (decoupled by default: "no chat" unless a chatbot opened
         // it). Tap → the merged all-chats overlay in pick mode.
@@ -395,6 +448,10 @@
         '<div class="hub-ctlrow">' +
           stepper('cols', c.grid.cols, 1, 5) +
           stepper('rows', c.grid.rows, 3, 100) +
+          // v0.58 (user spec pt 4): the show-bundles toggle — rides between
+          // the steppers and the publish pill; ON = bundle cards shown (their
+          // member items hidden), OFF = plain items only.
+          bundlesToggleHTML() +
           '<button class="hub-publish" id="hub-publish">＋ publish</button>' +
         '</div>' +
         '<div class="hub-pillrow" id="hub-tags">' + tagsHTML() + '</div>' +
@@ -469,16 +526,37 @@
       });
       return out;
     }
+    // v0.58 (user spec pt 8): MY-xyz — the my-pill filters the grid to the
+    // user's downloads (client-side q + sort over the downloads list).
+    if (c.mine) {
+      if (c.mineLoading) return '<div class="art-loading">loading your downloads…</div>';
+      var mine = mineVisible(c);
+      if (!mine.length) {
+        return '<div class="hub-empty">nothing downloaded yet — browse the community and grab something</div>';
+      }
+      var mp = minePage(c, mine);
+      return (
+        '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + mp.eff + '">' +
+          mine.slice((mp.page - 1) * mp.per, mp.page * mp.per).map(cardHTML).join('') +
+        '</div>' +
+        pagerHTML(mp.page, mp.pages)
+      );
+    }
     var eff = clampCols(c.grid, c.width);
     c.eff = eff;
     var per = eff * c.grid.rows;
-    var items = c.items || [];
+    // v0.58 (user spec pt 4): the bundles toggle decides the grid — ON =
+    // the bunch cards lead AND their member items hide; OFF = plain items.
+    var showBundles = readBundles();
+    var items = (c.items || []).filter(function (it) {
+      return !showBundles || !(it && it.collection);
+    });
     var pages = Math.max(1, Math.ceil(items.length / per));
     var page = Math.min(Math.max(1, c.page), pages);
     c.page = page;
 
     if (c.loading && !c.items) return '<div class="art-loading">loading the library…</div>';
-    if (!items.length && !(c.collections || []).length) {
+    if (!items.length && !(showBundles && (c.collections || []).length)) {
       return '<div class="hub-empty">' +
         (c.err ? esc(c.err) :
           'nothing here' + (c.q ? ' for “' + esc(c.q) + '”' : '') +
@@ -489,14 +567,20 @@
     // q — loadCollections shares it). v0.56 (user spec): a bunch only
     // lands in libraries its members ACTUALLY have — superpowers with no
     // theme files stops appearing in Themes.
-    var bunches = c.bunchLoading ? [] : (c.collections || []).filter(function (b) {
+    var bunches = (showBundles && !c.bunchLoading) ? (c.collections || []).filter(function (b) {
       return ((b && b.byType) || {})[c.type] > 0;
-    });
+    }) : [];
     return (
       '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
           bunches.map(collectionCardHTML).join('') +
           items.slice((page - 1) * per, page * per).map(cardHTML).join('') +
       '</div>' +
+      pagerHTML(page, pages)
+    );
+  }
+
+  function pagerHTML(page, pages) {
+    return (
       '<div class="hub-pager">' +
         '<button class="hub-nav" data-page="prev"' + (page <= 1 ? ' disabled' : '') + ' aria-label="previous page">‹</button>' +
         '<span class="hub-page-line">page ' + page + '/' + pages + '</span>' +
@@ -505,14 +589,51 @@
     );
   }
 
+  // v0.58: the my-xyz list — client-side q filter + sort over downloads.
+  function mineVisible(c) {
+    var list = (c.mineItems || []).slice();
+    var lq = String(c.q || '').toLowerCase();
+    if (lq) {
+      list = list.filter(function (it) {
+        return (it.name || '').toLowerCase().indexOf(lq) >= 0 ||
+          (it.description || '').toLowerCase().indexOf(lq) >= 0 ||
+          (it.tags || []).some(function (t) { return (t || '').toLowerCase().indexOf(lq) >= 0; });
+      });
+    }
+    var key = c.sort === 'downloads' ? 'downloads' : (c.sort === 'hearts' ? 'hearts' : 'updatedAt');
+    list.sort(function (a, b) {
+      if (key !== 'updatedAt') return (b[key] || 0) - (a[key] || 0);
+      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    });
+    return list;
+  }
+  function minePage(c, mine) {
+    var eff = clampCols(c.grid, c.width);
+    c.eff = eff;
+    var per = eff * c.grid.rows;
+    var pages = Math.max(1, Math.ceil(mine.length / per));
+    var page = Math.min(Math.max(1, c.page), pages);
+    c.page = page;
+    return { eff: eff, per: per, page: page, pages: pages };
+  }
+
   function stepper(kind, val, lo, hi) {
-    return '<span class="hub-ctl">' + esc(kind) +
+    return '<span class="hub-ctl" data-ctl="' + escAttr(kind) + '">' +
       '<button class="hub-step" data-step="' + escAttr(kind) + ':-1"' + (val <= lo ? ' disabled' : '') +
-        ' aria-label="fewer ' + esc(kind) + '">−</button>' +
+        ' aria-label="fewer ' + esc(kind) + '">' + (kind === 'cols' ? '‹' : '−') + '</button>' +
       '<span class="hub-step-val" id="hub-' + escAttr(kind) + '-val">' + val + '</span>' +
       '<button class="hub-step" data-step="' + escAttr(kind) + ':1"' + (val >= hi ? ' disabled' : '') +
-        ' aria-label="more ' + esc(kind) + '">＋</button>' +
+        ' aria-label="more ' + esc(kind) + '">' + (kind === 'cols' ? '›' : '＋') + '</button>' +
     '</span>';
+  }
+
+  // v0.58 (user spec pt 4): the bundles toggle — a compact labeled switch.
+  function bundlesToggleHTML() {
+    var on = readBundles();
+    return '<button type="button" class="hub-bundles' + (on ? ' on' : '') + '" id="hub-bundles"' +
+      ' aria-pressed="' + on + '" title="show bundle cards (their member items hide while on)">' +
+      '<span class="hub-bundles-track"><span class="hub-bundles-dot"></span></span>' +
+      '<span class="hub-bundles-label">bundles</span></button>';
   }
 
   // ── v0.52: themed stat glyphs (bigger ♥ / ⤓ — user spec item 4). The
@@ -535,6 +656,12 @@
         if (cur.items[i].id === id) return cur.items[i];
       }
     }
+    // v0.58: the my-xyz filter renders items cur.items never held
+    if (cur.mineItems) {
+      for (i = 0; i < cur.mineItems.length; i++) {
+        if (cur.mineItems[i].id === id) return cur.mineItems[i];
+      }
+    }
     // v0.52: bunch members live in their groups, not cur.items
     var groups = cur.bunchGroups || [];
     for (i = 0; i < groups.length; i++) {
@@ -554,6 +681,11 @@
     // optional; no icon renders exactly the pre-v0.52 layout.
     var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 20) : '';
     var hearted = isHearted(it.type || (cur && cur.type), it.repo, it.id);
+    // v0.58 (user spec pt 10): "~x stages" rides the foot, right of the
+    // downloads with a two-tab gap — templates with a deterministic count.
+    var isTpl = (it.type || (cur && cur.type)) === 'template';
+    var stages = (isTpl && it.stageCount > 0)
+      ? '<span class="hub-card-stat hub-card-stat--stages">~' + it.stageCount + ' stages</span>' : '';
     return (
       '<button class="hub-card" data-item="' + escAttr(it.id) + '">' +
         '<span class="hub-card-bg" data-bgcard="1"></span>' +
@@ -561,7 +693,7 @@
         '<span class="hub-card-body">' +
           '<span class="hub-card-titlerow">' +
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
-            '<span class="hub-card-name">' + esc(it.name) + '</span>' +
+            '<span class="hub-card-name"><span class="hub-card-name-in">' + esc(it.name) + '</span></span>' +
           '</span>' +
           '<span class="hub-card-desc">' + esc(sub) + '</span>' +
           '<span class="hub-card-author">by ' + esc(it.author || 'unknown') + '</span>' +
@@ -569,18 +701,36 @@
             '<span class="hub-card-stat' + (hearted ? ' on' : '') + '" data-heart="1" role="button"' +
               ' tabindex="0" aria-label="endorse">' + heartGlyph(hearted) + '<b>' + (it.hearts || 0) + '</b></span>' +
             '<span class="hub-card-stat">' + dlGlyph() + '<b>' + (it.downloads || 0) + '</b></span>' +
+            stages +
           '</span>' +
         '</span>' +
       '</button>'
     );
   }
 
+  // v0.58 (user spec pt 6): long names MARQUEE — the inner span slowly
+  // slides across when the name overflows its line (see marqueeScan).
+  function marqueeScan(host) {
+    var scope = host || (cur && cur.panel ? cur.panel.bodyEl : document);
+    if (!scope || !scope.querySelectorAll) return;
+    scope.querySelectorAll('.hub-card-name').forEach(function (n) {
+      var inner = n.firstElementChild;
+      if (!inner || n.classList.contains('marquee')) return;
+      var over = inner.scrollWidth - n.clientWidth;
+      if (over > 8) {
+        n.classList.add('marquee');
+        n.style.setProperty('--slide-d', -over + 'px');
+        n.style.setProperty('--slide-t', Math.max(4, Math.round(over / 26)) + 's');
+      }
+    });
+  }
+
   // v0.52 (user spec item 1): the BUNCH card — one grouped listing for a
-  // whole collection. Distinct surface style (no bg art): the members are
-  // the art. Tap opens the cross-library member view.
-  // v0.56 (user spec): a polished BADGE rides the title row — the
-  // bundle's first tag (from the engine's most-common-member-tag rollup),
-  // bright accent-2 text, width fits the text up to a cap then ellipsizes.
+  // whole collection. v0.58 (user spec pt 2): the bunch is now a FULL card
+  // — bg art (the engine resolves design: curated override → newest member
+  // design → the deterministic hash fallback) + a horizontal FOR-SALE-STYLE
+  // FLAG on the left edge showing "#tag" + a smaller "bundle". Tap opens
+  // the cross-library member view.
   function collectionCardHTML(b) {
     var I = window.IconLib;
     var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22)
@@ -590,16 +740,17 @@
     Object.keys(byType).forEach(function (t) {
       bits.push(byType[t] + ' ' + (shortType(t)) + (byType[t] === 1 ? '' : 's'));
     });
-    var badge = (b.tag || '').trim()
-      ? '<span class="hub-bunch-badge">#' + esc(String(b.tag).trim()) + '</span>' : '';
+    var flag = (b.tag || '').trim()
+      ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
+        '</b><i>bundle</i></span>' : '';
     return (
       '<button class="hub-card hub-card--bunch" data-bunch="' + escAttr(b.id) + '">' +
-        '<span class="hub-card-fade"></span>' +   // v0.54: the same scrim — uniform cards
+        '<span class="hub-card-bg" data-bunchbg="1"></span>' +
+        '<span class="hub-card-fade"></span>' +
         '<span class="hub-card-body">' +
           '<span class="hub-card-titlerow">' +
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
-            '<span class="hub-card-name">' + esc(b.id) + '</span>' +
-            badge +
+            '<span class="hub-card-name"><span class="hub-card-name-in">' + esc(b.id) + '</span></span>' +
           '</span>' +
           '<span class="hub-card-desc">' + esc(b.members + ' bundled items — ' + bits.join(' · ')) + '</span>' +
           '<span class="hub-card-foot">' +
@@ -607,8 +758,52 @@
             '<span class="hub-card-stat">' + dlGlyph() + '<b>' + (b.downloads || 0) + '</b></span>' +
           '</span>' +
         '</span>' +
+        flag +
       '</button>'
     );
+  }
+
+  // v0.58: the flag's paint — an opaque solid from the bunch's own design
+  // (its first stop), else the deterministic hash color; ink flips by
+  // luminance so the text always reads. This is per-item CONTENT data (the
+  // same rule as card art), not UI chrome — chrome stays on theme vars.
+  function flagStyle(b) {
+    var d = b.design || {};
+    var color = '';
+    if (d.kind === 'gradient' && d.colors && d.colors.length) color = d.colors[0];
+    if (!color) color = idColors(b.id)[0];
+    var ink = '#fff', shadow = '0 1px 4px rgba(0,0,0,0.55)';
+    var m = /^#([0-9a-f]{6})$/i.exec(String(color).trim());
+    if (m) {
+      var r = parseInt(m[1].slice(0, 2), 16), g = parseInt(m[1].slice(2, 4), 16), bl = parseInt(m[1].slice(4, 6), 16);
+      if (0.299 * r + 0.587 * g + 0.114 * bl > 168) {
+        ink = 'rgba(10,10,14,0.92)'; shadow = '0 1px 3px rgba(255,255,255,0.35)';
+      }
+    }
+    return ' style="background:' + color + ';color:' + ink + ';text-shadow:' + shadow + '"';
+  }
+
+  // v0.58: the bunch card's art layer — like paintCardBg but png designs
+  // (member uploads) fall back to the hash gradient (no png endpoint for
+  // a bunch).
+  function paintBunchBg(bgEl, b) {
+    var d = b.design || {};
+    if (d.kind === 'gradient' && d.colors && d.colors.length >= 1) {
+      var GU = window.GradientUI;
+      if (GU) {
+        var css = GU.css({ colors: d.colors, dir: d.dir, angle: d.angle, tex: d.tex });
+        if (css.charAt(0) === '#') bgEl.style.backgroundColor = css;
+        else {
+          bgEl.style.backgroundImage = css;
+          if (d.tex && GU.BLENDED) bgEl.style.backgroundBlendMode = 'color';
+        }
+        return;
+      }
+      if (d.colors.length === 1) { bgEl.style.backgroundColor = d.colors[0]; return; }
+      bgEl.style.backgroundImage = 'linear-gradient(135deg, ' + d.colors.join(', ') + ')';
+      return;
+    }
+    bgEl.style.backgroundImage = idGradient(b.id);
   }
 
   function shortType(t) {
@@ -665,6 +860,14 @@
     if (!el) return;
     el.innerHTML = libsHTML();
     wireLibs(el);
+    // v0.58: cur.type resolves ASYNC (fetchLibraries) — after it lands the
+    // chrome re-tones + the my-xyz pill relabels (the initial render had
+    // no type yet).
+    var rootEl = (cur && cur.panel && cur.panel.bodyEl) ? cur.panel.bodyEl.querySelector('.hub-root') : null;
+    if (rootEl && cur.type && rootEl.getAttribute('data-tone') !== cur.type) {
+      rootEl.setAttribute('data-tone', cur.type);
+      updateChatrow();
+    }
   }
   function updateTags() {
     var el = q('#hub-tags');
@@ -719,6 +922,16 @@
     if (!z) return;
     z.innerHTML = bodyHTML();
     wireBody(z);
+    marqueeScan(z);   // v0.58: measure the long names after the paint
+  }
+
+  // v0.58 (user spec pt 8): refresh the chat row (the my-xyz pill follows
+  // the browsed type + its on/off state).
+  function updateChatrow() {
+    var el = q('.hub-chatrow');
+    if (!el) return;
+    el.innerHTML = chatPillHTML();
+    wireChatPill(el);
   }
 
   // ── wiring ───────────────────────────────────────────────────────
@@ -839,7 +1052,7 @@
     wireLibs(el);
     wireTags(el);
     wireBody(el);
-
+    marqueeScan(el);   // v0.58: the initial grid paint needs a scan too
     var pub = el.querySelector('#hub-publish');
     if (pub) pub.addEventListener('click', function () {
       if (window.HubPublish && cur) window.HubPublish.open(cur.type);
@@ -886,10 +1099,16 @@
         cur.collections = null;
         var si = q('#hub-search');
         if (si) si.value = '';
+        // v0.58 (pts 1 + 8): the whole library chrome re-tones to the
+        // browsed category + the my-xyz pill relabels (and reloads if on).
+        var rootEl = (cur.panel && cur.panel.bodyEl) ? cur.panel.bodyEl.querySelector('.hub-root') : null;
+        if (rootEl) rootEl.setAttribute('data-tone', cur.type);
         updateLibs();
         updateTags();
         updateFilters();
+        updateChatrow();
         updateBody();
+        if (cur.mine) loadMine();
         loadItems();
       });
     });
@@ -922,7 +1141,9 @@
         if (!cur) return;
         var parts = b.getAttribute('data-step').split(':');
         var kind = parts[0], dir = parseInt(parts[1], 10) || 0;
-        var lo = kind === 'cols' ? 1 : 3, hi = kind === 'cols' ? 5 : 10;
+        // v0.58: the rows cap finally matches its spec everywhere (3–100 —
+        // the old handler clamped at 10 while the UI promised 100).
+        var lo = kind === 'cols' ? 1 : 3, hi = kind === 'cols' ? 5 : 100;
         if (kind === 'cols') cur.grid.cols = Math.max(lo, Math.min(hi, cur.grid.cols + dir));
         else cur.grid.rows = Math.max(lo, Math.min(hi, cur.grid.rows + dir));
         saveGrid(cur.grid);
@@ -951,6 +1172,29 @@
       });
     });
 
+    // v0.58 (user spec pt 4): the show-bundles toggle — one tap flips the
+    // grid between bundle cards (members hidden) and plain items. (Guarded:
+    // wireBody re-runs on every body update and the fallback lookup finds
+    // the header button from the zone scope — without the flag every
+    // updateBody would add another listener and the clicks would cancel.)
+    var bundlesBtn = host.querySelector('#hub-bundles') ||
+      (c.panel && c.panel.bodyEl ? c.panel.bodyEl.querySelector('#hub-bundles') : null);
+    if (bundlesBtn && !bundlesBtn._bundlesWired) {
+      bundlesBtn._bundlesWired = 1;
+      bundlesBtn.addEventListener('click', function () {
+        if (!cur) return;
+        var on = !readBundles();
+        saveBundles(on);
+        cur.page = 1;
+        var btn = q('#hub-bundles');
+        if (btn) {
+          btn.classList.toggle('on', on);
+          btn.setAttribute('aria-pressed', String(on));
+        }
+        updateBody();
+      });
+    }
+
     // cards → item detail · v0.52: bunch cards → the member view, and the
     // card hearts endorse DIRECTLY (user spec item 6: every heart is live —
     // downloaded items toggle their endorsement right on the card; the
@@ -975,6 +1219,11 @@
       b.addEventListener('click', function () {
         loadBunch(b.getAttribute('data-bunch'));
       });
+      // v0.58: the bunch card's own art layer
+      var bid = b.getAttribute('data-bunch');
+      var bb = (c.collections || []).filter(function (x) { return x && x.id === bid; })[0];
+      var bg2 = b.querySelector('[data-bunchbg]');
+      if (bg2 && bb) paintBunchBg(bg2, bb);
     });
 
     // v0.56: the bunch chip's ✕ lives in the dock's fsub — wired by
@@ -991,8 +1240,10 @@
         if (!it) return;
         var type = it.type || cur.type;
         if (!isDownloaded(type, it.repo, it.id)) {
+          // v0.58 (user spec pt 7): the footer pill says it out loud — then
+          // the detail opens (that's where the download lives).
+          toast('download first — endorsing needs a download', { ms: 2400 });
           if (window.HubItem) window.HubItem.open(type, it);
-          else toast('download the item before endorsing it');
           return;
         }
         var on = !isHearted(type, it.repo, it.id);
@@ -1070,15 +1321,19 @@
         '<span class="hub-chatpill-label">no chat</span>' +
         '<span class="hub-chatpill-chev" aria-hidden="true">▾</span></button>';
     }
-    // v0.52: the LOCAL library companion — templates/skills downloaded
-    // from the hub land in the local user library (templatesheet.js
-    // "Yours"); this ghost pill opens THAT browser with activation
-    // wired to the current chat (the old ⧉ pill's path, kept alive).
-    if (cur && (cur.type === 'template' || cur.type === 'skill')) {
-      out += '<button type="button" id="hub-locallib" class="hub-chatpill hub-chatpill--none"' +
-        ' title="your downloaded ' + esc(cur.type) + 's — browse + use them in this chat">' +
-        '<span class="hub-chatpill-ico">' + (cur.type === 'skill' ? '🛠' : '⧉') + '</span>' +
-        '<span class="hub-chatpill-label">local ' + esc(cur.type) + 's</span></button>';
+    // v0.58 (user spec pt 8): MY-XYZ — the local-library FILTER pill. It
+    // shows for EVERY browsed type ("my personas / my skills / my templates /
+    // my themes"), relabels as the user browses, and FILTERS the grid to the
+    // engine's downloaded items (no more redirect to the template sheet).
+    if (cur) {
+      out += '<button type="button" id="hub-locallib" class="hub-chatpill hub-chatpill--mine' +
+        (cur.mine ? ' on' : '') + '"' +
+        ' aria-pressed="' + (cur.mine ? 'true' : 'false') + '"' +
+        ' title="show only your downloaded ' + esc(shortType(cur.type)) + 's"' +
+        ' aria-label="' + escAttr(mineLabel(cur.type)) + ' — filter to your downloads">' +
+        '<span class="hub-chatpill-ico">' + libIcon(cur.type) + '</span>' +
+        '<span class="hub-chatpill-label">' + esc(mineLabel(cur.type)) + '</span>' +
+        (cur.mine ? '<span class="hub-chatpill-chev" aria-hidden="true">✓</span>' : '') + '</button>';
     }
     return out;
   }
@@ -1109,22 +1364,57 @@
         toast('library connected to ' + (cur.chat.title || 'the chat'));
       });
     });
-    // v0.52: the local-library ghost pill — the downloaded templates/
-    // skills browser, with activation wired to the current chat.
+    // v0.58 (user spec pt 8): the my-xyz FILTER pill — taps toggle the
+    // grid between the community and the user's downloads. (Guarded:
+    // paintChatPill re-invokes this without replacing the my-pill node.)
     var local = root.querySelector('#hub-locallib');
-    if (local) local.addEventListener('click', function () {
-      if (!window.TemplateSheet) { toast('the local library is not available'); return; }
-      window.TemplateSheet.open({
-        active: '',
-        onActivate: function (tpl) {
-          if (window.ChatPanel && window.ChatPanel.applyTemplate) {
-            window.ChatPanel.applyTemplate(tpl);
-          } else if (window.Artifacts && window.Artifacts.toast) {
-            window.Artifacts.toast('open a chat first');
-          }
+    if (local && !local._mineWired) {
+      local._mineWired = 1;
+      local.addEventListener('click', function () {
+        if (!cur) return;
+        if (cur.mine) {
+          cur.mine = false;
+          cur.mineItems = null;
+          cur.page = 1;
+          updateChatrow();
+          updateBody();
+          return;
         }
+        cur.mine = true;
+        cur.page = 1;
+        loadMine();
       });
-    });
+    }
+  }
+
+  // v0.58: fetch the engine's downloads for the browsed type (the my-xyz
+  // filter's source — it follows the user across devices + reinstalls).
+  function loadMine() {
+    if (!cur || !cur.type) return;
+    var type = cur.type;
+    cur.mineLoading = true;
+    updateChatrow();
+    updateBody();
+    api('GET', '/api/hub/' + encodeURIComponent(type) + '/downloads')
+      .then(function (d) {
+        if (!cur || cur.type !== type || !cur.mine) return;
+        cur.mineLoading = false;
+        cur.mineItems = [];
+        ((d && d.items) || []).forEach(function (r) {
+          if (!r || !r.item) return;
+          markDownloaded(type, r.item.repo, r.item.id);
+          if (r.hearted) setHearted(type, r.item.repo, r.item.id, true);
+          cur.mineItems.push(r.item);
+        });
+        updateBody();
+      })
+      .catch(function (e) {
+        if (!cur || !cur.mine) return;
+        cur.mineLoading = false;
+        cur.mineItems = [];
+        toast((e && e.message) || 'could not load your downloads');
+        updateBody();
+      });
   }
 
   function paintChatPill(root) {
@@ -1173,6 +1463,10 @@
       bunchLoading: false,
       collections: null,
       colSeq: 0,
+      // v0.58: the my-xyz filter state
+      mine: false,
+      mineItems: null,
+      mineLoading: false,
       _onResize: null
     };
     panel.pushView(buildView());

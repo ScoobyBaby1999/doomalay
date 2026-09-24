@@ -296,8 +296,13 @@ func (s *Service) scanCorpusLines(card RepoCard, path, body string, res *scanEnt
 }
 
 // registerScanItem adds one scanned item, deduping by id (two corpus
-// files could describe the same key — first one wins).
-func (s *Service) registerScanItem(res *scanEntry, item Item, _ string) {
+// files could describe the same key — first one wins). v0.58 (user spec
+// pt 10): the payload is in hand here — templates get their deterministic
+// stage count baked in at scan time.
+func (s *Service) registerScanItem(res *scanEntry, item Item, payload string) {
+        if item.Type == "template" {
+                item.StageCount = CountStages(payload)
+        }
         for _, existing := range res.byType[item.Type] {
                 if existing.ID == item.ID {
                         return
@@ -340,6 +345,13 @@ func classifyCorpusRow(row corpusRow, path string) (string, string) {
 // "<path>#<row key>" (and "<path>#<row key>:<child name>" for expanded
 // array entries). Plain paths hit FetchFile directly.
 func (s *Service) resolvePayload(repo, ref string) (string, error) {
+        // v0.58: builtin payload refs ("builtin://<id>") resolve from memory.
+        if repo == BuiltinRepo {
+                if p, ok := builtinPayloads[strings.TrimPrefix(ref, "builtin://")]; ok {
+                        return p, nil
+                }
+                return "", ErrNotFoundLocal
+        }
         hash := strings.IndexByte(ref, '#')
         if hash < 0 {
                 body, err := s.hf.FetchFile(repo, ref)

@@ -675,6 +675,9 @@
     open: open,
     saveFromHub: saveFromHub,
     buildBrief: buildBrief,
-    isFavorite: isFav
+    isFavorite: isFav,
+    // v0.58: hubitem's "use template" parses a hub payload into an entry
+    // (stages / markdown) before buildBrief builds its methodology text.
+    normalizeHubPayload: normalizeHubPayload
   };
 })();

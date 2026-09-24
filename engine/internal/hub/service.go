@@ -323,6 +323,16 @@ func (s *Service) remoteItem(typ, repo, id string) (Item, error) {
         if err != nil {
                 return Item{}, err
         }
+        // v0.58: engine builtins never touch HF — the sentinel repo resolves
+        // straight from the builtin table.
+        if repo == BuiltinRepo {
+                for _, it := range builtinItems() {
+                        if it.Type == spec.Type && it.ID == id {
+                                return it, nil
+                        }
+                }
+                return Item{}, ErrNotFoundLocal
+        }
         if meta, err := s.hf.FetchFile(repo, "items/"+id+".json"); err == nil {
                 var item Item
                 if json.Unmarshal(meta, &item) == nil && item.ID != "" {
@@ -459,6 +469,13 @@ func (s *Service) Items(typ, q, sortMode, tagFilter string, refresh bool) ([]Ite
                 addItem(item, rowState(local[item.ID]))
                 delete(local, item.ID)
         }
+        // v0.58: the engine-seeded builtin cards (deep research …) — they ride
+        // the same merge/dedupe/counters as every scanned item, so a downloaded
+        // builtin's local row state (hearts) applies too.
+        for _, item := range builtinsFor(spec.Type) {
+                addItem(item, rowState(local[item.ID]))
+                delete(local, item.ID)
+        }
         for _, row := range local { // downloaded locally but no longer indexed remotely
                 addItem(row.Item, rowState(row))
         }
@@ -538,6 +555,17 @@ func hasTag(item Item, lq string) bool {
                 }
         }
         return false
+}
+
+// LocalStateFor returns the local heart/download booleans for one item —
+// v0.58: item-detail responses overlay these so fresh sessions render
+// correct endorse/download states (the client's in-memory maps are
+// session-only).
+func (s *Service) LocalStateFor(typ, id string) (hearted, downloaded bool) {
+        if row, err := GetLocalItem(s.db, typ, id); err == nil && row != nil {
+                return row.Hearted, row.DownloadedAt != ""
+        }
+        return false, false
 }
 
 // rowState projects a local row onto the overlay shape applyCounts uses.
@@ -653,8 +681,10 @@ func (s *Service) Download(typ, repo, id string) (Item, string, error) {
         if err := MarkDownloaded(s.db, typ, id); err != nil {
                 return Item{}, "", err
         }
-        s.appendMetric("download", target(repo, id)) // best-effort
-        s.Invalidate("")                             // counts changed
+        if repo != BuiltinRepo { // builtins carry no metrics repo of their own
+                s.appendMetric("download", target(repo, id)) // best-effort
+        }
+        s.Invalidate("")                                     // counts changed
         if row, err := GetLocalItem(s.db, typ, id); err == nil {
                 return s.countsFor(typ, row.Item), row.Payload, nil
         }
@@ -698,19 +728,21 @@ func (s *Service) Endorse(typ, repo, id string, endorse bool) (Item, error) {
         if err := SetHearted(s.db, typ, id, endorse); err != nil {
                 return Item{}, err
         }
-        if token := s.Token(); token != "" {
-                if endorse {
-                        if err := s.hf.LikeRepo(token, repo); err != nil {
-                                log.Printf("hub: like %s: %v", repo, err) // non-fatal
+        if repo != BuiltinRepo { // no HF repo to like + no metrics target for builtins
+                if token := s.Token(); token != "" {
+                        if endorse {
+                                if err := s.hf.LikeRepo(token, repo); err != nil {
+                                        log.Printf("hub: like %s: %v", repo, err) // non-fatal
+                                }
+                        } else if err := s.hf.UnlikeRepo(token, repo); err != nil {
+                                log.Printf("hub: unlike %s: %v", repo, err)
                         }
-                } else if err := s.hf.UnlikeRepo(token, repo); err != nil {
-                        log.Printf("hub: unlike %s: %v", repo, err)
+                        op := "unheart"
+                        if endorse {
+                                op = "heart"
+                        }
+                        s.appendMetric(op, target(repo, id))
                 }
-                op := "unheart"
-                if endorse {
-                        op = "heart"
-                }
-                s.appendMetric(op, target(repo, id))
         }
         s.Invalidate("") // counts changed
         if row, err := GetLocalItem(s.db, typ, id); err == nil {
@@ -729,6 +761,7 @@ type PublishRequest struct {
         PNGBase64   string   `json:"pngBase64"`
         Icon        string   `json:"icon"`       // v0.52: optional card icon (Lucide-style kebab name)
         Collection  string   `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
+        StageCount  int      `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
 }
 
 // Publish uploads an item under the connected user's per-type dataset repo
@@ -779,6 +812,15 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         }
         if png := decodeB64(req.PNGBase64); len(png) > 0 && isPNG(png) {
                 item.Design = Design{Kind: "png"}
+        }
+
+        // v0.58 (user spec pt 10): templates carry a stage count — the manual
+        // field wins, else the engine auto-counts the payload's stages[].
+        if spec.Type == "template" {
+                item.StageCount = req.StageCount
+                if item.StageCount <= 0 {
+                        item.StageCount = CountStages(req.Payload)
+                }
         }
 
         // Republish keeps the original createdAt + any baked counters.

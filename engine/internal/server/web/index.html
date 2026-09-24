@@ -2553,6 +2553,23 @@
   .hub-chatpill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hub-chatpill-chev { color: var(--text-3); font-size: calc(var(--ui-micro-fs) + 1px); flex-shrink: 0; }
   .hub-chatpill--none { color: var(--text-3); font-style: italic; }
+  /* v0.58 (pt 8): MY-XYZ — the downloads FILTER pill (follows the tone) */
+  .hub-chatpill--mine { border-style: dashed; }
+  .hub-chatpill--mine.on {
+    color: var(--hub-tone, var(--accent-2)); font-style: normal;
+    border-color: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.55);
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.10);
+  }
+
+  /* ══ v0.58 — THE CATEGORY TONE (user spec pt 1) ══════════════════
+     The browsed library owns ONE tone pair; the library chrome (the
+     publish pill, the focused search, the sort icons, the bunch chip, the
+     my-xyz pill, the steppers' value window) follows it. Tones are THEME
+     VARS — persona/template tints, skills accent-3, themes accent-2. */
+  .hub-root { --hub-tone: var(--accent-2); --hub-tone-rgb: var(--accent-2-rgb); }
+  .hub-root[data-tone="persona"]  { --hub-tone: var(--persona-tint);  --hub-tone-rgb: var(--persona-rgb); }
+  .hub-root[data-tone="template"] { --hub-tone: var(--template-tint); --hub-tone-rgb: var(--template-rgb); }
+  .hub-root[data-tone="skill"]    { --hub-tone: var(--accent-3);      --hub-tone-rgb: var(--accent-3-rgb); }
 
   /* ══ v0.56 — THE LIBRARY TOP DOCK (user spec item 9) ══════════════
      The pinned chrome is ONE dock: the collapsed "Public Library"
@@ -2615,7 +2632,7 @@
     transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
   .hub-searchico .icl { display: block; }
-  .hub-searchico:hover { color: var(--accent); border-color: var(--accent); }
+  .hub-searchico:hover { color: var(--hub-tone, var(--accent)); border-color: var(--hub-tone, var(--accent)); }
   .hub-search {
     flex: 1 1 auto; min-width: 0; box-sizing: border-box; background: var(--surface-2);
     border: 1px solid var(--border); color: var(--text-1);
@@ -2623,7 +2640,7 @@
     outline: none; min-height: 28px;
     font-size: calc(var(--ui-fs) - 1px); font-family: inherit;
   }
-  .hub-search:focus { border-color: var(--accent); }
+  .hub-search:focus { border-color: var(--hub-tone, var(--accent)); }
   /* the sort icons — little round buttons, the active one lit */
   .hub-sortrow { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
   .hub-sortico {
@@ -2638,9 +2655,9 @@
   .hub-sortico .icl { display: block; }
   .hub-sortico:hover { color: var(--text-1); background: var(--surface-2); }
   .hub-sortico[data-on="1"] {
-    color: var(--accent-2);
-    background: rgba(var(--accent-2-rgb), 0.12);
-    border-color: rgba(var(--accent-2-rgb), 0.5);
+    color: var(--hub-tone, var(--accent-2));
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.12);
+    border-color: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.5);
   }
   .hub-fsub {
     font-size: var(--ui-micro-fs); color: var(--text-3);
@@ -2653,9 +2670,9 @@
   .hub-root.scrunch .hub-dockrow .hub-sortrow,
   .hub-root.scrunch #hub-fsub { display: none; }
   .hub-root.scrunch .hub-searchico {
-    background: rgba(var(--accent-2-rgb), 0.12);
-    border-color: rgba(var(--accent-2-rgb), 0.5);
-    color: var(--accent-2);
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.12);
+    border-color: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.5);
+    color: var(--hub-tone, var(--accent-2));
   }
 
   /* the collapsible header body — under the dock, folds on the bar tap */
@@ -2734,29 +2751,69 @@
   /* tag pills (inside the collapsible header) — the shared .dx-pill */
   .hub-pillrow { display: flex; gap: 6px; flex-wrap: wrap; }
 
-  .hub-ctlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hub-ctlrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  /* v0.58 (pt 5): the steppers — compact slider-look pills. Flatter,
+  smaller arrows; the VALUE window is the tinted thumb (the thing that
+  pops, not the + and −); tabular numbers keep the pill from jittering. */
   .hub-ctl {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); font-weight: 600;
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 3px;
+    font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3); font-weight: 700;
+    letter-spacing: 0.05em;
   }
   .hub-step {
-    width: 24px; height: 24px; border-radius: 9px;
-    background: var(--surface-2);
-    border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
+    width: 22px; height: 22px; border-radius: 999px;
+    background: transparent; border: none;
+    color: var(--text-3); font-size: 13px; font-weight: 600;
     font-family: inherit; cursor: pointer; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s;
+  }
+  .hub-step:not(:disabled):hover { color: var(--text-1); }
+  .hub-step:disabled { opacity: 0.3; cursor: default; }
+  .hub-step-val {
+    min-width: 26px; text-align: center; color: var(--text-1);
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.14);
+    border-radius: 999px; padding: 2.5px 4px;
+    font-variant-numeric: tabular-nums; font-weight: 800;
+    font-size: calc(var(--ui-small-fs) - 1px);
+  }
+  /* v0.58 (pt 4): the show-bundles toggle */
+  .hub-bundles {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 700; letter-spacing: 0.05em;
+    color: var(--text-3); padding: 3px 4px;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .hub-step:disabled { opacity: 0.35; cursor: default; }
-  .hub-step-val {
-    min-width: 16px; text-align: center; color: var(--text-1);
-    font-variant-numeric: tabular-nums; font-weight: 700;
+  .hub-bundles-track {
+    width: 30px; height: 17px; border-radius: 999px; position: relative;
+    background: var(--surface-3); border: 1px solid var(--border);
+    transition: background 0.18s ease, border-color 0.18s ease; flex: 0 0 auto;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.18);
   }
+  .hub-bundles-dot {
+    position: absolute; top: 1.5px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--text-2);
+    transition: transform 0.18s ease, background 0.18s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+  }
+  .hub-bundles.on .hub-bundles-track {
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.35);
+    border-color: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.6);
+  }
+  .hub-bundles.on .hub-bundles-dot {
+    transform: translateX(13px); background: var(--hub-tone, var(--accent-2));
+  }
+  .hub-bundles.on { color: var(--text-2); }
   .hub-publish {
-    margin-left: auto; background: rgba(var(--accent-rgb), 0.14);
-    border: 1px solid rgba(var(--accent-rgb), 0.45); color: var(--accent);
+    margin-left: auto; background: rgba(var(--hub-tone-rgb, var(--accent-rgb)), 0.14);
+    border: 1px solid rgba(var(--hub-tone-rgb, var(--accent-rgb)), 0.45); color: var(--hub-tone, var(--accent));
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
     padding: 5px 12px; border-radius: 999px;
-    box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.22);
+    box-shadow: 0 2px 8px rgba(var(--hub-tone-rgb, var(--accent-rgb)), 0.22);
     font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2809,6 +2866,20 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     text-shadow: 0 1px 6px rgba(0,0,0,0.45);
   }
+  /* v0.58 (pt 6): the inner name span — long names slowly slide across
+     (the marquee; marqueeScan measures + paints --slide-d/--slide-t). */
+  .hub-card-name-in { display: inline-block; white-space: nowrap; will-change: transform; }
+  .hub-card-name.marquee { text-overflow: clip; }
+  .hub-card-name.marquee .hub-card-name-in {
+    animation: hub-name-slide var(--slide-t, 6s) ease-in-out infinite alternate;
+  }
+  @keyframes hub-name-slide {
+    0%, 12%   { transform: translateX(0); }
+    88%, 100% { transform: translateX(var(--slide-d, -40px)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hub-card-name.marquee .hub-card-name-in { animation: none; }
+  }
   .hub-card-desc {
     font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35; font-weight: 500;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -2830,13 +2901,25 @@
   }
   .hub-card-stat .icl { display: block; }
   .hub-card-stat.on { color: var(--accent); }
-  .hub-card-stat[data-heart] { cursor: pointer; }
+  /* v0.58 (pt 14): the endorse HOTBOX — padding + matching negative
+     margins grow the hit target to ~44px with zero visual shift (the
+     half-height panel made the old ~17px strip nearly untappable). */
+  .hub-card-stat[data-heart] {
+    cursor: pointer; padding: 14px 12px; margin: -14px -12px;
+    border-radius: 12px;
+  }
   .hub-card-stat[data-heart]:active { transform: scale(0.92); }
-  /* the BUNCH card — one grouped listing; the surface style IS the signal */
-  .hub-card--bunch { border: 1px solid var(--accent); }
+  /* v0.58 (pt 10): "~x stages" — two tabs of space right of the downloads */
+  .hub-card-stat--stages {
+    margin-left: 1.5em; color: var(--text-3); font-weight: 600;
+    font-size: var(--ui-small-fs);
+  }
+  /* the BUNCH card — full art like every other card (v0.58 pt 2) */
+  .hub-card--bunch { border: 1.5px solid var(--border-strong); }
   .hub-card--bunch .hub-card-ico {
-    background: rgba(var(--accent-rgb, 128,128,160), 0.16); color: var(--accent);
-    border-color: var(--accent);
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.18);
+    color: var(--hub-tone, var(--accent-2));
+    border-color: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.55);
   }
   /* the bunch member view */
   .hub-bunch-sec { margin: 0 0 14px; }
@@ -2851,25 +2934,28 @@
     border-radius: 999px; padding: 0 8px; color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
-  /* v0.56 (user spec): THE BUNCH BADGE — pristine, bright, dynamic. Shows
-     the bundle's first tag; the width fits the text up to a cap, then the
-     text ellipsizes (never the layout). */
-  .hub-bunch-badge {
-    flex: 0 1 auto; min-width: 0;
-    display: inline-flex; align-items: center;
-    padding: 2px 8px; border-radius: 999px;
-    background: rgba(var(--accent-2-rgb), 0.16);
-    border: 1px solid rgba(var(--accent-2-rgb), 0.55);
-    color: var(--accent-2);
-    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 700;
-    letter-spacing: 0.02em;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    max-width: 46%;
-    text-shadow: 0 1px 4px rgba(var(--bg-app-rgb), 0.5);
+  /* v0.58 (pt 2): THE BUNDLE FLAG — a horizontal for-sale-style badge off
+     the card's left edge (anchored just above the foot), showing "#tag"
+     bold + a smaller "bundle". The paint is the bunch's OWN design color
+     (inline, per-item content data); the right end is notched like a tag. */
+  .hub-bundle-flag {
+    position: absolute; left: 0; bottom: 44px; z-index: 2;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 14px 4px 10px;
+    border-radius: 0 9px 9px 0;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 50%, 100% 100%, 0 100%);
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 800; letter-spacing: 0.02em;
+    max-width: 86%; overflow: hidden; white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  .hub-bundle-flag b { font-weight: 800; }
+  .hub-bundle-flag i {
+    font-style: normal; font-size: calc(var(--ui-small-fs) - 3px);
+    font-weight: 600; opacity: 0.88; letter-spacing: 0.04em;
   }
   .hub-bunch-chip {
     display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface-2); border: 1px solid var(--accent);
+    background: var(--surface-2); border: 1px solid var(--hub-tone, var(--accent));
     color: var(--text-1); border-radius: 999px; padding: 2px 10px;
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
   }
@@ -2911,76 +2997,153 @@
   }
   .hp-icocell[data-on="1"] { border-color: var(--accent); color: var(--accent); background: var(--surface-3); }
   .hp-opt { color: var(--text-3); font-weight: 400; }
+  /* v0.58: the stage-count hint + the re-publish dirty hint */
+  .hp-stagehint {
+    font-size: var(--ui-micro-fs); color: var(--text-3); margin: 3px 1px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .hp-edithint {
+    font-size: var(--ui-micro-fs); color: var(--text-3); text-align: center;
+    margin: 6px 0 0; line-height: 1.5;
+  }
+  .hp-edithint b { color: var(--text-2); }
 
-  /* ── the item detail (hubitem.js) ─────────────────────────────────── */
-  .hi-root { display: flex; flex-direction: column; min-height: 100%; gap: 12px; }
+  /* ── the item detail (hubitem.js) — v0.58: the "lib · name" page ────
+     iPhone-crisp: the hero carries a contrast SCRIM (bg-panel based —
+     light theme → light veil + dark text, dark theme → dark veil + light
+     text) so the title/description never blend into the art; the payload
+     flows straight from the title card (the hero's base melts into the
+     page); the fabs are big OPAQUE circles. */
+  .hi-root {
+    display: flex; flex-direction: column; min-height: 100%; gap: 12px;
+    --hub-tone: var(--accent-2); --hub-tone-rgb: var(--accent-2-rgb);
+  }
+  .hi-root[data-tone="persona"]  { --hub-tone: var(--persona-tint);  --hub-tone-rgb: var(--persona-rgb); }
+  .hi-root[data-tone="template"] { --hub-tone: var(--template-tint); --hub-tone-rgb: var(--template-rgb); }
+  .hi-root[data-tone="skill"]    { --hub-tone: var(--accent-3);      --hub-tone-rgb: var(--accent-3-rgb); }
   .hi-head {
-    position: relative; border-radius: 12px; overflow: hidden; flex-shrink: 0;
+    position: relative; border-radius: 16px; overflow: hidden; flex-shrink: 0;
     border: 1px solid var(--surface-2); cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hi-head-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
-  .hi-head-body {
-    position: relative; display: flex; flex-direction: column; gap: 3px;
-    padding: 16px 14px 12px; min-height: 132px;
+  /* v0.58: THE SCRIM — art shows through, text stays readable, and the
+     base melts into the page (the payload flows straight out of the card) */
+  .hi-head-scrim {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(to bottom,
+      rgba(var(--bg-panel-rgb), 0.38) 0%,
+      rgba(var(--bg-panel-rgb), 0.46) 55%,
+      rgba(var(--bg-panel-rgb), 0.86) 100%);
   }
-  .hi-titlerow { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .hi-head-body {
+    position: relative; display: flex; flex-direction: column; gap: 4px;
+    padding: 18px 15px 13px; min-height: 138px;
+  }
+  .hi-titlerow { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .hi-ico {
     flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-    width: 34px; height: 34px; border-radius: 11px;
-    background: rgba(var(--surface-1-rgb), 0.55); border: 1px solid var(--border);
+    width: 36px; height: 36px; border-radius: 12px;
+    background: rgba(var(--bg-panel-rgb), 0.55); border: 1px solid var(--border);
     color: var(--text-1);
   }
   .hi-ico .icl { display: block; }
   .hi-title {
     flex: 1 1 auto; min-width: 0;
-    font-size: calc(var(--ui-fs) + 4px); font-weight: 800; color: var(--text-1);
-    line-height: 1.2; text-shadow: 0 1px 8px rgba(0,0,0,0.5);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;  /* v0.54: long names no longer wrap/displace the header */
+    font-size: calc(var(--ui-fs) + 7px); font-weight: 800; color: var(--text-1);
+    line-height: 1.15; letter-spacing: -0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .hi-desc { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.45; }
+  .hi-desc { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5; }
   .hi-meta { font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); }
-  .hi-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .hi-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 2px; }
   .hi-chip {
-    background: rgba(var(--accent-2-rgb), 0.13); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
-    color: var(--accent-2); border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.14);
+    border: 1px solid rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.45);
+    color: var(--hub-tone, var(--accent-2)); border-radius: 999px;
     padding: 2px 9px;
     font-size: calc(var(--ui-small-fs) - 2px); font-weight: 600;
   }
+  .hi-stagen {
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.12);
+    color: var(--hub-tone, var(--accent-2)); border-radius: 999px;
+    padding: 2px 8px; font-size: calc(var(--ui-small-fs) - 2px);
+    font-weight: 700; font-variant-numeric: tabular-nums;
+  }
   .hi-counts {
-    display: flex; gap: 14px; margin-top: 4px; color: var(--text-3);
+    display: flex; gap: 16px; margin-top: 5px; color: var(--text-2);
     font-size: var(--ui-small-fs); font-variant-numeric: tabular-nums;
   }
+  .hi-counts span { display: inline-flex; align-items: center; gap: 5px; }
+  .hi-counts .icl { display: block; }
+  .hi-counts b { color: var(--text-1); font-weight: 700; }
   .hi-fold-ico {
     position: absolute; top: 8px; right: 10px; color: var(--text-2);
-    font-size: var(--ui-small-fs); text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    font-size: var(--ui-small-fs);
   }
   /* the collapsible header — folded hides the description/tags and
      dims the background to a compact bar */
-  .hi-head.folded .hi-head-bg { opacity: 0.25; }
+  .hi-head.folded .hi-head-bg, .hi-head.folded .hi-head-scrim { opacity: 0.25; }
   .hi-head.folded .hi-head-body { min-height: 0; padding: 10px 14px 8px; }
   .hi-head.folded .hi-desc, .hi-head.folded .hi-chips,
   .hi-head.folded .hi-meta { display: none; }
   .hi-body { flex: 1 1 auto; min-height: 0; }
   .hi-body .fmt { font-size: var(--ui-fs); }
+  /* v0.58 (pt 8): the payload view toggle */
+  .hi-viewrow { display: flex; margin: 0 0 10px; }
+  .hi-viewseg {
+    display: inline-flex; padding: 2px; gap: 2px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+  }
+  .hi-viewseg button {
+    border: none; background: transparent; color: var(--text-3);
+    font-family: inherit; font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    padding: 3px 12px; border-radius: 999px; cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hi-viewseg button.on {
+    color: var(--hub-tone, var(--accent-2));
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.16);
+  }
+  .hi-stages { margin-top: 2px; }
   .hi-fabs {
     position: sticky; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
     margin-top: auto; display: flex; justify-content: flex-end; gap: 10px;
+    z-index: 2;
   }
-  /* v0.52 (user spec item 4): the heart + download fabs BIGGER */
+  /* v0.58 (VLM polish): the soft DOCK — content fades out under the fabs
+     instead of hard-cutting beneath them. */
+  .hi-fabs::before {
+    content: ''; position: absolute; left: -14px; right: -14px;
+    top: -26px; bottom: -12px; z-index: -1; pointer-events: none;
+    background: linear-gradient(to bottom,
+      rgba(var(--bg-panel-rgb), 0) 0%,
+      rgba(var(--bg-panel-rgb), 0.82) 62%,
+      rgba(var(--bg-panel-rgb), 0.9) 100%);
+    border-radius: 20px;
+  }
+  /* v0.58 (pt 7): the fabs — round, OPAQUE, ~2× the visual weight of the
+     old 54px squares. Real IconLib glyphs; the heart fills + goes solid
+     err when on (opaque like an endorsement). */
   .hi-fab {
-    width: 54px; height: 54px; border-radius: 16px; background: var(--surface-2);
-    border: 1px solid var(--border-strong); color: var(--text-1); font-size: 22px;
-    cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    width: 62px; height: 62px; border-radius: 50%; background: var(--surface-2);
+    border: 1.5px solid var(--border-strong); color: var(--text-1);
+    cursor: pointer; box-shadow: 0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
     display: flex; align-items: center; justify-content: center;
     font-family: inherit; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+    transition: transform 0.14s ease;
   }
-  .hi-fab:active { background: var(--surface-3); }
-  .hi-fab:disabled { opacity: 0.4; cursor: not-allowed; }
+  .hi-fab:active { transform: scale(0.92); background: var(--surface-3); }
+  .hi-fab .icl { display: block; }
   .hi-fab.on {
-    color: var(--err); border-color: rgba(var(--err-rgb), 0.5);
-    background: rgba(var(--err-rgb), 0.12);
+    color: var(--on-accent, #fff); border-color: var(--err);
+    background: var(--err);
+  }
+  .hi-fab.locked { opacity: 0.55; }
+  .hi-fab--use {
+    color: var(--on-accent, #fff); border-color: transparent;
+    background: var(--accent);
   }
 
   /* ── publish + the HF connect flow (hubpublish.js) ───────────────── */

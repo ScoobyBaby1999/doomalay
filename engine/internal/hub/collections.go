@@ -39,6 +39,11 @@ type CollectionSummary struct {
         Downloads int            `json:"downloads"` // Σ member downloads
         ByType    map[string]int `json:"byType"`    // members per library type
         UpdatedAt string         `json:"updatedAt"` // newest member update
+        // v0.58 (user spec pt 2): the bunch's card ART — the curated override
+        // for known bunches, else the newest member's card design (any
+        // publisher brands their own bunch by giving their items a look).
+        // Zero value = the client paints its deterministic hash gradient.
+        Design Design `json:"design"`
 }
 
 // Collections derives every collection bunch across all registered
@@ -53,6 +58,10 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                 icons map[string]int
                 names []string
                 tags  map[string]int // v0.56: first-tag votes across members
+                // v0.58: the newest member carrying a usable card design — the
+                // bunch card's art when no curated override exists.
+                bestDesign   Design
+                bestDesignAt int64
         }
         bunches := map[string]*agg{}
 
@@ -90,6 +99,12 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         if ParseTime(it.UpdatedAt) > ParseTime(a.sum.UpdatedAt) {
                                 a.sum.UpdatedAt = it.UpdatedAt
                         }
+                        // v0.58: track the NEWEST member that carries a usable
+                        // design — that's the bunch's inherited look.
+                        if usableDesign(it.Design) && ParseTime(it.UpdatedAt) > a.bestDesignAt {
+                                a.bestDesignAt = ParseTime(it.UpdatedAt)
+                                a.bestDesign = it.Design
+                        }
                 }
         }
 
@@ -124,6 +139,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                 }
                 a.sum.Tag = bestTag
+                a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
                 out = append(out, a.sum)
         }
         sort.SliceStable(out, func(i, j int) bool {
@@ -170,4 +186,32 @@ func (s *Service) CollectionItems(id string) ([]CollectionMembers, error) {
                 }
         }
         return out, nil
+}
+
+// usableDesign reports whether a design can paint a card (a gradient with
+// stops, or a PNG). Zero/"none" designs don't count.
+func usableDesign(d Design) bool {
+        return (d.Kind == "gradient" && len(d.Colors) > 0) || d.Kind == "png"
+}
+
+// builtinBunchDesigns — curated art for known bunches (v0.58 user spec pt 2:
+// "let's make the superpowers bundle have a random color + random gradient
+// of your choosing"). superpowers-obra, the flagship port, wears a hot mesh.
+var builtinBunchDesigns = map[string]Design{
+        "superpowers-obra": {
+                Kind:   "gradient",
+                Colors: []string{"#f59e0b", "#ef4444", "#7c3aed"},
+                Dir:    "mesh",
+        },
+}
+
+// bunchDesign resolves a bunch's card art: the curated override wins, else
+// the newest member's card design (how any user brands their own bundle),
+// else the zero Design — the client then paints its deterministic hash
+// gradient from the bunch id, so EVERY bundle has stable art.
+func bunchDesign(id string, newest Design) Design {
+        if d, ok := builtinBunchDesigns[id]; ok {
+                return d
+        }
+        return newest
 }

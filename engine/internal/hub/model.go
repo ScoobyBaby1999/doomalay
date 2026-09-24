@@ -9,6 +9,7 @@ package hub
 import (
         "crypto/sha256"
         "encoding/hex"
+        "encoding/json"
         "regexp"
         "strings"
         "time"
@@ -50,7 +51,25 @@ type Item struct {
         // collection render as ONE grouped listing that opens the members.
         Icon        string   `json:"icon"`
         Collection  string   `json:"collection"`
+        // v0.58 (user spec pt 10): templates carry a deterministic stage count
+        // — auto-counted from the payload's stages[] at scan/publish time, or
+        // the manual override from the publish form. 0 = unknown (never shown).
+        StageCount int      `json:"stageCount,omitempty"`
         File        string   `json:"file"` // in-repo payload path ("items/<id><ext>")
+}
+
+// CountStages deterministically counts a TEMPLATE payload's stages: a JSON
+// body carrying a "stages" array (the superpowers/brain shape) counts its
+// entries; markdown-only templates return 0 = unknown (the publish form's
+// manual field covers those — v0.58 user spec pt 10).
+func CountStages(payload string) int {
+        var doc struct {
+                Stages []json.RawMessage `json:"stages"`
+        }
+        if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &doc); err != nil {
+                return 0
+        }
+        return len(doc.Stages)
 }
 
 // LocalState is the per-user overlay the engine keeps in hub_items (never

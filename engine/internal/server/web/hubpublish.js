@@ -43,6 +43,20 @@
 
   var MAX_TAGS = 15, MAX_TAG_LEN = 24; // the engine's caps — mirrored UI-side
 
+  // v0.58 (user spec pt 11): per-type payload LABELS + placeholders. Skills
+  // are .md (the Claude SKILL.md format — frontmatter + instructions body);
+  // templates are stage-JSON; themes are .doomtheme bundles. The old form
+  // labeled everything but personas "(.json)".
+  function payloadExt(type) {
+    return { persona: '.md', skill: '.md', template: '.json', theme: '.doomtheme' }[type] || '.json';
+  }
+  function payloadPlaceholder(type) {
+    if (type === 'persona') return 'the persona markdown — the text the model receives';
+    if (type === 'skill') return 'the skill markdown — SKILL.md-style: name + description frontmatter, then the instructions body (one file — scripts can\u2019t ride the hub payload)';
+    if (type === 'template') return 'the template JSON — {"name", "stages": [{name, role, instructions}\u2026], "markdown"}';
+    return 'the theme bundle JSON — prefills from your current look, or export one from Colors · Import / Export Theme';
+  }
+
   var cur = null; // { panel, type, name, desc, tags, design:{kind,spec}, pngBase64, payload, folds, focus }
 
   function esc(s) {
@@ -136,26 +150,52 @@
       } catch (e) { /* the form just starts empty */ }
     }
     var GU = window.GradientUI || { random: function () { return ['var(--accent)', 'var(--accent-2)']; } };
+    // v0.58 (pt 12): RE-PUBLISH prefill — the edit fab sends the item's
+    // info + card visuals + payload; the dirty guard blocks unedited posts.
+    var preDesign = { kind: 'none', spec: { colors: GU.random(), dir: 'auto' } };
+    var pd = prefill.design;
+    if (pd && pd.kind === 'gradient' && pd.colors && pd.colors.length) {
+      preDesign = { kind: 'gradient', spec: { colors: pd.colors.slice(), dir: pd.dir || 'auto', angle: pd.angle || 0, tex: pd.tex || '' } };
+    } else if (pd && pd.kind === 'png') {
+      // keep the image segment selected; the repo's existing png stays
+      // unless a new one is picked (an empty pngBase64 reuses it)
+      preDesign = { kind: 'image', spec: { colors: GU.random(), dir: 'auto' } };
+    }
     cur = {
       panel: panel,
       type: type || 'persona',
       name: prefill.name || '',
       desc: prefill.desc || '',
-      tags: [],
+      tags: (prefill.tags || []).slice(),
       // v0.52 (user spec items 1+3): the optional card icon (the picker
       // grid below) + the optional collection bunch this item joins.
       icon: prefill.icon || '',
       collection: prefill.collection || '',
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
-      design: { kind: 'none', spec: { colors: GU.random(), dir: 'auto' } },
+      design: preDesign,
       pngBase64: '',
       payload: prefill.payload || '',
+      // v0.58: the manual stage override (templates) + the edit origin
+      stageCount: prefill.stageCount || 0,
+      editOf: prefill.editOf || null,
       folds: { details: false, design: false },       // sections start open
       focus: false                                    // payload focus mode
     };
+    cur._baseline = snapshot(); // the dirty guard's reference point
     panel.pushView(buildView());
   }
+
+  // v0.58 (pt 12): the re-publish dirty guard — what the form started as.
+  function snapshot() {
+    var c = cur;
+    return JSON.stringify({
+      name: c.name, desc: c.desc, tags: c.tags.slice().sort(), icon: c.icon,
+      collection: c.collection, design: designOut(), pngBase64: c.pngBase64,
+      payload: c.payload, stageCount: c.stageCount || 0
+    });
+  }
+  function isDirty() { return !cur || !cur._baseline || snapshot() !== cur._baseline; }
 
   function buildView() {
     return view('publish · ' + cur.type, function () { return renderHTML(); },
@@ -239,8 +279,8 @@
             '<div class="pv-section-label">icon <span class="hp-opt">optional</span></div>' +
             (iconGrid || '<p class="pv-hint" style="margin:0">the icon library is not available</p>') +
             '<div class="pv-section-label">bunch / collection <span class="hp-opt">optional</span></div>' +
-            '<input id="hp-collection" class="pv-input" placeholder="e.g. superpowers-obra" value="' + escAttr(c.collection) + '">' +
-            '<p class="pv-hint" style="margin:4px 0 0">items sharing a bunch id render as ONE grouped listing — anyone\u2019s items can join a bunch.</p>' +
+            '<input id="hp-collection" class="pv-input" placeholder="e.g. my-toolkit" value="' + escAttr(c.collection) + '">' +
+            '<p class="pv-hint" style="margin:4px 0 0">items sharing a bunch id render as ONE grouped listing — the bundle card wears the newest member\u2019s card design, so give your items a look to brand it.</p>' +
           '</div>' +
         '</div>' +
 
@@ -262,22 +302,46 @@
 
         '<div class="hp-sec hp-payload-sec" id="hp-sec-payload">' +
           '<div class="hp-sec-bar">' +
-            '<span class="hp-sec-title">payload' + (c.type === 'persona' ? ' (.md)' : ' (.json)') +
-              ' <span class="hp-star">*</span></span>' +
+            '<span class="hp-sec-title">payload (' + payloadExt(c.type) + ') <span class="hp-star">*</span></span>' +
             '<button type="button" class="hp-focus-btn" id="hp-focus" title="grow the payload to own the screen">' +
               (c.focus ? '⤡ collapse' : '⤢ focus') + '</button>' +
           '</div>' +
           '<div class="hp-sec-body">' +
+            (c.type === 'template'
+              ? '<div class="pv-section-label"># stages <span class="hp-opt">optional — blank = auto-count the payload\u2019s stages[]</span></div>' +
+                '<input id="hp-stages" class="pv-input" type="number" min="0" max="99" inputmode="numeric"' +
+                  ' placeholder="auto" value="' + (c.stageCount > 0 ? c.stageCount : '') + '">' +
+                '<div class="hp-stagehint" id="hp-stagehint">' + stageHint() + '</div>'
+              : '') +
             '<textarea id="hp-payload" class="hp-textarea hp-payload" placeholder="' +
-              (c.type === 'persona' ? 'the persona markdown — the text the model receives' : 'the template JSON') + '">' +
+              escAttr(payloadPlaceholder(c.type)) + '">' +
               esc(c.payload) + '</textarea>' +
           '</div>' +
         '</div>' +
 
-        '<button id="hp-publish" class="pv-btn pv-btn-primary" style="width:100%">⤴ publish to the hub</button>' +
+        '<button id="hp-publish" class="pv-btn pv-btn-primary"' +
+          (c.editOf && !isDirty() ? ' disabled' : '') + ' style="width:100%">' +
+          (c.editOf ? '⤳ publish the update' : '⤴ publish to the hub') + '</button>' +
+        (c.editOf ? '<p class="hp-edithint" id="hp-edithint">' +
+          (isDirty() ? 'edited — ready to re-publish over <b>' + esc(c.editOf.name || c.editOf.id) + '</b>'
+                     : 'make an edit first — re-publishing ' + esc(c.editOf.name || c.editOf.id) + ' unchanged is blocked') +
+          '</p>' : '') +
         '<div class="hp-err" id="hp-err"></div>' +
       '</div>'
     );
+  }
+
+  // v0.58 (pt 10): the live stage count hint under a template payload.
+  function stageHint() {
+    var n = countStages(cur.payload);
+    return n ? '~' + n + ' stages detected in the payload' : 'no stages[] detected — the count shows only when set';
+  }
+  function countStages(text) {
+    try {
+      var raw = JSON.parse(String(text || ''));
+      if (raw && typeof raw === 'object' && Array.isArray(raw.stages)) return raw.stages.length;
+    } catch (e) {}
+    return 0;
   }
 
   // the preview strip — the exact css the published card will render
@@ -301,6 +365,47 @@
     return 'background-image:linear-gradient(135deg,' + colors.join(',') + ')';
   }
 
+  // v0.58 (pt 12): the dirty guard's live paint — the publish CTA enables
+  // only once an edit actually happened (re-publish mode).
+  function dirtyPaint() {
+    if (!cur || !cur.panel || !cur.panel.bodyEl) return;
+    var btn = cur.panel.bodyEl.querySelector('#hp-publish');
+    var hint = cur.panel.bodyEl.querySelector('#hp-edithint');
+    if (!cur.editOf) return;
+    var dirty = isDirty();
+    if (btn) btn.disabled = !dirty;
+    if (hint) {
+      hint.innerHTML = dirty
+        ? 'edited — ready to re-publish over <b>' + esc(cur.editOf.name || cur.editOf.id) + '</b>'
+        : 'make an edit first — re-publishing ' + esc(cur.editOf.name || cur.editOf.id) + ' unchanged is blocked';
+    }
+  }
+
+  // v0.58 (user spec pt 9): THE SCROLL-SAFE REBUILD — every mid-edit
+  // re-render (design shape changes, tag adds, rerolls, crops) keeps the
+  // scroll position AND the focused input + caret (the values live in
+  // `cur` via the input listeners, so nothing else is lost).
+  function rebuild() {
+    if (!cur || !cur.panel) return;
+    var body = cur.panel.bodyEl;
+    var ae = document.activeElement, aeId = null, aePos = -1;
+    if (ae && body && body.contains(ae) && ae.id) {
+      aeId = ae.id;
+      try { aePos = ae.selectionStart; } catch (e) { aePos = -1; }
+    }
+    cur.panel.replaceView(buildView(), { keepScroll: true });
+    if (aeId) {
+      var again = body.querySelector('#' + aeId);
+      if (again) {
+        try {
+          again.focus();
+          if (aePos >= 0 && again.setSelectionRange) again.setSelectionRange(aePos, aePos);
+        } catch (e) {}
+      }
+    }
+    dirtyPaint();
+  }
+
   // ── wiring ────────────────────────────────────────────────────────
   function wire(el) {
     if (!cur) return;
@@ -309,15 +414,26 @@
     // live state harvest (the view re-renders on segment switches — the
     // form's values survive in `cur`)
     var name = el.querySelector('#hp-name');
-    if (name) name.addEventListener('input', function () { c.name = name.value; });
+    if (name) name.addEventListener('input', function () { c.name = name.value; dirtyPaint(); });
     var desc = el.querySelector('#hp-desc');
-    if (desc) desc.addEventListener('input', function () { c.desc = desc.value; });
+    if (desc) desc.addEventListener('input', function () { c.desc = desc.value; dirtyPaint(); });
     var payload = el.querySelector('#hp-payload');
-    if (payload) payload.addEventListener('input', function () { c.payload = payload.value; });
+    if (payload) payload.addEventListener('input', function () {
+      c.payload = payload.value;
+      var sh = el.querySelector('#hp-stagehint');
+      if (sh) sh.textContent = stageHint();
+      dirtyPaint();
+    });
+    // v0.58 (pt 10): the manual stage override (templates — blank = auto)
+    var stagesIn = el.querySelector('#hp-stages');
+    if (stagesIn) stagesIn.addEventListener('input', function () {
+      c.stageCount = parseInt(stagesIn.value, 10) || 0;
+      dirtyPaint();
+    });
 
     // v0.52: the bunch field + the icon picker grid (tap toggles; "—" = none)
     var coll = el.querySelector('#hp-collection');
-    if (coll) coll.addEventListener('input', function () { c.collection = coll.value; });
+    if (coll) coll.addEventListener('input', function () { c.collection = coll.value; dirtyPaint(); });
     el.querySelectorAll('[data-icn]').forEach(function (b) {
       b.addEventListener('click', function () {
         c.icon = b.getAttribute('data-icn') || '';
@@ -370,7 +486,7 @@
     el.querySelectorAll('[data-untag]').forEach(function (b) {
       b.addEventListener('click', function () {
         c.tags.splice(parseInt(b.getAttribute('data-untag'), 10) || 0, 1);
-        c.panel.replaceView(buildView());
+        rebuild();
       });
     });
 
@@ -386,7 +502,7 @@
         }
         if (k !== 'image') c.pngBase64 = '';
         c.design.kind = k;
-        c.panel.replaceView(buildView());
+        rebuild();
       });
     });
 
@@ -402,7 +518,7 @@
           var pv = el.querySelector('#hp-preview');
           if (pv) pv.setAttribute('style', previewBackground());
         },
-        rebuild: function () { c.panel.replaceView(buildView()); }
+        rebuild: function () { rebuild(); }
       });
     }
 
@@ -415,7 +531,7 @@
       var spec = c.design.spec || (c.design.spec = {});
       spec.colors = rnd;
       if (!spec.dir) spec.dir = 'auto';
-      c.panel.replaceView(buildView());
+      rebuild();
     });
 
     // the image picker — CropUI (drag to crop, original-pixel output)
@@ -437,7 +553,7 @@
           maxEdge: 1024,      // clarity kept — never stretched to fit
           onDone: function (b64, meta) {
             c.pngBase64 = b64;
-            c.panel.replaceView(buildView());
+            rebuild();
             toast('cropped ' + meta.width + '×' + meta.height + ' at full clarity');
           },
           onErr: function (msg) {
@@ -452,7 +568,7 @@
     var rmImg = el.querySelector('#hp-rm-img');
     if (rmImg) rmImg.addEventListener('click', function () {
       c.pngBase64 = '';
-      c.panel.replaceView(buildView());
+      rebuild();
     });
 
     // PUBLISH
@@ -466,7 +582,7 @@
     if (cur.tags.indexOf(t) >= 0) return; // dup — quiet
     if (cur.tags.length >= MAX_TAGS) { toast(MAX_TAGS + ' tags max'); return; }
     cur.tags.push(t);
-    cur.panel.replaceView(buildView());
+    rebuild();
   }
 
   // what the engine receives: "none" sends the generated gradient (the
@@ -494,6 +610,14 @@
     var errEl = cur.panel.bodyEl.querySelector('#hp-err');
     var btn = cur.panel.bodyEl.querySelector('#hp-publish');
     if (errEl) errEl.textContent = '';
+    // v0.58 (pt 12): the re-publish dirty guard — an unedited update is
+    // blocked with the reason inline.
+    if (cur.editOf && !isDirty()) {
+      if (errEl) errEl.textContent = 'make an edit first — re-publishing ' +
+        (cur.editOf.name || cur.editOf.id) + ' unchanged is blocked';
+      dirtyPaint();
+      return;
+    }
     if (btn) { btn.disabled = true; btn.textContent = 'publishing…'; }
     api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', {
       name: cur.name,
@@ -503,10 +627,11 @@
       payload: cur.payload,
       pngBase64: cur.pngBase64 || '',
       icon: cur.icon || '',
-      collection: cur.collection || ''
+      collection: cur.collection || '',
+      stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0
     }).then(function (d) {
       var item = d.item, repo = d.repo;
-      toast('published to ' + repo);
+      toast(cur.editOf ? ('updated — ' + item.name) : ('published to ' + repo));
       if (window.Hub) {
         window.Hub.markDownloaded(cur.type, item.repo, item.id);
         window.Hub.markStale(cur.type);
@@ -517,7 +642,7 @@
       panel.popView();                  // drop the publish form…
       window.HubItem.open(type, item, { payload: payload }); // …straight into the detail
     }).catch(function (e) {
-      if (btn) { btn.disabled = false; btn.textContent = '⤴ publish to the hub'; }
+      if (btn) { btn.disabled = false; btn.textContent = cur && cur.editOf ? '⤳ publish the update' : '⤴ publish to the hub'; }
       if (e.status === 401) {
         openConnect();                  // the form survives underneath
         return;

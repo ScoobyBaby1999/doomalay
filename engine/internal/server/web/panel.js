@@ -184,19 +184,32 @@
 
     // Push a view over whatever is showing. The first push stashes the
     // root; further pushes just stack (persona list → editor → trigger).
+    // v0.58 (user spec pt 9): the covered view's scroll position is
+    // snapshotted onto the view object so popView() can restore it —
+    // opening a card detail + tapping ‹ no longer jumps to the top.
     pushView(view) {
       if (!view) return;
       if (!this.viewStack.length) this._stashRoot();
+      else {
+        var prev = this.viewStack[this.viewStack.length - 1];
+        if (prev && typeof prev._scrollTop !== 'number') prev._scrollTop = this.bodyEl.scrollTop;
+      }
       this.viewStack.push(view);
       this._renderTopView();
     }
 
     // Re-render the current view in place (quick updates — the memory
     // ladder cycling, placeholder adds, mode pill refreshes).
-    replaceView(view) {
+    // v0.58: opts.keepScroll preserves the scroll offset across the
+    // re-render (the publish form's live edits); default stays reset.
+    replaceView(view, opts) {
       if (!this.viewStack.length) return this.pushView(view);
+      var keep = 0;
+      if (opts && opts.keepScroll) keep = this.bodyEl.scrollTop;
       if (view) this.viewStack[this.viewStack.length - 1] = view;
       this._renderTopView();
+      if (keep) this.bodyEl.scrollTop = keep;
+      return true;
     }
 
     // The view currently on top (null while the root content shows) —
@@ -213,7 +226,19 @@
       if (!this.viewStack.length) return false;
       var v = this.viewStack.pop();
       if (v && v.onClose) { try { v.onClose(); } catch (e) { console.error('view onClose', e); } }
-      if (this.viewStack.length) { this._renderTopView(); return true; }
+      if (this.viewStack.length) {
+        var back = this.viewStack[this.viewStack.length - 1];
+        var restore = typeof back._scrollTop === 'number' ? back._scrollTop : null;
+        this._renderTopView();
+        // v0.58: restore the revealed view's scroll snapshot (rAF — the
+        // re-rendered content needs a frame to lay out before the offset
+        // can stick).
+        if (restore !== null) {
+          var body = this.bodyEl, y = restore;
+          requestAnimationFrame(function () { try { body.scrollTop = y; } catch (e) {} });
+        }
+        return true;
+      }
       this._restoreRoot();
       return true;
     }
