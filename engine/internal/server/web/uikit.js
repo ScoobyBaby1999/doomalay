@@ -68,25 +68,29 @@
     if (typeof document === 'undefined') return;
     if (document.getElementById('uikit-v2-style')) return;
     var css = [
-      // live preview bar (~36px, rounded 10px)
-      '.gr-preview-bar{height:36px;border-radius:10px;margin-bottom:8px;',
+      // live preview bar — v0.54 polish: taller, even radius
+      '.gr-preview-bar{height:40px;border-radius:12px;margin-bottom:10px;',
       'border:1px solid var(--border);background-repeat:no-repeat;',
-      'background-size:cover;background-position:center;flex-shrink:0}',
+      'background-size:cover;background-position:center;flex-shrink:0;',
+      'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04)}',
       // shared row wrapper for the v2 control rows
       '.gr-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
       '.gr-row-pat{margin-top:6px}',
       '.gr-row-label{font-size:var(--ui-micro-fs);color:var(--text-3);',
       'font-weight:700;letter-spacing:.05em;text-transform:uppercase;',
       'margin-right:2px;user-select:none}',
-      // dir + pattern pills — compact siblings of the .gr-mini look
-      '.gr-dir{border:1px solid var(--border);background:transparent;',
-      'color:var(--text-3);border-radius:8px;padding:4px 10px;',
+      // dir + pattern pills — v0.54: the active state is the app's
+      // accent tint (matching .dx-pill[data-on]) instead of flat surface
+      '.gr-dir{border:1px solid var(--border);background:var(--surface-2);',
+      'color:var(--text-3);border-radius:9px;padding:4px 10px;',
       'font-size:calc(var(--ui-small-fs) - 2px);min-height:30px;',
       'font-family:inherit;cursor:pointer;line-height:1.2;',
+      'transition:border-color .15s,color .15s,background .15s;',
       'touch-action:manipulation;-webkit-tap-highlight-color:transparent}',
       '.gr-dir:hover{border-color:var(--border-strong);color:var(--text-2)}',
       '.gr-dir[data-on="1"]{border-color:var(--accent);',
-      'background:var(--surface-3);color:var(--text-1)}',
+      'background:rgba(var(--accent-rgb),0.14);color:var(--text-1);',
+      'font-weight:600}',
       // the angle row (only rendered for dir === 'diag')
       '.gr-row-angle{gap:8px}',
       '.gr-angle{flex:1;min-width:110px;accent-color:var(--accent)}',
@@ -95,7 +99,7 @@
       'text-align:right}',
       // the texture row (40px thumb + pick/remove)
       '.gr-tex-thumb{display:inline-block;width:40px;height:40px;',
-      'border-radius:8px;border:1px solid var(--border);',
+      'border-radius:10px;border:1px solid var(--border);',
       'background-size:cover;background-position:center;',
       'background-repeat:no-repeat;flex-shrink:0}',
       // pinch-zoom needs the browser's gestures switched OFF here
@@ -238,6 +242,43 @@
     return 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',' + av + ')';
   }
 
+  // v0.54: linear hex interpolation (mesh long-palette spot sampling + the
+  // canvas patternColorAt's shared geometry). Pure, total: bad hexes pass a
+  // through unchanged (same contract as darken/lighten).
+  function mixHex(a, b, t) {
+    var ra = hexToRgb(a), rb = hexToRgb(b);
+    if (!ra || !rb) return a;
+    t = Math.max(0, Math.min(1, t));
+    function h2(v) {
+      var s = Math.round(v).toString(16);
+      return s.length < 2 ? '0' + s : s;
+    }
+    return '#' + h2(ra.r + (rb.r - ra.r) * t) +
+      h2(ra.g + (rb.g - ra.g) * t) + h2(ra.b + (rb.b - ra.b) * t);
+  }
+
+  // v0.54: the MESH spot table — the first four are the original v0.44 pins
+  // (selftests pin them byte-for-byte); entries 5–8 widen the field for
+  // longer palettes so EVERY stop lands on a spot. Shared with app.js's
+  // canvas painter (paintBackgroundInto mirrors it) so the background art
+  // and the dot/line sampling agree.
+  var MESH_SPOTS = [
+    { x: 20, y: 25, f: 55 }, { x: 80, y: 15, f: 50 },
+    { x: 75, y: 80, f: 55 }, { x: 15, y: 85, f: 50 },
+    { x: 55, y: 8, f: 45 }, { x: 38, y: 55, f: 50 },
+    { x: 92, y: 58, f: 48 }, { x: 8, y: 45, f: 52 }
+  ];
+
+  // v0.54: sample a palette as ONE hex at t∈[0,1] (across all stops).
+  function paletteAt(colors, t) {
+    if (!colors || !colors.length) return '#000000';
+    if (colors.length === 1) return colors[0];
+    t = Math.max(0, Math.min(1, t));
+    var f = t * (colors.length - 1);
+    var i = Math.min(colors.length - 2, Math.floor(f));
+    return mixHex(colors[i], colors[i + 1], f - i);
+  }
+
   var GradientUI = {
     MAX: MAX_COLORS,
 
@@ -276,12 +317,24 @@
       return spec;
     },
 
-    // ── css(v) → the background-image value ─────────────────────────
+    // ── css(v, opts) → the background-image value ─────────────────
     // 1 color + a simple dir + no tex → the BARE hex (legacy callers
     // paint with background-color). Everything else → the recipe
     // string; a tex appends ', url("<tex>")' as the bottom layer (a
     // 1-color simple dir becomes a flat 2-stop gradient underneath).
-    css: function (v) {
+    //
+    // v0.54 (user spec: "some items don't follow colors as well as
+    // others… mesh, checkers… changing the options doesn't seem to
+    // affect the coloring"): every PATTERN recipe now consumes the FULL
+    // palette (stops 5–15 no longer ignored) and css() takes
+    // opts.scale — a px multiplier for the repeating recipes so small
+    // previews (the collapsed-row banner, 64×18) can show several
+    // pattern periods instead of one clipped cell.
+    css: function (v, opts) {
+      opts = opts || {};
+      var scale = (typeof opts.scale === 'number' && isFinite(opts.scale)
+        && opts.scale > 0) ? opts.scale : 1;
+      function px(n) { return Math.max(1, Math.round(n * scale)); }
       var s = GradientUI.norm(v);
       var c = s.colors;
       var dir = s.dir;
@@ -320,13 +373,18 @@
           break;
         }
         case 'mesh': {
-          // 4 soft radials cycling the palette over a base linear
-          var spots = ['at 20% 25%', 'at 80% 15%', 'at 75% 80%', 'at 15% 85%'];
-          var fades = ['55%', '50%', '55%', '50%'];
+          // v0.54: the spot count follows the palette (4–8), spots cycle
+          // the FULL palette, and palettes longer than the table sample
+          // by interpolation — every stop lands on the art.
+          var k = Math.max(4, Math.min(MESH_SPOTS.length, c.length));
           var parts = [];
-          for (var i = 0; i < 4; i++) {
-            parts.push('radial-gradient(' + spots[i] + ', ' +
-              c[i % c.length] + ' 0px, transparent ' + fades[i] + ')');
+          for (var i = 0; i < k; i++) {
+            var mcol = (c.length <= MESH_SPOTS.length)
+              ? c[i % c.length]
+              : paletteAt(c, i / (k - 1));
+            parts.push('radial-gradient(at ' + MESH_SPOTS[i].x + '% ' +
+              MESH_SPOTS[i].y + '%, ' + mcol + ' 0px, transparent ' +
+              MESH_SPOTS[i].f + '%)');
           }
           var base = c.length > 1 ? c[c.length - 1] : darken(c[0], 20);
           parts.push('linear-gradient(' + base + ')');
@@ -334,32 +392,87 @@
           break;
         }
         case 'pat-navy': {
-          var n2 = c.length > 1 ? c[1] : darken(c[0], 18);
-          layer = 'repeating-linear-gradient(45deg, ' +
-            c[0] + ' 0 14px, ' + n2 + ' 14px 28px)';
+          // v0.54: stripes cycle ALL stops (period = n·stripeWidth).
+          // seg() keeps the historical '0' (no unit) for the zero bound —
+          // the selftests pin the 2-color string byte-for-byte.
+          function seg(v) { return v === 0 ? '0' : v + 'px'; }
+          var nc = c.length > 1 ? c : [c[0], darken(c[0], 18)];
+          var swid = px(14);
+          var nstops = [];
+          for (var ni = 0; ni < nc.length; ni++) {
+            nstops.push(nc[ni] + ' ' + seg(ni * swid) + ' ' + seg((ni + 1) * swid));
+          }
+          layer = 'repeating-linear-gradient(45deg, ' + nstops.join(', ') + ')';
           break;
         }
         case 'pat-pinstripe': {
-          var p2 = c.length > 1 ? c[1] : lighten(c[0], 18);
-          layer = 'repeating-linear-gradient(90deg, transparent 0 18px, ' +
-            rgba(c[0], 0.35) + ' 18px 19px), ' +
-            'linear-gradient(160deg, ' + c[0] + ', ' + p2 + ')';
+          var ps = px(18);
+          if (c.length <= 2) {
+            var p2 = c.length > 1 ? c[1] : lighten(c[0], 18);
+            layer = 'repeating-linear-gradient(90deg, transparent 0 ' + ps + 'px, ' +
+              rgba(c[0], 0.35) + ' ' + ps + 'px ' + (ps + 1) + 'px), ' +
+              'linear-gradient(160deg, ' + c[0] + ', ' + p2 + ')';
+          } else {
+            // v0.54: each palette stop (from the 2nd on) gets its own
+            // thin stripe layer, offset so the stripes interleave — the
+            // base sweeps first → last. Capped at 6 stripe layers.
+            var stripes = [];
+            for (var pi = 1; pi < c.length && pi <= 6; pi++) {
+              var poff = ps + (pi - 1) * (ps + 1);
+              stripes.push('repeating-linear-gradient(90deg, transparent 0 ' +
+                poff + 'px, ' + rgba(c[pi], 0.35) + ' ' + poff + 'px ' +
+                (poff + 1) + 'px)');
+            }
+            layer = stripes.join(', ') + ', linear-gradient(160deg, ' +
+              c[0] + ', ' + c[c.length - 1] + ')';
+          }
           break;
         }
         case 'pat-gingham': {
-          var g2 = c.length > 1 ? c[1] : c[0];
-          var g3 = c.length > 2 ? c[2] : lighten(c[0], 30);
-          layer = 'repeating-linear-gradient(0deg, ' + rgba(c[0], 0.55) +
-            ' 0 40px, transparent 40px 80px), ' +
-            'repeating-linear-gradient(90deg, ' + rgba(g2, 0.35) +
-            ' 0 40px, transparent 40px 80px), ' +
-            'linear-gradient(' + g3 + ')';
+          // v0.54: horizontal bands cycle the EVEN stops, vertical the
+          // ODD stops (≤3 stops = the original exact recipe: c0 bands, c1
+          // bands, base c2), base = the last stop once the palette
+          // outgrows the classic trio.
+          var band = px(40);
+          var evenC = [c[0]], oddC = [c.length > 1 ? c[1] : c[0]];
+          if (c.length > 3) {
+            evenC = []; oddC = [];
+            for (var gi = 0; gi < c.length; gi++) {
+              (gi % 2 === 0 ? evenC : oddC).push(c[gi]);
+            }
+            // the last stop IS the base — keep it out of the band cycles
+            if (evenC[evenC.length - 1] === c[c.length - 1]) evenC.pop();
+            else if (oddC[oddC.length - 1] === c[c.length - 1]) oddC.pop();
+          }
+          function bandLayer(axis, list, alpha) {
+            if (list.length <= 1) {
+              return 'repeating-linear-gradient(' + axis + 'deg, ' +
+                rgba(list[0] || c[0], alpha) + ' 0 ' + band + 'px, transparent ' +
+                band + 'px ' + (band * 2) + 'px)';
+            }
+            var bs = [];
+            for (var bi = 0; bi < list.length; bi++) {
+              bs.push(rgba(list[bi], alpha) + ' ' + (bi * band) + 'px ' +
+                ((bi + 1) * band) + 'px');
+            }
+            return 'repeating-linear-gradient(' + axis + 'deg, ' + bs.join(', ') + ')';
+          }
+          var gBase = c.length > 3 ? c[c.length - 1]
+            : (c.length > 2 ? c[2] : lighten(c[0], 30));
+          layer = bandLayer(0, evenC, 0.55) + ', ' + bandLayer(90, oddC, 0.35) +
+            ', linear-gradient(' + gBase + ')';
           break;
         }
         case 'pat-sunburst': {
-          var s2 = c.length > 1 ? c[1] : lighten(c[0], 18);
-          layer = 'repeating-conic-gradient(from 0deg at 50% 100%, ' +
-            c[0] + ' 0deg 15deg, ' + s2 + ' 15deg 30deg)';
+          // v0.54: rays cycle ALL stops — the wedge shrinks as the
+          // palette grows (2 stops keep the pinned 15° rays).
+          var sc = c.length > 1 ? c : [c[0], lighten(c[0], 18)];
+          var wedge = Math.max(3, Math.round(30 / sc.length));
+          var rays = [];
+          for (var si = 0; si < sc.length; si++) {
+            rays.push(sc[si] + ' ' + (si * wedge) + 'deg ' + ((si + 1) * wedge) + 'deg');
+          }
+          layer = 'repeating-conic-gradient(from 0deg at 50% 100%, ' + rays.join(', ') + ')';
           break;
         }
         case 'pat-checker': {
@@ -374,13 +487,37 @@
           // v0.49.1: SINGLE-QUOTED url — consumers paste css() into HTML
           // style="..." attributes, where a double-quoted url would
           // terminate the attribute (live-caught in the browser redteam).
+          //
+          // v0.54: >2 stops make a QUILT — an n×n cell tile cycling the
+          // palette ((i+j) % n) so every stop appears and the tile stays
+          // seamless (period = n cells). Cycle capped at 8 stops (a 15-stop
+          // checker would need a 240px tile; stops 9+ read as noise at
+          // 16px cells anyway). ≤2 stops = the classic pinned 32px tile.
+          var cell = Math.max(4, Math.round(16 * scale));
+          var cyc = Math.max(2, Math.min(8, c.length));
           var kA = c[0];
           var kB = c.length > 1 ? c[1] : darken(c[0], 18);
-          var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
-            '<rect width="32" height="32" fill="' + kA + '"/>' +
-            '<rect width="16" height="16" fill="' + kB + '"/>' +
-            '<rect x="16" y="16" width="16" height="16" fill="' + kB + '"/>' +
-            '</svg>';
+          var T = cell * cyc;
+          var svg;
+          if (c.length <= 2) {
+            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + T + '" height="' + T + '">' +
+              '<rect width="' + T + '" height="' + T + '" fill="' + kA + '"/>' +
+              '<rect width="' + cell + '" height="' + cell + '" fill="' + kB + '"/>' +
+              '<rect x="' + cell + '" y="' + cell + '" width="' + cell + '" height="' + cell + '" fill="' + kB + '"/>' +
+              '</svg>';
+          } else {
+            var rects = '<rect width="' + T + '" height="' + T + '" fill="' + kA + '"/>';
+            for (var qi = 0; qi < cyc; qi++) {
+              for (var qj = 0; qj < cyc; qj++) {
+                if ((qi + qj) % cyc === 0) continue; // the base rect covers i+j ≡ 0
+                rects += '<rect x="' + (qi * cell) + '" y="' + (qj * cell) +
+                  '" width="' + cell + '" height="' + cell +
+                  '" fill="' + c[(qi + qj) % cyc] + '"/>';
+              }
+            }
+            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + T + '" height="' + T + '">' +
+              rects + '</svg>';
+          }
           layer = "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
           break;
         }
@@ -606,11 +743,33 @@
         }
       }
 
+      // v0.54: the sibling collapsed-row banner (appearance.js rows +
+      // the tweaks view that reuses its builders) — repaints with the
+      // TRUE pattern at banner scale, on EVERY live change AND right
+      // before each rebuild (so even callers that don't re-render show
+      // the fresh pattern immediately). Rows that DO re-render rebuild
+      // the banner from the stored spec anyway — both paths agree.
+      function paintBanner() {
+        var row = el.closest ? el.closest('.color-row-collapsed') : null;
+        if (!row) return;
+        var b = row.querySelector('.color-row-banner');
+        if (!b) return;
+        var cssVal = GradientUI.css(spec, { scale: 0.28 });
+        if (cssVal.charAt(0) === '#') {
+          b.style.backgroundImage = '';
+          b.style.backgroundColor = cssVal;
+        } else {
+          b.style.backgroundColor = '';
+          b.style.backgroundImage = cssVal;
+        }
+      }
+
       // swatch values
       el.querySelectorAll('.gr-color').forEach(function (inp) {
         inp.addEventListener('input', function () {
           colors[parseInt(inp.getAttribute('data-gr'), 10) || 0] = inp.value;
           paintPreview();
+          paintBanner();
           if (h.live) h.live();
         });
       });
@@ -620,6 +779,7 @@
         b.addEventListener('click', function () {
           if (colors.length <= 1) return;
           colors.splice(parseInt(b.getAttribute('data-gr-rm'), 10) || 0, 1);
+          paintBanner();
           if (h.rebuild) h.rebuild();
         });
       });
@@ -629,6 +789,7 @@
       if (add) add.addEventListener('click', function () {
         if (colors.length >= MAX_COLORS) return;
         colors.push(GradientUI.random(1)[0]);
+        paintBanner();
         if (h.rebuild) h.rebuild();
       });
 
@@ -637,6 +798,7 @@
       if (shuf) shuf.addEventListener('click', function () {
         var r = GradientUI.random(colors.length);
         for (var i = 0; i < r.length; i++) colors[i] = r[i];
+        paintBanner();
         if (h.rebuild) h.rebuild();
       });
 
@@ -646,6 +808,7 @@
         var r = GradientUI.random();
         colors.length = 0;
         for (var i = 0; i < r.length; i++) colors.push(r[i]);
+        paintBanner();
         if (h.rebuild) h.rebuild();
       });
 
@@ -656,6 +819,7 @@
           var d = b.getAttribute('data-gr-dir');
           if (!d || d === spec.dir) return;
           spec.dir = d;
+          paintBanner();
           if (h.rebuild) h.rebuild();
         });
       });
@@ -800,6 +964,48 @@
         .indexOf("url('data:image/svg+xml") === 0);
       ok('css.checkerNoShorthandSuffix', G.css({ colors: ['#a', '#b'], dir: 'pat-checker' })
         .indexOf(' 0 0 / ') < 0);
+
+      // v0.54 — the FULL-PALETTE pattern recipes (user spec: mesh/checkers
+      // must follow the colors). Every stop lands on the art now.
+      eq('css.mesh5', G.css({ colors: ['#a', '#b', '#c', '#d', '#e'], dir: 'mesh' }),
+        'radial-gradient(at 20% 25%, #a 0px, transparent 55%), ' +
+        'radial-gradient(at 80% 15%, #b 0px, transparent 50%), ' +
+        'radial-gradient(at 75% 80%, #c 0px, transparent 55%), ' +
+        'radial-gradient(at 15% 85%, #d 0px, transparent 50%), ' +
+        'radial-gradient(at 55% 8%, #e 0px, transparent 45%), ' +
+        'linear-gradient(#e)');
+      var mesh10 = G.css({ colors: ['#a', '#b', '#c', '#d', '#e', '#f', '#g',
+        '#h', '#i', '#j'], dir: 'mesh' });
+      ok('css.mesh10.eightSpots', (mesh10.match(/radial-gradient\(/g) || []).length === 8);
+      ok('css.mesh10.baseLast', mesh10.slice(-19) === 'linear-gradient(#j)');
+      eq('css.navy3', G.css({ colors: ['#a', '#b', '#c'], dir: 'pat-navy' }),
+        'repeating-linear-gradient(45deg, #a 0 14px, #b 14px 28px, #c 28px 42px)');
+      eq('css.sunburst3', G.css({ colors: ['#a', '#b', '#c'], dir: 'pat-sunburst' }),
+        'repeating-conic-gradient(from 0deg at 50% 100%, #a 0deg 10deg, #b 10deg 20deg, #c 20deg 30deg)');
+      eq('css.gingham5', G.css({
+        colors: ['#aaaaaa', '#bbbbbb', '#cccccc', '#dddddd', '#eeeeee'], dir: 'pat-gingham'
+      }),
+        'repeating-linear-gradient(0deg, rgba(170,170,170,.55) 0px 40px, rgba(204,204,204,.55) 40px 80px), ' +
+        'repeating-linear-gradient(90deg, rgba(187,187,187,.35) 0px 40px, rgba(221,221,221,.35) 40px 80px), ' +
+        'linear-gradient(#eeeeee)');
+      var pin3 = G.css({ colors: ['#a', '#b', '#c'], dir: 'pat-pinstripe' });
+      ok('css.pinstripe3.twoStripeLayers',
+        (pin3.match(/repeating-linear-gradient/g) || []).length === 2);
+      ok('css.pinstripe3.baseSweep',
+        pin3.indexOf('linear-gradient(160deg, #a, #c)') >= 0);
+      var quilt = G.css({ colors: ['#a', '#b', '#c'], dir: 'pat-checker' });
+      ok('css.quilt3.tile48', quilt.indexOf(encodeURIComponent('width="48"')) >= 0);
+      ok('css.quilt3.sevenRects', (decodeURIComponent(quilt).match(/<rect /g) || []).length === 7);
+      ok('css.quilt3.cycled', decodeURIComponent(quilt).indexOf('fill="#c"') >= 0);
+
+      // v0.54 — opts.scale shrinks the repeating recipes' px constants
+      // (the collapsed-row banner previews at ~0.28).
+      eq('css.scale.navy', G.css({ colors: ['#a', '#b'], dir: 'pat-navy' }, { scale: 0.5 }),
+        'repeating-linear-gradient(45deg, #a 0 7px, #b 7px 14px)');
+      ok('css.scale.checker', G.css({ colors: ['#a', '#b'], dir: 'pat-checker' }, { scale: 0.5 })
+        .indexOf(encodeURIComponent('width="16"')) >= 0);
+      eq('css.scale.ignoredByGradients', G.css({ colors: ['#a', '#b'], dir: 'h' }, { scale: 0.5 }),
+        'linear-gradient(90deg, #a, #b)');
 
       // tex layering
       eq('css.tex', G.css({ colors: ['#aabbcc', '#ccbbaa'], dir: 'auto', tex: 'data:image/jpeg;base64,ZZ==' }),

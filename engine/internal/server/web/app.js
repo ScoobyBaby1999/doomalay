@@ -165,10 +165,11 @@
       var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
       ctx.strokeStyle = gridPaint(lineSpec, lineFallback);
       ctx.lineWidth = 1;
-      // v0.52: multi-stop line specs paint each line (and, in segment
-      // mode, each segment) with its own sampled color — some lines are
-      // differently colored than others, exactly like the dots below.
-      var lineMulti = validStopsOf(lineSpec).length > 1;
+      // v0.54: pattern-aware per-line sampling — multi-stop line specs
+      // paint each line (and, in segment mode, each segment) at its own
+      // point on the gradient/pattern, mirroring the background's exact
+      // geometry (sweeps, mesh spots, checker cells, stripe bands…).
+      var lineSampler = makePatternSampler(lineSpec, lineFallback);
       ctx.beginPath();
       var lineIdx = 0;
       // v0.49 (user spec: "for grid lines it should change both height
@@ -185,10 +186,7 @@
         var dx = scatterPx * (h1 - 0.5) * 2;
         var rot = rotDeg * (hashCell(ix, 1) - 0.5) * 2;  // radians
         var lwBase = 1 * (1 + sizeFrac * (hashCell(ix, 2) - 0.5) * 2);
-        if (lineMulti) {
-          var lt = 0.6 * ((x + offsetX * scale) / Math.max(1, W + Math.abs(offsetX * scale))) + 0.4 * hashCell(ix, 31);
-          ctx.strokeStyle = specColorAt(lineSpec, lineFallback, Math.abs(lt) % 1);
-        }
+        if (lineSampler) ctx.strokeStyle = lineSampler(x, H / 2);
         ctx.save();
         ctx.translate(x + dx, 0);
         ctx.rotate(rot * Math.PI / 180);
@@ -203,10 +201,7 @@
             var iyS = Math.round((y + offsetY * scale) / scaledGrid);
             var segLen = scaledGrid * (1 + sizeFrac * (hashCell(ix + 5, iyS) - 0.5) * 2);
             var segW = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ix + 9, iyS) - 0.5) * 2));
-            if (lineMulti) {
-              ctx.strokeStyle = specColorAt(lineSpec, lineFallback,
-                (0.5 * (iyS / Math.max(1, H / scaledGrid)) + 0.5 * hashCell(ix + 9, iyS)) % 1);
-            }
+            if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
             ctx.lineWidth = segW;
             ctx.beginPath();
             ctx.moveTo(0, y - segLen / 2);
@@ -223,10 +218,7 @@
         var dy = scatterPx * (h2 - 0.5) * 2;
         var rot2 = rotDeg * (hashCell(1, iy) - 0.5) * 2;
         var lw2Base = 1 * (1 + sizeFrac * (hashCell(2, iy) - 0.5) * 2);
-        if (lineMulti) {
-          var lt2 = 0.6 * ((y + offsetY * scale) / Math.max(1, H + Math.abs(offsetY * scale))) + 0.4 * hashCell(iy, 37);
-          ctx.strokeStyle = specColorAt(lineSpec, lineFallback, Math.abs(lt2) % 1);
-        }
+        if (lineSampler) ctx.strokeStyle = lineSampler(W / 2, y);
         ctx.save();
         ctx.translate(0, y + dy);
         ctx.rotate(rot2 * Math.PI / 180);
@@ -241,10 +233,7 @@
             var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
             var segLen2 = scaledGrid * (1 + sizeFrac * (hashCell(ixS, iy + 5) - 0.5) * 2);
             var segW2 = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ixS, iy + 9) - 0.5) * 2));
-            if (lineMulti) {
-              ctx.strokeStyle = specColorAt(lineSpec, lineFallback,
-                (0.5 * (ixS / Math.max(1, W / scaledGrid)) + 0.5 * hashCell(ixS, iy + 9)) % 1);
-            }
+            if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
             ctx.lineWidth = segW2;
             ctx.beginPath();
             ctx.moveTo(x2 - segLen2 / 2, 0);
@@ -260,11 +249,12 @@
       var dotSpec = specs && specs.dotColor;
       var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
       ctx.fillStyle = gridPaint(dotSpec, dotFallback);
-      // v0.52 (user spec item 7): a multi-stop dot spec colors each dot
-      // at its own point on the gradient — half by where the dot sits on
-      // screen (a diagonal sweep), half by its stable hash (the organic
-      // scatter). Some dots are differently colored than others.
-      var dotMulti = validStopsOf(dotSpec).length > 1;
+      // v0.54: pattern-aware per-dot sampling — each dot picks its color
+      // from the SAME gradient/pattern field the background paints
+      // (sweeps, mesh spots, checker cells, stripe bands, ray sectors…),
+      // world-anchored so panning slides the palette through the lattice
+      // without shimmer.
+      var dotSampler = makePatternSampler(dotSpec, dotFallback);
       const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
       for (let x = startX; x < W; x += scaledGrid) {
         for (let y = startY; y < H; y += scaledGrid) {
@@ -276,11 +266,7 @@
           var jx = scatterPx * (hd - 0.5) * 2;
           var jy = scatterPx * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
           var jr = dotR * (1 + sizeFrac * (hd2 - 0.5) * 2);
-          if (dotMulti) {
-            var posT = 0.5 * (x / Math.max(1, W)) + 0.5 * (y / Math.max(1, H));
-            var dcolT = (0.55 * posT + 0.45 * hashCell(dix + 21, diy + 17)) % 1;
-            ctx.fillStyle = specColorAt(dotSpec, dotFallback, dcolT);
-          }
+          if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
           var jrot = rotDeg * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
           ctx.save();
           ctx.translate(x + jx, y + jy);
@@ -303,20 +289,21 @@
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────
-  // Full-fidelity spec → viewport paint (the reported bug: "the panel
-  // background setting follows the complex gradients and bumpmaps very
-  // poorly and inaccurately"). The background is VIEWPORT-FIXED (it never
-  // scrolls with pan/zoom), so every aesthetic paints directly with
-  // canvas primitives — no tiling math, exact geometry:
-  //   auto/h/v/diag/diag2/radial → the gradient sweeps (as before)
-  //   swirl                       → a REAL conic sweep (createConicGradient,
-  //                                guarded — falls back to solid)
-  //   mesh                        → the base linear + 4 soft radials (multi-pass)
-  //   pat-navy / pinstripe / gingham / sunburst / checker → drawn band-by-band
-  //   tex (the bumpmap)           → the image, cover-fit, then the gradient
-  //                                painted OVER it with globalCompositeOperation
-  //                                'color' — the same blend contract the CSS
-  //                                side uses (background-blend-mode: color)
+  // Full-fidelity spec → COLOR-SPACE tile paint (the reported bug: "the
+  // panel background setting follows the complex gradients and bumpmaps
+  // very poorly and inaccurately"). v0.52: the tile rides a PARALLAX
+  // camera — the background pans at 35% of the grid's rate and zooms at
+  // 35% of the grid's scale (a far plane behind the lattice).
+  // v0.54 (user spec: "the huge scrollable canvas displays the color like
+  // space… but it feels tiled sometimes, we don't want it to feel tiled"):
+  //   · the tile is 2× the viewport (pan period = 4 screens, not 2)
+  //   · zx is CLAMPED ≥ 1 — zooming out never shrinks the tile below the
+  //     viewport (no at-rest double tiles)
+  //   · mesh paints the SAME 8-spot table the CSS recipe uses (every
+  //     palette stop lands, richer field, rarer recurrence)
+  //   · patterns cycle the FULL palette (matching the v0.54 css recipes)
+  //   · textures cover-fit into the bigger tile → the mirror period
+  //     doubles (the Rorschach repeat halves)
   // While a texture is still loading the gradient paints alone; the
   // onload triggers one repaint (update()).
   var texCache = {};   // dataURL → { img, ready }
@@ -358,58 +345,201 @@
   }
 
   // bgGradientPass — the linear/radial/conic sweeps shared by the bg and
-  // (via gridPaint) the strokes. Returns a fillable style or null.
-  function bgGradientPass(stops, dir, angle, gctx) {
+  // (via gridPaint) the strokes. v0.54: parameterized by (w, h) — the
+  // background tile paints at 2× the viewport while gridPaint keeps the
+  // viewport geometry. Returns a fillable style or null.
+  function bgGradientPass(stops, dir, angle, gctx, w, h) {
     gctx = gctx || ctx;
-    if (stops.length < 2 || W <= 0 || H <= 0) return null;
+    w = w || W; h = h || H;
+    if (stops.length < 2 || w <= 0 || h <= 0) return null;
     var g = null;
-    var half = Math.hypot(W, H) / 2;
-    if (dir === 'h') g = gctx.createLinearGradient(0, 0, W, 0);
-    else if (dir === 'v') g = gctx.createLinearGradient(0, 0, 0, H);
-    else if (dir === 'diag2') g = gctx.createLinearGradient(0, 0, W, H);
-    else if (dir === 'radial') g = gctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, half);
+    var half = Math.hypot(w, h) / 2;
+    if (dir === 'h') g = gctx.createLinearGradient(0, 0, w, 0);
+    else if (dir === 'v') g = gctx.createLinearGradient(0, 0, 0, h);
+    else if (dir === 'diag2') g = gctx.createLinearGradient(0, 0, w, h);
+    else if (dir === 'radial') g = gctx.createRadialGradient(w / 2, h * 0.35, 0, w / 2, h * 0.35, half);
     else if (dir === 'swirl') {
       // v0.49: a real conic sweep when the browser has it
       if (typeof ctx.createConicGradient === 'function') {
-        g = gctx.createConicGradient(240 * Math.PI / 180, W * 0.55, H * 0.45);
+        g = gctx.createConicGradient(240 * Math.PI / 180, w * 0.55, h * 0.45);
       } else return null;
     } else { // 'diag' + 'auto'
       var ang = (dir === 'auto' || typeof angle !== 'number') ? 135 : angle;
-      if (ang === 135) g = gctx.createLinearGradient(0, H, W, 0);
+      if (ang === 135) g = gctx.createLinearGradient(0, h, w, 0);
       else {
         var rad = (ang - 135) * Math.PI / 180;
         var c = Math.cos(rad), s = Math.sin(rad);
         var dx = (c + s) / Math.SQRT2, dy = (s - c) / Math.SQRT2;
-        g = gctx.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half, W / 2 + dx * half, H / 2 + dy * half);
+        g = gctx.createLinearGradient(w / 2 - dx * half, h / 2 - dy * half, w / 2 + dx * half, h / 2 + dy * half);
       }
     }
     for (var i = 0; i < stops.length; i++) g.addColorStop(i / (stops.length - 1), stops[i]);
     return g;
   }
 
-  // ── v0.52: per-item gradient sampling (user spec item 7: "when changing
-  // the colors of the grid dots, let's have them follow a gradient like
-  // lines do where some dots are differently colored then others") —
-  // sample the spec's stops at t∈[0,1] so each dot/line picks its own spot
-  // on the gradient. A 1-stop spec stays solid (the common case: zero
-  // per-item cost).
-  function mixHex(a, b, t) {
-    var ma = /^#([0-9a-fA-F]{6})$/.exec(a), mb = /^#([0-9a-fA-F]{6})$/.exec(b);
-    if (!ma || !mb) return a;
-    var na = parseInt(ma[1], 16), nb = parseInt(mb[1], 16);
-    var r = Math.round(((na >> 16) & 255) * (1 - t) + ((nb >> 16) & 255) * t);
-    var g = Math.round(((na >> 8) & 255) * (1 - t) + ((nb >> 8) & 255) * t);
-    var bl = Math.round((na & 255) * (1 - t) + (nb & 255) * t);
-    return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
-  }
-  function specColorAt(spec, fallbackHex, t) {
+  // ── v0.54 THE COLOR SPACE — pattern-aware per-element sampling ────
+  // The v0.52 specColorAt sampled the STOPS positionally but ignored
+  // the dir — switching the dots/lines to mesh/checker/stripes changed
+  // nothing about their coloring (user report: "changing the options
+  // (mesh, bumpmaps, checkers, ext) doesn't seem to affect the coloring
+  // much"). makePatternSampler() mirrors the background painter's
+  // geometry so EVERY option paints the lattice too:
+  //   simple dirs → the sweep projection (bgGradientPass's exact axes)
+  //   swirl → the conic sweep around the tile's focal
+  //   mesh → soft inverse-distance blend of the SAME spot table
+  //   pat-navy → the 45° stripe bands (28px period)
+  //   pat-checker → the cell parity (32px cells, cycle ≤ 8 stops)
+  //   pat-gingham → the two-axis band product (40px bands)
+  //   pat-sunburst → the ray sectors from the bottom-center focal
+  //   pat-pinstripe / tex → the base sweep (a stripe or the bumpmap's
+  //     luminance doesn't quantize a dot's hue)
+  // Sampling happens in PARALLAX-WORLD coordinates — the background
+  // camera's frame — so the dot colors ride the SAME moving pattern the
+  // background paints: pan and the palette flows through the lattice;
+  // everything is world-anchored (no shimmer). Returns null for 1-stop
+  // specs (the solid fast path — zero per-element cost).
+  var MESH_SPOTS = [
+    { x: 20, y: 25, f: 55 }, { x: 80, y: 15, f: 50 },
+    { x: 75, y: 80, f: 55 }, { x: 15, y: 85, f: 50 },
+    { x: 55, y: 8, f: 45 }, { x: 38, y: 55, f: 50 },
+    { x: 92, y: 58, f: 48 }, { x: 8, y: 45, f: 52 }
+  ];
+
+  function makePatternSampler(spec, fallbackHex) {
     var stops = validStopsOf(spec);
-    if (!stops.length) return fallbackHex;
-    if (stops.length === 1) return stops[0];
-    t = Math.max(0, Math.min(1, t));
-    var f = t * (stops.length - 1);
-    var i = Math.min(stops.length - 2, Math.floor(f));
-    return mixHex(stops[i], stops[i + 1], f - i);
+    if (stops.length < 2) return null;
+    var dir = (spec && spec.dir) || 'auto';
+    var angle = (typeof spec.angle === 'number') ? spec.angle : 135;
+    var rgb = [];
+    for (var i = 0; i < stops.length; i++) {
+      var m = /^#([0-9a-fA-F]{6})$/.exec(stops[i]);
+      if (m) rgb.push(parseInt(m[1], 16));
+    }
+    if (rgb.length < 2) return null;
+
+    function h2c(v) {
+      var s = Math.max(0, Math.min(255, Math.round(v))).toString(16);
+      return s.length < 2 ? '0' + s : s;
+    }
+    function hexAt(idx) {          // a DISCRETE stop (patterns)
+      var n = rgb[((idx % rgb.length) + rgb.length) % rgb.length];
+      return '#' + h2c((n >> 16) & 255) + h2c((n >> 8) & 255) + h2c(n & 255);
+    }
+    function sampleRGB(t) {        // interpolated (sweeps + mesh spots)
+      t = ((t % 1) + 1) % 1;
+      var f = t * (rgb.length - 1);
+      var i2 = Math.min(rgb.length - 2, Math.floor(f));
+      var tt = f - i2;
+      var a = rgb[i2], b = rgb[i2 + 1];
+      return [
+        ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * tt,
+        ((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * tt,
+        (a & 255) + ((b & 255) - (a & 255)) * tt
+      ];
+    }
+    function hex(c) { return '#' + h2c(c[0]) + h2c(c[1]) + h2c(c[2]); }
+
+    // the sweep projection (bgGradientPass's exact geometry, tile dims)
+    function sweepT(lx, ly, tw, th, ang) {
+      if (dir === 'h') return lx / tw;
+      if (dir === 'v') return ly / th;
+      if (dir === 'diag2') return (lx * tw + ly * th) / (tw * tw + th * th);
+      if (dir === 'radial') {
+        var rdx = lx - tw / 2, rdy = ly - th * 0.35;
+        return Math.sqrt(rdx * rdx + rdy * rdy) / (Math.hypot(tw, th) / 2);
+      }
+      if (dir === 'swirl') {
+        var sa = Math.atan2(ly - th * 0.45, lx - tw * 0.55) * 180 / Math.PI;
+        return (sa - 240) / 360;
+      }
+      // diag (custom angle) + auto (135)
+      var a2 = (dir === 'auto') ? 135 : ang;
+      if (a2 === 135) return (lx * tw - ly * th + th * th) / (tw * tw + th * th);
+      var rad = (a2 - 135) * Math.PI / 180;
+      var c = Math.cos(rad), s = Math.sin(rad);
+      var dx = (c + s) / Math.SQRT2, dy = (s - c) / Math.SQRT2;
+      return 0.5 + ((lx - tw / 2) * dx + (ly - th / 2) * dy) / Math.hypot(tw, th);
+    }
+
+    // mesh pre-pass: the spot rgb table (palette interpolation for the
+    // long palettes — every stop lands, same as the css recipe)
+    var meshK = Math.max(4, Math.min(MESH_SPOTS.length, stops.length));
+    var meshSpots = [];
+    for (var mi = 0; mi < meshK; mi++) {
+      var cr;
+      if (stops.length <= MESH_SPOTS.length) {
+        var pn = parseInt(stops[mi % stops.length].slice(1), 16);
+        cr = [(pn >> 16) & 255, (pn >> 8) & 255, pn & 255];
+      } else {
+        cr = sampleRGB(mi / Math.max(1, meshK - 1));
+      }
+      meshSpots.push({ x: MESH_SPOTS[mi].x / 100, y: MESH_SPOTS[mi].y / 100,
+        f: MESH_SPOTS[mi].f / 100, c: cr });
+    }
+    function meshHex(lx, ly, tw, th) {
+      // the tile's mesh base is a diag-160 sweep of [first,last] —
+      // sample that projection for the base color
+      var t160 = 0.5 + ((lx - tw / 2) * ((Math.cos((160 - 135) * Math.PI / 180) + Math.sin((160 - 135) * Math.PI / 180)) / Math.SQRT2) +
+        (ly - th / 2) * ((Math.sin((160 - 135) * Math.PI / 180) - Math.cos((160 - 135) * Math.PI / 180)) / Math.SQRT2)) / Math.hypot(tw, th);
+      var bc = sampleRGB(t160);
+      var acc = [0, 0, 0], wsum = 0;
+      var rmax = Math.max(tw, th);
+      for (var si = 0; si < meshSpots.length; si++) {
+        var sp = meshSpots[si];
+        var dx = lx - sp.x * tw, dy = ly - sp.y * th;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        var r = sp.f * rmax;
+        if (d < r) {
+          var w = 1 - d / r;
+          w = w * w;
+          acc[0] += w * sp.c[0]; acc[1] += w * sp.c[1]; acc[2] += w * sp.c[2];
+          wsum += w;
+        }
+      }
+      if (wsum <= 0.0001) return hex(bc);
+      var blend = Math.min(1, wsum);
+      var sc = [acc[0] / wsum, acc[1] / wsum, acc[2] / wsum];
+      return hex([bc[0] * (1 - blend) + sc[0] * blend,
+        bc[1] * (1 - blend) + sc[1] * blend,
+        bc[2] * (1 - blend) + sc[2] * blend]);
+    }
+
+    return function (sx, sy) {
+      // parallax-world fold: screen → the tile's bitmap coordinates
+      var tw = bgView.tw || W, th = bgView.th || H, zx = bgView.zx || 1;
+      var tw2 = 2 * tw, th2 = 2 * th;
+      var bx = ((sx - bgView.px) % tw2 + tw2) % tw2;
+      var by = ((sy - bgView.py) % th2 + th2) % th2;
+      if (bx > tw) bx = tw2 - bx;
+      if (by > th) by = th2 - by;
+      var lx = bx / zx, ly = by / zx;
+      var bw = tw / zx, bh = th / zx;   // the tile's bitmap dims
+      switch (dir) {
+        case 'mesh':
+          return meshHex(lx, ly, bw, bh);
+        case 'pat-navy': {
+          var xr = (lx + ly) / Math.SQRT2;
+          return hexAt(Math.floor(xr / 28));
+        }
+        case 'pat-checker': {
+          var cyc = Math.max(2, Math.min(8, rgb.length));
+          var cell = Math.floor(lx / 32) + Math.floor(ly / 32);
+          return hexAt(((cell % cyc) + cyc) % cyc);
+        }
+        case 'pat-gingham':
+          return hexAt(Math.floor(ly / 40) + Math.floor(lx / 40));
+        case 'pat-sunburst': {
+          var a = Math.atan2(ly - bh, lx - bw / 2) * 180 / Math.PI;
+          var wedge = Math.max(3, Math.round(30 / rgb.length));
+          var sector = Math.floor((((a % 360) + 360) % 360) / wedge);
+          return hexAt(sector);
+        }
+        case 'pat-pinstripe':
+          return hex(sampleRGB(sweepT(lx, ly, bw, bh, 160)));
+        default: // auto/h/v/diag/diag2/radial/swirl/tex
+          return hex(sampleRGB(sweepT(lx, ly, bw, bh, angle)));
+      }
+    };
   }
 
   // ── v0.52 THE PARALLAX BACKGROUND (user spec item 7: "let's change the
@@ -426,31 +556,45 @@
   // and the wrap keeps the parallax infinite without ever sliding off.
   var bgCache = { key: '', tile: null };
   var BG_PARALLAX = 0.35;
+  // v0.54: the color-space tile is MULT× the viewport — the mirror
+  // period grows to 2·MULT screens of pan, textures cover-fit larger
+  // (the Rorschach repeat halves), and the mesh spots spread over a
+  // field twice the screen (softer, rarer glows).
+  var BG_TILE_MULT = 2;
+  // the live parallax camera (read by makePatternSampler so the grid
+  // elements ride the same moving pattern the background paints)
+  var bgView = { tw: 0, th: 0, zx: 1, px: 0, py: 0 };
 
-  function bgTileKey(spec, fallbackHex) {
+  function bgTileKey(spec, fallbackHex, tw, th) {
     var s = '';
     try { s = JSON.stringify(spec); } catch (e) { s = String(spec); }
-    return s + '|' + W + 'x' + H + '|' + fallbackHex;
+    return s + '|' + tw + 'x' + th + '|' + fallbackHex;
   }
 
-  function bgTileFor(spec, fallbackHex) {
-    var key = bgTileKey(spec, fallbackHex);
+  function bgTileFor(spec, fallbackHex, tw, th) {
+    var key = bgTileKey(spec, fallbackHex, tw, th);
     if (bgCache.key === key && bgCache.tile) return bgCache.tile;
     var off = document.createElement('canvas');
-    off.width = Math.max(1, W);
-    off.height = Math.max(1, H);
-    paintBackgroundInto(off.getContext('2d'), spec, fallbackHex);
+    off.width = Math.max(1, tw);
+    off.height = Math.max(1, th);
+    paintBackgroundInto(off.getContext('2d'), spec, fallbackHex, tw, th);
     bgCache = { key: key, tile: off };
     return off;
   }
 
   function paintCanvasBackground(spec, fallbackHex) {
-    var tile = bgTileFor(spec, fallbackHex);
-    var zx = 1 + (scale - 1) * BG_PARALLAX;        // bg zoom = 35% of the grid's
-    var tw = Math.max(16, W * zx), th = Math.max(16, H * zx);
+    var TW = Math.max(16, Math.round(W * BG_TILE_MULT));
+    var TH = Math.max(16, Math.round(H * BG_TILE_MULT));
+    var tile = bgTileFor(spec, fallbackHex, TW, TH);
+    // v0.54: zx CLAMPED ≥ 1 — zooming out never shrinks the tile below
+    // the viewport (the old 0.825× at min-zoom painted 2+ tiles at rest,
+    // the most visible "it feels tiled" artifact)
+    var zx = Math.max(1, 1 + (scale - 1) * BG_PARALLAX);   // bg zoom = 35% of the grid's
+    var tw = TW * zx, th = TH * zx;
     // the parallax pan, wrapped into the mirror period [0, 2·tw)
     var px = ((-offsetX * scale * BG_PARALLAX) % (2 * tw) + 2 * tw) % (2 * tw);
     var py = ((-offsetY * scale * BG_PARALLAX) % (2 * th) + 2 * th) % (2 * th);
+    bgView = { tw: tw, th: th, zx: zx, px: px, py: py };   // for the samplers
     for (var ix = 0; ; ix++) {
       var x0 = px - 2 * tw + ix * tw;
       if (x0 >= W) break;
@@ -470,20 +614,20 @@
     }
   }
 
-  // paintBackgroundInto — the v0.49 full-fidelity painter, unchanged
-  // except it now paints into ANY 2d context (the offscreen tile) instead
-  // of owning the viewport.
-  function paintBackgroundInto(ctx, spec, fallbackHex) {
+  // paintBackgroundInto — the full-fidelity painter, into ANY 2d
+  // context at (tw, th) — the 2× color-space tile since v0.54.
+  function paintBackgroundInto(gctx, spec, fallbackHex, tw, th) {
     const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    tw = tw || W; th = th || H;
     var stops = validStopsOf(spec);
     var dir = (spec && spec.dir) || 'auto';
     var texUrl = (spec && typeof spec.tex === 'string') ? spec.tex : '';
     var texImg = texImageFor(texUrl);
     if (!stops.length && !texImg) {
       // nothing valid — the legacy hex path
-      ctx.fillStyle = HEX_RE.test(spec == null ? '' : String(spec)) ? String(spec) : fallbackHex;
-      if (spec && Array.isArray(spec.colors) && HEX_RE.test(fallbackHex)) ctx.fillStyle = fallbackHex;
-      ctx.fillRect(0, 0, W, H);
+      gctx.fillStyle = HEX_RE.test(spec == null ? '' : String(spec)) ? String(spec) : fallbackHex;
+      if (spec && Array.isArray(spec.colors) && HEX_RE.test(fallbackHex)) gctx.fillStyle = fallbackHex;
+      gctx.fillRect(0, 0, tw, th);
       return;
     }
     // the TEXTURE pass (bumpmap): cover-fit the image, then paint the
@@ -491,101 +635,123 @@
     // luminance of the bumpmap (the CSS blend contract).
     if (texImg) {
       var ir = texImg.width / texImg.height;
-      var vr = W / H;
+      var vr = tw / th;
       var dw, dh;
-      if (ir > vr) { dh = H; dw = H * ir; } else { dw = W; dh = W / ir; }
-      ctx.drawImage(texImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      ctx.globalCompositeOperation = 'color';
+      if (ir > vr) { dh = th; dw = th * ir; } else { dw = tw; dh = tw / ir; }
+      gctx.drawImage(texImg, (tw - dw) / 2, (th - dh) / 2, dw, dh);
+      gctx.globalCompositeOperation = 'color';
     }
     // ── the gradient / pattern passes ──
     var c = stops.length ? stops : ['#0a0a0b'];
     var c0 = c[0];
     var c1 = c.length > 1 ? c[1] : null;
     var paintPlain = function () {   // the sweep (or solid) over everything
-      var g = bgGradientPass(c, dir, spec && spec.angle, ctx);
-      ctx.fillStyle = g || c0;
-      ctx.fillRect(0, 0, W, H);
+      var g = bgGradientPass(c, dir, spec && spec.angle, gctx, tw, th);
+      gctx.fillStyle = g || c0;
+      gctx.fillRect(0, 0, tw, th);
     };
     if (dir === 'mesh') {
-      // base linear + 4 soft radials — the exact uikit recipe
+      // v0.54: the SAME 8-spot table the css recipe uses — spot count
+      // follows the palette (4–8), every stop lands, palette
+      // interpolation beyond the table. The base sweeps first→last.
+      var meshK = Math.max(4, Math.min(MESH_SPOTS.length, c.length));
       var base = c.length > 1 ? c[c.length - 1] : shadeHex(c0, -0.2);
-      ctx.fillStyle = bgGradientPass([c0, base], 'diag', 160, ctx) || base;
-      ctx.fillRect(0, 0, W, H);
-      var spots = [[0.20, 0.25], [0.80, 0.15], [0.75, 0.80], [0.15, 0.85]];
-      var fades = [0.55, 0.50, 0.55, 0.50];
-      for (var i = 0; i < 4; i++) {
-        var rg = ctx.createRadialGradient(W * spots[i][0], H * spots[i][1], 0,
-          W * spots[i][0], H * spots[i][1], Math.max(W, H) * fades[i]);
+      gctx.fillStyle = bgGradientPass([c0, base], 'diag', 160, gctx, tw, th) || base;
+      gctx.fillRect(0, 0, tw, th);
+      var rmax = Math.max(tw, th);
+      for (var i = 0; i < meshK; i++) {
+        var sp = MESH_SPOTS[i];
+        var sx = tw * sp.x / 100, sy = th * sp.y / 100;
+        var rg = gctx.createRadialGradient(sx, sy, 0, sx, sy, rmax * sp.f / 100);
         rg.addColorStop(0, c[i % c.length]);
         rg.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = rg;
-        ctx.fillRect(0, 0, W, H);
+        gctx.fillStyle = rg;
+        gctx.fillRect(0, 0, tw, th);
       }
     } else if (dir === 'pat-navy') {
-      var n2 = c1 || shadeHex(c0, -0.18);
-      ctx.fillStyle = c0;
-      ctx.fillRect(0, 0, W, H);
-      ctx.save();
-      ctx.translate(W / 2, H / 2);
-      ctx.rotate(-Math.PI / 4);   // CSS 45deg axis → stripes ⟂ to it
-      var span = Math.hypot(W, H);
-      for (var b = -span; b < span; b += 28) {
-        ctx.fillStyle = n2;
-        ctx.fillRect(b, -span, 14, span * 2);
+      // v0.54: stripes cycle ALL stops (28px period · n stripes)
+      var nc = c.length > 1 ? c : [c[0], shadeHex(c0, -0.18)];
+      gctx.fillStyle = nc[0];
+      gctx.fillRect(0, 0, tw, th);
+      gctx.save();
+      gctx.translate(tw / 2, th / 2);
+      gctx.rotate(-Math.PI / 4);   // CSS 45deg axis → stripes ⟂ to it
+      var span = Math.hypot(tw, th);
+      var swid = 28 / nc.length;
+      for (var nb = 0; nb < nc.length; nb++) {
+        gctx.fillStyle = nc[nb];
+        for (var b = -span + nb * 28; b < span; b += 28 * nc.length) {
+          gctx.fillRect(b, -span, swid, span * 2);
+        }
       }
-      ctx.restore();
+      gctx.restore();
     } else if (dir === 'pat-pinstripe') {
       var p2 = c1 || shadeHex(c0, 0.18);
-      ctx.fillStyle = bgGradientPass([c0, p2], 'diag', 160, ctx) || c0;
-      ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = rgbaStr(c0, 0.35);
-      ctx.lineWidth = 1;
-      for (var px = 9; px < W; px += 18) {
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, H);
-        ctx.stroke();
+      gctx.fillStyle = bgGradientPass([c0, c[c.length - 1]], 'diag', 160, gctx, tw, th) || c0;
+      gctx.fillRect(0, 0, tw, th);
+      gctx.strokeStyle = rgbaStr(c0, 0.35);
+      gctx.lineWidth = 1;
+      for (var ps2 = 9; ps2 < tw; ps2 += 18) {
+        gctx.beginPath();
+        gctx.moveTo(ps2, 0);
+        gctx.lineTo(ps2, th);
+        gctx.stroke();
       }
     } else if (dir === 'pat-gingham') {
-      var g2 = c1 || c0;
-      var g3 = c.length > 2 ? c[2] : shadeHex(c0, 0.30);
-      ctx.fillStyle = g3;
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = rgbaStr(c0, 0.55);
-      for (var gy = 0; gy < H; gy += 80) ctx.fillRect(0, gy, W, 40);
-      ctx.fillStyle = rgbaStr(g2, 0.35);
-      for (var gx = 0; gx < W; gx += 80) ctx.fillRect(gx, 0, 40, H);
+      // v0.54: horizontal bands cycle the even stops, vertical the odd
+      // (≤3 stops = the classic trio), base = the last stop
+      var gEven = [], gOdd = [];
+      for (var gi = 0; gi < c.length; gi++) (gi % 2 === 0 ? gEven : gOdd).push(c[gi]);
+      if (c.length > 3) {
+        if (gEven[gEven.length - 1] === c[c.length - 1]) gEven.pop();
+        else if (gOdd[gOdd.length - 1] === c[c.length - 1]) gOdd.pop();
+      }
+      var gBase = c.length > 3 ? c[c.length - 1]
+        : (c.length > 2 ? c[2] : shadeHex(c0, 0.30));
+      gctx.fillStyle = gBase;
+      gctx.fillRect(0, 0, tw, th);
+      for (var hb = 0; hb < gEven.length; hb++) {
+        gctx.fillStyle = rgbaStr(gEven[hb], 0.55);
+        for (var gy = hb * 80; gy < th; gy += 80 * gEven.length) gctx.fillRect(0, gy, tw, 40);
+      }
+      for (var vb = 0; vb < gOdd.length; vb++) {
+        gctx.fillStyle = rgbaStr(gOdd[vb], 0.35);
+        for (var gx = vb * 80; gx < tw; gx += 80 * gOdd.length) gctx.fillRect(gx, 0, 40, th);
+      }
     } else if (dir === 'pat-sunburst') {
-      var s2 = c1 || shadeHex(c0, 0.18);
-      var cx = W / 2, cy = H;
-      var span2 = Math.hypot(W, H);
-      ctx.fillStyle = c0;
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = s2;
-      for (var a = 0; a < 360; a += 30) {
-        var r0 = a * Math.PI / 180, r1 = (a + 15) * Math.PI / 180;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + Math.cos(r0) * span2, cy + Math.sin(r0) * span2);
-        ctx.lineTo(cx + Math.cos(r1) * span2, cy + Math.sin(r1) * span2);
-        ctx.closePath();
-        ctx.fill();
+      // v0.54: rays cycle ALL stops — wedge = max(3, 30/n)°
+      var sc = c.length > 1 ? c : [c[0], shadeHex(c0, 0.18)];
+      var cx = tw / 2, cy = th;
+      var span2 = Math.hypot(tw, th);
+      var wedge = Math.max(3, Math.round(30 / sc.length));
+      gctx.fillStyle = sc[0];
+      gctx.fillRect(0, 0, tw, th);
+      for (var a = 0; a < 360; a += wedge) {
+        var ri = (a / wedge) % sc.length;
+        gctx.fillStyle = sc[ri];
+        var r0 = a * Math.PI / 180, r1 = (a + wedge) * Math.PI / 180;
+        gctx.beginPath();
+        gctx.moveTo(cx, cy);
+        gctx.lineTo(cx + Math.cos(r0) * span2, cy + Math.sin(r0) * span2);
+        gctx.lineTo(cx + Math.cos(r1) * span2, cy + Math.sin(r1) * span2);
+        gctx.closePath();
+        gctx.fill();
       }
     } else if (dir === 'pat-checker') {
-      var k2 = c1 || shadeHex(c0, -0.18);
-      ctx.fillStyle = c0;
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = k2;
-      for (var cy2 = 0, row = 0; cy2 < H; cy2 += 32, row++) {
-        for (var cx2 = ((row % 2) ? 32 : 0); cx2 < W; cx2 += 64) {
-          ctx.fillRect(cx2, cy2, 32, 32);
+      // v0.54: the QUILT — cell color = stops[(row+col) % cyc] with the
+      // cycle capped at 8 (matching the css recipe); 32px cells.
+      var cyc2 = Math.max(2, Math.min(8, c.length));
+      for (var cy2 = 0, row = 0; cy2 < th; cy2 += 32, row++) {
+        for (var cx2 = 0, col = 0; cx2 < tw; cx2 += 32, col++) {
+          gctx.fillStyle = c[((row + col) % cyc2 + cyc2) % cyc2];
+          gctx.fillRect(cx2, cy2, 32, 32);
         }
       }
     } else {
       paintPlain();
     }
     if (texImg) {
-      ctx.globalCompositeOperation = 'source-over';   // restore
+      gctx.globalCompositeOperation = 'source-over';   // restore
     }
   }
 
@@ -598,12 +764,12 @@
   //     gradient (createLinearGradient / createRadialGradient) across
   //     the viewport — the bg fill, line strokes, dots and origin all
   //     take it (dots pick up the gradient at their own position)
-  //   · swirl / mesh / pat-* / tex → the SOLID first color. DOCUMENTED
-  //     LIMITATION: the infinite canvas repaints at pan/zoom frame rate
-  //     and has no cheap equivalent of a CSS conic sweep, layered mesh
-  //     or repeating background pattern — those aesthetics stay in the
-  //   CSS var surfaces; the canvas keeps its sweep. 'auto' = the CSS
-  //   recipe's 135° diagonal.
+  //   · swirl / mesh / pat-* / tex strokes → the SOLID first color for
+  //     the FALLBACK style; the per-element pattern sampling
+  //     (makePatternSampler, v0.54) paints those dirs per dot/line at
+  //     the pattern's own geometry — this path only serves consumers
+  //     that paint one continuous style (the origin dot, arrows) and
+  //     the pre-sampler fallback.
   // ANGLE MAP (h/v/diag2/radial are exact; diag's default 135 too — a
   // CUSTOM angle rotates the default direction about the center):
   //   h      (0,0) → (W,0)          v      (0,0) → (0,H)

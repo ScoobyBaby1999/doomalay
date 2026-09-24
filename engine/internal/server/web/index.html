@@ -799,9 +799,9 @@
     line-height: 1.35;
   }
   .color-row-banner {
-    flex: 0 0 64px;
-    height: 18px;
-    border-radius: 6px;
+    flex: 0 0 76px;
+    height: 20px;
+    border-radius: 7px;
     border: 1px solid var(--border);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
   }
@@ -837,12 +837,12 @@
   .color-row-body {
     display: grid;
     grid-template-rows: 0fr;
-    transition: grid-template-rows 0.24s cubic-bezier(0.2, 0.7, 0.3, 1);
+    transition: grid-template-rows 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .color-row-body > * { overflow: hidden; min-height: 0; }
   .color-row-collapsed.expanded .color-row-body { grid-template-rows: 1fr; }
   .color-row-collapsed.expanded .color-row-body > .gr-editor {
-    padding-top: 10px;
+    padding-top: 12px;
     overflow: visible;
   }
   /* v0.45 ITEM 6: the toggle switch (hide lines / hide dots) */
@@ -1791,37 +1791,42 @@
   .hub-wrap[open] .hub-chev { transform: rotate(0deg); }
   .hub-wrap:not([open]) .hub-chev { transform: rotate(-90deg); }
   .hub-list { display: flex; flex-direction: column; gap: calc(5px * var(--chat-scale)); }
-  .hub-card {
+  /* v0.54 RENAME: the in-chat hub cards are .hmsg-* now — the old
+     .hub-card name collided with the PUBLIC LIBRARY cards (equal
+     specificity, so this block's align-items:center + gap leaked onto
+     the library grid and broke its column layout — icons shifted per
+     text length, the user-reported displacement bug). */
+  .hmsg-card {
     display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
     padding: calc(7px * var(--chat-scale)) calc(8px * var(--chat-scale)); border-radius: 10px;
     background: var(--surface-2); border: 1px solid transparent;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer;
     min-height: calc(44px * var(--chat-scale)); /* touch target */
   }
-  .hub-card:active { background: var(--surface-3); }
-  .hub-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .hub-card-ico {
+  .hmsg-card:active { background: var(--surface-3); }
+  .hmsg-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hmsg-card-ico {
     width: calc(26px * var(--chat-scale)); height: calc(26px * var(--chat-scale)); border-radius: 7px; flex-shrink: 0;
     background: rgba(var(--accent-2-rgb),0.1); border: 1px solid rgba(var(--accent-2-rgb),0.3);
     display: flex; align-items: center; justify-content: center;
     font-size: calc(var(--chat-fs) * 0.72);
   }
-  .hub-card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-  .hub-card-title {
+  .hmsg-card-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .hmsg-card-title {
     color: var(--text-2); font-size: calc(var(--chat-fs) * 0.77); font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .hub-card-title .hub-have { color: var(--ok); }
-  .hub-card-sub {
+  .hmsg-card-title .hub-have { color: var(--ok); }
+  .hmsg-card-sub {
     color: var(--text-3); font-size: calc(var(--chat-fs) * 0.64);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .hub-card-stats {
+  .hmsg-card-stats {
     color: var(--text-3); font-size: calc(var(--chat-fs) * 0.58);
     font-variant-numeric: tabular-nums;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .hub-dl {
+  .hmsg-dl {
     flex-shrink: 0; width: calc(34px * var(--chat-scale)); height: calc(34px * var(--chat-scale));
     border-radius: 9px; border: 1px solid rgba(var(--accent-2-rgb),0.35);
     background: rgba(var(--accent-2-rgb),0.07); color: var(--accent-2);
@@ -1830,9 +1835,9 @@
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
     transition: background 0.15s, color 0.15s;
   }
-  .hub-dl:active { background: rgba(var(--accent-2-rgb),0.2); }
-  .hub-dl:disabled { cursor: default; }
-  .hub-dl.hub-dld {
+  .hmsg-dl:active { background: rgba(var(--accent-2-rgb),0.2); }
+  .hmsg-dl:disabled { cursor: default; }
+  .hmsg-dl.hmsg-dld {
     background: rgba(var(--ok-rgb),0.08); border-color: rgba(var(--ok-rgb),0.3);
     color: var(--ok);
   }
@@ -2686,12 +2691,17 @@
   }
   /* v0.52 (user spec items 3+4): cleaner cards — a REAL border, a shadow,
      the text-pop scrim over any background art, the icon column left of
-     the name, and bigger ♥/⤓ stats. Everything rides theme vars. */
+     the name, and bigger ♥/⤓ stats. Everything rides theme vars.
+     v0.54: the layout is UNIFORM now — the .hmsg-* rename killed the
+     class collision that shrank/centered the body (align-self:stretch
+     keeps it full-width belt-and-braces), the border reads at 1.5px,
+     the scrim is deeper at the bottom, and the foot pins to the card's
+     base so every card formats identically regardless of text length. */
   .hub-card {
     position: relative; display: flex; flex-direction: column; justify-content: flex-end;
     overflow: hidden; min-height: 148px; padding: 0; border-radius: 14px;
-    background: var(--surface-1); border: 1px solid var(--border-strong);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+    background: var(--surface-1); border: 1.5px solid var(--border-strong);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.32);
     cursor: pointer; text-align: left; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2700,13 +2710,14 @@
   .hub-card-fade {
     position: absolute; inset: 0; pointer-events: none;
     background: linear-gradient(to top,
-      rgba(var(--surface-1-rgb), 0.97) 0%,
-      rgba(var(--surface-1-rgb), 0.86) 38%,
-      rgba(var(--surface-1-rgb), 0.34) 74%,
-      rgba(var(--surface-1-rgb), 0.05) 100%);
+      rgba(var(--surface-1-rgb), 0.985) 0%,
+      rgba(var(--surface-1-rgb), 0.90) 38%,
+      rgba(var(--surface-1-rgb), 0.36) 74%,
+      rgba(var(--surface-1-rgb), 0.06) 100%);
   }
   .hub-card-body {
     position: relative; display: flex; flex-direction: column; gap: 3px; padding: 10px 11px;
+    align-self: stretch; margin-top: auto;
   }
   .hub-card-titlerow { display: flex; align-items: center; gap: 7px; min-width: 0; }
   .hub-card-ico {
@@ -2720,12 +2731,13 @@
     flex: 1 1 auto; min-width: 0;
     font-size: calc(var(--ui-fs) + 1px); font-weight: 800; color: var(--text-1); line-height: 1.22;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    text-shadow: 0 1px 4px rgba(0,0,0,0.35);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.45);
   }
   .hub-card-desc {
     font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35; font-weight: 500;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.4);
   }
   .hub-card-author {
     font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3);
@@ -2832,6 +2844,7 @@
     flex: 1 1 auto; min-width: 0;
     font-size: calc(var(--ui-fs) + 4px); font-weight: 800; color: var(--text-1);
     line-height: 1.2; text-shadow: 0 1px 8px rgba(0,0,0,0.5);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;  /* v0.54: long names no longer wrap/displace the header */
   }
   .hi-desc { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.45; }
   .hi-meta { font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); }
@@ -3022,42 +3035,58 @@
     font-size: inherit; padding: 0; font-family: inherit; line-height: 1;
   }
 
-  /* GradientUI — the 1–10 color gradient editor */
-  .gr-editor { display: flex; flex-direction: column; gap: 8px; }
-  /* top padding gives the floating ✕ remove buttons room INSIDE the
-     collapsible section box (overflow:hidden would clip them) */
-  .gr-swatches { display: flex; flex-wrap: wrap; gap: 10px 8px; padding: 8px 2px 2px; }
+  /* GradientUI — the 1–15 color gradient editor.
+     v0.54 POLISH (user spec: "the expanded options look extremely
+     prototypish… much more finished and professional"): even radii,
+     soft ambient shadows, hover/focus states, the ✕ INSIDE the chip
+     (no more floating offsets) — the v0.33 hand-drawn wobble is gone.
+     Everything rides theme vars. */
+  .gr-editor { display: flex; flex-direction: column; gap: 10px; }
+  .gr-swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px; }
   .gr-swatch { position: relative; display: inline-flex; }
   .gr-color {
     width: 46px; height: 36px; padding: 2px;
-    border: 1px solid var(--border); border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
+    border: 1px solid var(--border); border-radius: 10px;
     background: var(--surface-2); cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .gr-color:hover { border-color: var(--border-strong); }
+  .gr-color:focus-visible {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35);
   }
   .gr-rm {
-    position: absolute; top: -7px; right: -7px;
-    width: 18px; height: 18px; border-radius: 50%;
+    position: absolute; top: 3px; right: 3px;
+    width: 17px; height: 17px; border-radius: 50%;
     background: var(--surface-3); color: var(--text-2);
     border: 1px solid var(--border-strong);
-    font-size: 10px; line-height: 1; font-family: inherit; cursor: pointer;
+    box-shadow: 0 0 0 2px var(--surface-2);
+    font-size: 9px; line-height: 1; font-family: inherit; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
+  .gr-rm:hover { color: var(--text-1); border-color: var(--accent); }
   .gr-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .gr-mini {
     background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
-    border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
-    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.9);
-    padding: 6px 10px; font-size: calc(var(--ui-small-fs) - 1px);
+    border-radius: 9px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.14);
+    padding: 6px 11px; font-size: calc(var(--ui-small-fs) - 1px);
     font-family: inherit; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s, box-shadow 0.15s;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
+  .gr-mini:hover { border-color: var(--border-strong); color: var(--text-1); }
+  .gr-mini:active { transform: translateY(1px); box-shadow: none; }
   .gr-mini:disabled { opacity: 0.35; cursor: default; }
   .gr-count { margin-left: auto; font-size: var(--ui-micro-fs); color: var(--text-3);
     font-variant-numeric: tabular-nums; font-weight: 700; }
   .gr-cap { font-size: var(--ui-micro-fs); color: var(--text-3); }
+  /* the tweaks Background gradient preview (tweaks.js) — same polish */
   .gr-preview {
-    height: 56px; border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
-    border: 1px solid var(--surface-2); flex-shrink: 0;
+    height: 52px; border-radius: 12px;
+    border: 1px solid var(--border); flex-shrink: 0;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
   }
 
   /* CropUI — the drag-to-crop overlay (full-screen, above the panel) */

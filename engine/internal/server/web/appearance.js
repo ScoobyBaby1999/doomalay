@@ -132,6 +132,30 @@
     wireColorRows(root);
   }
 
+  // ── v0.54 refreshEditorInPlace — swap ONE row's editor markup +
+  // re-wire, keeping the row the user is working in EXPANDED. The old
+  // rebuild path ran Settings.rerender(), which preserved sections +
+  // scroll but COLLAPSED the open color row — every dir pill tap or
+  // color add slammed the editor shut (the "prototypish" churn the
+  // user reported). Returns false when the row left the DOM (panel
+  // closed/superseded) — callers fall back to the full rerender.
+  function refreshEditorInPlace(pfx, spec, edOpts, rewire) {
+    var G = window.GradientUI;
+    var ed = document.getElementById(pfx + '-gr');
+    var row = (ed && ed.closest) ? ed.closest('.color-row-collapsed') : null;
+    var body = row ? row.querySelector('[data-color-body]') : null;
+    if (!G || !ed || !row || !body || !document.contains(ed)) return false;
+    body.innerHTML = G.editor(pfx, spec, edOpts || {});
+    try { rewire(); } catch (e) { /* never fatal */ }
+    // the '· customized' marker appears once an override exists
+    var name = row.querySelector('.color-row-name');
+    if (name && !name.querySelector('.crc-mark')) {
+      name.insertAdjacentHTML('beforeend',
+        ' <span class="crc-mark" style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>');
+    }
+    return true;
+  }
+
   // ── the shared fmt row registry + wiring (tweaks.js reuses the rows) ─
   var fmtSpecs = {};   // 'slot|scope' → the live spec the row was built with
   var FMT_SLOTS_ALL = ['a1', 'a2', 'a3', 'bright', 'link'];
@@ -174,7 +198,12 @@
           wireFmtRow(rowEl);
         }
       } else {
-        Settings.rerender();
+        // v0.54: the GLOBAL rows refresh in place too (no full rerender
+        // that would collapse the row) — the chat-scope pattern, applied
+        routeFmtWrite(slot, scope, spec);
+        var ok = refreshEditorInPlace('fmt-' + slot, spec, { noTex: true },
+          function () { wireFmtRow(rowEl); });
+        if (!ok) Settings.rerender();
       }
     };
     G.wire(editorEl, { spec: spec, live: live, rebuild: rebuild });
@@ -328,14 +357,26 @@
     var editorHtml = opts.editorHtml || '';
     var onReset = opts.onReset;
     var colors = (spec && spec.colors) ? spec.colors : ['#000000'];
-    // the banner: a thin gradient strip previewing the spec's paint
-    var bannerCss = 'background:linear-gradient(135deg,';
-    if (colors.length === 1) {
-      bannerCss += colors[0] + ',' + colors[0];
+    // v0.54: the banner previews the TRUE paint — the exact recipe
+    // (mesh / checker / stripes / rays) at a small scale, not the old
+    // always-135°-linear strip that made every option look identical.
+    // The wire() side keeps it LIVE (paintBanner in uikit.js).
+    var bannerCss;
+    var G = window.GradientUI;
+    if (G && G.css) {
+      var cssVal = G.css(spec, { scale: 0.28 });
+      bannerCss = cssVal.charAt(0) === '#'
+        ? ('background-color:' + cssVal + ';')
+        : ('background-image:' + cssVal + ';');
     } else {
-      bannerCss += colors.join(',');
+      bannerCss = 'background:linear-gradient(135deg,';
+      if (colors.length === 1) {
+        bannerCss += colors[0] + ',' + colors[0];
+      } else {
+        bannerCss += colors.join(',');
+      }
+      bannerCss += ');';
     }
-    bannerCss += ');';
     var fmtAttr = (opts.fmtSlot ? ' data-fmt-slot="' + opts.fmtSlot + '"' : '') +
       (opts.fmtScope ? ' data-fmt-scope="' + opts.fmtScope + '"' : '');
     return '<div class="color-row-collapsed" data-color-row="' + pfx + '"' + fmtAttr + '>' +
@@ -382,9 +423,17 @@
   function gridColorRow(key, label, spec) {
     var G = window.GradientUI;
     var pfx = 'gc-' + key;             // e.g. gc-bg / gc-lineColor
-    queueEditorWire(pfx + '-gr', spec,
-      function () { writeGridKey(key, spec); },
-      function () { writeGridKey(key, spec); Settings.rerender(); });
+    var edOpts = { noTex: true };
+    var live = function () { writeGridKey(key, spec); };
+    var rebuild = function () {
+      writeGridKey(key, spec);
+      // v0.54: in-place refresh — the row stays open across shape changes
+      if (!refreshEditorInPlace(pfx, spec, edOpts, function () {
+        var el = document.getElementById(pfx + '-gr');
+        if (el && G && G.wire) G.wire(el, { spec: spec, live: live, rebuild: rebuild });
+      })) Settings.rerender();
+    };
+    queueEditorWire(pfx + '-gr', spec, live, rebuild);
     // v0.45 ITEM 5: collapsed color row — banner + expand arrow + per-row reset
     var onReset = function () {
       var defaults = { bg: '#0a0a0b', lineColor: '#131318',
@@ -594,9 +643,17 @@
       // composite pass); every other theme var still hides it (static CSS
       // consumers can't blend a texture).
       var edOpts = { noTex: !c.canvas };
-      queueEditorWire(pfx + '-gr', spec,
-        function () { writeThemeVar(c.var, spec); },
-        function () { writeThemeVar(c.var, spec); Settings.rerender(); });
+      var tvLive = function () { writeThemeVar(c.var, spec); };
+      var tvRebuild = function () {
+        writeThemeVar(c.var, spec);
+        // v0.54: in-place refresh — the row stays open (no full rerender
+        // slamming the editor shut on every dir pill tap)
+        if (!refreshEditorInPlace(pfx, spec, edOpts, function () {
+          var el = document.getElementById(pfx + '-gr');
+          if (el && G && G.wire) G.wire(el, { spec: spec, live: tvLive, rebuild: tvRebuild });
+        })) Settings.rerender();
+      };
+      queueEditorWire(pfx + '-gr', spec, tvLive, tvRebuild);
       var editorHtml = (G ? G.editor(pfx, spec, edOpts) :
         '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>');
       var onReset = function () {

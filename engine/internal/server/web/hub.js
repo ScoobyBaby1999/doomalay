@@ -565,6 +565,7 @@
     });
     return (
       '<button class="hub-card hub-card--bunch" data-bunch="' + escAttr(b.id) + '">' +
+        '<span class="hub-card-fade"></span>' +   // v0.54: the same scrim — uniform cards
         '<span class="hub-card-body">' +
           '<span class="hub-card-titlerow">' +
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +

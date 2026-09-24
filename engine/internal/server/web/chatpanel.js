@@ -4208,21 +4208,21 @@
         var hDl = !!hIt.downloaded;
         var hTags = Array.isArray(hIt.tags) ? hIt.tags.join(' · ') : '';
         hrows +=
-          '<div class="hub-card' + (hDl ? ' hub-card-dl' : '') + '" data-hub-card="1"' +
+          '<div class="hmsg-card' + (hDl ? ' hmsg-card-dl' : '') + '" data-hub-card="1"' +
             ' data-hub-type="' + escAttr(hIt.type || '') + '"' +
             ' data-hub-repo="' + escAttr(hIt.repo || '') + '"' +
             ' data-hub-id="' + escAttr(hIt.id || '') + '"' +
             ' data-hub-name="' + escAttr(hIt.name || '') + '"' +
             ' role="button" tabindex="0" aria-label="open ' + escAttr(hIt.name || 'item') + ' in the hub"' +
           '>' +
-            '<span class="hub-card-ico">' + (hIt.type === 'template' ? '🧩' : '🛠') + '</span>' +
-            '<span class="hub-card-meta">' +
-              '<span class="hub-card-title">' + esc(hIt.name || 'item') + (hDl ? ' <span class="hub-have">✓</span>' : '') + '</span>' +
-              '<span class="hub-card-sub">' + esc(hIt.description || '') + '</span>' +
-              '<span class="hub-card-stats">♥ ' + (hIt.hearts || 0) + ' · ⤓ ' + (hIt.downloads || 0) +
+            '<span class="hmsg-card-ico">' + (hIt.type === 'template' ? '🧩' : '🛠') + '</span>' +
+            '<span class="hmsg-card-meta">' +
+              '<span class="hmsg-card-title">' + esc(hIt.name || 'item') + (hDl ? ' <span class="hub-have">✓</span>' : '') + '</span>' +
+              '<span class="hmsg-card-sub">' + esc(hIt.description || '') + '</span>' +
+              '<span class="hmsg-card-stats">♥ ' + (hIt.hearts || 0) + ' · ⤓ ' + (hIt.downloads || 0) +
                 (hTags ? ' · ' + esc(hTags) : '') + '</span>' +
             '</span>' +
-            '<button class="hub-dl' + (hDl ? ' hub-dld' : '') + '" data-hub-dl="1"' +
+            '<button class="hmsg-dl' + (hDl ? ' hmsg-dld' : '') + '" data-hub-dl="1"' +
               (hDl ? ' disabled title="already downloaded — find it in the ⧉ sheet under Yours"' :
                 ' title="download" aria-label="download ' + escAttr(hIt.name || 'item') + '"') + '>' +
               (hDl ? '✓' : '⤓') +
@@ -4768,9 +4768,9 @@
         if (window.Hub && window.Hub.markDownloaded) {
           window.Hub.markDownloaded(type, repo, itemId);
         }
-        card.classList.add('hub-card-dl');
+        card.classList.add('hmsg-card-dl');
         btn.textContent = '✓';
-        btn.classList.add('hub-dld');
+        btn.classList.add('hmsg-dld');
         btn.setAttribute('title', 'already downloaded — find it in the ⧉ sheet under Yours');
         if (window.Hub && window.Hub.toast) window.Hub.toast('downloaded — ' + (card.getAttribute('data-hub-name') || 'item'));
       }).catch(function (err) {
