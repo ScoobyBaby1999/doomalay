@@ -1600,7 +1600,10 @@
       }
       if (!icon) { window.Hub.open(); return; }  // toasts "open a chat first"
       openChatPanelFor(icon);
-      window.Hub.open(undefined, { chat: null });
+      // v0.60 pt B: canvasHost — the panel below is just a HOST for the
+      // library. Back/✕ on the library's main browsing page closes the
+      // whole panel (canvas), never the synthetic host chat.
+      window.Hub.open(undefined, { chat: null, canvasHost: true });
     });
   }
 

@@ -68,6 +68,36 @@
   var hearted = {};    // "type|repo|id" → true
 
   var cur = null;      // the open hub view's state
+  // v0.60 pt B: the BUNCH detail is its OWN pushed view (bcur) — the grid
+  // beneath keeps its filters/selection/scroll untouched, so ‹ from a
+  // bundle returns to exactly the grid you left (panel.js snapshots the
+  // covered view's scroll on push).
+  var bcur = null;     // the open bunch view's state
+
+  // v0.60 pt B: BROWSE-STATE PERSISTENCE — the library remembers where
+  // you were (type, q, sort, tag, mine, page, folded, scroll) across
+  // close→reopen. Saved on every user action + throttled scroll + close;
+  // restored on open (an explicit type argument wins; q/tag/mine restore
+  // only when the browsed type matches the saved one).
+  var HUBSTATE_KEY = 'doomalay.hubstate.v1';
+  function saveHubstate() {
+    if (!cur) return;
+    try {
+      localStorage.setItem(HUBSTATE_KEY, JSON.stringify({
+        type: cur.type || '',
+        q: cur.q || '',
+        sort: cur.sort || 'recent',
+        tag: cur.tag || '',
+        mine: !!cur.mine,
+        page: cur.page || 1,
+        folded: !!cur.folded,
+        scroll: (cur.panel && cur.panel.bodyEl) ? cur.panel.bodyEl.scrollTop : 0
+      }));
+    } catch (e) {}
+  }
+  function readHubstate() {
+    try { return JSON.parse(localStorage.getItem(HUBSTATE_KEY)) || null; } catch (e) { return null; }
+  }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -228,7 +258,19 @@
         cur.page = 1;
         cur.stale = false;
         cur.tags = collectTags(cur.items);
+        // v0.60 pt B: the saved page applies once (bodyHTML clamps it to
+        // the real page count) + the one-shot scroll restore after the
+        // first paint (rAF — the grid needs a frame to lay out).
+        if (cur._keepPage) { cur.page = cur._keepPage; cur._keepPage = 0; }
         if (isTop()) { updateLibs(); updateTags(); updateBody(); }
+        if (cur._restoreScroll) {
+          var bodyEl = cur.panel && cur.panel.bodyEl;
+          var y = cur._restoreScroll;
+          cur._restoreScroll = 0;
+          if (bodyEl) requestAnimationFrame(function () {
+            try { bodyEl.scrollTop = y; } catch (e) {}
+          });
+        }
         seedLocalState(cur.type);   // v0.58: light up downloaded/hearted states
         loadCollections(refresh);
       })
@@ -291,34 +333,135 @@
       });
   }
 
-  // v0.52: open a bunch — the cross-library member list.
-  function loadBunch(id) {
-    if (!cur) return;
-    cur.bunch = id;
-    cur.bunchGroups = null;
-    cur.bunchLoading = true;
-    cur.page = 1;
-    if (isTop()) { updateFilters(); updateBody(); }
+  // v0.60 pt B: OPEN A BUNCH — its own PUSHED view. The grid beneath
+  // keeps its filters/selection/scroll (pushView snapshots the covered
+  // view's scroll); ‹ pops back to exactly the grid you left.
+  function openBunch(id) {
+    var panel = PV();
+    if (!panel || !cur) return;
+    bcur = { panel: panel, id: id, groups: null, loading: true, seq: 0, viewObj: null };
+    panel.pushView(bunchView());
+    fetchBunch(id);
+  }
+
+  function bunchView() {
+    var v = view('bundle · ' + (bcur ? bcur.id : 'bundle'), function () { return bunchRender(); },
+      function (el) { bunchWire(el); },
+      function () { bcur = null; });
+    if (bcur) bcur.viewObj = v; // bunchTop()'s identity check
+    return v;
+  }
+
+  function bunchTop() {
+    return !!(bcur && bcur.panel && bcur.viewObj &&
+      typeof bcur.panel.topView === 'function' && bcur.panel.topView() === bcur.viewObj);
+  }
+
+  function bunchRepaint() {
+    if (!bcur || !bcur.panel) return;
+    bcur.panel.replaceView(bunchView(), { keepScroll: true });
+  }
+
+  function fetchBunch(id) {
+    if (!bcur) return;
+    var seq = bcur.seq = (bcur.seq || 0) + 1;
     api('GET', '/api/hub/collections/' + encodeURIComponent(id) + '/items')
       .then(function (d) {
-        if (!cur || cur.bunch !== id) return;
-        cur.bunchLoading = false;
-        cur.bunchGroups = (d && d.groups) || [];
-        if (isTop()) updateBody();
+        if (!bcur || bcur.seq !== seq) return;
+        bcur.loading = false;
+        bcur.groups = (d && d.groups) || [];
+        if (bunchTop()) bunchRepaint();
       })
       .catch(function (e) {
-        if (!cur || cur.bunch !== id) return;
-        cur.bunchLoading = false;
-        cur.bunchGroups = [];
-        if (isTop()) { toast(e.message || 'the bunch could not be reached'); updateBody(); }
+        if (!bcur || bcur.seq !== seq) return;
+        bcur.loading = false;
+        bcur.groups = [];
+        if (bunchTop()) { toast(e.message || 'the bunch could not be reached'); bunchRepaint(); }
       });
   }
 
-  function leaveBunch() {
-    if (!cur) return;
-    cur.bunch = '';
-    cur.bunchGroups = null;
-    if (isTop()) { updateFilters(); updateBody(); }
+  // the bunch view render — a hero (the bunch's own design + flag) + the
+  // cross-library member sections, one grid per type.
+  function bunchRender() {
+    if (!bcur) return '';
+    var b = bunchMeta(bcur.id);
+    var I = window.IconLib;
+    var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22) : (I ? I.svg('package', 22) : '');
+    var bits = [];
+    var byType = b.byType || {};
+    Object.keys(byType).forEach(function (t) {
+      bits.push(byType[t] + ' ' + shortType(t) + (byType[t] === 1 ? '' : 's'));
+    });
+    var flag = (b.tag || '').trim()
+      ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
+        '</b><i>bundle</i></span>' : '';
+    var hero =
+      '<div class="hub-bunch-hero" style="background-image:' +
+        ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
+        '<span class="hub-bunch-hero-bg" data-bunchbg="1"></span>' +
+        '<span class="hub-bunch-hero-scrim" aria-hidden="true"></span>' +
+        '<div class="hub-bunch-hero-body">' +
+          '<div class="hub-bunch-hero-titlerow">' +
+            (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
+            '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
+          '</div>' +
+          '<div class="hub-bunch-hero-desc">' + esc((b.members || 0) + ' bundled items — ' + bits.join(' · ')) + '</div>' +
+        '</div>' +
+        flag +
+      '</div>';
+    var body = '';
+    if (bcur.loading) {
+      body = '<div class="art-loading">loading the bundle…</div>';
+    } else {
+      var groups = bcur.groups || [];
+      if (!groups.length) {
+        body = '<div class="hub-empty">the bundle “' + esc(bcur.id) + '” has no members anymore</div>';
+      } else {
+        groups.forEach(function (g) {
+          body += '<div class="hub-bunch-sec">' +
+            '<div class="hub-bunch-sec-h">' + libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
+              ' <span class="hub-bunch-sec-n">' + g.items.length + '</span></div>' +
+            '<div class="hub-grid" style="--hub-cols:' + clampCols(cur && cur.grid, bcur.panel && bcur.panel.bodyEl ? bcur.panel.bodyEl.clientWidth : 320) + '">' +
+              g.items.map(cardHTML).join('') +
+            '</div>' +
+          '</div>';
+        });
+      }
+    }
+    return '<div class="hub-root hub-root--bunch" data-tone="' + escAttr((cur && cur.type) || '') + '">' + hero +
+      '<div class="hub-bodyzone">' + body + '</div></div>';
+  }
+
+  // the bunch view's meta — the collections list the GRID loaded (this
+  // view only opens from a bunch card, so cur is alive and holds it).
+  function bunchMeta(id) {
+    var list = (cur && cur.collections) || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === id) return list[i];
+    }
+    return { id: id, members: 0, byType: {}, tag: '', design: null, icon: '' };
+  }
+
+  function bunchWire(el) {
+    if (!bcur || !el) return;
+    var c = cur;
+    // member cards → the item detail (the same open path the grid uses)
+    el.querySelectorAll('[data-item]').forEach(function (b) {
+      var id = b.getAttribute('data-item');
+      var it = findItem(id);
+      if (!it) return;
+      b.addEventListener('click', function () {
+        if (window.HubItem) window.HubItem.open(it.type || (c && c.type), it);
+      });
+      var bg = b.querySelector('[data-bgcard]');
+      if (bg) paintCardBg(bg, it);
+    });
+    // the hero's art layer — the bunch's own design
+    var heroBg = el.querySelector('[data-bunchbg]');
+    if (heroBg) paintBunchBg(heroBg, bunchMeta(bcur.id));
+    // live hearts on the member cards (the shared grid handler)
+    wireCardHearts(el);
+    marqueeScan(el);
   }
 
   function collectTags(items) {
@@ -429,10 +572,6 @@
 
   function fsubHTML() {
     var c = cur;
-    if (c.bunch) {
-      return '<span class="hub-bunch-chip">bunch: ' + esc(c.bunch) +
-        ' <span class="hub-bunch-x" id="hub-bunch-x" role="button" tabindex="0" aria-label="leave the bunch">✕</span></span>';
-    }
     return esc(SORT_SUB[c.sort] || '');
   }
 
@@ -506,28 +645,10 @@
 
   function bodyHTML() {
     var c = cur;
-    // v0.52: the BUNCH view — the member list across libraries, one
-    // section per type, each card opening the item detail as usual.
-    if (c.bunch) {
-      var groups = c.bunchGroups || [];
-      if (c.bunchLoading) return '<div class="art-loading">loading the bunch…</div>';
-      if (!groups.length) {
-        return '<div class="hub-empty">the bunch “' + esc(c.bunch) + '” has no members anymore</div>';
-      }
-      var out = '';
-      groups.forEach(function (g) {
-        out += '<div class="hub-bunch-sec">' +
-          '<div class="hub-bunch-sec-h">' + libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
-            ' <span class="hub-bunch-sec-n">' + g.items.length + '</span></div>' +
-          '<div class="hub-grid" style="--hub-cols:' + clampCols(c.grid, c.width) + '">' +
-            g.items.map(cardHTML).join('') +
-          '</div>' +
-        '</div>';
-      });
-      return out;
-    }
     // v0.58 (user spec pt 8): MY-xyz — the my-pill filters the grid to the
     // user's downloads (client-side q + sort over the downloads list).
+    // (v0.60 pt B: the BUNCH view is its own pushed view now — the grid
+    // below only ever renders the library/mine lists.)
     if (c.mine) {
       if (c.mineLoading) return '<div class="art-loading">loading your downloads…</div>';
       var mine = mineVisible(c);
@@ -662,8 +783,8 @@
         if (cur.mineItems[i].id === id) return cur.mineItems[i];
       }
     }
-    // v0.52: bunch members live in their groups, not cur.items
-    var groups = cur.bunchGroups || [];
+    // v0.60 pt B: bunch members live in the BUNCH VIEW's groups
+    var groups = (bcur && bcur.groups) || [];
     for (i = 0; i < groups.length; i++) {
       var items = groups[i].items || [];
       for (j = 0; j < items.length; j++) {
@@ -890,7 +1011,7 @@
   function updateFilters() {
     var c = cur;
     // v0.56: the sort ICONS (the old #hub-fcols text columns are gone) —
-    // surgical data-on swap + the fsub line (bunch chip or sort hint).
+    // surgical data-on swap + the fsub line (the sort hint).
     var root = (cur && cur.panel) ? cur.panel.bodyEl : null;
     if (root) {
       root.querySelectorAll('[data-sort]').forEach(function (b) {
@@ -900,21 +1021,6 @@
     }
     var sub = q('#hub-fsub');
     if (sub) sub.innerHTML = fsubHTML();
-    wireBunchX(sub);
-  }
-  // wireBunchX — the ✕ on the bunch chip (it can land in the dock's fsub
-  // after a surgical updateFilters — v0.56).
-  function wireBunchX(scope) {
-    var host = scope && scope.querySelectorAll ? scope : (cur && cur.panel ? cur.panel.bodyEl : document);
-    var bunchX = (scope && scope.querySelector && scope.querySelector('#hub-bunch-x')) ||
-      (host.querySelector ? host.querySelector('#hub-bunch-x') : null);
-    if (bunchX && !bunchX._bunchWired) {
-      bunchX._bunchWired = 1;
-      bunchX.addEventListener('click', function (e) {
-        e.stopPropagation();
-        leaveBunch();
-      });
-    }
   }
 
   function updateBody() {
@@ -977,6 +1083,7 @@
         var chev = q('.pub-chev');
         if (chev) chev.textContent = c.folded ? '▸' : '▾';
         toggle.setAttribute('aria-expanded', String(!c.folded));
+        saveHubstate(); // v0.60 pt B
       };
       toggle.addEventListener('click', fold);
       toggle.addEventListener('keydown', function (e) {
@@ -1002,6 +1109,7 @@
       });
     }
     if (!c._onHubScroll) {
+      var lastSave = 0;
       c._onHubScroll = function () {
         if (!cur || !cur.panel || !cur.panel.bodyEl) return;
         var st = cur.panel.bodyEl.scrollTop;
@@ -1012,6 +1120,10 @@
         var typing = si && (document.activeElement === si ||
           String(si.value || '').length > 0);
         setScrunch(st > 24 && !typing);
+        // v0.60 pt B: the scroll position persists (throttled — at most
+        // one write per 400ms of scrolling).
+        var now = Date.now();
+        if (now - lastSave > 400) { lastSave = now; saveHubstate(); }
       };
       c.panel.bodyEl.addEventListener('scroll', c._onHubScroll, { passive: true });
     }
@@ -1027,6 +1139,7 @@
         searchTimer = setTimeout(function () {
           if (!cur) return;
           cur.q = searchInput.value;
+          saveHubstate(); // v0.60 pt B: the browse state persists
           loadItems();
         }, 200);
       });
@@ -1041,11 +1154,11 @@
       b.addEventListener('click', function () {
         if (!cur) return;
         cur.sort = b.getAttribute('data-sort');
+        saveHubstate(); // v0.60 pt B
         updateFilters();
         loadItems();
       });
     });
-    wireBunchX(el.querySelector('#hub-fsub'));
 
     // library pills + tags + the body zone (cards / pager / publish /
     // steppers all live inside the zones these wire)
@@ -1094,9 +1207,9 @@
         cur.tag = '';
         cur.q = '';
         cur.page = 1;
-        cur.bunch = '';
-        cur.bunchGroups = null;
-        cur.collections = null;
+        cur.mine = false;
+        cur.mineItems = null;
+        saveHubstate(); // v0.60 pt B
         var si = q('#hub-search');
         if (si) si.value = '';
         // v0.58 (pts 1 + 8): the whole library chrome re-tones to the
@@ -1108,7 +1221,6 @@
         updateFilters();
         updateChatrow();
         updateBody();
-        if (cur.mine) loadMine();
         loadItems();
       });
     });
@@ -1121,6 +1233,7 @@
         if (!cur) return;
         var t = b.getAttribute('data-tag');
         cur.tag = (cur.tag === t) ? '' : t;
+        saveHubstate(); // v0.60 pt B
         updateTags();
         loadItems();
       });
@@ -1168,6 +1281,7 @@
         if (!cur || b.disabled) return;
         cur.page += (b.getAttribute('data-page') === 'next') ? 1 : -1;
         cur.page = Math.max(1, cur.page);
+        saveHubstate(); // v0.60 pt B
         updateBody();
       });
     });
@@ -1195,7 +1309,8 @@
       });
     }
 
-    // cards → item detail · v0.52: bunch cards → the member view, and the
+    // cards → item detail · v0.60 pt B: bunch cards OPEN THE PUSHED BUNCH
+    // VIEW (the grid beneath keeps its filters/selection/scroll), and the
     // card hearts endorse DIRECTLY (user spec item 6: every heart is live —
     // downloaded items toggle their endorsement right on the card; the
     // engine still 400-guards endorse-before-download, so a heart on a
@@ -1217,7 +1332,7 @@
 
     host.querySelectorAll('[data-bunch]').forEach(function (b) {
       b.addEventListener('click', function () {
-        loadBunch(b.getAttribute('data-bunch'));
+        openBunch(b.getAttribute('data-bunch'));
       });
       // v0.58: the bunch card's own art layer
       var bid = b.getAttribute('data-bunch');
@@ -1226,10 +1341,14 @@
       if (bg2 && bb) paintBunchBg(bg2, bb);
     });
 
-    // v0.56: the bunch chip's ✕ lives in the dock's fsub — wired by
-    // wireBunchX (called from wire() + updateFilters); the old duplicate
-    // wiring here double-bound the same element on every body update.
+    wireCardHearts(host);
+  }
 
+  // v0.60 pt B: wireCardHearts — the shared live-heart handler for BOTH the
+  // library grid and the bunch view's member cards (same contract as the
+  // old inline wireBody block).
+  function wireCardHearts(host) {
+    if (!host || !host.querySelectorAll) return;
     host.querySelectorAll('[data-heart]').forEach(function (h) {
       h.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -1254,6 +1373,7 @@
             if (d && d.item) refreshItem(d.item);
             toast(on ? 'endorsed ♥' : 'endorsement removed');
             if (isTop()) updateBody();
+            else if (bunchTop()) bunchRepaint();
           })
           .catch(function (e2) { toast((e2 && e2.message) || 'could not endorse'); });
       });
@@ -1261,6 +1381,9 @@
   }
 
   function onClosed() {
+    // v0.60 pt B: persist the browse state (final scroll included) BEFORE
+    // cur goes away.
+    saveHubstate();
     if (cur && cur._onResize) {
       window.removeEventListener('resize', cur._onResize);
       cur._onResize = null;
@@ -1280,7 +1403,16 @@
         p.subEl.textContent = cur._savedSub || '';
       }
     } catch (e) {}
+    // v0.60 pt B: CANVAS ENTRY — back/✕ on the library's main browsing page
+    // closes the whole panel (the user returns to the CANVAS, not the
+    // synthetic host chat opened just to hold the library). A chat connected
+    // through the pill cleared fromCanvas, so that path pops normally.
+    var fromCanvas = cur && cur.fromCanvas;
+    var panel = cur ? cur.panel : null;
     cur = null;
+    if (fromCanvas && panel) {
+      try { panel.close(); } catch (e) {}
+    }
   }
 
   // ── v0.52: the chat connection (user item 5) ────────────────────
@@ -1376,12 +1508,14 @@
           cur.mine = false;
           cur.mineItems = null;
           cur.page = 1;
+          saveHubstate(); // v0.60 pt B
           updateChatrow();
           updateBody();
           return;
         }
         cur.mine = true;
         cur.page = 1;
+        saveHubstate(); // v0.60 pt B
         loadMine();
       });
     }
@@ -1438,33 +1572,45 @@
     } else if (opts.chat === undefined) {
       chat = deriveChatFromPanel(); // legacy callers: connect the hosting chat
     } // opts.chat === null → explicitly NO chat (the canvas entry)
+    // v0.60 pt B: restore the last browse state. An explicit type argument
+    // wins; q/tag/mine only restore when the browsed type matches the saved
+    // one (a skills search makes no sense over templates).
+    var saved = readHubstate() || {};
+    var explicitType = !!type;
+    var sameType = !explicitType || saved.type === type;
     cur = {
       panel: panel,
       chat: chat, // v0.52: null (no chat) | {sessionId,title,name,avatarHTML}
+      // v0.60 pt B: opened from the CANVAS (app.js passes canvasHost when
+      // it had to open a host panel just to hold the library) — back/✕ on
+      // the main browsing page closes the whole panel (canvas), instead of
+      // dropping the user on the synthetic host chat behind it.
+      fromCanvas: !!opts.canvasHost,
       libraries: [],
       libErr: '',
-      type: type || null,
+      type: explicitType ? type : (saved.type || null),
       items: null,
       tags: [],
-      q: '',
-      sort: 'recent',
-      tag: '',
+      q: sameType ? (saved.q || '') : '',
+      sort: saved.sort || 'recent',
+      tag: sameType ? (saved.tag || '') : '',
       page: 1,
+      // v0.60 pt B: the saved page applies ONCE after the items land
+      // (loadItems resets page=1 on fetch; bodyHTML clamps the overflow).
+      _keepPage: sameType && saved.page > 1 ? saved.page : 0,
+      _restoreScroll: sameType ? (saved.scroll || 0) : 0,
       grid: readGrid(),
       loading: false,
       stale: false,
       err: '',
       auth: null,
       width: 0,
-      folded: false,
+      folded: !!saved.folded,
       eff: 0,
-      bunch: '',
-      bunchGroups: null,
-      bunchLoading: false,
       collections: null,
       colSeq: 0,
       // v0.58: the my-xyz filter state
-      mine: false,
+      mine: sameType && !!saved.mine,
       mineItems: null,
       mineLoading: false,
       _onResize: null
@@ -1517,7 +1663,14 @@
     // the chat toolbar's [template|+] / [skills|+] buttons and any
     // "apply to this chat" action read this.
     chat: function () { return cur ? cur.chat : null; },
-    setChat: function (chat) { if (cur) { cur.chat = chat || null; } },
+    // v0.60 pt B: connecting a chat through the pill clears the canvas
+    // entry — back from the library then pops to the chat panel normally
+    // (the library is no longer canvas-rooted).
+    setChat: function (chat) {
+      if (!cur) return;
+      cur.chat = chat || null;
+      if (chat) cur.fromCanvas = false;
+    },
     markStale: markStale,
     refreshItem: refreshItem,
     isDownloaded: isDownloaded,

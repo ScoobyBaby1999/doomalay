@@ -2961,12 +2961,40 @@
     color: var(--text-1); border-radius: 999px; padding: 2px 10px;
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
   }
-  .hub-bunch-x {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: var(--surface-3); color: var(--text-2);
-    font-size: 10px; cursor: pointer;
+  /* v0.60 pt B: THE BUNCH VIEW HERO — the pushed bundle page's head. The
+     bunch's own art shows through a contrast scrim (the hi-head pattern),
+     the flag anchors its bottom-left edge. Theme vars only for chrome. */
+  .hub-bunch-hero {
+    position: relative; overflow: hidden;
+    min-height: 150px; display: flex; align-items: flex-end;
+    background-color: var(--surface-2); background-size: cover; background-position: center;
+    border-radius: 18px; margin: 0 0 14px;
   }
+  .hub-bunch-hero-bg {
+    position: absolute; inset: 0; background-size: cover; background-position: center;
+  }
+  .hub-bunch-hero-scrim {
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom,
+      rgba(var(--bg-panel-rgb), 0.15) 0%,
+      rgba(var(--bg-panel-rgb), 0.62) 62%,
+      rgba(var(--bg-panel-rgb), 0.92) 100%);
+  }
+  .hub-bunch-hero-body {
+    position: relative; z-index: 1; padding: 18px 16px 14px; width: 100%;
+  }
+  .hub-bunch-hero-titlerow { display: flex; align-items: center; gap: 8px; }
+  .hub-bunch-hero-name {
+    font-size: calc(var(--ui-fs) + 5px); font-weight: 800; color: var(--text-1);
+    text-shadow: 0 1px 6px rgba(var(--bg-panel-rgb), 0.85);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-bunch-hero-desc {
+    margin-top: 3px; font-size: var(--ui-small-fs); color: var(--text-2);
+    text-shadow: 0 1px 4px rgba(var(--bg-panel-rgb), 0.8);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hub-bunch-hero .hub-bundle-flag { bottom: auto; top: 12px; z-index: 2; }
   .hub-empty {
     padding: 34px 18px; text-align: center; color: var(--text-3);
     font-size: var(--ui-small-fs); line-height: 1.6;
