@@ -194,6 +194,98 @@ func usableDesign(d Design) bool {
         return (d.Kind == "gradient" && len(d.Colors) > 0) || d.Kind == "png"
 }
 
+// ── v0.60 pt C.6: EVERYTHING IS A BUNDLE — collection downloads + deletes ──
+
+// CollectionDownload is one downloaded member of a bunch (item + payload,
+// the same shape a single-item download returns).
+type CollectionDownload struct {
+        Item    Item   `json:"item"`
+        Payload string `json:"payload"`
+}
+
+// CollectionDownloadGroup is one library's slice of a downloaded bunch.
+type CollectionDownloadGroup struct {
+        Type  string               `json:"type"`
+        Items []CollectionDownload `json:"items"`
+}
+
+// DownloadCollection downloads EVERY member of a bunch (v0.60 pt C.6: the
+// one-press bundle download). Each member rides the ordinary Download path
+// (local row + downloaded stamp + metric + the per-type counters), so the
+// per-item effects are identical to tapping every card in turn — the client
+// then applies the per-TYPE side effects (template/skill → the user's
+// library, persona → the chat, theme → the look). Individual member
+// failures are skipped (a half-offline bunch still lands its rest); an
+// empty result errors.
+func (s *Service) DownloadCollection(id string) ([]CollectionDownloadGroup, error) {
+        id = SanitizeCollection(id)
+        if id == "" {
+                return nil, ErrNotFoundLocal
+        }
+        out := []CollectionDownloadGroup{}
+        for _, spec := range All() {
+                items, err := s.Items(spec.Type, "", "hearts", "", false)
+                if err != nil {
+                        continue
+                }
+                group := CollectionDownloadGroup{Type: spec.Type}
+                for _, it := range items {
+                        if SanitizeCollection(it.Collection) != id {
+                                continue
+                        }
+                        item, payload, err := s.Download(spec.Type, it.Repo, it.ID)
+                        if err != nil {
+                                continue // member failed — the rest of the bundle still lands
+                        }
+                        group.Items = append(group.Items, CollectionDownload{Item: item, Payload: payload})
+                }
+                if len(group.Items) > 0 {
+                        out = append(out, group)
+                }
+        }
+        if len(out) == 0 {
+                return nil, ErrNotFoundLocal
+        }
+        return out, nil
+}
+
+// CollectionDeleted is one removed local row (the client cleans its
+// session marks + "Yours" copies from the list).
+type CollectionDeleted struct {
+        Type string `json:"type"`
+        ID   string `json:"id"`
+}
+
+// DeleteCollection removes every locally-downloaded member of a bunch
+// (v0.60 pt C.6: the delete-your-copy rule, bundle edition — the remote
+// listings are untouched). Returns the removed rows.
+func (s *Service) DeleteCollection(id string) ([]CollectionDeleted, error) {
+        id = SanitizeCollection(id)
+        if id == "" {
+                return nil, ErrNotFoundLocal
+        }
+        var refs []CollectionDeleted
+        for _, spec := range All() {
+                rows, err := ListLocal(s.db, spec.Type)
+                if err != nil {
+                        continue
+                }
+                for _, row := range rows {
+                        if row.DownloadedAt == "" || SanitizeCollection(row.Item.Collection) != id {
+                                continue // publish-only records + other bunches stay
+                        }
+                        if err := DeleteLocalItem(s.db, spec.Type, row.Item.ID); err == nil {
+                                refs = append(refs, CollectionDeleted{Type: spec.Type, ID: row.Item.ID})
+                        }
+                }
+        }
+        if len(refs) == 0 {
+                return nil, ErrNotFoundLocal
+        }
+        s.Invalidate("") // counts changed
+        return refs, nil
+}
+
 // builtinBunchDesigns — curated art for known bunches (v0.58 user spec pt 2:
 // "let's make the superpowers bundle have a random color + random gradient
 // of your choosing"). superpowers-obra, the flagship port, wears a hot mesh.

@@ -232,6 +232,9 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hub/libraries", s.handleHubLibraries)
         s.mux.HandleFunc("GET /api/hub/collections", s.handleHubCollections)
         s.mux.HandleFunc("GET /api/hub/collections/{id}/items", s.handleHubCollectionItems)
+        // v0.60 pt C.6: the bundle download + bundle delete-your-copy.
+        s.mux.HandleFunc("POST /api/hub/collections/{id}/download", s.handleHubCollectionDownload)
+        s.mux.HandleFunc("POST /api/hub/collections/{id}/delete", s.handleHubCollectionDelete)
         s.mux.HandleFunc("GET /api/hub/{type}/items", s.handleHubItems)
         s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
         s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)

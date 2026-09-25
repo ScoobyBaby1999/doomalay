@@ -396,6 +396,13 @@
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
         '</b><i>bundle</i></span>' : '';
+    // v0.60 pt C.6: the ONE-PRESS BUNDLE DOWNLOAD — every member rides the
+    // ordinary download path, then the per-type side effects apply.
+    var allDl = bcur.loading
+      ? ''
+      : '<button type="button" class="hub-bundle-dl" id="hub-bundle-dl"' +
+          ' title="download every item in this bundle" aria-label="download the whole bundle">' +
+          (statIcon('download', false) || '⤓') + '<span>download all ' + (b.members || 0) + '</span></button>';
     var hero =
       '<div class="hub-bunch-hero" style="background-image:' +
         ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
@@ -407,6 +414,7 @@
             '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
           '</div>' +
           '<div class="hub-bunch-hero-desc">' + esc((b.members || 0) + ' bundled items — ' + bits.join(' · ')) + '</div>' +
+          allDl +
         '</div>' +
         flag +
       '</div>';
@@ -460,9 +468,86 @@
     // the hero's art layer — the bunch's own design
     var heroBg = el.querySelector('[data-bunchbg]');
     if (heroBg) paintBunchBg(heroBg, bunchMeta(bcur.id));
+    // v0.60 pt C.6: the one-press bundle download.
+    var dl = el.querySelector('#hub-bundle-dl');
+    if (dl) dl.addEventListener('click', function () {
+      if (!bcur || bcur.dlBusy) return;
+      bcur.dlBusy = true;
+      var old = dl.innerHTML;
+      dl.innerHTML = (statIcon('download', false) || '⤓') + '<span>downloading…</span>';
+      doBundleDownload(bcur.id).then(function (n) {
+        dl.innerHTML = old;
+        if (bcur) { bcur.dlBusy = false; }
+        toast('downloaded ' + n + ' items — the whole bundle is yours');
+        if (bunchTop()) bunchRepaint();
+      }).catch(function (e) {
+        dl.innerHTML = old;
+        if (bcur) { bcur.dlBusy = false; }
+        toast((e && e.message) || 'the bundle download failed');
+      });
+    });
     // live hearts on the member cards (the shared grid handler)
     wireCardHearts(el);
     marqueeScan(el);
+  }
+
+  // v0.60 pt C.6: the BUNDLE download — POST the collection endpoint, then
+  // apply the per-TYPE side effects (the exact same ones a single download
+  // applies): template+skill → the user's template library ("Yours"),
+  // persona → the connected chat's persona list, theme → the look (the
+  // LAST theme in the bundle wins), script+doc → the local library row.
+  function doBundleDownload(id) {
+    var chat = cur ? cur.chat : null;
+    var sid = chat && chat.sessionId ? chat.sessionId : '';
+    var appliedThemes = 0;
+    return api('POST', '/api/hub/collections/' + encodeURIComponent(id) + '/download')
+      .then(function (d) {
+        var n = 0;
+        ((d && d.groups) || []).forEach(function (g) {
+          (g.items || []).forEach(function (m) {
+            if (!m || !m.item) return;
+            var it = m.item;
+            n++;
+            markDownloaded(it.type || g.type, it.repo, it.id);
+            if ((it.type === 'template' || it.type === 'skill') &&
+                window.TemplateSheet && window.TemplateSheet.saveFromHub) {
+              window.TemplateSheet.saveFromHub(it, m.payload);
+            }
+            if (it.type === 'persona') importPersonaInto(sid, it, m.payload);
+            if (it.type === 'theme' && window.LookIO && window.LookIO.importText) {
+              appliedThemes++;
+              window.LookIO.importText(m.payload);
+            }
+          });
+        });
+        if (n === 0) throw new Error('the bundle has no downloadable members');
+        return n;
+      });
+  }
+
+  // the persona side effect of a bundle download — the hubitem.js
+  // importPersona pattern (GET the session → append inactive → PATCH).
+  function importPersonaInto(sessionId, item, payload) {
+    if (!sessionId || !window.ChatPanel || !window.ChatPanel.current()) return;
+    fetch('/api/sessions/' + encodeURIComponent(sessionId))
+      .then(function (r) { return r.json(); })
+      .then(function (sess) {
+        var list = [];
+        try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
+        if (!list.length) {
+          list = [{ id: 'p_default', name: 'Default', text: (sess && sess.Persona) || '', mode: 'always' }];
+        }
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === item.id) return; // already imported
+        }
+        list.push({ id: item.id, name: item.name, text: payload || '', mode: 'inactive' });
+        return fetch('/api/sessions/' + encodeURIComponent(sessionId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personas: JSON.stringify(list) })
+        });
+      })
+      .catch(function () {}); // the local row already saved — the import is a bonus
   }
 
   function collectTags(items) {
@@ -650,19 +735,59 @@
     // user's downloads (client-side q + sort over the downloads list).
     // (v0.60 pt B: the BUNCH view is its own pushed view now — the grid
     // below only ever renders the library/mine lists.)
+    // v0.60 pt C.6: the mine view GROUPS BY BUNDLE — one section per
+    // collection (everything-is-a-bundle: published items self-bundle),
+    // loose downloads trail at the end; each bundle header carries a 🗑
+    // (delete-your-copy, with the keep/remove confirm bar).
     if (c.mine) {
       if (c.mineLoading) return '<div class="art-loading">loading your downloads…</div>';
       var mine = mineVisible(c);
       if (!mine.length) {
         return '<div class="hub-empty">nothing downloaded yet — browse the community and grab something</div>';
       }
+      var groups = {}, order = [];
+      mine.forEach(function (it) {
+        var key = String(it.collection || '');
+        if (!groups[key]) { groups[key] = []; order.push(key); }
+        groups[key].push(it);
+      });
+      order.sort(function (a, b) {
+        return groups[b].length - groups[a].length || (a || 'zzzz').localeCompare(b || 'zzzz');
+      });
       var mp = minePage(c, mine);
-      return (
-        '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + mp.eff + '">' +
-          mine.slice((mp.page - 1) * mp.per, mp.page * mp.per).map(cardHTML).join('') +
-        '</div>' +
-        pagerHTML(mp.page, mp.pages)
-      );
+      var mout = '';
+      order.forEach(function (key) {
+        var members = groups[key];
+        if (key) {
+          mout += '<div class="hub-bunch-sec">' +
+            '<div class="hub-bunch-sec-h">' + libIcon(c.type) + ' <span class="hub-mine-bundle">' + esc(key) + '</span>' +
+              ' <span class="hub-bunch-sec-n">' + members.length + '</span>' +
+              '<button type="button" class="hub-group-del" data-gdel="' + escAttr(key) + '"' +
+                ' title="delete this bundle\'s copies" aria-label="delete the bundle">🗑</button>' +
+            '</div>' +
+            '<div class="hub-grid" style="--hub-cols:' + mp.eff + '">' +
+              members.map(cardHTML).join('') +
+            '</div>' +
+          '</div>';
+        } else {
+          mout += '<div class="hub-bunch-sec">' +
+            '<div class="hub-bunch-sec-h">' + libIcon(c.type) + ' loose downloads' +
+              ' <span class="hub-bunch-sec-n">' + members.length + '</span></div>' +
+            '<div class="hub-grid" style="--hub-cols:' + mp.eff + '">' +
+              members.map(cardHTML).join('') +
+            '</div>' +
+          '</div>';
+        }
+      });
+      // the bundle-delete confirm bar (sticky at the body zone's bottom).
+      if (c.mineConfirm) {
+        mout += '<div class="hi-delbar hub-mine-delbar" id="hub-mine-delbar" role="alertdialog" aria-label="confirm bundle delete">' +
+          '<span class="hi-delbar-text">Remove every <b>' + esc(c.mineConfirm) + '</b> download from this device?</span>' +
+          '<button type="button" class="hi-delbar-btn" data-mdel="keep">keep</button>' +
+          '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-mdel="remove">remove</button>' +
+        '</div>';
+      }
+      return mout;
     }
     var eff = clampCols(c.grid, c.width);
     c.eff = eff;
@@ -1342,7 +1467,67 @@
       if (bg2 && bb) paintBunchBg(bg2, bb);
     });
 
+    // v0.60 pt C.6: the mine view's bundle group deletes — the 🗑 arms the
+    // keep/remove confirm bar; the bar's remove hits the collection delete
+    // endpoint (all member rows + the client's marks + "Yours" copies).
+    host.querySelectorAll('[data-gdel]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!cur) return;
+        cur.mineConfirm = b.getAttribute('data-gdel');
+        updateBody();
+      });
+    });
+    var mbar = host.querySelector('#hub-mine-delbar');
+    if (mbar) mbar.querySelectorAll('[data-mdel]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        var key = cur.mineConfirm || '';
+        cur.mineConfirm = '';
+        if (b.getAttribute('data-mdel') === 'remove' && key) { doBundleDelete(key); return; }
+        updateBody();
+      });
+    });
+
     wireCardHearts(host);
+  }
+
+  // v0.60 pt C.6: the BUNDLE delete — POST the collection delete endpoint
+  // (every member's local row), then clean the client: the session's
+  // downloaded/hearted marks + the localStorage "Yours" copies + the mine
+  // list itself (reloaded from the engine's now-smaller rows).
+  function doBundleDelete(id) {
+    toast('removing the bundle…', { hold: true });
+    api('POST', '/api/hub/collections/' + encodeURIComponent(id) + '/delete')
+      .then(function (d) {
+        ((d && d.items) || []).forEach(function (ref) {
+          if (!ref) return;
+          unmarkDownloadedAll(ref.type, ref.id);
+          if (window.TemplateSheet && window.TemplateSheet.removeUserTemplate &&
+              (ref.type === 'template' || ref.type === 'skill')) {
+            window.TemplateSheet.removeUserTemplate(String(ref.id));
+          }
+        });
+        toast('removed ' + ((d && d.deleted) || 0) + ' items — the bundle is off this device');
+        if (cur) { cur.mineConfirm = ''; if (cur.mine) loadMine(); else updateBody(); }
+      })
+      .catch(function (e) {
+        toast((e && e.message) || 'the bundle delete failed');
+        if (cur) { cur.mineConfirm = ''; updateBody(); }
+      });
+  }
+
+  // unmark a downloaded id across every repo variant (the local row's repo
+  // is the right one, but a stale mark from another ref would linger) —
+  // both the downloaded AND hearted maps.
+  function unmarkDownloadedAll(type, id) {
+    var suffix = '|' + id, prefix = type + '|';
+    for (var key in downloaded) {
+      if (key.indexOf(prefix) === 0 && key.slice(-suffix.length) === suffix) delete downloaded[key];
+    }
+    for (var hkey in hearted) {
+      if (hkey.indexOf(prefix) === 0 && hkey.slice(-suffix.length) === suffix) delete hearted[hkey];
+    }
   }
 
   // v0.60 pt B: wireCardHearts — the shared live-heart handler for BOTH the

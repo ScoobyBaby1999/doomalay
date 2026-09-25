@@ -851,6 +851,14 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         if png := decodeB64(req.PNGBase64); len(png) > 0 && isPNG(png) {
                 item.Design = Design{Kind: "png"}
         }
+        // v0.60 pt C.6: EVERYTHING IS A BUNDLE — a published item with no
+        // explicit collection becomes its own singular-item bundle (the
+        // collection id = the item id), so the whole hub is bundle-shaped:
+        // one-press bundle downloads, bundle deletes and the grouped
+        // downloads view work for every item ever published.
+        if item.Collection == "" {
+                item.Collection = item.ID
+        }
 
         // v0.58 (user spec pt 10): templates carry a stage count — the manual
         // field wins, else the engine auto-counts the payload's stages[].

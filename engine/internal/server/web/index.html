@@ -3008,6 +3008,40 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .hub-bunch-hero .hub-bundle-flag { bottom: auto; top: 12px; z-index: 2; }
+  /* v0.60 pt C.6: the ONE-PRESS BUNDLE DOWNLOAD — a tinted pill riding the
+     bunch hero under the description. */
+  .hub-bundle-dl {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
+    padding: 8px 14px; border-radius: 999px; cursor: pointer; font-family: inherit;
+    background: rgba(var(--bg-panel-rgb), 0.55);
+    border: 1px solid rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.75);
+    color: var(--hub-tone, var(--accent-2));
+    font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    text-shadow: 0 1px 4px rgba(var(--bg-panel-rgb), 0.8);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-bundle-dl:active { transform: scale(0.97); }
+  .hub-bundle-dl .icl { display: block; }
+  /* v0.60 pt C.6: the mine view's bundle-group delete 🗑 + the sticky
+     confirm bar (the hi-delbar pattern, bottom of the body zone). */
+  .hub-group-del {
+    margin-left: auto; width: 30px; height: 26px; border-radius: 8px;
+    background: rgba(var(--err-rgb), 0.10); border: 1px solid rgba(var(--err-rgb), 0.45);
+    color: var(--err); font-size: calc(var(--ui-small-fs) - 2px); cursor: pointer;
+    font-family: inherit; flex-shrink: 0; line-height: 1;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-mine-bundle {
+    font-weight: 800; color: var(--text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%;
+  }
+  .hub-mine-delbar {
+    position: sticky; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 4; box-shadow: 0 -8px 20px -12px rgba(var(--bg-app-rgb), 0.5),
+      0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
+    border-radius: 16px; margin-top: 10px;
+  }
   .hub-empty {
     padding: 34px 18px; text-align: center; color: var(--text-3);
     font-size: var(--ui-small-fs); line-height: 1.6;

@@ -235,6 +235,32 @@ func (s *Server) handleHubDelete(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": true, "id": req.ID})
 }
 
+// handleHubCollectionDelete is POST /api/hub/collections/{id}/delete —
+// removes every LOCALLY-downloaded member of the bundle (v0.60 pt C.6;
+// the client shows a keep/remove confirm bar). Remote listings untouched.
+func (s *Server) handleHubCollectionDelete(w http.ResponseWriter, r *http.Request) {
+        refs, err := s.hub.DeleteCollection(r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": len(refs), "items": refs})
+}
+
+// handleHubCollectionDownload is POST /api/hub/collections/{id}/download —
+// the one-press BUNDLE download (v0.60 pt C.6): every member rides the
+// ordinary Download path; the client applies the per-type side effects
+// (template/skill → the user's library, persona → the chat import,
+// theme → the look) from the returned {groups}.
+func (s *Server) handleHubCollectionDownload(w http.ResponseWriter, r *http.Request) {
+        groups, err := s.hub.DownloadCollection(r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}
+
 // handleHubEndorse is POST /api/hub/{type}/endorse|unendorse {repo,id} —
 // hearting requires the item be downloaded (the enforceable endorsement
 // rule); unendorse mirrors.
