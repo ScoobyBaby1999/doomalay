@@ -334,6 +334,17 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    // v0.60: the auth done page (external browser) deep-links back with
+    // doomalay://return. With launchMode=singleTop an already-running app
+    // receives THIS callback instead of being recreated — the WebView and
+    // its SPA state (open connect panel included) survive untouched, and
+    // the WebView's own visibilitychange listener refetches the account so
+    // the panel flips to connected by itself.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        AppLog.log("deep link / re-launch: ${intent.data}")
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // v0.14: the app is a single-page WebView — there is no navigation

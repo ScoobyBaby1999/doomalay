@@ -12,13 +12,25 @@
 //     the sandbox picker's connect button are THE SAME panel.
 //
 // Layout (user spec, in order):
-//   1. big "Connect Hugging Face" button → the origin-picked flow (v0.59:
-//      loopback → one-tap redirect; gateway/preview/LAN/tunnel → the device
-//      flow — a one-time code at hf.co/oauth/device, no redirect back
-//      needed, the app notices the authorization by itself);
+//   1. big "Connect Hugging Face" button → the origin-picked flow:
+//      • loopback → v0.60 HOME-COMING: a POPUP to /api/hf/oauth/start
+//        (the app tab NEVER navigates — state preserved, the back gesture
+//        untouched); the popup ends on the engine's done page which
+//        postMessages back and closes itself; the APK's WebView can't
+//        popup (window.open is dead there) → same-tab fallback, where the
+//        WebView intercepts the HF redirect into the external browser and
+//        the SPA document survives either way;
+//      • gateway/preview/LAN/tunnel → the v0.59 device flow (one-time
+//        code at hf.co/oauth/device, no redirect back needed);
 //   2. "Optional manual method" — paste-token textbox + connect
 //      (POST /api/hub/auth/connect {token});
 //   3. "get token ↗" link → https://huggingface.co/settings/tokens.
+//
+// v0.60 SYNC: the panel no longer trusts the landing query alone — a
+// `message` listener (done-page postMessage), plus visibilitychange /
+// focus / pageshow refetches of /api/hf/account, repaint the panel the
+// moment the user is back (the APK-return + manual-close cases the user
+// reported: "doesn't sync or update").
 //
 // Keeps (v0.46): openLogs / openLogsFor — the run/build logs viewer with the
 // Wake button (used by the sandbox picker's build-failure "view logs" link).
@@ -30,6 +42,61 @@
   'use strict';
 
   var curSpace = null; // {repo, stage, running, sleeping, ...}
+
+  // ── v0.60: live panel sync (the "doesn't update when I come back" fix) ─
+  // `active` points at the wired panel; the listeners below repaint it
+  // from postMessage (popup done page) or a fresh /api/hf/account probe
+  // (APK return / tab focus / bfcache pageshow). Installed ONCE.
+  var active = null; // {stateEl, errEl, btn, onDone, connectedUser}
+  function applyAuthResult(d) {
+    if (!active) return;
+    if (d && d.error) {
+      if (active.errEl) active.errEl.textContent = d.error;
+      if (active.btn) { active.btn.disabled = false; active.btn.textContent = 'Connect Hugging Face'; }
+      return;
+    }
+    var user = (d && d.user) || '?';
+    if (active.connectedUser === user) return; // dedupe: message + focus both fire
+    active.connectedUser = user;
+    paintState(active.stateEl, { connected: true, user: user, auth: 'oauth' });
+    if (active.btn) { active.btn.disabled = false; active.btn.textContent = 'Connect Hugging Face'; }
+    if (window.toast) window.toast('✓ connected to Hugging Face as ' + user + ' — token saved encrypted');
+    if (active.onDone) active.onDone(user);
+  }
+  function installSyncListeners() {
+    if (installSyncListeners.done) return;
+    installSyncListeners.done = true;
+    window.addEventListener('message', function (e) {
+      if (!active || !e.data || e.data.type !== 'doomalay-auth') return;
+      if (e.data.provider !== 'huggingface') return;
+      // same-origin only — the done page lives on the engine itself
+      if (e.origin !== window.location.origin) return;
+      applyAuthResult(e.data);
+    });
+    var refetch = function () {
+      if (!active || active.connectedUser) return;
+      account().then(function (a) {
+        if (a && a.connected) applyAuthResult({ provider: 'huggingface', user: a.user });
+      }).catch(function () {});
+    };
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) refetch(); });
+    window.addEventListener('focus', refetch);
+    window.addEventListener('pageshow', refetch); // bfcache back-restore
+  }
+
+  // openAuthPopup — v0.60: popup FIRST so the app tab never navigates.
+  // Returns the popup window or null (blocked / unsupported → the caller
+  // falls back to same-tab). The Android WebView gets no popup support
+  // (window.open without setSupportMultipleWindows does nothing useful) —
+  // same-tab there is safe: handleUrl intercepts the HF redirect into the
+  // external browser and the SPA document is never replaced.
+  function openAuthPopup(url) {
+    if (/\bwv\b/.test(navigator.userAgent || '')) { window.location.href = url; return null; }
+    var p = null;
+    try { p = window.open(url, 'doomalay-hf', 'width=520,height=680'); } catch (e) {}
+    if (p) { try { p.focus(); } catch (e) {} }
+    return p;
+  }
 
   // ── the shared account probe ───────────────────────────────────────────
   function account() {
@@ -186,19 +253,44 @@
     var errEl = el.querySelector('#hfc-err');
     var stateEl = el.querySelector('#hfc-state');
 
-    account().then(function (a) { paintState(stateEl, a); }).catch(function () {});
+    installSyncListeners();
+    active = { stateEl: stateEl, errEl: errEl, btn: null, onDone: onDone, connectedUser: null };
+    account().then(function (a) {
+      paintState(stateEl, a);
+      // pre-seed so a mere tab focus doesn't re-toast an old connection
+      if (a && a.connected && active) active.connectedUser = a.user || '?';
+    }).catch(function () {});
 
     var oauth = el.querySelector('#hfc-oauth');
-    if (oauth) oauth.addEventListener('click', function () {
-      // v0.59: origin picks the flow — loopback can catch the redirect,
-      // everything else (gateway/preview/LAN/tunnel) uses the device flow.
-      if (isLoopbackOrigin()) {
-        oauth.disabled = true; oauth.textContent = 'Redirecting…';
-        window.location.href = '/api/hf/oauth/start?redirect=/';
-      } else {
-        runDeviceFlow(errEl, stateEl, oauth, onDone);
-      }
-    });
+    if (oauth) {
+      active.btn = oauth;
+      oauth.addEventListener('click', function () {
+        // v0.60: origin picks the flow — loopback gets the POPUP redirect
+        // (the app tab never navigates), everything else the device flow.
+        if (isLoopbackOrigin()) {
+          var p = openAuthPopup('/api/hf/oauth/start?redirect=/');
+          if (p) {
+            oauth.disabled = true; oauth.textContent = 'Waiting for Hugging Face…';
+            if (errEl) errEl.textContent = '';
+            // user closed the popup without authorizing → unstick the button
+            var watch = setInterval(function () {
+              var closed = true;
+              try { closed = p.closed; } catch (e) {}
+              if (closed) {
+                clearInterval(watch);
+                if (active && !active.connectedUser) {
+                  oauth.disabled = false; oauth.textContent = 'Connect Hugging Face';
+                }
+              }
+            }, 800);
+          }
+          // p == null → same-tab navigation already started (WebView /
+          // popup-blocked); the landing listener + pageshow refetch cover it
+        } else {
+          runDeviceFlow(errEl, stateEl, oauth, onDone);
+        }
+      });
+    }
 
     var link = el.querySelector('#hfc-gettoken');
     if (link) link.addEventListener('click', function (e) {
@@ -348,6 +440,7 @@
       openLogs(repo);
     },
     current: function () { return curSpace; },
-    _runDeviceFlow: runDeviceFlow // test hook (browser red-team)
+    _runDeviceFlow: runDeviceFlow, // test hook (browser red-team)
+    _applyAuthResult: applyAuthResult // test hook — simulate the done-page message
   };
 })();

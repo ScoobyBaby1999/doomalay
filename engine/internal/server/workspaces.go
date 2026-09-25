@@ -1614,14 +1614,20 @@ func ghTokenExchange(ctx context.Context, form url.Values) (access, refresh stri
 }
 
 // handleGHOAuthCallback — GitHub bounces here with ?code&state; exchange,
-// store encrypted, and send the user back to the PWA.
+// store encrypted, and hand the user THE DONE PAGE (v0.60: no more 302 to
+// the app root — that reloaded the SPA in whatever browser the flow ran
+// in; the done page self-closes as a popup / deep-links back to the APK /
+// keeps the landing query on its plain link, and ghconnect.js repaints via
+// postMessage + the focus refetch).
 func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
         q := r.URL.Query()
-        backTo := func(suffix string) {
-                http.Redirect(w, r, "/?"+suffix, http.StatusFound)
-        }
         if e := q.Get("error"); e != "" {
-                backTo("gh_error=" + url.QueryEscape(e))
+                desc := q.Get("error_description")
+                if desc == "" {
+                        desc = e
+                }
+                oauthDonePage(w, "GitHub", "", "GitHub sign-in failed: "+desc,
+                        "gh_error="+url.QueryEscape(desc))
                 return
         }
         pending, ok := popOAuthState(q.Get("state"))
@@ -1630,7 +1636,7 @@ func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
                 return
         }
         if q.Get("code") == "" {
-                backTo("gh_error=" + url.QueryEscape("missing code"))
+                oauthDonePage(w, "GitHub", "", "GitHub sent no authorization code", "gh_error=missing+code")
                 return
         }
         id, secret := s.ghOAuthCreds()
@@ -1652,7 +1658,8 @@ func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
         }
         access, refresh, expiresIn, err := ghTokenExchange(ctx, form)
         if err != nil {
-                backTo("gh_error=" + url.QueryEscape(err.Error()))
+                oauthDonePage(w, "GitHub", "", "token exchange failed: "+err.Error(),
+                        "gh_error="+url.QueryEscape(err.Error()))
                 return
         }
         ae := accountExtra{RefreshToken: refresh}
@@ -1672,17 +1679,13 @@ func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
         if ae.Login != "" {
                 suffix += "&gh_login=" + url.QueryEscape(ae.Login)
         }
-        // v0.52 FIX (found by TestGHOAuthFullRoundTrip): the suffix used to
-        // be appended RAW to the redirect path — "/" + "gh_connected=1" =
-        // "/gh_connected=1", a PATH with no query, so the PWA's landing
-        // listener (URLSearchParams) never matched and the browser sat on
-        // a bogus URL instead of the app with the success toast. Glue the
-        // query on properly (HF's callback already did this).
+        // v0.52 FIX (kept): glue the query on properly — "(" + "suffix"
+        // once produced "/gh_connected=1", a PATH with no query.
         sep := "?"
         if strings.Contains(pending.Redirect, "?") {
                 sep = "&"
         }
-        http.Redirect(w, r, pending.Redirect+sep+suffix, http.StatusFound)
+        oauthDonePage(w, "GitHub", ae.Login, "", pending.Redirect+sep+suffix)
 }
 
 // ghRefreshMu serializes refresh exchanges (a swarm of parallel forge calls

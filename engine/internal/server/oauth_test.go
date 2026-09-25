@@ -181,16 +181,34 @@ func TestGHOAuthFullRoundTrip(t *testing.T) {
                 t.Fatal("authorize redirect carries no state")
         }
 
-        // 3. callback → exchange against the FAKE github → vault + redirect home
+        // 3. callback → exchange against the FAKE github → vault + THE DONE
+        // PAGE (v0.60: no more 302 into the app — the terminal page
+        // postMessages the popup home and deep-links the APK back).
         cb := httptest.NewRequest("GET", "/api/github/oauth/callback?code=abc&state="+url.QueryEscape(state), nil)
         recCB := httptest.NewRecorder()
         s.mux.ServeHTTP(recCB, cb)
-        if recCB.Code != 302 {
+        if recCB.Code != 200 {
                 t.Fatalf("callback HTTP %d: %s", recCB.Code, recCB.Body.String())
         }
-        back := recCB.Header().Get("Location")
-        if !strings.Contains(back, "gh_connected=1") || !strings.Contains(back, "gh_login=octocat") {
-                t.Fatalf("callback redirect = %q — missing connected/login flags", back)
+        page := recCB.Body.String()
+        for _, want := range []string{
+                "connected",           // the headline
+                "GitHub",               // the provider
+                "octocat",              // who signed in
+                "doomalay-auth",        // the postMessage payload type
+                "doomalay://return",    // the APK deep link
+                "gh_connected=1",       // the plain-link landing query
+                "window.close()",       // the popup self-close
+                "postMessage",          // the popup → opener sync
+        } {
+                if !strings.Contains(page, want) {
+                        t.Fatalf("done page missing %q:\n%s", want, page)
+                }
+        }
+        // and NO auto-redirect into the app — that was the v0.59 bug
+        // (the full app loading in the system browser / SPA root reload).
+        if strings.Contains(page, "http-equiv=\"refresh\"") || strings.Contains(page, "location.replace") {
+                t.Fatalf("done page must not auto-navigate into the app:\n%s", page)
         }
 
         // 4. the PAT + its refresh metadata landed in the vault
@@ -262,6 +280,58 @@ func TestHFExchangeCodeRoundTrip(t *testing.T) {
         hfTokenEndpoint = srv.URL + "/definitely-not-a-path"
         if _, err := hfExchangeCode("c0de", "v", "r"); err == nil {
                 t.Fatal("exchange against a dead path must fail")
+        }
+}
+
+// TestOAuthDonePage — the v0.60 HOME-COMING contract, direct: the error
+// flavor renders the failure + retry hint and NEVER auto-navigates, and
+// both flavors carry the deep link + the postMessage payload (the popup
+// path's whole job) + the landing-query link (the same-tab path's).
+func TestOAuthDonePage(t *testing.T) {
+        rec := httptest.NewRecorder()
+        oauthDonePage(rec, "Hugging Face", "probe tester", "", "hf_connected=1&hf_user=probe+tester")
+        page := rec.Body.String()
+        for _, want := range []string{
+                "connected", "Hugging Face", "probe tester",
+                "doomalay://return", "doomalay-auth",
+                "hf_connected=1", "window.close()", "postMessage",
+        } {
+                if !strings.Contains(page, want) {
+                        t.Fatalf("success done page missing %q:\n%s", want, page)
+                }
+        }
+        // HTML-escaping: a login with markup must not inject
+        rec2 := httptest.NewRecorder()
+        oauthDonePage(rec2, "GitHub", "<script>x</script>", "", "")
+        if strings.Contains(rec2.Body.String(), "<script>x</script>") {
+                t.Fatal("login is not HTML-escaped on the done page")
+        }
+        // the error flavor: message + retry hint + landing query, no close-only
+        rec3 := httptest.NewRecorder()
+        oauthDonePage(rec3, "GitHub", "", "bad_verification_code", "gh_error=bad_verification_code")
+        err := rec3.Body.String()
+        for _, want := range []string{"sign-in failed", "bad_verification_code", "press the connect button", "gh_error=bad_verification_code"} {
+                if !strings.Contains(err, want) {
+                        t.Fatalf("error done page missing %q:\n%s", want, err)
+                }
+        }
+        // the payload json must carry the error for the panel to surface
+        if !strings.Contains(err, "\"error\":\"bad_verification_code\"") {
+                t.Fatalf("error done page payload lacks the error field:\n%s", err)
+        }
+}
+
+// TestGHOAuthCallbackDeniedServesDonePage — GitHub's ?error= (user pressed
+// Deny) must land on the friendly terminal page, not a JSON blob. The
+// error branch fires before state validation, so no setup is needed.
+func TestGHOAuthCallbackDeniedServesDonePage(t *testing.T) {
+        s := seedOAuthServer(t)
+        cb := httptest.NewRequest("GET", "/api/github/oauth/callback?error=access_denied&error_description=The+user+has+denied+your+application+access.&state=whatever", nil)
+        recCB := httptest.NewRecorder()
+        s.mux.ServeHTTP(recCB, cb)
+        body := recCB.Body.String()
+        if recCB.Code != 200 || !strings.Contains(body, "denied your application") || !strings.Contains(body, "doomalay://return") {
+                t.Fatalf("denied callback HTTP %d — want the done page naming the denial + the return link:\n%s", recCB.Code, body)
         }
 }
 

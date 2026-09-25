@@ -13,11 +13,24 @@
         android:extractNativeLibs="true">
 
         <activity android:name=".MainActivity" android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Doomalay"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- v0.60: the auth done page's "← return to the app" button →
+                 doomalay://return. singleTop above means an already-running
+                 app just gets onNewIntent (no recreate — the WebView, its
+                 SPA state and the connect panel survive), and the WebView's
+                 visibilitychange refetches /api/hf/account so the panel
+                 flips to connected the moment the user is back. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="doomalay" />
             </intent-filter>
         </activity>
 

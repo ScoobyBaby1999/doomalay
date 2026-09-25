@@ -850,27 +850,40 @@ func (s *Server) handleHFOAuthCallback(w http.ResponseWriter, r *http.Request) {
                 if strings.Contains(msg, "lookup ") && strings.Contains(msg, ":53") {
                         msg += " (device DNS refused the engine — the DNS-over-HTTPS fallback will carry the retry)"
                 }
-                writeError(w, http.StatusBadGateway, "token exchange failed: "+msg)
+                // v0.60: this lands in a BROWSER TAB (popup or external
+                // browser) — serve the terminal page, not bare JSON.
+                oauthDonePage(w, "Hugging Face", "", "token exchange failed: "+msg, "hf_error="+url.QueryEscape(msg))
                 return
         }
         hfCli := s.hfClient()
         user, err := hfCli.WhoAmI(token)
         if err != nil {
-                writeError(w, http.StatusUnauthorized, "token rejected by HF: "+err.Error())
+                oauthDonePage(w, "Hugging Face", "", "token rejected by HF: "+err.Error(), "")
                 return
         }
         if err := s.vault.Set(hub.TokenEnvVar, "huggingface", token, user); err != nil {
-                writeError(w, http.StatusInternalServerError, "vault store: "+err.Error())
+                oauthDonePage(w, "Hugging Face", "", "vault store: "+err.Error(), "")
                 return
         }
+        // v0.60: THE HOME-COMING. The old code 302'd to /?hf_connected=1 —
+        // loading the whole app in the system browser (the "separate
+        // instance" the user saw on the APK) or reloading the SPA at its
+        // root (the "hardcoded screen"). The done page closes itself as a
+        // popup / deep-links back to the real app / keeps the landing
+        // query on its plain link — and the panel syncs via postMessage +
+        // the focus/visibility refetch (hfconnect.js).
         dest := entry.onSuccess
         if !strings.HasPrefix(dest, "/") {
                 dest = "/"
         }
+        sep := "?"
+        if strings.Contains(dest, "?") {
+                sep = "&"
+        }
         q := url.Values{}
         q.Set("hf_connected", "1")
         q.Set("hf_user", user)
-        http.Redirect(w, r, dest+"?"+q.Encode(), http.StatusFound)
+        oauthDonePage(w, "Hugging Face", user, "", dest+sep+q.Encode())
 }
 
 // hfExchangeCode — the OAuth code→token POST. v0.52: rides the netx

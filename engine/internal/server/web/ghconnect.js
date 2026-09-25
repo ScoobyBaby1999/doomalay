@@ -5,7 +5,11 @@
 // a distributed app would leak it to every install). So "Sign in with
 // GitHub" now auto-picks:
 //   1. secret configured on this install (env/vault — self-hosters) → the
-//      one-tap REDIRECT flow (GET /api/workspaces/oauth/github/start);
+//      one-tap REDIRECT flow (GET /api/workspaces/oauth/github/start) —
+//      v0.60: in a POPUP (the app tab never navigates; the popup ends on
+//      the engine's done page which postMessages back and closes itself;
+//      the APK WebView can't popup → same-tab fallback, where the redirect
+//      into the external browser is intercepted and the SPA survives);
 //   2. otherwise → the DEVICE-CODE flow (POST /api/workspaces/oauth/github/
 //      device/start): a one-time code to enter at github.com/login/device,
 //      the engine polls GitHub in the background, the token lands in this
@@ -15,20 +19,68 @@
 //      accounts {kind:"github", token});
 //   4. "get token ↗" link → https://github.com/settings/tokens.
 //
-// The v0.52 yellow "one-time OAuth setup" box is GONE by design: it stored
-// the secret per-device, which could never work for friends' installs —
-// the device flow made it unnecessary.
+// v0.60 SYNC: like the HF panel, a `message` listener (done-page
+// postMessage) + visibilitychange/focus/pageshow refetches of
+// /api/gh/account repaint the panel the moment the user is back.
 //
 // Two hosts, same builder: openConnectPanel (ConnectOverlay page) and
 // connectPanelView (master-panel view) — the workspace picker's GitHub row
 // (no secret configured) opens the overlay one.
 //
-// Exposes: window.GHConnect = { openConnectPanel, connectPanelView, account }
+// Exposes: window.GHConnect = { openConnectPanel, connectPanelView, account,
+//                               _applyAuthResult (test hook) }
 (function () {
   'use strict';
 
   function account() {
     return fetch('/api/gh/account').then(function (r) { return r.json(); });
+  }
+
+  // ── v0.60: live panel sync (same shape as hfconnect.js) ──────────────
+  var active = null; // {stateEl, errEl, btn, onDone, connectedUser}
+  function applyAuthResult(d) {
+    if (!active) return;
+    if (d && d.error) {
+      if (active.errEl) active.errEl.textContent = d.error;
+      if (active.btn) { active.btn.disabled = false; active.btn.textContent = 'Sign in with GitHub'; }
+      return;
+    }
+    var login = (d && d.user) || '?';
+    if (active.connectedUser === login) return; // dedupe: message + focus both fire
+    active.connectedUser = login;
+    paintState(active.stateEl, { connected: true, user: login });
+    if (active.btn) { active.btn.disabled = false; active.btn.textContent = 'Sign in with GitHub'; }
+    if (window.toast) window.toast('signed in to GitHub as ' + login + ' — token saved encrypted');
+    if (active.onDone) active.onDone(login);
+  }
+  function installSyncListeners() {
+    if (installSyncListeners.done) return;
+    installSyncListeners.done = true;
+    window.addEventListener('message', function (e) {
+      if (!active || !e.data || e.data.type !== 'doomalay-auth') return;
+      if (e.data.provider !== 'github') return;
+      if (e.origin !== window.location.origin) return;
+      applyAuthResult(e.data);
+    });
+    var refetch = function () {
+      if (!active || active.connectedUser) return;
+      account().then(function (a) {
+        if (a && a.connected) applyAuthResult({ provider: 'github', user: a.user });
+      }).catch(function () {});
+    };
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) refetch(); });
+    window.addEventListener('focus', refetch);
+    window.addEventListener('pageshow', refetch); // bfcache back-restore
+  }
+
+  // openAuthPopup — popup FIRST so the app tab never navigates (see
+  // hfconnect.js; the Android WebView takes the same-tab path).
+  function openAuthPopup(url) {
+    if (/\bwv\b/.test(navigator.userAgent || '')) { window.location.href = url; return null; }
+    var p = null;
+    try { p = window.open(url, 'doomalay-gh', 'width=520,height=680'); } catch (e) {}
+    if (p) { try { p.focus(); } catch (e) {} }
+    return p;
   }
 
   function bodyHTML(acct) {
@@ -171,28 +223,47 @@
     var errEl = el.querySelector('#ghc-err');
     var stateEl = el.querySelector('#ghc-state');
 
+    installSyncListeners();
+    active = { stateEl: stateEl, errEl: errEl, btn: null, onDone: onDone, connectedUser: null };
     var refresh = function () {
       account().then(function (a) {
         paintState(stateEl, a);
+        if (a && a.connected && active) active.connectedUser = a.user || '?';
       }).catch(function () {});
     };
     refresh();
 
     var oauth = el.querySelector('#ghc-oauth');
-    if (oauth) oauth.addEventListener('click', function () {
-      // v0.55: secret configured (self-hosted install) → one-tap redirect;
-      // otherwise → the secretless device flow (works for everyone).
-      account().then(function (a) {
-        if (a && a.has_secret) {
-          oauth.disabled = true; oauth.textContent = 'Redirecting…';
-          window.location.href = '/api/workspaces/oauth/github/start?redirect=/';
-        } else {
+    if (oauth) {
+      active.btn = oauth;
+      oauth.addEventListener('click', function () {
+        // v0.55: secret configured (self-hosted install) → one-tap redirect
+        // (v0.60: in a POPUP); otherwise → the secretless device flow.
+        account().then(function (a) {
+          if (a && a.has_secret) {
+            var p = openAuthPopup('/api/workspaces/oauth/github/start?redirect=/');
+            if (p) {
+              oauth.disabled = true; oauth.textContent = 'Waiting for GitHub…';
+              if (errEl) errEl.textContent = '';
+              var watch = setInterval(function () {
+                var closed = true;
+                try { closed = p.closed; } catch (e) {}
+                if (closed) {
+                  clearInterval(watch);
+                  if (active && !active.connectedUser) {
+                    oauth.disabled = false; oauth.textContent = 'Sign in with GitHub';
+                  }
+                }
+              }, 800);
+            }
+          } else {
+            runDeviceFlow(el, errEl, stateEl, oauth, onDone);
+          }
+        }).catch(function () {
           runDeviceFlow(el, errEl, stateEl, oauth, onDone);
-        }
-      }).catch(function () {
-        runDeviceFlow(el, errEl, stateEl, oauth, onDone);
+        });
       });
-    });
+    }
 
     var link = el.querySelector('#ghc-gettoken');
     if (link) link.addEventListener('click', function (e) {
@@ -248,6 +319,7 @@
   window.GHConnect = {
     openConnectPanel: openConnectPanel,
     connectPanelView: connectPanelView,
-    account: account
+    account: account,
+    _applyAuthResult: applyAuthResult // test hook — simulate the done-page message
   };
 })();
