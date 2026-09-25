@@ -667,6 +667,49 @@ func (s *Service) PNG(typ, repo, id string) ([]byte, error) {
         return s.hf.FetchFile(repo, "items/"+id+".png")
 }
 
+// validRepoID accepts exactly "owner/name" (the public dataset shape) and
+// rejects traversal ("..", empty parts, extra segments).
+func validRepoID(repo string) bool {
+        parts := strings.Split(repo, "/")
+        if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+                return false
+        }
+        for _, p := range parts {
+                if p == "." || p == ".." || strings.ContainsAny(p, "\\?#") {
+                        return false
+                }
+        }
+        return true
+}
+
+// RepoTree lists one directory level of any PUBLIC dataset repo — the repo
+// view's tree (v0.60 pt C.8). No token: public reads.
+func (s *Service) RepoTree(repo, dir string) ([]TreeEntry, error) {
+        if !validRepoID(repo) {
+                return nil, ErrNotFoundLocal
+        }
+        if dir == "" {
+                dir = "/"
+        }
+        if !strings.HasPrefix(dir, "/") {
+                dir = "/" + dir
+        }
+        return s.hf.ListTree(repo, dir)
+}
+
+// RepoFile fetches one file from any public dataset repo (the repo view's
+// file preview). Path traversal is rejected.
+func (s *Service) RepoFile(repo, path string) ([]byte, error) {
+        if !validRepoID(repo) {
+                return nil, ErrNotFoundLocal
+        }
+        path = strings.TrimPrefix(strings.TrimSpace(path), "/")
+        if path == "" || strings.Contains(path, "..") || strings.ContainsAny(path, "\\") {
+                return nil, ErrNotFoundLocal
+        }
+        return s.hf.FetchFile(repo, path)
+}
+
 // Download fetches an item's meta + payload (either layout — see
 // remoteItem/resolvePayload), saves it locally (downloaded state + local
 // counter bump), and appends the metrics download event.

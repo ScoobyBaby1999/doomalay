@@ -419,15 +419,25 @@
         flag +
       '</div>';
     var body = '';
-    if (bcur.loading) {
-      body = '<div class="art-loading">loading the bundle…</div>';
+    // v0.60 pt C.8: the [cards|repo] pill — cards = the member sections,
+    // repo = the artifacts-style tree of the bunch's publishing repo.
+    var viewPill =
+      '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="bundle view">' +
+        '<button type="button" data-bv="cards"' + (bcur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
+        '<button type="button" data-bv="repo"' + (bcur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
+      '</div></div>';
+    if (bcur.view === 'repo') {
+      body = viewPill + '<div class="hubrepo-tree" id="hubrepo-tree"></div>';
+    } else if (bcur.loading) {
+      body = viewPill + '<div class="art-loading">loading the bundle…</div>';
     } else {
       var groups = bcur.groups || [];
       if (!groups.length) {
-        body = '<div class="hub-empty">the bundle “' + esc(bcur.id) + '” has no members anymore</div>';
+        body = viewPill + '<div class="hub-empty">the bundle “' + esc(bcur.id) + '” has no members anymore</div>';
       } else {
+        var secs = '';
         groups.forEach(function (g) {
-          body += '<div class="hub-bunch-sec">' +
+          secs += '<div class="hub-bunch-sec">' +
             '<div class="hub-bunch-sec-h">' + libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
               ' <span class="hub-bunch-sec-n">' + g.items.length + '</span></div>' +
             '<div class="hub-grid" style="--hub-cols:' + clampCols(cur && cur.grid, bcur.panel && bcur.panel.bodyEl ? bcur.panel.bodyEl.clientWidth : 320) + '">' +
@@ -435,6 +445,7 @@
             '</div>' +
           '</div>';
         });
+        body = viewPill + secs;
       }
     }
     return '<div class="hub-root hub-root--bunch" data-tone="' + escAttr((cur && cur.type) || '') + '">' + hero +
@@ -449,6 +460,20 @@
       if (list[i] && list[i].id === id) return list[i];
     }
     return { id: id, members: 0, byType: {}, tag: '', design: null, icon: '' };
+  }
+
+  // v0.60 pt C.8: the repo the bunch publishes through — its FIRST member's
+  // repo (a bunch is one publisher's listing; mixed-repo bunches fall back
+  // to the first member that has one).
+  function bunchRepo(id) {
+    var groups = (bcur && bcur.groups) || [];
+    for (var i = 0; i < groups.length; i++) {
+      var items = groups[i].items || [];
+      for (var j = 0; j < items.length; j++) {
+        if (items[j] && items[j].repo) return items[j].repo;
+      }
+    }
+    return '';
   }
 
   function bunchWire(el) {
@@ -486,6 +511,33 @@
         toast((e && e.message) || 'the bundle download failed');
       });
     });
+    // v0.60 pt C.8: the [cards|repo] pill — repo mounts the artifacts-style
+    // tree; file rows matching a member's payload File open ITS card.
+    var seg = el.querySelector('.hi-viewseg');
+    if (seg) seg.querySelectorAll('[data-bv]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!bcur) return;
+        bcur.view = b.getAttribute('data-bv');
+        bunchRepaint();
+      });
+    });
+    var treeEl = el.querySelector('#hubrepo-tree');
+    if (treeEl && window.HubRepo) {
+      var repo = bunchRepo(bcur.id);
+      var byPath = {};
+      (bcur.groups || []).forEach(function (g) {
+        (g.items || []).forEach(function (it) {
+          if (it && it.file) byPath[it.file] = it;
+        });
+      });
+      window.HubRepo.mount(treeEl, repo, {
+        itemsByPath: byPath,
+        onOpenItem: function (it) {
+          if (it && window.HubItem) window.HubItem.open(it.type, it);
+        }
+      });
+    }
+
     // live hearts on the member cards (the shared grid handler)
     wireCardHearts(el);
     marqueeScan(el);

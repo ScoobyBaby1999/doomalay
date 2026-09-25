@@ -197,6 +197,15 @@
     var chipsRow = (chips || stageN || info)
       ? '<div class="hi-chips">' + chips + stageN + info + '</div>' : '';
 
+    // v0.60 pt C.8: the [cards|repo] pill — cards = the item view (payload),
+    // repo = the publishing repo's tree (the file rows that match an item
+    // open its card; this item's own file highlights).
+    var ivRow =
+      '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="detail view">' +
+        '<button type="button" data-iv="cards"' + (cur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
+        '<button type="button" data-iv="repo"' + (cur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
+      '</div></div>';
+
     return (
       '<div class="hi-root" data-tone="' + escAttr(cur.type) + '">' +
         '<div class="hi-head' + (cur.folded ? ' folded' : '') + '" id="hi-head">' +
@@ -218,8 +227,12 @@
           '</div>' +
           '<span class="hi-fold-ico">' + (cur.folded ? '▸' : '▾') + '</span>' +
         '</div>' +
-        '<div class="hi-body" id="hi-body">' +
-          (cur.payload == null ? '<div class="art-loading">loading the payload…</div>' : '') +
+        '<div class="hi-body" id="hi-body">' + ivRow +
+          (cur.view === 'repo'
+            ? '<div class="hubrepo-tree" id="hubrepo-tree"></div>'
+            : '<div id="hi-payload">' +
+                (cur.payload == null ? '<div class="art-loading">loading the payload…</div>' : '') +
+              '</div>') +
         '</div>' +
         '<div class="hi-fabs">' +
           (cur.confirmDel
@@ -387,13 +400,36 @@
         cur.panel.replaceView(buildView(), { keepScroll: true });
       });
     });
+
+    // v0.60 pt C.8: the [cards|repo] pill — repo mounts the publishing
+    // repo's tree (this item's own file opens its card).
+    var ivSeg = el.querySelector('.hi-viewseg');
+    if (ivSeg) ivSeg.querySelectorAll('[data-iv]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        cur.view = b.getAttribute('data-iv');
+        cur.panel.replaceView(buildView(), { keepScroll: true });
+      });
+    });
+    var treeEl = el.querySelector('#hubrepo-tree');
+    if (treeEl && window.HubRepo && cur.item) {
+      var byPath = {};
+      byPath[cur.item.file] = cur.item;
+      window.HubRepo.mount(treeEl, cur.item.repo, {
+        itemsByPath: byPath,
+        onOpenItem: function (it) {
+          if (it && window.HubItem) window.HubItem.open(it.type, it);
+        }
+      });
+    }
   }
 
   // the payload body — mode per type (v0.58 pt 8: templates get the ported
   // stage tree + a raw toggle; skills markdown; themes as before). The
-  // toggle is (re)wired here — renderPayload owns everything inside #hi-body.
+  // toggle is (re)wired here — renderPayload owns everything inside #hi-payload
+  // (the [cards|repo] row rides above it, untouched).
   function renderPayload(el) {
-    var body = el.querySelector('#hi-body');
+    var body = el.querySelector('#hi-payload');
     if (!body || cur.payload == null) return;
     var text = String(cur.payload || '');
     if (cur.type === 'template') {

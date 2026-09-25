@@ -16,6 +16,7 @@ import (
         "encoding/json"
         "io"
         "net/http"
+        "path/filepath"
         "strconv"
         "strings"
 
@@ -259,6 +260,63 @@ func (s *Server) handleHubCollectionDownload(w http.ResponseWriter, r *http.Requ
                 return
         }
         writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}
+
+// handleHubRepoTree is GET /api/hub/repo/{repo}/tree?path= — one directory
+// level of any public dataset repo (the [repo] view's tree; v0.60 pt C.8).
+func (s *Server) handleHubRepoTree(w http.ResponseWriter, r *http.Request) {
+        entries, err := s.hub.RepoTree(r.PathValue("repo"), r.URL.Query().Get("path"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+// hubRepoTextExts / hubRepoImgTypes classify the repo file preview.
+var (
+        hubRepoTextExts = map[string]bool{
+                ".md": true, ".json": true, ".sh": true, ".txt": true, ".py": true,
+                ".yaml": true, ".yml": true, ".toml": true, ".csv": true, ".xml": true,
+                ".html": true, ".css": true, ".js": true, ".ts": true, ".gitattributes": true,
+                ".gitignore": true, "": true,
+        }
+        hubRepoImgTypes = map[string]string{
+                ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+                ".ico": "image/x-icon",
+        }
+)
+
+// handleHubRepoFile is GET /api/hub/repo/{repo}/file?path= — one file from
+// a public dataset repo. Text-like extensions return JSON {text}; images
+// stream raw bytes with their content-type (an <img> src); anything else
+// reports {binary:true, size} so the client can say so.
+func (s *Server) handleHubRepoFile(w http.ResponseWriter, r *http.Request) {
+        repo := r.PathValue("repo")
+        path := r.URL.Query().Get("path")
+        body, err := s.hub.RepoFile(repo, path)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        ext := strings.ToLower(filepath.Ext(strings.TrimPrefix(path, "/")))
+        if strings.HasPrefix(path, ".") && !strings.Contains(strings.TrimPrefix(path, "/"), "/") {
+                ext = strings.TrimPrefix(path, "/") // .gitattributes & friends
+        }
+        if ct, ok := hubRepoImgTypes[ext]; ok {
+                w.Header().Set("Content-Type", ct)
+                w.Header().Set("Cache-Control", "public, max-age=3600")
+                w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write(body)
+                return
+        }
+        if hubRepoTextExts[ext] {
+                writeJSON(w, http.StatusOK, map[string]any{"text": string(body), "size": len(body)})
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"binary": true, "size": len(body)})
 }
 
 // handleHubEndorse is POST /api/hub/{type}/endorse|unendorse {repo,id} —
