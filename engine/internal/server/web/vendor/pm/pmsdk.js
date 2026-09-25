@@ -403,7 +403,19 @@ function findActions(text) {
   for (var i = lines.length - 1; i >= 0; i--) {
     if (isActionLineJS(lines[i])) { hit = i; break; }
   }
-  if (hit < 0) return [];
+  if (hit < 0) {
+    // v0.60 pt C.13b: TRAILING GLUED ACTION — the model wrote prose then
+    // glued the call after it on the SAME line (observed live on PM
+    // glm-5.3: "…before we build. ACTION: skills {\"action\":\"load\"…}").
+    // When the very END of the reply is a complete tool call (balanced
+    // JSON terminated by the text's end — trailing prose never matches),
+    // execute it instead of leaking the literal line to the user.
+    var gm = /ACTION:\s*([a-zA-Z0-9_-]+)\s*(\{[\s\S]*?\})\s*$/i.exec(text.trim());
+    if (gm && balancedJSONJS(gm[2])) {
+      return splitGluedJS(gm[1] + ' ' + gm[2]);
+    }
+    return [];
+  }
   // v0.28: tolerant extractor — decorations, "Action :", missing colon.
   var head = extractActionHeadJS(stripActionDecorations(lines[hit]));
   if (!head) return [];
