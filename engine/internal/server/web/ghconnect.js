@@ -73,6 +73,46 @@
     window.addEventListener('pageshow', refetch); // bfcache back-restore
   }
 
+  // ── v0.60.2: the space broker probe (the one-click, repo-scoped path) ──
+  // /api/gh/account carries broker_url; the panel probes the space's
+  // /gh/oauth/config (CORS-open boolean — no secret material) and, when
+  // the space holds the GitHub App secret, the primary button becomes the
+  // BROKER popup: one Authorize click on GitHub with "Only select
+  // repositories" = complete access over ONE repo (the user's spec). The
+  // device flow stays as the linked fallback for every other case.
+  var broker = { url: '', configured: false };
+  function probeBroker(url, onReady) {
+    if (!url || broker.url === url) { if (onReady) onReady(); return; }
+    broker.url = url;
+    fetch(url.replace(/\/$/, '') + '/gh/oauth/config', { mode: 'cors' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (c) {
+        if (c && c.configured) {
+          broker.configured = true;
+          paintBrokerMode();
+        }
+        if (onReady) onReady();
+      })
+      .catch(function () { if (onReady) onReady(); }); // unreachable space → device flow
+  }
+  function paintBrokerMode() {
+    var btn = document.getElementById('ghc-oauth');
+    var copy = document.getElementById('ghc-copy');
+    var alt = document.getElementById('ghc-code-fallback');
+    if (btn && btn.textContent.indexOf('one click') < 0) {
+      btn.textContent = 'Sign in with GitHub — one click';
+    }
+    if (copy) {
+      copy.innerHTML = 'One click, no codes: a window opens to GitHub where you press ' +
+        '<b style="color:var(--text-2)">Install &amp; Authorize</b>. On the repository ' +
+        'screen pick <b style="color:var(--text-2)">Only select repositories</b> and ' +
+        'choose your repo — that grants complete access to that repo only ' +
+        '(branches, files, PRs), never your whole account. The window closes ' +
+        'itself and this panel updates. The token is stored in the engine\'s ' +
+        'encrypted vault — we never see your password.';
+    }
+    if (alt) alt.style.display = 'block';
+  }
   // openAuthPopup — popup FIRST so the app tab never navigates (see
   // hfconnect.js; the Android WebView takes the same-tab path).
   function openAuthPopup(url) {
@@ -83,6 +123,24 @@
     return p;
   }
 
+  // waitPopup — disable the button while the popup lives; re-enable when
+  // the user closes it without finishing (shared by both popup flows).
+  function waitPopup(oauth, p, errEl) {
+    oauth.disabled = true; oauth.textContent = 'Waiting for GitHub…';
+    if (errEl) errEl.textContent = '';
+    var watch = setInterval(function () {
+      var closed = true;
+      try { closed = p.closed; } catch (e) {}
+      if (closed) {
+        clearInterval(watch);
+        if (active && !active.connectedUser) {
+          oauth.disabled = false;
+          oauth.textContent = broker.configured ? 'Sign in with GitHub — one click' : 'Sign in with GitHub';
+        }
+      }
+    }, 800);
+  }
+
   function bodyHTML(acct) {
     return '' +
       '<div style="padding:26px 22px">' +
@@ -91,7 +149,7 @@
           'background:var(--accent);color:var(--bg-app);border:none;font-size:15px;font-weight:600;' +
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Sign in with GitHub</button>' +
-        '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
+        '<p id="ghc-copy" style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
           'One login: you\'ll get a short <b style="color:var(--text-2)">one-time ' +
           'code</b> — not a password — to enter at ' +
           '<b style="color:var(--text-2)">github.com/login/device</b> (the page opens for you). ' +
@@ -102,6 +160,8 @@
           'no profile, no emails. Press <b style="color:var(--text-2)">Authorize</b> and the ' +
           'token is acquired automatically into the engine\'s encrypted vault. ' +
           'We never see your password.</p>' +
+        '<a id="ghc-code-fallback" href="#" style="display:none;margin:10px 0 0;font-size:12px;' +
+          'color:var(--accent-2);text-decoration:none">or use a one-time code instead →</a>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
             'letter-spacing:0.06em;margin-bottom:10px">Optional manual method</div>' +
@@ -229,33 +289,39 @@
       account().then(function (a) {
         paintState(stateEl, a);
         if (a && a.connected && active) active.connectedUser = a.user || '?';
+        // v0.60.2: probe the space broker while still signed out — it
+        // upgrades the button to the one-click popup when configured.
+        if (a && a.broker_url && !(a.connected)) probeBroker(a.broker_url);
       }).catch(function () {});
     };
     refresh();
+
+    var altLink = el.querySelector('#ghc-code-fallback');
+    if (altLink) altLink.addEventListener('click', function (e) {
+      e.preventDefault();
+      runDeviceFlow(el, errEl, stateEl, el.querySelector('#ghc-oauth'), onDone);
+    });
+    // a re-opened panel gets fresh DOM — re-apply broker mode if the probe
+    // already ran in this page session (probeBroker early-returns on the
+    // same URL, so the paint would otherwise never happen again)
+    if (broker.configured) paintBrokerMode();
 
     var oauth = el.querySelector('#ghc-oauth');
     if (oauth) {
       active.btn = oauth;
       oauth.addEventListener('click', function () {
-        // v0.55: secret configured (self-hosted install) → one-tap redirect
-        // (v0.60: in a POPUP); otherwise → the secretless device flow.
+        // v0.60.2: broker configured → the one-click popup (repo-scoped
+        // GitHub App auth through the space). v0.55 paths follow.
+        if (broker.configured) {
+          var bp = openAuthPopup('/api/gh/oauth/broker/start?origin=' +
+            encodeURIComponent(window.location.origin));
+          if (bp) waitPopup(oauth, bp, errEl);
+          return;
+        }
         account().then(function (a) {
           if (a && a.has_secret) {
             var p = openAuthPopup('/api/workspaces/oauth/github/start?redirect=/');
-            if (p) {
-              oauth.disabled = true; oauth.textContent = 'Waiting for GitHub…';
-              if (errEl) errEl.textContent = '';
-              var watch = setInterval(function () {
-                var closed = true;
-                try { closed = p.closed; } catch (e) {}
-                if (closed) {
-                  clearInterval(watch);
-                  if (active && !active.connectedUser) {
-                    oauth.disabled = false; oauth.textContent = 'Sign in with GitHub';
-                  }
-                }
-              }, 800);
-            }
+            if (p) waitPopup(oauth, p, errEl);
           } else {
             runDeviceFlow(el, errEl, stateEl, oauth, onDone);
           }
@@ -320,6 +386,7 @@
     openConnectPanel: openConnectPanel,
     connectPanelView: connectPanelView,
     account: account,
-    _applyAuthResult: applyAuthResult // test hook — simulate the done-page message
+    _applyAuthResult: applyAuthResult, // test hook — simulate the done-page message
+    _broker: broker // test hook — the probe state
   };
 })();

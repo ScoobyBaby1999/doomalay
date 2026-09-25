@@ -36,6 +36,44 @@ What each party holds:
 The one-tap **redirect** flow still exists as an optional extra for
 self-hosted installs that set `DOOMALAY_GH_CLIENT_SECRET` (see §4).
 
+### v0.60.2 — THE SPACE BROKER: the one-click, repo-scoped sign-in
+
+The device flow asks the user to read and retype a code. The **broker**
+(the legacy doomalaysocreate pattern, ported) removes even that: the
+community Space holds the GitHub App's **client secret** in its env, so it
+can run the full redirect exchange server-side. The panel opens a popup,
+the user presses **Install & Authorize** once, picks
+**Only select repositories** → the chosen repo gets complete access
+(branches, files, PRs — nothing account-wide), the popup ends on the
+engine's done page, closes itself, and the panel updates. The token
+crosses the browser only as a **one-time unguessable grant code** claimed
+server-to-server by the user's own engine.
+
+What each party holds now:
+
+| Piece | Who holds it | Secret? |
+|---|---|---|
+| Client ID | ships inside the app + the Space env | no |
+| Client secret | **the Space's env ONLY** (never in any app build) | yes |
+| User token | each user's own encrypted device vault | yes, per-user |
+
+**To arm it (one-time, ~2 minutes):**
+1. GitHub App settings → *Client secrets* → **Generate a new client secret**.
+2. GitHub App settings → *Callback URL* → add
+   `https://scoobybaby1999-doomalaysocreate.hf.space/gh/oauth/callback`
+   (keep Device Flow checked — it stays as the fallback).
+3. HF Space → *Settings → Secrets* → add
+   `GITHUB_CLIENT_ID=Iv23li3qm665pDrDO1Nh` and
+   `GITHUB_CLIENT_SECRET=<the secret from step 1>`.
+4. Redeploy the Space with the v0.60.2 `app.py`
+   (`scripts/shared_app.py` in the repo → `deploy_shared.py`).
+
+Until the Space is configured, every install automatically keeps the
+device-code flow (the panel probes `/gh/oauth/config` first). Security
+notes: the relay target is locked to loopback/LAN/gateway origins, states
+and grants are one-shot with 10/5-minute TTLs, and the secret never
+appears in any browser-facing URL.
+
 ---
 
 ## 1. Create the GitHub App — every box

@@ -511,6 +511,10 @@ func (s *Server) handleGHAccount(w http.ResponseWriter, r *http.Request) {
                 "has_secret":   secret != "",
                 "device_flow":  id != "", // v0.55: secretless device-code path
                 "redirect_uri": oauthRedirectURI(r),
+                // v0.60.2: the space broker (one-click, repo-scoped). The
+                // panel probes <broker_url>/gh/oauth/config (CORS-open) and
+                // offers the popup flow when the space holds the secret.
+                "broker_url": ghBrokerBaseURL(),
         })
 }
 

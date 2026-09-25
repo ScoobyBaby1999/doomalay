@@ -313,6 +313,10 @@ func (s *Server) routes() {
         // URL needed; works for every user of a shipped install).
         s.mux.HandleFunc("POST /api/workspaces/oauth/github/device/start", s.handleGHDeviceStart)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/device/status", s.handleGHDeviceStatus)
+        // v0.60.2: the space-brokered one-click (popup → space → GitHub →
+        // space exchange → relay → done page) — repo-scoped GitHub App auth
+        s.mux.HandleFunc("GET /api/gh/oauth/broker/start", s.handleGHBrokerStart)
+        s.mux.HandleFunc("GET /api/gh/oauth/relay", s.handleGHBrokerRelay)
         // v0.47 (task 10): the GitHub App's registered redirect URLs use
         // /api/github/oauth/callback (localhost:8123/:8080) — answer BOTH
         // paths so the user's existing registration just works.
