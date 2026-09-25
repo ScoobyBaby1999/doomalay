@@ -10,6 +10,7 @@ import (
         "crypto/sha256"
         "encoding/hex"
         "encoding/json"
+        "path"
         "regexp"
         "strings"
         "time"
@@ -108,7 +109,25 @@ func ItemID(name, author string) string {
 // "Superpowers Obra!!" and "superpowers-obra" are THE SAME id. Capped at
 // 24 chars; empty stays empty (icons/collections are optional).
 func SanitizeIcon(raw string) string {
-        out := slugRun.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), "-")
+        raw = strings.TrimSpace(raw)
+        // v0.61 pt C.10 (icons): a "file:<repo-path>" reference passes
+        // through INTACT — it names the item's own art file (png or svg),
+        // served by the repo-file route. The path must stay inside the
+        // repo (no "..", no backslash, no query/hash), keep an image
+        // extension and stay <= 200 chars; malformed refs drop to "".
+        if strings.HasPrefix(raw, "file:") {
+                p := strings.Trim(strings.TrimSpace(strings.TrimPrefix(raw, "file:")), "/")
+                if p == "" || len(p) > 200 || strings.Contains(p, "..") ||
+                        strings.ContainsAny(p, "\\?#") || strings.Contains(p, "//") {
+                        return ""
+                }
+                switch strings.ToLower(path.Ext(p)) {
+                case ".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif":
+                        return "file:" + p
+                }
+                return ""
+        }
+        out := slugRun.ReplaceAllString(strings.ToLower(raw), "-")
         out = strings.Trim(out, "-")
         if len(out) > MaxTagLen {
                 out = strings.Trim(out[:MaxTagLen], "-")

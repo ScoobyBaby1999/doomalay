@@ -3092,6 +3092,17 @@
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hp-icocell[data-on="1"] { border-color: var(--accent); color: var(--accent); background: var(--surface-3); }
+  /* v0.61 (icons): the custom icon <img> — an item's own art file (png or
+     svg) rendered where the Lucide glyphs go. Shape only; colors come from
+     the image itself. The upload cell ＋ is dashed to read as an action. */
+  img.icof {
+    display: block; width: 20px; height: 20px; object-fit: contain;
+    border-radius: 4px; flex-shrink: 0;
+  }
+  .hp-icocell img.icof { width: 19px; height: 19px; }
+  .hp-icocell--up { border-style: dashed; color: var(--text-3); font-weight: 700; }
+  .hp-icocell--custom { background: var(--surface-3); }
+  .hub-card-ico img.icof { width: 20px; height: 20px; }
   .hp-opt { color: var(--text-3); font-weight: 400; }
   /* v0.58: the stage-count hint + the re-publish dirty hint */
   .hp-stagehint {

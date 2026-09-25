@@ -387,7 +387,9 @@
     if (!bcur) return '';
     var b = bunchMeta(bcur.id);
     var I = window.IconLib;
-    var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22) : (I ? I.svg('package', 22) : '');
+    // v0.61 (icons): file:<path> icons render as the item's own art file
+    // (png/svg through the repo-file route); kebab names stay Lucide glyphs.
+    var ico = I ? (I.card(b.icon, b.repo, 22) || I.svg('package', 22)) : '';
     var bits = [];
     var byType = b.byType || {};
     Object.keys(byType).forEach(function (t) {
@@ -459,7 +461,7 @@
     for (var i = 0; i < list.length; i++) {
       if (list[i] && list[i].id === id) return list[i];
     }
-    return { id: id, members: 0, byType: {}, tag: '', design: null, icon: '' };
+    return { id: id, members: 0, byType: {}, tag: '', design: null, icon: '', repo: '' };
   }
 
   // v0.60 pt C.8: the repo the bunch publishes through — its FIRST member's
@@ -976,7 +978,8 @@
       '—';
     // v0.52 (user spec item 3): the icon COLUMN left of the name —
     // optional; no icon renders exactly the pre-v0.52 layout.
-    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 20) : '';
+    // v0.61 (icons): a file:<path> icon renders the item's own art file.
+    var ico = (it.icon && window.IconLib) ? window.IconLib.card(it.icon, it.repo, 20) : '';
     var hearted = isHearted(it.type || (cur && cur.type), it.repo, it.id);
     // v0.58 (user spec pt 10): "~x stages" rides the foot, right of the
     // downloads with a two-tab gap — templates with a deterministic count.
@@ -1030,8 +1033,9 @@
   // the cross-library member view.
   function collectionCardHTML(b) {
     var I = window.IconLib;
-    var ico = (I && I.has(b.icon || '')) ? I.svg(b.icon, 22)
-      : (I ? I.svg('package', 22) : '');
+    // v0.61 (icons): the bunch icon may be a file:<path> art file (the
+    // summary carries the contributor's repo).
+    var ico = I ? (I.card(b.icon, b.repo, 22) || I.svg('package', 22)) : '';
     var bits = [];
     var byType = b.byType || {};
     Object.keys(byType).forEach(function (t) {

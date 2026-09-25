@@ -169,7 +169,11 @@
       tags: (prefill.tags || []).slice(),
       // v0.52 (user spec items 1+3): the optional card icon (the picker
       // grid below) + the optional collection bunch this item joins.
+      // v0.61 (icons): a custom icon may ride instead — a square raster
+      // (CropUI ≤256) or an SVG document, committed as items/<id>/icon.*.
       icon: prefill.icon || '',
+      iconPNG: '',
+      iconSVG: '',
       collection: prefill.collection || '',
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
@@ -194,12 +198,35 @@
     var c = cur;
     return JSON.stringify({
       name: c.name, desc: c.desc, tags: c.tags.slice().sort(), icon: c.icon,
+      iconPNG: c.iconPNG || '', iconSVG: c.iconSVG || '',
       collection: c.collection, design: designOut(), pngBase64: c.pngBase64,
       payload: c.payload, stageCount: c.stageCount || 0,
       files: (c.files || []).map(function (f) { return { path: f.path, content: f.content }; })
     });
   }
   function isDirty() { return !cur || !cur._baseline || snapshot() !== cur._baseline; }
+
+  // v0.61 (icons): the custom icon's PREVIEW markup — a pending upload
+  // (data URL) or the edit's existing file: art (the repo-file route).
+  // '' when no custom icon is in play.
+  function iconCustomHTML(c) {
+    if (c.iconSVG) {
+      try {
+        var b64 = btoa(unescape(encodeURIComponent(c.iconSVG)));
+        return '<img class="icof" src="data:image/svg+xml;base64,' + b64 + '" width="19" height="19" alt="">';
+      } catch (e) { return ''; }
+    }
+    if (c.iconPNG) {
+      return '<img class="icof" src="data:image/png;base64,' + c.iconPNG + '" width="19" height="19" alt="">';
+    }
+    if (window.IconLib && window.IconLib.isFileIcon(c.icon)) {
+      // an edit prefill: the icon file lives in the item's repo
+      var repo = c.editOf && c.editOf.repo ? c.editOf.repo : '';
+      var u = window.IconLib.fileURL(c.icon, repo);
+      if (u) return '<img class="icof" src="' + u.replace(/"/g, '%22') + '" width="19" height="19" alt="" loading="lazy">';
+    }
+    return '';
+  }
 
   function buildView() {
     return view('publish · ' + cur.type, function () { return renderHTML(); },
@@ -248,16 +275,27 @@
     // v0.52: the icon picker — one optional glyph for the card's icon
     // column (user spec item 3), and the BUNCH field (item 1): items
     // sharing a collection id clamp into one grouped listing.
+    // v0.61 (icons): ＋ upload — the item's OWN art (a square raster
+    // through the cropper, or an SVG vector) replaces the glyph.
     var iconGrid = '';
     if (window.IconLib) {
+      var custom = iconCustomHTML(c);
       var cells = '<button type="button" class="hp-icocell" data-icn=""' +
-        (c.icon ? '' : ' data-on="1"') + ' title="no icon">—</button>';
+        ((c.icon || c.iconPNG || c.iconSVG) ? '' : ' data-on="1"') + ' title="no icon">—</button>';
       window.IconLib.NAMES.forEach(function (n) {
         cells += '<button type="button" class="hp-icocell" data-icn="' + escAttr(n) + '"' +
           (c.icon === n ? ' data-on="1"' : '') + ' title="' + escAttr(n) + '">' +
           window.IconLib.svg(n, 19) + '</button>';
       });
-      iconGrid = '<div class="hp-icogrid">' + cells + '</div>';
+      // the custom cell (selected whenever a custom icon is set — a
+      // pending upload or the edit's existing file)
+      if (custom) {
+        cells = '<button type="button" class="hp-icocell hp-icocell--custom" data-icnfile="1" data-on="1" title="custom icon">' +
+          custom + '</button>' + cells;
+      }
+      cells += '<button type="button" class="hp-icocell hp-icocell--up" id="hp-ico-up" title="upload an image or SVG">＋</button>';
+      iconGrid = '<div class="hp-icogrid">' + cells + '</div>' +
+        '<input type="file" id="hp-ico-file" accept="image/*,.svg" style="display:none">';
     }
 
     // the essentials + card design collapse; the payload has the FOCUS
@@ -475,11 +513,56 @@
     el.querySelectorAll('[data-icn]').forEach(function (b) {
       b.addEventListener('click', function () {
         c.icon = b.getAttribute('data-icn') || '';
+        // v0.61 (icons): a glyph pick clears any pending custom upload.
+        c.iconPNG = '';
+        c.iconSVG = '';
         el.querySelectorAll('[data-icn]').forEach(function (o) {
           if (o === b) o.setAttribute('data-on', '1'); else o.removeAttribute('data-on');
         });
       });
     });
+
+    // v0.61 (icons): ＋ upload — a square raster through the cropper (the
+    // resize-to-fit pipeline, ≤256 edge) or an SVG document read as text.
+    // Either rides the SAME commit as items/<id>/icon.<ext>.
+    var upBtn = el.querySelector('#hp-ico-up');
+    var upFile = el.querySelector('#hp-ico-file');
+    if (upBtn && upFile) {
+      upBtn.addEventListener('click', function () { upFile.click(); });
+      upFile.addEventListener('change', function () {
+        var f = upFile.files && upFile.files[0];
+        if (!f) return;
+        if (f.type === 'image/svg+xml' || /\.svg$/i.test(f.name || '')) {
+          if (f.size > 64 * 1024) { toast('that SVG is too large (64KB cap)'); upFile.value = ''; return; }
+          var fr = new FileReader();
+          fr.onload = function () {
+            c.iconSVG = String(fr.result || '');
+            c.iconPNG = '';
+            c.icon = '';
+            rebuild();
+            toast('custom SVG icon ready — it rides the publish');
+          };
+          fr.onerror = function () { toast('could not read that SVG'); };
+          fr.readAsText(f);
+        } else {
+          if (!window.CropUI) { toast('the cropper is not available'); return; }
+          window.CropUI.open({
+            file: f,
+            aspect: 1,          // the icon column is square
+            maxEdge: 256,        // a marker, not a poster
+            onDone: function (b64) {
+              c.iconPNG = b64;
+              c.iconSVG = '';
+              c.icon = '';
+              rebuild();
+              toast('custom icon cropped — it rides the publish');
+            },
+            onErr: function (msg) { toast(msg || 'could not read that image'); }
+          });
+        }
+        upFile.value = '';
+      });
+    }
 
     // collapsible sections — a class toggle + chev swap, no re-render
     el.querySelectorAll('[data-fold]').forEach(function (bar) {
@@ -711,6 +794,10 @@
       payload: cur.payload,
       pngBase64: cur.pngBase64 || '',
       icon: cur.icon || '',
+      // v0.61 (icons): the uploaded square icon — raster (CropUI ≤256) or
+      // SVG text. Either rides the commit as items/<id>/icon.<ext>.
+      icon_png_base64: cur.iconPNG || '',
+      icon_svg: cur.iconSVG || '',
       collection: cur.collection || '',
       stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
       files: files

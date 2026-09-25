@@ -101,5 +101,52 @@
     return w;
   }
 
-  window.IconLib = { NAMES: NAMES, has: has, svg: svg, el: el };
+  // ── v0.61 pt C.10 (icons): file:<path> — the item's OWN art file ──────
+  // A "file:<repo-relative-path>" icon names a png or svg committed with
+  // the item (the publish upload, the corpus' bundled assets). The
+  // repo-file route serves it with the right content-type, so it renders
+  // as a plain <img>. Unknown/empty names return '' everywhere (icons
+  // are optional); a load error just hides the img (onerror).
+  function isFileIcon(name) {
+    return String(name || '').indexOf('file:') === 0;
+  }
+
+  // fileURL(icon, repo) — the serving URL for a file: icon ('' otherwise).
+  function fileURL(icon, repo) {
+    if (!isFileIcon(icon) || !repo) return '';
+    var p = String(icon).slice(5);
+    return '/api/hub/repo/' + encodeURIComponent(repo) +
+      '/file?path=' + encodeURIComponent(p);
+  }
+
+  // card(icon, repo, size?) — ONE resolver for every icon render: a
+  // Lucide kebab name → the themed inline svg; a file:<path> → the img;
+  // anything else → ''. repo is REQUIRED for file: icons (where the file
+  // lives); without it the file: form falls back to ''.
+  function card(icon, repo, size) {
+    if (isFileIcon(icon)) {
+      var u = fileURL(icon, repo);
+      if (!u) return '';
+      size = size || 20;
+      return '<img class="icof" src="' + u.replace(/"/g, '%22') +
+        '" width="' + size + '" height="' + size + '" alt="" loading="lazy" ' +
+        'onerror="this.style.display=\'none\'">';
+    }
+    return svg(icon, size);
+  }
+
+  // dataCard(icon, dataURL, size?) — the preview form used while an
+  // upload is pending (the publish picker): same img, local source.
+  function dataCard(icon, dataURL, size) {
+    if (!isFileIcon(icon) || !dataURL) return '';
+    size = size || 20;
+    return '<img class="icof" src="' + String(dataURL).replace(/"/g, '%22') +
+      '" width="' + size + '" height="' + size + '" alt="">';
+  }
+
+  window.IconLib = {
+    NAMES: NAMES, has: has, svg: svg, el: el,
+    isFileIcon: isFileIcon, fileURL: fileURL,
+    card: card, dataCard: dataCard
+  };
 })();

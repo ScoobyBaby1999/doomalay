@@ -12,6 +12,7 @@ package server
 // text is separately capped at 64KB, the PNG at 6MB after decode).
 
 import (
+        "bytes"
         "encoding/base64"
         "encoding/json"
         "io"
@@ -142,6 +143,8 @@ func (s *Server) handleHubItem(w http.ResponseWriter, r *http.Request) {
 
 // handleHubPNG is GET /api/hub/{type}/png/{repo}/{id} — the card image
 // bytes with a long cache header (item content is id-addressed).
+// v0.61 pt C.10 (icons): the art may be an SVG — the content-type is
+// SNIFFED from the bytes (markup-first = image/svg+xml), not assumed.
 func (s *Server) handleHubPNG(w http.ResponseWriter, r *http.Request) {
         typ, ok := s.hubType(w, r)
         if !ok {
@@ -152,7 +155,11 @@ func (s *Server) handleHubPNG(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusNotFound, "no image for this item")
                 return
         }
-        w.Header().Set("Content-Type", "image/png")
+        ct := "image/png"
+        if t := bytes.TrimLeft(png, " \t\r\n\ufeff"); len(t) > 0 && t[0] == '<' {
+                ct = "image/svg+xml" // an SVG document — serve it as one
+        }
+        w.Header().Set("Content-Type", ct)
         w.Header().Set("Cache-Control", "public, max-age=604800")
         w.Header().Set("Content-Length", strconv.Itoa(len(png)))
         w.WriteHeader(http.StatusOK)

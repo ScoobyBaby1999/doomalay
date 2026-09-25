@@ -187,7 +187,9 @@
       return '<span class="hi-chip">#' + esc(t) + '</span>';
     }).join('');
 
-    var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 24) : '';
+    // v0.61 (icons): a file:<path> icon renders the item's own art file
+    // (png/svg through the repo-file route); kebab names stay Lucide.
+    var ico = (it.icon && window.IconLib) ? window.IconLib.card(it.icon, it.repo, 24) : '';
     var stageN = isTpl && it.stageCount > 0
       ? '<span class="hi-stagen">~' + it.stageCount + ' stages</span>' : '';
     // v0.60 pt C.5: type info chips on the hero — scripts carry

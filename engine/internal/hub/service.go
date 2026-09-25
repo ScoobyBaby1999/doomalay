@@ -662,11 +662,20 @@ func (s *Service) ItemDetail(typ, repo, id string) (Item, string, error) {
 }
 
 // PNG returns an item's card image bytes (nil when it has none).
+// v0.61 pt C.10 (icons): the card art may be an SVG — items/<id>.png is
+// tried first, then items/<id>.svg (the handler sniffs the content-type
+// from the bytes).
 func (s *Service) PNG(typ, repo, id string) ([]byte, error) {
         if _, err := Get(typ); err != nil {
                 return nil, err
         }
-        return s.hf.FetchFile(repo, "items/"+id+".png")
+        if png, err := s.hf.FetchFile(repo, "items/"+id+".png"); err == nil && len(png) > 0 {
+                return png, nil
+        }
+        if svg, err := s.hf.FetchFile(repo, "items/"+id+".svg"); err == nil && len(svg) > 0 {
+                return svg, nil
+        }
+        return nil, ErrNotFoundLocal
 }
 
 // validRepoID accepts exactly "owner/name" (the public dataset shape) and
@@ -843,6 +852,12 @@ type PublishRequest struct {
         Payload     string         `json:"payload"`
         PNGBase64   string         `json:"pngBase64"`
         Icon        string         `json:"icon"`       // v0.52: optional card icon (Lucide-style kebab name)
+        // v0.61 pt C.10 (icons): the uploaded square icon — a raster (CropUI
+        // square, <=256 edge -> PNG bytes) or an SVG document (vector). It
+        // rides the SAME commit at items/<id>/icon.<ext>; the meta points
+        // at it through Icon="file:<path>".
+        IconPNGBase64 string `json:"icon_png_base64"`
+        IconSVG       string `json:"icon_svg"`
         Collection  string         `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
         StageCount  int            `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
         // v0.60 pt C.8: REPO PUBLISHING — the files section. Each file is a
@@ -946,6 +961,34 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         if png := decodeB64(req.PNGBase64); len(png) > 0 && isPNG(png) {
                 item.Design = Design{Kind: "png"}
         }
+        // v0.61 pt C.10 (icons): the uploaded square icon — raster (CropUI
+        // square, <=256) or SVG (vector). It rides the SAME commit at
+        // items/<id>/icon.<ext>, the meta points at it through the
+        // "file:<path>" icon form, and the repo view lists it (item.Files).
+        iconFile, iconContent := "", []byte(nil)
+        if svg := bytes.TrimSpace([]byte(req.IconSVG)); len(svg) > 0 {
+                if err := validateIconSVG(svg); err != nil {
+                        return Item{}, err
+                }
+                iconFile, iconContent = "items/"+id+"/icon.svg", svg
+        } else if png := decodeB64(req.IconPNGBase64); len(png) > 0 {
+                if !isPNG(png) {
+                        return Item{}, errors.New("icon: not a valid PNG")
+                }
+                if len(png) > iconMaxBytes {
+                        return Item{}, fmt.Errorf("icon png too large (%dKB cap)", iconMaxBytes>>10)
+                }
+                iconFile, iconContent = "items/"+id+"/icon.png", png
+        }
+        if iconFile != "" {
+                for _, seen := range item.Files {
+                        if seen == iconFile {
+                                return Item{}, fmt.Errorf("file path %q collides with the icon", iconFile)
+                        }
+                }
+                item.Icon = "file:" + iconFile
+                item.Files = append(item.Files, iconFile)
+        }
         // v0.60 pt C.6: EVERYTHING IS A BUNDLE — a published item with no
         // explicit collection becomes its own singular-item bundle (the
         // collection id = the item id), so the whole hub is bundle-shaped:
@@ -1021,6 +1064,10 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 if png := decodeB64(req.PNGBase64); len(png) > 0 {
                         files = append(files, CommitFile{Path: "items/" + id + ".png", Content: png})
                 }
+        }
+        // v0.61 pt C.10 (icons): the uploaded icon rides the same commit.
+        if iconFile != "" {
+                files = append(files, CommitFile{Path: iconFile, Content: iconContent})
         }
         index, err := s.regenIndex(repo, item)
         if err == nil {
@@ -1160,6 +1207,28 @@ func decodeB64(s string) []byte {
 
 func isPNG(b []byte) bool {
         return len(b) >= 4 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47
+}
+
+// iconMaxBytes caps the uploaded icon (a square marker — 64KB is generous
+// for a 256px PNG and enormous for a hand-written SVG).
+const iconMaxBytes = 64 << 10
+
+// validateIconSVG accepts a real SVG document: small, markup-first (an
+// optional BOM + whitespace, then '<') and actually containing an <svg tag
+// (the renderer never scripts it — it lands in an <img src>, so embedded
+// scripts stay inert either way).
+func validateIconSVG(b []byte) error {
+        t := bytes.TrimLeft(b, " \t\r\n\ufeff")
+        if len(t) == 0 || t[0] != '<' {
+                return errors.New("icon: not an SVG document")
+        }
+        if !bytes.Contains(t, []byte("<svg")) {
+                return errors.New("icon: no <svg> root")
+        }
+        if len(b) > iconMaxBytes {
+                return fmt.Errorf("icon svg too large (%dKB cap)", iconMaxBytes>>10)
+        }
+        return nil
 }
 
 // isHexColor accepts the CSS hex forms we allow as gradient stops:

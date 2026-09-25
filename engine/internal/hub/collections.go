@@ -34,6 +34,7 @@ type CollectionSummary struct {
         Icon      string         `json:"icon"`   // most common member icon ("" = no icon)
         Sample    string         `json:"sample"` // first member name (a display fallback)
         Tag       string         `json:"tag"`    // most-common first member tag ("" = none)
+        Repo      string         `json:"repo"`    // v0.61 (icons): the icon file's repo (file: icons)
         Members   int            `json:"members"`
         Hearts    int            `json:"hearts"`    // Σ member hearts
         Downloads int            `json:"downloads"` // Σ member downloads
@@ -56,8 +57,11 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
         type agg struct {
                 sum   CollectionSummary
                 icons map[string]int
-                names []string
-                tags  map[string]int // v0.56: first-tag votes across members
+                // v0.61 (icons): the repo each icon name was first seen in
+                // — a file:<path> icon resolves against ITS contributor.
+                iconRepos map[string]string
+                names     []string
+                tags      map[string]int // v0.56: first-tag votes across members
                 // v0.58: the newest member carrying a usable card design — the
                 // bunch card's art when no curated override exists.
                 bestDesign   Design
@@ -77,7 +81,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                         a := bunches[id]
                         if a == nil {
-                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, tags: map[string]int{}}
+                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}}
                                 bunches[id] = a
                         }
                         a.sum.Members++
@@ -86,6 +90,9 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         a.sum.ByType[it.Type]++
                         if it.Icon != "" {
                                 a.icons[it.Icon]++
+                                if _, seen := a.iconRepos[it.Icon]; !seen {
+                                        a.iconRepos[it.Icon] = it.Repo
+                                }
                         }
                         // v0.56: each member's FIRST tag votes once — the
                         // most common becomes the bunch's badge tag.
@@ -130,6 +137,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                 }
                 a.sum.Icon = best
+                a.sum.Repo = a.iconRepos[best] // v0.61 (icons): where the icon file lives
                 // v0.56: the bunch tag — the members' most common FIRST tag
                 // (ties break alphabetically for determinism).
                 bestTag, bestTagN := "", 0

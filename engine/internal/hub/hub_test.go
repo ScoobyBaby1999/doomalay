@@ -1226,3 +1226,64 @@ func TestTimeHelpers(t *testing.T) {
                 t.Fatal("bad time must be 0")
         }
 }
+
+// ── v0.61 pt C.10 (icons): the file:<path> icon convention ──────────────
+
+func TestSanitizeIconFileRefs(t *testing.T) {
+	// valid file: refs pass through (path normalized, refs intact)
+	cases := map[string]string{
+		"file:items/abc123/icon.svg":        "file:items/abc123/icon.svg",
+		"file:items/abc123/icon.png":        "file:items/abc123/icon.png",
+		"file:assets/superpowers-small.svg": "file:assets/superpowers-small.svg",
+		"file: icons/logo.png":              "file:icons/logo.png", // the space after the colon trims
+		"file:/leading/slash.svg":           "file:leading/slash.svg",
+	}
+	for in, want := range cases {
+		if got := SanitizeIcon(in); got != want {
+			t.Errorf("SanitizeIcon(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// malformed refs drop to "" (traversal, non-image, empty)
+	for _, in := range []string{
+		"file:",
+		"file:../escape.svg",
+		"file:items/../x.svg",
+		"file:docs/readme.md", // not an image
+		"file:a\\b.svg",       // backslash
+		"file:a?b.svg",        // query
+		"file://double//slash.svg",
+	} {
+		if got := SanitizeIcon(in); got != "" {
+			t.Errorf("SanitizeIcon(%q) = %q, want \"\"", in, got)
+		}
+	}
+	// kebab names keep their old shape
+	if got := SanitizeIcon("Lightbulb!!"); got != "lightbulb" {
+		t.Errorf("kebab icon broken: %q", got)
+	}
+}
+
+func TestValidateIconSVG(t *testing.T) {
+	good := []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>")
+	if err := validateIconSVG(good); err != nil {
+		t.Errorf("valid svg rejected: %v", err)
+	}
+	// BOM + leading whitespace are fine
+	if err := validateIconSVG(append([]byte("  \n\ufeff"), good...)); err != nil {
+		t.Errorf("bom+ws svg rejected: %v", err)
+	}
+	for _, bad := range [][]byte{
+		[]byte("hello <svg>"), // not markup-first
+		[]byte("<div>no svg root</div>"),
+		nil,
+	} {
+		if err := validateIconSVG(bad); err == nil {
+			t.Errorf("bad svg accepted: %.20q", bad)
+		}
+	}
+	// the size cap
+	big := append([]byte("<svg>"), make([]byte, 65<<10)...)
+	if err := validateIconSVG(big); err == nil {
+		t.Error("oversized svg accepted")
+	}
+}
