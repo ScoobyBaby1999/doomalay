@@ -203,6 +203,41 @@ var PM_WEB_TOOLS_PROTOCOL = [
   'Cite web sources inline as [1], [2] matching the search result numbering. Never fabricate URLs.'
 ].join('\n');
 
+// v0.60 pt C.13: THE LIB PILL — the superpowers discipline on the PM path.
+// When the chat's lib gate is ON, the system message ALSO carries the full
+// bootstrap (fetched from the engine: using-superpowers verbatim + this
+// harness's tool map — porting guide Part 3: "the bootstrap is the entire
+// difference between the port working and not working") plus this protocol.
+var PM_LIB_PROTOCOL = [
+  'You also have THE SKILL LIBRARY (methodology skills — brainstorming, writing-plans, TDD, systematic-debugging, verification…):',
+  'ACTION: skills {"action": "list"} — the skill index',
+  'ACTION: skills {"action": "search", "q": "debug"} — ranked hits',
+  'ACTION: skills {"action": "load", "skill": "brainstorming"} — load a skill and FOLLOW it',
+  'ACTION: skills {"action": "files", "skill": "…"} / {"action": "read", "skill": "…", "path": "…"} — companion files',
+  'ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — browse the public hub',
+  'ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — an item\u2019s detail + payload head',
+  'ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download into the user\u2019s library + use it',
+  'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.'
+].join('\n');
+
+// The bootstrap cache (per page — the skill body is static per install).
+var _pmBootstrapCache = null;
+function fetchLibBootstrap(sessionId) {
+  if (_pmBootstrapCache) return Promise.resolve(_pmBootstrapCache);
+  var u = '/api/tools/skills?action=bootstrap' + (sessionId ? '&session=' + encodeURIComponent(sessionId) : '');
+  return fetch(u).then(function (r) { return r.json(); }).then(function (d) {
+    if (d && d.result) {
+      _pmBootstrapCache = d.result;
+      return d.result;
+    }
+    _pmBootstrapCache = null;
+    throw new Error((d && d.error) || 'bootstrap unavailable');
+  }).catch(function (e) {
+    _pmBootstrapCache = null;
+    throw e;
+  });
+}
+
 // v0.20: repair truncated tool-call JSON — models sometimes cut the
 // closing brace/quote (observed live: `ACTION: web_search {"query": "cat
 // diaper how to put on guide"` with no closing }). Append what's missing
@@ -458,6 +493,18 @@ async function runToolLoop(c, opts) {
   var system = opts.messages[0] && opts.messages[0].role === 'system'
     ? opts.messages[0].content + '\n\n' + PM_TOOLS_PROTOCOL + (toolsOn ? '\n\n' + PM_WEB_TOOLS_PROTOCOL : '')
     : PM_TOOLS_PROTOCOL + (toolsOn ? '\n\n' + PM_WEB_TOOLS_PROTOCOL : '');
+  // v0.60 pt C.13: the lib gate — ON prepends the full bootstrap (the
+  // using-superpowers body fetched from the engine, verbatim upstream +
+  // the harness tool map) and arms the skills/hublib ACTION protocol.
+  if (opts.lib) {
+    try {
+      var boot = await fetchLibBootstrap(opts.sessionId || '');
+      system = boot + '\n\n' + system + '\n\n' + PM_LIB_PROTOCOL;
+    } catch (e) {
+      // gate off server-side / engine hiccup — degrade to the plain loop
+      opts.onProgress && opts.onProgress({ text: 'skill library unavailable — ' + (e.message || e) });
+    }
+  }
   var messages = [{ role: 'system', content: system }].concat(
     opts.messages[0] && opts.messages[0].role === 'system' ? opts.messages.slice(1) : opts.messages);
   var allSources = [];
@@ -611,10 +658,15 @@ var PM_TOOL_ALIASES = {
   set_persona: 'persona_set', persona_edit: 'persona_set', edit_persona: 'persona_set', create_persona: 'persona_set',
   new_persona: 'persona_set', update_persona: 'persona_set',
   activate_persona: 'persona_activate', switch_persona: 'persona_activate', become: 'persona_activate', use_persona: 'persona_activate',
-  placeholder: 'placeholder_set', set_placeholder: 'placeholder_set', variable: 'placeholder_set', set_variable: 'placeholder_set'
+  placeholder: 'placeholder_set', set_placeholder: 'placeholder_set', variable: 'placeholder_set', set_variable: 'placeholder_set',
+  // v0.60 pt C.13: the lib pill's superpowers tools.
+  skill: 'skills', load_skill: 'skills', skill_load: 'skills', use_skill: 'skills',
+  superpowers: 'skills', methodology: 'skills',
+  hub: 'hublib', hub_library: 'hublib', library: 'hublib', public_library: 'hublib',
+  browse_hub: 'hublib', download_skill: 'hublib'
 };
 
-var PM_ALL_TOOLS = ['calculator', 'time_now', 'uuid', 'random', 'base64', 'hash', 'json_tool', 'text_stats', 'url_encode', 'regex_extract', 'docx_create', 'xlsx_create', 'zip_create', 'zip_extract', 'archive_create', 'archive_extract', 'web_search', 'web_fetch', 'delegate', 'persona_list', 'persona_set', 'persona_activate', 'placeholder_set'];
+var PM_ALL_TOOLS = ['calculator', 'time_now', 'uuid', 'random', 'base64', 'hash', 'json_tool', 'text_stats', 'url_encode', 'regex_extract', 'docx_create', 'xlsx_create', 'zip_create', 'zip_extract', 'archive_create', 'archive_extract', 'web_search', 'web_fetch', 'delegate', 'persona_list', 'persona_set', 'persona_activate', 'placeholder_set', 'skills', 'hublib'];
 
 function canonicalToolNameJS(name) {
   var n = String(name || '').toLowerCase().trim();
@@ -715,7 +767,8 @@ function actionHasRequiredArgJS(act) {
   var req = {
     web_search: 'query', web_fetch: 'url', delegate: 'prompt', calculator: 'expr',
     regex_extract: 'pattern', zip_create: 'name', docx_create: 'name',
-    xlsx_create: 'name', archive_create: 'name'
+    xlsx_create: 'name', archive_create: 'name',
+    skills: 'action', hublib: 'action'
   }[tool];
   if (!req) return true; // no required arg (time_now, uuid, persona_list…)
   var v = arg[req];
@@ -754,7 +807,45 @@ async function execAction(act, opts, allSources) {
     // bare 'Asia/Tokyo' becomes EVERY plausible key; each tool reads its own).
     arg = { query: wrapped, url: wrapped, text: wrapped, expr: wrapped, pattern: wrapped,
             tz: wrapped, algo: wrapped, name: wrapped, artifact: wrapped,
-            prompt: wrapped, id: wrapped, key: wrapped, value: wrapped, mode: wrapped };
+            prompt: wrapped, id: wrapped, key: wrapped, value: wrapped, mode: wrapped,
+            action: wrapped, skill: wrapped, type: wrapped, repo: wrapped, path: wrapped, q: wrapped };
+  }
+
+  // v0.60 pt C.13: THE SKILL LIBRARY + THE BOT-SIDE HUB — the engine serves
+  // both (lib-gated server-side; browse always OK, load/download gated).
+  if (tool === 'skills' || tool === 'hublib') {
+    var act2 = String(arg.action || '').toLowerCase();
+    if (!act2) {
+      // bare "ACTION: skills brainstorming" → load it; bare hublib → search
+      if (arg.skill || arg.name) { act2 = 'load'; arg.skill = arg.skill || arg.name; }
+      else if (arg.q) act2 = 'search';
+      else act2 = tool === 'skills' ? 'list' : 'search';
+    }
+    if (act2 === 'load' && !arg.skill) arg.skill = arg.name || arg.q || arg.id || '';
+    var su = '/api/tools/' + tool + '?action=' + encodeURIComponent(act2);
+    if (arg.q) su += '&q=' + encodeURIComponent(String(arg.q).slice(0, 200));
+    if (arg.skill) su += '&skill=' + encodeURIComponent(String(arg.skill).slice(0, 200));
+    if (arg.path) su += '&path=' + encodeURIComponent(String(arg.path).slice(0, 300));
+    if (arg.type) su += '&type=' + encodeURIComponent(String(arg.type).slice(0, 40));
+    if (arg.repo) su += '&repo=' + encodeURIComponent(String(arg.repo).slice(0, 200));
+    if (arg.id) su += '&id=' + encodeURIComponent(String(arg.id).slice(0, 200));
+    if (opts.sessionId) su += '&session=' + encodeURIComponent(opts.sessionId);
+    var sProg = act2 === 'load' ? 'loading skill ' + (arg.skill || '') + '…'
+      : act2 === 'download' ? 'downloading ' + (arg.id || '') + '…'
+      : act2 === 'search' ? 'searching the ' + (tool === 'skills' ? 'skill library' : 'hub') + '…'
+      : tool === 'skills' ? 'browsing the skill library…' : 'browsing the hub…';
+    opts.onProgress && opts.onProgress({ text: sProg });
+    opts.onTool && opts.onTool({ name: tool, summary: (act2 + ' ' + (arg.skill || arg.q || arg.id || '')).trim().slice(0, 80) });
+    var rs = await fetch(su);
+    if (!rs.ok) {
+      var errS = 'tool error HTTP ' + rs.status;
+      opts.onTool && opts.onTool({ name: tool, result: errS });
+      return 'OBSERVATION:\n(' + errS + ' — try again with valid arguments)';
+    }
+    var ds = await rs.json();
+    var outs = (ds && (ds.result || ds.error)) || '(empty)';
+    opts.onTool && opts.onTool({ name: tool, result: String(outs).slice(0, 120) });
+    return 'OBSERVATION:\n' + outs;
   }
 
   if (tool === 'web_search') {

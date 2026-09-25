@@ -2360,6 +2360,9 @@
       tools: !state.deepResearch,  // v0.45 ITEM 2: web search default-on — only a template (deep research) suppresses it
       // v0.26: the PM effort toggle (on/off → chat_template_kwargs.thinking).
       effort: state.effort || '',
+      // v0.60 pt C.13: the lib pill rides the PM turn — ON prepends the
+      // superpowers bootstrap + arms the skills/hublib ACTION tools.
+      lib: !!(state.libAuto || state.templateAuto || state.skillsAuto),
       // v0.22: throttled re-render (the WS path already used scheduleUpdate;
       // PM fired a FULL markdown+DOMPurify+Prism pass per token — the
       // "replies outside the thinking box don't stream smoothly" freeze).

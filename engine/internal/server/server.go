@@ -157,6 +157,11 @@ func (s *Server) routes() {
         // v0.20: local tool server for the PM bridge (calculator/time/
         // uuid/hash/json/… — same Go implementations the engine uses).
         s.mux.HandleFunc("GET /api/tools/local", s.handleToolsLocal)
+        // v0.60 pt C.13: the PM bridge's superpowers tools — the skills
+        // library (bootstrap/list/search/load/files/read) + the bot-side
+        // hub browse (search/get/download), both lib-gated server-side.
+        s.mux.HandleFunc("GET /api/tools/skills", s.handleToolsSkills)
+        s.mux.HandleFunc("GET /api/tools/hublib", s.handleToolsHublib)
 
         // v0.21: usage + cost tracking (per chat + fleet-wide).
         s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
