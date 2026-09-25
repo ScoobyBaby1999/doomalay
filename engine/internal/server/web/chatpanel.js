@@ -1465,7 +1465,7 @@
         '<div id="gate-box-' + s.key + '" data-gate-key="' + s.key + '" style="' + boxStyle(filled) + '">' +
           '<span style="font-size:26px">' + s.icon + '</span>' +
           '<span style="font-size: calc(var(--ui-fs) - 1px);font-weight:600;color:var(--text-1)">' + esc(s.title) + '</span>' +
-          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:' + (filled ? 'var(--ok)' : 'var(--text-3)') + '">' + esc(s.sub) + '</span>' +
+          '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:' + (filled ? 'var(--accent)' : 'var(--text-3)') + '">' + esc(s.sub) + '</span>' +
         '</div>';
     }
     return (

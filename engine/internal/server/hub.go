@@ -207,6 +207,34 @@ func (s *Server) handleHubDownloads(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+// handleHubDelete is POST /api/hub/{type}/delete {repo,id} — removes the
+// LOCAL downloaded copy (v0.60 pt A.3, with a client-side "are you sure"
+// confirm bar). The remote listing is untouched: delete-your-copy, not
+// unpublish. Publish-only records (never downloaded) are refused 400.
+func (s *Server) handleHubDelete(w http.ResponseWriter, r *http.Request) {
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        var req struct {
+                Repo string `json:"repo"`
+                ID   string `json:"id"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                return
+        }
+        if req.ID == "" {
+                writeError(w, http.StatusBadRequest, "id is required")
+                return
+        }
+        if err := s.hub.Delete(typ, req.ID); err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": true, "id": req.ID})
+}
+
 // handleHubEndorse is POST /api/hub/{type}/endorse|unendorse {repo,id} —
 // hearting requires the item be downloaded (the enforceable endorsement
 // rule); unendorse mirrors.

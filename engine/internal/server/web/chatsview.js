@@ -221,7 +221,7 @@
     }
     // pick mode: show which chat is currently connected
     var mark = (pickMode && connectedSid && c.session_id === connectedSid)
-      ? '<span class="cv-tag" style="background:rgba(var(--ok-rgb),0.14);color:var(--ok)">✓ connected</span>' : '';
+      ? '<span class="cv-tag" style="background:rgba(var(--accent-rgb),0.14);color:var(--accent)">✓ connected</span>' : '';
     return '<button class="cv-row" data-cv-sid="' + esc(c.session_id) + '" data-cv-title="' + escAttr(c.title || '') + '">' +
       '<div class="cv-topline">' +
         '<span class="cv-name">' + esc(c.title || 'Untitled chat') + '</span>' +

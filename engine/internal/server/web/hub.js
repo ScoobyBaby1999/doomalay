@@ -1486,6 +1486,8 @@
   // ── cross-module state (hubitem / hubpublish call these) ─────────
   function markDownloaded(type, repo, id) { downloaded[stateKey(type, repo, id)] = true; }
   function isDownloaded(type, repo, id) { return !!downloaded[stateKey(type, repo, id)]; }
+  // v0.60 pt A.3: delete-your-copy clears the local mark (hubitem doDelete).
+  function unmarkDownloaded(type, repo, id) { delete downloaded[stateKey(type, repo, id)]; }
   function setHearted(type, repo, id, on) {
     if (on) hearted[stateKey(type, repo, id)] = true;
     else delete hearted[stateKey(type, repo, id)];
@@ -1520,6 +1522,7 @@
     refreshItem: refreshItem,
     isDownloaded: isDownloaded,
     markDownloaded: markDownloaded,
+    unmarkDownloaded: unmarkDownloaded,
     setHearted: setHearted,
     isHearted: isHearted,
     toast: toast,

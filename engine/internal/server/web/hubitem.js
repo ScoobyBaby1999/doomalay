@@ -216,18 +216,33 @@
           (cur.payload == null ? '<div class="art-loading">loading the payload…</div>' : '') +
         '</div>' +
         '<div class="hi-fabs">' +
-          (isTpl
+          (cur.confirmDel
+            ? '<div class="hi-delbar" id="hi-delbar" role="alertdialog" aria-label="confirm delete">' +
+                '<span class="hi-delbar-text">Remove <b>' + esc(it.name || 'this item') + '</b> from your device?</span>' +
+                '<button type="button" class="hi-delbar-btn" data-del="keep">keep</button>' +
+                '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-del="remove">remove</button>' +
+              '</div>'
+            : '') +
+          (isTpl && !cur.confirmDel
             ? '<button class="hi-fab hi-fab--use" id="hi-use" title="use this template" aria-label="use this template">' +
                 hiGlyph('play') + '</button>'
             : '') +
-          '<button class="hi-fab" id="hi-dl" title="' +
-            (isTpl && cur.downloaded ? 're-publish with edits' : 'download') +
-            '" aria-label="' + (isTpl && cur.downloaded ? 're-publish with edits' : 'download') + '">' +
-            (isTpl && cur.downloaded ? hiGlyph('pen-line') : hiGlyph('download')) + '</button>' +
-          '<button class="hi-fab hi-fab--heart' + (cur.hearted ? ' on' : '') +
-            (cur.downloaded ? '' : ' locked') + '" id="hi-heart"' +
-            (cur.downloaded ? ' title="endorse"' : ' title="download first"') +
-            ' aria-label="endorse">' + hiGlyph('heart', cur.hearted) + '</button>' +
+          (!cur.confirmDel
+            ? '<button class="hi-fab" id="hi-dl" title="' +
+                (isTpl && cur.downloaded ? 're-publish with edits' : 'download') +
+                '" aria-label="' + (isTpl && cur.downloaded ? 're-publish with edits' : 'download') + '">' +
+                (isTpl && cur.downloaded ? hiGlyph('pen-line') : hiGlyph('download')) + '</button>'
+            : '') +
+          (!cur.confirmDel
+            ? '<button class="hi-fab hi-fab--heart' + (cur.hearted ? ' on' : '') +
+                (cur.downloaded ? '' : ' locked') + '" id="hi-heart"' +
+                (cur.downloaded ? ' title="endorse"' : ' title="download first"') +
+                ' aria-label="endorse">' + hiGlyph('heart', cur.hearted) + '</button>'
+            : '') +
+          (cur.downloaded && !cur.confirmDel
+            ? '<button class="hi-fab hi-fab--del" id="hi-del" title="delete your copy" aria-label="delete your copy">' +
+                hiGlyph('trash-2') + '</button>'
+            : '') +
         '</div>' +
       '</div>'
     );
@@ -237,7 +252,7 @@
   // glyphs are gone), filled hearts when on.
   function hiGlyph(name, filled) {
     var I = window.IconLib;
-    if (!I || !I.has(name)) return { heart: '♥', download: '⤓', 'pen-line': '✎', play: '▶' }[name] || '';
+    if (!I || !I.has(name)) return { heart: '♥', download: '⤓', 'pen-line': '✎', play: '▶', 'trash-2': '🗑' }[name] || '';
     var s = I.svg(name, 26);
     if (filled) s = s.replace('fill="none"', 'fill="currentColor"');
     return s;
@@ -297,6 +312,25 @@
         return;
       }
       if (cur.hearted) doUnendorse(); else doEndorse();
+    });
+
+    // v0.60 (pt A.3): DELETE — the fab appears only when downloaded; the
+    // tap swaps the fab row for an in-DOM confirm bar (keep/remove) so an
+    // accidental tap can never destroy the copy.
+    var del = el.querySelector('#hi-del');
+    if (del) del.addEventListener('click', function () {
+      if (!cur || cur.busy) return;
+      cur.confirmDel = true;
+      cur.panel.replaceView(buildView(), { keepScroll: true });
+    });
+    var bar = el.querySelector('#hi-delbar');
+    if (bar) bar.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        if (b.getAttribute('data-del') === 'remove') { doDelete(); return; }
+        cur.confirmDel = false;
+        cur.panel.replaceView(buildView(), { keepScroll: true });
+      });
     });
   }
 
@@ -482,6 +516,45 @@
     } else {
       toast('no chat panel to apply it to');
     }
+  }
+
+  // v0.60 (pt A.3): DELETE — removes the LOCAL copy (engine row + the
+  // localStorage "Yours" copy + the session's downloaded/hearted marks).
+  // The remote listing is untouched: delete-your-copy, not unpublish.
+  function doDelete() {
+    if (!cur || cur.busy) return;
+    cur.busy = true;
+    var it = cur.item;
+    toast('removing…', { hold: true });
+    api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/delete',
+        { repo: it.repo, id: it.id })
+      .then(function () {
+        if (!cur) return;
+        cur.busy = false;
+        cur.downloaded = false;
+        cur.hearted = false;
+        cur.confirmDel = false;
+        if (window.Hub) {
+          window.Hub.unmarkDownloaded(cur.type, it.repo, it.id);
+          window.Hub.setHearted(cur.type, it.repo, it.id, false);
+        }
+        // the localStorage "Yours" copy the download landed (templates +
+        // skills live there — see doDownload's saveFromHub call).
+        if ((cur.type === 'template' || cur.type === 'skill') &&
+            window.TemplateSheet && window.TemplateSheet.removeUserTemplate) {
+          window.TemplateSheet.removeUserTemplate(String(it.id));
+        }
+        toast('removed — ' + (it.name || 'the item') + ' is no longer on this device');
+        if (window.Hub && window.Hub.refreshItem) window.Hub.refreshItem(it);
+        cur.panel.replaceView(buildView(), { keepScroll: true });
+      })
+      .catch(function (e) {
+        if (!cur) return;
+        cur.busy = false;
+        cur.confirmDel = false;
+        toast(e.message || 'the delete failed');
+        cur.panel.replaceView(buildView(), { keepScroll: true });
+      });
   }
 
   function doEndorse() {
