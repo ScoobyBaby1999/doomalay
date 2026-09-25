@@ -55,7 +55,11 @@ type Item struct {
         // — auto-counted from the payload's stages[] at scan/publish time, or
         // the manual override from the publish form. 0 = unknown (never shown).
         StageCount int      `json:"stageCount,omitempty"`
-        File        string   `json:"file"` // in-repo payload path ("items/<id><ext>")
+        // v0.60 pt C.8: REPO PUBLISHING — the companion files of a multi-file
+        // bundle (repo-relative paths, committed at items/<id>/<path>). The
+        // repo view lists them; empty = a plain single-payload item.
+        Files  []string `json:"files,omitempty"`
+        File   string   `json:"file"` // in-repo payload path ("items/<id><ext>")
 }
 
 // CountStages deterministically counts a TEMPLATE payload's stages: a JSON

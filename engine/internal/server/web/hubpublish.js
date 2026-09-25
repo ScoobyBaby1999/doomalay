@@ -57,7 +57,7 @@
     return 'the theme bundle JSON — prefills from your current look, or export one from Colors · Import / Export Theme';
   }
 
-  var cur = null; // { panel, type, name, desc, tags, design:{kind,spec}, pngBase64, payload, folds, focus }
+  var cur = null; // { panel, type, name, desc, tags, design:{kind,spec}, pngBase64, payload, folds, focus, files:[{path,content}] }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -176,10 +176,13 @@
       design: preDesign,
       pngBase64: '',
       payload: prefill.payload || '',
+      // v0.60 pt C.8: REPO PUBLISHING — the files section (companion files
+      // at items/<id>/<path>; folders allowed in the paths).
+      files: (prefill.files || []).slice(),
       // v0.58: the manual stage override (templates) + the edit origin
       stageCount: prefill.stageCount || 0,
       editOf: prefill.editOf || null,
-      folds: { details: false, design: false },       // sections start open
+      folds: { details: false, design: false, files: false },      // sections start open
       focus: false                                    // payload focus mode
     };
     cur._baseline = snapshot(); // the dirty guard's reference point
@@ -192,7 +195,8 @@
     return JSON.stringify({
       name: c.name, desc: c.desc, tags: c.tags.slice().sort(), icon: c.icon,
       collection: c.collection, design: designOut(), pngBase64: c.pngBase64,
-      payload: c.payload, stageCount: c.stageCount || 0
+      payload: c.payload, stageCount: c.stageCount || 0,
+      files: (c.files || []).map(function (f) { return { path: f.path, content: f.content }; })
     });
   }
   function isDirty() { return !cur || !cur._baseline || snapshot() !== cur._baseline; }
@@ -319,6 +323,21 @@
           '</div>' +
         '</div>' +
 
+        // v0.60 pt C.8: THE FILES SECTION — repo publishing. The bundle's
+        // companion files (docs/scripts/assets), one row per file with
+        // folder-allowed paths; they ride the same commit at items/<id>/<path>.
+        '<div class="hp-sec' + (c.folds.files ? ' folded' : '') + '" id="hp-sec-files">' +
+          '<div class="hp-sec-bar" data-fold="files" role="button" tabindex="0">' +
+            '<span class="hp-sec-title">repo files <span class="hp-opt">optional — the bundle\u2019s companions</span></span>' +
+            '<span class="hp-sec-chev">' + (c.folds.files ? '▸' : '▾') + '</span>' +
+          '</div>' +
+          '<div class="hp-sec-body">' +
+            '<p class="pv-hint" style="margin:0 0 8px">extra files published alongside the payload — folder paths allowed (e.g. <b>docs/usage.md</b>, <b>scripts/run.sh</b>). Supported: md · json · sh · svg · txt · py · yaml · toml · csv · html · css · js · ts.</p>' +
+            filesRowsHTML() +
+            '<button type="button" class="hp-addfile" id="hp-addfile">＋ add file</button>' +
+          '</div>' +
+        '</div>' +
+
         '<button id="hp-publish" class="pv-btn pv-btn-primary"' +
           (c.editOf && !isDirty() ? ' disabled' : '') + ' style="width:100%">' +
           (c.editOf ? '⤳ publish the update' : '⤴ publish to the hub') + '</button>' +
@@ -335,6 +354,25 @@
   function stageHint() {
     var n = countStages(cur.payload);
     return n ? '~' + n + ' stages detected in the payload' : 'no stages[] detected — the count shows only when set';
+  }
+
+  // v0.60 pt C.8: the files section's rows — one path input + content
+  // textarea + remove per companion file. Values live in cur.files (the
+  // scroll-safe rebuild keeps them).
+  function filesRowsHTML() {
+    var c = cur;
+    var out = '';
+    (c.files || []).forEach(function (f, i) {
+      out +=
+        '<div class="hp-file" data-fi="' + i + '">' +
+          '<div class="hp-file-pathrow">' +
+            '<input class="pv-input hp-file-path" data-fpath="' + i + '" placeholder="docs/usage.md" value="' + escAttr(f.path || '') + '">' +
+            '<button type="button" class="hp-file-rm" data-frm="' + i + '" title="remove this file" aria-label="remove file">✕</button>' +
+          '</div>' +
+          '<textarea class="hp-textarea hp-file-content" data-fcontent="' + i + '" rows="4" placeholder="the file\u2019s content">' + esc(f.content || '') + '</textarea>' +
+        '</div>';
+    });
+    return out;
   }
   function countStages(text) {
     try {
@@ -574,6 +612,38 @@
     // PUBLISH
     var pub = el.querySelector('#hp-publish');
     if (pub) pub.addEventListener('click', function () { doPublish(); });
+
+    // v0.60 pt C.8: the files section — live harvest + add/remove rows.
+    var addFile = el.querySelector('#hp-addfile');
+    if (addFile) addFile.addEventListener('click', function () {
+      if (!cur) return;
+      if ((cur.files || []).length >= 20) { toast('20 files max'); return; }
+      cur.files.push({ path: '', content: '' });
+      rebuild();
+      var rows = cur.panel.bodyEl.querySelectorAll('.hp-file-path');
+      if (rows.length) { rows[rows.length - 1].focus(); }
+    });
+    el.querySelectorAll('[data-fpath]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var i = parseInt(inp.getAttribute('data-fpath'), 10) || 0;
+        if (cur && cur.files[i]) cur.files[i].path = inp.value;
+        dirtyPaint();
+      });
+    });
+    el.querySelectorAll('[data-fcontent]').forEach(function (ta) {
+      ta.addEventListener('input', function () {
+        var i = parseInt(ta.getAttribute('data-fcontent'), 10) || 0;
+        if (cur && cur.files[i]) cur.files[i].content = ta.value;
+        dirtyPaint();
+      });
+    });
+    el.querySelectorAll('[data-frm]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        cur.files.splice(parseInt(b.getAttribute('data-frm'), 10) || 0, 1);
+        rebuild();
+      });
+    });
   }
 
   function addTag(raw) {
@@ -619,6 +689,20 @@
       return;
     }
     if (btn) { btn.disabled = true; btn.textContent = 'publishing…'; }
+    // v0.60 pt C.8: the files section — drop fully-empty rows, refuse a
+    // path-less row with content, then ride the request.
+    var files = [];
+    ((cur && cur.files) || []).forEach(function (f) {
+      var p = String((f && f.path) || '').trim().replace(/^\/+/, '');
+      var body = String((f && f.content) || '');
+      if (!p && !body) return; // an untouched row
+      if (!p) {
+        if (errEl) errEl.textContent = 'every repo file needs a path (e.g. docs/usage.md)';
+        if (btn) { btn.disabled = false; btn.textContent = '⤴ publish to the hub'; }
+        return;
+      }
+      files.push({ path: p, content: body });
+    });
     api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', {
       name: cur.name,
       description: cur.desc,
@@ -628,7 +712,8 @@
       pngBase64: cur.pngBase64 || '',
       icon: cur.icon || '',
       collection: cur.collection || '',
-      stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0
+      stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
+      files: files
     }).then(function (d) {
       var item = d.item, repo = d.repo;
       toast(cur.editOf ? ('updated — ' + item.name) : ('published to ' + repo));

@@ -3301,6 +3301,24 @@
   }
   .hp-textarea:focus { border-color: var(--accent); }
   .hp-payload { min-height: 170px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  /* v0.60 pt C.8: THE FILES SECTION — one path input + content textarea
+     + remove per companion file (repo publishing). */
+  .hp-file { margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+  .hp-file-pathrow { display: flex; gap: 6px; align-items: stretch; }
+  .hp-file-path { flex: 1; min-width: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .hp-file-rm {
+    flex-shrink: 0; width: 38px; border-radius: 8px; cursor: pointer;
+    background: rgba(var(--err-rgb), 0.10); border: 1px solid rgba(var(--err-rgb), 0.45);
+    color: var(--err); font-size: var(--ui-small-fs); font-weight: 700; font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hp-file-content { min-height: 84px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .hp-addfile {
+    width: 100%; padding: 9px 12px; border-radius: 10px; cursor: pointer;
+    background: rgba(var(--accent-2-rgb), 0.08); border: 1px dashed rgba(var(--accent-2-rgb), 0.5);
+    color: var(--accent-2); font-size: var(--ui-small-fs); font-weight: 700; font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
   .hp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .hp-chip {
     display: inline-flex; align-items: center; gap: 5px;

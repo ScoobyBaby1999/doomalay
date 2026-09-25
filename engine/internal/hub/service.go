@@ -10,7 +10,9 @@ import (
         "encoding/base64"
         "encoding/json"
         "errors"
+        "fmt"
         "log"
+        "path"
         "sort"
         "strings"
         "sync"
@@ -834,15 +836,65 @@ func (s *Service) Endorse(typ, repo, id string, endorse bool) (Item, error) {
 
 // PublishRequest is the publish payload (the server decodes + size-caps it).
 type PublishRequest struct {
-        Name        string   `json:"name"`
-        Description string   `json:"description"`
-        Tags        []string `json:"tags"`
-        Design      Design   `json:"design"`
-        Payload     string   `json:"payload"`
-        PNGBase64   string   `json:"pngBase64"`
-        Icon        string   `json:"icon"`       // v0.52: optional card icon (Lucide-style kebab name)
-        Collection  string   `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
-        StageCount  int      `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
+        Name        string         `json:"name"`
+        Description string         `json:"description"`
+        Tags        []string       `json:"tags"`
+        Design      Design         `json:"design"`
+        Payload     string         `json:"payload"`
+        PNGBase64   string         `json:"pngBase64"`
+        Icon        string         `json:"icon"`       // v0.52: optional card icon (Lucide-style kebab name)
+        Collection  string         `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
+        StageCount  int            `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
+        // v0.60 pt C.8: REPO PUBLISHING — the files section. Each file is a
+        // repo-relative path (folders allowed) committed at
+        // items/<id>/<path> so a bundle carries its companions (docs,
+        // scripts, assets) in one publish.
+        Files []PublishFile `json:"files"`
+}
+
+// PublishFile is one companion file of a multi-file publish.
+type PublishFile struct {
+        Path    string `json:"path"`
+        Content string `json:"content"`
+}
+
+// publishFileExts whitelists the companion file extensions (text-friendly;
+// binary art rides the design/image path instead).
+var publishFileExts = map[string]bool{
+        ".md": true, ".json": true, ".sh": true, ".svg": true, ".txt": true,
+        ".py": true, ".yaml": true, ".yml": true, ".toml": true, ".csv": true,
+        ".html": true, ".css": true, ".js": true, ".ts": true,
+}
+
+// publishFileMaxBytes caps ONE companion file's content (same as the
+// primary payload) and publishFileMaxCount caps the section.
+const (
+        publishFileMaxBytes = 64 << 10
+        publishFileMaxCount = 20
+)
+
+// sanitizePublishFile validates one companion file: a repo-relative path
+// (no leading /, no "..", no backslashes), a whitelisted extension, and
+// content within the cap. Returns the cleaned path.
+func sanitizePublishFile(f PublishFile) (string, error) {
+        p := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(f.Path), "/"))
+        if p == "" {
+                return "", errors.New("a file path is required")
+        }
+        if strings.Contains(p, "..") || strings.ContainsAny(p, "\\?#") || strings.HasPrefix(p, ".") {
+                return "", fmt.Errorf("bad file path %q", f.Path)
+        }
+        if segs := strings.Split(p, "/"); len(segs) > 10 {
+                return "", fmt.Errorf("file path %q is too deep", f.Path)
+        }
+        ext := strings.ToLower(strings.TrimSpace(path.Ext(p)))
+        if !publishFileExts[ext] {
+                return "", fmt.Errorf("file %q: unsupported extension %q (md/json/sh/svg/txt/py/yaml/toml/csv/html/css/js/ts)", f.Path, ext)
+        }
+        if len(f.Content) > publishFileMaxBytes {
+                return "", fmt.Errorf("file %q is too large (64KB cap)", f.Path)
+        }
+        return p, nil
 }
 
 // Publish uploads an item under the connected user's per-type dataset repo
@@ -912,6 +964,27 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 }
         }
 
+        // v0.60 pt C.8: REPO PUBLISHING — validate the files section up front
+        // (a bad path/extension fails BEFORE any remote write).
+        if len(req.Files) > publishFileMaxCount {
+                return Item{}, fmt.Errorf("too many files (%d max)", publishFileMaxCount)
+        }
+        for _, f := range req.Files {
+                cleaned, err := sanitizePublishFile(f)
+                if err != nil {
+                        return Item{}, err
+                }
+                if cleaned == item.File {
+                        return Item{}, fmt.Errorf("file path %q collides with the payload", cleaned)
+                }
+                for _, seen := range item.Files {
+                        if seen == "items/"+id+"/"+cleaned {
+                                return Item{}, fmt.Errorf("duplicate file path %q", cleaned)
+                        }
+                }
+                item.Files = append(item.Files, "items/"+id+"/"+cleaned)
+        }
+
         // Republish keeps the original createdAt + any baked counters.
         if existing, err := s.hf.FetchFile(repo, "items/"+id+".json"); err == nil {
                 var prev Item
@@ -932,6 +1005,18 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 CommitFile{Path: "items/" + id + ".json", Content: metaJSON},
                 CommitFile{Path: item.File, Content: []byte(req.Payload)},
         )
+        // v0.60 pt C.8: the companion files — each rides the SAME commit at
+        // items/<id>/<path> (the meta already lists them in item.Files).
+        for _, f := range req.Files {
+                cleaned, err := sanitizePublishFile(f)
+                if err != nil {
+                        return Item{}, err
+                }
+                files = append(files, CommitFile{
+                        Path:    "items/" + id + "/" + cleaned,
+                        Content: []byte(f.Content),
+                })
+        }
         if item.Design.Kind == "png" {
                 if png := decodeB64(req.PNGBase64); len(png) > 0 {
                         files = append(files, CommitFile{Path: "items/" + id + ".png", Content: png})
