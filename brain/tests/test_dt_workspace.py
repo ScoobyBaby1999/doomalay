@@ -313,9 +313,20 @@ def test_ex_helpers_and_guards():
 
 
 def test_ex_build_never_raises():
-    assert da_ex.build(SimpleNamespace(engine_url="http://e.test", log=None)) == []
-    assert da_ws.build(SimpleNamespace(engine_url="http://e.test",
-                                       workspaces=[], log=None)) == []
+    # build() must never raise. Offline (no strands) both register nothing;
+    # in a FULL env (the E2E venv has strands) they register their tools.
+    try:
+        import strands  # noqa: F401
+        full = True
+    except ImportError:
+        full = False
+    ex = da_ex.build(SimpleNamespace(engine_url="http://e.test", log=None))
+    ws = da_ws.build(SimpleNamespace(engine_url="http://e.test",
+                                     workspaces=[], log=None))
+    if full:
+        assert ex and ws
+    else:
+        assert ex == [] and ws == []
 
 
 if __name__ == "__main__":

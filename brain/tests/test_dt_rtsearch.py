@@ -447,8 +447,13 @@ def test_dispatch_help_and_unknown():
 
 def test_build_offline_returns_empty_and_never_raises():
     ctx = dt_registry.ToolContext(workspace=Path(tempfile.mkdtemp(prefix="rtctx-")))
-    assert rt.build(ctx) == []          # strands not installed here
-    assert rt.build(None) == []         # broken ctx must not raise either
+    out = rt.build(ctx)
+    try:
+        import strands  # noqa: F401 — full env (the E2E venv): tools build
+        assert isinstance(out, list) and out
+    except ImportError:                  # offline: nothing registers…
+        assert out == []
+    assert rt.build(None) == []          # …and a broken ctx must not raise either
 
 
 def test_registry_manifest_lists_rtsearch():

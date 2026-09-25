@@ -1037,13 +1037,13 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "search, week/month reviews with trends + streaks, prompts, export",
         "- socreate: the 10x productivity creation loop — start(goal) → plan "
         "→ execute steps (sub-agents) → critique → iterate until done",
-        # v0.60 pt C.9: THE LIB PILL — one gate, one line when on.
-        ("- lib: the chat's library is ON — browse, load and use it freely: "
-         "the 17 methodology skills (brainstorming, writing-plans, TDD, "
-         "systematic-debugging, verification…) — load one BEFORE starting "
-         "work it covers; the template runner (deep research, brainstorm, "
-         "plan, SDD, TDD, debug, verify, redteam); and the hub below"
-         ) if skills_auto else None,
+        # v0.60 pt C.9: THE LIB PILL — one gate. pt C.12: when ON, the
+        # one-line hint is REPLACED by THE BOOTSTRAP — the full
+        # using-superpowers skill injected below (porting guide Part 3:
+        # "the bootstrap is the entire difference between the port
+        # working and not working").
+        ("- lib: the chat's library is ON — the skill discipline below is "
+         "ACTIVE") if skills_auto else None,
         ("- lib: the chat's Bot Library switch is OFF — you can still BROWSE "
          "and RECOMMEND (hublib search + the skills index), but loads and "
          "downloads refuse until the user flips ✦ tweaks → Bot Library back on"
@@ -1079,8 +1079,48 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "Unsure what a tool offers? Call it with action='help' first."
     )
 
+    # v0.60 pt C.12: THE BOOTSTRAP — porting guide Part 3: "at the start of
+    # every session, the full skills/using-superpowers/SKILL.md is injected
+    # into the model's context… the bootstrap is the entire difference
+    # between the port working and not working." The local port's copy
+    # (brain/agent_skills/superpowers-using-superpowers/SKILL.md, verbatim
+    # upstream body — never edited) rides in when the lib gate is ON; the
+    # per-harness TOOL MAP (guide Part 2: the action vocabulary → this
+    # harness's real tool names) follows it.
+    if skills_auto:
+        parts.append("SUPERPOWERS — THE SKILL DISCIPLINE (injected, active):\n\n"
+                     + _bootstrap_skill()
+                     + "\n\nHARNESS TOOL MAP (this harness's real tools):\n"
+                     "- *invoke a skill* → the `skills` tool: action='load', "
+                     "skill='superpowers-<name>' (e.g. 'superpowers-brainstorming')\n"
+                     "- *list/search skills* → the `skills` tool: action='list' or 'search'\n"
+                     "- *read a skill's companion files* → the `skills` tool: "
+                     "action='read', skill='…', path='…'\n"
+                     "- *dispatch a subagent* → the `delegate` tool\n"
+                     "- *create/update todos* → the `timemgr` tool (tasks)\n"
+                     "- *the skill library* is the chat's library — the hub "
+                     "(`hublib` tool) carries more, downloadable on demand")
+
     parts.append("When you use a tool, explain what you're doing and why. Be concise but complete.")
     return "\n\n".join(parts)
+
+
+def _bootstrap_skill() -> str:
+    """The bootstrap body: using-superpowers/SKILL.md verbatim, frontmatter
+    stripped (the name/description block is registry metadata — the BODY is
+    what teaches the model the discipline). Falls back to "" (never raises:
+    a missing file must not kill the system prompt)."""
+    try:
+        p = (Path(__file__).parent / "agent_skills"
+             / "superpowers-using-superpowers" / "SKILL.md")
+        body = p.read_text(encoding="utf-8")
+        if body.startswith("---"):
+            end = body.find("\n---", 3)
+            if end > 0:
+                body = body[end + 4:].lstrip("\r\n")
+        return body.strip()
+    except Exception:
+        return ""
 
 
 def _build_effort_body(model: str, effort: str) -> dict:

@@ -397,12 +397,19 @@ def test_run_on_missing_skills_dir_degrades():
 
 
 def test_build_offline_returns_empty_and_never_raises():
-    # strands is not installed in the offline env -> build registers nothing;
-    # a ctx without skills_dir must also degrade to [] (not raise).
+    # build() must never raise. Offline (no strands) it registers nothing;
+    # a ctx without skills_dir must also degrade to [] — and in a FULL env
+    # (the E2E venv has strands) a real skills_dir registers the tool.
     import types
+    try:
+        import strands  # noqa: F401
+        full = True
+    except ImportError:
+        full = False
     assert dt_skills.build(types.SimpleNamespace(skills_dir=None)) == []
     with _tree() as (root, skills):
-        assert dt_skills.build(types.SimpleNamespace(skills_dir=str(skills))) == []
+        out = dt_skills.build(types.SimpleNamespace(skills_dir=str(skills)))
+        assert (len(out) == 1) if full else (out == [])
 
 
 # ── standalone runner ────────────────────────────────────────────────────
