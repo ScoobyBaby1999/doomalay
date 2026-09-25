@@ -53,6 +53,8 @@ package server
 import (
         "context"
         "crypto/rand"
+        "crypto/sha256"
+        "encoding/base64"
         "encoding/hex"
         "encoding/json"
         "fmt"
@@ -1385,18 +1387,34 @@ var oauthStates = struct {
 }{m: map[string]oauthPending{}}
 
 type oauthPending struct {
-        Redirect string
-        Expires  time.Time
+        Redirect     string
+        Expires      time.Time
+        CodeVerifier string // v0.61: PKCE S256 — the verifier behind the start URL's code_challenge
 }
+
+// ghOAuthDefaultClientSecret — v0.61 (PLAN-AUTH-V061): the gh-CLI-pattern
+// SHIPPED secret. GitHub's own open-source CLI embeds its OAuth client
+// secret in source with the comment "This value is safe to be embedded in
+// version control" (cli/cli internal/authflow/flow.go) — GitHub's accepted
+// threat model for native clients: codes only land on the app's REGISTERED
+// callback URLs (our loopback = the user's own machine) and PKCE S256 makes
+// intercepted codes worthless. Shipping the secret turns every install's
+// loopback into a ONE-PRESS sign-in (login → Authorize → done page) with
+// ZERO HuggingFace involvement — the v0.61 directive. EMPTY until the app
+// owner pastes the generated secret here (docs/GITHUB_APP_SETUP.md §0:
+// GitHub App settings → Client secrets → Generate); while empty, installs
+// keep the v0.55 device flow. env DOOMALAY_GH_CLIENT_SECRET / vault values
+// still OVERRIDE this (self-hosters rotate at will).
+var ghOAuthDefaultClientSecret = ""
 
 // ghOAuthCreds: env override first (headless installs), then the vault,
 // then the BUILT-IN default — the "Doomalay Workspaces" GitHub App client
-// id (public by design; GitHub App ids are not secrets). v0.58: the
+// id (public by design; GitHub App ids are not secrets) plus the v0.61
+// shipped secret (gh-CLI pattern, see above). v0.58: the
 // user's NEW app, created per docs/GITHUB_APP_SETUP.md §1 with Device
 // Flow ☑ / Expire tokens ☐ / Any account, verified live (device/code
 // returns a user_code). The old app (Iv23liDzVTw7zphxo5Hv) is compromised
-// and deleted. NO secret ships anywhere: the device flow is the
-// production grant, the redirect flow stays env/vault-optional.
+// and deleted.
 const ghOAuthDefaultClientID = "Iv23li3qm665pDrDO1Nh"
 
 // v0.52 OAuth egress plumbing: every OAuth/token-exchange call rides the
@@ -1417,19 +1435,30 @@ var (
 )
 
 func (s *Server) ghOAuthCreds() (id, secret string) {
-        if id = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID")); id != "" {
-                return id, strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_SECRET"))
+        // v0.61: the env pair is read INDEPENDENTLY — self-hosters may set
+        // just DOOMALAY_GH_CLIENT_SECRET to override/rotate the shipped one
+        // against the built-in client id (docs/GITHUB_APP_SETUP.md §4).
+        id = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID"))
+        secret = strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_SECRET"))
+        if id != "" && secret != "" {
+                return id, secret
         }
         if s.vault != nil {
-                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil {
+                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil && id == "" {
                         id = strings.TrimSpace(v)
                 }
-                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_SECRET"); err == nil {
+                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_SECRET"); err == nil && secret == "" {
                         secret = strings.TrimSpace(v)
                 }
         }
         if id == "" {
                 id = ghOAuthDefaultClientID // no secret — start works, exchange can't
+        }
+        // the shipped secret belongs to the SHIPPED app — a custom id (env/
+        // vault self-hoster) must not inherit it (the pair would just fail
+        // the exchange with incorrect_client_credentials).
+        if secret == "" && id == ghOAuthDefaultClientID {
+                secret = ghOAuthDefaultClientSecret
         }
         return id, secret
 }
@@ -1467,6 +1496,7 @@ func (s *Server) handleGHOAuthStatus(w http.ResponseWriter, r *http.Request) {
                 "configured":   id != "" && secret != "",
                 "client_id":    id,
                 "has_secret":   secret != "",
+                "one_tap":      secret != "", // v0.61: the direct one-press web flow is live on this install
                 "device_flow":  id != "", // v0.55: secretless path, always available
                 "signed_in":    signed,
                 "login":        login,
@@ -1528,6 +1558,14 @@ func randHex(n int) string {
         return hex.EncodeToString(b)
 }
 
+// randBytes — v0.61: raw crypto-random bytes (the PKCE verifier seed; see
+// handleGHOAuthStart).
+func randBytes(n int) []byte {
+        b := make([]byte, n)
+        _, _ = rand.Read(b)
+        return b
+}
+
 // handleGHOAuthStart — redirect the user to GitHub's authorize page.
 func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
         id, secret := s.ghOAuthCreds()
@@ -1545,6 +1583,15 @@ func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
                 redirect = "/"
         }
         state := randHex(16)
+        // v0.61: PKCE S256 per the GitHub docs ("strongly recommended") —
+        // the verifier is 43 chars of base64url (32 random bytes), the
+        // challenge its base64url-SHA256 (43 chars, no padding). With the
+        // shipped gh-CLI-style secret this is what makes intercepted codes
+        // worthless: exchange needs BOTH the secret AND the verifier, and
+        // the verifier never leaves the engine's memory.
+        verifier := base64.RawURLEncoding.EncodeToString(randBytes(32))
+        sum := sha256.Sum256([]byte(verifier))
+        challenge := base64.RawURLEncoding.EncodeToString(sum[:])
         oauthStates.Lock()
         now := time.Now()
         for k, v := range oauthStates.m {
@@ -1552,11 +1599,13 @@ func (s *Server) handleGHOAuthStart(w http.ResponseWriter, r *http.Request) {
                         delete(oauthStates.m, k)
                 }
         }
-        oauthStates.m[state] = oauthPending{Redirect: redirect, Expires: now.Add(10 * time.Minute)}
+        oauthStates.m[state] = oauthPending{Redirect: redirect, Expires: now.Add(10 * time.Minute), CodeVerifier: verifier}
         oauthStates.Unlock()
         u := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(id) +
                 "&redirect_uri=" + url.QueryEscape(oauthRedirectURI(r)) +
-                "&state=" + url.QueryEscape(state)
+                "&state=" + url.QueryEscape(state) +
+                "&code_challenge=" + url.QueryEscape(challenge) +
+                "&code_challenge_method=S256"
         http.Redirect(w, r, u, http.StatusFound)
 }
 
@@ -1655,6 +1704,12 @@ func (s *Server) handleGHOAuthCallback(w http.ResponseWriter, r *http.Request) {
                 "client_secret": {secret},
                 "code":          {q.Get("code")},
                 "redirect_uri":  {oauthRedirectURI(r)},
+        }
+        // v0.61: the PKCE pair — present whenever the start URL carried a
+        // code_challenge (it always does now). GitHub requires the ORIGINAL
+        // verifier; a mismatched/missing one fails the exchange.
+        if pending.CodeVerifier != "" {
+                form.Set("code_verifier", pending.CodeVerifier)
         }
         access, refresh, expiresIn, err := ghTokenExchange(ctx, form)
         if err != nil {
@@ -1862,10 +1917,16 @@ func (s *Server) handleGHDeviceStart(w http.ResponseWriter, r *http.Request) {
         go s.pollGHDevice(p, id)
 
         writeJSON(w, 200, map[string]any{
-                "user_code":        p.UserCode,
-                "verification_uri": p.VerificationURI,
-                "expires_in":       out.ExpiresIn,
-                "interval":         int(interval.Seconds()),
+                "user_code":                 p.UserCode,
+                "verification_uri":          p.VerificationURI,
+                // v0.61: GitHub sends no verification_uri_complete (probed
+                // live), but the login wall preserves ?user_code= through its
+                // return_to — opening THIS url is a free prefill attempt:
+                // if GitHub's device page honors it the code is already
+                // typed in; if not, the user reads it off the panel as today.
+                "verification_uri_complete": p.VerificationURI + "?user_code=" + url.QueryEscape(p.UserCode),
+                "expires_in":                out.ExpiresIn,
+                "interval":                  int(interval.Seconds()),
         })
 }
 

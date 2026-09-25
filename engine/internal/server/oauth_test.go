@@ -16,6 +16,8 @@ package server
 //      the full start→callback→vault round-trip lands the PAT.
 
 import (
+        "crypto/sha256"
+        "encoding/base64"
         "encoding/json"
         "net/http"
         "net/http/httptest"
@@ -597,5 +599,162 @@ func TestHFDeviceFlowRoundTrip(t *testing.T) {
         }
         if extra != "devhug" {
                 t.Fatalf("vault extra = %q, want devhug", extra)
+        }
+}
+
+// TestGHOAuthShippedSecretOneTap — v0.61 (PLAN-AUTH-V061): the gh-CLI-
+// pattern shipped secret. With NO env and NO vault config, the built-in
+// default arms the DIRECT one-press: status reports has_secret/one_tap,
+// start redirects with a PKCE S256 challenge, and the callback exchange
+// carries the code_verifier whose SHA-256 IS that challenge.
+func TestGHOAuthShippedSecretOneTap(t *testing.T) {
+        var gotForm url.Values
+        mux := http.NewServeMux()
+        mux.HandleFunc("POST /login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
+                if err := r.ParseForm(); err != nil {
+                        w.WriteHeader(400)
+                        return
+                }
+                gotForm = r.Form
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"access_token":"gho_shipped","expires_in":0}`))
+        })
+        mux.HandleFunc("GET /user", func(w http.ResponseWriter, r *http.Request) {
+                if r.Header.Get("Authorization") != "Bearer gho_shipped" {
+                        w.WriteHeader(401)
+                        return
+                }
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"login":"shipcat"}`))
+        })
+        fake := httptest.NewServer(mux)
+        t.Cleanup(fake.Close)
+        withFakeGitHub(t, fake.URL)
+
+        // arm the shipped secret for this test only
+        oldSecret := ghOAuthDefaultClientSecret
+        ghOAuthDefaultClientSecret = "shipped-gh-cli-style-secret"
+        t.Cleanup(func() { ghOAuthDefaultClientSecret = oldSecret })
+
+        s := seedOAuthServer(t)
+
+        // 1. status — no env, no vault: the SHIPPED pair reports armed
+        recSt := httptest.NewRecorder()
+        s.mux.ServeHTTP(recSt, httptest.NewRequest("GET", "/api/workspaces/oauth/github/status", nil))
+        if recSt.Code != 200 {
+                t.Fatalf("status HTTP %d", recSt.Code)
+        }
+        var st struct {
+                HasSecret bool   `json:"has_secret"`
+                OneTap    bool   `json:"one_tap"`
+                ClientID  string `json:"client_id"`
+        }
+        if err := json.Unmarshal(recSt.Body.Bytes(), &st); err != nil {
+                t.Fatalf("status json: %v", err)
+        }
+        if !st.HasSecret || !st.OneTap {
+                t.Fatalf("status = has_secret:%v one_tap:%v — the shipped secret did not arm the one-press", st.HasSecret, st.OneTap)
+        }
+        if st.ClientID != ghOAuthDefaultClientID {
+                t.Fatalf("client_id = %q, want the built-in %q", st.ClientID, ghOAuthDefaultClientID)
+        }
+
+        // 2. start — 302 with the PKCE S256 pair
+        recStart := httptest.NewRecorder()
+        s.mux.ServeHTTP(recStart, httptest.NewRequest("GET", "/api/workspaces/oauth/github/start?redirect=/", nil))
+        if recStart.Code != 302 {
+                t.Fatalf("start HTTP %d, want 302", recStart.Code)
+        }
+        loc, err := url.Parse(recStart.Header().Get("Location"))
+        if err != nil || !strings.Contains(loc.String(), "github.com/login/oauth/authorize") {
+                t.Fatalf("start location = %q (err %v)", recStart.Header().Get("Location"), err)
+        }
+        if id := loc.Query().Get("client_id"); id != ghOAuthDefaultClientID {
+                t.Fatalf("authorize client_id = %q", id)
+        }
+        if ru := loc.Query().Get("redirect_uri"); !strings.Contains(ru, "/api/github/oauth/callback") {
+                t.Fatalf("authorize redirect_uri = %q", ru)
+        }
+        state := loc.Query().Get("state")
+        if state == "" {
+                t.Fatal("authorize redirect carries no state")
+        }
+        if m := loc.Query().Get("code_challenge_method"); m != "S256" {
+                t.Fatalf("code_challenge_method = %q, want S256", m)
+        }
+        challenge := loc.Query().Get("code_challenge")
+        if len(challenge) != 43 { // base64url(SHA256) is exactly 43 chars, no padding
+                t.Fatalf("code_challenge len = %d (%q), want 43", len(challenge), challenge)
+        }
+
+        // 3. callback — the exchange carries the verifier whose SHA-256
+        //    IS the challenge (the PKCE contract, end to end)
+        recCB := httptest.NewRecorder()
+        s.mux.ServeHTTP(recCB, httptest.NewRequest("GET",
+                "/api/github/oauth/callback?code=abc&state="+url.QueryEscape(state), nil))
+        if recCB.Code != 200 {
+                t.Fatalf("callback HTTP %d: %s", recCB.Code, recCB.Body.String())
+        }
+        verifier := gotForm.Get("code_verifier")
+        if verifier == "" {
+                t.Fatal("token exchange carried no code_verifier — PKCE must ride the exchange")
+        }
+        if gotForm.Get("client_secret") != "shipped-gh-cli-style-secret" {
+                t.Fatalf("exchange client_secret = %q, want the shipped one", gotForm.Get("client_secret"))
+        }
+        sum := sha256.Sum256([]byte(verifier))
+        if base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
+                t.Fatalf("code_verifier does not hash to the challenge — the PKCE pair is broken")
+        }
+        tok, _, err := s.vault.Get("GITHUB_PAT")
+        if err != nil || tok != "gho_shipped" {
+                t.Fatalf("vault GITHUB_PAT = %q (err %v), want gho_shipped", tok, err)
+        }
+
+        // 4. the done page greeted shipcat (same contract as v0.60)
+        if !strings.Contains(recCB.Body.String(), "shipcat") {
+                t.Fatalf("done page missing the login:\n%s", recCB.Body.String())
+        }
+}
+
+// TestGHOAuthDevicePrefillURL — v0.61: the device start response carries
+// verification_uri_complete (the ?user_code= prefill URL GitHub's login
+// wall preserves). The panel's "open github" button uses it so the code
+// may already be typed in when the user lands.
+func TestGHOAuthDevicePrefillURL(t *testing.T) {
+        mux := http.NewServeMux()
+        mux.HandleFunc("POST /login/device/code", func(w http.ResponseWriter, r *http.Request) {
+                w.Header().Set("Content-Type", "application/json")
+                w.Write([]byte(`{"device_code":"dev_code_40_chars_xxxxxxxxxxxxxxxx","user_code":"AB12-CD34","verification_uri":"https://github.com/login/device","expires_in":900,"interval":1}`))
+        })
+        fake := httptest.NewServer(mux)
+        t.Cleanup(fake.Close)
+        oldDev, oldAPI, oldTok := ghDeviceCodeEndpoint, forgeAPIBase, ghTokenEndpoint
+        ghDeviceCodeEndpoint = fake.URL + "/login/device/code"
+        forgeAPIBase, ghTokenEndpoint = fake.URL, fake.URL+"/login/oauth/access_token"
+        t.Cleanup(func() { ghDeviceCodeEndpoint, forgeAPIBase, ghTokenEndpoint = oldDev, oldAPI, oldTok })
+        ghDeviceStore.Lock()
+        ghDeviceStore.cur = nil
+        ghDeviceStore.Unlock()
+
+        s := seedOAuthServer(t)
+        rec := httptest.NewRecorder()
+        s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/workspaces/oauth/github/device/start", nil))
+        if rec.Code != 200 {
+                t.Fatalf("device start HTTP %d: %s", rec.Code, rec.Body.String())
+        }
+        var d struct {
+                UserCode                 string `json:"user_code"`
+                VerificationURI          string `json:"verification_uri"`
+                VerificationURIComplete  string `json:"verification_uri_complete"`
+        }
+        if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+                t.Fatalf("device start json: %v", err)
+        }
+        if d.VerificationURIComplete != "https://github.com/login/device?user_code=AB12-CD34" {
+                t.Fatalf("verification_uri_complete = %q, want the ?user_code= prefill URL", d.VerificationURIComplete)
+        }
+        if d.UserCode != "AB12-CD34" || d.VerificationURI != "https://github.com/login/device" {
+                t.Fatalf("device start = %+v — code/uri mangled", d)
         }
 }

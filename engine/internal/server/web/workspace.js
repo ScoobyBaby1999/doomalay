@@ -336,15 +336,12 @@
       if (sw) sw.addEventListener('click', function (e) { e.stopPropagation(); openManual(); });
     } else {
       el.addEventListener('click', function () {
-        if (kind === 'github' && accounts.github.oauth_configured) {
-          // park what we were doing, let the OAuth redirect, resume after
-          try { sessionStorage.setItem('ws-oauth-resume', '1'); } catch (e) {}
-          window.location.href = '/api/workspaces/oauth/github/start?redirect=%2F';
-        } else if (kind === 'github' && window.GHConnect) {
-          // v0.55: no secret on this install → the GitHub connect panel runs
-          // the secretless device-code flow (a one-time code entered at
-          // github.com/login/device) — works for every user, zero setup.
-          // The manual token box still lives inside that panel too.
+        if (kind === 'github' && window.GHConnect) {
+          // v0.61: ALWAYS the GitHub connect panel — it picks the flow
+          // (loopback+secret → the direct one-press POPUP; gateway →
+          // broker; else the device code) and the app tab NEVER navigates
+          // (the v0.60 same-tab redirect killed SPA state + the back
+          // gesture; that path is gone for good).
           window.GHConnect.openConnectPanel({ onDone: function () { if (onSignedIn) onSignedIn(); } });
         } else {
           openManual();

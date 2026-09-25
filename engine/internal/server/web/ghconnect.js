@@ -1,31 +1,34 @@
-// ghconnect.js — v0.55: the GitHub connect panel.
+// ghconnect.js — v0.61: the GitHub connect panel — GITHUB STANDS ALONE.
 //
-// THE PRODUCTION SIGN-IN (v0.55): GitHub has no public-client redirect flow
-// (the code exchange always demands the client secret — shipping it inside
-// a distributed app would leak it to every install). So "Sign in with
-// GitHub" now auto-picks:
-//   1. secret configured on this install (env/vault — self-hosters) → the
-//      one-tap REDIRECT flow (GET /api/workspaces/oauth/github/start) —
-//      v0.60: in a POPUP (the app tab never navigates; the popup ends on
-//      the engine's done page which postMessages back and closes itself;
-//      the APK WebView can't popup → same-tab fallback, where the redirect
-//      into the external browser is intercepted and the SPA survives);
-//   2. otherwise → the DEVICE-CODE flow (POST /api/workspaces/oauth/github/
-//      device/start): a one-time code to enter at github.com/login/device,
-//      the engine polls GitHub in the background, the token lands in this
-//      device's encrypted vault. NO secret anywhere, no setup, works the
-//      same for every user of a shipped build (same flow the gh CLI uses).
+// THE PRODUCTION SIGN-IN (v0.61, PLAN-AUTH-V061): GitHub, fully separated
+// from HuggingFace — no HF login, no space, no broker in the path. The
+// engine now ships the GitHub App's client secret gh-CLI-style (GitHub's
+// own CLI embeds its secret in open source: "This value is safe to be
+// embedded in version control") + PKCE S256, so the button auto-picks:
+//   1. loopback origin + secret available (the shipped default once
+//      armed) → THE DIRECT ONE-PRESS: a POPUP to
+//      /api/workspaces/oauth/github/start → github.com/login/oauth/
+//      authorize (login if needed → press Authorize — first run also
+//      picks "Only select repositories" = complete access over ONE
+//      repo) → back to the engine's loopback callback → done page →
+//      postMessage + auto-close → this panel repaints. No code entry,
+//      no HF anywhere, zero setup;
+//   2. gateway/preview/LAN origins (callback can't be registered there)
+//      → the v0.60.2 space broker popup when armed, else the v0.55
+//      DEVICE-CODE flow (one-time code at github.com/login/device — the
+//      engine polls in the background; the open button uses the
+//      ?user_code= prefill URL GitHub's login wall preserves);
 //   3. "Optional manual method" — paste-token box (POST /api/workspaces/
 //      accounts {kind:"github", token});
 //   4. "get token ↗" link → https://github.com/settings/tokens.
 //
-// v0.60 SYNC: like the HF panel, a `message` listener (done-page
-// postMessage) + visibilitychange/focus/pageshow refetches of
-// /api/gh/account repaint the panel the moment the user is back.
+// v0.60 SYNC (kept): a `message` listener (done-page postMessage) +
+// visibilitychange/focus/pageshow refetches of /api/gh/account repaint
+// the panel the moment the user is back.
 //
 // Two hosts, same builder: openConnectPanel (ConnectOverlay page) and
 // connectPanelView (master-panel view) — the workspace picker's GitHub row
-// (no secret configured) opens the overlay one.
+// opens the overlay one.
 //
 // Exposes: window.GHConnect = { openConnectPanel, connectPanelView, account,
 //                               _applyAuthResult (test hook) }
@@ -73,6 +76,15 @@
     window.addEventListener('pageshow', refetch); // bfcache back-restore
   }
 
+  // isLoopbackOrigin — v0.61: only a loopback origin's callback URL can be
+  // registered on the GitHub App (exact-match rule), so the DIRECT one-
+  // press web flow runs here and nowhere else. Gateways/previews/LAN keep
+  // the broker (when armed) / device flow.
+  function isLoopbackOrigin() {
+    var h = (window.location.hostname || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+  }
+
   // ── v0.60.2: the space broker probe (the one-click, repo-scoped path) ──
   // /api/gh/account carries broker_url; the panel probes the space's
   // /gh/oauth/config (CORS-open boolean — no secret material) and, when
@@ -113,6 +125,28 @@
     }
     if (alt) alt.style.display = 'block';
   }
+  // paintOneTapMode — v0.61: the DIRECT one-press copy (loopback + shipped
+  // secret). Same button label as the broker mode, different story: the
+  // popup goes STRAIGHT to GitHub — nothing of HuggingFace is involved.
+  function paintOneTapMode() {
+    var btn = document.getElementById('ghc-oauth');
+    var copy = document.getElementById('ghc-copy');
+    var alt = document.getElementById('ghc-code-fallback');
+    if (btn && btn.textContent.indexOf('one click') < 0) {
+      btn.textContent = 'Sign in with GitHub — one click';
+    }
+    if (copy) {
+      copy.innerHTML = 'One press, no codes, no HuggingFace: a window opens ' +
+        '<b style="color:var(--text-2)">straight to GitHub</b> — log in if ' +
+        'asked, press <b style="color:var(--text-2)">Authorize</b> and you\'re ' +
+        'done. The first time, pick <b style="color:var(--text-2)">Only select ' +
+        'repositories</b> and choose your repo — that grants complete access ' +
+        'to that repo only (branches, files, PRs), never your whole account. ' +
+        'The window closes itself and this panel updates; the token is stored ' +
+        'in the engine\'s encrypted vault. We never see your password.';
+    }
+    if (alt) alt.style.display = 'block';
+  }
   // openAuthPopup — popup FIRST so the app tab never navigates (see
   // hfconnect.js; the Android WebView takes the same-tab path).
   function openAuthPopup(url) {
@@ -122,6 +156,10 @@
     if (p) { try { p.focus(); } catch (e) {} }
     return p;
   }
+
+  // panelMode — v0.61: which one-click flavor the button is in (set by
+  // refresh; the waitPopup reset + re-opened panels need it).
+  var panelMode = { oneTap: false };
 
   // waitPopup — disable the button while the popup lives; re-enable when
   // the user closes it without finishing (shared by both popup flows).
@@ -135,7 +173,8 @@
         clearInterval(watch);
         if (active && !active.connectedUser) {
           oauth.disabled = false;
-          oauth.textContent = broker.configured ? 'Sign in with GitHub — one click' : 'Sign in with GitHub';
+          oauth.textContent = (panelMode.oneTap || broker.configured)
+            ? 'Sign in with GitHub — one click' : 'Sign in with GitHub';
         }
       }
     }, 800);
@@ -197,9 +236,13 @@
 
   // paintDeviceUI — the "enter this code" panel of the device flow. The
   // poll loop flips it to connected/expired/error as GitHub answers.
+  // v0.61: the open button prefers verification_uri_complete (the ?user_code=
+  // prefill URL — GitHub's login wall preserves it, so the code may already
+  // be typed in when the user lands).
   function paintDeviceUI(stateEl, d) {
     if (!stateEl) return;
     var uri = d.verification_uri || 'https://github.com/login/device';
+    var openUri = d.verification_uri_complete || uri;
     stateEl.innerHTML = '' +
       '<div style="padding:16px;border-radius:12px;background:var(--surface-2);' +
         'border:1px solid var(--border-strong)">' +
@@ -231,7 +274,7 @@
     });
     var open = stateEl.querySelector('#ghc-open');
     if (open) open.addEventListener('click', function () {
-      window.open(uri, '_blank');
+      window.open(openUri, '_blank');
     });
   }
 
@@ -285,13 +328,21 @@
 
     installSyncListeners();
     active = { stateEl: stateEl, errEl: errEl, btn: null, onDone: onDone, connectedUser: null };
+    var oneTap = false; // v0.61: loopback + secret → the direct one-press
     var refresh = function () {
       account().then(function (a) {
         paintState(stateEl, a);
         if (a && a.connected && active) active.connectedUser = a.user || '?';
-        // v0.60.2: probe the space broker while still signed out — it
-        // upgrades the button to the one-click popup when configured.
-        if (a && a.broker_url && !(a.connected)) probeBroker(a.broker_url);
+        // v0.61: the DIRECT one-press rules on loopback (GitHub fully
+        // separated from HF — no broker in the path). Off-loopback the
+        // v0.60.2 broker is still the one-click option when armed.
+        oneTap = !!(a && a.has_secret) && isLoopbackOrigin();
+        panelMode.oneTap = oneTap;
+        if (oneTap) {
+          paintOneTapMode();
+        } else if (a && a.broker_url && !(a.connected)) {
+          probeBroker(a.broker_url);
+        }
       }).catch(function () {});
     };
     refresh();
@@ -301,17 +352,23 @@
       e.preventDefault();
       runDeviceFlow(el, errEl, stateEl, el.querySelector('#ghc-oauth'), onDone);
     });
-    // a re-opened panel gets fresh DOM — re-apply broker mode if the probe
-    // already ran in this page session (probeBroker early-returns on the
-    // same URL, so the paint would otherwise never happen again)
+    // a re-opened panel gets fresh DOM — re-apply the one-click paint if
+    // the probe/refresh already ran in this page session
     if (broker.configured) paintBrokerMode();
 
     var oauth = el.querySelector('#ghc-oauth');
     if (oauth) {
       active.btn = oauth;
       oauth.addEventListener('click', function () {
-        // v0.60.2: broker configured → the one-click popup (repo-scoped
-        // GitHub App auth through the space). v0.55 paths follow.
+        // v0.61 priority: direct one-press (loopback) → broker (gateway,
+        // armed) → device flow. `oneTap` is refreshed by account() and
+        // also re-derived here so a slow first fetch never strands the
+        // button in device mode.
+        if (oneTap) {
+          var dp = openAuthPopup('/api/workspaces/oauth/github/start?redirect=/');
+          if (dp) waitPopup(oauth, dp, errEl);
+          return;
+        }
         if (broker.configured) {
           var bp = openAuthPopup('/api/gh/oauth/broker/start?origin=' +
             encodeURIComponent(window.location.origin));
@@ -319,7 +376,7 @@
           return;
         }
         account().then(function (a) {
-          if (a && a.has_secret) {
+          if (a && a.has_secret && isLoopbackOrigin()) {
             var p = openAuthPopup('/api/workspaces/oauth/github/start?redirect=/');
             if (p) waitPopup(oauth, p, errEl);
           } else {
