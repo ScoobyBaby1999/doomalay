@@ -204,8 +204,8 @@
         // v0.17 one-press connect reminder mode: the chat is ALREADY
         // unlocked behind this overlay — this GUI is just a nudge that
         // more providers can be connected. ✕ or scrim tap dismisses.
-        reminder = '<div style="background:rgba(var(--ok-rgb),0.08);border:1px solid rgba(var(--ok-rgb),0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--ok);line-height:1.5">' +
+        reminder = '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--accent);line-height:1.5">' +
           '✓ chat is ready — you can tap ✕ and start talking right now. ' +
           '<span style="color:var(--text-3)">This screen is just a reminder you can connect more providers.</span></div>';
       }
@@ -288,7 +288,7 @@
         // the dark card; user asked for a color from the selected theme).
         valHTML = '<span class="dd-validating" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent-2,var(--accent-2))">⟳ validating…</span>';
       } else if (val && val.state === 'valid') {
-        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--ok)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
       } else if (val && val.state === 'invalid') {
         valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err)">✕ invalid — see details below</span>';
       } else if (val && val.state === 'unverified') {
@@ -308,17 +308,17 @@
         if (catalogModels[m].provider === name) provModels.push(catalogModels[m]);
       }
       var useHTML = (isActive && onPick && provModels.length)
-        ? '<button data-use="' + name + '" style="margin-top:8px;width:100%;background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.4);color:var(--ok);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Use ' + provModels.length + ' models →</button>'
+        ? '<button data-use="' + name + '" style="margin-top:8px;width:100%;background:rgba(var(--accent-rgb),0.12);border:1px solid rgba(var(--accent-rgb),0.4);color:var(--accent);padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Use ' + provModels.length + ' models →</button>'
         : '';
 
       // v0.13 MODULAR ACTIVE INDICATOR: the card gets the shared dd-active
-      // ring (tinted with the provider's own color) + a green check-dot
+      // ring (tinted with the provider's own color) + an accent check-dot
       // next to the name. One mechanism (uiactive.js), used everywhere.
       var activeClass = isActive ? ' dd-active' : '';
-      var activeStyle = isActive ? ' --dd-accent:' + (cfg.color || 'var(--ok)') + ';' : '';
+      var activeStyle = isActive ? ' --dd-accent:' + (cfg.color || 'var(--accent)') + ';' : '';
       var activeDot = isActive ? window.UIActive.dotHTML() : '';
 
-      return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
+      return '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:12px;padding:14px;transition:border-color 0.2s, box-shadow 0.25s;' + activeStyle + '" class="prov-card' + activeClass + '" data-prov="' + name + '">' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
         '<div style="width:28px;height:28px;border-radius:50%;background:' + (cfg.color || 'var(--border-strong)') + ';display:flex;align-items:center;justify-content:center;color:var(--on-brand,#fff);font-weight:700;font-size: var(--ui-small-fs);flex-shrink:0">' + (cfg.label || name).charAt(0) + '</div>' +
         '<div style="flex:1;min-width:0">' +
@@ -326,7 +326,7 @@
         '<span style="font-size: var(--ui-fs);font-weight:600;color:var(--text-1)">' + (cfg.label || name) + '</span>' +
         activeDot +
         (cfg.free_tier ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + FREEC + ';background:rgba(var(--accent-2-rgb),0.14);padding:2px 6px;border-radius:4px">Free</span>' : '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:' + GOLD + ';background:rgba(var(--accent-3-rgb),0.12);padding:2px 6px;border-radius:4px">Paid</span>') +
-        (isActive ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--ok);background:rgba(var(--ok-rgb),0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(var(--ok-rgb),0.3)">Active</span>' : '') +
+        (isActive ? '<span style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(var(--accent-rgb),0.3)">Active</span>' : '') +
         valHTML +
         '</div>' +
         '<p style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:2px 0 0;line-height:1.4">' + (cfg.description || '') + '</p>' +
@@ -822,7 +822,7 @@
     if (el) {
       var old = el.textContent;
       el.textContent = msg;
-      el.style.color = 'var(--ok)';
+      el.style.color = 'var(--accent)';
       setTimeout(function () {
         if (el.isConnected) { el.textContent = old; el.style.color = ''; }
       }, 2400);

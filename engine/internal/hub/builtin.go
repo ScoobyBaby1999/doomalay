@@ -15,6 +15,8 @@
 // like any other template.
 package hub
 
+import "strings"
+
 // BuiltinRepo is the sentinel repo id every engine builtin carries. It is
 // never fetched from, liked, or metric-written — service methods intercept
 // it first.
@@ -25,43 +27,70 @@ const builtinUpdatedAt = "2026-09-24T00:00:00Z"
 
 // builtinItems returns the engine-seeded items (all types).
 func builtinItems() []Item {
-	return []Item{
-		{
-			ID:          "deep-research",
-			Type:        "template",
-			Name:        "Deep research",
-			Description: "The app's built-in engine pipeline: multi-round live web search, fetch and read the sources, plan the gaps, synthesize a fully-cited report.",
-			Author:      "doomalay",
-			Repo:        BuiltinRepo,
-			Tags:        []string{"research", "citations", "web"},
-			UpdatedAt:   builtinUpdatedAt,
-			Design: Design{
-				Kind:   "gradient",
-				Colors: []string{"#ef4444", "#a1a1aa", "#52525b"}, // red → grey shading, mesh
-				Dir:    "mesh",
-			},
-			Icon:       "compass",
-			StageCount: 8,
-			File:       "builtin://deep-research",
-		},
-	}
+        return []Item{
+                {
+                        ID:          "deep-research",
+                        Type:        "template",
+                        Name:        "Deep research",
+                        Description: "The app's built-in engine pipeline: multi-round live web search, fetch and read the sources, plan the gaps, synthesize a fully-cited report.",
+                        Author:      "doomalay",
+                        Repo:        BuiltinRepo,
+                        Tags:        []string{"research", "citations", "web"},
+                        UpdatedAt:   builtinUpdatedAt,
+                        Design: Design{
+                                Kind:   "gradient",
+                                Colors: []string{"#ef4444", "#a1a1aa", "#52525b"}, // red → grey shading, mesh
+                                Dir:    "mesh",
+                        },
+                        Icon:       "compass",
+                        StageCount: 8,
+                        File:       "builtin://deep-research",
+                },
+        }
 }
 
 // builtinsFor filters the builtins to one library type.
 func builtinsFor(typ string) []Item {
-	out := make([]Item, 0, 2)
-	for _, it := range builtinItems() {
-		if it.Type == typ {
-			out = append(out, it)
-		}
-	}
-	return out
+        out := make([]Item, 0, 2)
+        for _, it := range builtinItems() {
+                if it.Type == typ {
+                        out = append(out, it)
+                }
+        }
+        return out
+}
+
+// itemIsBuiltin reports whether an item IS an engine builtin (the sentinel
+// repo). v0.60 pt A.4.
+func itemIsBuiltin(item Item) bool { return item.Repo == BuiltinRepo }
+
+// builtinNameKeys returns the normalized name keys of this type's builtins
+// — the Items merge skips any scanned/downloaded twin whose name normalizes
+// the same (v0.60 pt A.4: the deep-research dupe; builtins win by name).
+func builtinNameKeys(typ string) map[string]bool {
+        keys := map[string]bool{}
+        for _, it := range builtinsFor(typ) {
+                keys[normName(it.Name)] = true
+        }
+        return keys
+}
+
+// normName normalizes an item name for dedup: lowercase, letters+digits
+// only ("Deep Research" and "deep-research" → "deepresearch").
+func normName(s string) string {
+        var b strings.Builder
+        for _, r := range strings.ToLower(s) {
+                if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+                        b.WriteRune(r)
+                }
+        }
+        return b.String()
 }
 
 // builtinPayloads is the builtins' in-memory payload store (resolvePayload
 // consults it for BuiltinRepo refs).
 var builtinPayloads = map[string]string{
-	"deep-research": deepResearchPayload,
+        "deep-research": deepResearchPayload,
 }
 
 // deepResearchPayload — the 8-stage methodology ported 1:1 from the brain's

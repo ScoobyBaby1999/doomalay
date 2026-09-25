@@ -130,9 +130,12 @@
   // saveFromHub — a hub download lands here (hubitem.js type=template).
   // payload is the template JSON (or markdown). Stored entries carry the
   // same shape as the brain index so the sheet treats them identically.
+  // v0.60 pt A.4: the builtin deep-research twin is NOT stored — the brain's
+  // native "Default Deep Research" already renders in the sheet.
   function saveFromHub(item, payload) {
     var entry = normalizeHubPayload(item, payload);
     if (!entry) { toast('that item did not carry a usable template'); return null; }
+    if (isBuiltinDeepResearch(item) || isBuiltinDeepResearch(entry)) return entry;
     var list = readUserTemplates();
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === entry.id) { list[i] = entry; break; }
@@ -141,6 +144,36 @@
     writeJSON(USER_KEY, list);
     toast('saved to your templates — find it under "Yours"');
     return entry;
+  }
+
+  // v0.60 pt A.4: the deep-research DUPE guard — the brain's native
+  // "Default Deep Research" (id deep_research) always renders in the sheet,
+  // so any hub-sourced copy of the engine's builtin deep-research card
+  // (repo doomalay/builtin / task_type deep_research / the builtin id) is a
+  // twin. Matches the engine-side Items() name-dedup (builtins win).
+  function isBuiltinDeepResearch(x) {
+    if (!x) return false;
+    var item = x.item || x;
+    var repo = String(item.repo || '');
+    var id = String(item.id || x.id || '');
+    var tt = String(item.task_type || x.task_type || '');
+    var nm = String(item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    return tt === 'deep_research' || repo === 'doomalay/builtin' ||
+      id === 'deep-research' || nm === 'deepresearch';
+  }
+
+  // v0.60 pt A.4: one-time cleanup — old hub-sourced deep-research copies
+  // that landed in localStorage "Yours" before the guard existed. Idempotent
+  // (re-running removes nothing once clean).
+  function purgeBuiltinTwins() {
+    var list = readUserTemplates();
+    if (!list.length) return;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].source === 'hub' && isBuiltinDeepResearch(list[i])) continue;
+      out.push(list[i]);
+    }
+    if (out.length !== list.length) writeJSON(USER_KEY, out);
   }
 
   function normalizeHubPayload(item, payload) {
@@ -285,6 +318,7 @@
     ]).then(function (res) {
       if (!cur) return;
       cur.loading = false;
+      purgeBuiltinTwins(); // v0.60 pt A.4: clean old hub-sourced deep-research copies
       var tpls = (res[0] && res[0].templates) || [];
       // tolerate the OLD brain shape (raw DEFAULT_TEMPLATES: no id) by
       // deriving id = task_type — the engine proxy is always the new
@@ -314,7 +348,8 @@
   // mergeHubDownloads appends the engine-stored hub downloads (templates
   // and skills) to the brain list, deduping against the brain entries and
   // the localStorage "Yours" copies (which stay authoritative — they are
-  // the user-editable ones).
+  // the user-editable ones). v0.60 pt A.4: the builtin deep-research twin is
+  // skipped — the brain native already renders it (the dupe fix).
   function mergeHubDownloads(tpls, hubRows, skillRows) {
     var have = {};
     for (var i = 0; i < tpls.length; i++) have[tpls[i].id] = 1;
@@ -322,8 +357,9 @@
     for (var u = 0; u < mine.length; u++) have[mine[u].id] = 1;
     function add(rows, kind) {
       for (var r = 0; r < rows.length; r++) {
+        if (isBuiltinDeepResearch(rows[r])) continue; // the twin — native wins
         var entry = normalizeHubPayload(rows[r].item, rows[r].payload);
-        if (!entry || have[entry.id]) continue;
+        if (!entry || have[entry.id] || isBuiltinDeepResearch(entry)) continue;
         entry.kind = kind;
         entry.source = 'hub';
         have[entry.id] = 1;
@@ -676,6 +712,9 @@
     saveFromHub: saveFromHub,
     buildBrief: buildBrief,
     isFavorite: isFav,
+    // v0.60 pt A.3: hubitem's delete-your-copy also clears the localStorage
+    // "Yours" copy the download landed here.
+    removeUserTemplate: removeUserTemplate,
     // v0.58: hubitem's "use template" parses a hub payload into an entry
     // (stages / markdown) before buildBrief builds its methodology text.
     normalizeHubPayload: normalizeHubPayload

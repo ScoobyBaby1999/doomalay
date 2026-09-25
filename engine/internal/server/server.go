@@ -237,6 +237,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)
         s.mux.HandleFunc("GET /api/hub/{type}/png/{repo}/{id}", s.handleHubPNG)
         s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)
+        s.mux.HandleFunc("POST /api/hub/{type}/delete", s.handleHubDelete)
         s.mux.HandleFunc("POST /api/hub/{type}/endorse", s.handleHubEndorse(true))
         s.mux.HandleFunc("POST /api/hub/{type}/unendorse", s.handleHubEndorse(false))
         s.mux.HandleFunc("POST /api/hub/{type}/publish", s.handleHubPublish)

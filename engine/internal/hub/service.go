@@ -458,9 +458,17 @@ func (s *Service) Items(typ, q, sortMode, tagFilter string, refresh bool) ([]Ite
         own := s.currentUser() + "/" + metricsRepo
         merged := make([]Item, 0, len(v.items)+len(local))
         seen := map[string]bool{}
+        // v0.60 pt A.4: name-dedup vs builtins — a scanned or downloaded
+        // item whose normalized name matches a builtin of this type is
+        // skipped (the builtin card wins; this killed the deep-research
+        // twin the template sheet also dedupes client-side).
+        builtinNames := builtinNameKeys(spec.Type)
         addItem := func(item Item, state *LocalState) {
                 if seen[item.ID] {
                         return
+                }
+                if !itemIsBuiltin(item) && builtinNames[normName(item.Name)] {
+                        return // the builtin's twin — the builtin card renders alone
                 }
                 seen[item.ID] = true
                 merged = append(merged, applyCounts(item, state, v.metrics, own))
@@ -710,6 +718,36 @@ func (s *Service) Downloads(typ string) ([]*LocalItem, error) {
                 }
         }
         return out, nil
+}
+
+// Delete removes a locally-downloaded item (v0.60 pt A.3: the delete-your-
+// copy feature). The whole local row goes — payload, heart state, downloaded
+// stamp — while the remote HF listing is untouched (this deletes the user's
+// copy, it does NOT unpublish). Rows that exist only as publish records
+// (DownloadedAt == "") are refused with ErrNotDownloaded — the same
+// enforceable rule as endorse.
+func (s *Service) Delete(typ, id string) error {
+        if _, err := Get(typ); err != nil {
+                return err
+        }
+        row, err := GetLocalItem(s.db, typ, id)
+        if err != nil {
+                if err == ErrNotFound {
+                        return ErrNotFoundLocal // route maps this to 404
+                }
+                return err
+        }
+        if row.DownloadedAt == "" {
+                return ErrNotDownloaded
+        }
+        if err := DeleteLocalItem(s.db, typ, id); err != nil {
+                if err == ErrNotFound {
+                        return ErrNotFoundLocal // route maps this to 404
+                }
+                return err
+        }
+        s.Invalidate("") // counts changed
+        return nil
 }
 
 // Endorse hearts an item (REQUIRES it downloaded locally), likes the
