@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.30.1-dev"
+var Version = "0.61.0"
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
