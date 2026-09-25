@@ -190,6 +190,12 @@
     var ico = (it.icon && window.IconLib) ? window.IconLib.svg(it.icon, 24) : '';
     var stageN = isTpl && it.stageCount > 0
       ? '<span class="hi-stagen">~' + it.stageCount + ' stages</span>' : '';
+    // v0.60 pt C.5: type info chips on the hero — scripts carry
+    // shebang/lines/size, templates carry the context budget chips
+    // (total tokens + the widest fan-out) from the stage payload.
+    var info = infoChips(cur.type, cur.payload);
+    var chipsRow = (chips || stageN || info)
+      ? '<div class="hi-chips">' + chips + stageN + info + '</div>' : '';
 
     return (
       '<div class="hi-root" data-tone="' + escAttr(cur.type) + '">' +
@@ -204,7 +210,7 @@
             '<div class="hi-desc">' + esc(it.description || '—') + '</div>' +
             '<div class="hi-meta">by ' + esc(it.author || 'unknown') +
               (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') + '</div>' +
-            (chips ? '<div class="hi-chips">' + chips + stageN + '</div>' : '') +
+            chipsRow +
             '<div class="hi-counts">' +
               '<span>' + hiGlyph('heart') + '<b>' + (it.hearts || 0) + '</b></span>' +
               '<span>' + hiGlyph('download') + '<b>' + (it.downloads || 0) + '</b></span>' +
@@ -246,6 +252,55 @@
         '</div>' +
       '</div>'
     );
+  }
+
+  // v0.60 pt C.5: infoChips — the hero's context line. Scripts show the
+  // shebang + line count + payload size; templates show the CONTEXT BUDGET
+  // (the summed stage max_tokens + the widest fan-out) parsed from the
+  // payload. Empty string when nothing applies (payload not loaded yet).
+  function infoChips(type, payload) {
+    if (payload == null) return '';
+    var text = String(payload || '');
+    if (type === 'script') {
+      var out = '';
+      var m = /^#![\t ]*(\S+)(?:[\t ]+(\S+))?.*\n?/.exec(text);
+      if (m) {
+        var first = m[1].split('/').pop() || m[1];
+        var interp = (first === 'env' && m[2]) ? (m[2].split('/').pop() || m[2]) : first;
+        out += '<span class="hi-chip hi-chip--info">' + esc(interp) + '</span>';
+      }
+      var lines = text.split('\n').length;
+      out += '<span class="hi-chip hi-chip--info">' + lines + (lines === 1 ? ' line' : ' lines') + '</span>';
+      out += '<span class="hi-chip hi-chip--info">' + humanBytes(text.length) + '</span>';
+      return out;
+    }
+    if (type === 'template') {
+      var stages = parseStages(text);
+      if (!stages || !stages.length) return '';
+      var total = 0, fan = 0, hasTok = false;
+      for (var i = 0; i < stages.length; i++) {
+        var st = stages[i] || {};
+        var mt = parseInt(st.max_tokens, 10) || 0;
+        if (mt > 0) { total += mt; hasTok = true; }
+        var par = st.fanout && parseInt(st.fanout.max_parallel, 10) || 0;
+        if (par > fan) fan = par;
+      }
+      var out2 = '';
+      if (hasTok) out2 += '<span class="hi-chip hi-chip--info">≤ ' + fmtTok(total) + ' tokens</span>';
+      if (fan > 1) out2 += '<span class="hi-chip hi-chip--info">fan-out ×' + fan + '</span>';
+      return out2;
+    }
+    return '';
+  }
+
+  function fmtTok(n) {
+    return n >= 10000 ? (Math.round(n / 1000) + 'k') : String(n);
+  }
+
+  function humanBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
   // v0.58: the detail glyphs — real IconLib SVGs (the old text ⤓/♥ DOS
@@ -377,7 +432,17 @@
       } catch (e) { body.textContent = text; }
       return;
     }
-    // skills + personas: the markdown pipeline (a SKILL.md is markdown)
+    // v0.60 pt C.5: scripts render as highlighted shell code (Prism bash
+    // through the Formatter's fenced-code pipeline; python shebangs —
+    // including the env form — get python).
+    if (cur.type === 'script') {
+      var lang = /^#!.*python/.test(text) ? 'python' : 'bash';
+      try {
+        window.Formatter.renderInto(body, '```' + lang + '\n' + text + '\n```', { mode: 'full' });
+      } catch (e) { body.textContent = text; }
+      return;
+    }
+    // skills + personas + docs: the markdown pipeline (a SKILL.md is markdown)
     try {
       window.Formatter.renderInto(body, text, { mode: 'full' });
     } catch (e) {
@@ -411,11 +476,16 @@
       var fo = st.fanout && typeof st.fanout === 'object'
         ? '<div class="ts-stage-fo">fan-out over ' + esc(st.fanout.over || 'items') +
           ' · max ' + esc(st.fanout.max_parallel || 1) + ' parallel</div>' : '';
+      // v0.60 pt C.5: the per-stage context budget subtitle.
+      var mt = parseInt(st.max_tokens, 10) || 0;
+      var mtLine = mt > 0
+        ? '<span class="hi-stage-mt">≤ ' + fmtTok(mt) + ' tokens</span>' : '';
       out += (
         '<div class="ts-stage">' +
           '<div class="ts-stage-head"><span class="ts-stage-n">' + (i + 1) + '</span>' +
             '<span class="ts-stage-name">' + esc(st.name || 'stage ' + (i + 1)) + '</span>' +
             (st.role ? '<span class="ts-chip">' + esc(st.role) + '</span>' : '') +
+            mtLine +
           '</div>' + fo +
           (st.instructions ? '<div class="ts-stage-ins">' + esc(st.instructions) + '</div>' : '') +
         '</div>'

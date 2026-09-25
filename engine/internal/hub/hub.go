@@ -106,4 +106,24 @@ func init() {
                 PayloadExt: ".doomtheme",
                 Desc:       "Full look bundles — global themes and single-chat looks",
         })
+        // v0.60 pt C.5: SCRIPTS + DOCS — the superpowers port's repo
+        // companions. A script is a runnable .sh payload (browsed, read,
+        // bundled — invoked through interpreters per the porting guide);
+        // a doc is a markdown payload (the port's guides/journals —
+        // bundled inside collections, no standalone browsing semantics
+        // beyond the detail view's markdown render).
+        Register(LibrarySpec{
+                Type:       "script",
+                Label:      "Script Library",
+                Tag:        "doomalay-script",
+                PayloadExt: ".sh",
+                Desc:       "Runnable shell scripts shared through Hugging Face datasets",
+        })
+        Register(LibrarySpec{
+                Type:       "doc",
+                Label:      "Doc Library",
+                Tag:        "doomalay-doc",
+                PayloadExt: ".md",
+                Desc:       "Markdown guides and journals shared through Hugging Face datasets",
+        })
 }

@@ -2570,6 +2570,10 @@
   .hub-root[data-tone="persona"]  { --hub-tone: var(--persona-tint);  --hub-tone-rgb: var(--persona-rgb); }
   .hub-root[data-tone="template"] { --hub-tone: var(--template-tint); --hub-tone-rgb: var(--template-rgb); }
   .hub-root[data-tone="skill"]    { --hub-tone: var(--accent-3);      --hub-tone-rgb: var(--accent-3-rgb); }
+  /* v0.60 pt C.5: scripts ride notice (terminal orange), docs ride the
+     primary accent — six distinct theme-var tones total. */
+  .hub-root[data-tone="script"]   { --hub-tone: var(--notice);        --hub-tone-rgb: var(--notice-rgb); }
+  .hub-root[data-tone="doc"]      { --hub-tone: var(--accent);        --hub-tone-rgb: var(--accent-rgb); }
 
   /* ══ v0.56 — THE LIBRARY TOP DOCK (user spec item 9) ══════════════
      The pinned chrome is ONE dock: the collapsed "Public Library"
@@ -2741,6 +2745,15 @@
   .hub-libpill[data-tone="skill"][data-on="1"] {
     background: rgba(var(--accent-3-rgb), 0.12);
     border-color: rgba(var(--accent-3-rgb), 0.5); color: var(--accent-3);
+  }
+  /* v0.60 pt C.5: script (notice) + doc (accent) lib pills. */
+  .hub-libpill[data-tone="script"][data-on="1"] {
+    background: rgba(var(--notice-rgb), 0.12);
+    border-color: rgba(var(--notice-rgb), 0.5); color: var(--notice);
+  }
+  .hub-libpill[data-tone="doc"][data-on="1"] {
+    background: rgba(var(--accent-rgb), 0.12);
+    border-color: rgba(var(--accent-rgb), 0.5); color: var(--accent);
   }
   .hub-libpill-ghost { cursor: default; }
 
@@ -3051,6 +3064,8 @@
   .hi-root[data-tone="persona"]  { --hub-tone: var(--persona-tint);  --hub-tone-rgb: var(--persona-rgb); }
   .hi-root[data-tone="template"] { --hub-tone: var(--template-tint); --hub-tone-rgb: var(--template-rgb); }
   .hi-root[data-tone="skill"]    { --hub-tone: var(--accent-3);      --hub-tone-rgb: var(--accent-3-rgb); }
+  .hi-root[data-tone="script"]   { --hub-tone: var(--notice);        --hub-tone-rgb: var(--notice-rgb); }
+  .hi-root[data-tone="doc"]      { --hub-tone: var(--accent);        --hub-tone-rgb: var(--accent-rgb); }
   .hi-head {
     position: relative; border-radius: 16px; overflow: hidden; flex-shrink: 0;
     border: 1px solid var(--surface-2); cursor: pointer;
@@ -3099,6 +3114,22 @@
     color: var(--hub-tone, var(--accent-2)); border-radius: 999px;
     padding: 2px 8px; font-size: calc(var(--ui-small-fs) - 2px);
     font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  /* v0.60 pt C.5: the INFO chips — shebang/lines/size (scripts) + the
+     context budget (templates). Surface-tinted (not the tone) so the
+     numbers read as METADATA, not tags. */
+  .hi-chip--info {
+    background: rgba(var(--surface-3-rgb, var(--surface-2-rgb)), 0.65);
+    border-color: var(--border-strong);
+    color: var(--text-2); font-variant-numeric: tabular-nums;
+  }
+  /* v0.60 pt C.5: the per-stage context budget subtitle (stage cards). */
+  .hi-stage-mt {
+    margin-left: auto; padding: 2px 8px; border-radius: 999px;
+    background: rgba(var(--surface-3-rgb, var(--surface-2-rgb)), 0.65);
+    border: 1px solid var(--border-strong); color: var(--text-2);
+    font-size: calc(var(--ui-small-fs) - 2px); font-weight: 700;
+    font-variant-numeric: tabular-nums; flex-shrink: 0;
   }
   .hi-counts {
     display: flex; gap: 16px; margin-top: 5px; color: var(--text-2);

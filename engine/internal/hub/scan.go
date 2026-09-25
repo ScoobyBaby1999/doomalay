@@ -70,12 +70,14 @@ func (s *Service) scanRepo(card RepoCard) *scanEntry {
 }
 
 // corpusRow is one line of a *.jsonl corpus (the key field that is set
-// names the kind — template | skill | persona).
+// names the kind — template | skill | persona | script | doc).
 type corpusRow struct {
         Template    string `json:"template"`
         Skill       string `json:"skill"`
         Persona     string `json:"persona"`
         Theme       string `json:"theme"`
+        Script      string `json:"script"` // v0.60 pt C.5
+        Doc         string `json:"doc"`    // v0.60 pt C.5
         File        string `json:"file"`
         Description string `json:"description"`
         Content     string `json:"content"`
@@ -161,6 +163,8 @@ func (s *Service) scanRepoFresh(card RepoCard) *scanEntry {
                 {"templates", "template", ".json"},
                 {"skills", "skill", ".md"},
                 {"themes", "theme", ".doomtheme"},
+                {"scripts", "script", ".sh"},   // v0.60 pt C.5
+                {"docs", "doc", ".md"},          // v0.60 pt C.5
         } {
                 list, err := s.hf.ListTree(card.ID, "/"+d.path)
                 if err != nil {
@@ -322,11 +326,19 @@ func classifyCorpusRow(row corpusRow, path string) (string, string) {
                 return "persona", row.Persona
         case row.Theme != "":
                 return "theme", row.Theme
+        case row.Script != "": // v0.60 pt C.5
+                return "script", row.Script
+        case row.Doc != "": // v0.60 pt C.5
+                return "doc", row.Doc
         }
         lower := strings.ToLower(path)
         switch {
         case strings.Contains(lower, "theme"):
                 return "theme", row.File
+        case strings.Contains(lower, "script"):
+                return "script", row.File
+        case strings.Contains(lower, "doc"):
+                return "doc", row.File
         case strings.Contains(lower, "template"):
                 return "template", row.File
         case strings.Contains(lower, "skill"):
@@ -335,6 +347,9 @@ func classifyCorpusRow(row corpusRow, path string) (string, string) {
                 return "persona", row.File
         }
         trimmed := strings.TrimSpace(row.Content)
+        if strings.HasPrefix(trimmed, "#!") {
+                return "script", row.File // v0.60: shebang content classifies as a script
+        }
         if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
                 return "template", row.File
         }
@@ -378,7 +393,8 @@ func (s *Service) resolvePayload(repo, ref string) (string, error) {
                 if json.Unmarshal([]byte(line), &row) != nil {
                         continue
                 }
-                if row.Template != key && row.Skill != key && row.Persona != key && row.Theme != key {
+                if row.Template != key && row.Skill != key && row.Persona != key && row.Theme != key &&
+                        row.Script != key && row.Doc != key {
                         continue
                 }
                 if child != "" {

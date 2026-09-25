@@ -48,7 +48,8 @@
   SORTS.forEach(function (s) { SORT_SUB[s.key] = s.sub; });
 
   // the library pills' glyphs — future registry types fall back to 📚
-  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨' };
+  // v0.60 pt C.5: script (⌨ terminal) + doc (📖 book) join the set.
+  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨', script: '⌨', doc: '📖' };
   function libIcon(type) { return LIB_ICONS[type] || '📚'; }
 
   // v0.58 (user spec pts 1 + 8): each browsed library has ONE tone pair that
@@ -57,7 +58,7 @@
   // template tints; skills ride accent-3; themes ride accent-2) — the CSS
   // maps .hub-root[data-tone] → --hub-tone / --hub-tone-rgb.
   function mineLabel(type) {
-    return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes' }[type] || 'my items';
+    return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes', script: 'my scripts', doc: 'my docs' }[type] || 'my items';
   }
 
   // The served Item carries no local-state flags — the web tracks what
@@ -928,7 +929,7 @@
   }
 
   function shortType(t) {
-    return { persona: 'persona', template: 'template', skill: 'skill', theme: 'theme' }[t] || t;
+    return { persona: 'persona', template: 'template', skill: 'skill', theme: 'theme', script: 'script', doc: 'doc' }[t] || t;
   }
 
   // The card's background layer: a v0.44 design SPEC (the shared
