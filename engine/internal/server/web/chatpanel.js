@@ -2542,26 +2542,25 @@
     // composer). See chatpanel.js ~L2289 (tools gate) + brain/agent.py
     // default flip.
 
-    // v0.52 THE 3 PILLS (user item 6): the toolbar is [effort · x] +
-    // [⧉ template | +] + [🛠 skills | +]. TWO hotboxes per pill:
-    //   · the LABEL press toggles the chat's auto-search cap
-    //     (template_auto / skills_auto — PATCHed via persistCaps; the
-    //     engine gates the template/skills tools + prompt lines on them,
-    //     so ON = the assistant browses + uses the library by itself)
+    // v0.60 pt C.9: THE LIB PILL (replaces the template + skills pills):
+    // the toolbar is [effort · x] + [🛠 lib | +]. TWO hotboxes:
+    //   · the LABEL press toggles the chat's lib_auto gate (ON: the bot
+    //     browses AND uses the library on the fly; OFF: it can still
+    //     browse + recommend — downloads/loads refuse with the switch
+    //     path, engine + brain both enforce).
     //   · the + press opens the PUBLIC LIBRARY with THIS chat connected
-    //     (Hub.open('template'|'skill', {chat}))
+    //     (Hub.open(undefined, {chat}) — the whole library, any type).
     // The + is DYNAMIC: it shows the name of the template/skill in use
     // THIS turn (tool_use/tool_result events — see paintSegPlus), the
     // active manual template shows persistently, and an unused slot is
     // just '+'. The old whole-pill ⧉ template browse action is replaced
     // by the + (the sheet stays reachable via the library's Yours rows).
-    bar.appendChild(segPill(bodyEl, state, icon, 'template'));
-    bar.appendChild(segPill(bodyEl, state, icon, 'skills'));
+    bar.appendChild(libPill(bodyEl, state, icon));
 
     syncTemplateChip(bodyEl, state, icon);
 
     if (anyActive || (state.effort && state.effort !== 'med') ||
-        state.templateAuto || state.skillsAuto) {
+        state.libAuto || state.templateAuto || state.skillsAuto) {
       var clear = document.createElement('button');
       clear.textContent = 'clear';
       clear.style.cssText = 'background:transparent;border:1px solid var(--border);color:var(--text-3);padding:4px 10px;border-radius:8px;font-size:11px;font-family:inherit;cursor:pointer;flex-shrink:0';
@@ -2572,8 +2571,9 @@
         state.webSearch = false;
         state.deepResearch = false;
         state.template = null; // v0.44: the active template clears with the rest
-        state.templateAuto = false; // v0.52: the pill toggles reset too
+        state.templateAuto = false; // v0.60: the lib gate resets with the rest
         state.skillsAuto = false;
+        state.libAuto = false;
         persistCaps(state, icon);
         renderToolbar(bar, state, levels, icon, bodyEl);
       });
@@ -2814,7 +2814,10 @@
       if (state._turnTemplate) return shortCap(state._turnTemplate);
       return '+';
     }
+    // v0.60 pt C.9: the lib pill's + — whatever is in use this turn.
     if (state._turnSkill) return shortCap(state._turnSkill);
+    if (state._turnTemplate) return shortCap(state._turnTemplate);
+    if (state.template && state.template.name) return shortCap(state.template.name);
     return '+';
   }
 
@@ -2823,6 +2826,73 @@
     if (!s) return '+';
     if (s.length > 12) s = s.slice(0, 11) + '…';
     return s;
+  }
+
+  // v0.60 pt C.9: THE LIB PILL — one gatekeeping pill + a dynamic + that
+  // opens the public library with this chat connected.
+  function libPill(bodyEl, state, icon) {
+    var active = !!(state.libAuto || state.templateAuto || state.skillsAuto ||
+      state.template || state.deepResearch);
+    var wrap = document.createElement('div');
+    wrap.id = 'seg-lib';
+    wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
+      'border:1px solid ' + (active ? 'rgba(var(--accent-rgb),0.55)' : 'var(--border)') + ';' +
+      'background:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      'border-radius:999px;overflow:hidden';
+
+    var lab = document.createElement('button');
+    lab.id = 'seg-lib-label';
+    lab.textContent = '🛠 lib';
+    lab.setAttribute('aria-pressed', active ? 'true' : 'false');
+    lab.title = 'the library — ON: the bot browses AND uses the library on the fly; ' +
+      'OFF: it can still browse + recommend (downloads need the switch back on)';
+    lab.style.cssText = 'border:none;background:transparent;color:' +
+      (active ? 'var(--accent)' : 'var(--text-3)') +
+      ';padding:4px 8px 4px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+      'white-space:nowrap;-webkit-tap-highlight-color:transparent';
+    lab.addEventListener('click', function () {
+      state.libAuto = !state.libAuto;
+      // keep the legacy flags in lockstep (old engine payloads read them)
+      state.templateAuto = state.libAuto;
+      state.skillsAuto = state.libAuto;
+      persistCaps(state, icon);
+      renderToolbar(bodyEl.querySelector('#chat-toolbar'), state,
+        state._effortLevels, icon, bodyEl);
+    });
+
+    var plus = document.createElement('button');
+    plus.id = 'seg-lib-plus';
+    plus.textContent = segPlusLabel(state, 'lib');
+    plus.title = 'open the public library — every type, this chat connected';
+    plus.setAttribute('aria-label', plus.title);
+    plus.style.cssText = 'border:none;border-left:1px solid ' +
+      (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
+      'background:transparent;color:' +
+      ((state.template || state._turnTemplate || state._turnSkill) ? 'var(--accent)' : 'var(--text-3)') +
+      ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
+      'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+      '-webkit-tap-highlight-color:transparent';
+    plus.addEventListener('click', function () {
+      if (!window.Hub) {
+        if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the library is not available');
+        return;
+      }
+      var chat = null;
+      var c = window.ChatPanel && window.ChatPanel.current();
+      if (c && c.icon) {
+        chat = {
+          sessionId: state.sessionId || (c.icon && c.icon.sessionId) || '',
+          title: c.icon.name || '',
+          name: c.icon.name || '',
+          avatarHTML: (c.icon && c.icon.getAvatarHTML) ? c.icon.getAvatarHTML() : ''
+        };
+      }
+      window.Hub.open(undefined, { chat: chat });
+    });
+
+    wrap.appendChild(lab);
+    wrap.appendChild(plus);
+    return wrap;
   }
 
   function segPill(bodyEl, state, icon, kind) {
@@ -2906,18 +2976,13 @@
   // turn is streaming; a full re-render would drop it).
   function paintSegPlus(bodyEl, state) {
     if (!bodyEl || !state) return;
-    var tp = bodyEl.querySelector('#seg-template-plus');
-    if (tp) {
-      var nl = segPlusLabel(state, 'template');
-      if (tp.textContent !== nl) tp.textContent = nl;
-      tp.style.color = ((state.template || state._turnTemplate) && nl !== '+')
+    var lp = bodyEl.querySelector('#seg-lib-plus');
+    if (lp) {
+      var nl = segPlusLabel(state, 'lib');
+      if (lp.textContent !== nl) lp.textContent = nl;
+      lp.style.color = (nl !== '+' &&
+        (state.template || state._turnTemplate || state._turnSkill))
         ? 'var(--accent)' : 'var(--text-3)';
-    }
-    var sp = bodyEl.querySelector('#seg-skills-plus');
-    if (sp) {
-      var nl2 = segPlusLabel(state, 'skills');
-      if (sp.textContent !== nl2) sp.textContent = nl2;
-      sp.style.color = (state._turnSkill && nl2 !== '+') ? 'var(--accent)' : 'var(--text-3)';
     }
   }
 
@@ -3044,10 +3109,11 @@
         template: state.template ? JSON.stringify({
           id: state.template.id, name: state.template.name, brief: state.template.brief
         }) : '',
-        // v0.52 THE 3 PILLS: the [template|+] / [skills|+] label toggles —
-        // the engine gates the template/skills tools on these.
-        template_auto: !!state.templateAuto,
-        skills_auto: !!state.skillsAuto,
+        // v0.60 pt C.9: THE LIB PILL — the single gatekeeping toggle (the
+        // legacy flags ride in lockstep for old engine payloads).
+        lib_auto: !!state.libAuto,
+        template_auto: !!(state.libAuto || state.templateAuto),
+        skills_auto: !!(state.libAuto || state.skillsAuto),
         sliding_window: state.slidingWindow || 40
       })
     }).catch(function (e) { console.error('persist caps failed', e); });
@@ -3145,10 +3211,11 @@
       effort: state.effort || 'med',
       web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
       deep_research: !!state.deepResearch,
-      // v0.52 THE 3 PILLS: the auto-search toggles ride creation too (the
-      // PATCH in the pill press covers later flips).
-      template_auto: !!state.templateAuto,
-      skills_auto: !!state.skillsAuto,
+      // v0.60 pt C.9: the lib gate rides creation too (the PATCH in the
+      // pill press covers later flips).
+      lib_auto: !!state.libAuto,
+      template_auto: !!(state.libAuto || state.templateAuto),
+      skills_auto: !!(state.libAuto || state.skillsAuto),
       // v0.44: the active method template blob (see persistCaps).
       template: state.template ? JSON.stringify({
         id: state.template.id, name: state.template.name, brief: state.template.brief
@@ -3185,10 +3252,14 @@
         // tools after every reload (the state defaulted them to off).
         if (typeof data.WebSearch === 'boolean') state.webSearch = data.WebSearch;
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
-        // v0.52 THE 3 PILLS: restore the auto-search toggles (the
-        // [template|+] / [skills|+] label press state).
+        // v0.60 pt C.9: restore the lib gate (the lib pill's state; the
+        // legacy pill flags promote through the OR for old sessions).
+        if (typeof data.LibAuto === 'boolean') state.libAuto = data.LibAuto;
         if (typeof data.TemplateAuto === 'boolean') state.templateAuto = data.TemplateAuto;
         if (typeof data.SkillsAuto === 'boolean') state.skillsAuto = data.SkillsAuto;
+        if (typeof data.LibAuto !== 'boolean') {
+          state.libAuto = !!(state.templateAuto || state.skillsAuto);
+        }
         // v0.44: restore the active method template (the persisted blob
         // {id, name, brief} — engine column template_id, PATCHed by
         // persistCaps; deep research restores via the flag above).

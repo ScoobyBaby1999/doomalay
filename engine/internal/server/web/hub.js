@@ -33,11 +33,11 @@
   // v0.58 (user spec pt 4): the show-bundles toggle — ON by default. ON
   // shows the bunch cards and HIDES their member items; OFF hides the
   // bunch cards and shows every individual item.
+  // v0.60 pt C.9: bundles are ALWAYS the grid (the toggle was retired
+  // with the lib pill wave — everything is a bundle).
   var BUNDLES_KEY = 'doomalay.hubbundles.v1';
-  function readBundles() {
-    try { return localStorage.getItem(BUNDLES_KEY) !== '0'; } catch (e) { return true; }
-  }
-  function saveBundles(on) { try { localStorage.setItem(BUNDLES_KEY, on ? '1' : '0'); } catch (e) {} }
+  function readBundles() { return true; }
+  function saveBundles() {}
   var SORTS = [
     { key: 'recent',    label: 'recent',       sub: 'newest updates first' },
     { key: 'downloads', label: 'downloads',    sub: 'most downloaded first' },
@@ -846,7 +846,7 @@
     var per = eff * c.grid.rows;
     // v0.58 (user spec pt 4): the bundles toggle decides the grid — ON =
     // the bunch cards lead AND their member items hide; OFF = plain items.
-    var showBundles = readBundles();
+    var showBundles = true; // v0.60 pt C.9: bundles are always the grid
     var items = (c.items || []).filter(function (it) {
       return !showBundles || !(it && it.collection);
     });
@@ -926,13 +926,11 @@
     '</span>';
   }
 
-  // v0.58 (user spec pt 4): the bundles toggle — a compact labeled switch.
+  // v0.60 pt C.9: the bundles toggle is GONE — every item is a bundle
+  // (the auto-collection), so the grid always shows the bundle cards and
+  // the members live inside the pushed bunch view.
   function bundlesToggleHTML() {
-    var on = readBundles();
-    return '<button type="button" class="hub-bundles' + (on ? ' on' : '') + '" id="hub-bundles"' +
-      ' aria-pressed="' + on + '" title="show bundle cards (their member items hide while on)">' +
-      '<span class="hub-bundles-track"><span class="hub-bundles-dot"></span></span>' +
-      '<span class="hub-bundles-label">bundles</span></button>';
+    return '';
   }
 
   // ── v0.52: themed stat glyphs (bigger ♥ / ⤓ — user spec item 4). The
@@ -1464,28 +1462,6 @@
       });
     });
 
-    // v0.58 (user spec pt 4): the show-bundles toggle — one tap flips the
-    // grid between bundle cards (members hidden) and plain items. (Guarded:
-    // wireBody re-runs on every body update and the fallback lookup finds
-    // the header button from the zone scope — without the flag every
-    // updateBody would add another listener and the clicks would cancel.)
-    var bundlesBtn = host.querySelector('#hub-bundles') ||
-      (c.panel && c.panel.bodyEl ? c.panel.bodyEl.querySelector('#hub-bundles') : null);
-    if (bundlesBtn && !bundlesBtn._bundlesWired) {
-      bundlesBtn._bundlesWired = 1;
-      bundlesBtn.addEventListener('click', function () {
-        if (!cur) return;
-        var on = !readBundles();
-        saveBundles(on);
-        cur.page = 1;
-        var btn = q('#hub-bundles');
-        if (btn) {
-          btn.classList.toggle('on', on);
-          btn.setAttribute('aria-pressed', String(on));
-        }
-        updateBody();
-      });
-    }
 
     // cards → item detail · v0.60 pt B: bunch cards OPEN THE PUSHED BUNCH
     // VIEW (the grid beneath keeps its filters/selection/scroll), and the

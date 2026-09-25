@@ -128,31 +128,33 @@ def collector():
 
 # ── the boxes ────────────────────────────────────────────────────────────
 
-def test_box_absent_means_enabled():
-    assert dt_hublib.box_enabled({}, "skill")[0]
-    assert dt_hublib.box_enabled(None, "template")[0]
-    assert dt_hublib.box_enabled({"unrelated": 1}, "skill")[0]
+def test_lib_absent_means_enabled():
+    """v0.60 pt C.9: the single Bot Library switch — absent = enabled."""
+    assert dt_hublib.lib_enabled({})[0]
+    assert dt_hublib.lib_enabled(None)[0]
+    assert dt_hublib.lib_enabled({"unrelated": 1})[0]
 
 
-def test_box_off_refuses_with_actionable_message():
-    ok, msg = dt_hublib.box_enabled({"botSkills": False}, "skill")
+def test_lib_off_refuses_with_actionable_message():
+    ok, msg = dt_hublib.lib_enabled({"botLib": False})
     assert not ok
-    assert "Skills box is OFF" in msg
+    assert "Bot Library switch is OFF" in msg
     assert "tweaks" in msg          # names where the switch lives
-    ok, msg = dt_hublib.box_enabled({"botTemplates": False}, "template")
-    assert not ok and "Templates box is OFF" in msg
+    assert "browse" in msg          # …and says browsing still works
 
 
-def test_box_true_and_cross_type_isolation():
-    assert dt_hublib.box_enabled({"botSkills": True}, "skill")[0]
-    # the SKILLS box must not gate templates, nor vice versa
-    assert dt_hublib.box_enabled({"botSkills": False}, "template")[0]
-    assert dt_hublib.box_enabled({"botTemplates": False}, "skill")[0]
+def test_lib_legacy_migration():
+    """Legacy per-type keys: BOTH off reads as off; one-off stays on."""
+    assert not dt_hublib.lib_enabled(
+        {"botTemplates": False, "botSkills": False})[0]
+    assert dt_hublib.lib_enabled({"botTemplates": False, "botSkills": True})[0]
+    assert dt_hublib.lib_enabled({"botTemplates": True, "botSkills": False})[0]
 
 
 def test_persona_type_is_not_hublibs():
-    ok, msg = dt_hublib.box_enabled({}, "persona")
-    assert not ok and "persona" in msg.lower()
+    out = dt_hublib.run("browse", typ="persona", client=FakeClient(items=[TDD]))
+    assert "templates, skills, scripts and docs" in out
+    assert "persona" in out.lower()
 
 
 def test_read_boxes_shapes():
@@ -164,16 +166,19 @@ def test_read_boxes_shapes():
 
 
 def test_gate_is_read_on_the_fly():
-    """The user's headline requirement: flip the box mid-conversation and
-    the NEXT tool call obeys — no caching of the tweak blob anywhere."""
-    fc = FakeClient(items=[TDD], tweaks={"botSkills": False})
-    assert "Skills box is OFF" in dt_hublib.run(
-        "browse", typ="skill", client=fc)
-    fc.tweaks_blob = {}                       # the user flips the switch ON
+    """The user's headline requirement: flip the switch mid-conversation and
+    the NEXT tool call obeys — no caching of the tweak blob anywhere.
+    v0.60 pt C.9: OFF keeps browse working (recommend); download refuses."""
+    fc = FakeClient(items=[TDD], tweaks={"botLib": False})
     out = dt_hublib.run("browse", typ="skill", client=fc)
-    assert "Skills box is OFF" not in out and "superpowers TDD" in out
-    fc.tweaks_blob = {"botSkills": False}     # …and OFF again
-    assert "Skills box is OFF" in dt_hublib.run(
+    assert "Bot Library switch is OFF" not in out and "superpowers TDD" in out
+    assert "Bot Library switch is OFF" in dt_hublib.run(
+        "download", typ="skill", ref="tdd", client=fc)
+    fc.tweaks_blob = {}                       # the user flips the switch ON
+    assert "Bot Library switch is OFF" not in dt_hublib.run(
+        "download", typ="skill", ref="tdd", client=fc)
+    fc.tweaks_blob = {"botLib": False}       # …and OFF again
+    assert "Bot Library switch is OFF" in dt_hublib.run(
         "download", typ="skill", ref="tdd", client=fc)
 
 
@@ -345,11 +350,11 @@ def test_libraries_and_help_and_unknown():
     assert "unknown action" in dt_hublib.run("frobnicate", client=fc)
 
 
-def test_type_must_be_template_or_skill():
+def test_type_must_be_hublib_served():
     fc = FakeClient(items=[TDD])
-    assert "type must be 'template' or 'skill'" in dt_hublib.run(
+    assert "templates, skills, scripts and docs" in dt_hublib.run(
         "browse", typ="persona", client=fc)
-    assert "type must be 'template' or 'skill'" in dt_hublib.run(
+    assert "templates, skills, scripts and docs" in dt_hublib.run(
         "download", client=fc)               # empty type too
 
 

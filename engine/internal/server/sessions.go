@@ -54,6 +54,8 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 // [template|+] / [skills|+] label press).
                 TemplateAuto bool `json:"template_auto"`
                 SkillsAuto   bool `json:"skills_auto"`
+                // v0.60 pt C.9: THE LIB PILL — the single gatekeeping toggle.
+                LibAuto bool `json:"lib_auto"`
                 // v0.46: HF-chat routing (sandbox="hf"): "shared" | "own" + the
                 // own space's "user/name" repo.
                 SandboxMode string `json:"sandbox_mode"`
@@ -123,6 +125,8 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 // v0.52: the auto-search pill toggles.
                 TemplateAuto: req.TemplateAuto,
                 SkillsAuto:   req.SkillsAuto,
+                // v0.60 pt C.9: the lib pill.
+                LibAuto: req.LibAuto,
                 // v0.46: HF-chat routing.
                 SandboxMode: req.SandboxMode,
                 SandboxRepo: req.SandboxRepo,
@@ -285,6 +289,17 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
         }
         if v, ok := req["skills_auto"].(bool); ok {
                 sess.SkillsAuto = v
+        }
+        // v0.60 pt C.9: THE LIB PILL — the single gatekeeping toggle. A
+        // lib_auto PATCH stamps the legacy pill flags to match (the old
+        // brain reads them); a legacy pill PATCH re-derives lib_auto as
+        // their OR, so the three never disagree.
+        if v, ok := req["lib_auto"].(bool); ok {
+                sess.LibAuto = v
+                sess.TemplateAuto = v
+                sess.SkillsAuto = v
+        } else if sess.LibAuto != (sess.TemplateAuto || sess.SkillsAuto) {
+                sess.LibAuto = sess.TemplateAuto || sess.SkillsAuto
         }
         if err := s.db.UpdateSession(sess); err != nil {
                 writeError(w, 500, "update: "+err.Error())

@@ -694,6 +694,8 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 // lines on them).
                 "template_auto": sess.TemplateAuto,
                 "skills_auto":   sess.SkillsAuto,
+                // v0.60 pt C.9: the lib pill's effective gate.
+                "lib_auto":      sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto,
                 // v0.19: persona system — the per-turn system message is
                 // identity + the chat's persona (or the default prompt).
                 "system_prompt": s.systemPromptFor(sess),

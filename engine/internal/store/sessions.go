@@ -62,6 +62,10 @@ type Session struct {
         // [skills|+] label press flips them.
         TemplateAuto bool
         SkillsAuto   bool
+        // v0.60 pt C.9: THE LIB PILL — the single gatekeeping library
+        // toggle (replaces the two pill toggles; the effective value ORs
+        // the legacy two until the first PATCH stamps it).
+        LibAuto bool
         // v0.46 HF CHAT: sandbox="hf" sessions route their turns through a
         // remote brain on an HF Space. SandboxMode picks the shape:
         //   "shared" → the community Space (auth: user's HF token)
@@ -87,14 +91,16 @@ INSERT INTO chat_sessions
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
    workspace_id, persona, personas, placeholders, manually_renamed, compact_summary, compact_seq,
    compact_enabled, compact_threshold, template_id, template_auto, skills_auto,
+   lib_auto,
    sandbox_mode, sandbox_repo, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
                 s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
                 s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
                 s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.TemplateAuto, s.SkillsAuto,
+                s.LibAuto,
                 s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
         return err
 }
@@ -110,14 +116,14 @@ UPDATE chat_sessions SET
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
   routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, manually_renamed=?,
   compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?,
-  template_auto=?, skills_auto=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
+  template_auto=?, skills_auto=?, lib_auto=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
                 s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed,
                 s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID,
-                s.TemplateAuto, s.SkillsAuto, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
+                s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
         return err
 }
 
@@ -155,7 +161,7 @@ func (db *DB) GetSession(id string) (*Session, error) {
         var compactSeq sql.NullInt64
         var compactEnabled, compactThreshold sql.NullInt64
         var templateID sql.NullString
-        var templateAuto, skillsAuto sql.NullInt64
+        var templateAuto, skillsAuto, libAuto sql.NullInt64
         var sandboxMode, sandboxRepo sql.NullString
         err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
@@ -163,14 +169,14 @@ SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_resea
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
        workspace_id, persona, personas, placeholders, manually_renamed,
        compact_summary, compact_seq, compact_enabled, compact_threshold, template_id,
-       template_auto, skills_auto, sandbox_mode, sandbox_repo, created_at, updated_at
+       template_auto, skills_auto, lib_auto, sandbox_mode, sandbox_repo, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
                 &s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
                 &s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
                 &s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
                 &s.WorkspaceID, &persona, &personas, &placeholders, &mr,
                 &compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID,
-                &templateAuto, &skillsAuto, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
+                &templateAuto, &skillsAuto, &libAuto, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
         if err == sql.ErrNoRows {
                 return nil, nil
         }
@@ -218,6 +224,13 @@ FROM chat_sessions WHERE id=?`, id).Scan(
         }
         if skillsAuto.Valid {
                 s.SkillsAuto = skillsAuto.Int64 != 0
+        }
+        // v0.60 pt C.9: the lib pill (absent on pre-migration rows = the
+        // legacy OR — a chat that had either pill on keeps the lib on).
+        if libAuto.Valid {
+                s.LibAuto = libAuto.Int64 != 0
+        } else {
+                s.LibAuto = s.TemplateAuto || s.SkillsAuto
         }
         // v0.46: HF-chat routing (sandbox=hf).
         if sandboxMode.Valid {

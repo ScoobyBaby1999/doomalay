@@ -823,6 +823,8 @@ async def chat(request: Request):
                 # dtemplate/skills tools + their system-prompt lines.
                 template_auto=body.get("template_auto", False),
                 skills_auto=body.get("skills_auto", False),
+                # v0.60 pt C.9: THE LIB PILL — the single gatekeeping flag.
+                lib_auto=body.get("lib_auto", False),
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"

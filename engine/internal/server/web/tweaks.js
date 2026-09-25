@@ -340,12 +340,13 @@
     persist(state);
   }
 
-  // ── v0.52: the Bot Library boxes (dt_hublib gating) ───────────────────
-  // Absent = ENABLED — every pre-boxes chat keeps full bot library access,
-  // and the tool re-reads the blob on EVERY call ("on the fly": flip a
-  // switch mid-conversation and the next hublib call obeys). Only these two
-  // keys may enter the blob through this path.
-  var BOX_KEYS = ['botTemplates', 'botSkills'];
+  // ── v0.60 pt C.9: THE BOT LIBRARY switch (the lib pill's gate) ────────
+  // Absent = ENABLED — every pre-switch chat keeps full bot library access,
+  // and the brain re-reads the blob on EVERY call ("on the fly": flip the
+  // switch mid-conversation and the next turn obeys). OFF keeps browse +
+  // recommend working; only downloads/loads refuse. Only this key may enter
+  // the blob through this path.
+  var BOX_KEYS = ['botLib'];
 
   function setBox(state, key, v) {
     if (BOX_KEYS.indexOf(key) < 0) return;
@@ -772,9 +773,8 @@
             '<button data-action="tweaks-sizes-reset" data-scope="chat" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px;width:100%">inherit the global sizes again</button>'
           ) +
           sec('Bot Library',
-            '<p class="hint">Whether this chat\'s bot may browse + download the PUBLIC HUB\'s community libraries (the hublib tool). Flips apply on the very next bot turn — no restart. Both default to on; a switch that was never touched stays on.</p>' +
-            boxRow('botTemplates', 'Templates', 'the bot can browse + download method templates from the hub', t.botTemplates !== false) +
-            boxRow('botSkills', 'Skills', 'the bot can browse + download methodology skills from the hub', t.botSkills !== false)
+            '<p class="hint">The single switch behind the lib pill. ON: the bot browses, downloads AND uses the library on the fly. OFF: the bot can still browse + recommend — downloads and skill loads refuse with the switch path. Flips apply on the very next bot turn — no restart.</p>' +
+            boxRow('botLib', 'Bot Library', 'the bot may browse + download + use the library (skills, templates, scripts, docs)', t.botLib !== false)
           ) +
           sec('Background',
             '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +

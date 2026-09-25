@@ -71,8 +71,9 @@ async def run_turn(
     mode: str = "auto",
     history: list = None,
     workspaces: list = None,
-    template_auto: bool = False,   # v0.52: the [template|+] pill
-    skills_auto: bool = False,     # v0.52: the [skills|+] pill
+    template_auto: bool = False,   # v0.52: the [template|+] pill (legacy)
+    skills_auto: bool = False,     # v0.52: the [skills|+] pill (legacy)
+    lib_auto: bool = False,       # v0.60 pt C.9: THE LIB PILL (the single gate)
 ) -> AsyncIterator[dict]:
     """Run one chat turn. Yields events as dicts.
 
@@ -96,6 +97,12 @@ async def run_turn(
         yield {"type": "error", "error": "auth", "message": f"no API key in env {env_var}"}
         yield {"type": "status", "state": "error", "usage": None}
         return
+
+    # v0.60 pt C.9: THE LIB PILL — one gate. lib_auto wins; a legacy pill
+    # (or an old engine payload) promotes through the OR of the old two.
+    lib_on = bool(lib_auto or template_auto or skills_auto)
+    template_auto = lib_on
+    skills_auto = lib_on
 
     # Build the system prompt.
     if not system_prompt:
@@ -208,14 +215,13 @@ async def _run_strands_agent(
         callback = _StreamCallback()
 
         # Build the tools.
-        # v0.52 THE 3 PILLS: the per-chat auto-search toggles — a disabled
-        # pill drops its dt tool from the registry (and its system-prompt
-        # line below), so the model can't browse a library the user off.
+        # v0.60 pt C.9: THE LIB PILL — OFF keeps browsing + recommending
+        # (hublib + the skills index stay); only the USING tools drop: the
+        # template runner (dtemplate) goes, and the skills LOAD action
+        # refuses with the switch path (gated inside dt_skills).
         _exclude = []
         if not template_auto:
             _exclude.append("dtemplate")
-        if not skills_auto:
-            _exclude.append("skills")
         tools = _build_tools(workspace, web_search, session_id=session_id,
                              callback=callback, model=model,
                              llm_info=(litellm_id, litellm_base or "", api_key),
@@ -1031,14 +1037,21 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "search, week/month reviews with trends + streaks, prompts, export",
         "- socreate: the 10x productivity creation loop — start(goal) → plan "
         "→ execute steps (sub-agents) → critique → iterate until done",
-        ("- skills: browse + load the 17 methodology skills (brainstorming, "
-         "writing-plans, TDD, systematic-debugging, verification…) — load one "
-         "BEFORE starting work it covers") if skills_auto else None,
-        ("- dtemplate: browse + run the template library (deep research, "
-         "brainstorm, plan, SDD, TDD, debug, verify, redteam…) on any input") if template_auto else None,
-        "- hublib: browse + download the PUBLIC HUB's community templates "
-        "and skills — search/popular, tappable one-press download cards for "
-        "the user, payload in hand to follow",
+        # v0.60 pt C.9: THE LIB PILL — one gate, one line when on.
+        ("- lib: the chat's library is ON — browse, load and use it freely: "
+         "the 17 methodology skills (brainstorming, writing-plans, TDD, "
+         "systematic-debugging, verification…) — load one BEFORE starting "
+         "work it covers; the template runner (deep research, brainstorm, "
+         "plan, SDD, TDD, debug, verify, redteam); and the hub below"
+         ) if skills_auto else None,
+        ("- lib: the chat's Bot Library switch is OFF — you can still BROWSE "
+         "and RECOMMEND (hublib search + the skills index), but loads and "
+         "downloads refuse until the user flips ✦ tweaks → Bot Library back on"
+         ) if not skills_auto else None,
+        "- hublib: browse + recommend the PUBLIC HUB's community templates, "
+        "skills, scripts and docs — search/popular, tappable one-press "
+        "download cards for the user (downloads need the chat's Bot Library "
+        "switch ON), payload in hand to follow",
         "- artifact: create AND surgically EDIT (find/replace, line splices, "
         "inserts, dry_run) the REAL chat artifacts — including files made in "
         "earlier turns; write deliverables HERE, not just as chat text",

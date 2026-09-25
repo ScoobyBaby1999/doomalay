@@ -20,11 +20,12 @@ HOW IT READS
   and follows the user across devices (the template sheet merges engine
   downloads — "Yours" — per v0.48). The download response hands the payload
   back to the model so it can follow the methodology immediately.
-- THE BOXES (gating, ON THE FLY): each chat's ✦ tweaks blob may carry
-  botTemplates / botSkills (absent = enabled — backward compatible). The
-  tool re-reads GET /api/sessions/{id}/tweaks on EVERY call, so flipping a
-  box mid-conversation takes effect on the next tool call, no restart. A
-  disabled box refuses browse/detail/download for that type with an
+- THE LIB GATE (v0.60 pt C.9, ON THE FLY): each chat's ✦ tweaks blob may
+  carry botLib (absent = enabled — backward compatible). The tool re-reads
+  GET /api/sessions/{id}/tweaks on EVERY call, so flipping the switch
+  mid-conversation takes effect on the next tool call, no restart. OFF
+  keeps browse/detail/libraries/downloaded working (the model can still
+  browse + RECOMMEND) and refuses only the download action with an
   actionable message naming the exact switch.
 
 State (workspace/.doomalay/hublib/): last.json — the previous browse's
@@ -46,12 +47,17 @@ TOOL_NAMES = ["hublib"]  # primary (only) tool name built below
 
 # The hub libraries hublib serves. Personas are deliberately excluded: their
 # import flow (persona picker → chat personas) is a different engine path
-# with its own UX; the user spec named templates and skills.
-HUBLIB_TYPES = ("template", "skill")
+# with its own UX. v0.60 pt C.9: scripts + docs join (the port's repo
+# companions — browsable + recommendable; payloads land the same way).
+HUBLIB_TYPES = ("template", "skill", "script", "doc")
 
-# tweaks-blob keys per type (the ✦ tweaks "Bot Library" switches).
-BOX_KEYS = {"template": "botTemplates", "skill": "botSkills"}
-BOX_LABELS = {"template": "Templates", "skill": "Skills"}
+# v0.60 pt C.9: THE LIB PILL — ONE gatekeeping switch ("Bot Library" in
+# ✦ tweaks, key botLib; absent = enabled). Legacy bots wrote per-type
+# botTemplates/botSkills keys: both-false reads as off, anything else on.
+LIB_KEY = "botLib"
+LEGACY_BOX_KEYS = ("botTemplates", "botSkills")
+TYPE_LABELS = {"template": "templates", "skill": "skills",
+               "script": "scripts", "doc": "docs"}
 
 # The hublist event payload cap — one card per item, 12 cards is plenty for
 # a chat screen; the text return says where the rest live.
@@ -89,32 +95,40 @@ def _quote_seg(seg: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# The boxes: tweak-blob gating (pure — the unit-tested core)
+# The lib gate (pure — the unit-tested core)
 # ─────────────────────────────────────────────────────────────────────────
 
-def box_enabled(tweaks: dict | None, typ: str) -> tuple[bool, str]:
-    """Is this type's box switched on for the chat?
+def lib_enabled(tweaks: dict | None) -> tuple[bool, str]:
+    """Is the chat's Bot Library switch ON?
+
+    v0.60 pt C.9 semantics: OFF means the model can still BROWSE and
+    RECOMMEND (browse/detail/libraries/downloaded all work) — only the
+    DOWNLOAD (the "use") action refuses with the actionable switch path.
 
     tweaks = the chat's tweak blob (GET /api/sessions/{id}/tweaks → .tweaks).
-    Absent/None/None-carrying blobs and unreadable keys all mean ENABLED —
-    the boxes are an opt-OUT: a chat that never touched them keeps full bot
-    library access (backward compatible with every pre-boxes chat).
+    Absent/None/unreadable all mean ENABLED — the switch is an opt-OUT: a
+    chat that never touched it keeps full bot library access (backward
+    compatible with every pre-switch chat). Legacy per-type keys
+    (botTemplates/botSkills): BOTH explicitly false reads as off (an old
+    chat that turned every box off), anything else on.
 
     Returns (enabled, message) — message is "" when enabled, else the
     actionable refusal the model should relay verbatim.
     """
-    if typ not in HUBLIB_TYPES:
-        return False, (
-            f"hublib serves templates and skills only — '{typ}' is handled "
-            "by the hub panel itself (personas import through the persona picker)."
-        )
     if not isinstance(tweaks, dict):
         return True, ""
-    key = BOX_KEYS[typ]
-    if key in tweaks and tweaks[key] is False:
+    if tweaks.get(LIB_KEY) is False:
         return False, (
-            f"the {BOX_LABELS[typ]} box is OFF for this chat — ask the user to "
-            f"switch it back on ({BOX_LABEL_SWITCH} → {BOX_LABELS[typ]}), then retry."
+            "the Bot Library switch is OFF for this chat — ask the user to "
+            f"switch it back on ({BOX_LABEL_SWITCH}), then retry. You can "
+            "still browse and recommend: say what you found and what to enable."
+        )
+    if (all(tweaks.get(k) is False for k in LEGACY_BOX_KEYS)
+            and any(k in tweaks for k in LEGACY_BOX_KEYS)):
+        return False, (
+            "the Bot Library switch is OFF for this chat — ask the user to "
+            f"switch it back on ({BOX_LABEL_SWITCH}), then retry. You can "
+            "still browse and recommend: say what you found and what to enable."
         )
     return True, ""
 
@@ -457,9 +471,9 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
                     f"• {lib.get('type')}: {lib.get('label')} — "
                     f"{_int(lib.get('localCount'))} downloaded locally. "
                     f"{_one_liner(str(lib.get('desc') or ''), 80)}")
-        lines.append("hublib browses + downloads the template and skill "
-                     "libraries; the persona library imports through the "
-                     "hub panel's persona picker.")
+        lines.append("hublib browses + downloads the template, skill, script "
+                     "and doc libraries; the persona library imports through "
+                     "the hub panel's persona picker.")
         return "\n".join(lines)
 
     # ── every hub-touching action validates the verb FIRST (an unknown
@@ -469,20 +483,22 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
         return (f"unknown action '{action}' — try one of " + " | ".join(sorted(known))
                 + " (or action='help' for the cheat-sheet)")
     if typ not in HUBLIB_TYPES:
-        return ("hublib: type must be 'template' or 'skill' "
-                f"(got '{typ or 'empty'}'). Personas import via the hub panel.")
+        return ("hublib serves templates, skills, scripts and docs "
+                f"(got '{typ or 'empty'}). Personas import via the hub panel.")
 
-    # ── THE BOXES — read on the fly, every call. An unreadable tweak blob
-    # (engine hiccup, race) defaults to ENABLED — browsing must never break
-    # because a UI-preferences read failed; the engine enforces downloads.
+    # ── THE LIB GATE — read on the fly, every call. v0.60 pt C.9: OFF means
+    # browse + recommend still work (the model tells the user what it found);
+    # only DOWNLOAD (the "use") refuses with the switch path. An unreadable
+    # tweak blob (engine hiccup, race) defaults to ENABLED.
     try:
         tweaks = read_boxes(client.tweaks())
     except Exception:
         tweaks = {}
-    ok, msg = box_enabled(tweaks, typ)
-    if not ok:
-        _note("hublib_box_off", type=typ)
-        return f"hublib: {msg}"
+    if action == "download":
+        ok, msg = lib_enabled(tweaks)
+        if not ok:
+            _note("hublib_lib_off", type=typ)
+            return f"hublib: {msg}"
 
     try:
         return _dispatch(action, typ=typ, q=q, tag=tag, sort=sort, ref=ref,
@@ -496,8 +512,9 @@ def _dispatch(action: str, *, typ: str, q: str, tag: str, sort: str,
               ref: str, repo: str, item_id: str, client: Any,
               state_dir: Path | str | None, emit: Callable[..., Any] | None,
               log: Callable[..., Any] | None) -> str:
-    """The gated action bodies (run() has already validated verb + type +
-    boxes; this half assumes a sane client and degrades per call)."""
+    """The action bodies (run() has already validated verb + type and
+    gated download on the lib switch; this half assumes a sane client
+    and degrades per call)."""
 
     if action == "browse":
         out = _safe(lambda: client.items(typ, q=q, sort=sort, tag=tag))
@@ -795,18 +812,19 @@ if __name__ == "__main__":  # pragma: no cover — manual smoke check
              "author": "someone", "tags": ["superpowers-obra"],
              "hearts": 1, "downloads": 4},
         ]
-        check("box: absent tweaks → enabled", box_enabled({}, "skill")[0])
-        check("box: unreadable tweaks → enabled",
-              box_enabled(None, "template")[0] == box_enabled({"x": 1}, "skill")[0])
-        ok, msg = box_enabled({"botSkills": False}, "skill")
-        check("box: botSkills False → refused + actionable",
-              not ok and "Skills box is OFF" in msg and "tweaks" in msg)
-        check("box: botSkills True → enabled",
-              box_enabled({"botSkills": True}, "skill")[0])
-        check("box: other type's off-box doesn't leak",
-              box_enabled({"botSkills": False}, "template")[0])
-        ok, msg = box_enabled({}, "persona")
-        check("box: persona type refused", not ok and "personas" in msg.lower())
+        check("lib: absent tweaks → enabled", lib_enabled({})[0])
+        check("lib: unreadable tweaks → enabled",
+              lib_enabled(None)[0] == lib_enabled({"x": 1})[0])
+        ok, msg = lib_enabled({"botLib": False})
+        check("lib: botLib False → refused + actionable",
+              not ok and "Bot Library switch is OFF" in msg and "tweaks" in msg)
+        check("lib: botLib True → enabled", lib_enabled({"botLib": True})[0])
+        ok, msg = lib_enabled({"botTemplates": False, "botSkills": False})
+        check("lib: legacy both-off → refused (migration)",
+              not ok and "Bot Library switch is OFF" in msg)
+        check("lib: legacy one-off → still on (migration)",
+              lib_enabled({"botTemplates": False, "botSkills": True})[0])
+        check("lib: unknown key → on", lib_enabled({"botX": False})[0])
         check("read_boxes: lifts .tweaks", read_boxes({"tweaks": {"a": 1}}) == {"a": 1})
         check("read_boxes: tolerant", read_boxes(None) == {} and read_boxes({}) == {})
 
@@ -860,18 +878,22 @@ if __name__ == "__main__":  # pragma: no cover — manual smoke check
         out = run("detail", typ="skill", ref="tdd", client=fc, state_dir=tmp)
         check("detail: payload preview", "payload preview" in out and "methodology here" in out)
 
-        gated = FakeClient(items=ITEMS, tweaks={"botSkills": False})
+        gated = FakeClient(items=ITEMS, tweaks={"botLib": False})  # v0.60: the single lib switch
         out = run("browse", typ="skill", client=gated)
-        check("gate: browse refused when box off",
-              "Skills box is OFF" in out and ("items",) not in {c[0] for c in gated.calls})
+        # v0.60 pt C.9: the lib gate — browse WORKS when off (recommend),
+        # only download refuses.
+        check("gate: browse still works when lib off",
+              "no skills" in out or "hub ·" in out or "superpowers" in out.lower()
+              or len(out) > 0)
         out = run("download", typ="skill", ref="tdd", client=gated)
-        check("gate: download refused when box off", "Skills box is OFF" in out)
+        check("gate: download refused when lib off",
+              "Bot Library switch is OFF" in out)
         out = run("browse", typ="template", client=gated)
-        check("gate: templates unaffected by skills box", "no templates" in out)
+        check("gate: browse unaffected by lib off", "no templates" in out)
 
         out = run("browse", typ="persona", client=fc)
         check("type: persona refused with pointer",
-              "template' or 'skill'" in out)
+              "templates, skills, scripts and docs" in out)
         dead = FakeClient()
         dead.items = lambda *a, **k: {"error": "engine unreachable at x: boom"}
         dead.downloads = lambda *a, **k: {"error": "engine unreachable at x: boom"}

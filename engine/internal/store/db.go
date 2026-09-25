@@ -201,6 +201,10 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // the turn builder gates the template/skills tools on them.
                 {"chat_sessions", "template_auto", "ALTER TABLE chat_sessions ADD COLUMN template_auto INTEGER DEFAULT 0"},
                 {"chat_sessions", "skills_auto", "ALTER TABLE chat_sessions ADD COLUMN skills_auto INTEGER DEFAULT 0"},
+                // v0.60 pt C.9: THE LIB PILL — the single gatekeeping toggle
+                // (migrates from template_auto||skills_auto: the effective
+                // read ORs the old two until a PATCH stamps the new one).
+                {"chat_sessions", "lib_auto", "ALTER TABLE chat_sessions ADD COLUMN lib_auto INTEGER DEFAULT 0"},
                 // v0.46: HF chat — sandbox=hf sessions carry the space routing:
                 // sandbox_mode ("shared" | "own") + sandbox_repo ("user/name"
                 // for own spaces; "" for shared).

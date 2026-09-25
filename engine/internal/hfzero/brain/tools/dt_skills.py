@@ -863,6 +863,34 @@ def build(ctx) -> list:
         except Exception:
             return None
 
+    # v0.60 pt C.9: THE LIB GATE — the LOAD action ("use") refuses when the
+    # chat's Bot Library switch is off (list/search/read keep working: the
+    # model can still browse + recommend). Reads GET
+    # /api/sessions/{id}/tweaks like hublib does; every failure defaults to
+    # ENABLED (a preferences read must never break the tool).
+    def _lib_off() -> bool:
+        try:
+            import json as _json
+            from urllib.request import urlopen as _urlopen
+            engine = str(getattr(ctx, "engine_url", "") or "").rstrip("/")
+            sid = getattr(ctx, "chat_session_id", None)
+            if not engine or not sid:
+                return False
+            with _urlopen(f"{engine}/api/sessions/{sid}/tweaks", timeout=4) as r:
+                blob = _json.load(r).get("tweaks") or {}
+            if blob.get("botLib") is False:
+                return True
+            if ("botTemplates" in blob or "botSkills" in blob) and \
+                    blob.get("botTemplates") is False and blob.get("botSkills") is False:
+                return True  # legacy both-off migration
+            return False
+        except Exception:
+            return False
+
+    _LIB_OFF_MSG = ("skills: the Bot Library switch is OFF for this chat — ask the "
+                    "user to switch it back on (✦ tweaks → Bot Library), then retry. "
+                    "You can still browse and recommend (list/search/read).")
+
     try:
         @strands_tool_decorator(name="skills", description=TOOL_DESCRIPTION)
         def skills(action: str, skill: str = "", query: str = "", filter: str = "") -> str:
@@ -881,6 +909,8 @@ def build(ctx) -> list:
                 state = None
                 if (action or "").strip().lower() in ("load", "loaded"):
                     state = _state_dir()
+                if (action or "").strip().lower() == "load" and _lib_off():
+                    return _LIB_OFF_MSG
 
                 def _on_loaded(name: str) -> None:
                     # oplog + transcript line so the user sees methodology
