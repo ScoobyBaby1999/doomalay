@@ -766,13 +766,13 @@ func TestGHOAuthDevicePrefillURL(t *testing.T) {
         }
 }
 
-// TestGHDeviceRidesDeviceApp — v0.61.2: the one-press web app (the new
-// ghOAuthDefaultClientID) has Device Flow DISABLED (probed live:
-// device/code → device_flow_disabled), so the secretless device fallback
-// must ride ghDeviceDefaultClientID — the device-capable v0.58 app — NOT
-// the web-flow pair from ghOAuthCreds(). Two apps, two jobs; the split
-// must survive.
-func TestGHDeviceRidesDeviceApp(t *testing.T) {
+// TestGHDeviceRidesOneApp — v0.61.3: the owner enabled Device Flow on the
+// ONE app (probed live 2026-09-26: device/code mints a user_code on
+// Iv23liDzVTw7zphxo5Hv), so the v0.61.2 two-app split is retired. The
+// device fallback now rides the SAME resolver as the web flow
+// (ghOAuthCreds — env → vault → the shipped app); a custom env id must
+// drive BOTH flows, and no second app constant exists anymore.
+func TestGHDeviceRidesOneApp(t *testing.T) {
         var gotID string
         mux := http.NewServeMux()
         mux.HandleFunc("POST /login/device/code", func(w http.ResponseWriter, r *http.Request) {
@@ -796,23 +796,20 @@ func TestGHDeviceRidesDeviceApp(t *testing.T) {
 
         s := seedOAuthServer(t)
 
-        // 1. the device flow posts the DEVICE app's id — never the one-press
-        //    app (Device Flow is off there; GitHub would refuse it).
+        // 1. the device flow posts THE ONE APP's id — the same id the web
+        //    flow resolves (the two-app split is gone).
         rec := httptest.NewRecorder()
         s.mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/workspaces/oauth/github/device/start", nil))
         if rec.Code != 200 {
                 t.Fatalf("device start HTTP %d: %s", rec.Code, rec.Body.String())
         }
-        if gotID != ghDeviceDefaultClientID {
-                t.Fatalf("device flow client_id = %q, want the device app %q (the one-press app has Device Flow disabled)",
-                        gotID, ghDeviceDefaultClientID)
-        }
-        if ghOAuthDefaultClientID == ghDeviceDefaultClientID {
-                t.Fatal("the web flow and device flow share one app — the v0.61.2 split was lost")
+        if gotID != ghOAuthDefaultClientID {
+                t.Fatalf("device flow client_id = %q, want the ONE app %q (ghOAuthCreds resolver)",
+                        gotID, ghOAuthDefaultClientID)
         }
 
-        // 2. the WEB flow stays on the one-press app, armed with the shipped
-        //    secret (status: one_tap on the recovered app).
+        // 2. the WEB flow stays on the same app, armed with the shipped
+        //    secret (status: one_tap on the ONE app).
         recSt := httptest.NewRecorder()
         s.mux.ServeHTTP(recSt, httptest.NewRequest("GET", "/api/workspaces/oauth/github/status", nil))
         var st struct {
@@ -823,6 +820,9 @@ func TestGHDeviceRidesDeviceApp(t *testing.T) {
                 t.Fatalf("status json: %v", err)
         }
         if st.ClientID != ghOAuthDefaultClientID || !st.OneTap {
-                t.Fatalf("status = client_id:%q one_tap:%v — the shipped pair must arm the one-press on the web app", st.ClientID, st.OneTap)
+                t.Fatalf("status = client_id:%q one_tap:%v — the shipped pair must arm the one-press", st.ClientID, st.OneTap)
+        }
+        if gotID != st.ClientID {
+                t.Fatalf("device flow rode %q but status says %q — the flows diverged", gotID, st.ClientID)
         }
 }

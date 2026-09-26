@@ -281,6 +281,9 @@ probe space) settled the Docker question for good:
   `Iv23li3qm665pDrDO1Nh` (Device Flow ☑ verified live — device/code
   returns a user_code; no secret exists anywhere; see
   docs/GITHUB_APP_SETUP.md).
+  **2026-09-26 superseded again (v0.61.3):** the owner enabled Device Flow
+  on the ONE app `Iv23liDzVTw7zphxo5Hv` (probed live) — web one-press and
+  device fallback both ride it; the v0.58 app is retired from the engine.
 
 ---
 

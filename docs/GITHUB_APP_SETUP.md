@@ -62,14 +62,13 @@ github.com/login/device; the panel's open button uses the `?user_code=`
 prefill URL GitHub's login wall preserves). The engine picks
 automatically; the user never chooses.
 
-**Two apps, two jobs (v0.61.2):** the one-press app has **Device Flow
-OFF** (probed live: `device/code` → `device_flow_disabled`) — that's fine,
-the web flow never touches the device endpoint — so the secretless device
-fallback rides the v0.58 **Doomalay Workspaces** app
-(`Iv23li3qm665pDrDO1Nh`, Device Flow ☑, probed live: returns a user_code).
-The engine resolves them independently (`ghOAuthDefaultClientID` for the
-web flow, `ghDeviceDefaultClientID` for the device flow); a self-hoster's
-own app (env/vault) still overrides both.
+**ONE app, both flows (v0.61.3):** the owner enabled **Device Flow** on
+the one-press app (probed live 2026-09-26: `device/code` mints a
+user_code on `Iv23liDzVTw7zphxo5Hv`), so the v0.61.2 two-app split is
+RETIRED. Web one-press AND the secretless device fallback both ride the
+ONE app (`ghOAuthCreds` resolves it: env → vault → the shipped id). The
+v0.58 **Doomalay Workspaces** app (`Iv23li3qm665pDrDO1Nh`) is no longer
+referenced by the engine — the owner may delete it on GitHub's side.
 
 ### Current state: ARMED (v0.61.2) — rotation runbook
 
@@ -87,9 +86,10 @@ with a **freshly generated secret** (`ghOAuthDefaultClientSecret` in
 2. **Client secrets list**: the OLD (leaked) secret row is **deleted** —
    GitHub keeps every generated secret valid until you delete its row;
    only the fresh one should remain.
-3. **Device Flow ☐ on this app is fine** (the device fallback rides the
-   other app), **Expire user authorization tokens ☐**, Administration
-   **No access**.
+3. **Device Flow ☑ is ON** (the owner enabled it 2026-09-26 — the device
+   fallback rides this same app now; probed live: `device/code` returns a
+   user_code). Keep **Expire user authorization tokens ☐** (the refresh
+   grant would need the secret) and Administration **No access**.
 
 To **rotate** later: app settings → Client secrets → Generate → paste
 into `ghOAuthDefaultClientSecret` → delete the old row → commit → release.
@@ -144,10 +144,10 @@ After creation, on the app's page:
 - Note the **App ID** (not needed by the engine, just for reference).
 - Copy the **Client ID** (shown near the top, `Iv…`). It ships as
   `ghOAuthDefaultClientID` in `engine/internal/server/workspaces.go`.
-  **Wired as of v0.61.2: `Iv23liDzVTw7zphxo5Hv`** (the recovered first
-  app — the direct one-press; Device Flow OFF on it is fine, see §0).
-  The device-flow fallback rides `ghDeviceDefaultClientID` =
-  `Iv23li3qm665pDrDO1Nh` (the v0.58 app, Device Flow verified live).
+  **Wired as of v0.61.3: `Iv23liDzVTw7zphxo5Hv`** — THE ONE APP: Device
+  Flow ☑ enabled (probed live), so it serves BOTH the one-press web flow
+  and the secretless device fallback. The retired v0.58 app
+  (`Iv23li3qm665pDrDO1Nh`) is no longer referenced.
 - **Client secret: generate it and ship it** (v0.61 CHANGE — was: never
   generate). Paste the value into `ghOAuthDefaultClientSecret` in
   `engine/internal/server/workspaces.go` (gh-CLI pattern, see §0) — or,

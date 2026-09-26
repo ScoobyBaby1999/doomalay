@@ -7,9 +7,11 @@
 // caller. One click, works from ANY origin, no code to type.
 //
 // THE UPGRADE over the legacy flow: the space brokers the live GitHub APP
-// (Iv23li3qm665pDrDO1Nh) instead of a classic OAuth App — so GitHub's
-// authorize screen offers "Only select repositories": complete access over
-// ONE repo, nothing account-wide (the repo-level grant the user demanded).
+// (the ONE app, Iv23liDzVTw7zphxo5Hv — the broker path needs its own
+// non-loopback callback registered on the Space) instead of a classic
+// OAuth App — so GitHub's authorize screen offers "Only select
+// repositories": complete access over ONE repo, nothing account-wide
+// (the repo-level grant the user demanded).
 //
 // THE CHAIN (every hop a full-page navigation in the popup the panel
 // opened — the app tab itself never moves):
