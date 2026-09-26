@@ -183,7 +183,14 @@
           body = '<iframe class="lv-frame" src="' + esc(href) + '" loading="lazy" referrerpolicy="no-referrer" title="' + esc(d.title || 'page') + '"></iframe>';
         } else {
           body = '';
-          if (d.og_image) body += '<img class="lv-ogimg" src="' + esc(d.og_image) + '" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.remove()">';
+          // v0.62.4: the T3 tier — the engine's retina screenshot of the
+          // page (desktop/self-host; absent on Android, where the in-app
+          // browser covers it). Card art beats a bare og-card.
+          if (d.screenshot_url) {
+            body += '<img class="lv-ogimg lv-shot" src="' + esc(d.screenshot_url) + '" loading="lazy" alt="' + esc(d.title || 'screenshot') + '" onerror="this.remove()">';
+          } else if (d.og_image) {
+            body += '<img class="lv-ogimg" src="' + esc(d.og_image) + '" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.remove()">';
+          }
           if (d.description) body += '<div class="lv-desc">' + esc(d.description) + '</div>';
           body += d.login_redirect ?
             '<span class="lv-note">this site needs its own sign-in page —</span> ' :

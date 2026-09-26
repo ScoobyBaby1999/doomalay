@@ -395,6 +395,14 @@ func htmlPreview(target string) map[string]any {
         if t, _ := out["title"].(string); t == "" {
                 out["title"] = prettifyHost(hostOf(cur))
         }
+        // v0.62.4: when the T3 tier is live, blocked/login-walled verdicts
+        // carry the ready-to-use screenshot URL — the UI's card art for
+        // pages that can never iframe.
+        if !frameable {
+                if su := screenshotURLFor(target); su != "" {
+                        out["screenshot_url"] = su
+                }
+        }
         return out
 }
 
