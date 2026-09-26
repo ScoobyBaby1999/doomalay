@@ -920,6 +920,33 @@ func (s *Server) remoteBrainFor(sess *store.Session) *brain.RemoteBrain {
                 s.remoteMu.Unlock()
                 return rb
         }
+        // v0.62: PUBLIC mode — someone else's space connected by URL (the
+        // sandbox picker's footer). Shared-style auth (the user's own HF
+        // token) on an arbitrary repo; the remotes cache is namespaced so
+        // it never collides with an own-mode client for the same repo.
+        if mode == "public" {
+                repo := sess.SandboxRepo
+                if repo == "" || s.hfToken() == "" {
+                        return nil
+                }
+                cacheKey := "public:" + repo
+                s.remoteMu.RLock()
+                rb := s.remotes[cacheKey]
+                s.remoteMu.RUnlock()
+                if rb != nil {
+                        rb.SetEnv(env)
+                        return rb
+                }
+                url := hfzero.SpaceURL(repo)
+                if url == "" {
+                        return nil
+                }
+                rb = brain.NewSharedRemoteBrain(repo, url, s.hfToken, env)
+                s.remoteMu.Lock()
+                s.remotes[cacheKey] = rb
+                s.remoteMu.Unlock()
+                return rb
+        }
         // shared
         s.remoteMu.RLock()
         rb := s.sharedBrain

@@ -245,6 +245,11 @@
       base.iconCustom = !!this.iconCustom;   // v0.52: the browsed icon
       base.iconRev = this.iconRev || 0;
       base.sandbox = this.sandbox;
+      // v0.62: the HF routing detail (own|public|shared + repo) survives
+      // reloads — serialize() dropped these and the gatelock-stage label
+      // degraded to "HF · shared" until the engine session landed.
+      base.sandboxMode = this.sandboxMode || '';
+      base.sandboxRepo = this.sandboxRepo || '';
       base.model = this.model;
       base.provider = this.provider;
       base.sessionId = this.sessionId || ''; // v0.15: survive restarts
@@ -263,6 +268,8 @@
         vx: data.vx || 0, vy: data.vy || 0,
         radius: data.radius || 28,
         sandbox: data.sandbox || '',
+        sandboxMode: data.sandboxMode || '',
+        sandboxRepo: data.sandboxRepo || '',
         model: data.model || '',
         provider: data.provider || '',
         sessionId: data.sessionId || ''

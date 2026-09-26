@@ -201,6 +201,12 @@
       var short = repo.indexOf('/') >= 0 ? repo.split('/').slice(1).join('/') : repo;
       return 'HF · ' + (short || 'own space');
     }
+    // v0.62: a public space (someone else's, connected by URL)
+    if (state.sandboxMode === 'public') {
+      var prepo = String(state.sandboxRepo || '');
+      var pshort = prepo.indexOf('/') >= 0 ? prepo.split('/').slice(1).join('/') : prepo;
+      return 'HF · ' + (pshort || 'public space');
+    }
     return 'HF · shared';
   };
   var providerLabels = {};

@@ -281,6 +281,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hf/shared", s.handleHFShared)
         s.mux.HandleFunc("GET /api/hf/account", s.handleHFAccount)
         s.mux.HandleFunc("GET /api/hf/space/status", s.handleHFSpaceStatus)
+        s.mux.HandleFunc("GET /api/hf/space/probe", s.handleHFSpaceProbe)
         s.mux.HandleFunc("GET /api/hf/space/logs", s.handleHFSpaceLogs)
         s.mux.HandleFunc("POST /api/hf/space/restart", s.handleHFSpaceRestart)
 

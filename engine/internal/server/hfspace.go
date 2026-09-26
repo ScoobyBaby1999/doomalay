@@ -226,18 +226,19 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
                 // re-committed + the secret re-set below.
                 if !strings.Contains(msg, "already exists") && !strings.Contains(msg, "already created") {
                         // v0.46 quota reality (live-verified): free accounts get TWO
-                        // ZeroGPU spaces. Point the user at reuse + shared instead.
+                        // ZeroGPU spaces. v0.62: point at the spaces list (the
+                        // community workspace offer is gone).
                         if strings.Contains(msg, "ZeroGPU Spaces") || strings.Contains(msg, "limited to 2") {
                                 writeError(w, http.StatusPaymentRequired,
                                         "Free HF accounts can host 2 ZeroGPU sandboxes — you've used both. "+
-                                                "Reuse one of your spaces (Pick an existing space) or use the community workspace. "+
+                                                "Pick one of your spaces above (or connect a public one below). "+
                                                 "(PRO raises the cap to 10.)")
                                 return
                         }
                         if strings.Contains(msg, "PRO") || strings.Contains(msg, "subscription") {
                                 writeError(w, http.StatusPaymentRequired,
                                         "HF now requires PRO for this creation path (loophole closed): "+msg+
-                                                " — use the community workspace instead, or connect a PRO account")
+                                                " — pick one of your spaces above, or connect a PRO account")
                                 return
                         }
                         writeError(w, http.StatusBadGateway, "create space: "+msg)
@@ -552,7 +553,7 @@ func (s *Server) handleHFSpaceEnsure(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
                 return
         }
-        list, err := hfListUserSpaces(hfCli, token, user)
+        list, err := hfListUserSpaces(hfCli, token, user, false)
         if err != nil {
                 writeError(w, http.StatusBadGateway, "list spaces: "+err.Error())
                 return
@@ -572,8 +573,10 @@ func (s *Server) handleHFSpaceEnsure(w http.ResponseWriter, r *http.Request) {
         s.handleHFSpaceCreate(w, r2)
 }
 
-// handleHFSpacesList is GET /api/hf/spaces — the user's doomalay spaces with
-// live stages + which ones this engine holds tokens for.
+// handleHFSpacesList is GET /api/hf/spaces — the user's spaces with
+// live stages + which ones this engine holds tokens for. v0.62 ?all=1:
+// EVERY space the user owns (the sandbox picker's list) — the default
+// stays doomalay-named only (the ensure flow's fast path).
 func (s *Server) handleHFSpacesList(w http.ResponseWriter, r *http.Request) {
         token := s.hfToken()
         if token == "" {
@@ -586,7 +589,8 @@ func (s *Server) handleHFSpacesList(w http.ResponseWriter, r *http.Request) {
                 writeError(w, http.StatusUnauthorized, "HF token rejected: "+err.Error())
                 return
         }
-        list, err := hfListUserSpaces(hfCli, token, user)
+        all := r.URL.Query().Get("all") == "1"
+        list, err := hfListUserSpaces(hfCli, token, user, all)
         if err != nil {
                 writeError(w, http.StatusBadGateway, "list: "+err.Error())
                 return
@@ -619,10 +623,12 @@ type hfSpaceListItem struct {
         Stage string
 }
 
-// hfListUserSpaces lists the author's spaces, filtered to doomalay-ish names,
-// each annotated with its live stage (one status call each — bounded by how
-// many spaces a user realistically has).
-func hfListUserSpaces(hf *hub.HFClient, token, user string) ([]hfSpaceListItem, error) {
+// hfListUserSpaces lists the author's spaces — filtered to doomalay-ish
+// names by default (the ensure flow), every space with all=true (v0.62:
+// the sandbox picker lists ALL the user's spaces) — each annotated with
+// its live stage (one status call each — bounded by how many spaces a
+// user realistically has).
+func hfListUserSpaces(hf *hub.HFClient, token, user string, all bool) ([]hfSpaceListItem, error) {
         body, err := hf.DoRaw("GET", "/api/spaces?author="+user+"&limit=100", token, nil, "")
         if err != nil {
                 return nil, err
@@ -637,7 +643,10 @@ func hfListUserSpaces(hf *hub.HFClient, token, user string) ([]hfSpaceListItem, 
         out := make([]hfSpaceListItem, 0, len(raw))
         for _, sp := range raw {
                 parts := strings.SplitN(sp.ID, "/", 2)
-                if len(parts) != 2 || !hfzero.IsDoomalaySpaceName(parts[1]) {
+                if len(parts) != 2 {
+                        continue
+                }
+                if !all && !hfzero.IsDoomalaySpaceName(parts[1]) {
                         continue
                 }
                 item := hfSpaceListItem{Repo: sp.ID, SDK: sp.SDK, Stage: "UNKNOWN"}
@@ -693,6 +702,56 @@ func (s *Server) handleHFSpaceStatus(w http.ResponseWriter, r *http.Request) {
                 return
         }
         writeJSON(w, http.StatusOK, status)
+}
+
+// handleHFSpaceProbe is GET /api/hf/space/probe?repo=user/name (v0.62) —
+// the PUBLIC-connect verification: the space must ACCEPT the user's HF
+// token (shared-style auth) before the chat commits to it. Server-side so
+// the browser never fights the space's CORS. ok:false with an HTTP status
+// means the space answered but refuses public use; a network error is
+// reported as unreachable (the caller decides — sleeping spaces wake).
+func (s *Server) handleHFSpaceProbe(w http.ResponseWriter, r *http.Request) {
+        repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+        if repo == "" {
+                writeError(w, http.StatusBadRequest, "missing repo")
+                return
+        }
+        token := s.hfToken()
+        if token == "" {
+                writeError(w, http.StatusUnauthorized, "not connected to Hugging Face")
+                return
+        }
+        url := hfzero.SpaceURL(repo)
+        if url == "" {
+                writeError(w, http.StatusBadRequest, "invalid repo (want owner/name)")
+                return
+        }
+        cli := &http.Client{Timeout: 15 * time.Second}
+        // /models is AUTH-GATED (health is an open status route) — the probe
+        // must exercise the real auth path to detect a space that refuses
+        // public/HF-token use.
+        req, err := http.NewRequest("GET", url+"/models", nil)
+        if err != nil {
+                writeError(w, http.StatusInternalServerError, err.Error())
+                return
+        }
+        req.Header.Set("X-HF-Token", token)
+        resp, err := cli.Do(req)
+        if err != nil {
+                writeError(w, http.StatusBadGateway, "space unreachable: "+err.Error())
+                return
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode == 200 {
+                writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repo": repo})
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{
+                "ok":     false,
+                "repo":   repo,
+                "status": resp.StatusCode,
+                "error": fmt.Sprintf("the space answered but refused the connection (HTTP %d) — it doesn't allow public use", resp.StatusCode),
+        })
 }
 
 // handleHFSpaceLogs is GET /api/hf/space/logs?repo=user/name&type=run&tail=50

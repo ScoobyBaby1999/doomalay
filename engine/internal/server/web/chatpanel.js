@@ -2086,9 +2086,9 @@
         state.sandbox = sandboxType;
         // v0.46: the HF detail (mode + repo) rides the session + the icon
         // state so reloads restore the routing.
-        if (sandboxType === 'hf' && detail && (detail.mode === 'shared' || detail.mode === 'own')) {
+        if (sandboxType === 'hf' && detail && (detail.mode === 'shared' || detail.mode === 'own' || detail.mode === 'public')) {
           state.sandboxMode = detail.mode;
-          state.sandboxRepo = detail.mode === 'own' ? (detail.repo || '') : '';
+          state.sandboxRepo = (detail.mode === 'shared') ? '' : (detail.repo || '');
         } else if (sandboxType !== 'hf') {
           state.sandboxMode = '';
           state.sandboxRepo = '';
