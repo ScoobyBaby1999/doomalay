@@ -41,7 +41,6 @@ import (
         "strconv"
         "strings"
         "sync"
-        "syscall"
         "time"
 )
 
@@ -163,14 +162,9 @@ func (s *Server) handlePreviewScreenshot(w http.ResponseWriter, r *http.Request)
         // v0.62.4 robustness: chromium spawns zygotes/crash handlers — a
         // bare process kill on timeout/shutdown orphans them (observed:
         // a killed engine left a headless chrome burning CPU forever).
-        // Own process group → kill the whole tree on cancel.
-        cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-        cmd.Cancel = func() error {
-                if cmd.Process != nil {
-                        _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-                }
-                return nil
-        }
+        // Own process group → kill the whole tree on cancel (unix;
+        // windows gets the direct kill — screenshot_unix/windows.go).
+        cmdSetupKillGroup(cmd)
         out, err := cmd.CombinedOutput()
         if err != nil {
                 _ = os.Remove(tmp)
