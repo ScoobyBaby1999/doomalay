@@ -96,6 +96,7 @@ type RepoMeta struct {
         DefaultBranch string `json:"default_branch"`
         Private       bool   `json:"private"`
         Stars         int    `json:"stars"`
+        Language      string `json:"language"`
         Forks         int    `json:"forks"`
         OpenIssues    int    `json:"open_issues"`
         UpdatedAt     string `json:"updated_at"`

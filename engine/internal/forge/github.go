@@ -555,6 +555,15 @@ func (c *Client) ghListUserRepos(ctx context.Context, token string, limit int) (
                 CloneURL      string `json:"clone_url"`
                 HTMLURL       string `json:"html_url"`
                 UpdatedAt     string `json:"updated_at"`
+                Language      string `json:"language"`
+                Stars         int    `json:"stargazers_count"`
+                // v0.62: the token's permissions per repo (the access pills
+                // in the workspaces picker glow off these).
+                Permissions struct {
+                        Admin bool `json:"admin"`
+                        Push  bool `json:"push"`
+                        Pull  bool `json:"pull"`
+                } `json:"permissions"`
         }
         if err := c.ghGetJSON(ctx, "/user/repos?sort=updated&per_page="+fmt.Sprint(limit), token, &rows, maxListBody); err != nil {
                 return nil, err
@@ -563,7 +572,9 @@ func (c *Client) ghListUserRepos(ctx context.Context, token string, limit int) (
         for _, r := range rows {
                 out = append(out, RepoMeta{FullName: r.FullName, Description: r.Description,
                         DefaultBranch: r.DefaultBranch, Private: r.Private,
-                        CloneURL: r.CloneURL, WebURL: r.HTMLURL, UpdatedAt: r.UpdatedAt})
+                        CloneURL: r.CloneURL, WebURL: r.HTMLURL, UpdatedAt: r.UpdatedAt,
+                        Stars: r.Stars, Language: r.Language,
+                        Admin: r.Permissions.Admin, Push: r.Permissions.Push, Pull: r.Permissions.Pull})
         }
         return out, nil
 }

@@ -103,6 +103,102 @@
       // v0.62: the simple empty state (user spec: "nothing here yet…")
       '.wsx-empty{padding:26px 16px;text-align:center;color:var(--text-3);' +
         'font-size:var(--ui-small-fs);font-weight:500}' +
+      // ── v0.62: THE PROVIDER PICKER (user item 6) ───────────────────────
+      // The picker root scopes the provider THEME SYNC: data-prov overrides
+      // the accent-2 vars inside the overlay so EVERY wsx surface (sign-in
+      // blocks, go buttons, opt rows, badges) repaints in the selected
+      // provider's colors — "the colors on the overlay dynamically sync to
+      // represent the githubs theme".
+      '.wsp[data-prov="github"]{--wsp-rgb:88,166,255;--wsp-c:#58a6ff;' +
+        '--accent-2-rgb:88,166,255;--accent-2:#58a6ff}' +
+      '.wsp[data-prov="gitea"]{--wsp-rgb:139,195,74;--wsp-c:#8bc34a;' +
+        '--accent-2-rgb:139,195,74;--accent-2:#8bc34a}' +
+      '.wsp[data-prov="gitlab"]{--wsp-rgb:252,109,38;--wsp-c:#fc6d26;' +
+        '--accent-2-rgb:252,109,38;--accent-2:#fc6d26}' +
+      '.wsp[data-prov="sourcehut"]{--wsp-rgb:45,212,191;--wsp-c:#2dd4bf;' +
+        '--accent-2-rgb:45,212,191;--accent-2:#2dd4bf}' +
+      // the base scope: no data-prov (self-host) → the app theme accent.
+      '.wsp{--wsp-rgb:var(--accent-2-rgb);--wsp-c:var(--accent-2)}' +
+      '.wsp-pills{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;' +
+        'padding:12px 12px 4px}' +
+      '.wsp-pill{display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+        'gap:4px;min-height:64px;padding:10px 4px;border-radius:12px;cursor:pointer;' +
+        'border:1.5px solid var(--surface-3);background:var(--surface-1);' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
+        'transition:border-color .15s, background .15s}' +
+      '.wsp-pill .ic{font-size:19px;line-height:1}' +
+      '.wsp-pill .nm{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;' +
+        'color:var(--text-2);letter-spacing:0.2px}' +
+      '.wsp-pill[data-on="1"]{border-color:rgba(var(--kp, var(--wsp-rgb)),0.7);' +
+        'background:rgba(var(--kp, var(--wsp-rgb)),0.12);' +
+        'box-shadow:0 0 14px rgba(var(--kp, var(--wsp-rgb)),0.22)}' +
+      '.wsp-pill[data-on="1"] .nm{color:var(--kpc, var(--wsp-c))}' +
+      // the provider section
+      '.wsp-sec{padding:8px 12px 2px}' +
+      '.wsp-loggedin{display:flex;align-items:center;gap:8px;margin:2px 0 4px;padding:9px 12px;' +
+        'border-radius:10px;background:rgba(var(--ok-rgb),0.07);' +
+        'border:1px solid rgba(var(--ok-rgb),0.35);color:var(--ok);' +
+        'font-size:var(--ui-small-fs);font-weight:600}' +
+      '.wsp-signin{display:flex;align-items:center;gap:8px;margin:2px 0 4px;padding:11px 12px;' +
+        'border-radius:12px;cursor:pointer;' +
+        'border:1px solid rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.5);' +
+        'color:var(--wsp-c, var(--accent-2));font-weight:700;font-size:var(--ui-small-fs);' +
+        'background:linear-gradient(135deg,rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.16),' +
+        'rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.06));' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.wsp-signin:active{filter:brightness(1.35)}' +
+      '.wsp-action{display:flex;align-items:center;gap:8px;margin:6px 0;padding:10px 12px;' +
+        'border-radius:12px;cursor:pointer;' +
+        'border:1.5px solid rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.35);' +
+        'color:var(--wsp-c, var(--accent-2));font-weight:700;font-size:var(--ui-small-fs);' +
+        'background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.06);' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.wsp-action:active{background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.14)}' +
+      // the public-repo connect bar (search-bar look, like the HF footer)
+      '.wsp-pubwrap{margin:8px 0 2px;padding:10px 12px;border-radius:12px;' +
+        'background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.05);' +
+        'border:1px solid rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.25)}' +
+      '.wsp-pub-title{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;' +
+        'color:var(--wsp-c, var(--accent-2));margin-bottom:7px}' +
+      '.wsp-pub-bar{display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;' +
+        'background:var(--surface-2);border:1px solid var(--border);min-width:0}' +
+      '.wsp-pub-bar input{flex:1;min-width:0;background:transparent;border:none;outline:none;' +
+        'color:var(--text-1);font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit}' +
+      '.wsp-pub-bar input::placeholder{color:var(--text-3)}' +
+      '.wsp-pub-go{flex-shrink:0;padding:7px 13px;border-radius:999px;border:none;cursor:pointer;' +
+        'background:var(--wsp-c, var(--accent-2));color:var(--bg-app);text-shadow:none;font-size:calc(var(--ui-small-fs) - 1px);' +
+        'font-weight:700;font-family:inherit;-webkit-tap-highlight-color:transparent}' +
+      // the repos box (scrollable, grouped by owner)
+      '.wsp-repos-head{display:flex;align-items:center;gap:6px;margin:12px 2px 4px;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-3);' +
+        'letter-spacing:0.5px;text-transform:uppercase}' +
+      '.wsp-repos{max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;' +
+        'border:1px solid var(--surface-3);border-radius:12px;margin-bottom:6px}' +
+      '.wsp-owner{position:sticky;top:0;z-index:1;font-size:calc(var(--ui-small-fs) - 2px);' +
+        'font-weight:700;color:var(--text-3);letter-spacing:0.5px;padding:7px 12px 3px;' +
+        'background:var(--surface-1);text-transform:uppercase}' +
+      '.wsp-repo{padding:7px 12px 8px;border-bottom:1px solid var(--surface-2);cursor:pointer;' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.wsp-repo:last-child{border-bottom:none}' +
+      '.wsp-repo:active{background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.08)}' +
+      '.wsp-row1{display:flex;align-items:center;gap:8px}' +
+      '.wsp-row1 .nm{flex:1;min-width:0;font-weight:600;color:var(--text-1);font-size:var(--ui-small-fs);' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.wsp-row1 .mt{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      // THE ACCESS PILLS (user item 6): read / partial·fork·PR / full — the
+      // one matching the user's access on the repo GLOWS, the rest stay dim.
+      '.wsp-acc{display:flex;gap:5px;margin:5px 0 1px 26px}' +
+      '.wsp-accp{font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;padding:2px 8px;' +
+        'border-radius:999px;border:1px solid var(--border);color:var(--text-3);' +
+        'background:rgba(var(--surface-3-rgb),0.3)}' +
+      '.wsp-accp.on{color:var(--wsp-c, var(--accent-2));' +
+        'border-color:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.6);' +
+        'background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.12);' +
+        'box-shadow:0 0 10px rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.4)}' +
+      '.wsp-loading{padding:14px 12px;font-size:var(--ui-small-fs);color:var(--text-3)}' +
+      '.wsp-note-row{padding:8px 2px;font-size:var(--ui-small-fs);color:var(--text-3);line-height:1.45}' +
+      '.wsp-secdiv{margin:10px 12px 0;border-top:1px solid var(--surface-2)}' +
       '.wsx-acts{display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 10px 48px}' +
       '.wsx-act{background-color:var(--surface-2);border:1px solid var(--surface-3);color:var(--text-2);' +
         'padding:6px 10px;border-radius:9px;font-size:var(--ui-small-fs);font-family:inherit;' +
@@ -172,6 +268,22 @@
         'background:rgba(var(--surface-3-rgb),0.3)}' +
       '.wsx-chip.cw{color:var(--warn);border-color:rgba(var(--warn-rgb),0.5);' +
         'background:rgba(var(--warn-rgb),0.08)}' +
+      // v0.62: THE CONNECT-ANY-REPO hero pill (leads the connect page) —
+      // a real theme-GRADIENT pill (user item 5: "everything, even the
+      // pill gradient, use theme colors").
+      '.wso-any{display:flex;align-items:center;gap:12px;margin:12px 12px 0;padding:14px;' +
+        'border-radius:14px;cursor:pointer;' +
+        'border:1.5px solid rgba(var(--accent-rgb),0.45);' +
+        'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
+        'background-image:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
+        'transition:filter 0.15s}' +
+      '.wso-any:active{filter:brightness(1.35)}' +
+      '.wso-any-ic{flex-shrink:0;font-size:20px;line-height:1}' +
+      '.wso-any-mid{flex:1;min-width:0}' +
+      '.wso-any-title{display:block;font-size:calc(var(--ui-fs) + 1px);font-weight:700;color:var(--accent)}' +
+      '.wso-any-sub{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin-top:2px;line-height:1.45}' +
+      '.wso-any-arrow{flex-shrink:0;color:var(--accent);font-size:18px}' +
       // repo rows (edit A10): nesting + varied type marks + meta line
       '.wsx-reposec{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-3);' +
         'letter-spacing:0.5px;padding:12px 22px 4px;text-transform:uppercase}' +
@@ -431,7 +543,8 @@
       if (resume) {
         try {
           var pend = JSON.parse(resume);
-          if (pend.mode === 'discover') { openDiscover(); return; }
+          // v0.62: my-repos moved into the picker's provider section —
+          // any parked discover resume lands back on the picker.
           if (pend.mode === 'create') { openCreateForm(); return; }
           if (pend.mode === 'cloud' && pend.url) { openCloudForm(pend.url); return; }
         } catch (e) {}
@@ -441,15 +554,49 @@
     });
   }
 
+  // ── v0.62: THE PROVIDER PILLS (user item 6) ───────────────────────────
+  // Every default-supported forge as a big polished pill (its OWN color),
+  // the section + the whole overlay repainting in the selected provider's
+  // theme (see the .wsp[data-prov] scope rules).
+  var PROVIDERS = [
+    { k: 'github',    icon: '🐙', name: 'GitHub',    rgb: '88,166,255',  c: '#58a6ff', host: 'github.com' },
+    { k: 'gitea',     icon: '🍵', name: 'Gitea',     rgb: '139,195,74',  c: '#8bc34a', host: 'gitea.com' },
+    { k: 'gitlab',    icon: '🦊', name: 'GitLab',    rgb: '252,109,38',  c: '#fc6d26', host: 'gitlab.com' },
+    { k: 'sourcehut', icon: '🪶', name: 'Sourcehut',  rgb: '45,212,191',  c: '#2dd4bf', host: 'sr.ht' },
+    { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: null,          c: null,      host: '' }
+  ];
+  var curProv = 'github';   // "by default the GitHub pill is selected"
+
+  function provByKind(k) {
+    for (var i = 0; i < PROVIDERS.length; i++) if (PROVIDERS[i].k === k) return PROVIDERS[i];
+    return PROVIDERS[0];
+  }
+
+  function pillsHTML() {
+    var out = '';
+    PROVIDERS.forEach(function (p) {
+      var style = p.rgb ? '--kp:' + p.rgb + ';--kpc:' + p.c + ';' : '';
+      out += '<div class="wsp-pill" data-k="' + p.k + '" data-on="' + (p.k === curProv ? '1' : '') + '"' +
+        (style ? ' style="' + style + '"' : '') + '>' +
+        '<span class="ic">' + p.icon + '</span><span class="nm">' + esc(p.name) + '</span></div>';
+    });
+    return out;
+  }
+
   function pickerHTML() {
-    // v0.62 (user spec): no large description text — the header is tight,
-    // the empty state says the simple thing.
+    // v0.62 (user item 6): the provider pills grid at the TOP, the provider
+    // section (sign-in / create / public repo / your repos with access
+    // pills) under it, the global workspaces below, the pinned connect row.
     return (
-      '<div class="wsx">' +
+      '<div class="wsp wsx" data-prov="' + esc(curProv) + '">' +
         '<div class="wsx-head">' +
           '<span class="wsx-title">▣ workspaces</span>' +
           '<span class="wsx-badge read" id="wsx-count">…</span>' +
         '</div>' +
+        '<div class="wsp-pills" id="wsp-pills">' + pillsHTML() + '</div>' +
+        '<div class="wsp-sec" id="wsp-sec"></div>' +
+        '<div class="wsp-secdiv"></div>' +
+        '<div class="wsp-repos-head" style="margin-top:12px">▣ your workspaces</div>' +
         '<div class="wsx-list" id="wsx-list">' +
           '<div class="wsx-sub">loading…</div>' +
         '</div>' +
@@ -457,7 +604,7 @@
           '<div class="wsx-conn" id="wsx-connect" role="button" tabindex="0">' +
             '<span style="font-size:15px">＋</span>' +
             '<span class="wsx-mid">connect workspace' +
-              '<div class="wsx-meta">cloud · create · device</div></span>' +
+              '<div class="wsx-meta">any repo · create · device</div></span>' +
           '</span>' +
         '</div>' +
       '</div>');
@@ -466,6 +613,238 @@
   function wirePicker() {
     var conn = document.getElementById('wsx-connect');
     if (conn) conn.addEventListener('click', function () { openConnectPage(); });
+    var pillsEl = document.getElementById('wsp-pills');
+    if (pillsEl) pillsEl.querySelectorAll('.wsp-pill').forEach(function (pill) {
+      pill.addEventListener('click', function () {
+        if (curProv === pill.dataset.k) return;
+        curProv = pill.dataset.k;
+        // repaint the pills + re-scope the theme + re-render the section
+        pillsEl.innerHTML = pillsHTML();
+        wirePicker();
+        renderProvSection();
+      });
+    });
+    renderProvSection();
+  }
+
+  // ── v0.62: THE PROVIDER SECTION (under the pills) ────────────────────
+  // github/gitea: sign-in (or the simple "✓ logged in — @user" text) →
+  // create new repo pill → connect a public repo (URL) → THE REPOS BOX
+  // (scrollable, grouped by owner, access pills glowing under each).
+  // gitlab/sourcehut: the public-repo bar (no account sign-in on the engine
+  // yet — any URL still connects). selfhost: device storage / local folder
+  // instead of a login (user spec).
+  function renderProvSection() {
+    var sec = document.getElementById('wsp-sec');
+    if (!sec) return;
+    var root = document.querySelector('.wsp');
+    if (root) root.setAttribute('data-prov', curProv);
+    var p = provByKind(curProv);
+    var hasAccount = curProv === 'github' || curProv === 'gitea';
+
+    if (curProv === 'selfhost') {
+      sec.innerHTML =
+        '<div class="wsp-note-row">your device, your storage — a folder this app (and every chat) can read + write. nothing leaves your phone.</div>' +
+        '<div class="wsp-action" id="wsp-device">📱 device storage' +
+          '<div style="margin-left:auto;font-weight:400;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">pick a folder →</div></div>' +
+        '<div class="wsp-action" id="wsp-local" style="opacity:0.5;pointer-events:none">▤ local folder' +
+          '<div style="margin-left:auto;font-weight:400;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">coming soon</div></div>';
+      var dev = sec.querySelector('#wsp-device');
+      if (dev) dev.addEventListener('click', openDevicePage);
+      return;
+    }
+
+    var acc = accounts[curProv];
+    var signedIn = hasAccount && acc && acc.signed_in;
+    var signinHtml;
+    if (signedIn) {
+      signinHtml = '<div class="wsp-loggedin">✓ logged in' +
+        (acc.login ? ' <span style="opacity:0.85">— @' + esc(acc.login) + '</span>' : '') + '</div>';
+    } else if (hasAccount) {
+      signinHtml = '<div class="wsp-signin" id="wsp-signin" role="button" tabindex="0">⏾ sign in to ' +
+        esc(p.name) + '</div>';
+    } else {
+      signinHtml = '<div class="wsp-note-row">paste any ' + esc(p.name) +
+        ' repo URL below — read-only by URL, sign-in token support lands with the account system.</div>';
+    }
+
+    sec.innerHTML =
+      signinHtml +
+      '<div class="wsp-action" id="wsp-create">✚ create new ' + esc(p.name) + ' repo' +
+        '<div style="margin-left:auto;font-weight:400;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">name · license</div></div>' +
+      '<div class="wsp-pubwrap">' +
+        '<div class="wsp-pub-title">connect a public repo</div>' +
+        '<div class="wsp-pub-bar"><span style="flex-shrink:0;color:var(--text-3);font-size:13px">⌕</span>' +
+          '<input id="wsp-pub-url" placeholder="https://' + esc(p.host || 'github.com') + '/owner/repo" ' +
+            'autocomplete="off" autocapitalize="off" spellcheck="false">' +
+          '<button id="wsp-pub-go" class="wsp-pub-go">connect</button></div>' +
+        '<div id="wsp-pub-err" style="display:none"></div>' +
+      '</div>' +
+      (hasAccount && signedIn
+        ? '<div class="wsp-repos-head">your ' + esc(p.name) + ' repos</div>' +
+          '<div class="wsp-repos" id="wsp-repos"><div class="wsp-loading">loading your repos…</div></div>'
+        : (hasAccount
+            ? '<div class="wsp-note-row">sign in above to browse your ' + esc(p.name) + ' repos + create with one tap</div>'
+            : ''))
+
+    // wire: sign-in (the reusable panel for github; manual token for gitea).
+    // The GH panel OPENS on the same overlay (nav stack resets) — on done
+    // we REOPEN the picker fresh (signed in, section re-rendered).
+    var sign = sec.querySelector('#wsp-signin');
+    if (sign) sign.addEventListener('click', function () {
+      if (curProv === 'github' && window.GHConnect) {
+        window.GHConnect.openConnectPanel({
+          onDone: function () {
+            refreshAccounts().then(reopenPicker);
+          }
+        });
+      } else if (curProv === 'gitea') {
+        openGiteaToken();
+      }
+    });
+    var create = sec.querySelector('#wsp-create');
+    if (create) create.addEventListener('click', function () { openCreateForm(curProv); });
+
+    // wire: the public-repo URL bar — recognized hosts go to the repo
+    // detail (entire repo | pick branches), exactly like the repo rows.
+    var go = sec.querySelector('#wsp-pub-go');
+    var urlIn = sec.querySelector('#wsp-pub-url');
+    function tryPub() {
+      var errEl = sec.querySelector('#wsp-pub-err');
+      if (errEl) { errEl.style.display = 'none'; errEl.innerHTML = ''; }
+      var v = (urlIn ? urlIn.value : '').trim();
+      if (!v) return;
+      var url = v;
+      if (!/^https?:\/\//i.test(v)) url = 'https://' + v;
+      var m = url.replace(/^https?:\/\//, '').replace(/\.git$/, '').match(/^([\w.-]+)\/([\w.-]+)\/([\w.-]+)/);
+      if (!m) {
+        if (errEl) {
+          errEl.style.display = '';
+          errEl.innerHTML = '<span style="color:var(--err);font-size:calc(var(--ui-small-fs) - 1px)">couldn\u2019t read that as a repo URL — try ' + esc('https://' + (p.host || 'github.com') + '/owner/repo') + '</span>';
+        }
+        return;
+      }
+      openRepoDetail(url, m[2] + '/' + m[3], '');
+    }
+    if (go) go.addEventListener('click', tryPub);
+    if (urlIn) urlIn.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); tryPub(); }
+    });
+
+    if (hasAccount && signedIn) loadProvRepos();
+  }
+
+  // reopen the picker on the overlay (post sign-in / post token: the GH
+  // panel or the token page replaced the stack — land back on a FRESH
+  // picker with the signed-in section rendered).
+  function reopenPicker() {
+    window.ConnectOverlay.open(pickerHTML(), {
+      onSwap: function () { wirePicker(); loadGlobals(); }
+    });
+  }
+
+  // the gitea manual-token inline form (github rides the GH panel)
+  function openGiteaToken() {
+    pushPage(
+      '<div class="wsx">' +
+        pageHead('🍵 sign in to Gitea') +
+        '<div class="wsx-note">paste a Gitea token — it\u2019s verified once, encrypted into the engine vault, and reused everywhere.</div>' +
+        '<div class="wsx-field"><div class="wsx-label">TOKEN</div>' +
+          '<input class="wsx-input" id="wgt-token" placeholder="gitea token" autocomplete="off" autocapitalize="off" spellcheck="false"></div>' +
+        '<div class="wsx-err" id="wgt-err" style="display:none"></div>' +
+        '<button class="wsx-go" id="wgt-go">save token</button>' +
+      '</div>',
+      function () {
+        var go = document.getElementById('wgt-go');
+        if (go) go.addEventListener('click', function () {
+          var inp = document.getElementById('wgt-token');
+          var err = document.getElementById('wgt-err');
+          var tok = inp ? inp.value.trim() : '';
+          err.style.display = 'none';
+          if (!tok) { inp.style.borderColor = 'var(--err)'; return; }
+          go.disabled = true; go.textContent = 'verifying…';
+          api('/api/workspaces/accounts', 'POST', { kind: 'gitea', token: tok })
+            .then(function (d) {
+              toast('signed in to Gitea' + (d.login ? ' as ' + d.login : '') + ' — saved encrypted');
+              return refreshAccounts();
+            })
+            .then(function () {
+              curProv = 'gitea';
+              reopenPicker();
+            })
+            .catch(function (e) {
+              go.disabled = false; go.textContent = 'save token';
+              err.textContent = e.message; err.style.display = '';
+            });
+        });
+      });
+  }
+
+  // the repos box (discover, kind-aware) — grouped by owner, access pills
+  // glowing under each repo (read / partial·fork·PR / full).
+  function accessPills(r) {
+    var lvl = (r.push || r.admin) ? 'full' : (r.pull ? 'partial' : 'read');
+    function one(id, label, on) {
+      return '<span class="wsp-accp' + (on ? ' on' : '') + '"' + (on ? '' : ' aria-hidden="true"') + '>' + label + '</span>';
+    }
+    return '<div class="wsp-acc">' +
+      one('read', 'read', lvl === 'read') +
+      one('partial', 'partial · fork/PR', lvl === 'partial') +
+      one('full', 'full', lvl === 'full') +
+      '</div>';
+  }
+
+  function loadProvRepos() {
+    var box = document.getElementById('wsp-repos');
+    if (!box) return;
+    var p = provByKind(curProv);
+    box.innerHTML = '<div class="wsp-loading">loading your repos…</div>';
+    api('/api/workspaces/discover?kind=' + encodeURIComponent(curProv) +
+        (p.host ? '&host=' + encodeURIComponent(p.host) : '') + '&limit=100').then(function (d) {
+      if (!document.getElementById('wsp-repos')) return;   // page swapped
+      var repos = d.repos || [];
+      if (!repos.length) {
+        box.innerHTML = '<div class="wsp-loading">no repos on that account yet</div>';
+        return;
+      }
+      var byOwner = {};
+      var order = [];
+      repos.forEach(function (r) {
+        var owner = (r.full_name || r.name).split('/')[0] || 'yours';
+        if (!byOwner[owner]) { byOwner[owner] = []; order.push(owner); }
+        byOwner[owner].push(r);
+      });
+      var html = '';
+      order.forEach(function (owner) {
+        html += '<div class="wsp-owner">' + esc(owner) +
+          '<span style="opacity:0.6;font-weight:400"> · ' + byOwner[owner].length + '</span></div>';
+        byOwner[owner].forEach(function (r) {
+          var meta = [];
+          if (r.language) meta.push(esc(r.language));
+          if (r.stars != null) meta.push('★ ' + r.stars);
+          if (r.updated_at) meta.push(esc(timeAgo(r.updated_at)));
+          var full = r.full_name || r.name;
+          html +=
+            '<div class="wsp-repo" data-url="' + esc(r.web_url || '') + '" data-name="' + esc(full) + '" data-def="' + esc(r.default_branch || '') + '">' +
+              '<div class="wsp-row1">' + repoTypeMark(r) +
+                '<span class="nm">' + esc(full.split('/').pop()) + '</span>' +
+                '<span style="color:var(--text-3)">›</span></div>' +
+              (meta.length ? '<div class="wsp-row1" style="margin-top:1px"><span class="mt">' + meta.join(' · ') + '</span></div>' : '') +
+              accessPills(r) +
+            '</div>';
+        });
+      });
+      box.innerHTML = html;
+      box.querySelectorAll('.wsp-repo').forEach(function (row) {
+        row.addEventListener('click', function () {
+          openRepoDetail(row.getAttribute('data-url'), row.getAttribute('data-name'),
+            row.getAttribute('data-def'));
+        });
+      });
+    }).catch(function (e) {
+      if (!document.getElementById('wsp-repos')) return;
+      box.innerHTML = '<div class="wsp-loading" style="color:var(--err)">' + esc(e.message) + '</div>';
+    });
   }
 
   function loadGlobals() {
@@ -605,21 +984,25 @@
     pushPage(connectHTML(), wireConnectPage);
   }
 
+  // v0.62 (user items 5+6): CONNECT ANY REPO leads at the TOP (the
+  // formatted hero rides under it), create follows, MY REPOS IS GONE (the
+  // user's repos now live in the picker's provider section), device
+  // storage + local folder close it out. Every color rides theme vars —
+  // the gradients included.
   function connectHTML() {
     return (
       '<div class="wsx">' +
         '<div class="wsx-head"><span class="wsx-title">connect workspace</span></div>' +
-        '<div class="wsx-opt" id="wso-cloud">' +
-          '<span class="wsx-ico k-github">☁</span>' +
-          '<span class="wsx-mid">Cloud Workspace</span>' +
-          '<span style="color:var(--accent-2)">›</span>' +
+        '<div class="wso-any" id="wso-cloud" role="button" tabindex="0">' +
+          '<span class="wso-any-ic">☁</span>' +
+          '<span class="wso-any-mid">' +
+            '<span class="wso-any-title">connect any repo</span>' +
+            '<div class="wso-any-sub">paste a URL — the host is recognized. plain URL = read-only; sign in for writes.</div>' +
+          '</span>' +
+          '<span class="wso-any-arrow">›</span>' +
         '</div>' +
-        // edit A5: the formatted, theme-colored cloud description
+        // the formatted, theme-colored hero (hosts + access levels)
         '<div class="wsx-cloudhero">' +
-          '<div style="font-size:var(--ui-small-fs);color:var(--text-2);line-height:1.5">' +
-            'connect <b style="color:var(--text-1)">any repo URL</b> — recognized hosts below. ' +
-            'a plain URL is <b style="color:var(--text-1)">read-only</b>; sign in for writes.' +
-          '</div>' +
           '<div class="wsx-chips">' +
             '<span class="wsx-chip c1">🐙 github</span>' +
             '<span class="wsx-chip c2">🍵 gitea</span>' +
@@ -639,12 +1022,6 @@
             '<div class="wsx-meta">from scratch — name, license, gitignore</div></span>' +
           '<span style="color:var(--accent-2)">›</span>' +
         '</div>' +
-        '<div class="wsx-opt" id="wso-discover">' +
-          '<span class="wsx-ico k-github">⌂</span>' +
-          '<span class="wsx-mid">my repos' +
-            '<div class="wsx-meta">your GitHub — pick branches, one-tap connect</div></span>' +
-          '<span style="color:var(--accent-2)">›</span>' +
-        '</div>' +
         '<div class="wsx-opt" id="wso-device">' +
           '<span class="wsx-ico k-device">📱</span>' +
           '<span class="wsx-mid">device storage' +
@@ -662,9 +1039,7 @@
     var c = document.getElementById('wso-cloud');
     if (c) c.addEventListener('click', function () { openCloudForm(''); });
     var cr = document.getElementById('wso-create');
-    if (cr) cr.addEventListener('click', openCreateForm);
-    var d = document.getElementById('wso-discover');
-    if (d) d.addEventListener('click', openDiscover);
+    if (cr) cr.addEventListener('click', function () { openCreateForm('github'); });
     var dv = document.getElementById('wso-device');
     if (dv) dv.addEventListener('click', openDevicePage);
   }
@@ -792,16 +1167,19 @@
       });
   }
 
-  // ── create repo form (edit A10: uses the saved sign-in) ────────────────
-  function openCreateForm() {
-    pushPage(createFormHTML(), wireCreateForm);
+  // ── create repo form (edit A10 + v0.62: KIND-AWARE — the picker's
+  // create pill passes the selected provider, gitea gets its own flow) ────
+  function openCreateForm(kind) {
+    kind = kind || 'github';
+    pushPage(createFormHTML(kind), function () { wireCreateForm(kind); });
   }
 
-  function createFormHTML() {
+  function createFormHTML(kind) {
+    kind = kind || 'github';
     return (
       '<div class="wsx">' +
-        pageHead('✚ create new repo') +
-        signinHTML('github', 'wsc') +
+        pageHead('✚ create new ' + kindLabel(kind) + ' repo') +
+        signinHTML(kind, 'wsc') +
         '<div class="wsx-field"><div class="wsx-label">NAME</div>' +
           '<input class="wsx-input" id="wsc-name" placeholder="my-new-repo" autocomplete="off" spellcheck="false"></div>' +
         '<div class="wsx-field"><div class="wsx-label">DESCRIPTION</div>' +
@@ -818,13 +1196,14 @@
       '</div>');
   }
 
-  function wireCreateForm() {
-    wireSignin(document, 'github', 'wsc', function () {
-      pushPage(createFormHTML(), wireCreateForm);
+  function wireCreateForm(kind) {
+    kind = kind || 'github';
+    wireSignin(document, kind, 'wsc', function () {
+      pushPage(createFormHTML(kind), function () { wireCreateForm(kind); });
     });
     var loadLists = function () {
       ['license', 'gitignore'].forEach(function (which) {
-        api('/api/workspaces/' + which + 's?kind=github').then(function (d) {
+        api('/api/workspaces/' + which + 's?kind=' + encodeURIComponent(kind)).then(function (d) {
           var sel = document.getElementById('wsc-' + which);
           if (!sel) return;
           var key = which === 'license' ? 'licenses' : 'gitignores';
@@ -835,20 +1214,20 @@
         }).catch(function () {});
       });
     };
-    if (accounts.github.signed_in) loadLists();
+    if (accounts[kind] && accounts[kind].signed_in) loadLists();
     var go = document.getElementById('wsc-go');
     if (go) go.addEventListener('click', function () {
       var err = document.getElementById('wsc-err');
       err.style.display = 'none';
       var name = document.getElementById('wsc-name').value.trim();
       if (!name) { err.textContent = 'a name is required'; err.style.display = ''; return; }
-      if (!accounts.github.signed_in) {
+      if (!(accounts[kind] && accounts[kind].signed_in)) {
         err.textContent = 'sign in above first — the new repo needs an owner account';
         err.style.display = ''; return;
       }
       go.disabled = true; go.textContent = 'creating…';
       api('/api/workspaces/create-repo', 'POST', {
-        kind: 'github',
+        kind: kind,
         name: name,
         description: document.getElementById('wsc-desc').value.trim(),
         license: document.getElementById('wsc-license').value,
@@ -866,36 +1245,10 @@
     });
   }
 
-  // ── MY REPOS (edit A10: sign-in-first + the rework) ────────────────────
-  function openDiscover() {
-    pushPage(discoverHTML(), function () {
-      wireSignin(document, 'github', 'wsd', function () {
-        pushPage(discoverHTML(), wireDiscover);
-        listMyRepos();
-      });
-      if (accounts.github.signed_in) listMyRepos();
-    });
-    if (accounts.github.signed_in) listMyRepos();
-  }
-
-  function discoverHTML() {
-    return (
-      '<div class="wsx">' +
-        pageHead('⌂ my repos') +
-        signinHTML('github', 'wsd') +
-        '<div class="wsx-list" id="wsd-list"></div>' +
-        '<div class="wsx-err" id="wsd-err" style="display:none"></div>' +
-      '</div>');
-  }
-
-  function wireDiscover() {
-    wireSignin(document, 'github', 'wsd', function () {
-      pushPage(discoverHTML(), wireDiscover);
-      listMyRepos();
-    });
-    if (accounts.github.signed_in) listMyRepos();
-  }
-
+  // ── MY REPOS — RETIRED (v0.62 user item 6): the user's repos render in
+  // the workspaces PICKER itself (the provider section's repos box, with
+  // the glowing access pills). The standalone discover page is gone;
+  // an in-flight OAuth resume just reopens the picker.
   function repoTypeMark(r) {
     if (r.fork) return '<span class="wsx-type fork" title="fork">⑂</span>';
     if (r.private) return '<span class="wsx-type priv" title="private">🔒</span>';
@@ -911,63 +1264,6 @@
     if (s < 86400) return Math.floor(s / 3600) + 'h ago';
     if (s < 2592000) return Math.floor(s / 86400) + 'd ago';
     return Math.floor(s / 2592000) + 'mo ago';
-  }
-
-  function listMyRepos() {
-    var list = document.getElementById('wsd-list');
-    if (!list) return;
-    list.innerHTML = '<div class="wsx-sub">loading your repos…</div>';
-    api('/api/workspaces/discover?kind=github&limit=100').then(function (d) {
-      var repos = d.repos || [];
-      if (!repos.length) {
-        list.innerHTML = '<div class="wsx-sub">no repos on that account</div>';
-        return;
-      }
-      // edit A10: group by owner (nesting + indentation), varied type
-      // marks, stars/language/updated meta, theme colors throughout.
-      var byOwner = {};
-      var order = [];
-      repos.forEach(function (r) {
-        var owner = (r.full_name || r.name).split('/')[0] || 'yours';
-        if (!byOwner[owner]) { byOwner[owner] = []; order.push(owner); }
-        byOwner[owner].push(r);
-      });
-      var html = '';
-      order.forEach(function (owner) {
-        html += '<div class="wsx-reposec">' + esc(owner) +
-          '<span style="color:var(--text-3);font-weight:400"> · ' +
-          byOwner[owner].length + '</span></div>';
-        byOwner[owner].forEach(function (r) {
-          var meta = [];
-          if (r.stars != null) meta.push('<span class="wsx-stat"><span class="star">★</span> ' + r.stars + '</span>');
-          if (r.language) meta.push('<span class="wsx-stat"><span class="dot"></span> ' + esc(r.language) + '</span>');
-          if (r.updated_at) meta.push(esc(timeAgo(r.updated_at)));
-          html +=
-            '<div class="wsx-repo" data-url="' + esc(r.web_url || '') + '" data-name="' + esc(r.full_name || r.name) + '" data-def="' + esc(r.default_branch || '') + '">' +
-              '<div class="wsx-row">' +
-                repoTypeMark(r) +
-                '<span class="wsx-mid">' +
-                  '<span class="wsx-name" style="font-size:var(--ui-small-fs)">' + esc((r.full_name || r.name).split('/').pop()) + '</span>' +
-                  '<div class="wsx-meta">' + (meta.length ? meta.join('<span style="color:var(--border-strong)"> · </span>') :
-                    esc(r.default_branch || '')) + '</div>' +
-                '</span>' +
-                '<span style="color:var(--text-3)">›</span>' +
-              '</div>' +
-            '</div>';
-        });
-      });
-      list.innerHTML = html;
-      Array.prototype.forEach.call(list.querySelectorAll('.wsx-repo'), function (el) {
-        el.addEventListener('click', function () {
-          openRepoDetail(el.getAttribute('data-url'), el.getAttribute('data-name'),
-            el.getAttribute('data-def'));
-        });
-      });
-    }).catch(function (e) {
-      list.innerHTML = '';
-      var err = document.getElementById('wsd-err');
-      if (err) { err.textContent = e.message; err.style.display = ''; }
-    });
   }
 
   // ── REPO DETAIL (edit A10: entire repo | pick branches) ────────────────
