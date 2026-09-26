@@ -348,12 +348,12 @@
             '</div>'
           : '') +
         useHTML +
-        // v0.56: the Get-API-key link follows the PRIMARY accent (the old
-        // gold read as hardcoded) — opens the REAL browser (v0.14: no more
-        // in-app embedding). A waiting hint appears on the card — the user
-        // copies the key in the browser and pastes it right here.
+        // v0.62.3: the Get-API-key link opens the IN-APP BROWSER (the APK
+        // viewer / a desktop popup) — the user never leaves the app to
+        // grab a key. webview-hostile providers (Google-only OAuth) hand
+        // off to a Chrome Custom Tab on the APK instead.
         '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--accent);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
-        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your browser. Copy your API key there, come back, and paste it above.</div>' +
+        '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the in-app browser. Copy your API key there, tap ✕ to come straight back, and paste it above.</div>' +
         '</div>';
     }
 
@@ -437,18 +437,29 @@
         });
       });
 
-      // Gold "Get API key" links (v0.14): open the REAL browser immediately
-      // and reveal the waiting hint. No embedding — the app screen stays
-      // put, so the back gesture returns here exactly as left.
+      // v0.62.3: the Get-API-key links open the IN-APP BROWSER — the APK
+      // viewer (top-level WebView: the key consoles render fully; logins
+      // persist in the WebView profile) or a desktop popup. Google-only
+      // OAuth providers (webview_hostile) go to a Chrome Custom Tab on
+      // the APK. The waiting hint adapts to whichever tier fired.
       contentEl.querySelectorAll('[data-getkey]').forEach(function (link) {
         link.addEventListener('click', function (e) {
           e.preventDefault();
           var name = link.dataset.getkey;
           var cfg = providers[name];
           if (cfg && cfg.signup_url) {
-            openInSystemBrowser(cfg.signup_url);
+            var tier = window.InAppBrowser
+              ? window.InAppBrowser.open(cfg.signup_url, { purpose: 'getkey', hostile: !!cfg.webview_hostile })
+              : (openInSystemBrowser(cfg.signup_url), 'browser');
             var hint = contentEl.querySelector('#getkey-hint-' + name);
-            if (hint) hint.style.display = 'block';
+            if (hint) {
+              if (tier === 'apk-viewer') {
+                hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the in-app browser. Copy your API key there, tap ✕ to come straight back, and paste it above.';
+              } else if (tier === 'popup') {
+                hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the window beside this one. Copy your API key there, come back, and paste it above.';
+              }
+              hint.style.display = 'block';
+            }
           }
         });
       });

@@ -108,13 +108,58 @@
   function wireOpen(card, href) {
     var b = card.querySelector('.lv-open');
     if (b) b.addEventListener('click', function () {
-      // E1: a popup on desktop, a tab elsewhere. E2 (the in-app browser)
-      // upgrades this to the APK viewer / themed path.
-      var w = null;
-      try { w = window.open(href, '_blank', 'width=760,height=900'); } catch (e) {}
-      if (!w) try { w = window.open(href, '_blank'); } catch (e2) {}
+      window.InAppBrowser.open(href);
     });
   }
+
+  // ── v0.62.3: THE IN-APP BROWSER (PLAN-V063 Phase E2) ──────────────
+  // "Press any link and stay in the app." Three tiers, best first:
+  //   APK  — the __doomalayKotlin bridge opens the ViewerActivity (a
+  //          second WebView, full screen, our themed toolbar; top-level
+  //          navigation so frame guards don't apply — the KEY CONSOLES
+  //          render fully in-app); the main WebView NEVER navigates.
+  //   desktop — a popup window (760×900) beside the app: the paste box
+  //          stays visible (the v0.60 OAuth pattern applied to keys).
+  //   gateway — a new tab (the honest ceiling where popups are blocked).
+  // webview-hostile pages (Google-only OAuth: disallowed_useragent in a
+  // WebView) pass hostile:true — the APK tier hands those to a Chrome
+  // Custom Tab (the user's Chrome session, usually already logged in).
+  var themeSnapshot = function () {
+    var cs = getComputedStyle(document.documentElement);
+    var pick = function (v) { var s = cs.getPropertyValue(v).trim(); return s || ''; };
+    return {
+      accent: pick('--accent'),
+      bgPanel: pick('--bg-panel') || pick('--bg-app'),
+      surface: pick('--surface-2'),
+      text1: pick('--text-1'),
+      text3: pick('--text-3'),
+      border: pick('--border')
+    };
+  };
+
+  window.InAppBrowser = {
+    open: function (url, opts) {
+      opts = opts || {};
+      var bridge = window.__doomalayKotlin;
+      if (bridge && typeof bridge.openInApp === 'function') {
+        try {
+          var th = themeSnapshot();
+          bridge.openInApp(url, JSON.stringify({
+            theme: th,
+            hostile: !!opts.hostile,
+            purpose: opts.purpose || 'link'
+          }));
+          return 'apk-viewer';
+        } catch (e) { /* bridge hiccup — fall through */ }
+      }
+      var w = null;
+      try { w = window.open(url, '_blank', 'width=760,height=900,noopener'); } catch (e1) {}
+      if (!w) {
+        try { w = window.open(url, '_blank'); } catch (e2) {}
+      }
+      return w ? 'popup' : 'tab';
+    }
+  };
 
   // ── the per-tier body ──────────────────────────────────────────────
   function paint(card, href, d) {

@@ -1,121 +1,122 @@
 {
-  "opencode": {
-    "env_var": "OPENCODE_ZEN_API_KEY",
-    "base_url": "https://opencode.ai/zen/v1",
-    "litellm_prefix": "opencode",
-    "label": "OpenCode Zen",
-    "description": "Curated AI models tested by the OpenCode team. Free tier: 100 requests/day; free models cost $0, paid models are per-token.",
-    "signup_url": "https://opencode.ai/auth",
-    "free_tier": true,
-    "color": "#00D9A0",
-    "validate": "chat_probe",
-    "probe_model": "big-pickle"
-  },
-  "privatemodeai": {
-    "env_var": "PRIVATEMODEAI_API_KEY",
-    "base_url": "https://api.privatemode.ai/v1",
-    "litellm_prefix": "privatemodeai",
-    "label": "PrivateMode AI",
-    "description": "Confidential AI inference — prompts are hardware-encrypted in transit and at rest. Free: 5M tokens on signup, then 1M prompt + 1M completion tokens/month.",
-    "signup_url": "https://portal.privatemode.ai/api-keys",
-    "free_tier": true,
-    "color": "#9333EA",
-    "probe_model": "kimi-k2.6"
-  },
-  "nvidia": {
-    "env_var": "NVIDIA_API_KEY",
-    "base_url": "https://integrate.api.nvidia.com/v1",
-    "litellm_prefix": "nvidia",
-    "label": "NVIDIA",
-    "description": "Hosted open models (Llama, Kimi, DeepSeek, Qwen) on NVIDIA NIM. Free credits for new accounts; ~40 requests/min.",
-    "signup_url": "https://build.nvidia.com/settings/api-keys",
-    "free_tier": true,
-    "color": "#76B900",
-    "validate": "chat_probe",
-    "probe_model": "nvidia/nemotron-3.5-lightning-30b-a3b"
-  },
-  "openrouter": {
-    "env_var": "OPENROUTER_API_KEY",
-    "base_url": "https://openrouter.ai/api/v1",
-    "litellm_prefix": "openrouter",
-    "label": "OpenRouter",
-    "description": "One API for 400+ models from every major vendor. ':free' model variants share a free pool (~50 requests/day); paid models use credits.",
-    "signup_url": "https://openrouter.ai/keys",
-    "free_tier": true,
-    "color": "#7C3AED",
-    "validate": "auth_key",
-    "validate_path": "/auth/key"
-  },
-  "cloudflare": {
-    "env_var": "CLOUDFLARE_API_KEY",
-    "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
-    "litellm_prefix": "cloudflare",
-    "label": "Cloudflare Workers AI",
-    "description": "Llama, Kimi and Qwen on Cloudflare's edge network. Free daily neuron allocation; needs an API token + Account ID.",
-    "signup_url": "https://dash.cloudflare.com/profile/api-tokens",
-    "free_tier": true,
-    "extra_env_var": "CLOUDFLARE_ACCOUNT_ID",
-    "color": "#F38020"
-  },
-  "groq": {
-    "env_var": "GROQ_API_KEY",
-    "base_url": "https://api.groq.com/openai/v1",
-    "litellm_prefix": "groq",
-    "label": "Groq",
-    "description": "Ultra-fast LPU inference of Llama, Kimi, Qwen and more. Generous free tier with per-model daily request limits.",
-    "signup_url": "https://console.groq.com/keys",
-    "free_tier": true,
-    "color": "#F55036"
-  },
-  "together": {
-    "env_var": "TOGETHER_API_KEY",
-    "base_url": "https://api.together.xyz/v1",
-    "litellm_prefix": "together",
-    "label": "Together AI",
-    "description": "Hosted open-source models (Llama, DeepSeek, Qwen). Free trial credits on signup, then pay-as-you-go.",
-    "signup_url": "https://api.together.ai/settings/api-keys",
-    "free_tier": true,
-    "color": "#0F6FFF"
-  },
-  "mistral": {
-    "env_var": "MISTRAL_API_KEY",
-    "base_url": "https://api.mistral.ai/v1",
-    "litellm_prefix": "mistral",
-    "label": "Mistral",
-    "description": "Mistral's own models (Large, Small, Codestral). Free experiment tier with monthly token limits; paid plans scale up.",
-    "signup_url": "https://console.mistral.ai/api-keys",
-    "free_tier": true,
-    "color": "#FF7000"
-  },
-  "anthropic": {
-    "env_var": "ANTHROPIC_API_KEY",
-    "base_url": "https://api.anthropic.com/v1",
-    "litellm_prefix": "anthropic",
-    "label": "Anthropic",
-    "description": "Claude models (Sonnet, Opus, Haiku). Pay-as-you-go per token; requires billing enabled.",
-    "signup_url": "https://console.anthropic.com/settings/keys",
-    "free_tier": false,
-    "color": "#D97706",
-    "auth_style": "anthropic"
-  },
-  "openai": {
-    "env_var": "OPENAI_API_KEY",
-    "base_url": "https://api.openai.com/v1",
-    "litellm_prefix": "openai",
-    "label": "OpenAI",
-    "description": "GPT-5, o-series and GPT-4o. Pay-as-you-go per token; no standing free tier.",
-    "signup_url": "https://platform.openai.com/api-keys",
-    "free_tier": false,
-    "color": "#10A37F"
-  },
-  "deepseek": {
-    "env_var": "DEEPSEEK_API_KEY",
-    "base_url": "https://api.deepseek.com/v1",
-    "litellm_prefix": "deepseek",
-    "label": "DeepSeek",
-    "description": "DeepSeek V3 and R1 (chat + reasoning). Very low per-token pricing; no free tier.",
-    "signup_url": "https://platform.deepseek.com/api_keys",
-    "free_tier": false,
-    "color": "#4D6BFE"
-  }
+ "opencode": {
+  "env_var": "OPENCODE_ZEN_API_KEY",
+  "base_url": "https://opencode.ai/zen/v1",
+  "litellm_prefix": "opencode",
+  "label": "OpenCode Zen",
+  "description": "Curated AI models tested by the OpenCode team. Free tier: 100 requests/day; free models cost $0, paid models are per-token.",
+  "signup_url": "https://opencode.ai/auth",
+  "free_tier": true,
+  "color": "#00D9A0",
+  "validate": "chat_probe",
+  "probe_model": "big-pickle",
+  "webview_hostile": true
+ },
+ "privatemodeai": {
+  "env_var": "PRIVATEMODEAI_API_KEY",
+  "base_url": "https://api.privatemode.ai/v1",
+  "litellm_prefix": "privatemodeai",
+  "label": "PrivateMode AI",
+  "description": "Confidential AI inference — prompts are hardware-encrypted in transit and at rest. Free: 5M tokens on signup, then 1M prompt + 1M completion tokens/month.",
+  "signup_url": "https://portal.privatemode.ai/api-keys",
+  "free_tier": true,
+  "color": "#9333EA",
+  "probe_model": "kimi-k2.6"
+ },
+ "nvidia": {
+  "env_var": "NVIDIA_API_KEY",
+  "base_url": "https://integrate.api.nvidia.com/v1",
+  "litellm_prefix": "nvidia",
+  "label": "NVIDIA",
+  "description": "Hosted open models (Llama, Kimi, DeepSeek, Qwen) on NVIDIA NIM. Free credits for new accounts; ~40 requests/min.",
+  "signup_url": "https://build.nvidia.com/settings/api-keys",
+  "free_tier": true,
+  "color": "#76B900",
+  "validate": "chat_probe",
+  "probe_model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+ },
+ "openrouter": {
+  "env_var": "OPENROUTER_API_KEY",
+  "base_url": "https://openrouter.ai/api/v1",
+  "litellm_prefix": "openrouter",
+  "label": "OpenRouter",
+  "description": "One API for 400+ models from every major vendor. ':free' model variants share a free pool (~50 requests/day); paid models use credits.",
+  "signup_url": "https://openrouter.ai/keys",
+  "free_tier": true,
+  "color": "#7C3AED",
+  "validate": "auth_key",
+  "validate_path": "/auth/key"
+ },
+ "cloudflare": {
+  "env_var": "CLOUDFLARE_API_KEY",
+  "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+  "litellm_prefix": "cloudflare",
+  "label": "Cloudflare Workers AI",
+  "description": "Llama, Kimi and Qwen on Cloudflare's edge network. Free daily neuron allocation; needs an API token + Account ID.",
+  "signup_url": "https://dash.cloudflare.com/profile/api-tokens",
+  "free_tier": true,
+  "extra_env_var": "CLOUDFLARE_ACCOUNT_ID",
+  "color": "#F38020"
+ },
+ "groq": {
+  "env_var": "GROQ_API_KEY",
+  "base_url": "https://api.groq.com/openai/v1",
+  "litellm_prefix": "groq",
+  "label": "Groq",
+  "description": "Ultra-fast LPU inference of Llama, Kimi, Qwen and more. Generous free tier with per-model daily request limits.",
+  "signup_url": "https://console.groq.com/keys",
+  "free_tier": true,
+  "color": "#F55036"
+ },
+ "together": {
+  "env_var": "TOGETHER_API_KEY",
+  "base_url": "https://api.together.xyz/v1",
+  "litellm_prefix": "together",
+  "label": "Together AI",
+  "description": "Hosted open-source models (Llama, DeepSeek, Qwen). Free trial credits on signup, then pay-as-you-go.",
+  "signup_url": "https://api.together.ai/settings/api-keys",
+  "free_tier": true,
+  "color": "#0F6FFF"
+ },
+ "mistral": {
+  "env_var": "MISTRAL_API_KEY",
+  "base_url": "https://api.mistral.ai/v1",
+  "litellm_prefix": "mistral",
+  "label": "Mistral",
+  "description": "Mistral's own models (Large, Small, Codestral). Free experiment tier with monthly token limits; paid plans scale up.",
+  "signup_url": "https://console.mistral.ai/api-keys",
+  "free_tier": true,
+  "color": "#FF7000"
+ },
+ "anthropic": {
+  "env_var": "ANTHROPIC_API_KEY",
+  "base_url": "https://api.anthropic.com/v1",
+  "litellm_prefix": "anthropic",
+  "label": "Anthropic",
+  "description": "Claude models (Sonnet, Opus, Haiku). Pay-as-you-go per token; requires billing enabled.",
+  "signup_url": "https://console.anthropic.com/settings/keys",
+  "free_tier": false,
+  "color": "#D97706",
+  "auth_style": "anthropic"
+ },
+ "openai": {
+  "env_var": "OPENAI_API_KEY",
+  "base_url": "https://api.openai.com/v1",
+  "litellm_prefix": "openai",
+  "label": "OpenAI",
+  "description": "GPT-5, o-series and GPT-4o. Pay-as-you-go per token; no standing free tier.",
+  "signup_url": "https://platform.openai.com/api-keys",
+  "free_tier": false,
+  "color": "#10A37F"
+ },
+ "deepseek": {
+  "env_var": "DEEPSEEK_API_KEY",
+  "base_url": "https://api.deepseek.com/v1",
+  "litellm_prefix": "deepseek",
+  "label": "DeepSeek",
+  "description": "DeepSeek V3 and R1 (chat + reasoning). Very low per-token pricing; no free tier.",
+  "signup_url": "https://platform.deepseek.com/api_keys",
+  "free_tier": false,
+  "color": "#4D6BFE"
+ }
 }

@@ -47,4 +47,9 @@ android {
 
 dependencies {
     implementation("androidx.core:core:1.13.1")
+    // v0.62.3: Chrome Custom Tabs (Apache-2.0) — the handoff target for
+    // webview-hostile pages (Google-only OAuth: disallowed_useragent in a
+    // WebView). The ONLY new dependency of the embed wave; everything
+    // else (viewer, YT embeds, link cards) is stdlib WebView + web code.
+    implementation("androidx.browser:browser:1.8.0")
 }

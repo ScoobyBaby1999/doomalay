@@ -21,6 +21,10 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val REQUEST_NOTIF = 1001
 
+    // v0.62.3: the main WebView's video fullscreen (onShowCustomView)
+    private var fullscreenView: android.view.View? = null
+    private var fullscreenCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
+
     // v0.31: the WebView FILE CHOOSER (a real v0.30 bug — <input type=file>
     // was dead in the APK: onShowFileChooser was never implemented, so the
     // tweaks background picker AND the hub's card-image picker did
@@ -141,6 +145,32 @@ class MainActivity : Activity() {
                         false
                     }
                 }
+
+                // v0.62.3: VIDEO FULLSCREEN in the main WebView — the E1
+                // YouTube embed's □ button (and any <video> going full-
+                // screen). The custom view overlays the whole activity;
+                // back / the site's exit restores the app exactly as it
+                // was (the WebView itself never navigated).
+                override fun onShowCustomView(view: android.view.View, callback: android.webkit.WebChromeClient.CustomViewCallback) {
+                    if (fullscreenView != null) {
+                        callback.onCustomViewHidden()
+                        return
+                    }
+                    fullscreenView = view
+                    fullscreenCallback = callback
+                    addContentView(view, android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+
+                override fun onHideCustomView() {
+                    (fullscreenView?.parent as? android.view.ViewGroup)?.removeView(fullscreenView)
+                    fullscreenView = null
+                    fullscreenCallback?.onCustomViewHidden()
+                    fullscreenCallback = null
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
             }
 
             webView.webViewClient = object : WebViewClient() {
@@ -162,11 +192,12 @@ class MainActivity : Activity() {
                 private fun handleUrl(url: String?): Boolean {
                     if (url == null) return false
                     if (url.startsWith("http://127.0.0.1:8080") || url.startsWith("about:")) return false
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-                    } catch (e: Exception) {
-                        AppLog.error("external open failed: $url", e)
-                    }
+                    // v0.62.3: the link opens IN-APP — the ViewerActivity (a
+                    // second WebView with our toolbar). Top-level navigation
+                    // there ignores frame guards, so the key consoles render
+                    // fully; the main WebView NEVER navigates — the SPA state,
+                    // the open panel and the back-gesture stack stay put.
+                    openInViewer(url, hostile = false)
                     return true
                 }
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
@@ -180,6 +211,11 @@ class MainActivity : Activity() {
                 }
             }
             setContentView(webView)
+            // v0.62.3: THE JS BRIDGE — the web UI's InAppBrowser tier calls
+            // __doomalayKotlin.openInApp(url, opts) with a live theme
+            // snapshot (CSS vars) so the viewer's toolbar follows the app's
+            // theme system — nothing hardcoded on the Kotlin side.
+            webView.addJavascriptInterface(bridgeObject(), "__doomalayKotlin")
             webView.loadData(
                 "<html><body style='background:#0a0a0b;color:#a78bfa;font-family:sans-serif;" +
                 "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>" +
@@ -236,6 +272,104 @@ class MainActivity : Activity() {
 
     @Volatile private var retrying = false
 
+    // v0.62.3: the bridge object — shared by proceed() and the error
+    // screen (addJavascriptInterface replaces by name, so both call
+    // sites must install the SAME surface: retryEngine + openInApp).
+    private fun bridgeObject(): Any = object : Any() {
+        @android.webkit.JavascriptInterface
+        fun retryEngine() {
+            AppLog.log("User pressed engine Retry")
+            handler.post { retryEngine() }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun openInApp(url: String, optsJson: String) {
+            AppLog.log("openInApp: $url")
+            handler.post {
+                val opts = try { org.json.JSONObject(optsJson) } catch (e: Exception) { org.json.JSONObject() }
+                openInViewer(url, hostile = opts.optBoolean("hostile", false), themeJson = optsJson)
+            }
+        }
+    }
+
+    // openInViewer — THE IN-APP BROWSER (PLAN-V063 E2). hostile pages
+    // (Google-only OAuth — disallowed_useragent in a WebView) go to a
+    // Chrome Custom Tab instead (the user's Chrome session, usually
+    // already logged in).
+    private fun openInViewer(url: String, hostile: Boolean, themeJson: String? = null) {
+        if (hostile) {
+            openCustomTab(url)
+            return
+        }
+        if (themeJson != null) {
+            startActivity(Intent(this, ViewerActivity::class.java).apply {
+                putExtra("url", url)
+                putExtra("theme", themeJson)
+            })
+            return
+        }
+        // no snapshot yet (the handleUrl path) — read the live CSS vars
+        // from the main WebView, THEN open. evaluateJavascript returns
+        // the JSON representation, ready for the viewer's JSONObject.
+        if (this::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "(function(){try{var cs=getComputedStyle(document.documentElement);" +
+                    "var p=function(v){var s=cs.getPropertyValue(v).trim();return (s&&s.indexOf('var(')<0)?s:''};" +
+                    "return {accent:p('--accent'),bgPanel:p('--bg-panel')||p('--bg-app')," +
+                    "surface:p('--surface-2'),text1:p('--text-1'),text3:p('--text-3'),border:p('--border')}}" +
+                    "catch(e){return {}}})()"
+            ) { res ->
+                startActivity(Intent(this, ViewerActivity::class.java).apply {
+                    putExtra("url", url)
+                    putExtra("theme", res ?: "{}")
+                })
+            }
+        }
+    }
+
+    // the webview-hostile escape hatch: a Chrome Custom Tab (the user's
+    // Chrome session). Falls back to the system browser — never to the
+    // viewer (a Google login wall can't complete in a WebView).
+    private fun openCustomTab(url: String) {
+        val launch = { accent: Int? ->
+            try {
+                val b = androidx.browser.customtabs.CustomTabsIntent.Builder().setShowTitle(true)
+                if (accent != null) b.setToolbarColor(accent)
+                b.build().launchUrl(this, android.net.Uri.parse(url))
+            } catch (e: Exception) {
+                AppLog.error("custom tab failed — system browser", e)
+                try { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) } catch (e2: Exception) {
+                    AppLog.error("system browser also failed", e2)
+                }
+            }
+        }
+        if (this::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "(function(){try{return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()}catch(e){return ''}})()"
+            ) { res -> launch(parseCssColor(res)) }
+        } else {
+            launch(null)
+        }
+    }
+
+    // "#a78bfa" or "rgb(167,139,250)" (evaluateJavascript returns the JSON
+    // representation — a quoted string — so trim the quotes) → a color.
+    private fun parseCssColor(v: String?): Int? {
+        val s = (v ?: "").trim().trim('"')
+        if (s.isEmpty() || (!s.startsWith("#") && !s.startsWith("rgb"))) return null
+        return try {
+            if (s.startsWith("#")) android.graphics.Color.parseColor(s)
+            else {
+                val nums = Regex("-?\\d+").findAll(s).map { it.value.toInt() }.toList()
+                if (nums.size >= 3) android.graphics.Color.rgb(
+                    nums[0].coerceIn(0, 255), nums[1].coerceIn(0, 255), nums[2].coerceIn(0, 255))
+                else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** v0.15: engine-down screen WITH a retry path (was a dead end). */
     @SuppressLint("SetJavaScriptEnabled")
     private fun showEngineRetry() {
@@ -261,13 +395,10 @@ class MainActivity : Activity() {
             </body></html>
         """.trimIndent()
         if (this::webView.isInitialized) {
-            webView.addJavascriptInterface(object : Any() {
-                @android.webkit.JavascriptInterface
-                fun retryEngine() {
-                    AppLog.log("User pressed engine Retry")
-                    handler.post { retryEngine() }
-                }
-            }, "__doomalayKotlin")
+            // v0.62.3: the SAME bridge surface as proceed() — the old
+            // retry-only object would have clobbered openInApp when the
+            // error screen re-registered the name.
+            webView.addJavascriptInterface(bridgeObject(), "__doomalayKotlin")
             webView.loadData(html, "text/html", "utf-8")
         }
     }
@@ -347,6 +478,16 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        // v0.62.3: video fullscreen exits FIRST (the custom view covers
+        // everything — the app underneath never moved)
+        if (fullscreenView != null) {
+            (fullscreenView?.parent as? android.view.ViewGroup)?.removeView(fullscreenView)
+            fullscreenView = null
+            fullscreenCallback?.onCustomViewHidden()
+            fullscreenCallback = null
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            return
+        }
         // v0.14: the app is a single-page WebView — there is no navigation
         // history to walk "back" through. The old code called
         // webView.goBack(), which jumped to the leftover "Starting engine…"
