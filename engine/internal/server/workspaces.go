@@ -1400,22 +1400,38 @@ type oauthPending struct {
 // callback URLs (our loopback = the user's own machine) and PKCE S256 makes
 // intercepted codes worthless. Shipping the secret turns every install's
 // loopback into a ONE-PRESS sign-in (login → Authorize → done page) with
-// ZERO HuggingFace involvement — the v0.61 directive. EMPTY until the app
-// owner pastes the generated secret here (docs/GITHUB_APP_SETUP.md §0:
-// GitHub App settings → Client secrets → Generate); while empty, installs
-// keep the v0.55 device flow. env DOOMALAY_GH_CLIENT_SECRET / vault values
-// still OVERRIDE this (self-hosters rotate at will).
-var ghOAuthDefaultClientSecret = ""
+// ZERO HuggingFace involvement — the v0.61 directive. ARMED in v0.61.2:
+// the app owner generated a FRESH secret on the recovered one-press app
+// and pasted it here — one line arms every install in the world. To
+// rotate: GitHub App settings → Client secrets → Generate → paste below
+// (and DELETE the old secret row there — GitHub keeps old secrets valid
+// until deleted). env DOOMALAY_GH_CLIENT_SECRET / vault values still
+// OVERRIDE this (self-hosters rotate at will).
+var ghOAuthDefaultClientSecret = "ab694028248d5d1024bc07281b1eed76afb591ee"
 
 // ghOAuthCreds: env override first (headless installs), then the vault,
-// then the BUILT-IN default — the "Doomalay Workspaces" GitHub App client
-// id (public by design; GitHub App ids are not secrets) plus the v0.61
-// shipped secret (gh-CLI pattern, see above). v0.58: the
-// user's NEW app, created per docs/GITHUB_APP_SETUP.md §1 with Device
-// Flow ☑ / Expire tokens ☐ / Any account, verified live (device/code
-// returns a user_code). The old app (Iv23liDzVTw7zphxo5Hv) is compromised
-// and deleted.
-const ghOAuthDefaultClientID = "Iv23li3qm665pDrDO1Nh"
+// then the BUILT-IN default — the WEB-FLOW app pair (public by design;
+// GitHub App ids are not secrets) plus the shipped secret above.
+// v0.61.2: the DEFAULT is the RECOVERED first app (Iv23liDzVTw7zphxo5Hv)
+// — the owner rotated its client secret (fresh Generate; the leaked old
+// row must be deleted on the app's Client secrets list, which kills the
+// leaked value) and it is now the DIRECT one-press app. Device Flow is
+// OFF on it (probed live 2026-09-26: device/code → device_flow_disabled)
+// — fine for the web flow, which never touches the device endpoint, but
+// the secretless fallback must NOT ride it (see ghDeviceDefaultClientID
+// below). Its callback URLs must carry the loopback pair
+// (docs/GITHUB_APP_SETUP.md §2).
+const ghOAuthDefaultClientID = "Iv23liDzVTw7zphxo5Hv"
+
+// ghDeviceDefaultClientID — v0.61.2: the DEVICE-FLOW app. The v0.58
+// "Doomalay Workspaces" app (Iv23li3qm665pDrDO1Nh), Device Flow ☑ /
+// Expire tokens ☐ / Any account, verified live (device/code returns a
+// user_code — re-probed 2026-09-26). The one-press app above has Device
+// Flow disabled, so the secretless device flow (gateway origins + the
+// "or use a one-time code instead" link in the panel) keeps riding THIS
+// app. Custom installs (env/vault id) still override — their own app
+// then serves both flows, as the setup doc says.
+const ghDeviceDefaultClientID = "Iv23li3qm665pDrDO1Nh"
 
 // v0.52 OAuth egress plumbing: every OAuth/token-exchange call rides the
 // netx transport (system resolver → DNS-over-HTTPS fallback). The live
@@ -1845,12 +1861,29 @@ var ghDeviceStore = struct {
         cur *ghDevicePending
 }{}
 
+// ghDeviceClientID — v0.61.2: the device flow's client id. NOT
+// ghOAuthCreds(): the one-press web app (the new default) has Device Flow
+// DISABLED (probed live), so the secretless fallback rides the device-
+// capable app unless the install configures its own (env/vault — a
+// self-hoster's app then serves both flows, as the setup doc says).
+func (s *Server) ghDeviceClientID() string {
+        if id := strings.TrimSpace(os.Getenv("DOOMALAY_GH_CLIENT_ID")); id != "" {
+                return id
+        }
+        if s.vault != nil {
+                if v, _, err := s.vault.Get("GITHUB_OAUTH_CLIENT_ID"); err == nil && strings.TrimSpace(v) != "" {
+                        return strings.TrimSpace(v)
+                }
+        }
+        return ghDeviceDefaultClientID
+}
+
 // handleGHDeviceStart — POST /api/workspaces/oauth/github/device/start.
 // Calls GitHub's device endpoint with the (public, built-in) client id and
 // hands the user_code to the UI; a background poller then waits for the
 // user to authorize at github.com/login/device.
 func (s *Server) handleGHDeviceStart(w http.ResponseWriter, r *http.Request) {
-        id, _ := s.ghOAuthCreds()
+        id := s.ghDeviceClientID()
         if id == "" {
                 writeError(w, 400, "no GitHub App client id configured (set DOOMALAY_GH_CLIENT_ID)")
                 return

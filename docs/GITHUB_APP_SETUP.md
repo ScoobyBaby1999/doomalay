@@ -62,26 +62,39 @@ github.com/login/device; the panel's open button uses the `?user_code=`
 prefill URL GitHub's login wall preserves). The engine picks
 automatically; the user never chooses.
 
-### Arming the direct one-press (one-time, ~3 minutes)
+**Two apps, two jobs (v0.61.2):** the one-press app has **Device Flow
+OFF** (probed live: `device/code` → `device_flow_disabled`) — that's fine,
+the web flow never touches the device endpoint — so the secretless device
+fallback rides the v0.58 **Doomalay Workspaces** app
+(`Iv23li3qm665pDrDO1Nh`, Device Flow ☑, probed live: returns a user_code).
+The engine resolves them independently (`ghOAuthDefaultClientID` for the
+web flow, `ghDeviceDefaultClientID` for the device flow); a self-hoster's
+own app (env/vault) still overrides both.
 
-1. **GitHub App settings → Identifying and authorizing users → Callback
-   URLs** → add BOTH:
+### Current state: ARMED (v0.61.2) — rotation runbook
+
+The shipped pair is the **recovered first app** (`Iv23liDzVTw7zphxo5Hv`)
+with a **freshly generated secret** (`ghOAuthDefaultClientSecret` in
+`engine/internal/server/workspaces.go`). The owner's side of the bargain
+(verify once in the app's settings on GitHub):
+
+1. **Callback URLs** carry BOTH loopback entries:
    - `http://localhost:8080/api/github/oauth/callback`
    - `http://127.0.0.1:8080/api/github/oauth/callback`
 
    (plus the same pair with port `:8123` if that port is ever used.)
    GitHub Apps accept multiple callback URLs and allow http for loopback.
-2. **Client secrets → Generate a new client secret** → paste the value
-   into `ghOAuthDefaultClientSecret` in
-   `engine/internal/server/workspaces.go` → commit → release. That single
-   line arms every install in the world.
-3. Keep **Device Flow ☑** (the fallback), **Expire user authorization
-   tokens ☐** (refresh also needs the secret; long-lived tokens are the
-   UX we want), Administration **No access**.
+2. **Client secrets list**: the OLD (leaked) secret row is **deleted** —
+   GitHub keeps every generated secret valid until you delete its row;
+   only the fresh one should remain.
+3. **Device Flow ☐ on this app is fine** (the device fallback rides the
+   other app), **Expire user authorization tokens ☐**, Administration
+   **No access**.
 
-Until step 2 lands, `ghOAuthDefaultClientSecret` is empty and installs
-behave exactly like v0.60 (broker/device flow) — the empty string is the
-off switch.
+To **rotate** later: app settings → Client secrets → Generate → paste
+into `ghOAuthDefaultClientSecret` → delete the old row → commit → release.
+One line re-arms every install in the world; the empty string was the
+v0.60-era off switch (no longer used).
 
 ---
 
@@ -131,13 +144,16 @@ After creation, on the app's page:
 - Note the **App ID** (not needed by the engine, just for reference).
 - Copy the **Client ID** (shown near the top, `Iv…`). It ships as
   `ghOAuthDefaultClientID` in `engine/internal/server/workspaces.go`.
-  **Wired as of v0.58: `Iv23li3qm665pDrDO1Nh`** (the current app, Device
-  Flow verified live against `github.com/login/device/code`).
+  **Wired as of v0.61.2: `Iv23liDzVTw7zphxo5Hv`** (the recovered first
+  app — the direct one-press; Device Flow OFF on it is fine, see §0).
+  The device-flow fallback rides `ghDeviceDefaultClientID` =
+  `Iv23li3qm665pDrDO1Nh` (the v0.58 app, Device Flow verified live).
 - **Client secret: generate it and ship it** (v0.61 CHANGE — was: never
   generate). Paste the value into `ghOAuthDefaultClientSecret` in
   `engine/internal/server/workspaces.go` (gh-CLI pattern, see §0) — or,
   for a self-hosted/rotated setup, set `DOOMALAY_GH_CLIENT_SECRET` on
-  that machine instead. Never paste it into a chat or a non-repo file.
+  that machine instead. Then **delete any older secret rows** on the
+  app's Client secrets list (GitHub keeps them valid until deleted).
 
 ## 2. What users see (all implemented)
 
@@ -168,9 +184,11 @@ After creation, on the app's page:
 ## 3. Why shipping the secret is OK now (the v0.61 security model)
 
 The old policy ("the secret doesn't exist") came from the OLD app pair
-whose secret leaked into the wrong places — that app is deleted. The
-v0.61 model is GitHub's own (the gh CLI ships its secret in open source)
-plus two structural guards:
+whose secret leaked into the wrong places. v0.61.2 closes that chapter:
+the app was **recovered, not abandoned** — the owner generated a **fresh
+secret** (and deletes the leaked row), which is exactly the gh-CLI-style
+rotation runbook. The v0.61 model is GitHub's own (the gh CLI ships its
+secret in open source) plus two structural guards:
 
 - **A leaked secret alone grants nothing.** It is not an API token: no
   repo access, no user data, no installation tokens (those need the App's
