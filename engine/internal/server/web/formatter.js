@@ -555,8 +555,14 @@
         '</div>' +
         '<div class="fmt-yt-cap">' + esc(label && label !== href ? label : 'YouTube · ' + vid) +
           '<span class="fmt-yt-open"> ↗</span></div>';
-      card.addEventListener('click', function () {
-        try { window.open(href, '_blank'); } catch (e) { location.href = href; }
+      card.addEventListener('click', function (e) {
+        // ↗ on the caption keeps the old open-outside affordance
+        if (e.target.closest && e.target.closest('.fmt-yt-open')) {
+          e.stopPropagation();
+          try { window.open(href, '_blank'); } catch (err) { location.href = href; }
+          return;
+        }
+        playYTInPlace(card, vid, href);
       });
       // a link sitting alone in its <p> → the card replaces the <p>;
       // otherwise it slots in right after
@@ -569,6 +575,79 @@
         else { a.classList.add('fmt-link-kept'); }
       }
     });
+  }
+
+  // ── v0.62.1: play YouTube IN PLACE (PLAN-V063 Phase E1) ───────────
+  // The card swaps its thumbnail for the privacy-enhanced embed iframe
+  // (youtube-nocookie, frame-friendly BY DESIGN — the v062 frame probe);
+  // the user never leaves the app. Timestamps ride along as ?start=.
+  function ytStartSecs(href) {
+    var m = href.match(/[?&](?:t|start)=([0-9hms]+)/i);
+    if (!m) return 0;
+    var s = m[1].toLowerCase();
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+    var total = 0, num = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if (c >= '0' && c <= '9') { num = num * 10 + (c.charCodeAt(0) - 48); continue; }
+      if (c === 'h') { total += num * 3600; num = 0; }
+      else if (c === 'm') { total += num * 60; num = 0; }
+      else if (c === 's') { total += num; num = 0; }
+      else return 0;
+    }
+    return total;
+  }
+
+  function playYTInPlace(card, vid, href) {
+    var holder = card.querySelector('.fmt-yt-thumb');
+    if (!holder || holder.querySelector('iframe')) return; // already playing
+    var start = ytStartSecs(href);
+    var src = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(vid) +
+      '?autoplay=1&rel=0' + (start ? '&start=' + start : '');
+    var ifr = document.createElement('iframe');
+    ifr.className = 'fmt-yt-player';
+    ifr.src = src;
+    ifr.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+    ifr.setAttribute('allowfullscreen', '');
+    ifr.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    ifr.setAttribute('title', 'YouTube player');
+    holder.appendChild(ifr);
+    var t = holder.querySelector('.fmt-yt-thumbimg'); if (t) t.style.opacity = '0';
+    var p = holder.querySelector('.fmt-yt-play'); if (p) p.style.display = 'none';
+    // Document Picture-in-Picture (desktop Chrome/Edge 116+). Hidden when
+    // the API is absent — Android WebView has no documentPictureInPicture
+    // (fullscreen there is the E2 WebChromeClient custom view).
+    if (window.documentPictureInPicture && window.documentPictureInPicture.requestWindow) {
+      var btn = document.createElement('button');
+      btn.className = 'fmt-yt-pip';
+      btn.type = 'button';
+      btn.title = 'pop the player out (picture-in-picture)';
+      btn.setAttribute('aria-label', 'picture in picture');
+      btn.textContent = '⧉';
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        popYTOut(holder, ifr);
+      });
+      holder.appendChild(btn);
+    }
+    card.classList.add('fmt-yt-playing');
+  }
+
+  // pop the player into an always-on-top Document-PiP window. MOVING an
+  // iframe reloads it (browser behavior — the video re-cues); preserving
+  // the exact position needs the YT IFrame API (the v0.62.4 stretch).
+  function popYTOut(holder, ifr) {
+    window.documentPictureInPicture.requestWindow({ width: 640, height: 380 })
+      .then(function (pipWin) {
+        var st = pipWin.document.createElement('style');
+        st.textContent = 'html,body{margin:0;height:100%;background:#000}body{display:flex}iframe{flex:1;width:100%;height:100%;border:0}';
+        pipWin.document.head.appendChild(st);
+        pipWin.document.body.appendChild(ifr);
+        pipWin.addEventListener('pagehide', function () {
+          holder.appendChild(ifr); // re-adopt into the card (reloads — accepted)
+        });
+      })
+      .catch(function () { /* gesture lost / refused — stay inline */ });
   }
 
   // ── v0.28 MediaZoom — the pinch-zoom image overlay ────────────────

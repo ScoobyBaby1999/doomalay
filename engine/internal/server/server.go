@@ -146,6 +146,7 @@ func (s *Server) routes() {
         // any same-origin JS bug). CORS middleware blocks foreign origins.
         s.mux.HandleFunc("GET /api/keys/value", s.handleKeysValue)
         s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
+        s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview) // v0.62.1: the universal link verdict
         s.mux.HandleFunc("GET /api/netdiag", s.handleNetDiag)
         s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
         s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
