@@ -325,6 +325,24 @@
     return overlayEl && overlayEl.style.visibility !== 'hidden' && !closing;
   }
 
+  // v0.62: the APK back-gesture entry — ONE press pops ONE nested page
+  // (the Android path can't ride the popstate handler: MainActivity
+  // intercepts the gesture and calls window.doomalay.handleBack(), which
+  // used to close the WHOLE overlay — the user landed on the chat instead
+  // of the previous overlay page). Mirrors the popstate branch exactly:
+  // nested → popPage + consume the history entry; root → close + drain.
+  function backOne() {
+    if (!isOpen() || closing) return false;
+    if (navStack.length > 1) {
+      popPage();
+      consumeEntry();
+    } else {
+      closeNow();
+      drainHistory();
+    }
+    return true;
+  }
+
   function getContentEl() { return contentEl; }
 
   window.ConnectOverlay = {
@@ -335,6 +353,7 @@
     replaceContent: replaceContent,
     pushPage: pushPage,
     popPage: popPage,
-    pageDepth: pageDepth
+    pageDepth: pageDepth,
+    backOne: backOne
   };
 })();

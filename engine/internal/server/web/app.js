@@ -912,9 +912,12 @@
     // or panel), false if nothing was open. Called by MainActivity.onBackPressed
     // so the back gesture closes overlays/panels instead of exiting the app.
     handleBack: function () {
-      // Close connect overlay first (highest priority)
+      // v0.62: the overlay pops ONE page per press (the APK path — the
+      // old unconditional close() dumped the user back on the chat instead
+      // of the previous overlay page, e.g. connect-a-workspace →
+      // workspaces). backOne() pops nested pages; closes at the root.
       if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
-        window.ConnectOverlay.close();
+        window.ConnectOverlay.backOne();
         return true;
       }
       // v0.18: the artifacts drawer/editor + the long-press action sheet

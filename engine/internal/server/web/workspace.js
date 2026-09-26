@@ -85,16 +85,24 @@
         'background:rgba(var(--ok-rgb),0.08)}' +
       '.wsx-badge.inchat{color:var(--ok);border-color:rgba(var(--ok-rgb),0.55);' +
         'background:rgba(var(--ok-rgb),0.10)}' +
-      // the PINNED connect row (edit A9): sticky bottom, slightly smaller
+      // the PINNED connect row (edit A9): sticky bottom — v0.62: a real
+      // THEME-GRADIENT pill (the old dashed-border row read as unthemed).
       '.wsx-conn-wrap{position:sticky;bottom:0;z-index:3;margin-top:4px;' +
         'padding:8px 12px 10px;background:color-mix(in srgb, var(--surface-1) 92%, transparent);' +
         'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
         'border-top:1px solid var(--surface-2)}' +
-      '.wsx-conn{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 10px;' +
-        'border-radius:10px;cursor:pointer;border:1.5px dashed var(--border-strong);' +
-        'color:var(--accent-2);font-weight:600;font-size:var(--ui-small-fs);' +
-        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
-      '.wsx-conn:active{background:rgba(var(--accent-2-rgb),0.10)}' +
+      '.wsx-conn{display:flex;align-items:center;gap:9px;min-height:44px;padding:9px 12px;' +
+        'border-radius:12px;cursor:pointer;' +
+        'border:1.5px solid rgba(var(--accent-rgb),0.45);' +
+        'color:var(--accent);font-weight:700;font-size:var(--ui-small-fs);' +
+        'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
+        'background-image:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
+        'transition:filter 0.15s}' +
+      '.wsx-conn:active{filter:brightness(1.35)}' +
+      // v0.62: the simple empty state (user spec: "nothing here yet…")
+      '.wsx-empty{padding:26px 16px;text-align:center;color:var(--text-3);' +
+        'font-size:var(--ui-small-fs);font-weight:500}' +
       '.wsx-acts{display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 10px 48px}' +
       '.wsx-act{background-color:var(--surface-2);border:1px solid var(--surface-3);color:var(--text-2);' +
         'padding:6px 10px;border-radius:9px;font-size:var(--ui-small-fs);font-family:inherit;' +
@@ -434,13 +442,14 @@
   }
 
   function pickerHTML() {
+    // v0.62 (user spec): no large description text — the header is tight,
+    // the empty state says the simple thing.
     return (
       '<div class="wsx">' +
         '<div class="wsx-head">' +
           '<span class="wsx-title">▣ workspaces</span>' +
           '<span class="wsx-badge read" id="wsx-count">…</span>' +
         '</div>' +
-        '<div class="wsx-sub">connect to a cloud repo for a hosted storage space you can access from any device anywhere.</div>' +
         '<div class="wsx-list" id="wsx-list">' +
           '<div class="wsx-sub">loading…</div>' +
         '</div>' +
@@ -448,7 +457,7 @@
           '<div class="wsx-conn" id="wsx-connect" role="button" tabindex="0">' +
             '<span style="font-size:15px">＋</span>' +
             '<span class="wsx-mid">connect workspace' +
-              '<div class="wsx-meta">cloud · create · my repos · device</div></span>' +
+              '<div class="wsx-meta">cloud · create · device</div></span>' +
           '</span>' +
         '</div>' +
       '</div>');
@@ -474,9 +483,9 @@
       (res[1].workspaces || []).forEach(function (w) { boundIds[w.id] = true; });
       if (cntEl) cntEl.textContent = String(Object.keys(boundIds).length);
       if (!rows.length) {
+        // v0.62 (user spec): a simple "nothing here yet…" — not a body of text.
         listEl.innerHTML =
-          '<div class="wsx-sub">none yet — connect a cloud repo below (a plain URL works: it becomes read-only), ' +
-          'or pick a folder on this device.</div>';
+          '<div class="wsx-empty">nothing here yet…</div>';
         return;
       }
       var html = '';
