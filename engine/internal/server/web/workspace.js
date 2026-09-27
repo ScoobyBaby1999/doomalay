@@ -64,8 +64,8 @@
       '.wsx-ico{flex-shrink:0;width:28px;height:28px;border-radius:8px;display:flex;' +
         'align-items:center;justify-content:center;font-size:15px;' +
         'background:rgba(var(--accent-2-rgb),0.08);border:1px solid rgba(var(--accent-2-rgb),0.25)}' +
-      '.wsx-ico.k-github{background:rgba(var(--accent-2-rgb),0.10);border-color:rgba(var(--accent-2-rgb),0.3)}' +
-      '.wsx-ico.k-gitea{background:rgba(var(--ok-rgb),0.10);border-color:rgba(var(--ok-rgb),0.3)}' +
+      '.wsx-ico.k-github{background:rgba(var(--accent-rgb),0.10);border-color:rgba(var(--accent-rgb),0.3)}' +
+      '.wsx-ico.k-gitea{background:rgba(var(--accent-2-rgb),0.10);border-color:rgba(var(--accent-2-rgb),0.3)}' +
       '.wsx-ico.k-gitlab{background:rgba(var(--accent-3-rgb),0.10);border-color:rgba(var(--accent-3-rgb),0.3)}' +
       '.wsx-ico.k-device{background:rgba(var(--accent-rgb),0.10);border-color:rgba(var(--accent-rgb),0.3)}' +
       '.wsx-ico.k-generic{background:rgba(var(--surface-3-rgb),0.25);border-color:var(--surface-3)}' +
@@ -91,15 +91,26 @@
         'padding:8px 12px 10px;background:color-mix(in srgb, var(--surface-1) 92%, transparent);' +
         'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
         'border-top:1px solid var(--surface-2)}' +
-      '.wsx-conn{display:flex;align-items:center;gap:9px;min-height:44px;padding:9px 12px;' +
-        'border-radius:12px;cursor:pointer;' +
-        'border:1.5px solid rgba(var(--accent-rgb),0.45);' +
+      // v0.63: the connect pill — SMALLER HEIGHT, more polished (user spec
+      // pt 2): single line, tighter gradient, a hairline inner glow.
+      '.wsx-conn{display:flex;align-items:center;justify-content:center;gap:8px;' +
+        'min-height:38px;padding:7px 14px;border-radius:11px;cursor:pointer;' +
+        'border:1px solid rgba(var(--accent-rgb),0.5);' +
         'color:var(--accent);font-weight:700;font-size:var(--ui-small-fs);' +
         'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
         'background-image:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
+        'box-shadow:inset 0 0 12px rgba(var(--accent-rgb),0.05);' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
-        'transition:filter 0.15s}' +
-      '.wsx-conn:active{filter:brightness(1.35)}' +
+        'transition:filter 0.15s,transform 0.15s}' +
+      '.wsx-conn:active{filter:brightness(1.35);transform:scale(0.985)}' +
+      '.wsx-conn-plus{font-size:14px;line-height:1}' +
+      '.wsx-conn-label{letter-spacing:0.02em}' +
+      // v0.63: "your workspaces" tabbed right a bit + the picker stays
+      // LARGE even when empty (the list keeps a min-height).
+      '.wsx-yw-head{display:flex;align-items:center;gap:6px;margin:14px 16px 2px 22px;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-3);' +
+        'letter-spacing:0.5px;text-transform:uppercase}' +
+      '.wsx-list--tall{min-height:300px}' +
       // v0.62: the simple empty state (user spec: "nothing here yet…")
       '.wsx-empty{padding:26px 16px;text-align:center;color:var(--text-3);' +
         'font-size:var(--ui-small-fs);font-weight:500}' +
@@ -109,15 +120,18 @@
       // blocks, go buttons, opt rows, badges) repaints in the selected
       // provider's colors — "the colors on the overlay dynamically sync to
       // represent the githubs theme".
-      '.wsp[data-prov="github"]{--wsp-rgb:88,166,255;--wsp-c:#58a6ff;' +
-        '--accent-2-rgb:88,166,255;--accent-2:#58a6ff}' +
-      '.wsp[data-prov="gitea"]{--wsp-rgb:139,195,74;--wsp-c:#8bc34a;' +
-        '--accent-2-rgb:139,195,74;--accent-2:#8bc34a}' +
-      '.wsp[data-prov="gitlab"]{--wsp-rgb:252,109,38;--wsp-c:#fc6d26;' +
-        '--accent-2-rgb:252,109,38;--accent-2:#fc6d26}' +
-      '.wsp[data-prov="sourcehut"]{--wsp-rgb:45,212,191;--wsp-c:#2dd4bf;' +
-        '--accent-2-rgb:45,212,191;--accent-2:#2dd4bf}' +
-      // the base scope: no data-prov (self-host) → the app theme accent.
+      // v0.63 (user spec pt 2): every provider rides a THEME accent —
+      // github=Accent 1 (primary), gitlab=Accent 3, sourcehut=Accent 4
+      // (gitea IS accent-2 — the base scope, no override needed). The
+      // override re-points the accent-2 vars inside the overlay so every
+      // wsx surface repaints in the selected provider's theme.
+      '.wsp[data-prov="github"]{--wsp-rgb:var(--accent-rgb);--wsp-c:var(--accent);' +
+        '--accent-2-rgb:var(--accent-rgb);--accent-2:var(--accent)}' +
+      '.wsp[data-prov="gitlab"]{--wsp-rgb:var(--accent-3-rgb);--wsp-c:var(--accent-3);' +
+        '--accent-2-rgb:var(--accent-3-rgb);--accent-2:var(--accent-3)}' +
+      '.wsp[data-prov="sourcehut"]{--wsp-rgb:var(--accent-4-rgb);--wsp-c:var(--accent-4);' +
+        '--accent-2-rgb:var(--accent-4-rgb);--accent-2:var(--accent-4)}' +
+      // the base scope: gitea (accent-2) + self-host (the neutral default).
       '.wsp{--wsp-rgb:var(--accent-2-rgb);--wsp-c:var(--accent-2)}' +
       '.wsp-pills{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;' +
         'padding:12px 12px 4px}' +
@@ -133,6 +147,11 @@
         'background:rgba(var(--kp, var(--wsp-rgb)),0.12);' +
         'box-shadow:0 0 14px rgba(var(--kp, var(--wsp-rgb)),0.22)}' +
       '.wsp-pill[data-on="1"] .nm{color:var(--kpc, var(--wsp-c))}' +
+      // v0.63: the self-host pill — the neutral local option (no brand
+      // color): selected = a crisp border + surface lift, no glow.
+      '.wsp-pill--neutral[data-on="1"]{border-color:var(--border-strong);' +
+        'background:var(--surface-2);box-shadow:none}' +
+      '.wsp-pill--neutral[data-on="1"] .nm{color:var(--text-1)}' +
       // the provider section
       '.wsp-sec{padding:8px 12px 2px}' +
       '.wsp-loggedin{display:flex;align-items:center;gap:8px;margin:2px 0 4px;padding:9px 12px;' +
@@ -268,22 +287,6 @@
         'background:rgba(var(--surface-3-rgb),0.3)}' +
       '.wsx-chip.cw{color:var(--warn);border-color:rgba(var(--warn-rgb),0.5);' +
         'background:rgba(var(--warn-rgb),0.08)}' +
-      // v0.62: THE CONNECT-ANY-REPO hero pill (leads the connect page) —
-      // a real theme-GRADIENT pill (user item 5: "everything, even the
-      // pill gradient, use theme colors").
-      '.wso-any{display:flex;align-items:center;gap:12px;margin:12px 12px 0;padding:14px;' +
-        'border-radius:14px;cursor:pointer;' +
-        'border:1.5px solid rgba(var(--accent-rgb),0.45);' +
-        'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
-        'background-image:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
-        '-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
-        'transition:filter 0.15s}' +
-      '.wso-any:active{filter:brightness(1.35)}' +
-      '.wso-any-ic{flex-shrink:0;font-size:20px;line-height:1}' +
-      '.wso-any-mid{flex:1;min-width:0}' +
-      '.wso-any-title{display:block;font-size:calc(var(--ui-fs) + 1px);font-weight:700;color:var(--accent)}' +
-      '.wso-any-sub{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin-top:2px;line-height:1.45}' +
-      '.wso-any-arrow{flex-shrink:0;color:var(--accent);font-size:18px}' +
       // repo rows (edit A10): nesting + varied type marks + meta line
       '.wsx-reposec{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-3);' +
         'letter-spacing:0.5px;padding:12px 22px 4px;text-transform:uppercase}' +
@@ -414,7 +417,7 @@
     }
     return (
       '<div class="wsx-signin big" id="' + id + '" role="button" tabindex="0">' +
-        '<div class="wsx-signin-title">⏾ Sign in with ' + esc(kindLabel(kind)) + '</div>' +
+        '<div class="wsx-signin-title">Sign in with ' + esc(kindLabel(kind)) + '</div>' +
         '<div class="wsx-signin-sub" id="' + id + '-sub">' +
           (kind === 'github'
             ? 'one tap — you approve on github, we get the token. no pasting.'
@@ -554,16 +557,18 @@
     });
   }
 
-  // ── v0.62: THE PROVIDER PILLS (user item 6) ───────────────────────────
-  // Every default-supported forge as a big polished pill (its OWN color),
-  // the section + the whole overlay repainting in the selected provider's
-  // theme (see the .wsp[data-prov] scope rules).
+  // ── v0.63: THE PROVIDER PILLS ─────────────────────────────────────────
+  // Every default-supported forge as a polished pill — v0.63 (user spec):
+  // ALL provider colors ride the THEME now (the hardcoded brand RGB is
+  // retired): github → Accent 1 (primary), gitea → Accent 2, gitlab →
+  // Accent 3, sourcehut → Accent 4, self-host → the neutral base (no
+  // brand, no login — the local-device option rides surface/text tones).
   var PROVIDERS = [
-    { k: 'github',    icon: '🐙', name: 'GitHub',    rgb: '88,166,255',  c: '#58a6ff', host: 'github.com' },
-    { k: 'gitea',     icon: '🍵', name: 'Gitea',     rgb: '139,195,74',  c: '#8bc34a', host: 'gitea.com' },
-    { k: 'gitlab',    icon: '🦊', name: 'GitLab',    rgb: '252,109,38',  c: '#fc6d26', host: 'gitlab.com' },
-    { k: 'sourcehut', icon: '🪶', name: 'Sourcehut',  rgb: '45,212,191',  c: '#2dd4bf', host: 'sr.ht' },
-    { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: null,          c: null,      host: '' }
+    { k: 'github',    icon: '🐙', name: 'GitHub',    rgb: 'var(--accent-rgb)',   c: 'var(--accent)',   host: 'github.com' },
+    { k: 'gitea',     icon: '🍵', name: 'Gitea',     rgb: 'var(--accent-2-rgb)', c: 'var(--accent-2)', host: 'gitea.com' },
+    { k: 'gitlab',    icon: '🦊', name: 'GitLab',    rgb: 'var(--accent-3-rgb)', c: 'var(--accent-3)', host: 'gitlab.com' },
+    { k: 'sourcehut', icon: '🪶', name: 'Sourcehut',  rgb: 'var(--accent-4-rgb)', c: 'var(--accent-4)', host: 'sr.ht' },
+    { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: null,                  c: null,              host: '' }
   ];
   var curProv = 'github';   // "by default the GitHub pill is selected"
 
@@ -576,36 +581,34 @@
     var out = '';
     PROVIDERS.forEach(function (p) {
       var style = p.rgb ? '--kp:' + p.rgb + ';--kpc:' + p.c + ';' : '';
-      out += '<div class="wsp-pill" data-k="' + p.k + '" data-on="' + (p.k === curProv ? '1' : '') + '"' +
+      out += '<div class="wsp-pill' + (p.rgb ? '' : ' wsp-pill--neutral') + '" data-k="' + p.k + '" data-on="' + (p.k === curProv ? '1' : '') + '"' +
         (style ? ' style="' + style + '"' : '') + '>' +
         '<span class="ic">' + p.icon + '</span><span class="nm">' + esc(p.name) + '</span></div>';
     });
     return out;
   }
 
+  // v0.63 (user spec): THE PICKER IS SLIM — just "your workspaces" + the
+  // compact ＋ connect pill. The provider pills + sign-in + create + the
+  // public-repo connect bar moved to their OWN page (the connect page,
+  // pushed onto the same overlay stack — two separate pages, back pops
+  // one level).
   function pickerHTML() {
-    // v0.62 (user item 6): the provider pills grid at the TOP, the provider
-    // section (sign-in / create / public repo / your repos with access
-    // pills) under it, the global workspaces below, the pinned connect row.
     return (
-      '<div class="wsp wsx" data-prov="' + esc(curProv) + '">' +
+      '<div class="wsx wsp">' +
         '<div class="wsx-head">' +
           '<span class="wsx-title">▣ workspaces</span>' +
           '<span class="wsx-badge read" id="wsx-count">…</span>' +
         '</div>' +
-        '<div class="wsp-pills" id="wsp-pills">' + pillsHTML() + '</div>' +
-        '<div class="wsp-sec" id="wsp-sec"></div>' +
-        '<div class="wsp-secdiv"></div>' +
-        '<div class="wsp-repos-head" style="margin-top:12px">▣ your workspaces</div>' +
-        '<div class="wsx-list" id="wsx-list">' +
+        '<div class="wsx-yw-head">▣ your workspaces</div>' +
+        '<div class="wsx-list wsx-list--tall" id="wsx-list">' +
           '<div class="wsx-sub">loading…</div>' +
         '</div>' +
         '<div class="wsx-conn-wrap">' +
           '<div class="wsx-conn" id="wsx-connect" role="button" tabindex="0">' +
-            '<span style="font-size:15px">＋</span>' +
-            '<span class="wsx-mid">connect workspace' +
-              '<div class="wsx-meta">any repo · create · device</div></span>' +
-          '</span>' +
+            '<span class="wsx-conn-plus">＋</span>' +
+            '<span class="wsx-conn-label">connect workspace</span>' +
+          '</div>' +
         '</div>' +
       '</div>');
   }
@@ -613,18 +616,6 @@
   function wirePicker() {
     var conn = document.getElementById('wsx-connect');
     if (conn) conn.addEventListener('click', function () { openConnectPage(); });
-    var pillsEl = document.getElementById('wsp-pills');
-    if (pillsEl) pillsEl.querySelectorAll('.wsp-pill').forEach(function (pill) {
-      pill.addEventListener('click', function () {
-        if (curProv === pill.dataset.k) return;
-        curProv = pill.dataset.k;
-        // repaint the pills + re-scope the theme + re-render the section
-        pillsEl.innerHTML = pillsHTML();
-        wirePicker();
-        renderProvSection();
-      });
-    });
-    renderProvSection();
   }
 
   // ── v0.62: THE PROVIDER SECTION (under the pills) ────────────────────
@@ -661,7 +652,9 @@
       signinHtml = '<div class="wsp-loggedin">✓ logged in' +
         (acc.login ? ' <span style="opacity:0.85">— @' + esc(acc.login) + '</span>' : '') + '</div>';
     } else if (hasAccount) {
-      signinHtml = '<div class="wsp-signin" id="wsp-signin" role="button" tabindex="0">⏾ sign in to ' +
+      // v0.63 (user spec pt 3): plain "sign in to X" text — the broken ⏾
+      // glyph is gone; the provider pill's icon above carries the visual.
+      signinHtml = '<div class="wsp-signin" id="wsp-signin" role="button" tabindex="0">sign in to ' +
         esc(p.name) + '</div>';
     } else {
       signinHtml = '<div class="wsp-note-row">paste any ' + esc(p.name) +
@@ -695,7 +688,7 @@
       if (curProv === 'github' && window.GHConnect) {
         window.GHConnect.openConnectPanel({
           onDone: function () {
-            refreshAccounts().then(reopenPicker);
+            refreshAccounts().then(reopenConnect);
           }
         });
       } else if (curProv === 'gitea') {
@@ -743,6 +736,18 @@
     });
   }
 
+  // v0.63: post-sign-in landing — the picker as the root level, the
+  // CONNECT page pushed on top (the signed-in provider section is what the
+  // user just earned; back still pops to the picker).
+  function reopenConnect() {
+    window.ConnectOverlay.open(pickerHTML(), {
+      onSwap: function () { wirePicker(); loadGlobals(); }
+    });
+    window.ConnectOverlay.pushPage(connectHTML(), {
+      onSwap: function () { wireConnectPage(); }
+    });
+  }
+
   // the gitea manual-token inline form (github rides the GH panel)
   function openGiteaToken() {
     pushPage(
@@ -770,7 +775,7 @@
             })
             .then(function () {
               curProv = 'gitea';
-              reopenPicker();
+              reopenConnect();
             })
             .catch(function (e) {
               go.disabled = false; go.textContent = 'save token';
@@ -984,64 +989,34 @@
     pushPage(connectHTML(), wireConnectPage);
   }
 
-  // v0.62 (user items 5+6): CONNECT ANY REPO leads at the TOP (the
-  // formatted hero rides under it), create follows, MY REPOS IS GONE (the
-  // user's repos now live in the picker's provider section), device
-  // storage + local folder close it out. Every color rides theme vars —
-  // the gradients included.
+  // v0.63 (user spec pt 1): THE CONNECT PAGE — its own page (pushed from
+  // the picker's ＋ pill): the provider pills grid at the top, the provider
+  // section under it (sign in → create new repo → connect a public repo →
+  // your repos with access pills; self-host = device storage / local
+  // folder). Every color rides the theme — the selected provider scopes
+  // the WHOLE page to its accent (see the .wsp[data-prov] rules).
   function connectHTML() {
     return (
-      '<div class="wsx">' +
+      '<div class="wsp wsx" data-prov="' + esc(curProv) + '">' +
         '<div class="wsx-head"><span class="wsx-title">connect workspace</span></div>' +
-        '<div class="wso-any" id="wso-cloud" role="button" tabindex="0">' +
-          '<span class="wso-any-ic">☁</span>' +
-          '<span class="wso-any-mid">' +
-            '<span class="wso-any-title">connect any repo</span>' +
-            '<div class="wso-any-sub">paste a URL — the host is recognized. plain URL = read-only; sign in for writes.</div>' +
-          '</span>' +
-          '<span class="wso-any-arrow">›</span>' +
-        '</div>' +
-        // the formatted, theme-colored hero (hosts + access levels)
-        '<div class="wsx-cloudhero">' +
-          '<div class="wsx-chips">' +
-            '<span class="wsx-chip c1">🐙 github</span>' +
-            '<span class="wsx-chip c2">🍵 gitea</span>' +
-            '<span class="wsx-chip c3">🦊 gitlab</span>' +
-            '<span class="wsx-chip cn">🪶 sourcehut</span>' +
-            '<span class="wsx-chip cn">📦 self-hosted</span>' +
-          '</div>' +
-          '<div class="wsx-chips" style="margin-top:6px">' +
-            '<span class="wsx-chip cn">read</span>' +
-            '<span class="wsx-chip cw">partial — fork + PR</span>' +
-            '<span class="wsx-chip c2">full — direct commits</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="wsx-opt" id="wso-create">' +
-          '<span class="wsx-ico k-gitea">✚</span>' +
-          '<span class="wsx-mid">create new repo' +
-            '<div class="wsx-meta">from scratch — name, license, gitignore</div></span>' +
-          '<span style="color:var(--accent-2)">›</span>' +
-        '</div>' +
-        '<div class="wsx-opt" id="wso-device">' +
-          '<span class="wsx-ico k-device">📱</span>' +
-          '<span class="wsx-mid">device storage' +
-            '<div class="wsx-meta">a folder on this device — read + write, never leaves your phone</div></span>' +
-          '<span style="color:var(--accent-2)">›</span>' +
-        '</div>' +
-        '<div class="wsx-opt" aria-disabled="true">' +
-          '<span class="wsx-ico k-generic">▤</span>' +
-          '<span class="wsx-mid">local folder<div class="wsx-meta">coming soon</div></span>' +
-        '</div>' +
+        '<div class="wsp-pills" id="wsp-pills">' + pillsHTML() + '</div>' +
+        '<div class="wsp-sec" id="wsp-sec"></div>' +
       '</div>');
   }
 
   function wireConnectPage() {
-    var c = document.getElementById('wso-cloud');
-    if (c) c.addEventListener('click', function () { openCloudForm(''); });
-    var cr = document.getElementById('wso-create');
-    if (cr) cr.addEventListener('click', function () { openCreateForm('github'); });
-    var dv = document.getElementById('wso-device');
-    if (dv) dv.addEventListener('click', openDevicePage);
+    var pillsEl = document.getElementById('wsp-pills');
+    if (pillsEl) pillsEl.querySelectorAll('.wsp-pill').forEach(function (pill) {
+      pill.addEventListener('click', function () {
+        if (curProv === pill.dataset.k) return;
+        curProv = pill.dataset.k;
+        // repaint the pills + re-scope the theme + re-render the section
+        pillsEl.innerHTML = pillsHTML();
+        wireConnectPage();
+        renderProvSection();
+      });
+    });
+    renderProvSection();
   }
 
   function pageHead(title) {
