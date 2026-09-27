@@ -115,13 +115,11 @@
       btn.textContent = 'Sign in with GitHub — one click';
     }
     if (copy) {
-      copy.innerHTML = 'One click, no codes: a window opens to GitHub where you press ' +
-        '<b style="color:var(--text-2)">Install &amp; Authorize</b>. On the repository ' +
-        'screen pick <b style="color:var(--text-2)">Only select repositories</b> and ' +
-        'choose your repo — that grants complete access to that repo only ' +
-        '(branches, files, PRs), never your whole account. The window closes ' +
-        'itself and this panel updates. The token is stored in the engine\'s ' +
-        'encrypted vault — we never see your password.';
+      // v0.63: short (user spec — "much shorter" + a safety line).
+      copy.innerHTML = 'Press <b style="color:var(--text-2)">Install &amp; Authorize</b>, then pick ' +
+        '<b style="color:var(--text-2)">Only select repositories</b> — the bots only ' +
+        'ever touch the repos you choose. The token stays encrypted on this ' +
+        'device; we never see your password.';
     }
     if (alt) alt.style.display = 'block';
   }
@@ -136,14 +134,11 @@
       btn.textContent = 'Sign in with GitHub — one click';
     }
     if (copy) {
-      copy.innerHTML = 'One press, no codes, no HuggingFace: a window opens ' +
-        '<b style="color:var(--text-2)">straight to GitHub</b> — log in if ' +
-        'asked, press <b style="color:var(--text-2)">Authorize</b> and you\'re ' +
-        'done. The first time, pick <b style="color:var(--text-2)">Only select ' +
-        'repositories</b> and choose your repo — that grants complete access ' +
-        'to that repo only (branches, files, PRs), never your whole account. ' +
-        'The window closes itself and this panel updates; the token is stored ' +
-        'in the engine\'s encrypted vault. We never see your password.';
+      // v0.63: short (user spec — "much shorter" + a safety line).
+      copy.innerHTML = 'Press <b style="color:var(--text-2)">Authorize</b>, then pick ' +
+        '<b style="color:var(--text-2)">Only select repositories</b> — the bots only ' +
+        'ever touch the repos you choose. The token stays encrypted on this ' +
+        'device; we never see your password.';
     }
     if (alt) alt.style.display = 'block';
   }
@@ -180,25 +175,33 @@
     }, 800);
   }
 
+  // v0.63 (user spec): a big circular 🐙 badge above the sign-in pill +
+  // a MUCH shorter description (press authorize → repo access only →
+  // encrypted on-device; the device-flow mechanics explain themselves when
+  // the flow actually runs).
+  function serviceBadge(icon, tint) {
+    return (
+      '<div style="display:flex;justify-content:center;margin:2px 0 14px">' +
+        '<div style="width:64px;height:64px;border-radius:50%;display:flex;align-items:center;' +
+          'justify-content:center;font-size:31px;line-height:1;' +
+          'background:rgba(' + tint + ',0.10);border:1px solid rgba(' + tint + ',0.35);' +
+          'box-shadow:0 4px 18px rgba(' + tint + ',0.14)">' + icon + '</div>' +
+      '</div>');
+  }
+
   function bodyHTML(acct) {
     return '' +
-      '<div style="padding:26px 22px">' +
+      '<div style="padding:24px 22px 26px">' +
+        serviceBadge('🐙', 'var(--accent-rgb)') +
         '<div id="ghc-state" style="margin-bottom:16px"></div>' +
         '<button id="ghc-oauth" style="width:100%;padding:14px;border-radius:12px;' +
           'background:var(--accent);color:var(--bg-app);border:none;font-size:15px;font-weight:600;' +
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Sign in with GitHub</button>' +
-        '<p id="ghc-copy" style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
-          'One login: you\'ll get a short <b style="color:var(--text-2)">one-time ' +
-          'code</b> — not a password — to enter at ' +
-          '<b style="color:var(--text-2)">github.com/login/device</b> (the page opens for you). ' +
-          'GitHub\'s own note there ("staff will never ask you for this code") is its ' +
-          'standard phishing guard — the code only confirms this sign-in and can\'t ' +
-          'be reused. The app asks for <b style="color:var(--text-2)">repository access ' +
-          'only</b>: read/write your code, open pull requests. No account settings, ' +
-          'no profile, no emails. Press <b style="color:var(--text-2)">Authorize</b> and the ' +
-          'token is acquired automatically into the engine\'s encrypted vault. ' +
-          'We never see your password.</p>' +
+        '<p id="ghc-copy" style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.55;text-align:center">' +
+          'Press <b style="color:var(--text-2)">authorize</b> to let the bots handle the ' +
+          '<b style="color:var(--text-2)">GitHub repos of your choosing</b> — nothing else. ' +
+          'The token stays encrypted on this device; we never see or store your password.</p>' +
         '<a id="ghc-code-fallback" href="#" style="display:none;margin:10px 0 0;font-size:12px;' +
           'color:var(--accent-2);text-decoration:none">or use a one-time code instead →</a>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +

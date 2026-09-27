@@ -107,22 +107,32 @@
   // renderBody() → html; wireBody(el, api, onDone) → hooks it up.
   // `api` is the transport ({post: fn(url, body)}) so the overlay and the
   // panel view can reuse their own error/toast conventions.
+  // v0.63 (user spec): a big circular 🤗 badge above the sign-in pill +
+  // a MUCH shorter description (the old loopback/device-flow paragraph is
+  // gone — the device flow explains itself when it actually runs).
+  function serviceBadge(icon, tint) {
+    return (
+      '<div style="display:flex;justify-content:center;margin:2px 0 14px">' +
+        '<div style="width:64px;height:64px;border-radius:50%;display:flex;align-items:center;' +
+          'justify-content:center;font-size:31px;line-height:1;' +
+          'background:rgba(' + tint + ',0.10);border:1px solid rgba(' + tint + ',0.35);' +
+          'box-shadow:0 4px 18px rgba(' + tint + ',0.14)">' + icon + '</div>' +
+      '</div>');
+  }
+
   function connectBodyHTML() {
     return '' +
-      '<div style="padding:26px 22px">' +
+      '<div style="padding:24px 22px 26px">' +
+        serviceBadge('🤗', 'var(--accent-rgb)') +
         '<div id="hfc-state" style="margin-bottom:16px"></div>' +
         '<button id="hfc-oauth" style="width:100%;padding:14px;border-radius:12px;' +
           'background:var(--accent);color:var(--bg-app);border:none;font-size:15px;font-weight:600;' +
           'font-family:inherit;cursor:pointer;box-shadow:0 4px 12px rgba(var(--accent-rgb),0.3)">' +
           'Connect Hugging Face</button>' +
-        '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.5">' +
-          'One login, no keys. When the app runs on this device you\'ll be ' +
-          'redirected to huggingface.co and come straight back. Through a ' +
-          'gateway or preview URL you\'ll get a short one-time code to enter at ' +
-          '<b style="color:var(--text-2)">hf.co/oauth/device</b> — the app ' +
-          'notices the authorization by itself, nothing redirects back. ' +
-          'The token is stored in the engine\'s encrypted vault. ' +
-          'We never see your password.</p>' +
+        '<p style="font-size:12px;color:var(--text-3);margin:12px 0 0;line-height:1.55;text-align:center">' +
+          'Press <b style="color:var(--text-2)">authorize</b> to let the bots manage the ' +
+          '<b style="color:var(--text-2)">spaces + datasets of your choosing</b>. ' +
+          'The token stays encrypted on this device — we never see or store your password.</p>' +
         '<div style="margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border)">' +
           '<div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;' +
             'letter-spacing:0.06em;margin-bottom:10px">Optional manual method</div>' +

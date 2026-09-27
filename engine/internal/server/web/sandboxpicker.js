@@ -70,31 +70,32 @@
     });
   }
 
-  // ── v0.62: the HF card description builders ──────────────────────────
-  // User spec: "keep the description small text size, but use more
-  // formatting and subtle or accent colors". Small mono-density rows; tone
-  // picks the color (ok = capability, warn = caveat).
-  function hfDescRow(glyph, html, tone) {
-    var color = tone === 'warn' ? 'var(--warn)' : 'var(--ok)';
-    return '<div style="display:flex;align-items:flex-start;gap:6px;margin:1.5px 0">' +
-      '<span style="flex-shrink:0;width:12px;text-align:center;font-size:9px;line-height:1.6;color:' + color + '">' + glyph + '</span>' +
-      '<span style="color:' + color + ';font-weight:500">' + html + '</span></div>';
-  }
-
-  // The HF Space card body (user item 2, verbatim core sentence + the old
-  // panel's detail rows — ZeroGPU only, no community workspace).
+  // ── the HF card description builder ──────────────────────────────────
+  // v0.63 (user spec, random item 1): the HF Space card body — a two-tone
+  // structured description. tc1 = Accent 1, tc2 = Accent 2 (small text):
+  //   Linux Sandbox (tc1). Access to bash, python, node, java … package
+  //   installs … (tc2). Your own ZeroGPU space, runs on dynamically
+  //   allocated resources.
+  //   ° 2 per free account • sleeps by usage • 1 GB          (tc1)
+  //   ° wakes in ~2 mins, installs are ephemeral (tc2), brain
+  //     reinstalls packages automatically after sleep.        (tc1)
   function hfCardDesc() {
+    var tc1 = 'var(--accent)';
+    var tc2 = 'var(--accent-2)';
     return (
-      '<span style="color:var(--text-2)">Linux sandbox, <b style="color:var(--warn)">ephemeral</b>. Access to ' +
-        '<b style="color:var(--accent)">bash, python, java</b>, package installs. ' +
-        'Your own personal <b style="color:var(--accent)">ZeroGPU</b> space running on ' +
-        '<b style="color:var(--accent)">dynamically allocated resources</b>.</span>' +
-      '<div style="display:flex;flex-direction:column;margin-top:4px">' +
-        hfDescRow('✓', 'root access — <b>bash · python · git · node · gcc</b>', 'ok') +
-        hfDescRow('✓', 'package installs — <b>apt · pip · npm</b> (+ go, rust, java on demand)', 'ok') +
-        hfDescRow('✦', 'dynamic GPU resources', 'ok') +
-        hfDescRow('⏱', '2 per free account · 1 GB storage · sleeps by usage', 'warn') +
-        hfDescRow('⏱', 'wakes in ~1 min · installs are ephemeral — the brain reinstalls after a nap', 'warn') +
+      '<div style="font-size:calc(var(--ui-small-fs) - 2px);line-height:1.55;color:var(--text-2)">' +
+        '<span style="color:' + tc1 + ';font-weight:700">Linux Sandbox</span>' +
+        '<span style="color:' + tc1 + '">. </span>' +
+        '<span style="color:' + tc2 + '">Access to ' +
+          '<b style="color:' + tc2 + '">bash, python, node, java</b> … package installs …</span>' +
+        '<br>' +
+        'Your own <b style="color:' + tc1 + '">ZeroGPU</b> space, runs on ' +
+        '<b style="color:' + tc1 + '">dynamically allocated resources</b>.' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;margin-top:6px;font-size:calc(var(--ui-small-fs) - 2px);line-height:1.6">' +
+        '<span style="color:' + tc1 + '">° 2 per free account • sleeps by usage • 1 GB</span>' +
+        '<span style="color:' + tc1 + '">° wakes in ~2 mins, installs are ' +
+          '<b style="color:' + tc2 + '">ephemeral</b>, brain reinstalls packages automatically after sleep.</span>' +
       '</div>');
   }
 

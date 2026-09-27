@@ -750,10 +750,20 @@
 
   // the gitea manual-token inline form (github rides the GH panel)
   function openGiteaToken() {
+    // v0.63 (user spec): the big circular 🍵 badge above the sign-in pill
+    // (same treatment as the HF/GitHub panels) + a shorter note.
     pushPage(
       '<div class="wsx">' +
-        pageHead('🍵 sign in to Gitea') +
-        '<div class="wsx-note">paste a Gitea token — it\u2019s verified once, encrypted into the engine vault, and reused everywhere.</div>' +
+        pageHead('sign in to Gitea') +
+        '<div style="display:flex;justify-content:center;margin:6px 0 4px">' +
+          '<div style="width:64px;height:64px;border-radius:50%;display:flex;align-items:center;' +
+            'justify-content:center;font-size:31px;line-height:1;' +
+            'background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.35);' +
+            'box-shadow:0 4px 18px rgba(var(--accent-2-rgb),0.14)">🍵</div>' +
+        '</div>' +
+        '<div class="wsx-note" style="text-align:center">press authorize to let the bots handle the ' +
+          '<b>Gitea repos of your choosing</b> — the token is verified once, encrypted on this ' +
+          'device, and reused everywhere.</div>' +
         '<div class="wsx-field"><div class="wsx-label">TOKEN</div>' +
           '<input class="wsx-input" id="wgt-token" placeholder="gitea token" autocomplete="off" autocapitalize="off" spellcheck="false"></div>' +
         '<div class="wsx-err" id="wgt-err" style="display:none"></div>' +
