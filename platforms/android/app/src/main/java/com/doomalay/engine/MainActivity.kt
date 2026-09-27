@@ -192,12 +192,27 @@ class MainActivity : Activity() {
                 private fun handleUrl(url: String?): Boolean {
                     if (url == null) return false
                     if (url.startsWith("http://127.0.0.1:8080") || url.startsWith("about:")) return false
-                    // v0.62.3: the link opens IN-APP — the ViewerActivity (a
-                    // second WebView with our toolbar). Top-level navigation
-                    // there ignores frame guards, so the key consoles render
-                    // fully; the main WebView NEVER navigates — the SPA state,
-                    // the open panel and the back-gesture stack stay put.
-                    openInViewer(url, hostile = false)
+                    // v0.63.5: THE PANEL GETS THE LINK FIRST. The web UI's
+                    // docked browser (browserdock.js) renders links as a
+                    // PANEL SCREEN — the user's clarified spec: no new
+                    // full-screen browser unless the page demands it. We
+                    // hand the URL to the live JS layer; InAppBrowser.open()
+                    // docks it on the panel (or rides its own fallback
+                    // tiers — the key consoles still reach the viewer via
+                    // the bridge). Only a DEAD web layer (engine restarting,
+                    // SPA not loaded: result null/undefined) opens the
+                    // full-screen ViewerActivity directly.
+                    try {
+                        val js = "(window.InAppBrowser ? window.InAppBrowser.open(" +
+                            org.json.JSONObject.quote(url) + ") : null)"
+                        webView.evaluateJavascript(js) { res ->
+                            val handled = res != null && res != "null" && res != "undefined"
+                            if (!handled) openInViewer(url, hostile = false)
+                        }
+                    } catch (e: Exception) {
+                        AppLog.error("dock handoff failed — native viewer: $url", e)
+                        openInViewer(url, hostile = false)
+                    }
                     return true
                 }
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {

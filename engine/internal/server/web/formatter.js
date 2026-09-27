@@ -556,10 +556,17 @@
         '<div class="fmt-yt-cap">' + esc(label && label !== href ? label : 'YouTube · ' + vid) +
           '<span class="fmt-yt-open"> ↗</span></div>';
       card.addEventListener('click', function (e) {
-        // ↗ on the caption keeps the old open-outside affordance
+        // ↗ on the caption keeps the old open-outside affordance —
+        // v0.63.5: it rides the box+arrow tiers (the site's native app
+        // claims the domain → Custom Tab → browser), never a raw
+        // window.open (the APK's native layer would dock it instead).
         if (e.target.closest && e.target.closest('.fmt-yt-open')) {
           e.stopPropagation();
-          try { window.open(href, '_blank'); } catch (err) { location.href = href; }
+          if (window.InAppBrowser && window.InAppBrowser.external) {
+            window.InAppBrowser.external(href);
+          } else {
+            try { window.open(href, '_blank'); } catch (err) {}
+          }
           return;
         }
         playYTInPlace(card, vid, href);
@@ -728,7 +735,15 @@
       img.style.transform = '';
       var ob = root.querySelector('#mz-open');
       ob.style.display = /^https?:/i.test(src) ? '' : 'none';
-      ob.onclick = function () { try { window.open(src, '_blank'); } catch (e) {} };
+      // v0.63.5: the zoom overlay's open button is a leave-the-app
+      // affordance → the box+arrow tiers (external), not window.open.
+      ob.onclick = function () {
+        if (window.InAppBrowser && window.InAppBrowser.external) {
+          window.InAppBrowser.external(src);
+        } else {
+          try { window.open(src, '_blank'); } catch (e) {}
+        }
+      };
       root.classList.add('open');
       document.addEventListener('keydown', onKey);
     }

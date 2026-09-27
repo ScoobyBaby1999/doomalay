@@ -131,7 +131,11 @@
         '--accent-2-rgb:var(--accent-3-rgb);--accent-2:var(--accent-3)}' +
       '.wsp[data-prov="sourcehut"]{--wsp-rgb:var(--accent-4-rgb);--wsp-c:var(--accent-4);' +
         '--accent-2-rgb:var(--accent-4-rgb);--accent-2:var(--accent-4)}' +
-      // the base scope: gitea (accent-2) + self-host (the neutral default).
+      // v0.63.5: self-host rides the PRIMARY theme accent too (user spec:
+      // the selected pill glows in the theme color like every provider).
+      '.wsp[data-prov="selfhost"]{--wsp-rgb:var(--accent-rgb);--wsp-c:var(--accent);' +
+        '--accent-2-rgb:var(--accent-rgb);--accent-2:var(--accent)}' +
+      // the base scope: gitea (accent-2 — no override needed above).
       '.wsp{--wsp-rgb:var(--accent-2-rgb);--wsp-c:var(--accent-2)}' +
       '.wsp-pills{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;' +
         'padding:12px 12px 4px}' +
@@ -147,11 +151,6 @@
         'background:rgba(var(--kp, var(--wsp-rgb)),0.12);' +
         'box-shadow:0 0 14px rgba(var(--kp, var(--wsp-rgb)),0.22)}' +
       '.wsp-pill[data-on="1"] .nm{color:var(--kpc, var(--wsp-c))}' +
-      // v0.63: the self-host pill — the neutral local option (no brand
-      // color): selected = a crisp border + surface lift, no glow.
-      '.wsp-pill--neutral[data-on="1"]{border-color:var(--border-strong);' +
-        'background:var(--surface-2);box-shadow:none}' +
-      '.wsp-pill--neutral[data-on="1"] .nm{color:var(--text-1)}' +
       // the provider section
       '.wsp-sec{padding:8px 12px 2px}' +
       '.wsp-loggedin{display:flex;align-items:center;gap:8px;margin:2px 0 4px;padding:9px 12px;' +
@@ -561,14 +560,16 @@
   // Every default-supported forge as a polished pill — v0.63 (user spec):
   // ALL provider colors ride the THEME now (the hardcoded brand RGB is
   // retired): github → Accent 1 (primary), gitea → Accent 2, gitlab →
-  // Accent 3, sourcehut → Accent 4, self-host → the neutral base (no
-  // brand, no login — the local-device option rides surface/text tones).
+  // Accent 3, sourcehut → Accent 4, self-host → the theme's PRIMARY
+  // accent (v0.63.5 user spec: "the self host category… doesn't glow in
+  // the theme color when selected" — the no-glow neutral is retired;
+  // no brand, no login, but the selected state glows like the rest).
   var PROVIDERS = [
     { k: 'github',    icon: '🐙', name: 'GitHub',    rgb: 'var(--accent-rgb)',   c: 'var(--accent)',   host: 'github.com' },
     { k: 'gitea',     icon: '🍵', name: 'Gitea',     rgb: 'var(--accent-2-rgb)', c: 'var(--accent-2)', host: 'gitea.com' },
     { k: 'gitlab',    icon: '🦊', name: 'GitLab',    rgb: 'var(--accent-3-rgb)', c: 'var(--accent-3)', host: 'gitlab.com' },
     { k: 'sourcehut', icon: '🪶', name: 'Sourcehut',  rgb: 'var(--accent-4-rgb)', c: 'var(--accent-4)', host: 'sr.ht' },
-    { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: null,                  c: null,              host: '' }
+    { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: 'var(--accent-rgb)',   c: 'var(--accent)',   host: '' }
   ];
   var curProv = 'github';   // "by default the GitHub pill is selected"
 
@@ -581,7 +582,7 @@
     var out = '';
     PROVIDERS.forEach(function (p) {
       var style = p.rgb ? '--kp:' + p.rgb + ';--kpc:' + p.c + ';' : '';
-      out += '<div class="wsp-pill' + (p.rgb ? '' : ' wsp-pill--neutral') + '" data-k="' + p.k + '" data-on="' + (p.k === curProv ? '1' : '') + '"' +
+      out += '<div class="wsp-pill" data-k="' + p.k + '" data-on="' + (p.k === curProv ? '1' : '') + '"' +
         (style ? ' style="' + style + '"' : '') + '>' +
         '<span class="ic">' + p.icon + '</span><span class="nm">' + esc(p.name) + '</span></div>';
     });

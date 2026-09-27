@@ -1,32 +1,26 @@
-// linkviewer.js — v0.62.1: THE UNIVERSAL LINK CARD (PLAN-V063 Phase E1).
+// linkviewer.js — v0.63.5: THE TAP IS THE OPEN (PLAN-V0635).
 //
-// Every external link the chat (or any panel) renders opens IN THE APP:
-// one click → the engine's /api/preview verdict → the best tier the link
-// supports. Never a blank tab-out again:
-//   image          → inline + MediaZoom on tap
-//   video / audio  → native tags (desktop video controls carry PiP)
-//   pdf            → the browser's PDF viewer iframe + ⤢ open in the dock
-//   frameable html → sandboxed lazy iframe (deepseek et al. — the v062
-//                    frame probe verified who allows framing) + ⤢ open
-//                    in THE DOCK (browserdock.js — the panel browser)
-//   blocked html   → the og-card (favicon + title + description) + open ⤢
-//   (YouTube links never get here — formatter.js cards them with the
-//    in-place player + Document PiP.)
+// USER SPEC: "instead of having the browser in browser be it's own new
+// screen, we have the browser in browser render as the panel screen…
+// Opening a link would display it on the panel, so the user may have a
+// link open with the panel sitting at half position, see the app canvas
+// in the background."
 //
-// v0.63.4: the browsing TIERS live in browserdock.js now (InAppBrowser
-// v2 — open() docks the PANEL BROWSER, fallback() keeps the v0.62.3
-// full-screen tiers for frame-blocked pages, external() is the box+arrow
-// "leave the app" action). The icon language: ⤢ maximize = "bigger,
-// still in the app" · ⧉ box+arrow = "leave to the real browser/app".
+// So the document-level delegate now docks THE PANEL BROWSER directly
+// (browserdock.js — InAppBrowser v2): one tap on ANY external link and
+// the browser is a PANEL SCREEN — the strip toolbar (↻ pill = copy +
+// refresh, the dash, ‹ ⧉ ✕), full/half docking, the chat root stashed
+// and restored untouched underneath. Frameable pages load in the dock's
+// iframe; youtube rewires to the embed; media rides native tags; blocked
+// pages dock to the og/screenshot card with the ⤢ fallback tiers.
+// (YouTube links never get here — formatter.js cards them with the
+// in-place player + Document PiP; getkey/hostile links are wired by the
+// providers panel and ride the synchronous fallback tiers.)
 //
-// Bare URLs stay compact until tapped — transcripts never become
-// galleries unless asked. One document-level delegate covers every
-// message, current and future (streams included).
-//
-// THEME: every color rides CSS vars (.lv-* in index.html) — nothing
-// hardcoded, the theme system owns it all.
-//
-// Exposes: window.LinkViewer = { openCard, isExternal, _paint (tests) }
+// The inline lv-card painter stays EXPORTED (window.LinkViewer.openCard /
+// _paint) — the tests exercise it and it remains the degenerate path if
+// the dock script ever fails to load — but a plain link tap never shows
+// it anymore: the tap IS the open.
 (function () {
   'use strict';
 
@@ -58,7 +52,14 @@
     var href = a.getAttribute('href') || '';
     if (!isExternal(href)) return;
     e.preventDefault();                       // the app NEVER navigates away
-    openCard(a, href);
+    // v0.63.5: THE TAP IS THE OPEN — the browser docks ON THE PANEL as a
+    // panel screen (the user's clarified spec). The inline card painter
+    // below stays exported for the tests + the degenerate path only.
+    if (window.InAppBrowser && window.InAppBrowser.open) {
+      window.InAppBrowser.open(href);
+    } else {
+      openCard(a, href);
+    }
   });
 
   // ── the card lifecycle ─────────────────────────────────────────────

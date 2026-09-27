@@ -86,7 +86,10 @@ LOC0=$(ev "location.href")
 case "$LOC0" in "$BASE"|"$BASE/"|"$BASE/#"*) ok "the app never navigated (still $LOC0)";; *) bad "the app navigated away: $LOC0";; esac
 
 # 2. the blocked link → the og-card, in place
-ev "var a = document.querySelector('#v0621-msg a[href*=openrouter]'); a ? a.click() : 'nolink'; 'x'" >/dev/null
+# (v0.63.5: a plain tap DOCKS the panel browser now — the card painter
+#  stays exported (window.LinkViewer.openCard) and these assertions
+#  exercise it directly, exactly like a tap did in v0.62.1.)
+ev "var a = document.querySelector('#v0621-msg a[href*=openrouter]'); a ? window.LinkViewer.openCard(a, a.href) : 'nolink'; 'x'" >/dev/null
 sleep 4
 ORCARD=$(ev "var c = document.querySelector('#v0621-msg .lv-card[data-lv-url*=openrouter]'); c ? (c.querySelector('.lv-note') ? c.querySelector('.lv-note').textContent : 'no-note') : 'none'")
 has "$ORCARD" "blocks embedding" "blocked link → the lv-card with the honest blocks-embedding note"
@@ -94,19 +97,19 @@ ORB=$(ev "var c = document.querySelector('#v0621-msg .lv-card[data-lv-url*=openr
 check "$ORB" "button" "the blocked card carries the open ↗ button"
 
 # 3. the frameable link → the sandboxed iframe, in place
-ev "document.querySelector('#v0621-msg a[href*=example]').click(); 'x'" >/dev/null
+ev "var a = document.querySelector('#v0621-msg a[href*=example]'); window.LinkViewer.openCard(a, a.href); 'x'" >/dev/null
 sleep 4
 EXFRAME=$(ev "var c = document.querySelector('#v0621-msg .lv-card[data-lv-url*=example]'); c ? (c.querySelector('.lv-frame') ? 'iframe' : 'no-iframe:' + c.querySelector('.lv-body').innerHTML.slice(0,80)) : 'none'")
 check "$EXFRAME" "iframe" "frameable link → the lv-frame iframe (in-app render)"
 
 # 4. the image link → the inline image
-ev "document.querySelector('#v0621-msg a[href*=hqdefault]').click(); 'x'" >/dev/null
+ev "var a = document.querySelector('#v0621-msg a[href*=hqdefault]'); window.LinkViewer.openCard(a, a.href); 'x'" >/dev/null
 sleep 3
 IMGCARD=$(ev "var c = document.querySelector('#v0621-msg .lv-card[data-lv-url*=hqdefault]'); c ? (c.querySelector('.lv-img') ? 'img' : 'no-img') : 'none'")
 check "$IMGCARD" "img" "image link → the inline lv-img"
 
 # 5. deepseek link → frameable iframe (probed frame-friendly)
-ev "document.querySelector('#v0621-msg a[href*=deepseek]').click(); 'x'" >/dev/null
+ev "var a = document.querySelector('#v0621-msg a[href*=deepseek]'); window.LinkViewer.openCard(a, a.href); 'x'" >/dev/null
 sleep 5
 DSFRAME=$(ev "var c = document.querySelector('#v0621-msg .lv-card[data-lv-url*=deepseek]'); c ? (c.querySelector('.lv-frame') ? 'iframe' : 'note:' + (c.querySelector('.lv-note')||{}).textContent) : 'none'")
 check "$DSFRAME" "iframe" "deepseek link → the lv-frame iframe (the lone frame-friendly console)"

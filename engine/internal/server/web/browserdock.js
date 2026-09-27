@@ -32,6 +32,11 @@
 //     rewrite (the pill keeps the ORIGINAL link); frame-blocked → the
 //     dock swaps to the og/screenshot card with a ⤢ open (fallback);
 //     media → native tags. Verdict failures keep the optimistic load.
+//     v0.63.5: html/youtube frames carry the NO-TOP-NAVIGATION sandbox
+//     (allow-scripts/forms/popups/same-origin/presentation — everything
+//     a page needs, but a frame-buster can NEVER navigate the app's top
+//     window away) + the same-URL rapid-reopen guard turns a bust loop
+//     into the blocked card instead of a reload spiral.
 //   fallback(url) — bridge hostile?CustomTab:ViewerActivity → popup →
 //     tab (v0.62.3 verbatim). external(url) — box+arrow semantics.
 //   back/canBack/close/isOpen/currentURL — dock controls (app.js gives
@@ -154,6 +159,7 @@
   // ══ THE DOCK ═══════════════════════════════════════════════════════
   var stack = [];        // [{url, embed, title, blocked, media}]
   var live = false;      // the dock view is in the panel's stack
+  var lastOpen = null;   // {url, t} — the frame-buster loop guard
   var view = {
     title: 'browser',
     chrome: 'browser',   // panel.js: .panel-browser strip mode while top
@@ -194,7 +200,21 @@
       p.pushView(view);          // onMount → dockRender
     } else if (dockIsTop()) {
       var top = stack[stack.length - 1];
-      if (top && top.url === url) { dockRender(); return 'panel'; } // re-open: refresh focus
+      if (top && top.url === url) {
+        // v0.63.5: the frame-buster guard. A page that keeps forcing a
+        // top navigation (window.open / target=_top) lands back here via
+        // the native handleUrl bridge on every attempt — two re-opens of
+        // the SAME url inside 1.5s means a loop: show the blocked card,
+        // never reload the frame again. A human re-tap that fast is a
+        // no-op anyway (their page is already showing).
+        if (lastOpen && lastOpen.url === url && (Date.now() - lastOpen.t) < 1500) {
+          top.blocked = top.blocked || { title: hostOf(url), url: url };
+          dockRender();
+          return 'panel';
+        }
+        lastOpen = { url: url, t: Date.now() };
+        dockRender(); return 'panel'; // re-open: refresh focus
+      }
       if (stack.length > 29) stack.shift();
       stack.push(entry);
       dockRender();
@@ -202,8 +222,14 @@
       // covered by another view: queue it — onMount re-renders the top
       stack.push(entry);
     }
+    lastOpen = { url: url, t: Date.now() };
     fetchVerdict(entry);
     return 'panel';
+  }
+
+  function hostOf(u) {
+    try { return new URL(u, location.href).hostname.replace(/^www\./, ''); }
+    catch (e) { return ''; }
   }
 
   // the parallel /api/preview verdict (1h server cache; the lv-card
@@ -260,9 +286,20 @@
 
   function mountFrame(root, e) {
     var src = e.embed || e.url;
+    // v0.63.5: the NO-TOP-NAVIGATION sandbox for html/youtube — every
+    // capability a normal iframe gives (scripts, forms, popups, the
+    // page's own origin storage, presentation/PiP) EXCEPT the right to
+    // navigate our top window: frame-buster JS dies quietly on every
+    // platform and the desktop SPA can never be navigated away. PDFs
+    // keep the plain frame — the browser's built-in PDF viewer rides
+    // its own chrome-extension origin.
+    var isPdf = e.media === 'pdf' || /\.pdf(?:[?#]|$)/i.test(e.url);
+    var sb = isPdf ? '' :
+      ' sandbox="allow-scripts allow-forms allow-popups' +
+      ' allow-popups-to-escape-sandbox allow-same-origin allow-presentation"';
     root.innerHTML =
       '<div class="pb-loadbar" id="pb-loadbar"></div>' +
-      '<iframe class="pb-frame" id="pb-frame" src="' + esc(src) + '"' +
+      '<iframe class="pb-frame" id="pb-frame" src="' + esc(src) + '"' + sb +
       ' referrerpolicy="no-referrer" allowfullscreen allow="' +
       'fullscreen; picture-in-picture; encrypted-media; clipboard-write"' +
       ' title="' + esc(e.title || src) + '"></iframe>';
@@ -288,6 +325,14 @@
       inner = '<audio src="' + esc(e.url) + '" controls preload="metadata"></audio>';
     }
     root.innerHTML = '<div class="pb-mediawrap">' + inner + '</div>';
+    // v0.63.5: the docked image taps into the pinch-zoom overlay (the
+    // v0.62.1 MediaZoom capability lives on inside the panel browser).
+    var img = root.querySelector('img');
+    if (img && window.MediaZoom) {
+      img.addEventListener('click', function () {
+        window.MediaZoom.open(img.currentSrc || img.src, img.alt || '');
+      });
+    }
     var spin = document.getElementById('pb-refresh');
     if (spin) spin.classList.remove('loading');
   }

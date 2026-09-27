@@ -109,6 +109,8 @@ HINTTXT=$(ev "
 has "$HINTTXT" "in-app browser" "the bridge-tier hint copy says 'in-app browser'"
 
 # 6. the blocked-link card's open rides InAppBrowser (bridge stub still up)
+# (v0.63.5: a plain tap DOCKS the panel browser now — the card painter is
+#  exported surface; drive it directly, exactly like a tap did in v0.62.3.)
 CARDOPEN=$(ev "
 (function(){
   window.__provCalls = [];
@@ -118,7 +120,7 @@ CARDOPEN=$(ev "
   window.Formatter.renderInto(holder, 'see [the console](https://openrouter.ai/keys)', 'full', {});
   var a = holder.querySelector('a[href*=openrouter]');
   if (!a) return 'no-link';
-  a.click();
+  window.LinkViewer.openCard(a, a.href);
   return 'card-pending';
 })()")
 sleep 4

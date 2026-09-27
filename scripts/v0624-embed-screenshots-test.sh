@@ -96,7 +96,9 @@ ev "
   window.Formatter.renderInto(holder, 'grab a key at [the console](https://openrouter.ai/keys)', 'full', {});
   var a = holder.querySelector('a[href*=openrouter]');
   if (!a) return 'no-link';
-  a.click();
+  // v0.63.5: a plain tap DOCKS the panel browser now — the card painter
+  // is exported surface; drive it directly (the card art is the subject).
+  window.LinkViewer.openCard(a, a.href);
   return 'pending';
 })()" >/dev/null
 sleep 4
