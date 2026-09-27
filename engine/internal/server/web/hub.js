@@ -219,6 +219,12 @@
       cur.libraries = (d && d.libraries) || [];
       var hadType = !!cur.type;
       if (!cur.type && cur.libraries.length) cur.type = cur.libraries[0].type;
+      // v0.63: a hubstate-restored type that's no longer browsable (docs
+      // went Hidden this release) resets to the first visible library.
+      if (cur.type && !cur.libraries.some(function (l) { return l && l.type === cur.type; })) {
+        cur.type = cur.libraries.length ? cur.libraries[0].type : '';
+        hadType = false;
+      }
       // repaint ONLY when the hub view is still the one on top — a view
       // stacked over it (item detail, publish) owns the body meanwhile.
       if (isTop()) {
@@ -421,14 +427,28 @@
         flag +
       '</div>';
     var body = '';
+    // v0.63 (user spec pt 6): the REPO-VIEW AVAILABILITY — a bundle whose
+    // members have no repo (a singular item) or the builtin sentinel
+    // (deep research → "HF rejected the token") gets a disabled segment
+    // reading "repo view unavailable" instead of a tree that 404s. The
+    // live probe (HubRepo.probe) double-checks real repos async and flips
+    // the pill if HF refuses it.
+    var bRepo = bunchRepo(bcur.id);
+    var repoAvail = !!bRepo && bRepo !== 'doomalay/builtin' && !bcur.repoNA;
     // v0.60 pt C.8: the [cards|repo] pill — cards = the member sections,
     // repo = the artifacts-style tree of the bunch's publishing repo.
-    var viewPill =
-      '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="bundle view">' +
-        '<button type="button" data-bv="cards"' + (bcur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
-        '<button type="button" data-bv="repo"' + (bcur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
-      '</div></div>';
-    if (bcur.view === 'repo') {
+    // v0.63 (user spec pt 4): the sections render COLLAPSED by default —
+    // tap the header row to expand that section (see bunchWire).
+    var viewPill = repoAvail
+      ? '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="bundle view">' +
+          '<button type="button" data-bv="cards"' + (bcur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
+          '<button type="button" data-bv="repo"' + (bcur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
+        '</div></div>'
+      : '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="bundle view">' +
+          '<button type="button" class="on">cards</button>' +
+          '<button type="button" disabled title="this bundle has no browsable repo">repo view unavailable</button>' +
+        '</div></div>';
+    if (bcur.view === 'repo' && repoAvail) {
       body = viewPill + '<div class="hubrepo-tree" id="hubrepo-tree"></div>';
     } else if (bcur.loading) {
       body = viewPill + '<div class="art-loading">loading the bundle…</div>';
@@ -439,9 +459,12 @@
       } else {
         var secs = '';
         groups.forEach(function (g) {
-          secs += '<div class="hub-bunch-sec">' +
-            '<div class="hub-bunch-sec-h">' + libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
-              ' <span class="hub-bunch-sec-n">' + g.items.length + '</span></div>' +
+          var open = !!(bcur.secOpen && bcur.secOpen[g.type]);
+          secs += '<div class="hub-bunch-sec' + (open ? '' : ' folded') + '" data-sec="' + escAttr(g.type) + '">' +
+            '<div class="hub-bunch-sec-h" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+              libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
+              ' <span class="hub-bunch-sec-n">' + g.items.length + '</span>' +
+              '<span class="hub-sec-chev" aria-hidden="true">▸</span></div>' +
             '<div class="hub-grid" style="--hub-cols:' + clampCols(cur && cur.grid, bcur.panel && bcur.panel.bodyEl ? bcur.panel.bodyEl.clientWidth : 320) + '">' +
               g.items.map(cardHTML).join('') +
             '</div>' +
@@ -513,6 +536,24 @@
         toast((e && e.message) || 'the bundle download failed');
       });
     });
+    // v0.63 (user spec pt 4): the section headers toggle their sections
+    // (collapsed is the default state — see bunchRender).
+    el.querySelectorAll('.hub-bunch-sec-h').forEach(function (h) {
+      var sec = h.parentElement;
+      if (!sec || !sec.classList.contains('hub-bunch-sec')) return;
+      var flip = function () {
+        if (!bcur) return;
+        var t = sec.getAttribute('data-sec');
+        if (!t) return;
+        bcur.secOpen = bcur.secOpen || {};
+        bcur.secOpen[t] = !bcur.secOpen[t];
+        bunchRepaint();
+      };
+      h.addEventListener('click', flip);
+      h.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+      });
+    });
     // v0.60 pt C.8: the [cards|repo] pill — repo mounts the artifacts-style
     // tree; file rows matching a member's payload File open ITS card.
     var seg = el.querySelector('.hi-viewseg');
@@ -536,6 +577,19 @@
         itemsByPath: byPath,
         onOpenItem: function (it) {
           if (it && window.HubItem) window.HubItem.open(it.type, it);
+        }
+      });
+    }
+    // v0.63 (user spec pt 6): the async repo-availability probe — real
+    // repos get one cheap tree fetch; if HF refuses it (401/404) the pill
+    // flips to "repo view unavailable" (cached per repo in HubRepo).
+    var probeRepo = bunchRepo(bcur.id);
+    if (window.HubRepo && probeRepo && probeRepo !== 'doomalay/builtin' && !bcur.repoNA) {
+      window.HubRepo.probe(probeRepo).then(function (ok) {
+        if (!ok && bcur && !bcur.repoNA) {
+          bcur.repoNA = true;
+          if (bcur.view === 'repo') bcur.view = 'cards';
+          bunchRepaint();
         }
       });
     }
@@ -812,10 +866,16 @@
       var mout = '';
       order.forEach(function (key) {
         var members = groups[key];
+        // v0.63 (user spec pt 4): mine sections collapse too — same
+        // chevron header as the bunch view (collapsed by default).
+        var mOpen = !!(c.mineOpen && c.mineOpen[key]);
+        var secCls = 'hub-bunch-sec' + (mOpen ? '' : ' folded');
+        var secAttrs = ' data-msec="' + escAttr(key) + '"';
         if (key) {
-          mout += '<div class="hub-bunch-sec">' +
-            '<div class="hub-bunch-sec-h">' + libIcon(c.type) + ' <span class="hub-mine-bundle">' + esc(key) + '</span>' +
+          mout += '<div class="' + secCls + '"' + secAttrs + '>' +
+            '<div class="hub-bunch-sec-h" role="button" tabindex="0" aria-expanded="' + (mOpen ? 'true' : 'false') + '">' + libIcon(c.type) + ' <span class="hub-mine-bundle">' + esc(key) + '</span>' +
               ' <span class="hub-bunch-sec-n">' + members.length + '</span>' +
+              '<span class="hub-sec-chev" aria-hidden="true">▸</span>' +
               '<button type="button" class="hub-group-del" data-gdel="' + escAttr(key) + '"' +
                 ' title="delete this bundle\'s copies" aria-label="delete the bundle">🗑</button>' +
             '</div>' +
@@ -824,9 +884,10 @@
             '</div>' +
           '</div>';
         } else {
-          mout += '<div class="hub-bunch-sec">' +
-            '<div class="hub-bunch-sec-h">' + libIcon(c.type) + ' loose downloads' +
-              ' <span class="hub-bunch-sec-n">' + members.length + '</span></div>' +
+          mout += '<div class="' + secCls + '"' + secAttrs + '>' +
+            '<div class="hub-bunch-sec-h" role="button" tabindex="0" aria-expanded="' + (mOpen ? 'true' : 'false') + '">' + libIcon(c.type) + ' loose downloads' +
+              ' <span class="hub-bunch-sec-n">' + members.length + '</span>' +
+              '<span class="hub-sec-chev" aria-hidden="true">▸</span></div>' +
             '<div class="hub-grid" style="--hub-cols:' + mp.eff + '">' +
               members.map(cardHTML).join('') +
             '</div>' +
@@ -1043,7 +1104,7 @@
     });
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
-        '</b><i>bundle</i></span>' : '';
+        '</b></span>' : '';
     return (
       '<button class="hub-card hub-card--bunch" data-bunch="' + escAttr(b.id) + '">' +
         '<span class="hub-card-bg" data-bunchbg="1"></span>' +
@@ -1518,6 +1579,25 @@
         cur.mineConfirm = '';
         if (b.getAttribute('data-mdel') === 'remove' && key) { doBundleDelete(key); return; }
         updateBody();
+      });
+    });
+
+    // v0.63 (user spec pt 4): the MINE sections toggle (collapsed by
+    // default — same affordance as the bunch view's sections). The 🗑
+    // above stops propagation, so it never folds/unfolds by accident.
+    host.querySelectorAll('.hub-bunch-sec-h').forEach(function (h) {
+      var sec = h.parentElement;
+      if (!sec || !sec.hasAttribute('data-msec')) return;
+      var flip = function () {
+        if (!cur) return;
+        var key = sec.getAttribute('data-msec');
+        cur.mineOpen = cur.mineOpen || {};
+        cur.mineOpen[key] = !cur.mineOpen[key];
+        updateBody();
+      };
+      h.addEventListener('click', flip);
+      h.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
       });
     });
 

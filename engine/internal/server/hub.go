@@ -62,7 +62,9 @@ func hubWriteItemErr(w http.ResponseWriter, err error) {
 }
 
 // handleHubLibraries is GET /api/hub/libraries — the registry + local
-// counts (the panel builds its tabs from this).
+// counts (the panel builds its tabs from this). v0.63: Hidden specs (docs)
+// are filtered out — they're bundle-companion formats, not browsable
+// categories (item/download/repo routes keep accepting the type).
 func (s *Server) handleHubLibraries(w http.ResponseWriter, r *http.Request) {
         type library struct {
                 hub.LibrarySpec
@@ -70,6 +72,9 @@ func (s *Server) handleHubLibraries(w http.ResponseWriter, r *http.Request) {
         }
         out := make([]library, 0, 8)
         for _, spec := range hub.All() {
+                if spec.Hidden {
+                        continue
+                }
                 out = append(out, library{LibrarySpec: spec, LocalCount: hub.CountLocal(s.db, spec.Type)})
         }
         writeJSON(w, http.StatusOK, map[string]any{"libraries": out})

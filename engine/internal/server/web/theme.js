@@ -54,34 +54,34 @@
   // accent hexes for swatch previews — the live values live in CSS)
   var THEMES = {
     midnight: { label: 'Midnight', scheme: 'teal',   light: false,
-      accent: '#a78bfa', accent2: '#38bdf8', accent3: '#f472b6',
+      accent: '#a78bfa', accent2: '#38bdf8', accent3: '#f472b6', accent4: '#34d399',
       grid: { bg: '#0a0a0b', line: '#131318', dot: '#2e2e3a', origin: '#4a4a5e' } },
     nebula:   { label: 'Nebula',   scheme: 'berry',  light: false,
-      accent: '#c084fc', accent2: '#22d3ee', accent3: '#f0abfc',
+      accent: '#c084fc', accent2: '#22d3ee', accent3: '#f0abfc', accent4: '#fbbf24',
       grid: { bg: '#0b0912', line: '#171225', dot: '#2e2748', origin: '#413463' } },
     ember:    { label: 'Ember',    scheme: 'sunset', light: false,
-      accent: '#fb923c', accent2: '#fbbf24', accent3: '#fb7185',
+      accent: '#fb923c', accent2: '#fbbf24', accent3: '#fb7185', accent4: '#2dd4bf',
       grid: { bg: '#0f0a08', line: '#1f150d', dot: '#3a2c1b', origin: '#57401f' } },
     forest:   { label: 'Forest',   scheme: 'forest', light: false,
-      accent: '#4ade80', accent2: '#2dd4bf', accent3: '#a3e635',
+      accent: '#4ade80', accent2: '#2dd4bf', accent3: '#a3e635', accent4: '#fb923c',
       grid: { bg: '#080d0a', line: '#12241a', dot: '#213528', origin: '#2f4a37' } },
     ocean:    { label: 'Ocean',    scheme: 'ocean',  light: false,
-      accent: '#38bdf8', accent2: '#7dd3fc', accent3: '#818cf8',
+      accent: '#38bdf8', accent2: '#7dd3fc', accent3: '#818cf8', accent4: '#fb7185',
       grid: { bg: '#070b10', line: '#101c28', dot: '#1f3341', origin: '#2b4759' } },
     rose:     { label: 'Rose',     scheme: 'rose',   light: false,
-      accent: '#f472b6', accent2: '#fb7185', accent3: '#e879f9',
+      accent: '#f472b6', accent2: '#fb7185', accent3: '#e879f9', accent4: '#38bdf8',
       grid: { bg: '#100a0d', line: '#20141b', dot: '#3a2833', origin: '#523744' } },
     mono:     { label: 'Mono',     scheme: 'mono',   light: false,
-      accent: '#d4d4d4', accent2: '#a8a8a8', accent3: '#8a8a8a',
+      accent: '#d4d4d4', accent2: '#a8a8a8', accent3: '#8a8a8a', accent4: '#6e6e6e',
       grid: { bg: '#0a0a0a', line: '#161616', dot: '#282828', origin: '#3d3d3d' } },
     solar:    { label: 'Solar',    scheme: 'solar',  light: false,
-      accent: '#fbbf24', accent2: '#67e8f9', accent3: '#a5b4fc',
+      accent: '#fbbf24', accent2: '#67e8f9', accent3: '#a5b4fc', accent4: '#fb7185',
       grid: { bg: '#060810', line: '#101828', dot: '#1f2a42', origin: '#2e3d5e' } },
     paper:    { label: 'Paper',    scheme: 'paper',  light: true,
-      accent: '#b45309', accent2: '#0e7490', accent3: '#be185d',
+      accent: '#b45309', accent2: '#0e7490', accent3: '#be185d', accent4: '#4d7c0f',
       grid: { bg: '#f4f1ea', line: '#e0d8c8', dot: '#c9bda6', origin: '#a3906c' } },
     frost:    { label: 'Frost',    scheme: 'frost',  light: true,
-      accent: '#4f6ef7', accent2: '#0891b2', accent3: '#c026d3',
+      accent: '#4f6ef7', accent2: '#0891b2', accent3: '#c026d3', accent4: '#ea580c',
       grid: { bg: '#eef2f7', line: '#dbe3ec', dot: '#c2cfdd', origin: '#93a7c0' } }
   };
 
@@ -179,6 +179,7 @@
   // are SURFACES (--surface-1). `hint` rides to the settings row.
   var RGB_PAIRS = {
     '--accent': '--accent-rgb', '--accent-2': '--accent-2-rgb', '--accent-3': '--accent-3-rgb',
+    '--accent-4': '--accent-4-rgb',
     '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb',
     '--bg-app': '--bg-app-rgb', '--surface-1': '--surface-1-rgb', '--surface-2': '--surface-2-rgb',
     '--bg-panel': '--bg-panel-rgb'
@@ -198,7 +199,10 @@
       hint: 'body text · gradients paint the titles' },
     { var: '--accent', label: 'Accent 1', rgb: true, hint: 'the primary accent · user bubbles' },
     { var: '--accent-2', label: 'Accent 2', rgb: true, hint: 'the adjacent accent' },
-    { var: '--accent-3', label: 'Accent 3', rgb: true, hint: 'the third accent' }
+    { var: '--accent-3', label: 'Accent 3', rgb: true, hint: 'the third accent' },
+    // v0.63 (user spec): the FOURTH accent — library categories (scripts)
+    // and workspace providers (sourcehut) ride it.
+    { var: '--accent-4', label: 'Accent 4', rgb: true, hint: 'the fourth accent · scripts + providers' }
   ];
 
   function applyTheme(s) {

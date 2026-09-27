@@ -202,11 +202,21 @@
     // v0.60 pt C.8: the [cards|repo] pill — cards = the item view (payload),
     // repo = the publishing repo's tree (the file rows that match an item
     // open its card; this item's own file highlights).
-    var ivRow =
-      '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="detail view">' +
-        '<button type="button" data-iv="cards"' + (cur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
-        '<button type="button" data-iv="repo"' + (cur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
-      '</div></div>';
+    // v0.63 (user spec pt 6): REPO-VIEW AVAILABILITY — no repo / the
+    // builtin sentinel (deep research → "HF rejected the token") / a
+    // probe-rejected repo renders a disabled "repo view unavailable"
+    // segment instead of a tree that 404s.
+    var repoAvail = !!it.repo && it.repo !== 'doomalay/builtin' && !cur.repoNA;
+    var ivRow = repoAvail
+      ? '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="detail view">' +
+          '<button type="button" data-iv="cards"' + (cur.view !== 'repo' ? ' class="on"' : '') + '>cards</button>' +
+          '<button type="button" data-iv="repo"' + (cur.view === 'repo' ? ' class="on"' : '') + '>repo</button>' +
+        '</div></div>'
+      : '<div class="hi-viewrow"><div class="hi-viewseg" role="group" aria-label="detail view">' +
+          '<button type="button" class="on">cards</button>' +
+          '<button type="button" disabled title="this item has no browsable repo">repo view unavailable</button>' +
+        '</div></div>';
+    var showRepo = cur.view === 'repo' && repoAvail;
 
     return (
       '<div class="hi-root" data-tone="' + escAttr(cur.type) + '">' +
@@ -230,7 +240,7 @@
           '<span class="hi-fold-ico">' + (cur.folded ? '▸' : '▾') + '</span>' +
         '</div>' +
         '<div class="hi-body" id="hi-body">' + ivRow +
-          (cur.view === 'repo'
+          (showRepo
             ? '<div class="hubrepo-tree" id="hubrepo-tree"></div>'
             : '<div id="hi-payload">' +
                 (cur.payload == null ? '<div class="art-loading">loading the payload…</div>' : '') +
@@ -421,6 +431,19 @@
         itemsByPath: byPath,
         onOpenItem: function (it) {
           if (it && window.HubItem) window.HubItem.open(it.type, it);
+        }
+      });
+    }
+    // v0.63 (user spec pt 6): the async repo-availability probe — one cheap
+    // root fetch (cached per repo); a refusal flips the pill to the
+    // disabled "repo view unavailable" variant and lands back on cards.
+    if (window.HubRepo && cur.item && cur.item.repo &&
+        cur.item.repo !== 'doomalay/builtin' && !cur.repoNA) {
+      window.HubRepo.probe(cur.item.repo).then(function (ok) {
+        if (!ok && cur && !cur.repoNA) {
+          cur.repoNA = true;
+          if (cur.view === 'repo') cur.view = 'cards';
+          cur.panel.replaceView(buildView(), { keepScroll: true });
         }
       });
     }

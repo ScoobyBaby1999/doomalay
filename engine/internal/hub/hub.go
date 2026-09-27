@@ -21,6 +21,13 @@ type LibrarySpec struct {
         Tag        string `json:"tag"`         // HF dataset tag that marks repos of this type
         PayloadExt string `json:"payload_ext"` // payload file extension (".md", ".json")
         Desc       string `json:"desc"`        // one-line description for UIs
+        // Hidden libraries never appear in the /api/hub/libraries response (no
+        // browsable tab in the panel) but stay fully REGISTERED — bundle member
+        // sections, one-press downloads, item serving and repo-file routes all
+        // iterate All()/CollectionItems and keep working. v0.63 (user spec:
+        // "docs are a hidden format we support to help users and the bot when
+        // using a library — not a browsable, downloadable category").
+        Hidden bool `json:"hidden,omitempty"`
 }
 
 // RepoName returns the per-user HF dataset repo name for this library
@@ -125,5 +132,6 @@ func init() {
                 Tag:        "doomalay-doc",
                 PayloadExt: ".md",
                 Desc:       "Markdown guides and journals shared through Hugging Face datasets",
+                Hidden:     true, // v0.63: bundled + bot-served only — never a browsable tab
         })
 }

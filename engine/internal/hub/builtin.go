@@ -95,7 +95,9 @@ var builtinPayloads = map[string]string{
 
 // deepResearchPayload — the 8-stage methodology ported 1:1 from the brain's
 // "Default Deep Research" flow template (templates.py), in the same JSON
-// shape the hub's other template payloads use.
+// shape the hub's other template payloads use. v0.63: every stage budget
+// x5 (user spec: "up the max tokens for deep research template by like
+// x5") — the old ceilings clipped long briefings.
 const deepResearchPayload = `{
   "name": "Deep research",
   "description": "The classic deep-research pipeline: decompose the question, search the live web per sub-question, verify and read the sources, synthesize a fully-cited briefing, then critique the gaps and refine. Best for questions needing fresh, sourced answers.",
@@ -103,15 +105,15 @@ const deepResearchPayload = `{
   "task": "deep research briefing",
   "tags": ["research", "web", "citations", "multi-stage"],
   "stages": [
-    {"name": "decompose", "role": "planner", "instructions": "Break the prompt into 3-6 specific, researchable sub-questions. Output JSON array: [{\"question\": str, \"why\": str}]. Every sub-question must be answerable from public sources.", "inputs": ["prompt"], "max_tokens": 800},
-    {"name": "search_terms", "role": "planner", "instructions": "For each sub-question, propose 2-4 precise web search queries (different phrasings, English + other relevant languages). Output JSON: {\"queries\": [str]}. No duplicates.", "inputs": ["decompose"], "max_tokens": 600},
-    {"name": "source_scan", "role": "generator", "instructions": "Using the web search results, list the most authoritative sources per sub-question with a one-line relevance note. Output JSON array: [{\"url\": str, \"title\": str, \"note\": str}]. Prefer primary sources (.gov, .edu, official docs, peer-reviewed). DO NOT invent URLs — if uncertain, OMIT.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["decompose.{i}", "search_terms"], "max_tokens": 1200},
-    {"name": "verification", "role": "verifier", "instructions": "Check the proposed sources against fetched_sources. Drop paywalled, empty, or unreachable ones. Output JSON: {\"verified\": [...], \"dropped\": [...], \"reasons\": {str: str}}.", "inputs": ["source_scan.*", "fetched_sources"], "max_tokens": 1000},
-    {"name": "synthesis", "role": "generator", "instructions": "Write the research briefing: answer each sub-question in 150-300 words, grounded in the verified sources, citing them as [N]. Begin with '# <answer headline>' followed by '## <sub-question>' sections. NEVER invent citations.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["prompt", "decompose.{i}", "verification.verified", "fetched_sources"], "max_tokens": 2000},
-    {"name": "gap_check", "role": "critiquer", "instructions": "Identify unanswered or weakly-sourced parts of the synthesis. Output a bullet list of concrete gaps (which sub-question, what is missing, what source would fix it) or 'No gaps found'. No praise.", "inputs": ["synthesis.*", "verification.verified"], "max_tokens": 600},
-    {"name": "refine", "role": "transformer", "instructions": "Patch the gaps flagged by gap_check using fetched_sources. Add a '## Confidence' section rating each sub-question's answer (high/medium/low) with a one-line justification. Return the FULL briefing.", "inputs": ["synthesis.*", "gap_check", "fetched_sources"], "max_tokens": 2500},
-    {"name": "assemble", "role": "assembler", "instructions": "Assemble the final answer: the refined briefing followed by '## References' listing exactly the verified sources as [N] Author. \"Title\". Year. URL. Do NOT add new sources.", "inputs": ["refine", "verification.verified"], "max_tokens": 1200}
+    {"name": "decompose", "role": "planner", "instructions": "Break the prompt into 3-6 specific, researchable sub-questions. Output JSON array: [{\"question\": str, \"why\": str}]. Every sub-question must be answerable from public sources.", "inputs": ["prompt"], "max_tokens": 4000},
+    {"name": "search_terms", "role": "planner", "instructions": "For each sub-question, propose 2-4 precise web search queries (different phrasings, English + other relevant languages). Output JSON: {\"queries\": [str]}. No duplicates.", "inputs": ["decompose"], "max_tokens": 3000},
+    {"name": "source_scan", "role": "generator", "instructions": "Using the web search results, list the most authoritative sources per sub-question with a one-line relevance note. Output JSON array: [{\"url\": str, \"title\": str, \"note\": str}]. Prefer primary sources (.gov, .edu, official docs, peer-reviewed). DO NOT invent URLs — if uncertain, OMIT.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["decompose.{i}", "search_terms"], "max_tokens": 6000},
+    {"name": "verification", "role": "verifier", "instructions": "Check the proposed sources against fetched_sources. Drop paywalled, empty, or unreachable ones. Output JSON: {\"verified\": [...], \"dropped\": [...], \"reasons\": {str: str}}.", "inputs": ["source_scan.*", "fetched_sources"], "max_tokens": 5000},
+    {"name": "synthesis", "role": "generator", "instructions": "Write the research briefing: answer each sub-question in 150-300 words, grounded in the verified sources, citing them as [N]. Begin with '# <answer headline>' followed by '## <sub-question>' sections. NEVER invent citations.", "fanout": {"over": "decompose", "max_parallel": 6}, "inputs": ["prompt", "decompose.{i}", "verification.verified", "fetched_sources"], "max_tokens": 10000},
+    {"name": "gap_check", "role": "critiquer", "instructions": "Identify unanswered or weakly-sourced parts of the synthesis. Output a bullet list of concrete gaps (which sub-question, what is missing, what source would fix it) or 'No gaps found'. No praise.", "inputs": ["synthesis.*", "verification.verified"], "max_tokens": 3000},
+    {"name": "refine", "role": "transformer", "instructions": "Patch the gaps flagged by gap_check using fetched_sources. Add a '## Confidence' section rating each sub-question's answer (high/medium/low) with a one-line justification. Return the FULL briefing.", "inputs": ["synthesis.*", "gap_check", "fetched_sources"], "max_tokens": 12500},
+    {"name": "assemble", "role": "assembler", "instructions": "Assemble the final answer: the refined briefing followed by '## References' listing exactly the verified sources as [N] Author. \"Title\". Year. URL. Do NOT add new sources.", "inputs": ["refine", "verification.verified"], "max_tokens": 6000}
   ],
-  "output_rules": {"format": "markdown", "min_words": 800, "max_words": 4000, "required_sections": ["References", "Confidence"], "banned_phrases": ["clearly", "obviously", "everyone knows", "state-of-the-art"], "tone": "measured, citation-heavy, hedged where sources disagree"}
+  "output_rules": {"format": "markdown", "min_words": 800, "max_words": 20000, "required_sections": ["References", "Confidence"], "banned_phrases": ["clearly", "obviously", "everyone knows", "state-of-the-art"], "tone": "measured, citation-heavy, hedged where sources disagree"}
 }
 `

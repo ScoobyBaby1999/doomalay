@@ -55,6 +55,50 @@
     return '/api/hub/repo/' + encodeURIComponent(repo);
   }
 
+  // ── v0.63: THE TREE-STATE MEMORY ─────────────────────────────────────
+  // User spec: "navigating backwards should remember the current opened
+  // folder tree … if the user was navigating a folder nested three levels
+  // deep they must re-expand three folders" — no more. The expanded set
+  // lives MODULE-level, keyed per repo: any remount (back from a file
+  // preview or an item card, a [cards|repo] flip, a bunch repaint) replays
+  // the recorded expansions depth-first. Each replay rides the SAME lazy
+  // load path (a synthesized row click), so the semantics stay identical.
+  var openPaths = {};
+
+  function depthOf(p) { return String(p).split('/').filter(Boolean).length; }
+
+  function cssPathEscape(p) {
+    return (window.CSS && CSS.escape) ? CSS.escape(p) : String(p).replace(/"/g, '\\"');
+  }
+
+  // restoreOpen — after a fresh mount, walk the recorded open paths
+  // shallowest-first; each level's branch only exists once its parent's
+  // fetch lands, so poll lightly (60ms ticks, ~10s cap) until the whole
+  // recorded set is replayed (or the container leaves the DOM).
+  function restoreOpen(container, repo) {
+    var paths = Object.keys(openPaths[repo] || {}).sort(function (a, b) {
+      return depthOf(a) - depthOf(b);
+    });
+    if (!paths.length) return;
+    var i = 0, ticks = 0;
+    var timer = setInterval(function () {
+      ticks++;
+      if (!container.isConnected || i >= paths.length || ticks > 170) {
+        clearInterval(timer);
+        return;
+      }
+      while (i < paths.length) {
+        var branch = container.querySelector('.artt-branch[data-path="' + cssPathEscape(paths[i]) + '"]');
+        if (!branch) break; // parent level still loading
+        if (!branch.classList.contains('open')) {
+          var row = branch.querySelector(':scope > .artt-row');
+          if (row) row.click();
+        }
+        i++;
+      }
+    }, 60);
+  }
+
   // natural compare (the artifacts tree's rule: digit runs compare numerically)
   function naturalCompare(a, b) {
     var ax = [], bx = [];
@@ -221,6 +265,11 @@
           loaded = true;
           buildDir(kids, entry.path, depth + 1);
         }
+        // v0.63: record the toggle in the per-repo memory (a later
+        // remount replays it — see restoreOpen above).
+        var mem = openPaths[repo] || (openPaths[repo] = {});
+        if (open) mem[entry.path] = true;
+        else delete mem[entry.path];
       });
       return branch;
     }
@@ -249,6 +298,28 @@
     }
 
     buildDir(root, '/', 0);
+    restoreOpen(container, repo);
+  }
+
+  // ── v0.63: THE REPO-AVAILABILITY PROBE ─────────────────────────────────
+  // One cheap root-tree fetch, cached per repo: ok = the repo accepts our
+  // HF token (200), bad = rejected/missing (401/404). The detail + bunch
+  // views consult it to decide between the real [cards|repo] pill and the
+  // disabled "repo view unavailable" variant (user spec pt 6).
+  var repoAvailCache = {};
+
+  function probe(repo) {
+    if (!repo || repo === 'doomalay/builtin') return Promise.resolve(false);
+    if (Object.prototype.hasOwnProperty.call(repoAvailCache, repo)) {
+      return Promise.resolve(repoAvailCache[repo]);
+    }
+    return fetch(repoBase(repo) + '/tree?path=%2F').then(function (r) {
+      repoAvailCache[repo] = r.ok;
+      return r.ok;
+    }).catch(function () {
+      repoAvailCache[repo] = false;
+      return false;
+    });
   }
 
   // ── the file preview (a pushed view) ─────────────────────────────────
@@ -347,5 +418,5 @@
     body.textContent = text;
   }
 
-  window.HubRepo = { mount: mount, openFile: openFile };
+  window.HubRepo = { mount: mount, openFile: openFile, probe: probe };
 })();

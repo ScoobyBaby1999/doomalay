@@ -513,9 +513,10 @@ func TestHubLibraries(t *testing.T) {
         if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
                 t.Fatalf("decode: %v", err)
         }
-        // v0.60 pt C.5: 6 built-in libraries — persona + template + skill +
-        // theme + script + doc.
-        if len(got.Libraries) != 6 {
+        // v0.63: 5 BROWSABLE libraries — persona + template + skill + theme +
+        // script. doc is Hidden (bundle-companion format, not a browsable
+        // category) so it never appears in the listing…
+        if len(got.Libraries) != 5 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}
@@ -531,9 +532,18 @@ func TestHubLibraries(t *testing.T) {
                 byType["theme"].Tag != "doomalay-theme" || byType["theme"].PayloadExt != ".doomtheme" {
                 t.Fatalf("specs = %+v", byType)
         }
-        if byType["script"].Tag != "doomalay-script" || byType["script"].PayloadExt != ".sh" ||
-                byType["doc"].Tag != "doomalay-doc" || byType["doc"].PayloadExt != ".md" {
-                t.Fatalf("script/doc specs = script:%+v doc:%+v", byType["script"], byType["doc"])
+        if byType["script"].Tag != "doomalay-script" || byType["script"].PayloadExt != ".sh" {
+                t.Fatalf("script spec = %+v", byType["script"])
+        }
+        if _, ok := byType["doc"]; ok {
+                t.Fatalf("doc must be hidden from the listing, got %+v", byType["doc"])
+        }
+        // …but the TYPE stays registered — the registry itself still knows
+        // it (bundle member sections + item/download/repo routes keep
+        // serving docs through All()/Get).
+        docSpec, err := hub.Get("doc")
+        if err != nil || docSpec.Tag != "doomalay-doc" || docSpec.PayloadExt != ".md" || !docSpec.Hidden {
+                t.Fatalf("registry doc spec = %+v err = %v", docSpec, err)
         }
 }
 
