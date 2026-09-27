@@ -666,7 +666,14 @@
   #chat-panel.panel-browser .pb-pill,
   #chat-panel.panel-browser .pb-acts { display: flex; }
   #chat-panel.panel-browser .panel-header { display: none; }
-  #chat-panel .panel-body.pb-mode {
+  /* v0.63.6 FIX: this rule used .pb-mode — a class NOTHING ever added
+     (panel.js adds pv-mode to EVERY view), so the flex chain never lit,
+     the iframe fell back to its ~150px intrinsic height and the page
+     occupied the top ~20% of the panel with dead space below. Scoped
+     to .panel-browser now — the class panel.js toggles exactly while
+     the dock view is top — so the frame STRETCHES the whole visible
+     window (.pb-root flex:1 → .pb-frame flex:1) at BOTH dock positions. */
+  #chat-panel.panel-browser .panel-body {
     padding: 0;
     overflow: hidden;
     display: flex;

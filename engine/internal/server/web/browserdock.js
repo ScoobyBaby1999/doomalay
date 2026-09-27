@@ -29,9 +29,15 @@
 //     consoles are frame-blocked by design; the v0.62.3 contract holds).
 //   open(url) → THE DOCK: strip + loadbar immediately, iframe loading
 //     optimistically, GET /api/preview in parallel — youtube → the embed
-//     rewrite (the pill keeps the ORIGINAL link); frame-blocked → the
-//     dock swaps to the og/screenshot card with a ⤢ open (fallback);
-//     media → native tags. Verdict failures keep the optimistic load.
+//     rewrite (the pill keeps the ORIGINAL link); frame-blocked →
+//     v0.63.6 THE AUTO-ROUTE: the dock hands the URL straight to the
+//     FULL-SCREEN browser-in-browser (the fallback tiers — a native
+//     WebView is a TOP-LEVEL context, immune to X-Frame-Options and
+//     CSP frame-ancestors) and closes itself. THE PANEL BROWSER ONLY
+//     EVER OPENS FOR PAGES IT CAN DISPLAY (the user's spec). A desktop
+//     popup fired async can be popup-blocked — that rare case keeps the
+//     og/screenshot card with a ⤢ open. Media → native tags. Verdict
+//     failures keep the optimistic load.
 //     v0.63.5: html/youtube frames carry the NO-TOP-NAVIGATION sandbox
 //     (allow-scripts/forms/popups/same-origin/presentation — everything
 //     a page needs, but a frame-buster can NEVER navigate the app's top
@@ -123,7 +129,11 @@
   }
 
   // ══ THE FALLBACK TIERS (v0.62.3 verbatim — now the backup) ════════
-  function fallback(url, opts) {
+  // v0.63.6: split into fallbackTier() — the AUTO-ROUTE needs to KNOW
+  // whether a tier actually fired (an async window.open on desktop can
+  // be popup-blocked and return null; the APK bridge always fires).
+  // The public fallback() keeps its string contract for the E2 suites.
+  function fallbackTier(url, opts) {
     opts = opts || {};
     var bridge = window.__doomalayKotlin;
     if (bridge && typeof bridge.openInApp === 'function') {
@@ -133,7 +143,7 @@
           hostile: !!opts.hostile,
           purpose: opts.purpose || 'link'
         }));
-        return 'apk-viewer';
+        return { tier: 'apk-viewer', ok: true };
       } catch (e) { /* bridge hiccup — fall through */ }
     }
     var w = null;
@@ -141,8 +151,9 @@
     if (!w) {
       try { w = window.open(url, '_blank'); } catch (e2) {}
     }
-    return w ? 'popup' : 'tab';
+    return w ? { tier: 'popup', ok: true } : { tier: 'tab', ok: false };
   }
+  function fallback(url, opts) { return fallbackTier(url, opts).tier; }
 
   // the box+arrow: leave the app entirely — the site's NATIVE app
   // claims its domain (ACTION_VIEW), Chrome Custom Tab as the fallback,
@@ -166,6 +177,13 @@
     render: function () { return '<div class="pb-root" id="pb-root"></div>'; },
     onMount: function () {
       live = true;
+      // v0.63.6: the AUTO-ROUTE may have emptied the stack while this
+      // view was covered — resurfacing onto an empty dock closes it
+      // instead of painting a blank page.
+      if (!current()) {
+        if (dockIsTop()) { var p0 = panelInst(); if (p0) p0.popView(); }
+        return;
+      }
       dockRender();
     },
     onClose: function () {
@@ -208,7 +226,7 @@
         // never reload the frame again. A human re-tap that fast is a
         // no-op anyway (their page is already showing).
         if (lastOpen && lastOpen.url === url && (Date.now() - lastOpen.t) < 1500) {
-          top.blocked = top.blocked || { title: hostOf(url), url: url };
+          top.busted = top.busted || { title: hostOf(url), url: url };
           dockRender();
           return 'panel';
         }
@@ -232,9 +250,10 @@
     catch (e) { return ''; }
   }
 
-  // the parallel /api/preview verdict (1h server cache; the lv-card
-  // usually primed it) — youtube rewrites to the embed, blocked pages
-  // swap to the og/screenshot card, media swaps to native tags.
+  // the parallel /api/preview verdict (1h server cache) — youtube
+  // rewrites to the embed, blocked pages AUTO-ROUTE to the full-screen
+  // browser (v0.63.6 — the dock pops itself; only a popup-blocked
+  // desktop keeps the card), media swaps to native tags.
   function fetchVerdict(entry) {
     fetch('/api/preview?url=' + encodeURIComponent(entry.url))
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -276,12 +295,43 @@
     var e = current();
     if (!root || !e) return;
     paintStrip();
-    if (e.blocked) { renderBlocked(root, e); return; }
+    // v0.63.6: the bust-loop guard keeps its card (a page that ESCAPED
+    // the sandbox must not auto-open the viewer without a fresh tap —
+    // the escape itself re-opened us, not the user); a verdict-based
+    // block AUTO-ROUTES to the full-screen browser-in-browser.
+    if (e.busted) { renderBlocked(root, e); return; }
+    if (e.blocked) {
+      if (!autoRoute(e)) renderBlocked(root, e);   // popup-blocked desktop
+      return;
+    }
     if (e.media === 'image' || e.media === 'video' || e.media === 'audio') {
       renderMedia(root, e);
       return;
     }
     mountFrame(root, e);                                    // html / pdf / youtube / optimistic
+  }
+
+  // v0.63.6: THE AUTO-ROUTE — "panel browser only even opens when the
+  // website it displays can be displayed. Otherwise the browser in
+  // browser is displayed." The verdict says this page can NEVER render
+  // in the dock's iframe (X-Frame-Options / CSP frame-ancestors / a
+  // cross-domain sign-in wall)? Hand the URL to the FULL-SCREEN
+  // browser-in-browser — a top-level browsing context where those
+  // anti-clickjacking guards don't apply — and pull the entry out of
+  // the dock. Returns false when no tier could fire (a desktop popup
+  // blocked outside a user gesture) so the caller keeps the card.
+  function autoRoute(e) {
+    var r = fallbackTier(e.url, { purpose: 'link' });
+    if (!r.ok) return false;
+    var p = panelInst();
+    var i = stack.indexOf(e);
+    if (i >= 0) stack.splice(i, 1);
+    if (stack.length) {
+      if (dockIsTop()) dockRender();       // the page beneath returns
+    } else if (p && dockIsTop()) {
+      p.popView();                         // the emptied dock closes itself
+    }
+    return true;
   }
 
   function mountFrame(root, e) {
@@ -338,7 +388,7 @@
   }
 
   function renderBlocked(root, e) {
-    var d = e.blocked || {};
+    var d = e.blocked || e.busted || {};
     var art = '';
     if (d.screenshot_url) {
       art = '<img class="pb-shot" src="' + esc(d.screenshot_url) + '" loading="lazy" alt="" onerror="this.remove()">';
@@ -350,6 +400,7 @@
       (d.description ? '<div class="pb-bdesc">' + esc(d.description) + '</div>' : '') +
       '<div class="pb-note">' + (d.login_redirect ?
         'this site needs its own sign-in page' :
+        e.busted ? 'this page refuses to stay embedded' :
         'this site blocks embedding') + '</div>' +
       '<button class="pb-open" type="button">' + I_MAX + 'open</button></div>';
     var b = root.querySelector('.pb-open');
@@ -386,7 +437,7 @@
       ev.stopPropagation();
       var e = current();
       var root = document.getElementById('pb-root');
-      if (e && root && !e.blocked) mountFrame(root, e);   // fresh iframe = full reload
+      if (e && root && !e.blocked && !e.busted) mountFrame(root, e);   // fresh iframe = full reload
     });
     if (refresh) refresh.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;

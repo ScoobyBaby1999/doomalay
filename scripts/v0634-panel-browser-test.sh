@@ -17,11 +17,13 @@
 #   - the nav stack: open A → open B (a YouTube watch URL docks the
 #     NOCOOKIE EMBED while the pill keeps the ORIGINAL link) → ‹ back
 #   - ✕ / Escape close the dock and restore the chat root untouched
-#   - a frame-blocked page docks to the og-card with the ⤢ open → the
-#     fallback tiers (bridge stub) — one tap to the full-screen viewer
+#   - v0.63.6: a frame-blocked page AUTO-ROUTES — the dock hands the
+#     URL to the FULL-SCREEN browser-in-browser (bridge viewer) and
+#     closes itself; the panel browser only ever opens for pages it
+#     can display (the og-card era is over)
 #   - the ⧉ box+arrow → bridge openExternal (ACTION_VIEW on device)
 #   - the v0.62.3 contract SURVIVES: getkey/hostile ride fallback()
-#     synchronously; the blocked card's open rides fallback too
+#     synchronously; the lv-card's open rides fallback too
 #   - theme discipline: the .pb-* rules hardcode no colors
 set -u
 DATA=/tmp/doomalay-v0634
@@ -90,7 +92,9 @@ ok "clipboard + bridge stubs installed"
 SURF=$(ev "['open','fallback','external','back','canBack','close','isOpen','currentURL'].every(function(k){return typeof window.InAppBrowser[k]==='function'}) ? 'v2' : 'old'")
 check "$SURF" "v2" "InAppBrowser v2 surface (open/fallback/external/back/canBack/close/isOpen/currentURL)"
 
-# ── 1. the frameable card → ⤢ → THE DOCK ───────────────────────────────
+# ── 1. THE TAP IS THE OPEN (v0.63.5+): the frameable tap docks the ─────
+# panel browser directly — no inline card anymore (the card painter
+# stays exported as the degenerate path; section 10 drives it directly)
 ev "(function(){
   var root = document.getElementById('chat-messages');
   var holder = document.createElement('div');
@@ -101,20 +105,16 @@ ev "(function(){
     'full', {});
   return 'rendered';
 })()" >/dev/null
-ev "var a = [].filter.call(document.querySelectorAll('#v0634-msg a'), function(x){return x.href.indexOf('example.com')>=0;})[0]; a && a.click(); 'tapped'" >/dev/null
-sleep 4
-CARD=$(ev "var c = [].filter.call(document.querySelectorAll('#v0634-msg .lv-card'), function(x){return (x.getAttribute('data-lv-url')||'').indexOf('example.com')>=0;})[0]; c ? (c.querySelector('iframe.lv-frame') && c.querySelector('.lv-dock') ? 'card+dock' : (c.querySelector('iframe.lv-frame') ? 'card-no-dockbtn' : 'no-frame')) : 'no-card'")
-check "$CARD" "card+dock" "the frameable card embeds AND carries the ⤢ dock button"
-
-# paint the blocked card too (the fallback assertions ride it later)
-ev "var a = [].filter.call(document.querySelectorAll('#v0634-msg a'), function(x){return x.href.indexOf('openrouter')>=0;})[0]; a && a.click(); 'tapped'" >/dev/null
-sleep 4
-
 # the pre-dock window height (for the remeasure comparison)
 VIS0=$(ev "parseFloat(getComputedStyle(document.getElementById('chat-panel')).getPropertyValue('--panel-vis-h'))||0" | cut -d. -f1)
+ev "var a = [].filter.call(document.querySelectorAll('#v0634-msg a'), function(x){return x.href.indexOf('example.com')>=0;})[0]; a && a.click(); 'tapped'" >/dev/null
+sleep 4
+CARD=$(ev "var c = document.querySelector('#v0634-msg .lv-card'); JSON.stringify({nocard: !c, dockopen: window.InAppBrowser.isOpen(), pill: document.getElementById('pb-url') ? document.getElementById('pb-url').textContent : 'none'})")
+has "$CARD" '"nocard":true' "the frameable tap docks THE DOCK directly (v0.63.5: the tap IS the open — no inline card)"
+has "$CARD" '"dockopen":true' "the dock is open from the tap"
+has "$CARD" '"pill":"https://example.com/"' "the pill shows the tapped link"
 
-ev "document.querySelector('#v0634-msg .lv-card .lv-dock').click(); 'docked'" >/dev/null
-sleep 1.2
+# the dock button era is over — nothing to click, the dock is already up
 
 DOCK=$(ev "(function(){
   var p = document.getElementById('chat-panel');
@@ -233,21 +233,20 @@ sleep 0.6
 ESC=$(ev "window.InAppBrowser.isOpen() ? 'still-open' : 'escaped'")
 check "$ESC" "escaped" "Escape pops the dock"
 
-# ── 8. a frame-blocked page docks to the og-card + ⤢ fallback ──────────
-ev "window.InAppBrowser.open('https://openrouter.ai/keys'); 'blocked-dock'" >/dev/null
+# ── 8. v0.63.6: a frame-blocked page AUTO-ROUTES to the full-screen ───
+# browser (the og-card era is over — the dock only ever opens for
+# pages it can display; blocked taps ride openInApp + the dock closes)
+ev "window.__bridge = []; window.InAppBrowser.open('https://openrouter.ai/keys'); 'blocked-dock'" >/dev/null
 sleep 4.5
 BLK=$(ev "(function(){
-  var b = document.querySelector('.pb-blocked');
-  return JSON.stringify({blocked: !!b, note: b ? (b.querySelector('.pb-note')||{}).textContent : '', open: !!(b && b.querySelector('.pb-open')), open2: window.InAppBrowser.isOpen()});
+  var c = window.__bridge[window.__bridge.length-1];
+  return JSON.stringify({m: c ? c.m : 'none', u: c ? c.u : 'none',
+    dockopen: window.InAppBrowser.isOpen(), card: !!document.querySelector('.pb-blocked')});
 })()")
-has "$BLK" '"blocked":true' "the blocked page docks to the og-card (not a blank frame)"
-has "$BLK" 'blocks embedding' "the honest note"
-has "$BLK" '"open":true' "the ⤢ open button is there"
-ev "document.querySelector('.pb-blocked .pb-open').click(); 'open-fallback'" >/dev/null
-sleep 0.5
-FB=$(ev "var c = window.__bridge[window.__bridge.length-1]; c ? c.m + ' ' + c.u : 'none'")
-has "$FB" 'openInApp https://openrouter.ai/keys' "the ⤢ rides the FALLBACK tiers (bridge viewer — one tap, no second dock)"
-ev "document.getElementById('pb-close').click(); 'cleanup'" >/dev/null; sleep 0.4
+has "$BLK" '"m":"openInApp"' "the blocked page AUTO-ROUTES to the full-screen browser (no dead frame)"
+has "$BLK" '"u":"https://openrouter.ai/keys"' "the viewer gets the exact URL"
+has "$BLK" '"dockopen":false' "the dock closed itself (panel browser only opens for displayable pages)"
+has "$BLK" '"card":false' "no blocked card — the browser-in-browser IS displayed"
 
 # ── 9. the ⧉ box+arrow → openExternal ───────────────────────────────────
 ev "window.InAppBrowser.open('https://example.com/'); 'x'" >/dev/null
@@ -264,8 +263,10 @@ has "$K1" '"tier":"apk-viewer"' "getkey stays SYNCHRONOUS on the fallback tier"
 has "$K1" '"hostile":false' "getkey passes hostile:false"
 K2=$(ev "window.__bridge = []; window.InAppBrowser.open('https://opencode.ai/auth', {purpose:'getkey', hostile:true}); var c = window.__bridge[0]; c.m + ' hostile=' + c.o.hostile")
 has "$K2" 'openInApp hostile=true' "the webview-hostile provider passes hostile:true"
-K3=$(ev "window.__bridge = []; var b = [].filter.call(document.querySelectorAll('#v0634-msg .lv-card'), function(x){return (x.getAttribute('data-lv-url')||'').indexOf('openrouter')>=0;})[0]; b = b && b.querySelector('.lv-open'); b && b.click(); var c = window.__bridge[0]; c ? c.m + ' ' + c.u : 'none'")
-has "$K3" 'openInApp https://openrouter.ai/keys' "the blocked card's open rides fallback directly (no two-tap dock trip)"
+K3=$(ev "window.__bridge = []; var a = [].filter.call(document.querySelectorAll('#v0634-msg a'), function(x){return x.href.indexOf('openrouter')>=0;})[0]; a && window.LinkViewer.openCard(a, a.href); 'carded'")
+sleep 3
+K3=$(ev "window.__bridge = []; var b = document.querySelector('#v0634-msg .lv-card'); var o = b && b.querySelector('.lv-open'); o && o.click(); var c = window.__bridge[0]; c ? c.m + ' ' + c.u : 'none'")
+has "$K3" 'openInApp https://openrouter.ai/keys' "the degenerate lv-card's open rides fallback directly (openCard stays exported)"
 
 # ── 11. the app tab NEVER navigated ─────────────────────────────────────
 LOC=$(ev "location.href")
@@ -315,15 +316,27 @@ has "$FULL" '"full":true' "dragging the strip UP docks the browser FULL (the she
 has "$FULL" '"pill":"https://example.com/"' "the dock (pill + frame) survived the drag"
 
 # drag back DOWN to the half position (default) — >10% down from full docks.
-# Re-grab the dash (the strip moved to the top when the sheet went full),
-# and drag GENTLY (slow steps = a dock intent, not a fling-close).
-DASH2=$(ev "var r = document.querySelector('#chat-panel .handle-bar').getBoundingClientRect(); Math.round(r.left+r.width/2)+' '+Math.round(r.top+r.height/2)")
-DX=$(echo $DASH2 | cut -d' ' -f1); DY=$(echo $DASH2 | cut -d' ' -f2)
-agent-browser mouse move $DX $DY >/dev/null
-agent-browser mouse down >/dev/null
-YY=$DY
-for STEP in 1 2 3 4 5; do YY=$((YY+60)); agent-browser mouse move $DX $YY >/dev/null; sleep 0.15; done
-agent-browser mouse up >/dev/null; pup
+# SYNTHETIC pointer events on the handle: with the frame now FILLING the
+# panel (the v0.63.6 fix), a CDP mouse drag lands every move over the
+# cross-origin iframe — headless routes those to the iframe's process and
+# gesture.js never sees them (the up-drag works because its pointer stays
+# inside the strip). Real devices are unaffected — touch events never
+# retarget and real mice capture in the browser process — so we drive the
+# same begin()/move()/end() path directly.
+DOWN0=$(ev "(function(){
+  var el = document.getElementById('panel-handle');
+  var r = document.querySelector('#chat-panel .handle-bar').getBoundingClientRect();
+  var y = Math.round(r.top + r.height/2);
+  el.dispatchEvent(new PointerEvent('pointerdown', {pointerId: 7, pointerType: 'mouse', clientY: y, bubbles: true, cancelable: true}));
+  return 'down-from-' + y;
+})()")
+YY=$(echo "$DOWN0" | grep -o '[0-9]*$')
+for STEP in 1 2 3 4 5; do
+  YY=$((YY+60))
+  ev "var el = document.getElementById('panel-handle'); el.dispatchEvent(new PointerEvent('pointermove', {pointerId: 7, pointerType: 'mouse', clientY: $YY, bubbles: true, cancelable: true})); 'mv'" >/dev/null
+  sleep 0.12
+done
+ev "var el = document.getElementById('panel-handle'); el.dispatchEvent(new PointerEvent('pointerup', {pointerId: 7, pointerType: 'mouse', clientY: $YY, bubbles: true, cancelable: true})); 'up'" >/dev/null
 sleep 0.9
 HALF=$(ev "(function(){ var p = document.getElementById('chat-panel'); return JSON.stringify({full: p.classList.contains('panel-full'), open: window.InAppBrowser.isOpen()}); })()")
 has "$HALF" '"full":false' "dragging back DOWN re-docks at the half position"

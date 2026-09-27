@@ -12,7 +12,9 @@
 // refresh, the dash, ‹ ⧉ ✕), full/half docking, the chat root stashed
 // and restored untouched underneath. Frameable pages load in the dock's
 // iframe; youtube rewires to the embed; media rides native tags; blocked
-// pages dock to the og/screenshot card with the ⤢ fallback tiers.
+// pages never dock at all — v0.63.6 THE AUTO-ROUTE (browserdock.js)
+// hands them straight to the full-screen browser-in-browser; only a
+// popup-blocked desktop keeps the og/screenshot card.
 // (YouTube links never get here — formatter.js cards them with the
 // in-place player + Document PiP; getkey/hostile links are wired by the
 // providers panel and ride the synchronous fallback tiers.)
