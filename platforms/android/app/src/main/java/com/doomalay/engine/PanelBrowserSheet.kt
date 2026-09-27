@@ -531,11 +531,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             sh.translationY = curOffset
             scrim?.alpha = scrimFor(curOffset)
         }
-        a.addListener(object : android.animation.Animator.AnimatorListener {
-            override fun onAnimationEnd(animation: android.animation.Animator?) { end() }
-            override fun onAnimationStart(animation: android.animation.Animator?) {}
-            override fun onAnimationCancel(animation: android.animation.Animator?) {}
-            override fun onAnimationRepeat(animation: android.animation.Animator?) {}
+        // (AnimatorListenerAdapter: the SDK's onAnimationEnd takes a
+        // NON-NULL Animator — a nullable override "overrides nothing"
+        // and fails the Kotlin build, the v0.64.0 CI lesson.)
+        a.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) { end() }
         })
         a.start()
     }
