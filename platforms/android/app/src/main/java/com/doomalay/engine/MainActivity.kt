@@ -21,6 +21,31 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val REQUEST_NOTIF = 1001
 
+    // v0.64.0: THE NATIVE PANEL BROWSER (PanelBrowserSheet) — a native
+    // WebView docked as a snappable bottom sheet over the untouched SPA
+    // (PLAN-V0640). Built lazily on the first __doomalayKotlin.openPanel
+    // call from browserdock.js (InAppBrowser v3); every surface without
+    // that bridge method never sees a panel browser at all.
+    private var panelSheet: PanelBrowserSheet? = null
+    private fun panelBrowser(): PanelBrowserSheet {
+        if (panelSheet == null) panelSheet = PanelBrowserSheet(this)
+        return panelSheet!!
+    }
+
+    // v0.64.0: an OAuth return page landing in the panel sheet's WebView
+    // (doomalay://) — the SPA never lost visibility, so its
+    // visibilitychange refetch has to be woken manually.
+    fun wakeSpa() {
+        if (this::webView.isInitialized) {
+            try {
+                webView.evaluateJavascript(
+                    "try{document.dispatchEvent(new Event('visibilitychange'))}catch(e){}", null)
+            } catch (e: Exception) {
+                AppLog.error("wakeSpa failed", e)
+            }
+        }
+    }
+
     // v0.62.3: the main WebView's video fullscreen (onShowCustomView)
     private var fullscreenView: android.view.View? = null
     private var fullscreenCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
@@ -324,6 +349,30 @@ class MainActivity : Activity() {
                 }
             }
         }
+
+        // v0.64.0: THE NATIVE PANEL BROWSER — browserdock.js (InAppBrowser
+        // v3) routes every plain link tap here on shells that carry the
+        // method; optsJson carries the live CSS-var theme snapshot. The
+        // sheet is RESUMABLE: close only hides it, so its WebView history
+        // + cookies survive to the next open.
+        @android.webkit.JavascriptInterface
+        fun openPanel(url: String, optsJson: String) {
+            AppLog.log("openPanel: $url")
+            handler.post { panelBrowser().open(url, optsJson) }
+        }
+
+        // the JS-side state getters (isOpen/currentURL/close consult
+        // these — the native sheet owns the browser state now)
+        @android.webkit.JavascriptInterface
+        fun panelClose() {
+            handler.post { panelSheet?.dismiss() }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun panelOpen(): Boolean = panelSheet?.isOpen() == true
+
+        @android.webkit.JavascriptInterface
+        fun panelUrl(): String = panelSheet?.currentUrl() ?: ""
     }
 
     // openInViewer — THE IN-APP BROWSER (PLAN-V063 E2). hostile pages
@@ -522,6 +571,11 @@ class MainActivity : Activity() {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             return
         }
+        // v0.64.0: THE NATIVE PANEL BROWSER owns back FIRST — video
+        // fullscreen → the WebView's own history → dismiss the sheet —
+        // all natively, before the SPA (doomalay.handleBack) is ever
+        // consulted. The SPA underneath stays exactly as left.
+        if (panelSheet != null && panelSheet?.handleBack() == true) return
         // v0.14: the app is a single-page WebView — there is no navigation
         // history to walk "back" through. The old code called
         // webView.goBack(), which jumped to the leftover "Starting engine…"
@@ -541,5 +595,24 @@ class MainActivity : Activity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    // v0.64.0: the sheet's WebView pauses its media/timers with the app
+    // (same lifecycle the main WebView gets for free).
+    override fun onPause() {
+        super.onPause()
+        panelSheet?.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        panelSheet?.onResume()
+    }
+
+    // v0.64.0: configChanges means no recreate — re-seat the sheet's
+    // dock on rotation so the offsets never go stale.
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        panelSheet?.relayout()
     }
 }

@@ -1,28 +1,22 @@
-// linkviewer.js — v0.63.5: THE TAP IS THE OPEN (PLAN-V0635).
+// linkviewer.js — v0.63.5 THE TAP IS THE OPEN · v0.64.0 the router ride.
 //
-// USER SPEC: "instead of having the browser in browser be it's own new
-// screen, we have the browser in browser render as the panel screen…
-// Opening a link would display it on the panel, so the user may have a
-// link open with the panel sitting at half position, see the app canvas
-// in the background."
-//
-// So the document-level delegate now docks THE PANEL BROWSER directly
-// (browserdock.js — InAppBrowser v2): one tap on ANY external link and
-// the browser is a PANEL SCREEN — the strip toolbar (↻ pill = copy +
-// refresh, the dash, ‹ ⧉ ✕), full/half docking, the chat root stashed
-// and restored untouched underneath. Frameable pages load in the dock's
-// iframe; youtube rewires to the embed; media rides native tags; blocked
-// pages never dock at all — v0.63.6 THE AUTO-ROUTE (browserdock.js)
-// hands them straight to the full-screen browser-in-browser; only a
-// popup-blocked desktop keeps the og/screenshot card.
+// The document-level delegate still makes ONE TAP ON ANY EXTERNAL LINK
+// the open — it calls InAppBrowser.open(href) (browserdock.js v3),
+// which routes by capability: on the v0.64 APK the NATIVE PANEL BROWSER
+// docks (a real top-level WebView in a snappable bottom sheet over the
+// untouched app — loads every page the browser-in-browser loads);
+// everywhere else (desktop, HF Space, self-host, old APKs) the link
+// goes straight to the browser-in-browser (popup → tab on desktop, the
+// full-screen viewer on APK) — no hesitation, no iframe, no
+// embeddability detection.
 // (YouTube links never get here — formatter.js cards them with the
 // in-place player + Document PiP; getkey/hostile links are wired by the
 // providers panel and ride the synchronous fallback tiers.)
 //
 // The inline lv-card painter stays EXPORTED (window.LinkViewer.openCard /
 // _paint) — the tests exercise it and it remains the degenerate path if
-// the dock script ever fails to load — but a plain link tap never shows
-// it anymore: the tap IS the open.
+// the router script ever fails to load — but a plain link tap never
+// shows it: the tap IS the open.
 (function () {
   'use strict';
 
@@ -135,10 +129,10 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>';
   }
 
-  // ⤢ + "open in the dock" — the frameable / pdf card's bigger view: the
-  // full panel browser (browserdock.js) with the strip toolbar, copy,
-  // refresh and the app's own back stack. The 16:10 inline crop stays
-  // for scanning the transcript; this is the "actually browse it" tap.
+  // ⤢ + "open" — the frameable / pdf card's bigger view: the browser
+  // ride (browserdock.js) — the native panel on the APK, the popup /
+  // viewer tiers everywhere else. The 16:10 inline crop stays for
+  // scanning the transcript; this is the "actually browse it" tap.
   function wireDock(card, href) {
     var b = card.querySelector('.lv-dock');
     if (b) b.addEventListener('click', function () {
@@ -148,13 +142,13 @@
     });
   }
 
-  // ── v0.62.3→v0.63.4: THE BROWSING TIERS moved to browserdock.js ────
-  // InAppBrowser v2: open(url) docks THE PANEL BROWSER (this panel's
-  // own view, the strip toolbar, full/half docking); fallback(url)
-  // keeps the E2 full-screen tiers (APK ViewerActivity / desktop
-  // popup / tab); external(url) is the ⧉ box+arrow leave-the-app
-  // action. The getkey flow + webview-hostile pages ride fallback()
-  // synchronously — the v0.62.3 contract is unchanged.
+  // ── v0.62.3→v0.64.0: THE BROWSING TIERS live in browserdock.js ────
+  // InAppBrowser v3: open(url) routes by capability — the NATIVE PANEL
+  // on shells with __doomalayKotlin.openPanel (the v0.64 APK), else the
+  // fallback() redirect tiers (full-screen APK viewer / desktop popup /
+  // tab) with zero hesitation. external(url) is the ⧉ box+arrow
+  // leave-the-app action. The getkey flow + webview-hostile pages ride
+  // fallback() synchronously — the v0.62.3 contract is unchanged.
 
   // ── the per-tier body ──────────────────────────────────────────────
   function paint(card, href, d) {

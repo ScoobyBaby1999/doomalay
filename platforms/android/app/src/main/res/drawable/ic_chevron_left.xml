@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.64.0: THE BACK CHEVRON — the Lucide chevron-left glyph (ISC
+License, the same corpus as web/icons.js and browserdock.js's ‹),
+stroked. Stroke color is white; the runtime imageTintList
+(PanelBrowserSheet) recolors it with the live web-theme snapshot —
+nothing hardcoded in use. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M15,18 L9,12 L15,6"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>
