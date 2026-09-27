@@ -270,12 +270,30 @@
       var v = this.viewStack[this.viewStack.length - 1];
       // header switches to view mode (model button hides, ‹ + ✕ appear)
       this._setViewHeader(true, v.title || '');
+      // v0.63.4: a view may claim the HANDLE STRIP as its chrome (the
+      // docked browser — the strip becomes the toolbar, the header
+      // yields). Toggled here so covering views restore the header and
+      // popView brings the strip back with the view itself.
+      this._setStripMode(!!(v && v.chrome === 'browser'));
       var html = '';
       try { html = v.render ? v.render() : ''; } catch (e) { console.error('view render', e); }
       this.bodyEl.classList.add('pv-mode');
       this.bodyEl.innerHTML = String(html || '');
       this.bodyEl.scrollTop = 0;
       if (v.onMount) { try { v.onMount(this.bodyEl); } catch (e) { console.error('view onMount', e); } }
+    }
+
+    // v0.63.4: .panel-browser on the sheet — the handle strip grows the
+    // pill + acts (its CSS in index.html), the panel header hides. The
+    // strip is ~22px taller, so gesture.js's chrome math must re-run a
+    // frame AFTER the class lands (--panel-vis-h depends on it).
+    _setStripMode(on) {
+      if (this.panelEl.classList.contains('panel-browser') === !!on) return;
+      this.panelEl.classList.toggle('panel-browser', !!on);
+      var g = this.gestures;
+      requestAnimationFrame(function () {
+        if (g && g.remeasure) { try { g.remeasure(); } catch (e) {} }
+      });
     }
 
     _stashRoot() {
@@ -294,6 +312,7 @@
 
     _restoreRoot() {
       this._setViewHeader(false);
+      this._setStripMode(false);   // v0.63.4: the last pop restores the plain strip
       this.bodyEl.classList.remove('pv-mode');
       if (this._rootFrag) {
         this.bodyEl.innerHTML = '';
@@ -328,6 +347,7 @@
       }
       this.viewStack = [];
       this.bodyEl.classList.remove('pv-mode');
+      this._setStripMode(false);   // v0.63.4: the strip chrome leaves too
       this._setViewHeader(false);
     }
 

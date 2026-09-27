@@ -942,6 +942,13 @@
       }
       // Close the chat panel (a view pops first, the root closes after)
       if (panel && panel.isOpen()) {
+        // v0.63.4: the docked browser's OWN back stack first — Android
+        // back while browsing walks the pages the user opened through
+        // the app, exactly like a real browser, before it pops the dock.
+        if (window.InAppBrowser && window.InAppBrowser.canBack && window.InAppBrowser.canBack()) {
+          window.InAppBrowser.back();
+          return true;
+        }
         if (panel.back && panel.back()) return true;
         panel.close();
         return true;

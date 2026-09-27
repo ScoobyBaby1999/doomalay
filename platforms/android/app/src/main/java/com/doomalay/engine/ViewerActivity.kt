@@ -26,7 +26,10 @@ import org.json.JSONObject
 //     apply (they govern iframes only), so the API-key consoles that are
 //     frame-blocked everywhere (openrouter, anthropic, together, nvidia,
 //     privatemode — the v062 frame probe) render FULLY in-app;
-//   - our own toolbar: ‹ back · host · ↻ reload · ⤢ Custom Tab · ✕ close;
+//   - our own toolbar: ‹ back · host · ↻ reload · ⧉ open outside · ✕ close
+//     (v0.63.4: the box+arrow glyph — the user's icon spec, "a clear box
+//     and arrow like YouTube" — for every leave-the-app action; the old
+//     ⤢ read as fullscreen but actually left the app);
 //   - cookies persist (CookieManager is the app-global profile, shared
 //     with the main WebView — logins survive across opens);
 //   - video fullscreen via WebChromeClient.onShowCustomView (YouTube
@@ -76,7 +79,8 @@ class ViewerActivity : Activity() {
         val text3 = col("text3", text1)
         val border = col("border", text1)
 
-        // ── the toolbar (‹ host ↻ ⤢ ✕) ─────────────────────────────────
+        // ── the toolbar (‹ host ↻ ⧉ ✕) — v0.63.4: the box+arrow is the
+        //    leave-the-app action (the user's icon spec) ─────────────
         toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(bg)
@@ -91,6 +95,20 @@ class ViewerActivity : Activity() {
             b.gravity = Gravity.CENTER
             b.setPadding(dip(16), dip(10), dip(16), dip(10))
             b.setOnClickListener { onClick(b) }
+            toolbar.addView(b, LinearLayout.LayoutParams(dip(48), ViewGroup.LayoutParams.WRAP_CONTENT))
+            return b
+        }
+        // v0.63.4: the icon button — the box+arrow vector, tinted with the
+        // LIVE web-theme text color (never a literal). Same 48dip slot as
+        // the text buttons so the toolbar rhythm is unchanged.
+        fun toolIconBtn(drawableRes: Int, title: String, onClick: () -> Unit): android.widget.ImageButton {
+            val b = android.widget.ImageButton(this)
+            b.setImageResource(drawableRes)
+            b.imageTintList = android.content.res.ColorStateList.valueOf(text1)
+            b.background = null
+            b.contentDescription = title
+            b.setPadding(dip(14), dip(12), dip(14), dip(12))
+            b.setOnClickListener { onClick() }
             toolbar.addView(b, LinearLayout.LayoutParams(dip(48), ViewGroup.LayoutParams.WRAP_CONTENT))
             return b
         }
@@ -214,7 +232,9 @@ class ViewerActivity : Activity() {
             }
         }
         toolBtn("↻", "reload") { webView.reload() }
-        toolBtn("⤢", "open in a browser tab") { openCustomTab(url, accent) }
+        // v0.63.4: THE BOX+ARROW — "leave the app for the real browser /
+        // the site's app". The old ⤢ glyph read as fullscreen (it wasn't).
+        toolIconBtn(R.drawable.ic_external_link, "open outside the app") { openCustomTab(url, accent) }
         toolBtn("✕", "close") { finish() }
 
         setContentView(column)

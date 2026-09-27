@@ -290,6 +290,25 @@ class MainActivity : Activity() {
                 openInViewer(url, hostile = opts.optBoolean("hostile", false), themeJson = optsJson)
             }
         }
+
+        // v0.63.4: THE BOX+ARROW — the panel browser's ⧉ strip button.
+        // "Leave the app for the real browser / the site's app": ACTION_VIEW
+        // lets the site's NATIVE app claim its domain (YouTube et al.);
+        // a Chrome Custom Tab is the fallback, the system browser the last
+        // resort (openCustomTab's own catch). Our manifest only claims the
+        // doomalay:// scheme, so this can never loop back into the app.
+        @android.webkit.JavascriptInterface
+        fun openExternal(url: String) {
+            AppLog.log("openExternal: $url")
+            handler.post {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                } catch (e: Exception) {
+                    AppLog.error("ACTION_VIEW failed — custom tab", e)
+                    openCustomTab(url)
+                }
+            }
+        }
     }
 
     // openInViewer — THE IN-APP BROWSER (PLAN-V063 E2). hostile pages

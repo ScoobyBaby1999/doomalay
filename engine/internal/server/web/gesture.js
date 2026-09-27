@@ -457,7 +457,16 @@
         if (curY >= H - 1) writeY(H);           // closed: stay closed
         else renderY(yForState('default'));     // visible: snap home instantly
       },
-      justDragged: function () { return performance.now() - lastDragEndedAt < 350; }
+      justDragged: function () { return performance.now() - lastDragEndedAt < 350; },
+      // v0.63.4: the handle strip grows a browser toolbar while the
+      // docked browser is up (panel.js _setStripMode) — re-run the chrome
+      // math + repaint the window var at the CURRENT offset so the
+      // visible window ends where it should (no jump, no gap).
+      remeasure: function () {
+        if (!panelEl) return;
+        measureChrome();
+        renderY(curY);
+      }
     };
 
     // ── CLASS-DRIVEN CLOSES (scrim tap and friends) ─────────────────

@@ -5,12 +5,19 @@
 // supports. Never a blank tab-out again:
 //   image          → inline + MediaZoom on tap
 //   video / audio  → native tags (desktop video controls carry PiP)
-//   pdf            → the browser's PDF viewer iframe
+//   pdf            → the browser's PDF viewer iframe + ⤢ open in the dock
 //   frameable html → sandboxed lazy iframe (deepseek et al. — the v062
-//                    frame probe verified who allows framing)
-//   blocked html   → the og-card (favicon + title + description) + open ↗
+//                    frame probe verified who allows framing) + ⤢ open
+//                    in THE DOCK (browserdock.js — the panel browser)
+//   blocked html   → the og-card (favicon + title + description) + open ⤢
 //   (YouTube links never get here — formatter.js cards them with the
 //    in-place player + Document PiP.)
+//
+// v0.63.4: the browsing TIERS live in browserdock.js now (InAppBrowser
+// v2 — open() docks the PANEL BROWSER, fallback() keeps the v0.62.3
+// full-screen tiers for frame-blocked pages, external() is the box+arrow
+// "leave the app" action). The icon language: ⤢ maximize = "bigger,
+// still in the app" · ⧉ box+arrow = "leave to the real browser/app".
 //
 // Bare URLs stay compact until tapped — transcripts never become
 // galleries unless asked. One document-level delegate covers every
@@ -95,7 +102,7 @@
     var host = hostOf(href) || 'link';
     card.innerHTML = headRow({ title: host }, href) +
       '<div class="lv-body"><span class="lv-note">preview unavailable —</span> ' +
-      '<button class="lv-open" type="button">open ↗</button></div>';
+      '<button class="lv-open" type="button">' + MAX() + 'open</button></div>';
     wireClose(card);
     wireOpen(card, href);
   }
@@ -105,61 +112,46 @@
     if (x) x.addEventListener('click', function () { card.style.display = 'none'; });
   }
 
+  // v0.63.4: the card's open button rides the FALLBACK tiers directly
+  // (the E2 bridge viewer on APK / the desktop popup) — a blocked page
+  // can never dock (frame guards), so one tap to the full-screen browser
+  // beats a two-tap trip through the dock's og-card.
   function wireOpen(card, href) {
     var b = card.querySelector('.lv-open');
     if (b) b.addEventListener('click', function () {
-      window.InAppBrowser.open(href);
+      if (window.InAppBrowser && window.InAppBrowser.fallback) {
+        window.InAppBrowser.fallback(href);
+      }
     });
   }
 
-  // ── v0.62.3: THE IN-APP BROWSER (PLAN-V063 Phase E2) ──────────────
-  // "Press any link and stay in the app." Three tiers, best first:
-  //   APK  — the __doomalayKotlin bridge opens the ViewerActivity (a
-  //          second WebView, full screen, our themed toolbar; top-level
-  //          navigation so frame guards don't apply — the KEY CONSOLES
-  //          render fully in-app); the main WebView NEVER navigates.
-  //   desktop — a popup window (760×900) beside the app: the paste box
-  //          stays visible (the v0.60 OAuth pattern applied to keys).
-  //   gateway — a new tab (the honest ceiling where popups are blocked).
-  // webview-hostile pages (Google-only OAuth: disallowed_useragent in a
-  // WebView) pass hostile:true — the APK tier hands those to a Chrome
-  // Custom Tab (the user's Chrome session, usually already logged in).
-  var themeSnapshot = function () {
-    var cs = getComputedStyle(document.documentElement);
-    var pick = function (v) { var s = cs.getPropertyValue(v).trim(); return s || ''; };
-    return {
-      accent: pick('--accent'),
-      bgPanel: pick('--bg-panel') || pick('--bg-app'),
-      surface: pick('--surface-2'),
-      text1: pick('--text-1'),
-      text3: pick('--text-3'),
-      border: pick('--border')
-    };
-  };
+  // ⤢ maximize — "bigger, still in the app" (the dock open button uses
+  // the same glyph; ⧉ box+arrow means LEAVE — browserdock.js owns that).
+  function MAX() {
+    return (window.__pbIcons && window.__pbIcons.max) ||
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>';
+  }
 
-  window.InAppBrowser = {
-    open: function (url, opts) {
-      opts = opts || {};
-      var bridge = window.__doomalayKotlin;
-      if (bridge && typeof bridge.openInApp === 'function') {
-        try {
-          var th = themeSnapshot();
-          bridge.openInApp(url, JSON.stringify({
-            theme: th,
-            hostile: !!opts.hostile,
-            purpose: opts.purpose || 'link'
-          }));
-          return 'apk-viewer';
-        } catch (e) { /* bridge hiccup — fall through */ }
+  // ⤢ + "open in the dock" — the frameable / pdf card's bigger view: the
+  // full panel browser (browserdock.js) with the strip toolbar, copy,
+  // refresh and the app's own back stack. The 16:10 inline crop stays
+  // for scanning the transcript; this is the "actually browse it" tap.
+  function wireDock(card, href) {
+    var b = card.querySelector('.lv-dock');
+    if (b) b.addEventListener('click', function () {
+      if (window.InAppBrowser && window.InAppBrowser.open) {
+        window.InAppBrowser.open(href);
       }
-      var w = null;
-      try { w = window.open(url, '_blank', 'width=760,height=900,noopener'); } catch (e1) {}
-      if (!w) {
-        try { w = window.open(url, '_blank'); } catch (e2) {}
-      }
-      return w ? 'popup' : 'tab';
-    }
-  };
+    });
+  }
+
+  // ── v0.62.3→v0.63.4: THE BROWSING TIERS moved to browserdock.js ────
+  // InAppBrowser v2: open(url) docks THE PANEL BROWSER (this panel's
+  // own view, the strip toolbar, full/half docking); fallback(url)
+  // keeps the E2 full-screen tiers (APK ViewerActivity / desktop
+  // popup / tab); external(url) is the ⧉ box+arrow leave-the-app
+  // action. The getkey flow + webview-hostile pages ride fallback()
+  // synchronously — the v0.62.3 contract is unchanged.
 
   // ── the per-tier body ──────────────────────────────────────────────
   function paint(card, href, d) {
@@ -176,11 +168,13 @@
         body = '<audio style="width:100%" src="' + esc(href) + '" controls preload="metadata"></audio>';
         break;
       case 'pdf':
-        body = '<iframe class="lv-frame tall" src="' + esc(href) + '" loading="lazy" title="' + esc(d.title || 'pdf') + '"></iframe>';
+        body = '<iframe class="lv-frame tall" src="' + esc(href) + '" loading="lazy" title="' + esc(d.title || 'pdf') + '"></iframe>' +
+          '<div class="lv-openwrap"><button class="lv-open lv-dock" type="button">' + MAX() + 'open</button></div>';
         break;
       case 'html':
         if (d.frameable && !d.login_redirect) {
-          body = '<iframe class="lv-frame" src="' + esc(href) + '" loading="lazy" referrerpolicy="no-referrer" title="' + esc(d.title || 'page') + '"></iframe>';
+          body = '<iframe class="lv-frame" src="' + esc(href) + '" loading="lazy" referrerpolicy="no-referrer" title="' + esc(d.title || 'page') + '"></iframe>' +
+            '<div class="lv-openwrap"><button class="lv-open lv-dock" type="button">' + MAX() + 'open</button></div>';
         } else {
           body = '';
           // v0.62.4: the T3 tier — the engine's retina screenshot of the
@@ -195,7 +189,7 @@
           body += d.login_redirect ?
             '<span class="lv-note">this site needs its own sign-in page —</span> ' :
             '<span class="lv-note">this site blocks embedding —</span> ';
-          body += '<button class="lv-open" type="button">open ↗</button>';
+          body += '<button class="lv-open" type="button">' + MAX() + 'open</button>';
         }
         break;
       default:
@@ -205,6 +199,7 @@
     card.innerHTML = headRow(d, href) + '<div class="lv-body">' + body + '</div>';
     wireClose(card);
     wireOpen(card, href);
+    wireDock(card, href);   // v0.63.4: the frameable/pdf ⤢ opens THE DOCK
     // image → the MediaZoom pinch-zoom overlay on tap
     var img = card.querySelector('.lv-img');
     if (img && window.MediaZoom) {
