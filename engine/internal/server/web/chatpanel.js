@@ -1439,14 +1439,23 @@
   // pills floated as bare text over the header's veil wash (the
   // "stained white" model + sandbox pills, 9 versions of weirdness).
   // projPillStyle builds the VALID twin-aware pattern once, for all.
+  // v0.70 — THE ACCURATE INK: the label now paints the pill's OWN
+  // accent color (var(--accent-N)) while the accent is SOLID — the
+  // quiet-tint look the chat metadata pills always had before v0.66
+  // flipped every label to --on-accent (white/black ink on a 14% tint
+  // read harsh and "lousy"). When the accent carries a GRADIENT, the
+  // [data-aN-grad] inline catchers in index.html take over: they paint
+  // the accent's viewport projection over the tint and flip the label
+  // to var(--on-accent-N) !important — readable ink under a live field.
+  // Both layers do exactly one job: solid → accent label, gradient →
+  // window + derived ink. (The catchers match this exact
+  // "background-color:rgba(var(--accent-N-rgb)" spelling.)
   function projPillStyle(colorVar, rgbVar) {
-    var onVar = (colorVar === '--accent') ? '--on-accent'
-      : String(colorVar).replace(/^--accent-/, '--on-accent-');
     return 'background-color:rgba(var(' + rgbVar + '),0.14);' +
       'background-image:var(' + colorVar + '-gradient, none);' +
       'background-attachment:fixed;' +
       'border:1px solid rgba(var(' + rgbVar + '),0.5);' +
-      'color:var(' + onVar + ', var(' + colorVar + '));' +
+      'color:var(' + colorVar + ');' +
       'text-shadow:var(--text-shadow);';
   }
 

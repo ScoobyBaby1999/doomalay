@@ -1980,8 +1980,25 @@
     // v0.52 (user item 7): the pill reads "▣ + workspace <count>" — the
     // icon-only form didn't say what it does.
     b.innerHTML = '▣ + workspace <span id="pill-workspace-count">0</span>';
+    // v0.70 — THE TWIN-AWARE PILL: the old v0.52 inline pattern
+    // (background:rgba(var(--accent-2-rgb),0.06) + a solid accent label)
+    // never carried the gradient twin, so the pill sat OUTSIDE the
+    // accent-2 field when the user painted Accent 2 — and the v0.67
+    // inline catchers matched it only incidentally (the audit watched
+    // it drop out after re-renders). This is chatpanel.js's
+    // projPillStyle pattern, verbatim: the rgba tint is the solid
+    // fallback, var(--accent-2-gradient) rides the image layer (fixed —
+    // a window on the accent's viewport projection), and the label
+    // paints the accent color on solid / --on-accent-2 via the
+    // [data-a2-grad] catchers under a gradient. Keep the spellings in
+    // sync with chatpanel.js's projPillStyle.
     b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-      'background:rgba(var(--accent-2-rgb),0.06);border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2);' +
+      'background-color:rgba(var(--accent-2-rgb),0.14);' +
+      'background-image:var(--accent-2-gradient, none);' +
+      'background-attachment:fixed;' +
+      'border:1px solid rgba(var(--accent-2-rgb),0.5);' +
+      'color:var(--accent-2);' +
+      'text-shadow:var(--text-shadow);' +
       'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
       'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
     b.title = 'Cloud workspaces connected to this chat';

@@ -395,6 +395,11 @@
     // window (the painter derives its selectors from the stylesheets
     // + the fresh gradient twins — see window.DoomProjection below).
     if (window.DoomProjection) window.DoomProjection.poke();
+    // v0.70: the DERIVED GATES — every accent-painted class in the
+    // stylesheets becomes a window/glyph on that accent's field (the
+    // systematic accuracy pass; see window.DoomGates below). Runs after
+    // the twins so the injected rules resolve against the live palette.
+    if (window.DoomGates) window.DoomGates.refresh();
   }
 
   // effectiveGridSpecs merges the user's explicit grid picks over the
@@ -687,6 +692,186 @@
       };
     })();
     window.DoomProjection = PROJ || { poke: function(){}, repaint: function(){}, paint: function(){} };
+
+    // ══ v0.70 THE DERIVED GATES ════════════════════════════════════
+    // The systematic half of the accuracy wave (user spec: "Just have
+    // each variable cast its gradient/color/image and have only the
+    // objects render the color/gradient/image background they are
+    // assigned to"). The v0.67 gates hand-LISTED a few dozen classes;
+    // every accent-tinted class the list missed stayed a flat quiet
+    // pill no matter what the user painted ("most pills in the app
+    // don't follow their assigned gradient"). Instead of maintaining a
+    // list, the gates are now DERIVED from the stylesheets themselves
+    // (the same walk PROJ.collect does): every STATIC rule that paints
+    // an accent — a background/background-color of var(--accent-N) or
+    // rgba(var(--accent-N-rgb),…), a border ring of the same with no
+    // background of its own (the OUTLINE pills), or a lone
+    // color: var(--accent-N) label (the ACCENT GLYPHS) — becomes a
+    // window/glyph on that accent's viewport projection, automatically,
+    // including styles the modules inject at runtime. Solid accents
+    // never trip a gate (the [data-aN-grad] attributes stay unset), so
+    // every base theme renders byte-identical to before.
+    //
+    // Skips (deliberate):
+    // · any selector with a pseudo-class/:not() — dynamic states and
+    //   pseudo-elements can't be matched statically (hover tints stay
+    //   tints; ::before glyphs stay as-is);
+    // · the gate/catcher rules themselves (selectors starting with
+    //   [data-a, [data-text-grad] or containing [style*=);
+    // · indirection vars (--wsp-*, --hub-tone-*) — those families carry
+    //   their own explicitly-scoped rules in index.html;
+    // · glyphs on filled elements — background-clip:text clips EVERY
+    //   layer, so a glyph recipe on an element with its own fill would
+    //   eat the fill (the v0.67 exclusion, kept);
+    // · outline windows on elements with a NON-accent background (a
+    //   surface card with an accent ring keeps its surface fill).
+    var GATES = (function () {
+      if (!HAS_DOM) return null;
+      var styleEl = null, lastCSS = '', observer = null;
+      var ACC = [
+        { gate: 'data-a1-grad', varName: '--accent',        rgb: '--accent-rgb',        img: '--accent-gradient',        ink: '--on-accent' },
+        { gate: 'data-a2-grad', varName: '--accent-2',      rgb: '--accent-2-rgb',      img: '--accent-2-gradient',      ink: '--on-accent-2' },
+        { gate: 'data-a3-grad', varName: '--accent-3',      rgb: '--accent-3-rgb',      img: '--accent-3-gradient',      ink: '--on-accent-3' },
+        { gate: 'data-a4-grad', varName: '--accent-4',      rgb: '--accent-4-rgb',      img: '--accent-4-gradient',      ink: '--on-accent-4' }
+      ];
+      var MAX_SEL = 400;   // pathological-sheet guard
+
+      function ruleAccent(spec, r) {
+        // → 'win' | 'glyph' | null for ONE accent config
+        var col = (r.style.getPropertyValue('color') || '').trim();
+        var bg = (r.style.getPropertyValue('background-color') || '') + ' ' +
+                 (r.style.getPropertyValue('background') || '') + ' ' +
+                 (r.style.getPropertyValue('background-image') || '');
+        var bd = (r.style.getPropertyValue('border-color') || '') + ' ' +
+                 (r.style.getPropertyValue('border') || '');
+        var bgAcc = bg.indexOf('var(' + spec.varName + ')') !== -1 ||
+                    bg.indexOf('rgba(var(' + spec.rgb + ')') !== -1 ||
+                    bg.indexOf('rgba(var(' + spec.rgb + ',') !== -1;
+        var bdAcc = bd.indexOf('rgba(var(' + spec.rgb + ')') !== -1 ||
+                    bd.indexOf('rgba(var(' + spec.rgb + ',') !== -1;
+        var colAcc = new RegExp('^var\\(' + spec.varName.replace(/-/g, '\\-') +
+          '(\\s*,[^)]*)?\\)$').test(col);
+        var hasFill = !!r.style.getPropertyValue('background-color') ||
+                      !!r.style.getPropertyValue('background') ||
+                      !!r.style.getPropertyValue('background-image');
+        if (bgAcc) return 'win';                       // a tint/fill of this accent
+        if (colAcc && !hasFill) return 'glyph';        // a lone accent label
+        if (bdAcc && !hasFill) return 'win';           // an outline pill (ring only)
+        return null;
+      }
+
+      function derive() {
+        var wins = {}, glyphs = {};
+        for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; glyphs[ACC[i].gate] = []; }
+        try {
+          for (var s = 0; s < document.styleSheets.length; s++) {
+            var rules;
+            try { rules = document.styleSheets[s].cssRules; } catch (e) { continue; }
+            (function walk(rs) {
+              for (var i = 0; i < rs.length; i++) {
+                var r = rs[i];
+                if (r.cssRules && r.cssRules.length) walk(r.cssRules);   // @media & friends
+                if (!r.style || !r.selectorText) continue;
+                var sel = r.selectorText;
+                if (sel.indexOf(':') !== -1) continue;                   // pseudo/:not()/hover — skip
+                if (sel.indexOf('[data-a') !== -1 || sel.indexOf('[data-text-grad]') !== -1 ||
+                    sel.indexOf('[style*=') !== -1) continue;            // the gate/catcher rules
+                // v0.70 final: the EXPLICIT families — index.html owns
+                // these with tone/prov-SCOPED gate rules (a derived BASE
+                // rule would over-fire across the scopes: the default-
+                // tone .hub-libpill base would window template/skill/
+                // script pills on accent-2; a .wsp rule's accent
+                // spelling is a provider-sync FALLBACK, not an
+                // assignment). Skip the whole selector family.
+                if (sel.indexOf('.hub-libpill') !== -1 || sel.indexOf('.wsp') !== -1 ||
+                    sel.indexOf('.wsx-') !== -1 || sel.indexOf('hub-tone') !== -1 ||
+                    sel.indexOf('--wsp') !== -1) continue;
+                // …and any rule whose VALUES ride the --wsp indirection
+                // vars (the provider theme sync) — same reason.
+                var st = r.style;
+                var raw = (st.getPropertyValue('color') || '') + ' ' +
+                  (st.getPropertyValue('background-color') || '') + ' ' +
+                  (st.getPropertyValue('background') || '') + ' ' +
+                  (st.getPropertyValue('background-image') || '') + ' ' +
+                  (st.getPropertyValue('border-color') || '') + ' ' +
+                  (st.getPropertyValue('border') || '');
+                if (raw.indexOf('var(--wsp') !== -1) continue;
+                for (var a = 0; a < ACC.length; a++) {
+                  var kind = ruleAccent(ACC[a], r);
+                  if (kind === 'win' && wins[ACC[a].gate].length < MAX_SEL) {
+                    wins[ACC[a].gate].push(sel);
+                  } else if (kind === 'glyph' && glyphs[ACC[a].gate].length < MAX_SEL) {
+                    glyphs[ACC[a].gate].push(sel);
+                  }
+                }
+              }
+            })(rules);
+          }
+        } catch (e) { /* a locked sheet is simply skipped */ }
+
+        var css = '';
+        for (var a = 0; a < ACC.length; a++) {
+          var A = ACC[a];
+          // v0.70 final: EVERY selector carries its own gate prefix —
+          // '[gate] ' + join(',') would leave selectors 2..N UNGATED
+          // (their color:var(--on-accent-N) would fire on SOLID themes,
+          // the "stained white" regression reborn).
+          var gateSel = function (list) {
+            return list.map(function (s) { return '[' + A.gate + '] ' + s; }).join(',');
+          };
+          if (wins[A.gate].length) {
+            css += gateSel(wins[A.gate]) + '{' +
+              'background-image:var(' + A.img + ',none)!important;' +
+              'background-attachment:fixed!important;' +
+              'color:var(' + A.ink + ')!important;}';
+          }
+          if (glyphs[A.gate].length) {
+            css += gateSel(glyphs[A.gate]) + '{' +
+              'background-image:var(' + A.img + ',none)!important;' +
+              'background-attachment:fixed!important;' +
+              '-webkit-background-clip:text!important;background-clip:text!important;' +
+              'color:transparent!important;}';
+          }
+        }
+        if (css !== lastCSS) {
+          if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'doom-derived-gates';
+            document.head.appendChild(styleEl);
+          }
+          styleEl.textContent = css;
+          lastCSS = css;
+          // the painter's selector cache must learn the newly-gated
+          // elements (they carry *-gradient images now)
+          if (window.DoomProjection) window.DoomProjection.repaint();
+        }
+      }
+
+      // re-derive when modules inject styles at runtime (hub, workspace,
+      // chatpanel inject <style> nodes on first open)
+      if (typeof MutationObserver === 'function') {
+        observer = new MutationObserver(function (muts) {
+          for (var i = 0; i < muts.length; i++) {
+            var m = muts[i];
+            if (m.type !== 'childList') continue;
+            for (var j = 0; j < m.addedNodes.length; j++) {
+              var n = m.addedNodes[j];
+              if (n.nodeType === 1 && (n.tagName === 'STYLE' || n.tagName === 'LINK') &&
+                  n.id !== 'doom-derived-gates') { derive(); return; }
+            }
+          }
+        });
+        observer.observe(document.head, { childList: true, subtree: true });
+      }
+
+      // the first derivation (late in theme.js's boot — applyTheme's
+      // initial call ran before DoomGates existed; every later apply
+      // re-derives through the applyTheme hook)
+      derive();
+
+      return { refresh: derive };
+    })();
+    window.DoomGates = GATES || { refresh: function(){} };
   }
   // the node self-test path (scripts/test_theme_twins.js): the PURE
   // spec/twin logic, no DOM anywhere near it. deriveTwins reads

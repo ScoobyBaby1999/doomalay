@@ -81,6 +81,13 @@
     --surface-2: #1e1832; --surface-2-rgb: 30,24,50;
     --surface-3: #2b2344; --surface-3-rgb: 43,35,68;
     --border: #2f2749; --border-strong: #413463;
+    /* v0.70 (the user's "the chatbot metadata seems to follow no theme"
+    on nebula): nebula was the ONE theme shipping without its own text
+    family — every label, sub-header and metadata line rendered
+    midnight's neutral grays, so the text looked unthemed next to the
+    violet/cyan surfaces. A cool violet-leaning family, matching the
+    theme's accents (every other theme already carries its four). */
+    --text-1: #ece8f8; --text-2: #b4aede; --text-3: #7d76a8; --text-3-dim: #5d5784;
     --accent: #c084fc; --accent-rgb: 192,132,252;
     --accent-2: #22d3ee; --accent-2-rgb: 34,211,238;  /* v0.38 FIX: hex was stale #38bdf8 while the tint said cyan */
     --accent-3: #f0abfc; --accent-3-rgb: 240,171,252;
@@ -3989,9 +3996,12 @@
   [data-text-grad] .art-title, [data-text-grad] .art-sheet-name,
   [data-text-grad] .art-binary-name, [data-text-grad] .crop-title,
   [data-text-grad] .lv-title, [data-text-grad] .hub-bunch-hero-name,
-  [data-text-grad] .hi-title, [data-text-grad] .hi-counts b,
+  [data-text-grad] .hi-title,
   [data-text-grad] .hi-delbar-text, [data-text-grad] .hubrepo-file-path,
-  [data-text-grad] .chat-working-stalled,
+  /* v0.70 TRIM: .hi-counts b is a --text-2 consumer and
+     .chat-working-stalled is a WARN-tinted status label — neither is a
+     Primary-text object, so neither rides the --text-1 field (the
+     accuracy contract: text follows ITS OWN variable, nothing else). */
   [data-text-grad] .vw-h1, [data-text-grad] .vw-h2, [data-text-grad] .vw-b,
   [data-text-grad] .vw-doc, [data-text-grad] .vw-title,
   [data-text-grad] .vw-arch-name, [data-text-grad] #menu button,
@@ -4115,6 +4125,128 @@
      their classes; the inline catchers below catch their styles). */
   [data-a4-grad] .wsx-chip.c1,
   [data-a4-grad] .wsx-type.pub {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-4) !important;
+  }
+
+  /* ══ v0.70 THE ACCURACY WAVE — the named pill families ═══════════
+     (the user's report: "The pill boxes … the ones we use for the
+     public library, or the ones we use to connect to GitHub/gitea/self
+     host … even all the ones used in the chat metadata. Most pill in
+     the app don't follow their assigned gradient"). These are the
+     CLASS-based families the v0.67 gates never listed (class tints
+     live in stylesheets — the inline catchers only see style=""
+     attributes). Every rule is gate-scoped, so a solid accent renders
+     exactly the quiet tint as before; only a LIVE gradient field
+     engages. Assignments are the app's own documented mapping:
+     · library pills — persona→A2, template→A1, skill→A3, script→A4,
+       doc→A1, default→A2 (v0.63);
+     · connect pills — github/selfhost→A1, gitea→A2, gitlab→A3,
+       sourcehut→A4 (v0.63); the +connect bar rides A1 (its label).
+     The ink flips to the derived --on-accent-N ONLY inside the gate —
+     outside it the label keeps its accent color (v0.70's accurate-ink
+     contract everywhere). */
+
+  /* the PUBLIC LIBRARY pills (the category picker) — persona + the
+     default ride Accent 2; template/doc (A1), skill (A3), script (A4)
+     carry their own rules below. The :not() chain keeps each tone's
+     pill on ITS OWN accent (a gradiented A2 must never window a
+     template pill through the base rule). */
+  [data-a2-grad] .hub-libpill[data-on="1"]:not([data-tone="template"]):not([data-tone="doc"]):not([data-tone="skill"]):not([data-tone="script"]),
+  [data-a2-grad] .hub-libpill[data-tone="persona"][data-on="1"] {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-2) !important;
+  }
+  [data-a1-grad] .hub-libpill[data-tone="template"][data-on="1"],
+  [data-a1-grad] .hub-libpill[data-tone="doc"][data-on="1"] {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent) !important;
+  }
+  [data-a3-grad] .hub-libpill[data-tone="skill"][data-on="1"] {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  [data-a4-grad] .hub-libpill[data-tone="script"][data-on="1"] {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-4) !important;
+  }
+  /* the library CHROME pills — the publish button, the my-xyz filter,
+     the tone strip — ride the BROWSED category's tone (the
+     .hub-root[data-tone] scope decides which accent that is). */
+  [data-a2-grad] .hub-root[data-tone="persona"] .hub-publish,
+  [data-a2-grad] .hub-root:not([data-tone]) .hub-publish,
+  [data-a2-grad] .hub-root[data-tone=""] .hub-publish,
+  [data-a2-grad] .hub-root[data-tone="persona"] .hub-chatpill--mine.on,
+  [data-a2-grad] .hub-root:not([data-tone]) .hub-chatpill--mine.on,
+  [data-a2-grad] .hub-root[data-tone=""] .hub-chatpill--mine.on {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-2) !important;
+  }
+  [data-a1-grad] .hub-root[data-tone="template"] .hub-publish,
+  [data-a1-grad] .hub-root[data-tone="doc"] .hub-publish,
+  [data-a1-grad] .hub-root[data-tone="template"] .hub-chatpill--mine.on,
+  [data-a1-grad] .hub-root[data-tone="doc"] .hub-chatpill--mine.on {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent) !important;
+  }
+  [data-a3-grad] .hub-root[data-tone="skill"] .hub-publish,
+  [data-a3-grad] .hub-root[data-tone="skill"] .hub-chatpill--mine.on {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  [data-a4-grad] .hub-root[data-tone="script"] .hub-publish,
+  [data-a4-grad] .hub-root[data-tone="script"] .hub-chatpill--mine.on {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-4) !important;
+  }
+
+  /* the CONNECT pills — the workspace picker's provider pills + sign-in
+     blocks (scoped by the picker's own data-prov), the provider icon
+     chips, and the pinned +connect bar. */
+  /* the pub-bar CONNECT button rides the provider's accent too (its
+     base rule paints var(--wsp-c, …) — an indirection spelling, so the
+     derivation correctly skips it and these explicit rules own it). */
+  [data-a1-grad] .wsp[data-prov="github"] .wsp-pill[data-on="1"],
+  [data-a1-grad] .wsp[data-prov="selfhost"] .wsp-pill[data-on="1"],
+  [data-a1-grad] .wsp[data-prov="github"] .wsp-signin,
+  [data-a1-grad] .wsp[data-prov="selfhost"] .wsp-signin,
+  [data-a1-grad] .wsp[data-prov="github"] .wsp-pub-go,
+  [data-a1-grad] .wsp[data-prov="selfhost"] .wsp-pub-go,
+  [data-a1-grad] .wsx-conn,
+  [data-a1-grad] .wsx-ico.k-github,
+  [data-a1-grad] .wsx-ico.k-device {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent) !important;
+  }
+  [data-a2-grad] .wsp[data-prov="gitea"] .wsp-pill[data-on="1"],
+  [data-a2-grad] .wsp[data-prov="gitea"] .wsp-signin,
+  [data-a2-grad] .wsp[data-prov="gitea"] .wsp-pub-go,
+  [data-a2-grad] .wsx-ico.k-gitea {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-2) !important;
+  }
+  [data-a3-grad] .wsp[data-prov="gitlab"] .wsp-pill[data-on="1"],
+  [data-a3-grad] .wsp[data-prov="gitlab"] .wsp-signin,
+  [data-a3-grad] .wsp[data-prov="gitlab"] .wsp-pub-go,
+  [data-a3-grad] .wsx-ico.k-gitlab {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-pill[data-on="1"],
+  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-signin,
+  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-pub-go {
     background-image: var(--accent-4-gradient, none) !important;
     background-attachment: fixed !important;
     color: var(--on-accent-4) !important;
