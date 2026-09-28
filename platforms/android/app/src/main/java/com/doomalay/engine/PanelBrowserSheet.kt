@@ -39,8 +39,37 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
 
-// PanelBrowserSheet — v0.64.2 THE POLISH WAVE (PLAN-V0642) on top of
-// v0.64.0 THE NATIVE PANEL BROWSER (PLAN-V0640).
+// PanelBrowserSheet — v0.64.3 THE TIDY PILL (PLAN-V0643) on top of
+// v0.64.2 THE POLISH WAVE (PLAN-V0642) on top of v0.64.0 THE NATIVE
+// PANEL BROWSER (PLAN-V0640).
+//
+// v0.64.3 SPEC ("that was a job well done. Good job. Let's make the
+// search pill… 10% less wide and high… the hitbox for the refresh
+// icon bigger… the smooth loading icon… upward approx 35%… a loading
+// pill, similar to the one we have when the chatbot is thinking… to
+// the web link pill… only when the website is actively loading"):
+//
+//   · THE TIDY PILL — the URL capsule ("the search pill", the user's
+//     name for it since the polish round) loses ~10% of its width and
+//     height: 30dp tall (was 34: the refresh slot grew but the 2×5dp
+//     vertical padding is gone), the text cap 170→153dp, the paddings
+//     a hair tighter. It reads slimmer next to the 34dp act circles.
+//   · THE REFRESH HITBOX — the ↻ ImageButton grows 24×24 → 30×30
+//     (+25% a side, +56% area — much easier to press) while its glyph
+//     stays 18dp (padding 3→6dp): the button now fills the pill's full
+//     height at its left edge. Its ripple circle follows 12→15dp.
+//   · THE RING LIFTED — the loading stack (ring + link text) moves up
+//     by 35% of the overlay's height (center 50% → 15% — the spinner
+//     sits just under the strip, where a browser's progress lives),
+//     clamped so the stack's top never leaves the body (the 30% duck
+//     peek has a short body; the clamp keeps ≥ ~13dp of headroom).
+//   · THE LOADING PILL — the chatbot's thinking pill (chatpanel.js
+//     v0.23, five pulsing accent dots — cwd-pulse: 0.9s cycle, 0.12s
+//     stagger, opacity .18→1, scale .82→1.12) becomes a LoadDots view
+//     at the END of the URL capsule: GONE unless a page is actively
+//     loading, fading with the overlay's own 110/160ms timing, tinted
+//     by the theme snapshot's accent per open. setLoading() is the
+//     one truth — body overlay AND pill dots ride the same calls.
 //
 // v0.64.0 SPEC (still the foundation): "If we can somehow render the
 // native WebView into a scrollable snapable panel, a feature or a push
@@ -141,7 +170,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var closeBtn: ImageButton? = null
     private var loading: FrameLayout? = null
     private var loadRing: LoadRing? = null
+    private var loadStack: LinearLayout? = null
     private var loadText: TextView? = null
+    private var loadDots: LoadDots? = null
     private var webView: WebView? = null
 
     // video fullscreen (the YouTube □ button)
@@ -165,6 +196,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // v0.64.2: the loading spins (the ring + the ↻ glyph)
     private var ringSpin: ValueAnimator? = null
     private var iconSpin: ObjectAnimator? = null
+    private var dotsSpin: ValueAnimator? = null
     private var loadSeq = 0L
 
     // v0.64.2: the last glide owns the sheet — animateTo cancels the
@@ -328,27 +360,37 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
         val bg = col("bgPanel", sysColor(android.R.attr.colorBackground, Color.BLACK))
 
-        // the pill: [↻ url] — tap = copy, drag = the sheet (disambiguated
-        // by the slop in makeDraggable); the ↻ glyph spins while loading
+        // the pill: [↻ url •••••] — tap = copy, drag = the sheet (disambiguated
+        // by the slop in makeDraggable); the ↻ glyph spins while loading;
+        // v0.64.3: the LoadDots (the chatbot-thinking pill's five dots)
+        // appear at the capsule's end while a page actively loads
         refreshIcon = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_refresh)
             background = null
-            setPadding(dip(3), dip(3), dip(3), dip(3))
+            // v0.64.3: the hitbox grows 24→30dp; the glyph STAYS 18dp
+            setPadding(dip(6), dip(6), dip(6), dip(6))
             contentDescription = "Refresh page"
         }
         pillText = TextView(activity).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.MIDDLE
-            maxWidth = dip(170)     // the pill shrinks to its text but caps
+            maxWidth = dip(153)     // v0.64.3: 170→153 — the capsule caps 10% narrower
             textSize = 12f
-            setPadding(dip(4), 0, dip(6), 0)
+            setPadding(dip(3), 0, dip(5), 0)
         }
+        loadDots = LoadDots(activity)
         val pillLocal = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dip(6), dip(5), dip(10), dip(5))
-            addView(refreshIcon, LinearLayout.LayoutParams(dip(24), dip(24)))
+            // v0.64.3: (6,5,10,5)→(5,0,9,0) — with the 30dp refresh slot
+            // the capsule stands 30dp tall (was 34 — ~10% less high)
+            setPadding(dip(5), 0, dip(9), 0)
+            addView(refreshIcon, LinearLayout.LayoutParams(dip(30), dip(30)))
             addView(pillText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(loadDots, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = dip(5)
+            })
         }
         pill = pillLocal
 
@@ -513,6 +555,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // text, theme-tinted per open (applyTheme); never consumes a
         // touch (the strip — the drag surface — lives outside the body,
         // and taps on a half-painted page pass through).
+        // v0.64.3: THE RING LIFTED — the stack rides 35% of the overlay's
+        // height ABOVE its center (center 50% → 15% — just under the
+        // strip, where a browser's progress lives), clamped so the
+        // stack's top never leaves a short body (the 30% duck peek).
         loadRing = LoadRing(activity)
         loadText = TextView(activity).apply {
             maxLines = 1
@@ -522,7 +568,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             gravity = Gravity.CENTER
             setPadding(dip(10), 0, dip(10), 0)
         }
-        val loadStack = LinearLayout(activity).apply {
+        val stackLocal = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             addView(loadRing, LinearLayout.LayoutParams(dip(40), dip(40)))
@@ -531,11 +577,20 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                 topMargin = dip(16)
             })
         }
+        loadStack = stackLocal
         loading = FrameLayout(activity).apply {
             visibility = View.GONE
-            addView(loadStack, FrameLayout.LayoutParams(
+            addView(stackLocal, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER))
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                val h = v.height.toFloat()
+                if (h > 0f) {
+                    val lift = -0.35f * h                    // 35% of the body, upward
+                    val cap = dip(50) - h / 2f               // the stack's top stays ≥ ~13dp inside
+                    stackLocal.translationY = if (lift < cap) cap else lift
+                }
+            }
         }
 
         val body = FrameLayout(activity).apply {
@@ -727,7 +782,8 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // ── v0.64.2: the loading overlay driver ──────────────────────────
     // Show: 110ms fade-in + the spins start. Hide: 160ms fade-out; the
     // sequence token makes a re-show (a redirect mid-fade) win over the
-    // stale hide's GONE end-action.
+    // stale hide's GONE end-action. v0.64.3: the pill's LoadDots ride
+    // the SAME calls — one loading truth, the capsule tells it too.
     private fun setLoading(on: Boolean, url: String?) {
         val ov = loading ?: return
         if (on) {
@@ -738,12 +794,24 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                 ov.visibility = View.VISIBLE
                 ov.animate().alpha(1f).setDuration(110L).start()
             }
+            val dots = loadDots
+            if (dots != null && dots.visibility != View.VISIBLE) {
+                dots.alpha = 0f
+                dots.visibility = View.VISIBLE
+                dots.animate().alpha(1f).setDuration(110L).start()
+            }
             startSpins()
         } else {
             val seq = ++loadSeq
             if (ov.visibility == View.VISIBLE) {
                 ov.animate().alpha(0f).setDuration(160L)
                     .withEndAction { if (loadSeq == seq) ov.visibility = View.GONE }
+                    .start()
+            }
+            val dots = loadDots
+            if (dots != null && dots.visibility == View.VISIBLE) {
+                dots.animate().alpha(0f).setDuration(160L)
+                    .withEndAction { if (loadSeq == seq) dots.visibility = View.GONE }
                     .start()
             }
             stopSpins()
@@ -769,6 +837,17 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             b.start()
             iconSpin = b
         }
+        // v0.64.3: the pill's five dots pulse on their own cycle (the
+        // chatbot's cwd-pulse cadence — 0.9s, 0.12s stagger)
+        if (dotsSpin == null) {
+            val d = ValueAnimator.ofFloat(0f, 1f)
+            d.duration = 900L
+            d.interpolator = LinearInterpolator()
+            d.repeatCount = ValueAnimator.INFINITE
+            d.addUpdateListener { an -> loadDots?.setPhase(an.animatedValue as Float) }
+            d.start()
+            dotsSpin = d
+        }
     }
 
     private fun stopSpins() {
@@ -776,6 +855,8 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         ringSpin = null
         iconSpin?.cancel()
         iconSpin = null
+        dotsSpin?.cancel()
+        dotsSpin = null
         refreshIcon?.rotation = 0f
     }
 
@@ -866,8 +947,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         pill?.background = chip(surface, 200, border)
         pillText?.setTextColor(text3)
         refreshIcon?.imageTintList = ColorStateList.valueOf(text3)
+        // v0.64.3: the ripple circle follows the grown 30dp hitbox (r12→15)
         refreshIcon?.background = RippleDrawable(ripple,
-            chipShape(Color.TRANSPARENT, 12, null), chipShape(Color.WHITE, 12, null))
+            chipShape(Color.TRANSPARENT, 15, null), chipShape(Color.WHITE, 15, null))
         for (b in listOf(backBtn, extBtn, closeBtn)) {
             b?.background = chip(surface, 17, border)
             b?.imageTintList = ColorStateList.valueOf(text1)
@@ -888,6 +970,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         loadRing?.arcColor = accent
         loadRing?.trackColor = (border and 0x00FFFFFF) or 0x2E000000
         loadText?.setTextColor(text3)
+        // v0.64.3: the pill's dots are the accent too (the chatbot's
+        // thinking dots follow --accent — same discipline)
+        loadDots?.dotColor = accent
 
         webView?.setBackgroundColor(bg)
     }
@@ -952,6 +1037,44 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             c.drawArc(oval, 0f, 360f, false, paint)
             paint.color = arcColor
             c.drawArc(oval, rot, 96f, false, paint)
+        }
+    }
+
+    // ── v0.64.3: THE LOADING PILL — the capsule's five dots ─────────
+    // The chatbot's thinking pill (chatpanel.js v0.23 "the no-silence
+    // guarantee"), ported dot for dot: five accent dots pulsing on a
+    // 0.9s cycle with a 0.12s stagger — opacity .18→1, scale .82→1.12
+    // (the CSS cwd-pulse keyframes, raised-cosine flavoured). GONE
+    // unless setLoading(true); tinted per open by applyTheme.
+    private class LoadDots(context: Context) : View(context) {
+        var dotColor = Color.LTGRAY
+        private var phase = 0f   // 0..1 — the shared clock, dotsSpin drives it
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        fun setPhase(p: Float) {
+            phase = p
+            invalidate()
+        }
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val d = resources.displayMetrics.density
+            // 5 dots × 5dp + 4 gaps × 3.5dp (+ the 1.12 scale headroom) ≈ 40dp
+            setMeasuredDimension((40f * d).toInt(), (14f * d).toInt())
+        }
+        override fun onDraw(c: Canvas) {
+            val d = resources.displayMetrics.density
+            val base = 2.5f * d                       // the dot's base radius
+            val pitch = 2f * base + 3.5f * d          // FIXED center-to-center (dots pulse in place)
+            val cy = height / 2f
+            var cx = base * 1.15f                     // headroom for the 1.12 scale peak
+            for (i in 0 until 5) {
+                // dot i's local cycle point: the shared phase + the stagger
+                var p = (phase + i * (120f / 900f)) % 1f
+                if (p < 0f) p += 1f
+                val s = (0.5 - 0.5 * Math.cos(2.0 * Math.PI * p.toDouble())).toFloat()  // ease-in-out
+                paint.color = dotColor
+                paint.alpha = (255 * (0.18f + 0.82f * s)).toInt().coerceIn(0, 255)
+                c.drawCircle(cx, cy, base * (0.82f + 0.30f * s), paint)
+                cx += pitch
+            }
         }
     }
 }
