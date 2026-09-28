@@ -2874,8 +2874,10 @@
     lab.setAttribute('aria-pressed', active ? 'true' : 'false');
     lab.title = 'the library — ON: the bot browses AND uses the library on the fly; ' +
       'OFF: it can still browse + recommend (downloads need the switch back on)';
+    // v0.67: the ACTIVE label rides the wrap's accent-1 projection →
+    // the derived readable ink (never accent-on-accent).
     lab.style.cssText = 'border:none;background:transparent;color:' +
-      (active ? 'var(--accent)' : 'var(--text-3)') +
+      (active ? 'var(--on-accent)' : 'var(--text-3)') +
       ';padding:4px 8px 4px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
       'white-space:nowrap;-webkit-tap-highlight-color:transparent';
     lab.addEventListener('click', function () {
@@ -2896,7 +2898,8 @@
     plus.style.cssText = 'border:none;border-left:1px solid ' +
       (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
       'background:transparent;color:' +
-      ((state.template || state._turnTemplate || state._turnSkill) ? 'var(--accent)' : 'var(--text-3)') +
+      ((state.template || state._turnTemplate || state._turnSkill)
+        ? (active ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)') +
       ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
       'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
       '-webkit-tap-highlight-color:transparent';
@@ -2934,7 +2937,11 @@
     wrap.id = 'seg-' + kind;
     wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
       'border:1px solid ' + (active ? 'rgba(var(--accent-rgb),0.55)' : 'var(--border)') + ';' +
-      'background:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      // v0.67: the ACTIVE wrap renders accent-1's viewport projection
+      // (the same window pattern as the lib pill — one field per var).
+      'background-color:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      'background-image:' + (active ? 'var(--accent-gradient, none)' : 'none') + ';' +
+      'background-attachment:fixed;' +
       'border-radius:999px;overflow:hidden';
 
     var lab = document.createElement('button');
@@ -2944,8 +2951,9 @@
     lab.title = isTpl
       ? 'template auto-search — ON: the assistant browses + uses the template library by itself'
       : 'skills auto-search — ON: the assistant loads methodology skills by itself';
+    // v0.67: derived ink on the active window (see the lib pill).
     lab.style.cssText = 'border:none;background:transparent;color:' +
-      (active ? 'var(--accent)' : 'var(--text-3)') +
+      (active ? 'var(--on-accent)' : 'var(--text-3)') +
       ';padding:4px 8px 4px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
       'white-space:nowrap;-webkit-tap-highlight-color:transparent';
     lab.addEventListener('click', function () {
@@ -2970,7 +2978,7 @@
       (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
       'background:transparent;color:' +
       ((isTpl ? (state.template || state._turnTemplate) : state._turnSkill)
-        ? 'var(--accent)' : 'var(--text-3)') +
+        ? (active ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)') +
       ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
       'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
       '-webkit-tap-highlight-color:transparent';
@@ -3008,9 +3016,11 @@
     if (lp) {
       var nl = segPlusLabel(state, 'lib');
       if (lp.textContent !== nl) lp.textContent = nl;
+      var wrapOn = !!(state.libAuto || state.templateAuto || state.skillsAuto ||
+        state.template || state.deepResearch);
       lp.style.color = (nl !== '+' &&
         (state.template || state._turnTemplate || state._turnSkill))
-        ? 'var(--accent)' : 'var(--text-3)';
+        ? (wrapOn ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)';
     }
   }
 

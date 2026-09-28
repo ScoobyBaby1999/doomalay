@@ -3924,8 +3924,16 @@
     text-shadow: var(--text-shadow);
   }
   /* v0.49 GRADIENT TEXT — when Primary text carries a gradient (theme.js
-     sets data-text-grad on :root), the PROMINENT text clips to it; body
-     text keeps the solid first color (readability first). */
+     sets data-text-grad on :root), the PROMINENT text clips to it.
+     v0.67 (user spec: "all text that isn't a title text or header don't
+     follow gradients"): the pass now extends to BODY text — the .fmt
+     message scope, row labels, card names, viewer prose. Every text-1
+     consumer is a window on the same fixed field. color: transparent
+     (no -webkit-text-fill-color here) so children that set their own
+     colors — links, code tokens, fmt slots — keep them.
+     EXCLUDED: elements with their own fills (inputs, chips, cards —
+     the Layer-2/3 windows already own their boxes; painting the text
+     field over them would REPLACE their projection). */
   [data-text-grad] .settings-section h3 span,
   [data-text-grad] .pub-title,
   [data-text-grad] .chatbot .name,
@@ -3933,6 +3941,22 @@
   [data-text-grad] .gatelock-title,
   [data-text-grad] .panel-header .meta .name,
   [data-text-grad] .wsx-title,
+  [data-text-grad] .fmt,
+  [data-text-grad] .placeholder,
+  [data-text-grad] .setting-row label,
+  [data-text-grad] .pv-row-title, [data-text-grad] .pv-sub-label,
+  [data-text-grad] .ts-row-name, [data-text-grad] .ts-detail-name,
+  [data-text-grad] .ts-stage-name,
+  [data-text-grad] .color-row-name, [data-text-grad] .art-row-name,
+  [data-text-grad] .art-title, [data-text-grad] .art-sheet-name,
+  [data-text-grad] .art-binary-name, [data-text-grad] .crop-title,
+  [data-text-grad] .lv-title, [data-text-grad] .hub-bunch-hero-name,
+  [data-text-grad] .hi-title, [data-text-grad] .hi-counts b,
+  [data-text-grad] .hi-delbar-text, [data-text-grad] .hubrepo-file-path,
+  [data-text-grad] .chat-working-stalled,
+  [data-text-grad] .vw-h1, [data-text-grad] .vw-h2, [data-text-grad] .vw-b,
+  [data-text-grad] .vw-doc, [data-text-grad] .vw-title,
+  [data-text-grad] .vw-arch-name, [data-text-grad] #menu button,
   [data-text-grad] h1, [data-text-grad] h2, [data-text-grad] h3 {
     background-image: var(--text-1-gradient);
     background-attachment: fixed;
@@ -3951,6 +3975,186 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
+  /* ══ v0.67 THE EVERY-WINDOW PASS ═════════════════════════════
+     (the user's report on v0.66: "pill boxes, especially the ones that
+     are outlines or borders, and all text that isn't a title text or
+     header don't follow gradients still". v0.66 converted the pill row,
+     the big surfaces and the headers; the STRAGGLERS are the accent-
+     TINTED families scattered through every screen — tint fill + rgba
+     ring + accent-colored label (the v0.56 "quiet pill" look). theme.js
+     now flags [data-a1..a4-grad] per accent when its gradient twin is
+     live, and the gates below turn every flagged family into what the
+     model promises: a WINDOW on that accent's viewport projection.
+     Solid accents never trip the gates — base themes render exactly
+     as v0.66.)
+     Recipes, mirroring v0.66's projPillStyle:
+     · WINDOW — tint pills/badges/chips paint the accent projection
+       (fixed) and their own accent-colored label flips to the derived
+       readable ink (var(--on-accent-N)).
+     · GLYPHS — accent-colored TEXT with no fill of its own clips the
+       same fixed projection through the letters (background-clip:
+       text — the [data-text-grad] mechanism, per accent).
+     · INLINE CATCHERS — the JS-built pills (model browser tone pills,
+       provider Free/Paid badges, workspace chips, composer segments)
+       set their tint/ring/color as INLINE styles; !important beaters
+       window them exactly like the class families. Status colors
+       (--ok/--err/--warn) are semantic, never windowed. */
+
+  /* — Accent 1 WINDOWS — the header model button, the editing banners,
+     the active nav tab, the selected template row, the working chip,
+     table heads, the send button's ON states. */
+  [data-a1-grad] #panel-model-btn,
+  [data-a1-grad] #edit-banner,
+  [data-a1-grad] #tpl-chip,
+  [data-a1-grad] .settings-nav .tab.active[data-page="appearance"],
+  [data-a1-grad] .ts-row-on,
+  [data-a1-grad] .ts-stage-n,
+  [data-a1-grad] .chat-working,
+  [data-a1-grad] .fmt table thead th,
+  [data-a1-grad] .vw-table td.vw-th,
+  [data-a1-grad] #chat-send.sm-on,
+  [data-a1-grad] #send-cluster.sm-cluster-on #chat-send-more,
+  [data-a1-grad] .sm-row.on,
+  [data-a1-grad] .sm-row.on .sm-auto {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent) !important;
+  }
+  /* the icons riding those windows flip to the ink too */
+  [data-a1-grad] .ts-row-on .ts-on-ico,
+  [data-a1-grad] #edit-banner .eb-ico,
+  [data-a1-grad] #tpl-chip .tpl-chip-ico { color: var(--on-accent) !important; }
+  /* — Accent 1 GLYPHS — the accent-colored labels with no fill. */
+  [data-a1-grad] .ts-on-ico,
+  [data-a1-grad] .hub-step-val {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+
+  /* — Accent 2 WINDOWS — the sizing tab, tool-use pills, artifact
+     download pills, hub counts, viewer tabs, scope pills, source cards. */
+  [data-a2-grad] .settings-nav .tab.active[data-page="sizing"],
+  [data-a2-grad] .tool-pill-use,
+  [data-a2-grad] .fmt-artifact-dl,
+  [data-a2-grad] .hmsg-dl,
+  [data-a2-grad] .hmsg-card-ico,
+  [data-a2-grad] .hub-count,
+  [data-a2-grad] .src-card-dom,
+  [data-a2-grad] .src-wrap .src-count,
+  [data-a2-grad] .vw-tab[data-on="1"],
+  [data-a2-grad] .vw-arch-fmt,
+  [data-a2-grad] .ph-scope-pill button[data-on="1"] {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-2) !important;
+  }
+  /* — Accent 2 GLYPHS. */
+  [data-a2-grad] .ts-stage-fo {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+
+  /* — Accent 3 WINDOWS — the general tab + the module families
+     (providers' Paid thumbs ride the inline catchers below). */
+  [data-a3-grad] .settings-nav .tab.active[data-page="general"] {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  [data-a3-grad] .mb-pill[data-on],
+  [data-a3-grad] .mb-ufchip {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  /* — Accent 4 WINDOWS — scripts + sourcehut (hub + workspace inject
+     their classes; the inline catchers below catch their styles). */
+  [data-a4-grad] .wsx-chip.c1,
+  [data-a4-grad] .wsx-type.pub {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-4) !important;
+  }
+
+  /* — INLINE CATCHERS — the JS-built accent pills (background tint
+     as an inline style: model browser pills/chips, provider Free/Paid
+     badges, workspace chips, connect pills). The tint stays as the
+     solid fallback UNDER the projection; the label flips to the ink.
+     Both spellings (background: / background-color:) and both accent
+     spacings are covered; status vars (--ok/--err/--warn) never match. */
+  [data-a1-grad] [style*="background:rgba(var(--accent-rgb)"],
+  [data-a1-grad] [style*="background-color:rgba(var(--accent-rgb)"],
+  [data-a1-grad] [style*="background: rgba(var(--accent-rgb)"],
+  [data-a1-grad] [style*="background-color: rgba(var(--accent-rgb)"] {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent) !important;
+  }
+  [data-a2-grad] [style*="background:rgba(var(--accent-2-rgb)"],
+  [data-a2-grad] [style*="background-color:rgba(var(--accent-2-rgb)"],
+  [data-a2-grad] [style*="background: rgba(var(--accent-2-rgb)"],
+  [data-a2-grad] [style*="background-color: rgba(var(--accent-2-rgb)"] {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-2) !important;
+  }
+  [data-a3-grad] [style*="background:rgba(var(--accent-3-rgb)"],
+  [data-a3-grad] [style*="background-color:rgba(var(--accent-3-rgb)"],
+  [data-a3-grad] [style*="background: rgba(var(--accent-3-rgb)"],
+  [data-a3-grad] [style*="background-color: rgba(var(--accent-3-rgb)"] {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-3) !important;
+  }
+  [data-a4-grad] [style*="background:rgba(var(--accent-4-rgb)"],
+  [data-a4-grad] [style*="background-color:rgba(var(--accent-4-rgb)"],
+  [data-a4-grad] [style*="background: rgba(var(--accent-4-rgb)"],
+  [data-a4-grad] [style*="background-color: rgba(var(--accent-4-rgb)"] {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    color: var(--on-accent-4) !important;
+  }
+  /* INLINE GLYPH CATCHERS — accent-colored text with NO background of
+     its own (labels, values, links in the overlays). */
+  [data-a1-grad] [style*="color:var(--accent)"]:not([style*="background"]),
+  [data-a1-grad] [style*="color: var(--accent)"]:not([style*="background"]) {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+  [data-a2-grad] [style*="color:var(--accent-2)"]:not([style*="background"]),
+  [data-a2-grad] [style*="color: var(--accent-2)"]:not([style*="background"]) {
+    background-image: var(--accent-2-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+  [data-a3-grad] [style*="color:var(--accent-3)"]:not([style*="background"]),
+  [data-a3-grad] [style*="color: var(--accent-3)"]:not([style*="background"]) {
+    background-image: var(--accent-3-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+  [data-a4-grad] [style*="color:var(--accent-4)"]:not([style*="background"]),
+  [data-a4-grad] [style*="color: var(--accent-4)"]:not([style*="background"]) {
+    background-image: var(--accent-4-gradient, none) !important;
+    background-attachment: fixed !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    color: transparent !important;
+  }
+
   /* v0.45 ITEM 4 fix (kept): --bg-app-rgb was referenced (L282, L1451)
      but never defined — per-theme statics below; theme.js now also writes
      the inline triplet when the user customizes --bg-app (which beats

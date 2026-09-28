@@ -164,7 +164,15 @@ phase_invariants() { # phase var
     var s=cs.getPropertyValue('$var').trim();
     var att=function(sel){var el=document.querySelector(sel);return el?getComputedStyle(el).backgroundAttachment:'';};
     var img=function(sel){var el=document.querySelector(sel);return el?String(getComputedStyle(el).backgroundImage).slice(0,90):'';};
-    return JSON.stringify({solid:s,grad:g.slice(0,140),textGrad:document.documentElement.getAttribute('data-text-grad')||'',veilInk:cs.getPropertyValue('--veil-ink').trim(),onAcc:cs.getPropertyValue('--on-accent').trim()+'/'+cs.getPropertyValue('--on-accent-2').trim()+'/'+cs.getPropertyValue('--on-accent-3').trim()+'/'+cs.getPropertyValue('--on-accent-4').trim(),meta:(document.getElementById('meta-theme-color')||{}).content||'',proj:{panel:att('#chat-panel'),header:att('#chat-header'),pillS:att('#pill-sandbox'),pillM:att('#pill-model'),pillImg:(img('#pill-sandbox')+' | '+img('#pill-model')).slice(0,180)}});
+    // v0.67: the gradient gates + the transform-proof painter's anchor on
+    // the model button (a live projection window inside the transformed
+    // panel: viewport-sized layer positioned at its own viewport offset).
+    var de=document.documentElement;
+    var gates=[de.getAttribute('data-a1-grad'),de.getAttribute('data-a2-grad'),de.getAttribute('data-a3-grad'),de.getAttribute('data-a4-grad')].map(function(x){return x?'1':'0';}).join('');
+    var paint='';
+    var pb=document.getElementById('panel-model-btn');
+    if(pb&&pb.offsetWidth){var pcs=getComputedStyle(pb);var pr=pb.getBoundingClientRect();paint=pcs.backgroundSize+' @ '+pcs.backgroundPosition+' (rect '+Math.round(pr.left)+','+Math.round(pr.top)+')';}
+    return JSON.stringify({solid:s,grad:g.slice(0,140),textGrad:de.getAttribute('data-text-grad')||'',gates:gates,paint:paint,veilInk:cs.getPropertyValue('--veil-ink').trim(),onAcc:cs.getPropertyValue('--on-accent').trim()+'/'+cs.getPropertyValue('--on-accent-2').trim()+'/'+cs.getPropertyValue('--on-accent-3').trim()+'/'+cs.getPropertyValue('--on-accent-4').trim(),meta:(document.getElementById('meta-theme-color')||{}).content||'',proj:{panel:att('#chat-panel'),header:att('#chat-header'),pillS:att('#pill-sandbox'),pillM:att('#pill-model'),pillImg:(img('#pill-sandbox')+' | '+img('#pill-model')).slice(0,180)}});
   })()")
   echo "{\"kind\":\"invariants\",\"phase\":\"$ph\",\"var\":\"$var\",\"checks\":$inv}" >> "$OUT/manifest.ndjson"
   echo "    ✔ invariants $ph/$var: $inv" | head -c 260; echo
@@ -433,6 +441,125 @@ if phase_allowed p18; then
   shot p18 colors
   ev "Settings.setState({themeOverrides:{}})" >/dev/null
   sleep 0.4
+fi
+
+# p19 — v0.67 THE PAINTER PROOF: inside the PERMANENTLY-TRANSFORMED chat
+#     panel, a real `background-attachment: fixed` renders ELEMENT-sized
+#     (every pill squeezes the whole gradient into its own box — the
+#     "every object follows the gradient in its own weird way" report).
+#     The transform-proof painter re-anchors each window by hand
+#     (background-size = viewport, background-position = -(viewport
+#     offset)). DETERMINISTIC assertion: the model button's layer is
+#     viewport-sized and positioned at its own rect — recorded as an
+#     invariant; the shot goes to the audit for the visual half.
+if phase_allowed p19; then
+  echo "── p19 the painter proof (transform-proof anchors)"
+  apply_override --accent "['#ff0033','#ff0033','#0044ff','#0044ff']" h
+  sleep 0.4
+  phase_invariants p19 --accent
+  nav chat
+  ev "var ok=(function(){
+    var b=document.getElementById('panel-model-btn');
+    if(!b||!b.offsetWidth) return 'button hidden';
+    var cs=getComputedStyle(b); var r=b.getBoundingClientRect();
+    var wantSize=window.innerWidth+'px '+window.innerHeight+'px';
+    var wantPos=(-r.left).toFixed(1)+'px '+(-r.top).toFixed(1)+'px';
+    var okSize=(cs.backgroundSize===wantSize), okPos=(cs.backgroundPosition===wantPos);
+    return (okSize&&okPos)?'PASS size='+wantSize+' pos='+wantPos:'FAIL size='+cs.backgroundSize+' (want '+wantSize+') pos='+cs.backgroundPosition+' (want '+wantPos+')';
+  })(); console.log('PAINTER:'+ok);" >/dev/null
+  sleep 0.3
+  shot p19 chat-painter
+  ev "Settings.setState({themeOverrides:{}})" >/dev/null
+  sleep 0.4
+fi
+
+# p20 — v0.67 THE EVERY-WINDOW PASS: accent-2 diag + a text-1 mesh. The
+#     STRAGGLER families (the user: "pill boxes, especially the ones that
+#     are outlines or borders, and all text that isn't a title") now
+#     render their accent's projection: the SIZING page's active tab is an
+#     accent-2 window with the derived ink; the chat's .fmt body text
+#     clips the text-1 mesh through its letters.
+if phase_allowed p20; then
+  echo "── p20 the every-window pass (a2 tabs + text-1 body)"
+  ev "Settings.setState({themeOverrides:{'$THEME':{'--accent-2':{colors:['#8a2be2','#c71585','#ff1493','#ff6347','#ffa500','#f5f542'],dir:'diag'},'--text-1':{colors:['#ff6633','#ffee00','#33ff99','#33ccff'],dir:'diag'}}}})" >/dev/null
+  sleep 0.4
+  phase_invariants p20 --accent-2
+  nav sizing
+  ev "var t=document.querySelector('.settings-nav .tab.active'); if(t){var cs=getComputedStyle(t); console.log('TAB:'+cs.backgroundPosition+' @ '+cs.backgroundSize+' ink='+cs.color);}" >/dev/null
+  sleep 0.3
+  shot p20 sizing-tabs
+  nav chat
+  ev "var f=document.querySelector('.fmt'); if(f){var cs=getComputedStyle(f); console.log('FMT:clip='+cs.backgroundClip+' pos='+cs.backgroundPosition+' color='+cs.color);}" >/dev/null
+  sleep 0.3
+  shot p20 chat-text
+  ev "Settings.setState({themeOverrides:{}})" >/dev/null
+  sleep 0.4
+fi
+
+# p21 — v0.67 THE DEEP FIELD: the parallax proof. Pan the canvas by a
+#     known amount; the LINES and DOTS must shift by DIFFERENT amounts
+#     (their own planes: line 0.772 / dot 0.88 at the default depth 60;
+#     flat would shift both identically). Measured by pixel-fold analysis
+#     and recorded in the manifest.
+if phase_allowed p21; then
+  echo "── p21 the deep field (parallax planes)"
+  nav home
+  shot p21 home-before
+  ev "(function(){
+    var c=document.getElementById('c');
+    function fire(t,x,y){c.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));}
+    fire('mousedown',300,420);
+    for(var i=1;i<=10;i++) fire('mousemove',300-i*20,420);
+    fire('mouseup',100,420);
+  })(); 'panned'" >/dev/null
+  sleep 2.2
+  shot p21 home-after
+  python3 - "$OUT/p21__home-before.png" "$OUT/p21__home-after.png" <<'PYPLL' >> "$OUT/manifest.ndjson"
+import sys, json
+try:
+    from PIL import Image
+    b = Image.open(sys.argv[1]).convert('RGB'); a = Image.open(sys.argv[2]).convert('RGB')
+    W, H = b.size
+    def line_shift(y):
+        def xs(img):
+            out, run = [], None
+            bg = sum(img.getpixel((10, y)))
+            for x in range(W):
+                if sum(img.getpixel((x, y))) > bg + 12:
+                    run = [x, x] if run is None else [run[0], x]
+                else:
+                    if run: out.append((run[0]+run[1])//2)
+                    run = None
+            if run: out.append((run[0]+run[1])//2)
+            return out
+        xb, xa = xs(b), xs(a)
+        if not xb or not xa: return None
+        return (xa[0] - xb[0]) % 48
+    def dot_shift(y):
+        def cols(img):
+            out = [x for x in range(2, W-2) if sum(img.getpixel((x, y))) > 100]
+            g = []
+            for x in out:
+                if g and x - g[-1][-1] <= 2: g[-1].append(x)
+                else: g.append([x])
+            return [sum(q)//len(q) for q in g]
+        cb, ca = cols(b), cols(a)
+        if not cb or not ca: return None
+        return (ca[0] - cb[0]) % 48
+    ls = next((s for s in (line_shift(y) for y in (100, 300, 500)) if s is not None), None)
+    ds = next((s for s in (dot_shift(y) for y in (335, 383, 431, 479)) if s is not None), None)
+    verdict = 'INCONCLUSIVE'
+    if ls is not None and ds is not None and ls != ds:
+        verdict = 'PARALLAX_CONFIRMED'
+    elif ls is not None and ds is not None and ls == ds:
+        verdict = 'FLAT_SUSPECTED'
+    print(json.dumps({"kind":"parallax","phase":"p21","lineShiftMod48":ls,"dotShiftMod48":ds,"verdict":verdict}))
+except Exception as e:
+    print(json.dumps({"kind":"parallax","phase":"p21","error":str(e)}))
+PYPLL
+  # reset the pan (the next phases need the icon on-screen)
+  ev "(function(){var s=JSON.parse(localStorage.getItem('doomalay.state.v2')||'{}');s.offset={x:0,y:0};localStorage.setItem('doomalay.state.v2',JSON.stringify(s));})(); 'reset'" >/dev/null
+  ab reload >/dev/null; sleep 1.5
 fi
 
 # ── assemble the manifest ────────────────────────────────────────

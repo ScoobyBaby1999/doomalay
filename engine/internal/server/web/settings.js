@@ -43,6 +43,10 @@
     gridScatter: 0,         // 0-100 → max px displacement per dot/line intersection
     gridSizeVariation: 0,   // 0-100 → max % radius/length delta
     gridRotation: 0,        // 0-100 → max degrees of rotation per line/dot
+    // v0.67 THE DEEP FIELD: parallax depth between the canvas planes
+    // (lines lag the icons, dots sit between; 0 = flat lattice, 100 =
+    // the full spacey stack; 60 default — see app.js renderGrid).
+    spaceParallax: 60,
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────

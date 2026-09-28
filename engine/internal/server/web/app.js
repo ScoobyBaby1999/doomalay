@@ -133,6 +133,21 @@
 
     // v0.45 ITEM 6: grid quick options — read once per redraw.
     var st = window.Settings.getState();
+    // ── v0.67 THE DEEP FIELD (user spec: "add a little more of a
+    // parallax feel when scrolling between the canvas, the lines, the
+    // dots, and the icons on screen. Make it feel more spacey like
+    // it's in space") ──
+    // The lattice is no longer one plane: lines and dots each ride
+    // their own parallax factor, so a pan reveals four depth planes —
+    // canvas background (deepening) → lines → dots → icons (the
+    // interaction plane, factor 1: drag/fling physics stay world-true).
+    // spaceParallax (Tweaks): 0 = the v0.52 flat lattice (byte-identical
+    // behavior), 100 = the full stack. The per-cell jitter hashes
+    // re-anchor in each layer's OWN frame (deterministic while sliding).
+    var pdepth = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 60;
+    pdepth = Math.max(0, Math.min(100, pdepth)) / 100;
+    var PF_LINE = 1 - 0.38 * pdepth;
+    var PF_DOT  = 1 - 0.20 * pdepth;
     var hideLines = !!st.hideGridLines;
     var hideDots = !!st.hideDots;
     var scatter = (typeof st.gridScatter === 'number') ? st.gridScatter : 0;       // 0-100 → up to ~scatter px
@@ -146,8 +161,12 @@
     var rotDeg = rotVar * 0.6;            // 100 → 60deg max
 
     const scaledGrid = gridSpacing() * scale;
-    const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
-    const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
+    // v0.67: each lattice plane wraps ITS OWN parallaxed pan — lines
+    // lag the icons, dots sit between (the depth stack).
+    const startX = ((-offsetX * scale * PF_LINE) % scaledGrid + scaledGrid) % scaledGrid;
+    const startY = ((-offsetY * scale * PF_LINE) % scaledGrid + scaledGrid) % scaledGrid;
+    const dStartX = ((-offsetX * scale * PF_DOT) % scaledGrid + scaledGrid) % scaledGrid;
+    const dStartY = ((-offsetY * scale * PF_DOT) % scaledGrid + scaledGrid) % scaledGrid;
 
     // ── v0.45 ITEM 6: stable per-cell hash so jitter is deterministic ──
     // (the same grid cell always gets the same offset/size/rotation — no
@@ -181,7 +200,8 @@
       var segMode = sizeFrac > 0;
       for (let x = startX; x < W; x += scaledGrid) {
         // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
-        var ix = Math.round((x + offsetX * scale) / scaledGrid);
+        // v0.67: anchored in the LINE plane's parallax frame.
+        var ix = Math.round((x + offsetX * scale * PF_LINE) / scaledGrid);
         var h1 = hashCell(ix, 0);
         var dx = scatterPx * (h1 - 0.5) * 2;
         var rot = rotDeg * (hashCell(ix, 1) - 0.5) * 2;  // radians
@@ -198,7 +218,7 @@
           ctx.stroke();
         } else {
           for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
-            var iyS = Math.round((y + offsetY * scale) / scaledGrid);
+            var iyS = Math.round((y + offsetY * scale * PF_LINE) / scaledGrid);
             var segLen = scaledGrid * (1 + sizeFrac * (hashCell(ix + 5, iyS) - 0.5) * 2);
             var segW = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ix + 9, iyS) - 0.5) * 2));
             if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
@@ -213,7 +233,7 @@
         lineIdx++;
       }
       for (let y = startY; y < H; y += scaledGrid) {
-        var iy = Math.round((y + offsetY * scale) / scaledGrid);
+        var iy = Math.round((y + offsetY * scale * PF_LINE) / scaledGrid);
         var h2 = hashCell(0, iy);
         var dy = scatterPx * (h2 - 0.5) * 2;
         var rot2 = rotDeg * (hashCell(1, iy) - 0.5) * 2;
@@ -230,7 +250,7 @@
           ctx.stroke();
         } else {
           for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
-            var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
+            var ixS = Math.round((x2 + offsetX * scale * PF_LINE) / scaledGrid);
             var segLen2 = scaledGrid * (1 + sizeFrac * (hashCell(ixS, iy + 5) - 0.5) * 2);
             var segW2 = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ixS, iy + 9) - 0.5) * 2));
             if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
@@ -256,11 +276,16 @@
       // without shimmer.
       var dotSampler = makePatternSampler(dotSpec, dotFallback);
       const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
-      for (let x = startX; x < W; x += scaledGrid) {
-        for (let y = startY; y < H; y += scaledGrid) {
+      // v0.67: the dots ride their OWN plane (dStartX/dStartY + the
+      // dot-frame hash anchors) — panning slides them against the line
+      // lattice; the offset reads as specks floating between the lines
+      // (stars between the constellations — the spacey depth the user
+      // asked for; spaceParallax 0 re-flattens the lattice exactly).
+      for (let x = dStartX; x < W; x += scaledGrid) {
+        for (let y = dStartY; y < H; y += scaledGrid) {
           // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
-          var dix = Math.round((x + offsetX * scale) / scaledGrid);
-          var diy = Math.round((y + offsetY * scale) / scaledGrid);
+          var dix = Math.round((x + offsetX * scale * PF_DOT) / scaledGrid);
+          var diy = Math.round((y + offsetY * scale * PF_DOT) / scaledGrid);
           var hd = hashCell(dix, diy);
           var hd2 = hashCell(dix + 7, diy + 7);
           var jx = scatterPx * (hd - 0.5) * 2;
@@ -556,6 +581,14 @@
   // and the wrap keeps the parallax infinite without ever sliding off.
   var bgCache = { key: '', tile: null };
   var BG_PARALLAX = 0.35;
+  // v0.67 DEEP FIELD: the far plane deepens with the spaceParallax
+  // setting (60 default → 0.296; 0 → exactly the v0.52 0.35).
+  function bgParallaxNow() {
+    var st = window.Settings.getState();
+    var d = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 60;
+    d = Math.max(0, Math.min(100, d)) / 100;
+    return Math.max(0.15, BG_PARALLAX - 0.09 * d);
+  }
   // v0.54: the color-space tile is MULT× the viewport — the mirror
   // period grows to 2·MULT screens of pan, textures cover-fit larger
   // (the Rorschach repeat halves), and the mesh spots spread over a
@@ -583,17 +616,18 @@
   }
 
   function paintCanvasBackground(spec, fallbackHex) {
+    var BG_P = bgParallaxNow();
     var TW = Math.max(16, Math.round(W * BG_TILE_MULT));
     var TH = Math.max(16, Math.round(H * BG_TILE_MULT));
     var tile = bgTileFor(spec, fallbackHex, TW, TH);
     // v0.54: zx CLAMPED ≥ 1 — zooming out never shrinks the tile below
     // the viewport (the old 0.825× at min-zoom painted 2+ tiles at rest,
     // the most visible "it feels tiled" artifact)
-    var zx = Math.max(1, 1 + (scale - 1) * BG_PARALLAX);   // bg zoom = 35% of the grid's
+    var zx = Math.max(1, 1 + (scale - 1) * BG_P);   // bg zoom = the far plane's rate
     var tw = TW * zx, th = TH * zx;
     // the parallax pan, wrapped into the mirror period [0, 2·tw)
-    var px = ((-offsetX * scale * BG_PARALLAX) % (2 * tw) + 2 * tw) % (2 * tw);
-    var py = ((-offsetY * scale * BG_PARALLAX) % (2 * th) + 2 * th) % (2 * th);
+    var px = ((-offsetX * scale * BG_P) % (2 * tw) + 2 * tw) % (2 * tw);
+    var py = ((-offsetY * scale * BG_P) % (2 * th) + 2 * th) % (2 * th);
     bgView = { tw: tw, th: th, zx: zx, px: px, py: py };   // for the samplers
     for (var ix = 0; ; ix++) {
       var x0 = px - 2 * tw + ix * tw;
@@ -964,6 +998,9 @@
     renderGrid();
     for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
     renderOffScreenArrows();
+    // v0.67: the icons ride transforms — the projection painter
+    // re-anchors their gradient windows to the viewport each frame.
+    if (window.DoomProjection) window.DoomProjection.poke();
   }
 
   function tick() {
@@ -984,6 +1021,7 @@
     renderGrid();
     for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
     renderOffScreenArrows();
+    if (window.DoomProjection) window.DoomProjection.poke();
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
     else { animating = false; scheduleSave(); }
   }

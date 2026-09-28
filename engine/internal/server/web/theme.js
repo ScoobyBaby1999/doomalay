@@ -223,9 +223,18 @@
     docEl._themeOverrideKeys = [];
     // v0.49: gradient TEXT — when the --text-1 override paints a real
     // gradient, flag the root so index.html's [data-text-grad] rules
-    // clip the prominent titles/headings to it (body text keeps the
-    // solid first color — gradient body text would be unreadable noise).
+    // clip the prominent titles/headings to it (v0.67: the pass now
+    // extends to body text + labels — every text-1 consumer is a
+    // window when the user paints Primary text as a field).
     var textGrad = false;
+    // v0.67: per-accent gradient gates — [data-aN-grad] on the root
+    // while accent N's twin is a real image. index.html's EVERY-WINDOW
+    // pass converts the remaining accent-TINTED pills/badges/labels
+    // into windows on that accent's viewport projection (the v0.66
+    // model, completed). Solid accents never trip the gates → every
+    // base theme renders byte-identical to v0.66.
+    var accGrad = { '--accent': false, '--accent-2': false,
+      '--accent-3': false, '--accent-4': false };
     if (overrides) {
       Object.keys(overrides).forEach(function (k) {
         // v0.44: the override value may be a hex (legacy) or a gradient
@@ -250,6 +259,7 @@
           docEl._themeOverrideKeys.push('--border-strong-gradient');
         }
         if (k === '--text-1' && twins.grad !== 'none') textGrad = true;
+        if (accGrad.hasOwnProperty(k) && twins.grad !== 'none') accGrad[k] = true;
         // auto-derive the -rgb triplet (rgba() composition needs it) —
         // ALWAYS from the SOLID twin (a gradient's stops can't compose
         // rgba(); the first color is the canonical tint, v0.26 contract)
@@ -263,6 +273,13 @@
     }
     if (textGrad) docEl.setAttribute('data-text-grad', '1');
     else docEl.removeAttribute('data-text-grad');
+    // v0.67: publish the per-accent gates (see accGrad above).
+    var A_ATTR = { '--accent': 'data-a1-grad', '--accent-2': 'data-a2-grad',
+      '--accent-3': 'data-a3-grad', '--accent-4': 'data-a4-grad' };
+    Object.keys(A_ATTR).forEach(function (av) {
+      if (accGrad[av]) docEl.setAttribute(A_ATTR[av], '1');
+      else docEl.removeAttribute(A_ATTR[av]);
+    });
 
     // v0.57: --bg-panel-rgb — derived EVERY apply (base themes included):
     // the scrim family (overlay scrim, chat scrim, media viewers) composes
@@ -373,6 +390,11 @@
         window.DoomalayConfig.families.default) {
       window.DoomalayConfig.families.default.color = cssVar('--border-strong') || '#4a4a5e';
     }
+
+    // v0.67: after the gates/twins land, re-anchor every projection
+    // window (the painter derives its selectors from the stylesheets
+    // + the fresh gradient twins — see window.DoomProjection below).
+    if (window.DoomProjection) window.DoomProjection.poke();
   }
 
   // effectiveGridSpecs merges the user's explicit grid picks over the
@@ -479,6 +501,8 @@
   // boot + live-apply (browser only — the node path skips straight to
   // the module.exports below)
   var HAS_WINDOW = (typeof window !== 'undefined');
+  var HAS_DOM = HAS_WINDOW && (typeof document !== 'undefined') &&
+    !!(document.documentElement) && (typeof document.addEventListener === 'function');
   var Settings = HAS_WINDOW ? window.Settings : null;
   if (Settings) {
     Settings.onChange(applyTheme);
@@ -503,6 +527,166 @@
       // asserts the parity).
       deriveTwins: deriveTwins
     };
+
+    // ══ v0.67 THE TRANSFORM-PROOF PROJECTION PAINTER ══════════════
+    // THE ROOT CAUSE this whole wave fixes: `background-attachment:
+    // fixed` is viewport-anchored ONLY outside transformed ancestors —
+    // and the chat panel is an ALWAYS-TALL SHEET that carries a
+    // PERMANENT transform (v0.42), so every gradient inside it (every
+    // pill, card, bubble, text clip — the entire UI except the canvas)
+    // rendered ELEMENT-SIZED: each object squeezed the whole viewport
+    // gradient into its own little box ("every object follows the
+    // gradient in its own weird way or not at all" — the user's exact
+    // report). The painter re-anchors each window by hand:
+    //     background-size: <viewport>px <viewport>px
+    //     background-position: -<el.viewportLeft>px -<el.viewportTop>px
+    //     background-attachment: scroll   (element-relative, deterministic)
+    // which is mathematically identical to a fixed attachment — the
+    // element displays exactly the viewport region it covers — and is
+    // immune to transforms. Elements OUTSIDE transformed roots keep
+    // the real fixed attachment (the canvas chatbots) untouched.
+    // The selector set is derived FROM THE STYLESHEETS (every rule
+    // with a fixed attachment or a *-gradient var image), so the
+    // painter can never drift from the CSS — including styles the
+    // modules inject at runtime (re-collected when <style> nodes
+    // appear).
+    var PROJ = (function () {
+      if (!HAS_DOM) return null;   // the node harness mounts a stub window — no DOM, no painter
+      var SEL = null;             // the compiled projection selector
+      var painted = [];           // elements carrying painter styles
+      var dirty = false, moving = 0, rafId = 0;
+      var STYLE_RE = /var\(--[a-z0-9-]*gradient/;
+
+      function collect() {
+        var sels = [];
+        try {
+          for (var s = 0; s < document.styleSheets.length; s++) {
+            var sheet = document.styleSheets[s];
+            var rules;
+            try { rules = sheet.cssRules; } catch (e) { continue; }
+            (function walk(rs) {
+              for (var i = 0; i < rs.length; i++) {
+                var r = rs[i];
+                // NOTE: modern Chromium gives EVERY CSSStyleRule a
+                // cssRules list (CSS nesting) — only recurse when it
+                // actually has children, and never skip the rule itself.
+                if (r.cssRules && r.cssRules.length) walk(r.cssRules);
+                if (!r.style || !r.selectorText) continue;
+                var att = r.style.getPropertyValue('background-attachment');
+                var img = r.style.getPropertyValue('background-image') || '';
+                if ((att && att.indexOf('fixed') !== -1) || STYLE_RE.test(img)) {
+                  // drop pseudo-elements (::after etc) — they never match
+                  sels.push(r.selectorText.replace(/::[a-z-]+/g, ''));
+                }
+              }
+            })(rules);
+          }
+        } catch (e) { /* a locked sheet is simply skipped */ }
+        SEL = sels.length ? sels.join(',') : null;
+      }
+
+      function transformedRoots() {
+        var out = [];
+        var roots = document.querySelectorAll(
+          '#chat-panel, #connect-overlay, .chatbot, .hub-sheet, .tpl-sheet');
+        for (var i = 0; i < roots.length; i++) {
+          var t = '';
+          try { t = getComputedStyle(roots[i]).transform; } catch (e) {}
+          if (t && t !== 'none') out.push(roots[i]);
+        }
+        return out;
+      }
+
+      function paint() {
+        if (!SEL) collect();
+        if (!SEL) return;
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var size = vw + 'px ' + vh + 'px';
+        var roots = transformedRoots();
+        var keep = [];
+        // paint every projection element inside a transformed root
+        for (var ri = 0; ri < roots.length; ri++) {
+          var els;
+          try { els = roots[ri].querySelectorAll(SEL); } catch (e) { SEL = null; return; }
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            var img = getComputedStyle(el).backgroundImage;
+            if (!img || img === 'none') continue;   // a solid twin — nothing to anchor
+            var r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
+            var pos = (-r.left).toFixed(1) + 'px ' + (-r.top).toFixed(1) + 'px';
+            if (el.style.backgroundPosition !== pos) el.style.backgroundPosition = pos;
+            if (el.style.backgroundSize !== size) el.style.backgroundSize = size;
+            if (el.style.backgroundAttachment !== 'scroll') el.style.backgroundAttachment = 'scroll';
+            keep.push(el);
+          }
+        }
+        // clear every previously-painted element that lost its anchor this
+        // pass — it left the transformed scopes, went offscreen, or its
+        // gradient twin reverted to solid. The CSS state owns it again
+        // (byte-identical to the no-gradient look; re-painted on return).
+        for (var p = 0; p < painted.length; p++) {
+          var el2 = painted[p];
+          if (!el2.isConnected || keep.indexOf(el2) !== -1) continue;
+          el2.style.removeProperty('background-position');
+          el2.style.removeProperty('background-size');
+          el2.style.removeProperty('background-attachment');
+        }
+        painted = keep;
+      }
+
+      function schedule() {
+        if (!rafId) rafId = requestAnimationFrame(run);
+      }
+      function run() {
+        rafId = 0;
+        if (dirty || moving > 0) { paint(); dirty = false; }
+        if (moving > 0) { moving = Math.max(0, moving - 1); schedule(); }
+      }
+      function mark() { dirty = true; schedule(); }
+
+      // ── the triggers ──
+      if (typeof MutationObserver === 'function') {
+        var mo = new MutationObserver(function (muts) {
+          for (var i = 0; i < muts.length; i++) {
+            var m = muts[i];
+            if (m.type === 'childList') {
+              for (var j = 0; j < m.addedNodes.length; j++) {
+                var n = m.addedNodes[j];
+                if (n.nodeType === 1 && (n.tagName === 'STYLE' || n.tagName === 'LINK')) {
+                  SEL = null;   // a new stylesheet — re-derive the selectors
+                }
+              }
+            }
+          }
+          mark();
+        });
+        mo.observe(document.documentElement, {
+          childList: true, subtree: true,
+          attributes: true, attributeFilter: ['style', 'class']
+        });
+      }
+      document.addEventListener('scroll', mark, true);
+      window.addEventListener('resize', function () { SEL = null; mark(); });
+      // CSS transitions don't fire attribute mutations (computed values
+      // interpolate) — the transform rides need explicit tracking.
+      ['transitionrun', 'transitionstart'].forEach(function (ev) {
+        document.addEventListener(ev, function (e) {
+          var pn = (e.propertyName || '');
+          if (pn === 'transform' || pn === 'all' || pn === '') { moving = 3; mark(); }
+        }, true);
+      });
+      ['transitionend', 'transitioncancel'].forEach(function (ev) {
+        document.addEventListener(ev, mark, true);
+      });
+
+      return {
+        poke: mark,             // app.js's physics tick calls this per frame
+        repaint: function () { SEL = null; paint(); },
+        paint: paint
+      };
+    })();
+    window.DoomProjection = PROJ || { poke: function(){}, repaint: function(){}, paint: function(){} };
   }
   // the node self-test path (scripts/test_theme_twins.js): the PURE
   // spec/twin logic, no DOM anywhere near it. deriveTwins reads
