@@ -299,6 +299,53 @@ func releaseTurnCancel(sessionID string, tc *turnCancel) {
         turnMu.Unlock()
 }
 
+// libraryPreamble (v0.67 THE LIBRARY AWARENESS WAVE — user report:
+// "the agent doesn't even know the app has a library"). Mirrors the
+// brain's _discipline_lines block (brain/agent.py:1025-1068) — the same
+// opportunistic but disciplined tone, adapted for the engine direct-LLM
+// path's tool surface (hublib + persona_list + persona_set + skills +
+// artifact). Two variants:
+//   - sess.LibAuto == true  -> LIB ON:  recommend + use; downloads armed.
+//   - sess.LibAuto == false -> LIB OFF: browse + recommend only; loads/
+//     downloads refuse until the user flips * tweaks -> Bot Library back on.
+// In both variants the model is told the library EXISTS (the user's core
+// ask: "it should not only know of the library's existence").
+func libraryPreamble(sess *store.Session) string {
+        if sess != nil && sess.LibAuto {
+                return librarySystemPromptOn
+        }
+        return librarySystemPromptOff
+}
+
+// librarySystemPromptOn — the LIB-ON preamble (the chat's Bot Library
+// switch is ON). The model is told the library exists, is instructed to
+// SEARCH before answering capability questions (Strands lesson: imperative
+// phrasing beats passive), to RECOMMEND + USE when it advances the goal,
+// and to BACK OFF in five listed cases (OpenAI's "describe when (and when
+// not) to use each function" rule). The MUST/SHOULD/MAY/MUST NOT modal
+// verbs are Strands' Agent SOP format.
+const librarySystemPromptOn = "\n\n## The Doomalay Library\n" +
+        "This chat's library is ON. The Doomalay app has a LIBRARY — a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the `hublib` tool (search by keyword, popular, recent, by tag).\n\n" +
+        "## Library discipline\n" +
+        "MUST: Before answering any question that could be solved by an existing library entry (a methodology, a skill, a persona, a theme, a script), call `hublib` with a 1-3 keyword query and report the top result(s) in one line. Never answer from parametric memory for capability questions.\n" +
+        "SHOULD: Recommend the smallest entry that solves the actual sub-problem; cite name + the one capability you'd use, and offer to download it for the user via the same tool.\n" +
+        "MAY: Pull an entry via `hublib` once you have decided it is the right fit; the download lands in the user's library (\"Yours\") and is immediately usable in this chat.\n" +
+        "MUST NOT use a library entry when: the task fits in a few lines of trivial code or text; the entry's surface area exceeds the problem's; the user explicitly asked for a from-scratch implementation; the entry is clearly stale (unmaintained, broken); or pulling it would steer away from the user's stated direction rather than toward it.\n" +
+        "When you recommend OR decline a library entry, state the reason in one clause (\"use X because Y\", \"skip X because Z\"). If unsure whether an entry exists, search first.\n"
+
+// librarySystemPromptOff — the LIB-OFF preamble (the chat's Bot Library
+// switch is OFF). The model is STILL told the library exists (the user's
+// core ask); it can browse + recommend but cannot load or download — the
+// app blocks those until the user flips * tweaks -> Bot Library back on.
+// The model is instructed NOT to pretend the library is unavailable.
+const librarySystemPromptOff = "\n\n## The Doomalay Library\n" +
+        "This chat's library switch is OFF (the user can flip it via * tweaks -> Bot Library). The Doomalay app still HAS a library — a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the `hublib` tool (search by keyword, popular, recent, by tag).\n\n" +
+        "## Library discipline (browse-only mode)\n" +
+        "MUST: When the user asks about capabilities (\"can the app do X?\", \"is there a skill for Y?\", \"do you have a template for Z?\"), call `hublib` with a 1-3 keyword query and report the top result(s) in one line — never answer from parametric memory.\n" +
+        "SHOULD: Recommend entries by name + one-line capability; tell the user to flip * tweaks -> Bot Library ON to download + use them.\n" +
+        "MAY: Browse the public hub (popular, recent, by tag) when the user asks for inspiration or what's new.\n" +
+        "MUST NOT attempt to download or load entries — loads and downloads refuse until the user flips the Bot Library switch back on. Do not pretend the library is unavailable; it IS available, just download-gated.\n"
+
 // defaultPersonaQuick (v0.20→v0.48) — the QUICK-CHAT default persona: OUR
 // default prompt (the artifact protocol) MERGED with the old HF space's
 // system prompt style ("Be direct and concise; lead with outcomes", the
@@ -352,7 +399,11 @@ const defaultPersonaHF = "## Identity\n" +
 
 // defaultPersonaFor (v0.48 task 6) picks the mode-aware default: HF chats
 // get an assistant that knows it lives in a Hugging Face Space with the
-// full toolchain; quick chats get the classic app persona.
+// full toolchain; quick chats get the classic app persona. v0.67 THE
+// LIBRARY AWARENESS WAVE: both defaults now append the library preamble
+// (conditional on sess.LibAuto) so the engine direct-LLM path matches
+// the brain's library-aware _build_system_prompt — the model knows the
+// library exists, recommends when on, browse-only when off.
 func defaultPersonaFor(sess *store.Session) string {
         if sess != nil && sess.Sandbox == "hf" {
                 p := defaultPersonaHF
@@ -361,9 +412,9 @@ func defaultPersonaFor(sess *store.Session) string {
                 } else {
                         p = strings.ReplaceAll(p, "{repo}", " (the shared sandbox)")
                 }
-                return p
+                return p + libraryPreamble(sess)
         }
-        return defaultPersonaQuick
+        return defaultPersonaQuick + libraryPreamble(sess)
 }
 
 // prettyModelName turns a model slot ("nvidia/nvidia/nemotron-…",

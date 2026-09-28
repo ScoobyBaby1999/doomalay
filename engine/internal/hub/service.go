@@ -33,6 +33,15 @@ const (
 // itemsTTL is the remote catalog cache window (mirrors the models catalog).
 const itemsTTL = 10 * time.Minute
 
+// emptyCacheTTL is the short retry window for an EMPTY cached view
+// (v0.67 THE EMPTY-CACHE GUARD — fixes "page 1/1 but no contents").
+// A transient HF/network failure that yields an empty discover() result
+// is retried cheaply every 30 seconds instead of freezing the library
+// for the full itemsTTL. Combined with stale-while-revalidate (see view),
+// an empty discover never evicts a previously-good list AND never pins
+// an empty result for 10 minutes.
+const emptyCacheTTL = 30 * time.Second
+
 // discovery concurrency bound (repos fan out; one slow repo must not stall
 // the whole list).
 const maxWorkers = 6
@@ -209,10 +218,32 @@ func (s *Service) Invalidate(typ string) {
 // refresh=true ALSO drops the shared repo-scan cache — a user who just
 // posted a dataset and hit refresh gets a real re-probe, not yesterday's
 // scan.
+//
+// v0.67 THE EMPTY-CACHE GUARD: two safety nets for the "page 1/1 but no
+// contents" bug (which was an empty discover() result cached for the full
+// 10-minute TTL after a transient HF hiccup; restarting the app wiped
+// the in-memory s.cache map and the next discover succeeded — "going off
+// and back on usually solves this"):
+//
+//  1. STALE-WHILE-REVALIDATE: a new empty discover preserves the previous
+//     non-empty cache (the user keeps seeing the last good list instead
+//     of an empty page). Only refresh=1 (an explicit user pull-to-refresh)
+//     bypasses this so the user can force-retry after a previously-empty
+//     state.
+//  2. SHORT EMPTY-TTL: a cached empty view expires after emptyCacheTTL
+//     (30s), not itemsTTL (10min) — so the next call after 30s retries
+//     the discover. A real empty library only costs one cheap probe per
+//     30s; a transient failure recovers within 30s instead of 10min.
 func (s *Service) view(spec LibrarySpec, refresh bool) *typeCache {
         s.mu.Lock()
         v := s.cache[spec.Type]
         fresh := v != nil && time.Since(v.at) < itemsTTL
+        // an EMPTY cached view expires after the short retry window (30s),
+        // not the full 10-min TTL — a transient failure shouldn't freeze the
+        // library for 10 minutes
+        if v != nil && len(v.items) == 0 && time.Since(v.at) >= emptyCacheTTL {
+                fresh = false
+        }
         s.mu.Unlock()
         if fresh && !refresh {
                 return v
@@ -224,6 +255,13 @@ func (s *Service) view(spec LibrarySpec, refresh bool) *typeCache {
         }
         nv := s.discover(spec)
         s.mu.Lock()
+        // stale-while-revalidate: a new empty discover preserves the previous
+        // non-empty cache (the user keeps seeing the last good list). Only an
+        // explicit refresh=1 bypasses this — the user wants a real retry.
+        if len(nv.items) == 0 && !refresh && v != nil && len(v.items) > 0 {
+                s.mu.Unlock()
+                return v
+        }
         s.cache[spec.Type] = nv
         s.mu.Unlock()
         return nv

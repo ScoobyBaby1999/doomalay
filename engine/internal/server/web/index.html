@@ -3062,8 +3062,11 @@
   /* v0.63 (user spec pt 3): 62→81px (+30%) — clears the logo/title block
      too; the small "bundle" text after #xyz is RETIRED (the tag reads
      cleaner alone). */
+  /* v0.67 (user spec pt 3, second bump): 81→113px (+40%) — the flag still
+     rode over the card icon on tall cards; +40% of 81 = 32.4, snapped to
+     113px clears the icon row entirely (user report: "move 40% higher"). */
   .hub-bundle-flag {
-    position: absolute; left: 0; bottom: 81px; z-index: 2;
+    position: absolute; left: 0; bottom: 113px; z-index: 2;
     display: inline-flex; align-items: center; gap: 5px;
     padding: 4px 14px 4px 10px;
     border-radius: 0 9px 9px 0;

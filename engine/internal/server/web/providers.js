@@ -442,6 +442,10 @@
       // persist in the WebView profile) or a desktop popup. Google-only
       // OAuth providers (webview_hostile) go to a Chrome Custom Tab on
       // the APK. The waiting hint adapts to whichever tier fired.
+      // v0.67 THE BIB GETKEY WAVE: on v0.64+ APKs (BIB-capable builds),
+      // non-hostile getkey URLs ride the native panel (PanelBrowserSheet)
+      // instead of the full-screen ViewerActivity — the user stays on
+      // the connect-cloud-provider screen with the key input visible.
       contentEl.querySelectorAll('[data-getkey]').forEach(function (link) {
         link.addEventListener('click', function (e) {
           e.preventDefault();
@@ -453,10 +457,14 @@
               : (openInSystemBrowser(cfg.signup_url), 'browser');
             var hint = contentEl.querySelector('#getkey-hint-' + name);
             if (hint) {
-              if (tier === 'apk-viewer') {
+              if (tier === 'native-panel') {
+                hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the panel browser. Copy your API key there, drag the panel down or tap ✕ to come straight back, and paste it above.';
+              } else if (tier === 'apk-viewer') {
                 hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the in-app browser. Copy your API key there, tap ✕ to come straight back, and paste it above.';
               } else if (tier === 'popup') {
                 hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the window beside this one. Copy your API key there, come back, and paste it above.';
+              } else if (tier === 'apk-external' || tier === 'tab') {
+                hint.innerHTML = '↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in your system browser. Grab your API key there, come back, and paste it above.';
               }
               hint.style.display = 'block';
             }

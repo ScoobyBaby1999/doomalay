@@ -27,11 +27,21 @@
 // iframes, ZERO embeddability detection. The APK-only capability is
 // detected, never assumed:
 //
-// ROUTING (InAppBrowser v3):
-//   open(url, {purpose:'getkey'|hostile}) → fallback() SYNC — the
-//     v0.62.3 contract is unchanged (key consoles and webview-hostile
-//     pages ride the full-screen viewer tiers).
-//   open(url) where __doomalayKotlin.openPanel exists (the v0.64 APK)
+// ROUTING (InAppBrowser v3 — v0.67 THE BIB GETKEY WAVE):
+//   open(url, {hostile}) → fallback() SYNC — genuinely webview-hostile
+//     pages (Google-only OAuth, frame-blocked key consoles) can't ride a
+//     WebView at all; they hand off to a Chrome Custom Tab / system
+//     browser on the APK, a new tab on desktop.
+//   open(url, {purpose:'getkey'}) where __doomalayKotlin.openPanel exists
+//     (the v0.64+ APK) → THE NATIVE PANEL: bridge openPanel(url,
+//     {theme snapshot, purpose}). The BIB panel is a real top-level
+//     native WebView — it loads every key-console page the full-screen
+//     ViewerActivity loaded (same engine, top-level navigation, ZERO
+//     iframes, ZERO embeddability detection), but docks over the
+//     untouched app instead of taking the whole screen. The user grabs
+//     their API key, drags the sheet down or taps ✕, and pastes above —
+//     never leaving the connect-cloud-provider screen.
+//   open(url) where __doomalayKotlin.openPanel exists (the v0.64+ APK)
 //     → THE NATIVE PANEL: bridge openPanel(url, {theme snapshot}).
 //     Returns 'native-panel'. The SPA never navigates, never renders a
 //     frame of the page — the sheet docks over it, resumable (its
@@ -168,19 +178,31 @@
   // ══ THE ROUTER ════════════════════════════════════════════════════
   function open(url, opts) {
     opts = opts || {};
-    // the E2 flows keep their synchronous tiers: key consoles are
-    // frame-blocked by design, hostile pages can't ride a WebView at all.
-    if (opts.purpose === 'getkey' || opts.hostile) return fallback(url, opts);
+    // v0.67 THE BIB GETKEY WAVE: only genuinely webview-hostile pages
+    // (Google-only OAuth, etc.) keep the synchronous fallback tier —
+    // they can't ride a WebView at all and must hand off to the system
+    // browser / Chrome Custom Tab. Non-hostile getkey URLs (the key
+    // consoles of most providers) flow through to the native-panel tier
+    // below: the PanelBrowserSheet is a top-level native WebView, so the
+    // X-Frame-Options / CSP frame-ancestors guards that the old v0.63.x
+    // iframe dock hit do not apply — every key-console page loads.
+    if (opts.hostile) return fallback(url, opts);
     if (!/^https?:\/\//i.test(url)) return fallback(url, opts);
 
-    // THE NATIVE PANEL — every shell that carries openPanel (the v0.64
+    // THE NATIVE PANEL — every shell that carries openPanel (the v0.64+
     // APK). The sheet is a real top-level native WebView: it loads
     // every page the browser-in-browser loads, docks over the
-    // untouched SPA, and owns its own history.
+    // untouched SPA, and owns its own history. v0.67: getkey URLs ride
+    // here too (the BIB GETKEY WAVE) — purpose is forwarded as metadata
+    // so the Kotlin sheet can stack key-console history separately if
+    // it wants (unknown fields are ignored on older sheets).
     var bridge = window.__doomalayKotlin;
     if (bridge && typeof bridge.openPanel === 'function') {
       try {
-        bridge.openPanel(url, JSON.stringify({ theme: themeSnapshot() }));
+        bridge.openPanel(url, JSON.stringify({
+          theme: themeSnapshot(),
+          purpose: opts.purpose || 'link'
+        }));
         return 'native-panel';
       } catch (e) { /* bridge hiccup — the redirect below catches it */ }
     }
