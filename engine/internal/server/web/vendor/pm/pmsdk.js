@@ -209,7 +209,7 @@ var PM_WEB_TOOLS_PROTOCOL = [
 // harness's tool map — porting guide Part 3: "the bootstrap is the entire
 // difference between the port working and not working") plus this protocol.
 var PM_LIB_PROTOCOL = [
-  'You also have THE SKILL LIBRARY (methodology skills — brainstorming, writing-plans, TDD, systematic-debugging, verification…):',
+  'You also have THE SKILL LIBRARY (methodology skills — brainstorming, writing-plans, TDD, systematic-debugging, verification…) plus the PUBLIC HUB (templates, skills, scripts, docs — other publishers\u2019 work):',
   'ACTION: skills {"action": "list"} — the skill index',
   'ACTION: skills {"action": "search", "q": "debug"} — ranked hits',
   'ACTION: skills {"action": "load", "skill": "brainstorming"} — load a skill and FOLLOW it',
@@ -217,7 +217,9 @@ var PM_LIB_PROTOCOL = [
   'ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — browse the public hub',
   'ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — an item\u2019s detail + payload head',
   'ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download into the user\u2019s library + use it',
-  'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.'
+  'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.',
+  'The library is an ASSET, not a detour: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name — a fit beats improvising. If the search comes back empty or nothing fits, say so and proceed without: never force a library item that steers away from the task, and never name an item a real search did not return.',
+  'If the user asks what\u2019s in the library, or asks you to find/recommend something for their task — search it and show the real results (cards render for the user). The user browses and downloads from the ✦ library panel too.'
 ].join('\n');
 
 // The bootstrap cache (per page — the skill body is static per install).
