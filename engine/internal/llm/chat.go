@@ -976,6 +976,14 @@ func effortBlacklisted(provider, model string) bool {
 // mentionsEffortParam reports whether a 400 body is complaining about the
 // reasoning/effort/thinking request fields (rather than auth, quota, the
 // model id, the payload, etc.).
+// v0.69: the Pydantic validation shapes join the trigger list — PM's
+// deployed glm-5.3 rejects out-of-enum values with
+//   {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'),
+//    'msg': "Input should be 'none', 'minima…"}
+// which contains NONE of the old trigger words ("unexpected"/"unknown"/…),
+// so the retry-without-param rescue never fired and the raw 400 surfaced
+// (the user's report). A body that names a reasoning field AND carries a
+// validation/literal_error shape is an effort-param rejection.
 func mentionsEffortParam(body string) bool {
         b := strings.ToLower(body)
         if !strings.Contains(b, "reason") && !strings.Contains(b, "effort") && !strings.Contains(b, "thinking") && !strings.Contains(b, "chat_template") {
@@ -985,7 +993,11 @@ func mentionsEffortParam(body string) bool {
                 strings.Contains(b, "unrecognized") || strings.Contains(b, "not supported") ||
                 strings.Contains(b, "unsupported") || strings.Contains(b, "invalid") ||
                 strings.Contains(b, "additional") || strings.Contains(b, "not allowed") ||
-                strings.Contains(b, "prohibited")
+                strings.Contains(b, "prohibited") ||
+                // v0.69: the Pydantic/FastAPI validation family
+                strings.Contains(b, "literal_error") ||
+                strings.Contains(b, "validation error") ||
+                strings.Contains(b, "input should be")
 }
 
 // CompleteSync performs ONE non-streaming completion and returns the full

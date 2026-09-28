@@ -48,17 +48,20 @@ import (
         "strings"
         "sync"
         "unicode"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
 )
 
 // Output caps — mirror the brain's dt_skills so both halves of the port
 // speak the same sizes (a skill body that fits one must fit the other).
 const (
-        skillsReadMax  = 8000  // browsing (companion files)
-        skillsLoadMax  = 40000 // injection (the largest real skill is ~33k)
-        skillsSearchTop = 8
-        hublibOutMax   = 6000  // dt_spec rule 9 — a few screens max
+        skillsReadMax     = 8000  // browsing (companion files)
+        skillsLoadMax     = 40000 // injection (the largest real skill is ~33k)
+        skillsSearchTop   = 8
+        hublibOutMax      = 6000 // dt_spec rule 9 — a few screens max
         hublibPayloadHead = 3000
-        hublibListMax  = 12
+        hublibListMax     = 12
 )
 
 // skillsEntry is one indexed skill (flat frontmatter per agentskills.io).
@@ -80,6 +83,18 @@ var (
 // different working directory (the e2e harness, installed layouts) the
 // executable's own sibling layout is the fallback: Android/installs ship
 // the brain NEXT TO the engine binary.
+//
+// v0.69 — THE EMBEDDED LIBRARY: the APK and the desktop binaries ship the
+// engine WITHOUT any brain directory (only the HF Space image copies
+// brain/), so the skills tool 400'd with "skills library unavailable:
+// Stat brain/agent_skills: no such file or directory" the moment the Bot
+// Library was enabled. The engine already EMBEDS the whole brain for the
+// HF-space deployer (hfzero, build-synced by make sync-hfzero) — when no
+// on-disk library is found, the embedded agent_skills subtree is extracted
+// ONCE per engine build into <DataDir>/brain/agent_skills (stamped with
+// the engine version; a stamp mismatch re-extracts) and served like a real
+// directory. Everything downstream (the mtime-cached index, list/load/
+// files/read) works unchanged on the extracted copy.
 func (s *Server) skillsDir() string {
         d := s.cfg.BrainDir
         if d == "" {
@@ -96,7 +111,66 @@ func (s *Server) skillsDir() string {
                         }
                 }
         }
+        if p := s.ensureEmbeddedSkills(); p != "" {
+                return p
+        }
         return filepath.Join(d, "agent_skills")
+}
+
+// skillsStamp is the extracted-library marker file: the engine version that
+// wrote the tree. A different running engine (upgrade) re-extracts.
+const skillsStampName = ".engine-skills-stamp"
+
+// ensureEmbeddedSkills extracts the embedded agent_skills library into
+// <DataDir>/brain/agent_skills when missing or stale, returning its path
+// ("" when unavailable — the caller falls back to the legacy path and the
+// honest Stat error surfaces exactly as before).
+func (s *Server) ensureEmbeddedSkills() string {
+        files, err := hfzero.AgentSkillFiles()
+        if err != nil || len(files) == 0 {
+                return "" // nothing embedded (shouldn't happen — sync-hfzero)
+        }
+        base := s.cfg.DataDir
+        if base == "" {
+                return "" // no writable data dir configured — don't guess
+        }
+        root := filepath.Join(base, "brain", "agent_skills")
+        stamp := filepath.Join(filepath.Dir(root), skillsStampName)
+        want := buildinfo.Version
+        if want == "" {
+                want = "dev"
+        }
+        if b, err := os.ReadFile(stamp); err == nil && string(b) == want {
+                if fi, err := os.Stat(root); err == nil && fi.IsDir() {
+                        return root // fresh for this build
+                }
+        }
+        // (re)extract: tmp dir first, then swap — a half-written tree can
+        // never be mistaken for a complete one (the stamp is the judge).
+        // The embedded paths are rooted "agent_skills/…" — strip that head
+        // so the files land DIRECTLY under the tmp root (no double nesting).
+        tmp := root + ".tmp"
+        _ = os.RemoveAll(tmp)
+        for _, f := range files {
+                rel := strings.TrimPrefix(f.Path, "agent_skills/")
+                if rel == "" || rel == f.Path && !strings.HasPrefix(f.Path, "agent_skills/") {
+                        continue // anything outside the subtree — skip
+                }
+                dst := filepath.Join(tmp, filepath.FromSlash(rel))
+                if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+                        return ""
+                }
+                if err := os.WriteFile(dst, f.Content, 0o644); err != nil {
+                        return ""
+                }
+        }
+        _ = os.RemoveAll(root)
+        if err := os.Rename(tmp, root); err != nil {
+                _ = os.RemoveAll(tmp)
+                return ""
+        }
+        _ = os.WriteFile(stamp, []byte(want), 0o644)
+        return root
 }
 
 // parseFrontmatterFlat parses the leading `---` block of a SKILL.md — the
@@ -425,7 +499,7 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
                         return
                 }
                 p := r.URL.Query().Get("path")
-                clean := filepath.Clean("/" + p)             // traversal-proof
+                clean := filepath.Clean("/" + p) // traversal-proof
                 if strings.Contains(clean, "..") {
                         writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "bad path"})
                         return
