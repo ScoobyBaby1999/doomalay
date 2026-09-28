@@ -17,8 +17,13 @@
 #   1. THE TIDY PILL — the URL capsule stands 30dp tall (was 34: the
 #      2×5dp vertical padding retired against the grown refresh slot),
 #      the text cap 170→153dp, the paddings (6,5,10,5)→(5,0,9,0).
+#      [v0.68.0 REBASE: the capsule shrank ANOTHER 15% — (4,0,8,0),
+#      130dp cap, 25.5dp tall; the anchors below track the new truth,
+#      v0680-browser-bar-test.sh audits the 15% cut itself]
 #   2. THE REFRESH HITBOX — the ↻ ImageButton 24×24 → 30×30 (+25% a
 #      side), glyph STAYS 18dp (padding 3→6), ripple circle 12→15dp.
+#      [v0.68.0 REBASE: the slot shrank with the capsule to 25.5×25.5 —
+#      still above the pre-v0.64.3 24dp; the glyph kept its 18dp]
 #   3. THE RING LIFTED — the loading stack rides translationY
 #      -0.35×overlay-height (clamped: the stack never leaves a short
 #      body — the 30% duck peek).
@@ -111,15 +116,15 @@ ev "window.__doomalayKotlin = window.__mkNative(); 'bridge back'" >/dev/null
 # ══ 2. THE STATIC KOTLIN AUDIT (CI compiles it — this proves intent) ══
 KTSHEET=$(cat "$KT/PanelBrowserSheet.kt")
 
-# ask 1 — the tidy pill: 30dp tall, 153dp cap, the tighter paddings
-has "$KTSHEET" "setPadding(dip(5), 0, dip(9), 0)" "Kotlin: the capsule's paddings (5,0,9,0) — 30dp tall (was 34)"
-has "$KTSHEET" "maxWidth = dip(153)" "Kotlin: the text cap 170→153dp (10% narrower)"
-has "$KTSHEET" "setPadding(dip(3), 0, dip(5), 0)" "Kotlin: the text paddings tightened (4,6)→(3,5)"
+# ask 1 — the tidy pill: the capsule's paddings + the text cap
+has "$KTSHEET" "setPadding(dip(4), 0, dip(8), 0)" "Kotlin: the capsule's paddings (4,0,8,0) — the v0.68.0 15% cut (25.5dp tall)"
+has "$KTSHEET" "maxWidth = dip(130)" "Kotlin: the text cap 153→130dp (the v0.68.0 15% cut)"
+has "$KTSHEET" "setPadding(dip(3), 0, dip(4), 0)" "Kotlin: the text paddings tightened (v0.68.0: right 5→4dp)"
 
-# ask 2 — the refresh hitbox: 30×30 slot, 18dp glyph, 15dp ripple
-has "$KTSHEET" "addView(refreshIcon, LinearLayout.LayoutParams(dip(30), dip(30)))" "Kotlin: the ↻ hitbox grows 24×24→30×30"
-has "$KTSHEET" "setPadding(dip(6), dip(6), dip(6), dip(6))" "Kotlin: the ↻ glyph STAYS 18dp (6dp padding inside the 30dp slot)"
-has "$KTSHEET" "chipShape(Color.TRANSPARENT, 15, null), chipShape(Color.WHITE, 15, null))" "Kotlin: the ↻ ripple circle follows 12→15dp"
+# ask 2 — the refresh hitbox: the slot rides the capsule, the 18dp glyph survives
+has "$KTSHEET" "addView(refreshIcon, LinearLayout.LayoutParams(dipF(25.5f), dipF(25.5f)))" "Kotlin: the ↻ slot follows the v0.68.0 25.5dp capsule (was 30)"
+has "$KTSHEET" "setPadding(dipF(3.75f), dipF(3.75f), dipF(3.75f), dipF(3.75f))" "Kotlin: the ↻ glyph STAYS 18dp (3.75dp padding inside the 25.5dp slot)"
+has "$KTSHEET" "chipShape(Color.TRANSPARENT, 12.75f, null), chipShape(Color.WHITE, 12.75f, null))" "Kotlin: the ↻ ripple circle follows the slot (15→12.75dp — exactly half)"
 
 # ask 3 — the ring lifted 35%, clamped for short bodies
 has "$KTSHEET" "val lift = -0.35f * h" "Kotlin: the loading stack lifts 35% of the overlay height"
