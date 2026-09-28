@@ -3178,6 +3178,16 @@
     font-size: var(--ui-small-fs); line-height: 1.6;
     border: 1px dashed var(--surface-3); border-radius: 12px;
   }
+  /* v0.67.4: the empty-state retry pill — one tap re-fetches the failed
+     library (theme vars only, the dx-pill house pattern). */
+  .hub-empty-retry {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 4px;
+    padding: 6px 14px; border-radius: 999px; cursor: pointer; font-family: inherit;
+    background: rgba(var(--accent-rgb), 0.10); border: 1px solid rgba(var(--accent-rgb), 0.40);
+    color: var(--accent); font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .hub-empty-retry:active { transform: scale(0.95); }
   .hub-pager {
     display: flex; align-items: center; justify-content: center; gap: 12px;
     font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3);

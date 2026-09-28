@@ -222,8 +222,12 @@
 
   // ── data ─────────────────────────────────────────────────────────
   function fetchLibraries() {
+    // v0.67.4: the seq guard — open→close→reopen races resolved against
+    // a REPLACED cur (module-level) used to write stale libraries into
+    // the fresh state. fetchLibraries had no guard of its own.
+    var seq = ++libSeq;
     return api('GET', '/api/hub/libraries').then(function (d) {
-      if (!cur) return;
+      if (!cur || libSeq !== seq) return;
       cur.libraries = (d && d.libraries) || [];
       var hadType = !!cur.type;
       if (!cur.type && cur.libraries.length) cur.type = cur.libraries[0].type;
@@ -233,18 +237,25 @@
         cur.type = cur.libraries.length ? cur.libraries[0].type : '';
         hadType = false;
       }
+      // v0.67.4: loadItems() ALWAYS fires when a type resolved. The old
+      // isTop() gate around the CALL (not the paint) skipped the fetch
+      // entirely whenever another view held the panel at that instant —
+      // items stayed null forever and the grid rendered the wrong empty
+      // state (the "page 1/1, nothing in it; leaving and returning to
+      // the app fixes it" report — a restart re-raced the timing).
+      // loadItems gates its own paints internally; the fetch is safe
+      // from any view state.
+      if (cur.type) loadItems();
       // repaint ONLY when the hub view is still the one on top — a view
       // stacked over it (item detail, publish) owns the body meanwhile.
-      if (isTop()) {
-        updateLibs();
-        if (!hadType && cur.type) loadItems();
-      }
+      if (isTop()) updateLibs();
     }).catch(function (e) {
-      if (!cur) return;
+      if (!cur || libSeq !== seq) return;
       cur.libErr = e.message || 'libraries unavailable';
       if (isTop()) updateLibs();
     });
   }
+  var libSeq = 0;
 
   function loadAuth() {
     return api('GET', '/api/hub/auth/status').then(function (d) {
@@ -1069,31 +1080,52 @@
     var eff = clampCols(c.grid, c.width);
     c.eff = eff;
     var per = eff * c.grid.rows;
-    // v0.58 (user spec pt 4): the bundles toggle decides the grid — ON =
-    // the bunch cards lead AND their member items hide; OFF = plain items.
-    var showBundles = true; // v0.60 pt C.9: bundles are always the grid
+    // v0.60 pt C.9: bundles are always the grid
+    var showBundles = true;
+    // v0.67.4: items===null means the fetch never landed (still loading,
+    // or loadItems never fired — the isTop() race). The OLD code fell
+    // through to "nothing here" with a null list — the page-1/1-empty /
+    // "returns nothing when it should return stuff" report. Loading is
+    // the only honest render for that state.
+    if (c.items === null) {
+      return '<div class="art-loading">loading the library…</div>';
+    }
+    // v0.67.4: the members hide ONLY behind bunch cards that ACTUALLY
+    // render — while the collections fetch is in flight (bunchLoading)
+    // or failed/empty, a member whose bunch card isn't on screen renders
+    // as a normal card. The old blanket filter (every it.collection
+    // hidden, bunch cards maybe missing) produced the empty-grid-page-
+    // 1/1 hole: real items vanished behind bunches that never painted.
+    var bunches = (showBundles && !c.bunchLoading) ? (c.collections || []).filter(function (b) {
+      return ((b && b.byType) || {})[c.type] > 0;
+    }) : [];
+    var renderedBunch = {};
+    bunches.forEach(function (b) { renderedBunch[b.id] = true; });
     var items = (c.items || []).filter(function (it) {
-      return !showBundles || !(it && it.collection);
+      return !it || !it.collection || !renderedBunch[SaniCollectionKey(it.collection)];
     });
     var pages = Math.max(1, Math.ceil(items.length / per));
     var page = Math.min(Math.max(1, c.page), pages);
     c.page = page;
 
     if (c.loading && !c.items) return '<div class="art-loading">loading the library…</div>';
-    if (!items.length && !(showBundles && (c.collections || []).length)) {
+    if (!items.length && !bunches.length) {
+      // v0.67.4: the bunches still streaming is a LOADING state, not
+      // "nothing here" — a type whose items are all bundle members (the
+      // skills library is exactly that) used to flash the wrong empty
+      // message between the two fetches. An error keeps its message +
+      // gains a retry pill; a clean empty keeps the old guidance.
+      if (!c.err && showBundles && c.bunchLoading) {
+        return '<div class="art-loading">loading the library…</div>';
+      }
       return '<div class="hub-empty">' +
-        (c.err ? esc(c.err) :
-          'nothing here' + (c.q ? ' for “' + esc(c.q) + '”' : '') +
-          ' — try another search, another tag, or publish something below') +
+        (c.err ? esc(c.err) + ' — ' : '') +
+        (c.err
+          ? '<button type="button" class="hub-empty-retry" id="hub-retry">↻ retry</button>'
+          : 'nothing here' + (c.q ? ' for \u201c' + esc(c.q) + '\u201d' : '') +
+            ' \u2014 try another search, another tag, or publish something below') +
         '</div>';
     }
-    // the bunch cards ride the SAME grid, first (they match the current
-    // q — loadCollections shares it). v0.56 (user spec): a bunch only
-    // lands in libraries its members ACTUALLY have — superpowers with no
-    // theme files stops appearing in Themes.
-    var bunches = (showBundles && !c.bunchLoading) ? (c.collections || []).filter(function (b) {
-      return ((b && b.byType) || {})[c.type] > 0;
-    }) : [];
     return (
       '<div class="hub-grid" id="hub-grid" style="--hub-cols:' + eff + '">' +
           bunches.map(collectionCardHTML).join('') +
@@ -1101,6 +1133,17 @@
       '</div>' +
       pagerHTML(page, pages)
     );
+  }
+
+  // v0.67.4: the client twin of the engine's SanitizeCollection — a
+  // member's collection id and the bunch card's id must meet on the
+  // SAME normalized key or the renderedBunch check misses. Mirrors
+  // model.go's SanitizeIcon slug exactly: lowercase, [^a-z0-9]+ → '-',
+  // trim edges, cap at 24 (MaxTagLen) then trim again.
+  function SaniCollectionKey(raw) {
+    var out = String(raw || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (out.length > 24) out = out.slice(0, 24).replace(/^-+|-+$/g, '');
+    return out;
   }
 
   function pagerHTML(page, pages) {
@@ -1687,6 +1730,16 @@
         saveHubstate(); // v0.60 pt B
         updateBody();
       });
+    });
+
+    // v0.67.4: the empty-state retry — an err'd library gets one tap back
+    // to a fresh fetch (the old empty state left the user stuck until a
+    // full app restart).
+    var retry = host.querySelector('#hub-retry');
+    if (retry) retry.addEventListener('click', function () {
+      if (!cur) return;
+      cur.err = '';
+      loadItems(true);
     });
 
 
