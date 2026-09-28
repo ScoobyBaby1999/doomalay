@@ -27,30 +27,32 @@
 // iframes, ZERO embeddability detection. The APK-only capability is
 // detected, never assumed:
 //
-// ROUTING (InAppBrowser v3 — v0.67 THE BIB GETKEY WAVE):
-//   open(url, {hostile}) → fallback() SYNC — genuinely webview-hostile
-//     pages (Google-only OAuth, frame-blocked key consoles) can't ride a
-//     WebView at all; they hand off to a Chrome Custom Tab / system
-//     browser on the APK, a new tab on desktop.
-//   open(url, {purpose:'getkey'}) where __doomalayKotlin.openPanel exists
-//     (the v0.64+ APK) → THE NATIVE PANEL: bridge openPanel(url,
-//     {theme snapshot, purpose}). The BIB panel is a real top-level
-//     native WebView — it loads every key-console page the full-screen
-//     ViewerActivity loaded (same engine, top-level navigation, ZERO
-//     iframes, ZERO embeddability detection), but docks over the
-//     untouched app instead of taking the whole screen. The user grabs
-//     their API key, drags the sheet down or taps ✕, and pastes above —
-//     never leaving the connect-cloud-provider screen.
-//   open(url) where __doomalayKotlin.openPanel exists (the v0.64+ APK)
-//     → THE NATIVE PANEL: bridge openPanel(url, {theme snapshot}).
-//     Returns 'native-panel'. The SPA never navigates, never renders a
-//     frame of the page — the sheet docks over it, resumable (its
-//     WebView history survives closes).
-//   open(url) EVERYWHERE ELSE (desktop, HF Space, self-host, phone
-//     browsers, pre-v0.64 APKs) → fallback() IMMEDIATELY — the
-//     popup/tab browser-in-browser. "For desktops, we should not
-//     hesitate to redirect users": no iframe dock, no verdict fetch, no
-//     embeddability detection — a real window that loads every page.
+// ROUTING (InAppBrowser v3 — v0.67.3 THE BIB GETKEY WAVE, revised):
+//   open(url, ...) where __doomalayKotlin.openPanel exists (the v0.64+
+//     APK) → THE NATIVE PANEL: bridge openPanel(url, {theme snapshot,
+//     purpose, hostile}). The BIB panel is a real top-level native
+//     WebView — it loads EVERY page a regular browser can, including
+//     OAuth-protected key consoles and pages that block iframe
+//     embedding (the legacy v0.63.x iframe dock's `webview_hostile`
+//     flag is obsolete in the BIB era). The user's mandate: "all
+//     redirects use the BIB panel and not the default browser screen."
+//     So getkey URLs (and any URL, hostile or not) ride the panel when
+//     it's available. `hostile` is forwarded as metadata so the Kotlin
+//     sheet can render an "open in external browser" affordance if it
+//     wants (unknown fields are ignored on older sheets).
+//   open(url, {hostile}) EVERYWHERE ELSE (desktop, HF Space, self-host,
+//     pre-v0.64 APKs, phone browsers) → external() — the system
+//     browser / Chrome Custom Tab on the APK, a new tab on desktop.
+//     Hostile providers (Google-only OAuth, frame-blocked key consoles)
+//     can't ride a WebView at all — they detect WebView user-agents and
+//     refuse to render, so they hand off to a real browser. (v0.67.3:
+//     fixes the original v0.62.3 contract bug — the code went to
+//     fallback() / apk-viewer, contradicting the header comment that
+//     said "go to a Chrome Custom Tab on the APK instead".)
+//   open(url) EVERYWHERE ELSE → fallback() IMMEDIATELY — the popup/tab
+//     browser-in-browser. "For desktops, we should not hesitate to
+//     redirect users": no iframe dock, no verdict fetch, no embeddability
+//     detection — a real window that loads every page.
 //   fallback(url) — the E2 tiers verbatim (apk-viewer / popup / tab).
 //   external(url) — the ⧉ box+arrow semantics, verbatim.
 //   isOpen()/currentURL()/close() — the bridge getters (panelOpen /
@@ -178,36 +180,39 @@
   // ══ THE ROUTER ════════════════════════════════════════════════════
   function open(url, opts) {
     opts = opts || {};
-    // v0.67 THE BIB GETKEY WAVE: only genuinely webview-hostile pages
-    // (Google-only OAuth, etc.) keep the synchronous fallback tier —
-    // they can't ride a WebView at all and must hand off to the system
-    // browser / Chrome Custom Tab. Non-hostile getkey URLs (the key
-    // consoles of most providers) flow through to the native-panel tier
-    // below: the PanelBrowserSheet is a top-level native WebView, so the
-    // X-Frame-Options / CSP frame-ancestors guards that the old v0.63.x
-    // iframe dock hit do not apply — every key-console page loads.
-    if (opts.hostile) return fallback(url, opts);
     if (!/^https?:\/\//i.test(url)) return fallback(url, opts);
 
-    // THE NATIVE PANEL — every shell that carries openPanel (the v0.64+
-    // APK). The sheet is a real top-level native WebView: it loads
-    // every page the browser-in-browser loads, docks over the
-    // untouched SPA, and owns its own history. v0.67: getkey URLs ride
-    // here too (the BIB GETKEY WAVE) — purpose is forwarded as metadata
-    // so the Kotlin sheet can stack key-console history separately if
-    // it wants (unknown fields are ignored on older sheets).
+    // v0.67.3 THE BIB GETKEY WAVE (revised): on v0.64+ APKs (BIB-capable
+    // builds), the native panel (PanelBrowserSheet — a real top-level
+    // native WebView) loads EVERY page a regular browser can, including
+    // OAuth-protected key consoles and pages that block iframe embedding.
+    // The user's mandate: "all redirects use the BIB panel and not the
+    // default browser screen." So getkey URLs (and any URL, hostile or
+    // not) ride the panel when it's available — the legacy v0.63.x
+    // iframe dock's `webview_hostile` flag is obsolete in the BIB era.
+    // hostile is forwarded as metadata so the Kotlin sheet can render an
+    // "open in external browser" affordance if it wants.
     var bridge = window.__doomalayKotlin;
     if (bridge && typeof bridge.openPanel === 'function') {
       try {
         bridge.openPanel(url, JSON.stringify({
           theme: themeSnapshot(),
-          purpose: opts.purpose || 'link'
+          purpose: opts.purpose || 'link',
+          hostile: !!opts.hostile
         }));
         return 'native-panel';
       } catch (e) { /* bridge hiccup — the redirect below catches it */ }
     }
 
-    // Everything else: straight to the browser-in-browser (a popup on
+    // Non-BIB builds (desktop, pre-v0.64 APKs, HF Space, phone browsers):
+    // hostile providers (Google-only OAuth, frame-blocked key consoles)
+    // can't ride a WebView at all — they detect WebView user-agents and
+    // refuse to render, so hand them to the system browser / Chrome Custom
+    // Tab (external). v0.67.3: this finally implements the v0.62.3 header
+    // comment ("go to a Chrome Custom Tab on the APK instead") which the
+    // original code contradicted (it went to fallback/apk-viewer).
+    if (opts.hostile) return external(url);
+    // Everyone else: straight to the browser-in-browser (a popup on
     // desktop, the full-screen viewer on old APKs) — no hesitation.
     return fallback(url, opts);
   }
