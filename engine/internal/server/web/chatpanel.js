@@ -2289,6 +2289,24 @@
         "\nFollow this template's methodology for this task:\n" +
         String(state.template.brief).trim() + "\n\n" + head;
     }
+    // v0.71: DEEP RESEARCH on the PM path — the engine's stage pipeline
+    // never runs here (PM turns are WebView-driven), so the flag alone
+    // said nothing and the bot "didn't know it was using a template".
+    // The 8-stage methodology rides as a single-agent pipeline the bot
+    // EXECUTES with its live web tools (decompose → search → verify →
+    // synthesize → gap-check → refine → assemble, the hub payload's
+    // contract: [N] citations, Confidence + References sections).
+    if (state.deepResearch) {
+      head = 'METHOD TEMPLATE — deep research (you are running it NOW)\n' +
+        'Execute this pipeline for the task, using your web tools at every research step:\n' +
+        '1. DECOMPOSE the question into 3-6 specific, researchable sub-questions.\n' +
+        '2. SEARCH: per sub-question, run 2-4 differently-phrased web searches; scan the hits for authoritative sources (primary > secondary: official docs, .gov, .edu, peer-reviewed).\n' +
+        '3. VERIFY: fetch the promising pages; drop paywalled, empty, or unreachable ones. NEVER invent URLs, sources, or citations — omit when uncertain.\n' +
+        '4. SYNTHESIZE: answer each sub-question in 150-300 words, grounded in the verified sources, citing them as [N].\n' +
+        '5. GAP-CHECK: list which parts are weakly sourced, and refine them with more searches.\n' +
+        '6. ASSEMBLE the final briefing: "# <answer headline>" then "## <sub-question>" sections, then "## Confidence" (high/medium/low per sub-question, one-line why), then "## References" — exactly the verified sources as [N] Author. "Title". Year. URL.\n' +
+        'Tone: measured, citation-heavy, hedged where sources disagree. Target 800+ words. Do NOT pad — every claim carries a source or an explicit hedge.\n\n' + head;
+    }
     var personaText;
     if (state.personas && state.personas.length && window.Persona && window.Persona.resolveActive) {
       window.Persona.setData(state.personas, state.persona || '', state.placeholders || {});
@@ -2404,6 +2422,20 @@
       }).catch(function (e) { console.error('persist PM event failed', e); });
     };
 
+    // v0.71: the persist boundary speaks the ENGINE usage shape. pmsdk
+    // normalizes at the stream (normUsage), but this seam is bridge-
+    // agnostic — any PMBridge implementation (or a future swap) that
+    // reports the OpenAI spelling still lands input_tokens/output_tokens
+    // in the status event, so server/usage.go counts the turn.
+    var normUsage = function (u) {
+      if (!u || typeof u !== 'object') return null;
+      var tin = (u.input_tokens !== undefined && u.input_tokens !== null) ? u.input_tokens : u.prompt_tokens;
+      var tout = (u.output_tokens !== undefined && u.output_tokens !== null) ? u.output_tokens : u.completion_tokens;
+      if ((tin === undefined || tin === null) && (tout === undefined || tout === null)) return null;
+      tin = Number(tin) || 0; tout = Number(tout) || 0;
+      return { input_tokens: tin, output_tokens: tout,
+               total_tokens: Number(u.total_tokens) || (tin + tout) };
+    };
     var finish = function (errText, usage) {
       clearHint();
       state.isStreaming = false;
@@ -2455,12 +2487,22 @@
       messages: history,
       signal: abort.signal,
       sessionId: state.sessionId || '', // v0.22: file tools save into this chat
-      tools: !state.deepResearch,  // v0.45 ITEM 2: web search default-on — only a template (deep research) suppresses it
+      // v0.71 FIX: deep research KEEPS the web tools on the PM path —
+      // the old `tools: !state.deepResearch` blindfolded the bot (the
+      // engine-native stage pipeline never runs for PM turns, so there
+      // was no web at all; the model answered from memory and "didn't
+      // know it was using a template"). The methodology block in
+      // pmSystemMessage + live tools = the template, executed.
+      tools: true,
       // v0.26: the PM effort toggle (on/off → chat_template_kwargs.thinking).
       effort: state.effort || '',
       // v0.60 pt C.13: the lib pill rides the PM turn — ON prepends the
       // superpowers bootstrap + arms the skills/hublib ACTION tools.
       lib: !!(state.libAuto || state.templateAuto || state.skillsAuto),
+      // v0.71: the attached WHOLE BUNDLE rides the PM turn — the manifest
+      // + decision protocol prepend the system message (the bot reads the
+      // bundle and picks the member that fits the request).
+      bundle: state.bundle || null,
       // v0.22: throttled re-render (the WS path already used scheduleUpdate;
       // PM fired a FULL markdown+DOMPurify+Prism pass per token — the
       // "replies outside the thinking box don't stream smoothly" freeze).
@@ -2534,7 +2576,7 @@
         if (st === 'running') showHint('establishing PrivateMode secure channel…');
       }
     }).then(function (result) {
-      finish(null, result && result.usage);
+      finish(null, normUsage(result && result.usage));
       return result;
     }).catch(function (e) {
       finish(friendlyError(e && e.message ? e.message : 'PrivateMode turn failed'));
@@ -2924,7 +2966,9 @@
       if (state._turnTemplate) return shortCap(state._turnTemplate);
       return '+';
     }
-    // v0.60 pt C.9: the lib pill's + — whatever is in use this turn.
+    // v0.60 pt C.9: the lib pill's + — the v0.68 ACTIVE-BUNDLE SEGMENT
+    // owns the in-use name now (the + stays a plain '+', upstream spec);
+    // an attached bundle shows THERE (armTurnBundle derives state.bundle).
     if (state._turnSkill) return shortCap(state._turnSkill);
     if (state._turnTemplate) return shortCap(state._turnTemplate);
     if (state.template && state.template.name) return shortCap(state.template.name);
@@ -3020,9 +3064,14 @@
   // armTurnBundle — rule 1 (a fresh turn re-arms to the manual template
   // or hides). Called from doSend + the replayed/live 'user' seam.
   function armTurnBundle(bodyEl, state) {
-    state._turnBundle = (state.template && state.template.name)
-      ? { kind: 'template', name: state.template.name }
-      : null;
+    // v0.71: an attached WHOLE BUNDLE leads (it outranks the single
+    // template — applyBundle arms it; tool events still override live
+    // during the turn, and the next user message re-derives back).
+    state._turnBundle = (state.bundle && state.bundle.name)
+      ? { kind: 'bundle', name: state.bundle.name }
+      : (state.template && state.template.name)
+        ? { kind: 'template', name: state.template.name }
+        : null;
     paintSegBundle(bodyEl, state);
   }
 
@@ -3064,7 +3113,7 @@
   // opens the public library with this chat connected.
   function libPill(bodyEl, state, icon) {
     var active = !!(state.libAuto || state.templateAuto || state.skillsAuto ||
-      state.template || state.deepResearch);
+      state.template || state.deepResearch || state.bundle);
     var wrap = document.createElement('div');
     wrap.id = 'seg-lib';
     wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
@@ -3325,6 +3374,75 @@
     }
   }
 
+  // ── v0.71 THE WHOLE-BUNDLE SEAM (user spec: "we must be able to use a
+  // bundle as a whole… the bot can then read the docs and the bundle
+  // itself and decide which skill, ext is best to use") ─────────────
+  // The bundle manifest is CLIENT-consumed (only the PM turn's system
+  // message reads it), so it lives in localStorage keyed by session —
+  // no engine column, no migration, restores on every panel rebuild.
+  var BUNDLE_KEY = 'doomalay.chatbundle.v1';
+  function bundleStore() {
+    try { return JSON.parse(localStorage.getItem(BUNDLE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveBundle(state) {
+    try {
+      var all = bundleStore();
+      if (state.bundle && state.sessionId) all[state.sessionId] = state.bundle;
+      else if (state.sessionId) delete all[state.sessionId];
+      localStorage.setItem(BUNDLE_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+  function loadBundle(state) {
+    if (!state.sessionId) return;
+    var b = bundleStore()[state.sessionId];
+    if (b && b.id && b.members && b.members.length) state.bundle = b;
+  }
+
+  // applyBundle — the public activation seam (the applyTemplate twin):
+  // the hub's bunch view hands over the WHOLE bundle {id, name, tag,
+  // members:[{type, name, desc, repo, id}]}; the chat arms the lib gate
+  // (the skills/hublib ACTION tools) and the PM turn prepends the
+  // manifest + the decision protocol — the BOT picks which member fits
+  // each request (a bundle replaces a pinned single template/skill).
+  function applyBundle(bundle) {
+    var c = currentCtx;
+    if (!c || !c.state) {
+      if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('open a chat first');
+      return;
+    }
+    var state = c.state, icon = c.icon;
+    if (bundle && bundle.id && bundle.members && bundle.members.length) {
+      state.bundle = {
+        id: String(bundle.id), name: String(bundle.name || bundle.id),
+        tag: String(bundle.tag || ''), members: bundle.members
+      };
+      state.libAuto = true;                 // the bundle rides the lib gate
+      state.templateAuto = true; state.skillsAuto = true;  // legacy lockstep
+      state.template = null;                // the bundle decides now
+      state.deepResearch = false;
+      saveBundle(state);
+      // v0.71 + v0.69.0: the ACTIVE-BUNDLE SEGMENT shows the attached
+      // bundle the moment it's applied (the same instant-show applyTemplate
+      // gives a template; the turn's tool events refine it to the member
+      // the bot actually loads).
+      armTurnBundle(c.bodyEl, state);
+      if (window.Artifacts && window.Artifacts.toast) {
+        window.Artifacts.toast('bundle attached — the bot picks the right member per task');
+      }
+    } else {
+      state.bundle = null;
+      saveBundle(state);
+    }
+    persistCaps(state, icon);
+    if (c.panel && c.panel.viewDepth && c.panel.viewDepth() === 0) {
+      state._tplPending = false;
+      buildToolbar(c.bodyEl, state, icon, c.type);
+      syncTemplateChip(c.bodyEl, state, icon);
+    } else {
+      state._tplPending = true;
+    }
+  }
+
   // ── v0.44 THE ACTIVE-TEMPLATE CHIP (inside the sticky input bar) ───
   // A one-line, removable '⧉ <name> ✕' banner pinned above the toolbar —
   // the edit-banner DOM mechanics (insert as the inputbar's first child,
@@ -3333,16 +3451,23 @@
   function syncTemplateChip(bodyEl, state, icon) {
     if (!bodyEl) return;
     var existing = bodyEl.querySelector('#tpl-chip');
-    if (!state.template) {
+    // v0.71: a whole-bundle attachment ALSO shows the chip ('▣ <bundle>')
+    // — clearing it detaches the bundle (the lib gate stays where the
+    // user left it; only the manifest goes).
+    if (!state.template && !state.bundle) {
       if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
       return;
     }
     var bar = bodyEl.querySelector('#chat-inputbar');
     if (!bar) return;
-    var name = (state.template && state.template.name) || 'template';
+    var isBundle = !state.template && !!state.bundle;
+    var name = isBundle
+      ? ((state.bundle && state.bundle.name) || 'bundle')
+      : ((state.template && state.template.name) || 'template');
+    var glyph = isBundle ? '▣' : '⧉';
     if (existing) {
       var label = existing.querySelector('.tpl-chip-text');
-      if (label) label.textContent = '⧉ ' + name;
+      if (label) label.textContent = glyph + ' ' + name;
       return;
     }
     var b = document.createElement('div');
@@ -3350,14 +3475,21 @@
     b.className = 'tpl-chip';
     b.setAttribute('role', 'status');
     b.innerHTML =
-      '<span class="tpl-chip-ico" aria-hidden="true">⧉</span>' +
-      '<span class="tpl-chip-text">' + esc('⧉ ' + name) + '</span>' +
-      '<button class="tpl-chip-x" title="clear the template" aria-label="Clear the active template">✕</button>';
+      '<span class="tpl-chip-ico" aria-hidden="true">' + glyph + '</span>' +
+      '<span class="tpl-chip-text">' + esc(glyph + ' ' + name) + '</span>' +
+      '<button class="tpl-chip-x" title="' + (isBundle ? 'detach the bundle' : 'clear the template') +
+        '" aria-label="' + (isBundle ? 'Detach the attached bundle' : 'Clear the active template') + '">✕</button>';
     b.querySelector('.tpl-chip-x').addEventListener('click', function () {
-      state.template = null;
+      if (isBundle) {
+        state.bundle = null;
+        saveBundle(state);
+      } else {
+        state.template = null;
+      }
       // v0.68: dropping the armed template drops the segment's manual
       // show too (a streaming turn's next tool event re-fills its real
-      // usage if it uses something).
+      // usage if it uses something). v0.71: a detached BUNDLE falls back
+      // the same way — armTurnBundle's derivation now knows state.bundle.
       armTurnBundle(bodyEl, state);
       persistCaps(state, icon);
       if (b.parentNode) b.parentNode.removeChild(b);
@@ -3539,6 +3671,9 @@
         if (typeof data.LibAuto !== 'boolean') {
           state.libAuto = !!(state.templateAuto || state.skillsAuto);
         }
+        // v0.71: restore the attached WHOLE-BUNDLE manifest (localStorage,
+        // keyed by session — see applyBundle).
+        loadBundle(state);
         // v0.44: restore the active method template (the persisted blob
         // {id, name, brief} — engine column template_id, PATCHed by
         // persistCaps; deep research restores via the flag above).
@@ -5271,6 +5406,7 @@
     // (templatesheet) and any surface with a resolved template activate
     // it in the CURRENT chat through the exact path the old ⧉ pill used.
     applyTemplate: applyTemplate,
+    applyBundle: applyBundle,
     render: render,
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },

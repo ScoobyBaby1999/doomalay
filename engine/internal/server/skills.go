@@ -376,7 +376,7 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
         case "bootstrap":
                 if !s.sessionLibOn(session) {
                         writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "the chat's Bot Library is OFF — flip ✦ tweaks → Bot Library (or the lib pill) back on first"})
+                                "error": "the chat's Bot Library is OFF — flip the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on first"})
                         return
                 }
                 body, err := os.ReadFile(filepath.Join(s.skillsDir(),
@@ -454,7 +454,7 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
         case "load":
                 if !s.sessionLibOn(session) {
                         writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "the chat's Bot Library is OFF — you can browse and recommend, but loads are refused until the user flips ✦ tweaks → Bot Library back on"})
+                                "error": "the chat's Bot Library is OFF — you can browse and recommend, but loads are refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"})
                         return
                 }
                 ref := r.URL.Query().Get("skill")

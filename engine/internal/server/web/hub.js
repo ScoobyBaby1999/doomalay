@@ -429,7 +429,15 @@
           (dlState && dlState.state === 'done' ? ' is-done' : '') + '" id="hub-bundle-dl"' +
           ' title="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '"' +
           ' aria-label="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '">' +
-          dlPillInner(dlState, b.members || 0) + '</button>';
+          dlPillInner(dlState, b.members || 0) + '</button>' +
+        // v0.71: USE THE WHOLE BUNDLE — attach the bundle to the connected
+        // chat; the bot reads the manifest and picks the member per task
+        // (user spec: "we should be able to use an entire bundle… the bot
+        // can then read the docs and the bundle itself and decide which
+        // skill, ext is best to use").
+        '<button type="button" class="hub-bundle-dl hub-bundle-use" id="hub-bundle-use"' +
+          ' title="use the whole bundle — the bot reads it and picks the right member for each task"' +
+          ' aria-label="use the whole bundle">▣<span>use bundle</span></button>';
     var hero =
       '<div class="hub-bunch-hero" style="background-image:' +
         ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
@@ -559,6 +567,47 @@
     // the live --dl-p fill + classes onto it (a download running in the
     // background repaints into a freshly opened bunch view).
     if (dl) paintDlPill();
+    // v0.71: USE THE WHOLE BUNDLE — hand the connected chat the bundle
+    // manifest (type/name/desc/repo/id per member, from the loaded
+    // groups); ChatPanel.applyBundle arms the lib gate + the PM turn's
+    // decision protocol.
+    var use = el.querySelector('#hub-bundle-use');
+    if (use) use.addEventListener('click', function () {
+      if (!bcur) return;
+      var chat = window.Hub && window.Hub.chat ? window.Hub.chat() : null;
+      if (!chat || !chat.sessionId) {
+        toast('connect a chat first — tap the chat pill', { ms: 2400 });
+        return;
+      }
+      if (!(window.ChatPanel && window.ChatPanel.applyBundle)) {
+        toast('this build has no bundle support');
+        return;
+      }
+      var members = [];
+      (bcur.groups || []).forEach(function (g) {
+        (g.items || []).forEach(function (it) {
+          if (!it) return;
+          members.push({
+            type: g.type || it.type || 'item',
+            name: it.name || it.id || '?',
+            desc: it.description || '',
+            repo: it.repo || '',
+            id: it.id || ''
+          });
+        });
+      });
+      if (!members.length) {
+        toast('the bundle is still loading — try again in a moment', { ms: 2400 });
+        return;
+      }
+      var meta = bunchMeta(bcur.id);
+      window.ChatPanel.applyBundle({
+        id: bcur.id,
+        name: bcur.id,
+        tag: (meta && meta.tag) || '',
+        members: members
+      });
+    });
     // v0.63 (user spec pt 4): the section headers toggle their sections
     // (collapsed is the default state — see bunchRender).
     el.querySelectorAll('.hub-bunch-sec-h').forEach(function (h) {
@@ -1372,20 +1421,48 @@
   // (its first stop), else the deterministic hash color; ink flips by
   // luminance so the text always reads. This is per-item CONTENT data (the
   // same rule as card art), not UI chrome — chrome stays on theme vars.
+  // v0.71: THE FLAG MIRRORS THE CARD — the badge used to wear only the
+  // design's FIRST STOP (a flat amber chip on superpowers' amber→red→
+  // violet mesh read as unrelated to the card under it). The badge now
+  // paints the SAME art the card paints (the full design through
+  // GradientUI — mesh/multi-stop/texture, blend mode included — else the
+  // bunch's deterministic hash gradient), so "#xyz bundle" always reads
+  // as belonging to its card. Ink flips by the AVERAGE luminance of the
+  // stops (a mesh's first stop can be the lightest/darkest outlier).
   function flagStyle(b) {
     var d = b.design || {};
-    var color = '';
-    if (d.kind === 'gradient' && d.colors && d.colors.length) color = d.colors[0];
-    if (!color) color = idColors(b.id)[0];
-    var ink = '#fff', shadow = '0 1px 4px rgba(0,0,0,0.55)';
-    var m = /^#([0-9a-f]{6})$/i.exec(String(color).trim());
-    if (m) {
-      var r = parseInt(m[1].slice(0, 2), 16), g = parseInt(m[1].slice(2, 4), 16), bl = parseInt(m[1].slice(4, 6), 16);
-      if (0.299 * r + 0.587 * g + 0.114 * bl > 168) {
-        ink = 'rgba(10,10,14,0.92)'; shadow = '0 1px 3px rgba(255,255,255,0.35)';
+    var paint = '', ref = '';
+    if (d.kind === 'gradient' && d.colors && d.colors.length) {
+      var GU = window.GradientUI;
+      var css = GU ? GU.css({ colors: d.colors, dir: d.dir, angle: d.angle, tex: d.tex }) : '';
+      if (css) {
+        paint = 'background:' + css + ';' +
+          ((d.tex && GU.BLENDED) ? 'background-blend-mode:color;' : '');
+      } else if (d.colors.length === 1) {
+        paint = 'background:' + d.colors[0] + ';';
+      } else {
+        paint = 'background:linear-gradient(135deg, ' + d.colors.join(', ') + ');';
       }
+      ref = d.colors.join(',');
     }
-    return ' style="background:' + color + ';color:' + ink + ';text-shadow:' + shadow + '"';
+    if (!paint) paint = 'background:' + idGradient(b.id) + ';';
+    if (!ref) ref = idColors(b.id).join(',');
+    var ink = '#fff', shadow = '0 1px 4px rgba(0,0,0,0.55)';
+    // the average luminance across every parseable stop (hex only —
+    // hsl/rgb specs fall back to the light-ink default, same as before)
+    var lum = 0, n = 0;
+    String(ref).split(',').forEach(function (c) {
+      var m = /^#([0-9a-f]{6})$/i.exec(String(c).trim());
+      if (!m) return;
+      lum += 0.299 * parseInt(m[1].slice(0, 2), 16) +
+             0.587 * parseInt(m[1].slice(2, 4), 16) +
+             0.114 * parseInt(m[1].slice(4, 6), 16);
+      n++;
+    });
+    if (n && lum / n > 168) {
+      ink = 'rgba(10,10,14,0.92)'; shadow = '0 1px 3px rgba(255,255,255,0.35)';
+    }
+    return ' style="' + paint + 'color:' + ink + ';text-shadow:' + shadow + '"';
   }
 
   // v0.58: the bunch card's art layer — like paintCardBg but png designs

@@ -100,6 +100,34 @@ function ensureVerified(c) {
   return verifyPromise;
 }
 
+// ── v0.71: USAGE NORMALIZATION + ROUND-SUMMING (the PM tracking fix) ──
+// The engine's usage aggregation (server/usage.go) reads the engine
+// shape — usage:{input_tokens, output_tokens}. PM's OpenAI-compatible
+// stream reports {prompt_tokens, completion_tokens, total_tokens}; the
+// bridge persisted it RAW, so every PM status event unmarshalled to
+// TURNS WITH ZERO TOKENS ("usage doesn't get tracked at all while using
+// privatemodeai"). normUsage maps either spelling into the engine
+// shape; mergeUsage sums across ReAct rounds exactly like the engine's
+// llm.mergeUsage (a 24-round tool loop is 24 API calls — the LAST
+// round's usage alone was never the turn's real cost).
+function normUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  var tin = u.input_tokens, tout = u.output_tokens;
+  if (tin === undefined || tin === null) tin = u.prompt_tokens;
+  if (tout === undefined || tout === null) tout = u.completion_tokens;
+  if ((tin === undefined || tin === null) && (tout === undefined || tout === null)) return null;
+  tin = Number(tin) || 0; tout = Number(tout) || 0;
+  return { input_tokens: tin, output_tokens: tout,
+           total_tokens: Number(u.total_tokens) || (tin + tout) };
+}
+function mergeUsage(a, b) {
+  if (!b) return a;
+  if (!a) return b;
+  return { input_tokens: (a.input_tokens || 0) + (b.input_tokens || 0),
+           output_tokens: (a.output_tokens || 0) + (b.output_tokens || 0),
+           total_tokens: (a.total_tokens || 0) + (b.total_tokens || 0) };
+}
+
 // streamChat(opts):
 //   opts.model     — PM model id (e.g. "kimi-k2.6")
 //   opts.messages  — [{role, content}] full conversation
@@ -208,7 +236,12 @@ var PM_WEB_TOOLS_PROTOCOL = [
 // bootstrap (fetched from the engine: using-superpowers verbatim + this
 // harness's tool map — porting guide Part 3: "the bootstrap is the entire
 // difference between the port working and not working") plus this protocol.
-var PM_LIB_PROTOCOL = [
+// v0.71: the protocol is SPLIT — PM_LIB_ACTIONS always rides the system
+// message (list/search stay open even with the 🛠 lib pill off, the
+// v0.60 pt C.9 browse+recommend semantics; without the vocabulary the
+// model GUESSED skills instead of searching — the user's report), and
+// PM_LIB_DISCIPLINE rides only under the gate with the bootstrap.
+var PM_LIB_ACTIONS = [
   'You also have THE SKILL LIBRARY (methodology skills — brainstorming, writing-plans, TDD, systematic-debugging, verification…) plus the PUBLIC HUB (templates, skills, scripts, docs — other publishers\u2019 work):',
   'ACTION: skills {"action": "list"} — the skill index',
   'ACTION: skills {"action": "search", "q": "debug"} — ranked hits',
@@ -217,10 +250,12 @@ var PM_LIB_PROTOCOL = [
   'ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — browse the public hub',
   'ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — an item\u2019s detail + payload head',
   'ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download into the user\u2019s library + use it',
-  'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.',
+  'NEVER guess or invent a skill — list/search FIRST, then load what actually exists. listing + searching are always available; load + download need this chat\u2019s 🛠 lib pill ON — when they are refused, finish from what you have and tell the user to flip the 🛠 lib pill on.',
   'The library is an ASSET, not a detour: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name — a fit beats improvising. If the search comes back empty or nothing fits, say so and proceed without: never force a library item that steers away from the task, and never name an item a real search did not return.',
   'If the user asks what\u2019s in the library, or asks you to find/recommend something for their task — search it and show the real results (cards render for the user). The user browses and downloads from the ✦ library panel too.'
 ].join('\n');
+var PM_LIB_DISCIPLINE = 'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.';
+var PM_LIB_PROTOCOL = PM_LIB_ACTIONS + '\n' + PM_LIB_DISCIPLINE;
 
 // The bootstrap cache (per page — the skill body is static per install).
 var _pmBootstrapCache = null;
@@ -507,24 +542,54 @@ async function runToolLoop(c, opts) {
   var system = opts.messages[0] && opts.messages[0].role === 'system'
     ? opts.messages[0].content + '\n\n' + PM_TOOLS_PROTOCOL + (toolsOn ? '\n\n' + PM_WEB_TOOLS_PROTOCOL : '')
     : PM_TOOLS_PROTOCOL + (toolsOn ? '\n\n' + PM_WEB_TOOLS_PROTOCOL : '');
+  // v0.71: the ACTION VOCABULARY always rides the system message. The
+  // v0.60 gate only armed it when the 🛠 lib pill was ON — with the
+  // pill off the model NEVER learned the actions and guessed skills
+  // instead of searching. The server gates the load/download half; the
+  // protocol text says which half needs the pill, so a refusal turns
+  // into a recommendation + a user hint instead of a retry storm.
+  system = system + '\n\n' + PM_LIB_ACTIONS;
   // v0.60 pt C.13: the lib gate — ON prepends the full bootstrap (the
   // using-superpowers body fetched from the engine, verbatim upstream +
-  // the harness tool map) and arms the skills/hublib ACTION protocol.
+  // the harness tool map) + the load-first discipline.
   if (opts.lib) {
     try {
       var boot = await fetchLibBootstrap(opts.sessionId || '');
-      system = boot + '\n\n' + system + '\n\n' + PM_LIB_PROTOCOL;
+      system = boot + '\n\n' + system + '\n\n' + PM_LIB_DISCIPLINE;
     } catch (e) {
       // gate off server-side / engine hiccup — degrade to the plain loop
       opts.onProgress && opts.onProgress({ text: 'skill library unavailable — ' + (e.message || e) });
     }
+  }
+  // v0.71: THE ATTACHED BUNDLE — the user used the whole bundle instead
+  // of picking one member (user spec: "the bot can then read the docs
+  // and the bundle itself and decide which skill, ext is best to use").
+  // The manifest + the decision protocol ride ABOVE everything else so
+  // the model reads the bundle first, every turn.
+  if (opts.bundle && opts.bundle.members && opts.bundle.members.length) {
+    var bd = opts.bundle;
+    var lines = [];
+    for (var bi = 0; bi < bd.members.length && bi < 60; bi++) {
+      var m = bd.members[bi] || {};
+      lines.push('· ' + (m.type || 'item') + ' — ' + (m.name || m.id || '?') +
+        (m.desc ? ' — ' + String(m.desc).slice(0, 140) : '') +
+        (m.repo && m.id ? ' [' + m.repo + ' / ' + m.id + ']' : ''));
+    }
+    system = 'THE ATTACHED BUNDLE — ' + (bd.name || bd.id) +
+      (bd.tag ? ' (#' + bd.tag + ')' : '') + ' — ' + bd.members.length + ' members\n' +
+      'The user attached this WHOLE bundle instead of one member. For EVERY request:\n' +
+      '1. Review the members below against the task BEFORE answering.\n' +
+      '2. Decide which member(s) fit the work best — never guess or answer from memory when a member covers it.\n' +
+      '3. LOAD the pick BEFORE starting: an installed skill via ACTION: skills {"action":"load","skill":"<name>"}; any hub member (skill/template/doc/script) via ACTION: hublib {"action":"get","type":"…","repo":"…","id":"…"} then {"action":"download",…} — the type/repo/id ride the manifest lines.\n' +
+      '4. Follow the loaded member to the letter, and say briefly WHICH member you used and why.\n' +
+      'Members:\n' + lines.join('\n') + '\n\n' + system;
   }
   var messages = [{ role: 'system', content: system }].concat(
     opts.messages[0] && opts.messages[0].role === 'system' ? opts.messages.slice(1) : opts.messages);
   var allSources = [];
   var finalText = '';
   var usage = null;
-  var MAX_ROUNDS = 24; // v0.22: 24 — 10-file generations + zip round-trip fit
+  var MAX_ROUNDS = 40; // v0.71: 40 — 20+-tool chains with reasoning between calls fit (24 clipped deep bundle flows; the exhaustion path still forces a final answer)
   var anyToolRun = false; // v0.24: has a tool executed yet this turn
   var nudged = false;     // v0.24: the auto-proceed push fired (max once)
 
@@ -533,7 +598,10 @@ async function runToolLoop(c, opts) {
       return { text: finalText, usage: usage, aborted: true, sources: allSources };
     }
     var res = await roundTrip(c, opts, messages);
-    usage = res.usage || usage;
+    // v0.71: SUM across rounds (the engine's mergeUsage contract) — the
+    // old `res.usage || usage` kept only the LAST round's tokens, so a
+    // 12-round tool turn reported one round's cost as the whole turn's.
+    usage = mergeUsage(usage, res.usage);
     var reply = (res.text || '').trim();
 
     var act = findActions(reply);
@@ -1128,7 +1196,7 @@ async function roundTripOnce(c, opts, messages) {
           }
         }
       }
-      if (ch.usage) usage = ch.usage;
+      if (ch.usage) usage = normUsage(ch.usage);
     }
     thinkClose(); // stream ended while still thinking
     // round complete — decide the tail if still undecided
