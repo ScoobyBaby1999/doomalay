@@ -300,11 +300,15 @@ KTMAIN=$(cat "$KT/MainActivity.kt")
 has "$KTSHEET" "private var dragFromDuck = false" "Kotlin: the docked-grab marker exists"
 has "$KTSHEET" "dragFromDuck = ducked" "Kotlin: ACTION_DOWN captures the grab-from-duck"
 has "$KTSHEET" "if (dragFromDuck) cancelDuck(restoreDock = true)" "Kotlin: THE PRESS RULE — a still tap on the strip/pill restores"
-has "$KTSHEET" "if (dy > 0) { dismiss(); return }" "Kotlin: THE DOWN RULE — a downward slide from the peek dismisses"
+# [v0.68.0 REBASE: the down-rule dismissal now rides the gesture
+# spring — dismissSpring(vy) — gesture.js's momentum close; and the
+# WebView's MOVE branch grew the scroll-chain handoff (v0680)]
+has "$KTSHEET" "if (dy > 0) { dismissSpring(vy); return }" "Kotlin: THE DOWN RULE — a downward slide from the peek dismisses on the gesture spring"
 has "$KTSHEET" "try { webView?.onPause() } catch (e: Exception) {}" "Kotlin: the dismiss PAUSES the WebView (stops rendering)"
 has "$KTSHEET" "try { w.onResume() } catch (e: Exception) {}" "Kotlin: the re-open RESUMES it (the pairing)"
 has "$KTSHEET" "private var pageTapY = -1f" "Kotlin: the ducked page's still-press detector"
-has "$KTSHEET" "MotionEvent.ACTION_MOVE -> if (ducked) resetDuckTimer()" "Kotlin: page scrolls keep the peek (MOVE retriggers)"
+has "$KTSHEET" "if (ducked) resetDuckTimer()" "Kotlin: page activity keeps the peek (the retrigger rides the page's DOWN+MOVE)"
+has "$KTSHEET" "!v.canScrollVertically(-1) && ev.rawY > chainDownY" "Kotlin: v0.68.0 — the MOVE branch grew the chain handoff (a top-of-page pull releases the lock)"
 has "$KTSHEET" "if (ducked) cancelDuck(restoreDock = true)" "Kotlin: the chrome acts restore the dock after their action"
 has "$KTMAIN" "a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE" "Kotlin: MainActivity retriggers on continuous canvas drags"
 
