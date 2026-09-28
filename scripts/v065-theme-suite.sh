@@ -162,7 +162,9 @@ phase_invariants() { # phase var
     var cs=getComputedStyle(document.documentElement);
     var g=cs.getPropertyValue('$var-gradient').trim();
     var s=cs.getPropertyValue('$var').trim();
-    return JSON.stringify({solid:s,grad:g.slice(0,140),textGrad:document.documentElement.getAttribute('data-text-grad')||'',veilInk:cs.getPropertyValue('--veil-ink').trim(),meta:(document.getElementById('meta-theme-color')||{}).content||''});
+    var att=function(sel){var el=document.querySelector(sel);return el?getComputedStyle(el).backgroundAttachment:'';};
+    var img=function(sel){var el=document.querySelector(sel);return el?String(getComputedStyle(el).backgroundImage).slice(0,90):'';};
+    return JSON.stringify({solid:s,grad:g.slice(0,140),textGrad:document.documentElement.getAttribute('data-text-grad')||'',veilInk:cs.getPropertyValue('--veil-ink').trim(),onAcc:cs.getPropertyValue('--on-accent').trim()+'/'+cs.getPropertyValue('--on-accent-2').trim()+'/'+cs.getPropertyValue('--on-accent-3').trim()+'/'+cs.getPropertyValue('--on-accent-4').trim(),meta:(document.getElementById('meta-theme-color')||{}).content||'',proj:{panel:att('#chat-panel'),header:att('#chat-header'),pillS:att('#pill-sandbox'),pillM:att('#pill-model'),pillImg:(img('#pill-sandbox')+' | '+img('#pill-model')).slice(0,180)}});
   })()")
   echo "{\"kind\":\"invariants\",\"phase\":\"$ph\",\"var\":\"$var\",\"checks\":$inv}" >> "$OUT/manifest.ndjson"
   echo "    ✔ invariants $ph/$var: $inv" | head -c 260; echo
@@ -395,6 +397,42 @@ if phase_allowed p16; then
   sleep 0.6
   phase_invariants p16 --accent
   run_phase_screens p16 home chat colors
+fi
+
+# p17 — v0.66 THE WINDOW PROOF: a hard RED-left/BLUE-right accent-1 split.
+#     Every accent-1 object (the sandbox + persona pills, the user bubble,
+#     the lib pill) is a WINDOW into the SAME viewport projection: left
+#     pills must read RED-ish, right pills BLUE-ish (the audit's
+#     cross-element check), and NO pill may be white/milky (the
+#     stained-white regression this wave buries).
+if phase_allowed p17; then
+  echo "── p17 the window proof (accent-1 hard split)"
+  apply_override --accent "['#ff0033','#ff0033','#0044ff','#0044ff']" h
+  sleep 0.4
+  phase_invariants p17 --accent
+  run_phase_screens p17 chat colors library tweaks
+  ev "Settings.setState({themeOverrides:{}})" >/dev/null
+  sleep 0.4
+fi
+
+# p18 — v0.66 THE PILL VIEW: the header dropdown EXPANDED so the pill row
+#     is VISIBLE (sandbox/model/artifacts/persona/mind + the util row),
+#     under the accent-1 hard split + an accent-2 diag — every pill is a
+#     window into ITS variable's projection (the p17 proof, pill edition:
+#     left pills red, right pills blue, model/artifacts show a2's diag).
+if phase_allowed p18; then
+  echo "── p18 the pill view (dropdown expanded, a1 split + a2 diag)"
+  ev "Settings.setState({themeOverrides:{'$THEME':{'--accent':{colors:['#ff0033','#ff0033','#0044ff','#0044ff'],dir:'h'},'--accent-2':{colors:['#8a2be2','#c71585','#ff1493','#ff6347','#ffa500','#f5f542'],dir:'diag'}}}})" >/dev/null
+  sleep 0.4
+  phase_invariants p18 --accent
+  nav chat
+  ev "var ch=document.getElementById('header-chevron'); if(ch) ch.click();" >/dev/null
+  sleep 0.6
+  shot p18 chat-pills
+  nav colors
+  shot p18 colors
+  ev "Settings.setState({themeOverrides:{}})" >/dev/null
+  sleep 0.4
 fi
 
 # ── assemble the manifest ────────────────────────────────────────

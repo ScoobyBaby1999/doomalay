@@ -287,6 +287,22 @@
       docEl.style.setProperty('--on-accent', onColorFor(accResolved));
       docEl._themeOverrideKeys.push('--on-accent');
     }
+    // v0.66: --on-accent-N for EVERY accent (not just Accent 1). The
+    // projection rework makes pills/windows that RENDER accent-N's own
+    // field, so their labels need the same readable-ink derivation the
+    // user bubbles have always had (--on-accent). All four read their
+    // RESOLVED solid twin (theme block or override — overrides were
+    // written above, so this sees the user's palette). Naming follows
+    // the --on-accent convention: --on-accent-2 / -3 / -4.
+    var ON_VAR = { '--accent-2': '--on-accent-2',
+      '--accent-3': '--on-accent-3', '--accent-4': '--on-accent-4' };
+    Object.keys(ON_VAR).forEach(function (av) {
+      var v = String(getComputedStyle(docEl).getPropertyValue(av) || '').trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+        docEl.style.setProperty(ON_VAR[av], onColorFor(v));
+        docEl._themeOverrideKeys.push(ON_VAR[av]);
+      }
+    });
     // v0.57→v0.65 FIX: --veil-ink — the layer system's veil direction.
     // It used to derive from the RESOLVED TEXT color's luminance, which
     // sounded right but had a fatal case: a dark Primary-text override on

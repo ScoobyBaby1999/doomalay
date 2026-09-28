@@ -42,22 +42,20 @@
        themes override with deeper mixes for contrast on pale surfaces) */
     --persona-tint: #a78bfa;  --persona-rgb: 167,139,250;
     --template-tint: #4ade80; --template-rgb: 74,222,128;
-    /* v0.57 THE VEILS — the layer system's hierarchy tokens. Every CARD on a
-       big surface is a window into the surface's continuous field PLUS a
-       translucent veil: the pattern still shows through (seamless — one
-       underlying gradient per the user spec) but the card reads as a
-       CALMER, distinct layer. The veil INK is LUMINANCE-AWARE (theme.js
-       derives --veil-ink from the text color: light text → black ink,
-       dark text → white ink) so the veil always RESTORES text contrast,
-       whatever the user does to --bg-app / --bg-panel (a bright overlay
-       background under a bright veil washed the text out — the first
-       sweep round's finding). */
+    /* v0.66 PROJECTION — the veil tokens are GONE. The old layer system
+       composited translucent ink washes (linear-gradient(var(--veil-card)))
+       over every gradient field; when --veil-ink derived WHITE (a light
+       surface-1 first stop in the user's palette) every card, header and
+       pill under the wash turned 36-48% milky — the "stained white" model
+       + sandbox pills in the APK. Objects now render ONLY their own
+       variable's viewport projection (the v0.66 block at the bottom).
+       --veil-ink survives for ONE job: the text-shadow ink — a shadow
+       can restore contrast under a loud user gradient without ever
+       washing the fill (theme.js re-derives it from the resolved
+       surface-1 luminance on every applyTheme). */
     --veil-ink: #000000;
     --veil-ink-rgb: 0, 0, 0;
-    --veil-card: color-mix(in srgb, var(--veil-ink) 36%, transparent);
-    --veil-head: color-mix(in srgb, var(--veil-ink) 48%, transparent);
-    --veil-head-strong: color-mix(in srgb, var(--veil-ink) 72%, transparent);
-    /* v0.57 the text safety net — a soft veil-ink-colored shadow under
+    /* the text safety net — a soft veil-ink-colored shadow under
        text on the big surfaces. Invisible on well-contrasted themes,
        rescues readability when a user gradient carries a bright/white
        stop under the text (the sweep's finding). */
@@ -807,9 +805,8 @@
     gap: 10px;
     min-height: 48px;               /* v0.25: a real touch target */
     -webkit-tap-highlight-color: transparent;
-    /* v0.57: the header background is OWNED by the layer-system rule
-       (the bg-app field window + --veil-head) — no flat repaint here
-       (it would double-tint under the veil layers). */
+    /* v0.66: the header background is OWNED by the projection-system
+       rule (the bg-app window) — no flat repaint here. */
     transition: background-image 0.15s;
   }
   .settings-section h3 .chevron {
@@ -1486,24 +1483,28 @@
      twin, independent of color:) so the affordance survives clipping. */
   [data-fmt-grad~="a1"] .fmt h2 {
     background-image: var(--fmt-a1-gradient, none);
+    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-a1-ink, var(--fmt-a1));
   }
   [data-fmt-grad~="a3"] .fmt em,
   [data-fmt-grad~="a3"] .fmt h4 {
     background-image: var(--fmt-a3-gradient, none);
+    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-a3-ink, var(--fmt-a3));
   }
   [data-fmt-grad~="bright"] .fmt strong,
   [data-fmt-grad~="bright"] .fmt h1 {
     background-image: var(--fmt-bright-gradient, none);
+    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-bright-ink, var(--fmt-bright));
   }
   [data-fmt-grad~="link"] .fmt a.fmt-link,
   [data-fmt-grad~="link"] .fmt-user a.fmt-link {
     background-image: var(--fmt-link-gradient, none);
+    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-link-ink, var(--fmt-link));
   }
@@ -2686,8 +2687,8 @@
     display: flex; align-items: center; gap: 10px; width: 100%;
     /* v0.52 (user spec item 9): the header is COMPACT — less of the
        library screen spent on chrome, more on the cards.
-       v0.57: the background is OWNED by the layer-system header rule
-       (the bg-app field window + --veil-head — no flat repaint). */
+       v0.66: the background is OWNED by the projection-system header
+       rule (the bg-app window — no flat repaint). */
     padding: 5px 6px;
     border-radius: 12px;
     border: none;
@@ -3771,47 +3772,36 @@
   /* inputs share the accent caret so typing feels like the theme */
   input, textarea { caret-color: var(--accent); }
 
-  /* ══ v0.49 THE TWIN LAYER, FIXED ═══════════════════════════════════
-     The twin system (theme.js) writes --X (solid) + --X-gradient (image
-     or 'none') for every customizable var. THE v0.45 BUG (user-reported:
-     "panel background / borders / accents do nothing"): consumers that
-     set the `background:`/`border:` SHORTHAND inline reset background-
-     image/border-image to none — and an INLINE declaration beats any
-     author stylesheet rule, so the v0.45 sweep's twin rules never
-     painted on inline-styled elements. THE FIX: author !important, which
-     outranks inline non-important declarations. With 'none' twins these
-     rules remain visual no-ops, so nothing changes until the user actually
-     sets a gradient. Selector inventory matches the codebase's exact
-     inline patterns (border:1px / 1px-with-space — enumerated by grep).
-     v0.56 THE CONTINUOUS FIELD: every rule below also pins
-     `background-attachment: fixed` — one shared field per var, so nested
-     boxes never restart the gradient (the tiling fix). */
-  /* ══ v0.57 THE LAYER SYSTEM ═══════════════════════════════════════
-     One continuous field per var (background-attachment: fixed — anchored
-     to the transformed panel / overlay card = the user's "crop everything
-     that uses that color onto the panel" model) + VEILS for hierarchy:
-       Layer 1 — big surfaces (the panel itself): the full field, no veil.
-       Layer 2 — cards on surfaces: the same field window + --veil-card +
-                 the border ring → seamless AND calm.
-       Layer 3 — pills/tabs/inputs: the SURFACE-2 field (a different
-                 material — never surface-1: same-field pills vanish).
-       Headers — the bg-app field window + --veil-head (the v0.49
-                 "overlay background = headers/scrims" semantics).
-     Inline catchers first (author !important beats the inline `background:`
-     shorthand's image reset), then the stylesheet groups. */
-  /* — inline catchers — Layer 2 cards get the veil + the surface-1 field */
+  /* ══ v0.66 THE PROJECTION SYSTEM ═══════════════════════════════════
+     (the user's canvas-per-variable model, made literal — replaces the
+     v0.45 twin catchers + v0.56 field + v0.57 layer/veil stack)
+     Every customizable variable owns ONE viewport-fitted PROJECTION:
+     theme.js writes the twin --X-gradient, and EVERY consumer paints it
+     with `background-attachment: fixed` — Chromium sizes a fixed
+     background layer to the VIEWPORT, so every object of a variable is
+     a WINDOW into the same screen-fitted field: the pill top-left shows
+     the top-left of accent-1's projection, the bubble lower-right shows
+     that region — one coherent, tweakable image per variable, and
+     NOTHING else over it (no veils, no per-element copies — a 30px pill
+     no longer squeezes the whole gradient: "accent 4 was barely
+     noticeable"). The canvas (--bg-panel) already paints its projection
+     natively in app.js; text gradients sample the same fixed field.
+     The v0.45 !important catchers stay (inline `background:` SHORTHAND
+     still resets background-image; 'none' twins still no-op). The v0.57
+     VEILS are GONE — the ink washes were the "stained white" family of
+     bugs (see the :root note); --veil-ink now feeds only --text-shadow.
+     Inline catchers first, then the stylesheet groups. */
+  /* — inline catchers — Layer 2 cards: the surface-1 projection window */
   [style*="background: var(--surface-1)"],
   [style*="background:var(--surface-1)"] {
-    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
-      var(--surface-1-gradient, none) !important;
-    background-attachment: fixed, fixed !important;
+    background-image: var(--surface-1-gradient, none) !important;
+    background-attachment: fixed !important;
   }
-  /* — inline catchers — Layer 3 pills/inputs: the veil + the surface-2 field */
+  /* — inline catchers — Layer 3 pills/inputs: the surface-2 projection */
   [style*="background: var(--surface-2)"],
   [style*="background:var(--surface-2)"] {
-    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
-      var(--surface-2-gradient, none) !important;
-    background-attachment: fixed, fixed !important;
+    background-image: var(--surface-2-gradient, none) !important;
+    background-attachment: fixed !important;
   }
   [style*="background: var(--bg-app)"],
   [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; background-attachment: fixed !important; }
@@ -3838,30 +3828,28 @@
     text-shadow: var(--text-shadow);
   }
 
-  /* — Layer 2: cards on surfaces. 3 layers: the veil (top, padding-box),
-     the surface-1 field (padding-box), the border ring (border-box). All
-     fixed → windows into the SAME field the panel paints (seamless), the
-     veil calms them (hierarchy + readability on loud patterns). 'none'
-     twins keep the plain solid look; default themes get a subtle 24%
-     overlay-background tint — barely visible, but the boundary reads. */
+  /* — Layer 2: cards on surfaces. 2 layers: the surface-1 projection
+     (padding-box) + the border ring (border-box) — both fixed → windows
+     into the SAME field the panel paints (seamless, the boundary reads
+     through the ring). 'none' twins keep the plain solid look. v0.66:
+     the veil layer is GONE — the card is a pure projection window. */
   .settings-section, .hub-card, .pv-row, .msg-assistant, .ts-row,
   .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
   .cv-section, .mb-more, .wsx-opt, .src-wrap, .hub-wrap {
-    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
-      var(--surface-1-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
+    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, border-box;
+    background-clip: padding-box, border-box;
+    background-attachment: fixed, fixed;
     text-shadow: var(--text-shadow);
   }
 
   /* — Layer 3: pills / tabs / chips / inputs / small buttons — the
-     SURFACE-2 material (a different field than the cards behind them,
-     so they always read as raised chrome) + the veil (calm enough that
-     their labels read on loud patterns). Includes the untyped inputs
-     the input[type=text] selector misses. */
+     SURFACE-2 projection (a different field than the cards behind them,
+     so they always read as raised chrome). v0.66: no veil — pure
+     windows. Includes the untyped inputs the input[type=text] selector
+     misses. */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
   .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover,
@@ -3873,9 +3861,8 @@
   .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
   .wsc-brsel, .kbd, .pv-btn, .gr-editor, .gr-swatches, .gr-tools,
   #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn {
-    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
-      var(--surface-2-gradient, none);
-    background-attachment: fixed, fixed;
+    background-image: var(--surface-2-gradient, none);
+    background-attachment: fixed;
   }
   /* v0.49: the chat panel + settings pages are SURFACES — their gradient
      rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints
@@ -3905,34 +3892,30 @@
   [style*="border:2px solid var(--border)"] {
     border-image: var(--border-gradient, none) 1 !important;
   }
-  /* RADIUS-SAFE gradient borders for the Layer-3 chrome: the veil, the
-     surface-2 field, then the border ring. Corners stay round; 'none'
-     twins degrade to the plain solid look. .color-row-banner is OUT
-     (its inline preview stays local). */
+  /* RADIUS-SAFE gradient borders for the Layer-3 chrome: the surface-2
+     projection, then the border ring. Corners stay round; 'none' twins
+     degrade to the plain solid look. .color-row-banner is OUT (its
+     inline preview stays local — editor previews are the documented
+     exception to the projection model). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
   .color-row-reset {
-    background-image: linear-gradient(var(--veil-card), var(--veil-card)),
-      var(--surface-2-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
-  }
-  /* v0.57 HEADERS — the bg-app field window + the head veil (the v0.49
-     "overlay background = overlay screens · collapsible headers · scrims"
-     semantics made real: headers SAMPLE the overlay gradient — a window,
-     not a flat tint — so they vary with position like every other window;
-     'none' twins leave the plain veil look). The :active press deepens the
-     veil without dropping the image. */
-  .settings-section h3, #chat-header, .pub-head-bar {
-    background-image: linear-gradient(var(--veil-head), var(--veil-head)),
-      var(--bg-app-gradient, none);
+    background-image: var(--surface-2-gradient, none), var(--border-gradient, none);
+    background-origin: padding-box, border-box;
+    background-clip: padding-box, border-box;
     background-attachment: fixed, fixed;
+  }
+  /* v0.57→v0.66 HEADERS — the bg-app projection window (the v0.49
+     "overlay background = overlay screens · collapsible headers · scrims"
+     semantics: headers SAMPLE the overlay gradient — a window, not a
+     flat tint — so they vary with position like every other window;
+     'none' twins leave the plain solid look). The veil is gone; the
+     :active press dims via brightness (no ink wash over the field). */
+  .settings-section h3, #chat-header, .pub-head-bar {
+    background-image: var(--bg-app-gradient, none);
+    background-attachment: fixed;
     text-shadow: var(--text-shadow);
   }
-  .settings-section h3:active {
-    background-image: linear-gradient(var(--veil-head-strong), var(--veil-head-strong)),
-      var(--bg-app-gradient, none);
-  }
+  .settings-section h3:active { filter: brightness(0.94); }
   /* v0.57: the overlay screen's text safety net — the overlay card's
      content rides whatever --bg-app the user chose (a bright mesh under
      gray text was unreadable; the sweep's finding). Inherits to every
@@ -3952,6 +3935,8 @@
   [data-text-grad] .wsx-title,
   [data-text-grad] h1, [data-text-grad] h2, [data-text-grad] h3 {
     background-image: var(--text-1-gradient);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;

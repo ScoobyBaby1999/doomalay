@@ -1426,6 +1426,30 @@
     return [null, '--accent', '--accent-rgb'];
   }
 
+  // v0.66 THE PILL PROJECTION — the user's canvas-per-variable model for
+  // every pill that rides a theme variable: the pill renders ITS
+  // variable's viewport projection (background-attachment: fixed — the
+  // same screen-fitted field every other object of that variable
+  // samples; no per-pill gradient copies, no veils, no ink washes). The
+  // rgba tint stays as the fallback while the variable is a solid
+  // (twin 'none' → the image layer no-ops).
+  // ROOT CAUSE this buries: v0.56 wrote these pills as
+  //   rgba(--accent-rgb, 0.16)      ← the var name WITHOUT var()
+  //   → INVALID declaration → fill AND border silently dropped → the
+  // pills floated as bare text over the header's veil wash (the
+  // "stained white" model + sandbox pills, 9 versions of weirdness).
+  // projPillStyle builds the VALID twin-aware pattern once, for all.
+  function projPillStyle(colorVar, rgbVar) {
+    var onVar = (colorVar === '--accent') ? '--on-accent'
+      : String(colorVar).replace(/^--accent-/, '--on-accent-');
+    return 'background-color:rgba(var(' + rgbVar + '),0.14);' +
+      'background-image:var(' + colorVar + '-gradient, none);' +
+      'background-attachment:fixed;' +
+      'border:1px solid rgba(var(' + rgbVar + '),0.5);' +
+      'color:var(' + onVar + ', var(' + colorVar + '));' +
+      'text-shadow:var(--text-shadow);';
+  }
+
   // ── The pinned collapsible header (arrow + summary + meters + dropdown) ──
   // v0.27: the far right of the row carries the METERS — the context
   // ring (the usage panel's context bar, miniaturized: fills 0→100%, and
@@ -1519,11 +1543,7 @@
           b.id = p.id;
           b.textContent = p.label;
           b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
-            // v0.57: 0.16 tint (was 0.07 — washed out invisible on bright
-            // gradient bands; the sweep's finding) + the veil behind via the
-            // surface-2 catcher keeps the tone readable anywhere.
-            'background:rgba(' + tone[2] + ',0.16);border:1px solid rgba(' + tone[2] + ',0.5);color:var(' + tone[1] + ');' +
-            'text-shadow:var(--text-shadow);' +
+            projPillStyle(tone[1], tone[2]) +
             'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
             'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
@@ -1539,7 +1559,7 @@
       art.className = 'pill-artifacts';
       art.innerHTML = '🌳 <span id="pill-artifacts-count">' + (state.artifactsCount || 0) + '</span>';
       art.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-        'background:rgba(var(--accent-2-rgb),0.06);border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2);' +
+        projPillStyle('--accent-2', '--accent-2-rgb') +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
         'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
       art.addEventListener('click', function (e) {
@@ -1555,7 +1575,7 @@
       per.id = 'pill-persona';
       per.innerHTML = '🎭 persona';
       per.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-        'background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.55);color:var(--accent);' +
+        projPillStyle('--accent', '--accent-rgb') +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
         'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
       per.addEventListener('click', function (e) {
@@ -1575,7 +1595,7 @@
       mind.id = 'pill-mind';
       mind.innerHTML = '🧠 mind';
       mind.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
-        'background:rgba(var(--accent-3-rgb),0.06);border:1px solid rgba(var(--accent-3-rgb),0.55);color:var(--accent-3);' +
+        projPillStyle('--accent-3', '--accent-3-rgb') +
         'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
         'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2';
       mind.addEventListener('click', function (e) {
@@ -2840,7 +2860,12 @@
     wrap.id = 'seg-lib';
     wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
       'border:1px solid ' + (active ? 'rgba(var(--accent-rgb),0.55)' : 'var(--border)') + ';' +
-      'background:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      // v0.66: the ACTIVE lib wrap renders accent-1's viewport projection
+      // (fixed field — one window per variable app-wide); the tint stays
+      // as the solid-accent fallback. OFF stays transparent (a quiet rail).
+      'background-color:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
+      'background-image:' + (active ? 'var(--accent-gradient, none)' : 'none') + ';' +
+      'background-attachment:fixed;' +
       'border-radius:999px;overflow:hidden';
 
     var lab = document.createElement('button');

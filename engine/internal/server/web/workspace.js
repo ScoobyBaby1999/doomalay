@@ -341,7 +341,7 @@
         '-webkit-overflow-scrolling:touch}' +
       '.wsv-ta{width:100%;box-sizing:border-box;border:none;outline:none;resize:none;' +
         'min-height:240px;padding:12px;background:var(--surface-2);' +
-        'background-image:var(--surface-2-gradient,none);color:var(--text-1);' +
+        'background-image:var(--surface-2-gradient,none);background-attachment:fixed;color:var(--text-1);' +
         'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(var(--ui-fs) - 2px);' +
         'line-height:1.5;-webkit-overflow-scrolling:touch}';
     document.head.appendChild(s);
