@@ -19,14 +19,19 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.text.TextUtils
+import android.view.Choreographer
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
+import android.view.animation.PathInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -39,9 +44,45 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
 
-// PanelBrowserSheet — v0.64.3 THE TIDY PILL (PLAN-V0643) on top of
-// v0.64.2 THE POLISH WAVE (PLAN-V0642) on top of v0.64.0 THE NATIVE
-// PANEL BROWSER (PLAN-V0640).
+// PanelBrowserSheet — v0.68.0 THE BROWSER BAR WAVE (PLAN-V0680) on
+// v0.64.3 THE TIDY PILL (PLAN-V0643) on top of v0.64.2 THE POLISH WAVE
+// (PLAN-V0642) on top of v0.64.0 THE NATIVE PANEL BROWSER (PLAN-V0640).
+//
+// v0.68.0 SPEC ("Let's make the BIB (browser in browser) and panel have
+// the same dash length, let's change the BIB to use the panels dash and
+// length… the BIB's scrolling (how it detects weather to open close,
+// ext, resemble the panels functionality and mimic it if not use it
+// outright)… the BIB search bar (the one with the address of the site)
+// 15% less wide and high or 15% smaller in size… let's add search
+// functionality (browser either Google or something free like brave or
+// duckduckgo). So it works like any browser lol."):
+//
+//   · THE DASH — the BIB wears the panel's own .handle-bar verbatim:
+//     36×4dp (was 40) in the theme BORDER (index.html's var(--border)),
+//     radius 2 — the neutral grab hint, the same length on both panels.
+//   · THE SCROLLING — gesture.js mimicked outright, constant for
+//     constant: THE BODY CHAIN (a downward pull on a page sitting at
+//     its very top becomes the SHEET's drag past the 24dp slop — the
+//     WebView gets a clean CANCEL, the finger never loses control, the
+//     −6dp no-jump rebase lands at the hijack), THE DRAG FEEL (the
+//     0.8/frame render chase, the rubber-band above full ×0.25, the EMA
+//     velocity 0.7/0.3 over 4ms-floored samples, the activation rebase
+//     that kills the mid-glide drift jump), THE SPRINGS (the settle:
+//     stiffness 170 critically damped, quarter-velocity seeded; the
+//     release-close: 440 at the fling's momentum, ≥900px/s), and THE
+//     CURVE (open/close 170ms on cubic-bezier(0.32,0.72,0,1) — a
+//     PathInterpolator). decide() was already verbatim (v0.64.0).
+//   · THE CAPSULE — 15% smaller: 25.5dp tall (was 30), the text cap
+//     130dp (was 153), the ↻ slot 25.5dp square with the glyph STILL
+//     18dp (the v0.64.3 hitbox ask survives above the old 24dp).
+//   · THE BROWSER BAR — tap the capsule and type: the sheet glides
+//     FULL (the bar rides to the top, beyond any keyboard's reach), the
+//     URL selected like Chrome's omnibox. GO resolves like any browser
+//     — an explicit scheme passes, a host gets https://, anything else
+//     SEARCHES (DuckDuckGo: free, keyless, no tracking). Back / a focus
+//     loss cancels back to the dock the user came from; a committed
+//     search stays at full. LONG-PRESS the capsule still copies the
+//     link (the old tap affordance, reborn Android-style).
 //
 // v0.64.3 SPEC ("that was a job well done. Good job. Let's make the
 // search pill… 10% less wide and high… the hitbox for the refresh
@@ -163,13 +204,32 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         private const val FULL_CLOSE_FRAC = 0.55f  // from full: > 55% slow drag closes
         private const val CLOSE_FRAC = 0.32f       // from default: > 32% deliberate drag closes
         private const val PROJECTION_MS = 140f     // release velocity horizon
-        private const val SNAP_MS = 220L           // dock-to-dock glide
-        private const val RISE_MS = 250L           // the open rise (gesture.js's open curve)
-        private const val CLOSE_MS = 200L          // the dismiss slide
+        // v0.68.0: gesture.js's own timings — RISE_MS is v0.45's 170ms
+        // curve, and the dock-to-dock SNAP_MS glide is RETIRED (the
+        // settle spring below owns every landing now)
+        private const val RISE_MS = 170L           // the open rise + the class-close slide (gesture.js RISE_MS)
+        private const val CLOSE_MS = 170L          // the dismiss slide (same curve)
 
         // v0.64.2: THE SECRET THIRD DOCK — the canvas-duck peek
         private const val DUCK_FRAC = 0.30f        // the sheet fills only ~30% of the screen
         private const val DUCK_HOLD_MS = 3000L     // the retriggerable temporary hold
+
+        // v0.68.0: THE BODY CHAIN (gesture.js's scroll chain, constant
+        // for constant) + THE SPRINGS (its settle + dismiss physics)
+        private const val BODY_SLOP_DP = 24        // px of pull-down before the sheet grabs (gesture.js BODY_SLOP)
+        private const val CHAIN_REBASE_DP = 6      // the no-jump rebase at hijack (gesture.js y0 = y − 6)
+        private const val ANCHOR_SLOP_DP = 6       // the anchor's tap-vs-drag slop
+        private const val SETTLE_STIFF = 170f      // the settle spring (critically damped)
+        private const val SETTLE_DAMP = 1.02f      // …a hair over critical — no overshoot, no lag
+        private const val DISMISS_STIFF = 440f     // the gesture-close spring (snappier, v0.45)
+
+        // v0.68.0: gesture.js's rise curve — cubic-bezier(0.32,0.72,0,1)
+        private val easeCurve = PathInterpolator(0.32f, 0.72f, 0f, 1f)
+
+        // v0.68.0: THE SEARCH ENGINE — DuckDuckGo (the user's "Google or
+        // something free like brave or duckduckgo": free, keyless, no
+        // tracking — the in-app-browser default)
+        private const val SEARCH_URL = "https://duckduckgo.com/?q="
     }
 
     // ── views (built once; re-added if an error screen swapped content) ──
@@ -214,10 +274,34 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var dotsSpin: ValueAnimator? = null
     private var loadSeq = 0L
 
-    // v0.64.2: the last glide owns the sheet — animateTo cancels the
-    // prior animator (also fixes the pre-existing close→reopen race,
-    // where a stale close's GONE end-action buried a fresh reopen)
-    private var snapAnim: ValueAnimator? = null
+    // v0.68.0: THE GLIDE INTERFACE — the last glide owns the sheet, and a
+    // glide is now either a timed ValueAnimator curve (the 170ms
+    // rise/close) or a Choreographer spring (the settle + the dismiss).
+    // One owner slot, one cancel rule: a cancel fires the end action
+    // (ValueAnimator semantics — every end in this file is a no-op or
+    // the GONE-guard, so the behavior matches the old animator exactly).
+    private interface Glide { fun cancel() }
+    private var snapAnim: Glide? = null
+
+    // v0.68.0: THE BROWSER BAR (the capsule's editable twin)
+    private var editor: EditText? = null
+    private var editMode = false
+    private var editPriorFull = false      // the dock the user came from (a cancel returns there)
+
+    // v0.68.0: THE BODY CHAIN's DOWN bookkeeping (the WebView listener writes)
+    private var chainDownY = 0f            // the gesture's origin Y
+    private var chainMulti = false         // a second finger landed — never a chain gesture
+
+    // v0.68.0: THE DRAG RENDER CHASE (gesture.js dragRender — the 0.8/frame
+    // whisper of jitter smoothing between the finger and the sheet)
+    private var dragTargetY = 0f           // where the finger puts the top edge
+    private var dragNowY = 0f              // the smoothed render position
+    private var dragRender: Choreographer.FrameCallback? = null
+
+    // v0.68.0: THE LONG-PRESS (the capsule's copy, reborn Android-style —
+    // the touch listener consumes, so the system long-click never fires)
+    private var longRunnable: Runnable? = null
+    private var longFired = false
 
     @Volatile private var showing = false
     @Volatile private var liveUrl = ""
@@ -243,6 +327,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     // ─────────────────────────────────────────────────────── the surface
     fun open(url: String, optsJson: String) {
+        if (editMode) exitEdit(restoreDock = false)   // v0.68.0: a fresh link — the typed draft is stale
         try { themeJson = JSONObject(optsJson) } catch (e: Exception) { themeJson = JSONObject() }
         ensureViews()
         applyTheme()
@@ -270,7 +355,33 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     fun currentUrl(): String = liveUrl
 
     fun dismiss() {
+        if (editMode) exitEdit(restoreDock = false)   // v0.68.0: the keyboard goes with the sheet
         if (!showing) return
+        beginClose()
+        val h = if (fullH > 0) fullH.toFloat() else 1f
+        // (the GONE end-action is guarded — a reopen inside the 170ms
+        // slide cancels this glide, and the cancel-fired end must not
+        // bury it)
+        animateTo(h, CLOSE_MS) { if (!showing) overlay?.visibility = View.GONE }
+        notifyState()
+    }
+
+    // v0.68.0: the RELEASE-CLOSE — gesture.js's dismiss spring (stiffness
+    // 440, always chasing downward at the fling's momentum, never below
+    // 900px/s): the same bookkeeping as the ✕ dismiss, but the motion is
+    // the FINGER's momentum instead of a timed curve — a hard fling-down
+    // leaves the screen fast, a slow deliberate drag closes gently.
+    private fun dismissSpring(vy: Float) {
+        if (editMode) exitEdit(restoreDock = false)
+        if (!showing) return
+        beginClose()
+        val h = if (fullH > 0) fullH.toFloat() else 1f
+        springDismiss(h, vy) { if (!showing) overlay?.visibility = View.GONE }
+        notifyState()
+    }
+
+    // the shared close bookkeeping (✕ / Android back / the release-close)
+    private fun beginClose() {
         duckHandler.removeCallbacks(unduckRunnable)
         ducked = false
         showing = false
@@ -280,18 +391,15 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // battery burn while closed; open() pairs with onResume). The
         // history survives — the sheet stays resumable, exactly as before.
         try { webView?.onPause() } catch (e: Exception) {}
-        val h = if (fullH > 0) fullH.toFloat() else 1f
-        // (the GONE end-action is guarded — a reopen inside CLOSE_MS
-        // cancels this glide, and the cancel-fired end must not bury it)
-        animateTo(h, CLOSE_MS) { if (!showing) overlay?.visibility = View.GONE }
-        notifyState()
     }
 
     // Android back (native — consumed BEFORE the SPA is ever consulted):
-    // video fullscreen → exit; WebView history → walk; else dismiss.
+    // video fullscreen → exit; the BAR's edit → cancel it (the keyboard
+    // first, browser behavior); WebView history → walk; else dismiss.
     fun handleBack(): Boolean {
         if (customView != null) { hideCustomNow(); return true }
         if (!showing) return false
+        if (editMode) { exitEdit(restoreDock = true); return true }
         val w = webView
         if (w != null && w.canGoBack()) { w.goBack(); return true }
         dismiss()
@@ -333,7 +441,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         if (!showing || atFull) return
         if (ducked) { resetDuckTimer(); return }
         ducked = true
-        if (fullH > 0) animateTo(offsetForDuck(), SNAP_MS) {}
+        if (fullH > 0) springTo(offsetForDuck(), 0f) {}
         resetDuckTimer()
         notifyState()
     }
@@ -344,7 +452,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         duckHandler.removeCallbacks(unduckRunnable)
         if (!showing || !ducked) return
         ducked = false
-        if (!atFull && fullH > 0) animateTo(offsetForDefault(), SNAP_MS) {}
+        if (!atFull && fullH > 0) springTo(offsetForDefault(), 0f) {}
         notifyState()
     }
 
@@ -356,7 +464,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         if (!ducked) return
         ducked = false
         if (restoreDock && showing && !atFull && fullH > 0) {
-            animateTo(offsetForDefault(), SNAP_MS) {}
+            springTo(offsetForDefault(), 0f) {}
         }
         notifyState()
     }
@@ -397,26 +505,52 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         refreshIcon = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_refresh)
             background = null
-            // v0.64.3: the hitbox grows 24→30dp; the glyph STAYS 18dp
-            setPadding(dip(6), dip(6), dip(6), dip(6))
+            // v0.68.0: the slot follows the 15%-smaller capsule (30→
+            // 25.5dp); the glyph STAYS 18dp (3.75dp padding) — the
+            // hitbox survives above the pre-v0.64.3 24dp and still
+            // fills the capsule's height at its left edge
+            setPadding(dipF(3.75f), dipF(3.75f), dipF(3.75f), dipF(3.75f))
             contentDescription = "Refresh page"
         }
         pillText = TextView(activity).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.MIDDLE
-            maxWidth = dip(153)     // v0.64.3: 170→153 — the capsule caps 10% narrower
+            maxWidth = dip(130)     // v0.68.0: 153→130 — the capsule caps 15% narrower
             textSize = 12f
-            setPadding(dip(3), 0, dip(5), 0)
+            setPadding(dip(3), 0, dip(4), 0)
+        }
+        // v0.68.0: THE BROWSER BAR — the capsule's editable twin (GONE
+        // unless editing): textUri (the / and .com keys), GO, no
+        // fullscreen extract — tap the capsule and type, like any
+        // browser's address bar. Tinted by the theme snapshot per open.
+        editor = EditText(activity).apply {
+            setSingleLine(true)
+            inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO or
+                    EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            maxLines = 1
+            textSize = 12f
+            maxWidth = dip(130)
+            setPadding(dip(3), 0, dip(4), 0)
+            background = null
+            visibility = View.GONE
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_GO) { commitEdit(); true } else false
+            }
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus && editMode) exitEdit(restoreDock = true)
+            }
         }
         loadDots = LoadDots(activity)
         val pillLocal = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            // v0.64.3: (6,5,10,5)→(5,0,9,0) — with the 30dp refresh slot
-            // the capsule stands 30dp tall (was 34 — ~10% less high)
-            setPadding(dip(5), 0, dip(9), 0)
-            addView(refreshIcon, LinearLayout.LayoutParams(dip(30), dip(30)))
+            // v0.68.0: 15% smaller — (5,0,9,0)→(4,0,8,0); with the 25.5dp
+            // refresh slot the capsule stands 25.5dp tall (was 30)
+            setPadding(dip(4), 0, dip(8), 0)
+            addView(refreshIcon, LinearLayout.LayoutParams(dipF(25.5f), dipF(25.5f)))
             addView(pillText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(editor, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(loadDots, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 leftMargin = dip(5)
@@ -425,7 +559,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         pill = pillLocal
 
         // the dash — the grab hint, dead-center (1fr · auto · 1fr);
-        // v0.64.2: 36→40dp, a touch wider to read at a glance
+        // v0.68.0: THE PANEL'S OWN — index.html's .handle-bar verbatim:
+        // 36×4dp (was 40), the theme border, radius 2. The same dash
+        // length on both panels, exactly as asked.
         dash = View(activity)
 
         // ‹ ⧉ ✕ — the three acts. 34dp slots, theme border, icon tint
@@ -463,7 +599,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(10), dip(7), dip(10), dip(7))
             addView(cellL, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(dash, LinearLayout.LayoutParams(dip(40), dip(4))
+            addView(dash, LinearLayout.LayoutParams(dip(36), dip(4))
                 .apply { gravity = Gravity.CENTER_VERTICAL })
             addView(cellR, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
@@ -478,6 +614,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
+            // v0.68.0: the chain's partner — the overscroll glow never
+            // fights the hijack (a pull at the page top belongs to the
+            // SHEET now, gesture.js's body chain, not to the glow)
+            overScrollMode = View.OVER_SCROLL_NEVER
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
@@ -488,15 +628,34 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             // press (UP without crossing the slop) restores the sheet
             // to its original dock — the page still gets its tap (the
             // listener returns false, the page handles it normally).
-            setOnTouchListener { _, ev ->
+            // v0.68.0: THE CHAIN HANDOFF rides the same MOVE branch — at
+            // the page's very top + a downward pull, the parent lock is
+            // RELEASED so the body layout can intercept and the sheet
+            // can follow the finger (gesture.js's scroll chain, the
+            // native edition; the WebView gets a clean CANCEL).
+            setOnTouchListener { v, ev ->
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        chainDownY = ev.rawY
+                        chainMulti = false
+                        // the chain's grab-origin (THE DOCKED RULES — the
+                        // same field the strip's DOWN captures; one driver)
+                        dragFromDuck = ducked
                         if (ducked) resetDuckTimer()
                         pageTapY = ev.rawY        // the tap origin
                     }
-                    MotionEvent.ACTION_MOVE -> if (ducked) resetDuckTimer()
+                    MotionEvent.ACTION_POINTER_DOWN -> { chainMulti = true }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (ducked) resetDuckTimer()
+                        if (!chainMulti && ev.pointerCount == 1 &&
+                                !v.canScrollVertically(-1) && ev.rawY > chainDownY) {
+                            try {
+                                v.parent.requestDisallowInterceptTouchEvent(false)
+                            } catch (e: Exception) {}
+                        }
+                    }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (ducked && ev.actionMasked == MotionEvent.ACTION_UP && pageTapY >= 0f) {
+                        if (ev.actionMasked == MotionEvent.ACTION_UP && ducked && pageTapY >= 0f) {
                             if (Math.abs(ev.rawY - pageTapY) <= dip(6)) {
                                 cancelDuck(restoreDock = true)
                             }
@@ -641,11 +800,27 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         }
 
-        val body = FrameLayout(activity).apply {
+        // v0.68.0: THE BODY CHAIN — the body is a DragBodyLayout now
+        // (gesture.js's scroll chain, the native port): while the page
+        // sits at its very top, a downward pull past the 24dp slop is
+        // HIJACKED into the sheet's own drag — the WebView gets a clean
+        // CANCEL, the finger never loses control, and release() decides
+        // full/default/close exactly like the web panel's body.
+        val body = DragBodyLayout(activity).apply {
             addView(webView, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(loading, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // the hijack rule (every MOVE until it fires): one finger,
+            // the page at its very top, a deliberate downward pull
+            chainRule = { ev ->
+                if (ev.pointerCount != 1 || chainMulti || dragging) false
+                else {
+                    val w = webView
+                    val atTop = w == null || !w.canScrollVertically(-1)
+                    atTop && (ev.rawY - chainDownY) > dip(BODY_SLOP_DP)
+                }
+            }
         }
 
         sheet = LinearLayout(activity).apply {
@@ -673,86 +848,81 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         // ── wire the chrome ──────────────────────────────────────────
+        // v0.68.0: an act press ends the edit first (attention is back
+        // on the panel — the typed text is committed to nothing)
         refreshIcon?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
             webView?.reload()
             if (ducked) cancelDuck(restoreDock = true)
         }
         backBtn?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
             if (webView?.canGoBack() == true) webView?.goBack()
             if (ducked) cancelDuck(restoreDock = true)
         }
         extBtn?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
             openExternal(liveUrl)
             if (ducked) cancelDuck(restoreDock = true)
         }
         closeBtn?.setOnClickListener { dismiss() }
 
         // THE DRAG SURFACE: the strip + the pill follow the finger (a tap
-        // on the pill still copies — drag vs tap is disambiguated by the
-        // 6dp slop). The act buttons consume their own touches, so a drag
-        // never fights a ‹/⧉/✕ click and vice versa.
+        // on the pill OPENS THE BAR, a long-press COPIES — drag vs tap vs
+        // long-press is disambiguated by the slop + the system long-press
+        // timeout in makeDraggable). The act buttons consume their own
+        // touches, so a drag never fights a ‹/⧉/✕ click and vice versa.
         makeDraggable(strip)
-        makeDraggable(pillLocal) { copyLink() }
+        makeDraggable(pillLocal, tap = { enterEdit() }, longPress = { copyLink() })
 
         backBtn?.isEnabled = false
         backBtn?.alpha = 0.38f
     }
 
-    // drag + tap disambiguation on one view. `tap` (optional) fires only
-    // when the touch never crossed the slop — the pill both drags AND
-    // copies. v0.65.1: a grab that starts at the duck remembers it
-    // (dragFromDuck) — release() then applies THE DOCKED RULES, and a
-    // no-slop TAP on the strip/pill restores the original dock (the
-    // "press the panel" rule; the pill's copy still fires after).
+    // drag + tap + long-press disambiguation on one view. `tap` fires only
+    // when the touch never crossed the slop; `longPress` (the capsule's
+    // copy, reborn Android-style) fires at the system long-press timeout —
+    // cancelled by the slop, an early UP, or a second driver. The touch
+    // listener consumes everything, so the system long-click (which needs
+    // onTouchEvent) never fires — this IS the long-press. v0.65.1: a grab
+    // that starts at the duck remembers it (dragFromDuck at DOWN) — the
+    // shared drag machine's release() then applies THE DOCKED RULES, and a
+    // no-slop TAP on the strip/pill restores the original dock.
     @SuppressLint("ClickableViewAccessibility")
-    private fun makeDraggable(v: View, tap: (() -> Unit)? = null) {
+    private fun makeDraggable(v: View, tap: (() -> Unit)? = null, longPress: (() -> Unit)? = null) {
         v.setOnTouchListener { _, ev ->
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (dragging) return@setOnTouchListener false   // one driver (a chain grab owns the finger)
                     dragStartY = ev.rawY
-                    dragStartOffset = curOffset
-                    dragFromFull = atFull
                     dragFromDuck = ducked
                     lastMoveY = ev.rawY
                     lastMoveT = SystemClock.uptimeMillis()
                     velY = 0f
-                    dragging = false
+                    if (longPress != null) armLongPress(v, longPress)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dy = ev.rawY - dragStartY
-                    if (!dragging && Math.abs(dy) > dip(6)) {
-                        dragging = true
-                        // the finger is boss — kill any glide still
-                        // running (the 3s timer may have fired mid-press
-                        // and started the unduck home)
-                        snapAnim?.cancel()
-                        // a REAL grab takes the sheet out of the duck —
-                        // the hold dies and release() owns the landing
-                        // (a mere tap keeps the duck + its timer)
-                        if (ducked) cancelDuck(restoreDock = false)
+                    if (dragging) { dragFollow(ev.rawY); return@setOnTouchListener true }
+                    if (longFired) return@setOnTouchListener true   // the copy owned this press
+                    if (Math.abs(ev.rawY - dragStartY) > dip(ANCHOR_SLOP_DP)) {
+                        cancelLongPress()
+                        dragActivate(ev.rawY)
                     }
-                    if (dragging && fullH > 0) {
-                        curOffset = (dragStartOffset + dy).coerceIn(0f, fullH.toFloat())
-                        sheet?.translationY = curOffset
-                    }
-                    val now = SystemClock.uptimeMillis()
-                    val dt = now - lastMoveT
-                    if (dt > 0) velY = (ev.rawY - lastMoveY) / dt.toFloat()
-                    lastMoveY = ev.rawY
-                    lastMoveT = now
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    cancelLongPress()
+                    val fired = longFired
+                    longFired = false
                     if (dragging) {
-                        release(velY, curOffset - dragStartOffset)
-                    } else if (ev.actionMasked == MotionEvent.ACTION_UP) {
+                        dragEnd()
+                    } else if (ev.actionMasked == MotionEvent.ACTION_UP && !fired) {
                         // v0.65.1: the press rule — a still press on the
                         // ducked sheet returns it to its ORIGINAL dock
                         if (dragFromDuck) cancelDuck(restoreDock = true)
                         tap?.invoke()
                     }
-                    dragging = false
                     true
                 }
                 else -> false
@@ -760,22 +930,126 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         }
     }
 
+    // ── v0.68.0: THE DRAG MACHINE (gesture.js begin/move/end — one engine
+    // for the anchor grabs AND the body chain) ──────────────────────────
+    //
+    // The activation REBASE is the web's begin() semantics: the slop
+    // crossed (or the chain hijacked) — the origin is the CURRENT finger
+    // position and the sheet's FROZEN offset, so a grab mid-flight takes
+    // over from the exact on-screen spot (the old code captured both at
+    // DOWN, and a glide running between DOWN and the slop drifted the
+    // offset — a several-px jump the moment the finger became the boss).
+    private fun dragActivate(y: Float) {
+        dragging = true
+        // the finger is boss — kill any glide still running (a spring, the
+        // 170ms rise, a close) and the render chase
+        snapAnim?.cancel()
+        stopDragRender()
+        dragStartY = y
+        dragStartOffset = curOffset
+        dragFromFull = atFull
+        lastMoveY = y
+        lastMoveT = SystemClock.uptimeMillis()
+        velY = 0f
+        // a REAL grab takes the sheet out of the duck — the hold dies and
+        // release() owns the landing (dragFromDuck was captured at DOWN
+        // and survives, exactly the v0.65.1 contract)
+        if (ducked) cancelDuck(restoreDock = false)
+    }
+
+    // 1:1 finger tracking with a whisper of jitter smoothing (the 0.8/frame
+    // chase — gesture.js dragRender), rubber-banded past full, never past
+    // closed. Velocity: the EMA (0.7/0.3) over 4ms-floored samples — the
+    // sub-frame guard that killed the rebase flings on the web.
+    private fun dragFollow(y: Float) {
+        if (fullH <= 0) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastMoveT > 4) {
+            val inst = (y - lastMoveY) / (now - lastMoveT).toFloat()
+            velY = velY * 0.7f + inst * 0.3f
+        }
+        lastMoveY = y
+        lastMoveT = now
+        val raw = dragStartOffset + (y - dragStartY)
+        dragTargetY = when {
+            raw < 0f -> raw * 0.25f              // the rubber-band above full
+            raw > fullH -> fullH.toFloat()       // never past closed
+            else -> raw
+        }
+        startDragRender()
+    }
+
+    private fun dragEnd() {
+        dragging = false
+        stopDragRender()
+        // the FINGER's dy, not the rubber-banded sheet offset (gesture.js end)
+        release(velY, lastMoveY - dragStartY)
+    }
+
+    private fun startDragRender() {
+        if (dragRender != null) return
+        dragNowY = curOffset
+        val cb = object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                dragRender = null
+                dragNowY += (dragTargetY - dragNowY) * 0.8f
+                if (Math.abs(dragTargetY - dragNowY) < 0.4f) dragNowY = dragTargetY
+                curOffset = dragNowY
+                sheet?.translationY = curOffset
+                if (dragging && dragNowY != dragTargetY) {
+                    dragRender = this
+                    Choreographer.getInstance().postFrameCallback(this)
+                }
+            }
+        }
+        dragRender = cb
+        Choreographer.getInstance().postFrameCallback(cb)
+    }
+
+    private fun stopDragRender() {
+        dragRender?.let { Choreographer.getInstance().removeFrameCallback(it) }
+        dragRender = null
+    }
+
+    // the manual long-press (the listener consumes — the system one never
+    // fires). Arms at DOWN, dies on slop/UP/second-driver.
+    private fun armLongPress(v: View, act: () -> Unit) {
+        cancelLongPress()
+        longFired = false
+        val r = Runnable {
+            longFired = true
+            try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) } catch (e: Exception) {}
+            act()
+        }
+        longRunnable = r
+        duckHandler.postDelayed(r, ViewConfiguration.getLongPressTimeout().toLong())
+    }
+
+    private fun cancelLongPress() {
+        longRunnable?.let { duckHandler.removeCallbacks(it) }
+        longRunnable = null
+    }
+
     // gesture.js decide(), ported verbatim: velocity projection leads,
     // the tuned intent thresholds confirm. Three landings on the
     // fraction line: 0 (closed) / .62 (default) / 1 (full). v0.65.1:
     // a grab that STARTED at the duck bypasses decide() entirely — THE
-    // DOCKED RULES: a deliberate downward slide (the 6dp slop already
+    // DOCKED RULES: a deliberate downward slide (the slop already
     // filtered jitter) slides the sheet down and STOPS RENDERING
     // (dismiss + onPause); an upward slide — or anything else — glides
     // back to the ORIGINAL dock (the half dock, never full: "the panel
-    // goes back to it's original position").
+    // goes back to it's original position"). v0.68.0: the landings ride
+    // THE SPRINGS — the settle seeded with a quarter of the release
+    // velocity, the close riding the fling's momentum (gesture.js end(),
+    // motion for motion).
     private fun release(vy: Float, dy: Float) {
         if (fullH <= 0) { dismiss(); return }
         val h = fullH.toFloat()
+        val seed = vy * 1000f * 0.25f
         if (dragFromDuck) {
-            if (dy > 0) { dismiss(); return }
+            if (dy > 0) { dismissSpring(vy); return }
             atFull = false
-            animateTo(offsetForDefault(), SNAP_MS) {}
+            springTo(offsetForDefault(), seed) {}
             return
         }
         val downward = dy > 0
@@ -802,9 +1076,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         }
         when (target) {
-            "full" -> { atFull = true; animateTo(0f, SNAP_MS) {} }
-            "default" -> { atFull = false; animateTo(offsetForDefault(), SNAP_MS) {} }
-            else -> dismiss()
+            "full" -> { atFull = true; springTo(0f, seed) {} }
+            "default" -> { atFull = false; springTo(offsetForDefault(), seed) {} }
+            else -> dismissSpring(vy)
         }
     }
 
@@ -836,12 +1110,14 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     private fun animateTo(target: Float, ms: Long, end: () -> Unit) {
         val sh = sheet ?: run { end(); return }
-        // v0.64.2: the last glide owns the sheet — cancel any animator
-        // still running (duck↔undock↔snap↔close sequences overlap now).
+        // the last glide owns the sheet — cancel any glide still running
+        // (duck↔undock↔spring↔close sequences overlap now).
         snapAnim?.cancel()
         val a = ValueAnimator.ofFloat(curOffset, target)
         a.duration = ms
-        a.interpolator = DecelerateInterpolator(1.2f)
+        // v0.68.0: gesture.js's rise curve — cubic-bezier(0.32,0.72,0,1)
+        // (the same 170ms the web panel opens and closes on)
+        a.interpolator = easeCurve
         a.addUpdateListener { an ->
             curOffset = an.animatedValue as Float
             sh.translationY = curOffset
@@ -850,10 +1126,82 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // NON-NULL Animator — a nullable override "overrides nothing"
         // and fails the Kotlin build, the v0.64.0 CI lesson.)
         a.addListener(object : android.animation.AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: android.animation.Animator) { end() }
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                snapAnim = null
+                end()
+            }
         })
-        snapAnim = a
+        snapAnim = object : Glide { override fun cancel() { a.cancel() } }
         a.start()
+    }
+
+    // ── v0.68.0: THE SPRINGS (gesture.js springY + dismiss, one driver) ──
+    //
+    // One Choreographer integrator in offset-from-target coordinates.
+    // THE SETTLE: stiffness 170, critically damped ×1.02 (no overshoot,
+    // no lag — ~260ms from typical drag deltas), release velocity seeded
+    // at a quarter strength for the momentum feel, rest at |x|<1.5 &&
+    // |v|<40 → the exact landing. THE DISMISSAL: stiffness 440, raw
+    // critically damped, momentum ≥ 900px/s always downward, rest at
+    // arrival (it never overshoots). Both register as the sheet's Glide —
+    // the last one owns it, and a cancel fires the end action
+    // (ValueAnimator semantics; every end here is a no-op or the
+    // GONE-guard, so the behavior matches the old animator exactly).
+    private fun springDrive(target: Float, v0: Float, stiffness: Float, damping: Float,
+                            arrived: (Float, Float) -> Boolean, end: () -> Unit) {
+        val sh = sheet ?: run { end(); return }
+        snapAnim?.cancel()
+        var x = curOffset - target
+        var v = v0.coerceIn(-2400f, 2400f)
+        var lastT = System.nanoTime()
+        var done = false
+        val cb = object : Choreographer.FrameCallback {
+            override fun doFrame(now: Long) {
+                if (done) return
+                val dt = Math.min(0.05f, (now - lastT) / 1.0e9f)
+                lastT = now
+                val a = -stiffness * x - damping * v
+                v += a * dt
+                x += v * dt
+                if (arrived(x, v)) {
+                    done = true
+                    curOffset = target
+                    sh.translationY = curOffset
+                    snapAnim = null
+                    end()
+                    return
+                }
+                curOffset = target + x
+                sh.translationY = curOffset
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+        snapAnim = object : Glide {
+            override fun cancel() {
+                if (done) return
+                done = true
+                Choreographer.getInstance().removeFrameCallback(cb)
+                snapAnim = null
+                end()
+            }
+        }
+        Choreographer.getInstance().postFrameCallback(cb)
+    }
+
+    // the settle — every dock-to-dock landing, the duck glides, the
+    // undock/restore, and the release settle (quarter-velocity seeded)
+    private fun springTo(target: Float, v0: Float, end: () -> Unit) {
+        springDrive(target, v0, SETTLE_STIFF,
+            2f * Math.sqrt(SETTLE_STIFF.toDouble()).toFloat() * SETTLE_DAMP,
+            { x, v -> Math.abs(x) < 1.5f && Math.abs(v) < 40f }, end)
+    }
+
+    // the dismissal — the release-close rides the fling's momentum
+    private fun springDismiss(target: Float, vy: Float, end: () -> Unit) {
+        val v = if (vy * 1000f * 0.5f > 900f) vy * 1000f * 0.5f else 900f
+        springDrive(target, v, DISMISS_STIFF,
+            2f * Math.sqrt(DISMISS_STIFF.toDouble()).toFloat(),
+            { x, _ -> x >= -1f }, end)
     }
 
     // ── v0.64.2: the loading overlay driver ──────────────────────────
@@ -949,6 +1297,78 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         }
     }
 
+    // ── v0.68.0: THE BROWSER BAR — the capsule's omnibox twin ────────
+    //
+    // TAP the capsule (makeDraggable's tap) → enterEdit: the duck dies,
+    // the sheet glides FULL so the bar rides to the top of the screen
+    // (a half-docked bar would sit under the keyboard), the URL arrives
+    // pre-selected (Chrome's omnibox — type to replace), the IME is up.
+    // GO → commitEdit: resolveEntry decides URL-vs-search and the
+    // WebView takes it — the sheet STAYS at full (reading the results).
+    // Back / focus loss → exitEdit: the IME folds, the TextView returns,
+    // and a CANCEL glides back to the dock the user came from; the
+    // ✕/act/open() calls pass restoreDock=false (the sheet is going
+    // somewhere else anyway).
+    private fun enterEdit() {
+        if (editMode) return
+        val ed = editor ?: return
+        editPriorFull = atFull
+        if (ducked) cancelDuck(restoreDock = false)
+        editMode = true
+        pillText?.visibility = View.GONE
+        ed.visibility = View.VISIBLE
+        ed.setText(liveUrl)
+        ed.requestFocus()
+        // Chrome's omnibox: the URL pre-selected — type to replace it
+        ed.post { if (editMode) ed.selectAll() }
+        atFull = true
+        if (fullH > 0) springTo(0f, 0f) {}
+        try {
+            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(ed, 0)
+        } catch (e: Exception) { AppLog.error("panel ime show failed", e) }
+    }
+
+    private fun commitEdit() {
+        val entry = editor?.text?.toString()?.trim() ?: ""
+        if (entry.isEmpty()) { exitEdit(restoreDock = false); return }
+        val target = resolveEntry(entry)
+        exitEdit(restoreDock = false)   // the TextView back, the IME down
+        atFull = true                   // GO reads at FULL — the results are the point
+        if (fullH > 0) springTo(0f, 0f) {}
+        liveUrl = target
+        webView?.loadUrl(target)
+    }
+
+    // GO's brain — "it works like any browser lol": an explicit scheme
+    // passes untouched; a spaceless dotted/coloned entry is an address
+    // (https:// prepended — the modern default); EVERYTHING else is a
+    // question for DuckDuckGo (free, keyless, no tracking — the user's
+    // "Google or something free like brave or duckduckgo")
+    private fun resolveEntry(entry: String): String {
+        if (entry.startsWith("http://") || entry.startsWith("https://")) return entry
+        if (!entry.contains(' ') && (entry.contains('.') || entry.contains(':'))) {
+            return "https://" + entry
+        }
+        return SEARCH_URL + android.net.Uri.encode(entry)
+    }
+
+    private fun exitEdit(restoreDock: Boolean) {
+        if (!editMode) return
+        editMode = false
+        try {
+            val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(editor?.windowToken, 0)
+        } catch (e: Exception) {}
+        editor?.clearFocus()
+        editor?.visibility = View.GONE
+        pillText?.visibility = View.VISIBLE
+        if (restoreDock && showing && fullH > 0) {
+            atFull = editPriorFull
+            springTo(offsetFor(editPriorFull), 0f) {}
+        }
+    }
+
     // THE BOX+ARROW: ACTION_VIEW lets the site's NATIVE app claim its
     // domain; a Chrome Custom Tab (the user's Chrome session) is the
     // fallback, the system browser the last resort.
@@ -1013,29 +1433,38 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         val ripple = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
             intArrayOf((accent and 0x00FFFFFF) or 0x42000000, Color.TRANSPARENT))
-        fun chipShape(fill: Int, radiusDp: Int, stroke: Int?): GradientDrawable = GradientDrawable().apply {
+        // v0.68.0: the radii go FLOAT — the 15%-smaller capsule's 12.75dp
+        // ripple circle is not a whole dp
+        fun chipShape(fill: Int, radiusDp: Float, stroke: Int?): GradientDrawable = GradientDrawable().apply {
             setColor(fill)
-            cornerRadius = dip(radiusDp).toFloat()
+            cornerRadius = dipF(radiusDp).toFloat()
             if (stroke != null) setStroke(dip(1), stroke)
         }
-        fun chip(fill: Int, radiusDp: Int, stroke: Int?): RippleDrawable = RippleDrawable(
+        fun chip(fill: Int, radiusDp: Float, stroke: Int?): RippleDrawable = RippleDrawable(
             ripple, chipShape(fill, radiusDp, stroke), chipShape(Color.WHITE, radiusDp, null))
 
-        pill?.background = chip(surface, 200, border)
+        pill?.background = chip(surface, 200f, border)
         pillText?.setTextColor(text3)
         refreshIcon?.imageTintList = ColorStateList.valueOf(text3)
-        // v0.64.3: the ripple circle follows the grown 30dp hitbox (r12→15)
+        // v0.68.0: the ripple circle follows the 25.5dp slot (r15→12.75 —
+        // exactly half, the circle stays full)
         refreshIcon?.background = RippleDrawable(ripple,
-            chipShape(Color.TRANSPARENT, 15, null), chipShape(Color.WHITE, 15, null))
+            chipShape(Color.TRANSPARENT, 12.75f, null), chipShape(Color.WHITE, 12.75f, null))
+        // v0.68.0: the bar's editor wears the capsule's own text3 (the
+        // snapshot re-tints it per open, like everything else here)
+        editor?.setTextColor(text3)
         for (b in listOf(backBtn, extBtn, closeBtn)) {
-            b?.background = chip(surface, 17, border)
+            b?.background = chip(surface, 17f, border)
             b?.imageTintList = ColorStateList.valueOf(text1)
         }
         backBtn?.alpha = if (backBtn?.isEnabled == true) 1f else 0.38f
 
-        // the dash: the theme's own text color @ 30% — the grab hint
+        // v0.68.0: the dash: THE PANEL'S OWN — index.html's .handle-bar
+        // verbatim: the theme BORDER at full strength (var(--border)
+        // parity — the same neutral grab hint on both panels, never the
+        // accent, and no alpha tricks either)
         dash?.background = GradientDrawable().apply {
-            setColor((text1 and 0x00FFFFFF) or 0x4D000000)
+            setColor(border)
             cornerRadius = dip(2).toFloat()
         }
 
@@ -1082,6 +1511,42 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     } catch (e: Exception) { lastResort }
 
     private fun dip(v: Int): Int = (v * activity.resources.displayMetrics.density).toInt()
+
+    // v0.68.0: the float twin — the 15%-smaller capsule's fractional
+    // dimensions (25.5, 12.75, 3.75dp) land on exact pixels
+    private fun dipF(v: Float): Int = (v * activity.resources.displayMetrics.density).toInt()
+
+    // ── v0.68.0: THE BODY CHAIN (gesture.js's scroll chain, native) ──
+    // The WebView's touch listener releases the parent lock once the
+    // page sits at its very top and the finger pulls DOWN; this layout
+    // then intercepts the stream — the WebView gets a clean CANCEL, the
+    // finger never loses control — and hands it to the SAME drag machine
+    // the strip uses: the −6dp rebase at hijack (gesture.js's
+    // track.y0 = y − 6: the sheet springs into the grab instead of
+    // lagging the 24dp the finger already pulled), 1:1 follow with the
+    // jitter-smoothed chase, and release()'s decide() on the way down.
+    // One driver both ways: the rule never fires mid-drag, and the
+    // strip's DOWN refuses a finger while the chain owns one.
+    private inner class DragBodyLayout(context: Context) : FrameLayout(context) {
+        var chainRule: ((MotionEvent) -> Boolean)? = null
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.actionMasked == MotionEvent.ACTION_MOVE && !dragging) {
+                val rule = chainRule
+                if (rule != null && rule(ev)) {
+                    dragActivate(ev.rawY - dip(CHAIN_REBASE_DP))
+                    return true
+                }
+            }
+            return false
+        }
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_MOVE -> if (dragging) dragFollow(ev.rawY)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (dragging) dragEnd()
+            }
+            return true
+        }
+    }
 
     // ── v0.64.2: THE RING — the circular loading bar ──────────────────
     // A full-circle track (theme border @ ~18%, applied per open) + a
