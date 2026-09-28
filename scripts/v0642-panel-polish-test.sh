@@ -201,9 +201,9 @@ NCALL=$(ev "(function(){ var c = window.__calls[window.__calls.length-1] || {}; 
 has "$NCALL" '"m":"openPanel"' "the call rides openPanel with the theme snapshot"
 has "$NCALL" '"keys":[]' "all six live CSS-var theme keys present (the loading overlay + chips re-tint per open)"
 
-# getkey stays synchronous on the fallback tiers (never the panel)
+# getkey rides the panel (the v0.67.3 BIB mandate — a real top-level WebView)
 GK=$(ev "window.__calls = []; window.InAppBrowser.open('https://openrouter.ai/keys', {purpose:'getkey'}); (window.__calls[window.__calls.length-1]||{}).m || 'none'")
-check "$GK" "openInApp" "getkey rides openInApp (the v0.62.3 contract — never the panel)"
+check "$GK" "openPanel" "getkey rides openPanel (the v0.67.3 contract — the BIB era)"
 
 # desktop (bridge-less) still redirects instantly
 ev "delete window.__doomalayKotlin; window.__winOpen = []; 'clean'" >/dev/null

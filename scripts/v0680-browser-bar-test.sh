@@ -111,9 +111,14 @@ NCALL=$(ev "window.__calls = []; window.InAppBrowser.open('https://example.com/p
 has "$NCALL" '"m":"openPanel"' "a plain link still rides openPanel (the native dock)"
 
 GK=$(ev "window.__calls = []; window.InAppBrowser.open('https://openrouter.ai/keys', {purpose:'getkey'}); (window.__calls[window.__calls.length-1]||{}).m || 'none'")
-check "$GK" "openInApp" "getkey stays synchronous on openInApp (the v0.62.3 contract)"
+check "$GK" "openPanel" "getkey rides the panel (the v0.67.3 BIB mandate — a real top-level WebView)"
+
+HOSTILE=$(ev "window.__calls = []; window.InAppBrowser.open('https://example.com/x', {hostile:true}); (window.__calls[window.__calls.length-1]||{}).m || 'none'")
+check "$HOSTILE" "openPanel" "hostile rides the panel too (the v0.67.3 mandate — hostile is metadata now)"
 
 ev "delete window.__doomalayKotlin; 'bridgeless'" >/dev/null
+HXT=$(ev "window.__winOpen = []; window.InAppBrowser.open('https://example.com/hx', {hostile:true})")
+check "$HXT" "tab" "bridge-less hostile hands off EXTERNALLY (the tab — hostile can't ride a WebView on non-BIB builds)"
 DTIER=$(ev "window.InAppBrowser.open('https://example.com/desktop')")
 check "$DTIER" "popup" "the bridge-less surface still redirects to the POPUP tier instantly"
 ev "window.__doomalayKotlin = window.__mkNative(); 'bridge back'" >/dev/null
