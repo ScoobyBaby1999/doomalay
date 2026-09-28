@@ -127,15 +127,30 @@ import org.json.JSONObject
 //     a hand on the strip cancels the duck (release() owns the
 //     landing).
 //
-// Everything else is v0.64.0 verbatim: the strip contract (the pill
-// tap = COPY + toast, ‹ walks the REAL WebView history, ⧉ is THE
+//   · THE DOCKED RULES (v0.65.1, the parity wave — "if the user
+//     presses the panel while it is docked at 30%… if they press it
+//     or slide up, the panel goes back to it's original position, if
+//     they slide it down, it goes slides down and stops rendering"):
+//     a grab that starts at the duck (dragFromDuck) owns a special
+//     release — any DOWNWARD slide (past the slop) dismisses the sheet
+//     AND pauses its WebView (a closed sheet stops rendering, not just
+//     hides), anything else (an upward slide, or a no-slop tap on the
+//     strip/pill/page) glides back to the ORIGINAL dock. A still press
+//     on the ducked page itself restores too — the page still gets its
+//     tap (the listener never eats it), and sustained page scrolling
+//     keeps the peek (every MOVE retriggers the ~3s hold — "unless the
+//     user is interacting"). The ↻ ‹ ⧉ acts restore after their own
+//     action (attention is back on the panel); ✕ stays the dismiss.
+//
+// Everything else is v0.64.2/v0.64.3 verbatim: the strip contract (the
+// pill tap = COPY + toast, ‹ walks the REAL WebView history, ⧉ is THE
 // BOX+ARROW (ACTION_VIEW → Custom Tab → system browser), ✕ dismisses,
 // the dash dead-center), gesture.js parity (FLING_VY 0.55, CLOSE_FRAC
 // 0.32, velocity projection 140ms), the ViewerActivity-grade WebView
 // (cookies shared, video fullscreen, downloads → system, doomalay://
-// → dismiss + wakeSpa), resumable (close only hides), and THEME — the
-// live CSS-var snapshot re-tints everything on every open; system
-// theme attrs are the fallback, nothing hardcoded in use.
+// → dismiss + wakeSpa), resumable (close only hides — and now pauses),
+// and THEME — the live CSS-var snapshot re-tints everything on every
+// open; system theme attrs are the fallback, nothing hardcoded in use.
 class PanelBrowserSheet(private val activity: MainActivity) {
 
     // ── gesture.js parity (the web panel's docks + release tuning) ──
@@ -211,6 +226,13 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var dragStartY = 0f
     private var dragStartOffset = 0f
     private var dragFromFull = false
+    // v0.65.1: THE DOCKED-GRAB RULES — the gesture STARTED at the duck
+    // (set at ACTION_DOWN, survives the slop-crossing cancelDuck) so
+    // release() can decide with the duck's special semantics.
+    private var dragFromDuck = false
+    // v0.65.1: the ducked page's still-press detector — the touch's
+    // origin Y (a MOVE past the slop means a scroll, not a press)
+    private var pageTapY = -1f
     private var lastMoveY = 0f
     private var lastMoveT = 0L
     private var velY = 0f
@@ -225,6 +247,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         ensureViews()
         applyTheme()
         val w = webView ?: return
+        // v0.65.1: the dismiss paused the WebView — a resurfacing sheet
+        // resumes it (no-op when it was never paused).
+        try { w.onResume() } catch (e: Exception) {}
         liveUrl = url
         if (!showing) {
             // a fresh dock (or a resurface): the first ever open rides the
@@ -250,6 +275,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         ducked = false
         showing = false
         setLoading(false, null)
+        // v0.65.1: "slides down and stops rendering" — the hidden sheet
+        // also PAUSES its WebView (no compositing, no JS timers, no
+        // battery burn while closed; open() pairs with onResume). The
+        // history survives — the sheet stays resumable, exactly as before.
+        try { webView?.onPause() } catch (e: Exception) {}
         val h = if (fullH > 0) fullH.toFloat() else 1f
         // (the GONE end-action is guarded — a reopen inside CLOSE_MS
         // cancels this glide, and the cancel-fired end must not bury it)
@@ -451,11 +481,29 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
-            // v0.64.2: activity on the DUCKED panel itself retriggers the
-            // ~3s hold (reading/scrolling the peek keeps the peek) — the
-            // listener returns false, the page handles the touch normally.
+            // v0.65.1: THE DOCKED-PAGE RULES — activity on the ducked
+            // panel keeps the peek (every DOWN *and* MOVE retriggers the
+            // ~3s hold — a long scroll never expires mid-read, the
+            // "unless the user is interacting" clause), and a STILL
+            // press (UP without crossing the slop) restores the sheet
+            // to its original dock — the page still gets its tap (the
+            // listener returns false, the page handles it normally).
             setOnTouchListener { _, ev ->
-                if (ev.actionMasked == MotionEvent.ACTION_DOWN && ducked) resetDuckTimer()
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        if (ducked) resetDuckTimer()
+                        pageTapY = ev.rawY        // the tap origin
+                    }
+                    MotionEvent.ACTION_MOVE -> if (ducked) resetDuckTimer()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (ducked && ev.actionMasked == MotionEvent.ACTION_UP && pageTapY >= 0f) {
+                            if (Math.abs(ev.rawY - pageTapY) <= dip(6)) {
+                                cancelDuck(restoreDock = true)
+                            }
+                        }
+                        pageTapY = -1f
+                    }
+                }
                 false
             }
 
@@ -625,9 +673,18 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         // ── wire the chrome ──────────────────────────────────────────
-        refreshIcon?.setOnClickListener { webView?.reload() }
-        backBtn?.setOnClickListener { if (webView?.canGoBack() == true) webView?.goBack() }
-        extBtn?.setOnClickListener { openExternal(liveUrl) }
+        refreshIcon?.setOnClickListener {
+            webView?.reload()
+            if (ducked) cancelDuck(restoreDock = true)
+        }
+        backBtn?.setOnClickListener {
+            if (webView?.canGoBack() == true) webView?.goBack()
+            if (ducked) cancelDuck(restoreDock = true)
+        }
+        extBtn?.setOnClickListener {
+            openExternal(liveUrl)
+            if (ducked) cancelDuck(restoreDock = true)
+        }
         closeBtn?.setOnClickListener { dismiss() }
 
         // THE DRAG SURFACE: the strip + the pill follow the finger (a tap
@@ -643,7 +700,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     // drag + tap disambiguation on one view. `tap` (optional) fires only
     // when the touch never crossed the slop — the pill both drags AND
-    // copies.
+    // copies. v0.65.1: a grab that starts at the duck remembers it
+    // (dragFromDuck) — release() then applies THE DOCKED RULES, and a
+    // no-slop TAP on the strip/pill restores the original dock (the
+    // "press the panel" rule; the pill's copy still fires after).
     @SuppressLint("ClickableViewAccessibility")
     private fun makeDraggable(v: View, tap: (() -> Unit)? = null) {
         v.setOnTouchListener { _, ev ->
@@ -652,6 +712,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     dragStartY = ev.rawY
                     dragStartOffset = curOffset
                     dragFromFull = atFull
+                    dragFromDuck = ducked
                     lastMoveY = ev.rawY
                     lastMoveT = SystemClock.uptimeMillis()
                     velY = 0f
@@ -662,6 +723,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     val dy = ev.rawY - dragStartY
                     if (!dragging && Math.abs(dy) > dip(6)) {
                         dragging = true
+                        // the finger is boss — kill any glide still
+                        // running (the 3s timer may have fired mid-press
+                        // and started the unduck home)
+                        snapAnim?.cancel()
                         // a REAL grab takes the sheet out of the duck —
                         // the hold dies and release() owns the landing
                         // (a mere tap keeps the duck + its timer)
@@ -682,6 +747,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     if (dragging) {
                         release(velY, curOffset - dragStartOffset)
                     } else if (ev.actionMasked == MotionEvent.ACTION_UP) {
+                        // v0.65.1: the press rule — a still press on the
+                        // ducked sheet returns it to its ORIGINAL dock
+                        if (dragFromDuck) cancelDuck(restoreDock = true)
                         tap?.invoke()
                     }
                     dragging = false
@@ -694,13 +762,22 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     // gesture.js decide(), ported verbatim: velocity projection leads,
     // the tuned intent thresholds confirm. Three landings on the
-    // fraction line: 0 (closed) / .62 (default) / 1 (full). (The duck
-    // peek is a programmatic dock — release() still decides from
-    // wherever the finger let go, so a deliberate 0.32·H drag from the
-    // duck closes and a fling down closes, exactly like from default.)
+    // fraction line: 0 (closed) / .62 (default) / 1 (full). v0.65.1:
+    // a grab that STARTED at the duck bypasses decide() entirely — THE
+    // DOCKED RULES: a deliberate downward slide (the 6dp slop already
+    // filtered jitter) slides the sheet down and STOPS RENDERING
+    // (dismiss + onPause); an upward slide — or anything else — glides
+    // back to the ORIGINAL dock (the half dock, never full: "the panel
+    // goes back to it's original position").
     private fun release(vy: Float, dy: Float) {
         if (fullH <= 0) { dismiss(); return }
         val h = fullH.toFloat()
+        if (dragFromDuck) {
+            if (dy > 0) { dismiss(); return }
+            atFull = false
+            animateTo(offsetForDefault(), SNAP_MS) {}
+            return
+        }
         val downward = dy > 0
         val upward = dy < 0
         val projected = dy + vy * PROJECTION_MS

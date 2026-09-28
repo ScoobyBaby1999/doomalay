@@ -1,6 +1,6 @@
-// browserdock.js — v0.64.2 THE PANEL-STATE CHANNEL · v0.64.0 THE
-// NATIVE PANEL BROWSER ROUTER (PLAN-V0640 + PLAN-V0642). Exposes:
-// window.InAppBrowser (v3).
+// browserdock.js — v0.65.1 THE PARITY GUARD · v0.64.2 THE PANEL-STATE
+// CHANNEL · v0.64.0 THE NATIVE PANEL BROWSER ROUTER (PLAN-V0640 +
+// PLAN-V0642 + PLAN-V0643). Exposes: window.InAppBrowser (v3).
 //
 // USER SPEC: "If we can somehow render the native WebView into a
 // scrollable snapable panel, a feature or push that is solely reserved
@@ -105,8 +105,21 @@
         // ducked = the canvas holds the focus: lift the dim
         scrim.style.opacity = s.ducked ? '0' : '';
       } else {
-        scrim.style.pointerEvents = '';
-        scrim.style.opacity = '';
+        // v0.65.1: the close must not wipe the REGULAR panel's own
+        // overrides — if the SPA's chat panel is open underneath, its
+        // duck wiring still needs the scrim's taps suspended (a canvas
+        // press must reach the canvas), and the dim follows ITS duck
+        // (window.__doomalayPanelDuck, kept current by gesture.js).
+        // Otherwise: the exact pre-wave restore.
+        var spaPanel = document.getElementById('chat-panel');
+        var spaOpen = !!(spaPanel && spaPanel.classList.contains('open'));
+        if (spaOpen) {
+          scrim.style.pointerEvents = 'none';
+          scrim.style.opacity = (window.__doomalayPanelDuck === true) ? '0' : '';
+        } else {
+          scrim.style.pointerEvents = '';
+          scrim.style.opacity = '';
+        }
       }
     }
     try {

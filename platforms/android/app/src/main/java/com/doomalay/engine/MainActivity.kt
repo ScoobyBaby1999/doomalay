@@ -277,8 +277,13 @@ class MainActivity : Activity() {
             // FALSE — the touch ALWAYS flows on into the SPA, so the
             // canvas pans immediately under the gliding sheet — and every
             // retouch retriggers the ~3s re-dock delay.
+            // v0.65.1: ACTION_MOVE joins the trigger — a CONTINUOUS
+            // canvas drag is "the user is interacting" and must not let
+            // the hold expire mid-gesture (onSpaTouch is idempotent:
+            // already ducked → just the timer reset).
             webView.setOnTouchListener { _, ev ->
-                if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                val a = ev.actionMasked
+                if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE) {
                     panelSheet?.onSpaTouch()
                 }
                 false

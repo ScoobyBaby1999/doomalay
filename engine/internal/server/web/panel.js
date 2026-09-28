@@ -89,12 +89,21 @@
       // close-on-fling — "like scrolling down reels") replace the simple
       // drag-to-close when gesture.js is loaded. The remembered per-chat
       // position is applied on every open() and saved on close().
+      // v0.65.1: THE PARITY WAVE — the regular panel grows the BIB
+      // panel's SECRET THIRD DOCK (a 30% canvas-duck, ~3s retriggerable
+      // hold). The geometry + timer live in gesture.js (onDuckChange);
+      // THIS class owns the triggers (a touch on the app behind the
+      // panel) and the #chat-scrim channel (the dim over the canvas —
+      // the same inline-override pattern browserdock.js established for
+      // the native sheet).
       if (window.PanelGestures) {
         var selfG = this;
         this.gestures = window.PanelGestures.attach(this.panelEl, {
-          onStateChange: function () { selfG._syncPosNow(); }
+          onStateChange: function () { selfG._syncPosNow(); },
+          onDuckChange: function (d) { selfG._applyScrim(selfG.isOpen(), d); }
         });
         this.gestures.setCloseHook(function () { selfG.close(); });
+        this._wireDuck();
       } else {
         this._wireDragging();
       }
@@ -146,6 +155,12 @@
       if (this.gestures) {
         this.gestures.openAt(rememberedPos(this.currentContext && this.currentContext.id));
       }
+      // v0.65.1: the panel owns the layer now — the scrim keeps its dim
+      // but never eats a tap (a canvas press must reach the CANVAS: it
+      // pans it, and the duck glides the panel to the 30% peek).
+      // (Gesture mode only — the fallback keeps the scrim's own
+      // tap-to-close alive.)
+      if (this.gestures) this._applyScrim(true, false);
       // requestAnimationFrame ensures the browser has rendered the panel
       // in its hidden state before we add .open, so the CSS transition fires.
       requestAnimationFrame(function () {
@@ -164,6 +179,9 @@
       // v0.18: remember where this chat's panel was sitting (full vs
       // default) BEFORE tearing it down — the next open restores it.
       this._syncPosNow();
+      // v0.65.1: the scrim's overrides clear with the panel (base CSS:
+      // no dim, no taps — the exact pre-wave world).
+      if (this.gestures) this._applyScrim(false, false);
       this.scrimEl.classList.remove('open');
       this.panelEl.classList.remove('open');
       this._teardownViews(); // fire view onClose hooks + drop the stack
@@ -356,6 +374,87 @@
       if (this.gestures && this.currentContext && this.currentContext.id) {
         try { rememberPos(this.currentContext.id, this.gestures.state()); } catch (e) {}
       }
+    }
+
+    // ── v0.65.1: THE PARITY WAVE — the regular panel's third dock ────
+    //
+    // THE SCRIM CHANNEL — the same inline-override pattern browserdock.js
+    // established for the native sheet (inline rides on top of the
+    // .open class rules; clearing restores the world exactly):
+    //   open    → the scrim keeps its dim but suspends pointer-events:
+    //             a press on the visible canvas must reach the CANVAS
+    //             (it pans it, and the duck glides the panel to 30%).
+    //   ducked  → the canvas is IN FOCUS: the dim lifts (its 0.25s CSS
+    //             transition rides the glide).
+    //   closed  → both restored — the pre-wave world.
+    _applyScrim(open, duckedState) {
+      var s = this.scrimEl;
+      if (!s) return;
+      if (open) {
+        s.style.pointerEvents = 'none';
+        s.style.opacity = duckedState ? '0' : '';
+      } else {
+        s.style.pointerEvents = '';
+        s.style.opacity = '';
+      }
+    }
+
+    // THE TRIGGERS — a touch on the app behind the panel (the canvas
+    // strip it leaves visible): at the half dock it DUCKS (the 30% peek
+    // + the canvas focus); while ducked every touch RETRIGGERS the ~3s
+    // hold ("unless the user is interacting" — touchmove counts: a
+    // continuous canvas drag never expires mid-gesture). Capture-phase
+    // + passive: the touch is NEVER eaten — the canvas pans on the very
+    // first press, under the gliding panel (BIB parity, PanelBrowserSheet
+    // semantics exactly). THE DESKTOP CONVENTION — the scrim's old
+    // tap-to-close, reborn for the mouse: a clean CLICK outside the
+    // panel closes it (capture stopPropagation — the click never reaches
+    // the canvas widgets, exactly like the scrim never let it); a DRAG
+    // pans the canvas (new, and never a close); touch-generated clicks
+    // are ignored (the touch path owns ducks).
+    _wireDuck() {
+      if (!this.gestures || !this.gestures.duckForCanvas) return;
+      var self = this;
+      var outsidePanel = function (t) {
+        return !!(t && t.closest && !t.closest('#chat-panel'));
+      };
+
+      document.addEventListener('touchstart', function (e) {
+        if (!self.isOpen()) return;
+        if (e.touches.length !== 1) return;          // a second finger mid-gesture is never the trigger
+        if (self.gestures.state() === 'full') return;  // the full dock never ducks
+        if (!outsidePanel(e.target)) return;           // panel-internal touches are its own
+        if (self.gestures.isDucked()) self.gestures.retriggerDuck();
+        else self.gestures.duckForCanvas();
+      }, { capture: true, passive: true });
+
+      document.addEventListener('touchmove', function (e) {
+        if (!self.isOpen() || !self.gestures.isDucked()) return;
+        if (!outsidePanel(e.target)) return;
+        self.gestures.retriggerDuck();   // continuous interaction keeps the peek
+      }, { capture: true, passive: true });
+
+      // the mouse: down-position remembered so a drag (a canvas pan)
+      // never reads as a click
+      var downAt = null;
+      document.addEventListener('pointerdown', function (e) {
+        if (e.pointerType && e.pointerType !== 'mouse') { downAt = null; return; }
+        downAt = { x: e.clientX, y: e.clientY };
+      }, { capture: true, passive: true });
+      document.addEventListener('click', function (e) {
+        if (!self.isOpen()) return;
+        if (e.pointerType && e.pointerType !== 'mouse') return;  // touch/pen → not ours
+        if (!outsidePanel(e.target)) return;
+        // a drag is a pan, not a click — the old scrim never closed on one
+        if (downAt && (Math.abs(e.clientX - downAt.x) > 8 ||
+                       Math.abs(e.clientY - downAt.y) > 8)) return;
+        // capture-phase stop + prevent: the click dies exactly where the
+        // scrim's own tap-to-close used to kill it (the canvas widgets
+        // never see it) — then the panel closes.
+        e.stopPropagation();
+        e.preventDefault();
+        self.close();
+      }, true);
     }
 
     _wireDragging() {

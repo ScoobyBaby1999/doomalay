@@ -148,9 +148,13 @@ has "$EVSEEN" '"op":"0"' "ducked → the scrim's dim LIFTS (the canvas is back i
 has "$EVSEEN" '"evOpen":true' "the doomalay:panel-state event fires with open=true"
 has "$EVSEEN" '"evDucked":true' "the doomalay:panel-state event fires with ducked=true"
 
-# 1c. CLOSED: everything restored exactly — the scrim eats taps again
-# (its own tap-to-close is back) and the dim rides its .open class
-# (the scrim's 0.25s CSS opacity transition is given time to settle)
+# 1c. CLOSED: v0.65.1 THE PARITY GUARD — the native sheet's close no
+# longer wipes the scrim blindly: the SPA's OWN chat panel is OPEN here
+# (this suite opened it for the dim checks), so its duck wiring keeps
+# the taps suspended (a canvas press must still reach the canvas) and
+# the dim follows the SPA panel's own duck (not ducked → class rules).
+# The no-SPA-panel exact restore moved to v0651 §8 (it closes the SPA
+# panel first — here the guard's whole point is that it DOESN'T clear).
 ev "window.__doomalayPanelState({open:false, ducked:false}); 'closed'" >/dev/null
 sleep 0.6
 CLOSED=$(ev "(function(){
@@ -160,12 +164,14 @@ CLOSED=$(ev "(function(){
     peInline: scrim.style.pointerEvents,
     opInline: scrim.style.opacity,
     peComputed: cs.pointerEvents,
-    opComputed: cs.opacity
+    opComputed: cs.opacity,
+    spaOpen: document.getElementById('chat-panel').classList.contains('open')
   });
 })()")
-has "$CLOSED" '"peInline":""' "closed → the inline pointer-events override is cleared"
+has "$CLOSED" '"spaOpen":true' "v0.65.1: the SPA panel is open (the guard's precondition)"
+has "$CLOSED" '"peInline":"none"' "v0.65.1: the native close KEEPS the SPA panel's suspension (the parity guard)"
 has "$CLOSED" '"opInline":""' "closed → the inline opacity override is cleared"
-has "$CLOSED" '"peComputed":"auto"' "closed → the scrim's tap-to-close is LIVE again (pointer-events auto)"
+has "$CLOSED" '"opInline":""' "v0.65.1: the dim follows the SPA panel's own duck (not ducked → class rules)"
 has "$CLOSED" '"opComputed":"1"' "closed → the dim is back (the .open class governs, opacity 1)"
 
 # 1d. garbage-proof: a null/undefined payload restores, never throws

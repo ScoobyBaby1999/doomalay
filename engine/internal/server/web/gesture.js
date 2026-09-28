@@ -1,4 +1,5 @@
-// gesture.js — v0.42 THE ALWAYS-TALL SHEET (background-gap + settle-jank fix).
+// gesture.js — v0.65.1 THE PARITY WAVE (the secret third dock for the
+//                    REGULAR panel) on v0.42 THE ALWAYS-TALL SHEET.
 //
 // USER SPEC (v0.42, three complaints, one root cause): the sheet used to be
 // a RIGID card whose HEIGHT swapped per state, so:
@@ -66,6 +67,19 @@
   var FULL_CLOSE_FRAC = 0.55;  // from full: > 55% slow drag closes
   var CLOSE_FRAC = 0.32;       // from default: > 32% deliberate drag closes
   var PROJECTION_MS = 140;     // v0.38: release velocity horizon
+
+  // ── v0.65.1: THE SECRET THIRD DOCK (BIB parity — PLAN-V0643/44) ──
+  // The same contract the native panel browser (PanelBrowserSheet.kt)
+  // shipped in v0.64.2, constant for constant: a press on the app
+  // behind the half-docked panel glides it to a 30% peek and hands the
+  // canvas focus back; the peek holds ~3s, retriggered by every touch
+  // on the app behind it (and by interaction with the peek itself);
+  // expiry glides home. The full dock never ducks. currentState is
+  // NEVER touched — the per-chat position memory (full/default) is
+  // unaffected, and decide() stays verbatim for non-ducked gestures.
+  var DUCK_FRAC = 0.30;        // the peek fills ~30% of the screen
+  var DUCK_HOLD_MS = 3000;     // the retriggerable temporary hold
+  var DUCK_TAP_SLOP = 10;      // px — a still press on the peek (not a scroll)
 
   // ── v0.42 THE ALWAYS-TALL GEOMETRY ──────────────────────────────
   // H is the drag-math source of truth (innerHeight — dynamic toolbars),
@@ -145,14 +159,56 @@
   function attach(panel, opts) {
     panelEl = panel;
     onStateChange = (opts && opts.onStateChange) || null;
+    var onDuckChange = (opts && opts.onDuckChange) || null;
     H = window.innerHeight;
     measureChrome();
 
     var track = {
       active: false, y0: 0, t0: 0, lastY: 0, lastT: 0, vy: 0,
       fromAnchor: false, hijacked: false, baseFrac: 0, baseY: 0,
-      bodyStart: null
+      fromDuck: false, bodyStart: null
     };
+
+    // ── v0.65.1: THE DUCK ENGINE ──────────────────────────────────
+    var ducked = false;
+    var duckTimer = 0;
+    function yForDuck() { return (1 - DUCK_FRAC) * H; }
+    function fireDuck() {
+      try { window.__doomalayPanelDuck = ducked; } catch (e) {}
+      try { window.dispatchEvent(new CustomEvent('doomalay:panel-duck',
+        { detail: { ducked: ducked } })); } catch (e) {}
+      if (onDuckChange) { try { onDuckChange(ducked); } catch (e) {} }
+    }
+    function resetDuckTimer() {
+      if (duckTimer) clearTimeout(duckTimer);
+      duckTimer = setTimeout(function () { duckTimer = 0; unduck(); }, DUCK_HOLD_MS);
+    }
+    function duckForCanvas() {
+      if (curY >= H - 1) return;           // not on screen — nothing to duck
+      if (currentState === 'full') return; // the full dock never ducks
+      if (ducked) { resetDuckTimer(); return; }
+      ducked = true;
+      springY(curY, yForDuck(), 0);        // the glide (the settle spring)
+      resetDuckTimer();
+      fireDuck();
+    }
+    // the hold expired — home to the half dock, dim restored
+    function unduck() {
+      if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
+      if (!ducked) return;
+      ducked = false;
+      if (curY < H - 1) springY(curY, yForState(currentState), 0);
+      fireDuck();
+    }
+    // a real grab / a re-open / a close: the duck dies. With restore,
+    // the sheet glides home to its ORIGINAL dock first.
+    function cancelDuck(restore) {
+      if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
+      if (!ducked) return;
+      ducked = false;
+      if (restore && curY < H - 1) springY(curY, yForState(currentState), 0);
+      fireDuck();
+    }
 
     // ── MOTION OWNERSHIP ───────────────────────────────────────────
     // Exactly ONE writer drives the sheet at a time: the drag loop, the
@@ -306,6 +362,10 @@
       track.hijacked = false;
       track.baseY = curY;                       // where the sheet sits (mid-flight included)
       track.baseFrac = H > 0 ? 1 - curY / H : states[currentState];
+      // v0.65.1: a grab at the duck remembers it — end() then applies
+      // THE DOCKED RULES (the hold dies either way: the finger is boss)
+      track.fromDuck = ducked;
+      if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
       // no transition while the finger drives the sheet — every write
       // lands THIS frame (1:1 tracking, zero lag).
       panelEl.style.transition = 'none';
@@ -365,6 +425,7 @@
     // rigid card exactly like v0.41 — the content never squashes on exit.
     function dismiss(fromY, closeFn) {
       stopAll();
+      cancelDuck(false);   // v0.65.1: a closing sheet owes no duck
       panelEl.style.transition = 'none';
       // v0.45 ITEM 1: unblock canvas the INSTANT the fling-close begins.
       // The scrim loses .open (→ pointer-events:none) + the panel goes
@@ -412,11 +473,26 @@
       stopDragLoop();
       var dy = track.lastY - track.y0;
 
-      var next = decide(track.vy, dy);
-      var settleFrom = curY; // where the sheet visually sits right now (sub-pixel)
+      var next;
+      if (track.fromDuck) {
+        // v0.65.1: THE DOCKED RULES — a grab that started at the 30%
+        // peek: a deliberate DOWNWARD slide (the anchor's own slop
+        // filtered the jitter; 10px confirms intent for body hijacks)
+        // slides the panel down and CLOSES it; an upward slide — or a
+        // mere tap (dy≈0, the natural anchor case) — returns it to the
+        // ORIGINAL dock ("goes back to it's original position" — the
+        // half dock, never full).
+        if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
+        var wasDucked = ducked;
+        ducked = false;
+        if (wasDucked) fireDuck();
+        next = (dy > DUCK_TAP_SLOP) ? 'CLOSE' : 'default';
+      } else {
+        next = decide(track.vy, dy);
+      }
 
       if (next === 'CLOSE') {
-        dismiss(settleFrom, closeFn);
+        dismiss(curY, closeFn);
         return;
       }
       // The settle: apply the target state (class + events), then ONE
@@ -424,7 +500,7 @@
       // GLIDES to the snap point while the window stretches along.
       applyState(next);
       var v = track.vy * 1000 * 0.25; // seed with a quarter of release velocity (momentum feel)
-      springY(settleFrom, yForState(next), v);
+      springY(curY, yForState(next), v);
     }
 
     // ── Wire the ANCHOR zone: handle + panel header ──────────────
@@ -435,9 +511,10 @@
     var anchorAPI = {
       setCloseHook: null,
       state: function () { return currentState; },
-      setHeight: function (next, animate) { setHeight(next, animate !== false); },
+      setHeight: function (next, animate) { cancelDuck(false); setHeight(next, animate !== false); },
       openAt: function (pos) {
         var next = states[pos] !== undefined ? pos : 'default';
+        cancelDuck(false);   // v0.65.1: a re-open kills any stale duck; the spring below lands
         applyState(next);
         if (curY >= H - 1) {
           // closed → the 0.25s rise (identical curve to the old CSS one).
@@ -451,6 +528,7 @@
         }
       },
       reset: function () {
+        cancelDuck(false);   // v0.65.1
         applyState('default');
         stopAll();
         panelEl.style.transition = 'none';
@@ -458,6 +536,12 @@
         else renderY(yForState('default'));     // visible: snap home instantly
       },
       justDragged: function () { return performance.now() - lastDragEndedAt < 350; },
+      // ── v0.65.1: THE THIRD DOCK's public surface (panel.js wires the
+      // triggers; the geometry + the timer live here) ─────────────────
+      duckForCanvas: function () { duckForCanvas(); },
+      retriggerDuck: function () { if (ducked) resetDuckTimer(); },
+      cancelDuck: function (restore) { cancelDuck(!!restore); },
+      isDucked: function () { return ducked; },
       // v0.63.4: the handle strip grows a browser toolbar while the
       // docked browser is up (panel.js _setStripMode) — re-run the chrome
       // math + repaint the window var at the CURRENT offset so the
@@ -477,6 +561,7 @@
     function slideClosed() {
       track.active = false;
       track.bodyStart = null;
+      cancelDuck(false);   // v0.65.1: a closing sheet owes no duck
       // v0.45 ITEM 1: class-driven close (scrim tap / ✕) — unblock canvas
       // immediately so the grid is live while the 0.17s slide runs.
       panelEl.classList.add('closing');
@@ -594,21 +679,27 @@
       body.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
         if (track.active) return; // an ANCHOR gesture is already running
+        if (ducked) resetDuckTimer();   // v0.65.1: touching the peek = interacting
         track.bodyStart = {
           y: e.touches[0].clientY,
           t: performance.now(),
           sc: innerScroller(e.target),
-          noSheet: ownsGesture(e.target)
+          noSheet: ownsGesture(e.target),
+          maxDy: 0
         };
         track.active = false;
       }, { passive: true });
       body.addEventListener('touchmove', function (e) {
         var bs = track.bodyStart;
         if (!bs || e.touches.length !== 1) return;
+        if (ducked) resetDuckTimer();   // v0.65.1: scrolling the peek keeps it
         if (bs.noSheet) return; // sliders own their drags
         if (track.active && !track.hijacked) return; // anchor drag in progress
         var y = e.touches[0].clientY;
         var dy = y - bs.y;
+        // v0.65.1: how far this body touch travelled (a still press on
+        // the ducked peek is a press, not a scroll)
+        bs.maxDy = Math.max(bs.maxDy || 0, Math.abs(dy));
 
         if (dy <= 0) return; // upward = plain scrolling, never ours
         if (bs.sc && bs.sc.scrollTop > 0) return; // inner scroller still owns it
@@ -628,9 +719,15 @@
         }
       }, { passive: false });
       body.addEventListener('touchend', function () {
+        var bs = track.bodyStart;
         if (track.active && track.hijacked) {
           track.hijacked = false;
           end(closeHook);
+        } else if (ducked && bs && (bs.maxDy || 0) < DUCK_TAP_SLOP && curY < H - 1) {
+          // v0.65.1: THE PRESS RULE — a still press on the ducked
+          // panel's content returns it to its ORIGINAL dock (the tap's
+          // own target still gets its click — nothing here is prevented)
+          cancelDuck(true);
         }
         track.bodyStart = null;
       });
@@ -665,6 +762,7 @@
     writeVis(H);        // zero-height window while off-screen
     writeY(H);          // fully below the viewport
     applyState((opts && opts.initial) || 'default');
+    try { window.__doomalayPanelDuck = false; } catch (e) {}   // v0.65.1: the native channel's guard reads this
 
     return anchorAPI;
   }
