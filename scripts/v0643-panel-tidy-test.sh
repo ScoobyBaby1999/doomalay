@@ -103,10 +103,10 @@ has "$NCALL" '"m":"openPanel"' "a plain link still rides openPanel (the native d
 has "$NCALL" '"accent"' "the theme snapshot still rides every openPanel (the dots/ring re-tint per open)"
 
 GK=$(ev "window.__calls = []; window.InAppBrowser.open('https://openrouter.ai/keys', {purpose:'getkey'}); (window.__calls[window.__calls.length-1]||{}).m || 'none'")
-check "$GK" "openInApp" "getkey stays synchronous on openInApp (the v0.62.3 contract)"
+check "$GK" "openPanel" "getkey rides the panel (the v0.67.3 BIB mandate — a real top-level WebView)"
 
 HOSTILE=$(ev "window.__calls = []; window.InAppBrowser.open('https://example.com/x', {hostile:true}); (window.__calls[window.__calls.length-1]||{}).m || 'none'")
-check "$HOSTILE" "openInApp" "hostile pages stay on openInApp (never the panel)"
+check "$HOSTILE" "openPanel" "hostile rides the panel too (the v0.67.3 mandate — hostile is metadata now)"
 
 ev "delete window.__doomalayKotlin; 'bridgeless'" >/dev/null
 DTIER=$(ev "window.InAppBrowser.open('https://example.com/desktop')")

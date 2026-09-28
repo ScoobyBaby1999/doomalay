@@ -36,6 +36,8 @@
 #     (panelOpen/panelUrl/panelClose) — the native sheet owns the state
 #   - the v0.62.3 contract SURVIVES: getkey/hostile ride the fallback
 #     tiers SYNCHRONOUSLY (openInApp + hostile flag), never openPanel
+#     [v0.67.3 REBASE: getkey/hostile now ride openPanel — the BIB era;
+#     the fallback tiers are the bridge-less and pre-v0.64 surfaces]
 #   - the PRE-v0.64 APK degrades: a bridge with openInApp only → the
 #     full-screen viewer (fallback), still no iframe dock anywhere
 #   - the bridge hiccup: an openPanel that throws falls to the fallback
@@ -219,13 +221,17 @@ has "$STATE" '"url":"https://example.com/"' "currentURL() reads the bridge's pan
 has "$STATE" '"closed":true' "close() rides the bridge's panelClose"
 has "$STATE" '"call":"panelClose"' "close() actually reached the native layer"
 
-# ── 3. the v0.62.3 contract SURVIVES (getkey/hostile stay sync) ──────
+# ── 3. the v0.67.3 CONTRACT (getkey/hostile ride the BIB panel) ─────
+# [v0.67.3 REBASE: the BIB is a real top-level native WebView — it loads
+# every page a regular browser can, so getkey and hostile URLs ride
+# openPanel when the bridge exists (the user's "all redirects use the
+# BIB panel" mandate); hostile rides on as metadata for the sheet]
 K1=$(ev "window.__calls = []; var t = window.InAppBrowser.open('https://openrouter.ai/keys', {purpose:'getkey'}); var c = window.__calls[0]; JSON.stringify({tier:t, m:c.m, hostile:c.o.hostile, purpose:c.o.purpose})")
-has "$K1" '"tier":"apk-viewer"' "getkey stays SYNCHRONOUS on the fallback tier (the full-screen viewer)"
-has "$K1" '"m":"openInApp"' "getkey rides openInApp, NEVER openPanel"
+has "$K1" '"tier":"native-panel"' "getkey rides the NATIVE PANEL synchronously (the v0.67.3 BIB mandate)"
+has "$K1" '"m":"openPanel"' "getkey rides openPanel — the BIB era (never the fallback viewer)"
 has "$K1" '"hostile":false' "getkey passes hostile:false"
 K2=$(ev "window.__calls = []; window.InAppBrowser.open('https://opencode.ai/auth', {purpose:'getkey', hostile:true}); var c = window.__calls[0]; c.m + ' hostile=' + c.o.hostile")
-has "$K2" 'openInApp hostile=true' "the webview-hostile provider passes hostile:true"
+has "$K2" 'openPanel hostile=true' "the webview-hostile provider rides the panel with hostile:true (metadata)"
 
 # ── 4. the PRE-v0.64 APK: openInApp only → the full-screen viewer ────
 OLD=$(ev "(function(){

@@ -58,10 +58,15 @@ check "$(cat /tmp/v0623-a)" "yes" "InAppBrowser.open exists (linkviewer.js)"
 
 # 2. the bridge tier: stub the Kotlin bridge, verify the call carries
 #    the URL + hostile flag + a LIVE theme snapshot (CSS vars resolved)
+#    [v0.67.3 CONTRACT REBASE: the stub is the v0.64+ bridge shape —
+#    openPanel — and getkey/hostile URLs ride the PANEL now (the BIB
+#    is a real top-level WebView; hostile is metadata, and the old
+#    openInApp-only stub made the hostile call window.open away the
+#    tab, killing every section after it)]
 BRIDGE=$(ev "
 (function(){
   window.__bridgeCalls = [];
-  window.__doomalayKotlin = { openInApp: function(url, opts) { window.__bridgeCalls.push({url:url, opts:JSON.parse(opts)}); } };
+  window.__doomalayKotlin = { openPanel: function(url, opts) { window.__bridgeCalls.push({url:url, opts:JSON.parse(opts)}); } };
   var t1 = window.InAppBrowser.open('https://openrouter.ai/keys', {purpose:'getkey'});
   var t2 = window.InAppBrowser.open('https://opencode.ai/auth', {purpose:'getkey', hostile:true});
   var c = window.__bridgeCalls;
@@ -69,7 +74,8 @@ BRIDGE=$(ev "
   delete window.__doomalayKotlin;
   return JSON.stringify({t1:t1, t2:t2, n:c.length, hostile0:c[0].opts.hostile, hostile1:c[1].opts.hostile, url0:c[0].url, themeOk:themeOk, accent:c[0].opts.theme.accent});
 })()")
-has "$BRIDGE" '"t1":"apk-viewer"' "bridge tier fires first when __doomalayKotlin is present"
+has "$BRIDGE" '"t1":"native-panel"' "bridge tier fires first when __doomalayKotlin is present (the v0.67.3 BIB mandate)"
+has "$BRIDGE" '"t2":"native-panel"' "the hostile provider rides the PANEL too (hostile is metadata in the BIB era)"
 has "$BRIDGE" '"hostile0":false' "the non-hostile link passes hostile:false"
 has "$BRIDGE" '"hostile1":true' "the webview-hostile provider passes hostile:true"
 has "$BRIDGE" '"themeOk":true' "the bridge call carries a live theme snapshot"
@@ -80,7 +86,10 @@ has "$BRIDGE" '"url0":"https://openrouter.ai/keys"' "the bridge call carries the
 PANEL=$(ev "
 (function(){
   window.__provCalls = [];
-  window.__doomalayKotlin = { openInApp: function(url, opts) { window.__provCalls.push({url:url}); } };
+  window.__doomalayKotlin = {
+    openPanel: function(url, opts) { window.__provCalls.push({url:url}); },
+    openInApp: function(url, opts) { window.__provCalls.push({url:url}); }
+  };
   // open the providers panel (the same API app.js wires to #dock-cloud)
   if (!window.ProvidersScreen) return 'no-screen';
   window.ProvidersScreen.open(function(){});
@@ -106,7 +115,7 @@ HINTTXT=$(ev "
   var hint = document.getElementById('getkey-hint-' + a.dataset.getkey);
   return hint ? hint.textContent : '';
 })()")
-has "$HINTTXT" "in-app browser" "the bridge-tier hint copy says 'in-app browser'"
+has "$HINTTXT" "panel browser" "the bridge-tier hint copy says 'panel browser' (the v0.67.3 native-panel branch)"
 
 # 6. the blocked-link card's open rides InAppBrowser (bridge stub still up)
 # (v0.63.5: a plain tap DOCKS the panel browser now — the card painter is
