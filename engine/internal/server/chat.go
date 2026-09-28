@@ -317,6 +317,77 @@ func libraryPreamble(sess *store.Session) string {
         return librarySystemPromptOff
 }
 
+// chatMetadataPreamble (v0.68 THE METADATA PERSONAS — user spec: "edit
+// all default personas so that the bot knows about everything in its
+// chat metadata, just basic information to encapsulate what each pill
+// does"). A compact, LIVE-VALUED block describing every control the
+// user can flip on THIS chat, appended for every persona (default or
+// custom — it's factual context, not persona flavor), so the bot can
+// name the exact pill + where to flip it when the user asks. The PM
+// client composes the same block client-side (pmMetadataBlock — PM turns
+// bypass the engine); keep the two texts in sync.
+func (s *Server) chatMetadataPreamble(sess *store.Session) string {
+        if sess == nil {
+                return ""
+        }
+        libOn := sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto
+        if !s.tweaksBotLibOn(sess.ID) {
+                libOn = false // the tweaks half of the switch (either off = off)
+        }
+        dlOn := libOn && s.tweaksBotDLOn(sess.ID)
+        var tplName string
+        if raw := strings.TrimSpace(sess.TemplateID); raw != "" {
+                var tpl struct {
+                        Name string `json:"name"`
+                }
+                if json.Unmarshal([]byte(raw), &tpl) == nil && tpl.Name != "" {
+                        tplName = tpl.Name
+                } else {
+                        tplName = raw
+                }
+        }
+        b := &strings.Builder{}
+        b.WriteString("\n\n## This chat's controls (what the user can flip — name the pill + the path when relevant)\n")
+        b.WriteString("- effort (toolbar pill, currently \"" + effLabel(sess.Effort) + "\"): how deeply you reason per turn (low / med / high ladder).\n")
+        b.WriteString("- web search: ON by default — you search whenever a live fact matters.\n")
+        if sess.DeepResearch {
+                b.WriteString("- deep research: currently ON — be thorough, multi-source, cross-referenced, cited.\n")
+        } else {
+                b.WriteString("- deep research: currently OFF (armed via the lib pill's + when a template owns the composer).\n")
+        }
+        if libOn {
+                b.WriteString("- Bot Library (the 🛠 lib toolbar pill + ✦ tweaks → Bot Library): currently ON — you may browse, download and use the app's library on the fly.\n")
+        } else {
+                b.WriteString("- Bot Library (the 🛠 lib toolbar pill + ✦ tweaks → Bot Library): currently OFF — you can browse + recommend only; downloads/loads refuse until the user flips it back on.\n")
+        }
+        if dlOn {
+                b.WriteString("- Can download bundles (✦ tweaks → Bot Library → Can download bundles): currently ON — you may download new bundles and use them right away.\n")
+        } else {
+                b.WriteString("- Can download bundles (✦ tweaks → Bot Library → Can download bundles): currently OFF — only bundles already in the user's library (\"Yours\") are usable; new downloads refuse with that switch path.\n")
+        }
+        if tplName != "" {
+                b.WriteString("- active template (the ⧉ chip above the composer): \"" + tplName + "\" — its methodology is armed for every turn of this chat.\n")
+        } else {
+                b.WriteString("- active template: none armed (the user can apply one from the library's USE button).\n")
+        }
+        if w := sess.SlidingWindow; w > 0 {
+                b.WriteString("- context: the last " + strconv.Itoa(w) + " messages ride each turn (the sliding window; ✦ tweaks → mind).\n")
+        } else {
+                b.WriteString("- context: the whole chat rides each turn (no sliding window).\n")
+        }
+        b.WriteString("- ✦ tweaks (the header pill): this chat's OWN look — icon, colors, text sizes, background — purely cosmetic, plus the library switches above.\n")
+        return b.String()
+}
+
+// effLabel normalizes an effort value for the persona text.
+func effLabel(e string) string {
+        if v := strings.TrimSpace(e); v != "" {
+                return v
+        }
+        return "med"
+}
+
+
 // librarySystemPromptOn — the LIB-ON preamble (the chat's Bot Library
 // switch is ON). The model is told the library exists, is instructed to
 // SEARCH before answering capability questions (Strands lesson: imperative
@@ -505,6 +576,10 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         b.WriteString("Today is " + time.Now().Format("Monday, 2 January 2006") + ".")
 
         ph := s.mergedPlaceholders(sess) // v0.29: global customs + this chat's local customs
+        // v0.68 THE METADATA PERSONAS: every persona (default or custom)
+        // gets the live controls block — the bot knows what each pill does
+        // + the current state, so it can name the exact flip path on ask.
+        meta := s.chatMetadataPreamble(sess)
         if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
                 persona := strings.TrimSpace(spec.Text)
                 if persona == "" {
@@ -516,6 +591,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                         b.WriteString("\n\n" + artifactSystemPrompt)
                 }
                 b.WriteString(s.libStateLine(sess))
+                b.WriteString(meta)
                 return b.String()
         }
         persona := strings.TrimSpace(sess.Persona)
@@ -525,6 +601,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                 // with the full toolchain).
                 b.WriteString("\n\n" + substituteAllVars(defaultPersonaFor(sess), sess.Title, sess.Model, sess.Provider, ph))
                 b.WriteString(s.libStateLine(sess))
+                b.WriteString(meta)
                 return b.String()
         }
         b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))
@@ -533,6 +610,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                 b.WriteString("\n\n" + artifactSystemPrompt)
         }
         b.WriteString(s.libStateLine(sess))
+        b.WriteString(meta)
         return b.String()
 }
 
@@ -781,6 +859,11 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 "skills_auto":   sess.SkillsAuto,
                 // v0.60 pt C.9: the lib pill's effective gate.
                 "lib_auto":      sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto,
+                // v0.68: the effective tweaks gates (the standalone-brain
+                // fallback prompt names them; the engine-sent system_prompt
+                // already carries the full metadata block).
+                "bot_lib":       (sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto) && s.tweaksBotLibOn(sess.ID),
+                "bot_dl":        (sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto) && s.tweaksBotLibOn(sess.ID) && s.tweaksBotDLOn(sess.ID),
                 // v0.19: persona system — the per-turn system message is
                 // identity + the chat's persona (or the default prompt).
                 "system_prompt": s.systemPromptFor(sess),

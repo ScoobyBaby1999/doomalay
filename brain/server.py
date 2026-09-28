@@ -825,6 +825,10 @@ async def chat(request: Request):
                 skills_auto=body.get("skills_auto", False),
                 # v0.60 pt C.9: THE LIB PILL — the single gatekeeping flag.
                 lib_auto=body.get("lib_auto", False),
+                # v0.68: the effective tweaks gates (None-safe — old
+                # engines don't send them).
+                bot_lib=body.get("bot_lib"),
+                bot_dl=body.get("bot_dl"),
             ):
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"

@@ -2188,6 +2188,68 @@
 
   // ── A PrivateMode turn (SDK bridge, runs in the WebView) ──────────
 
+  // pmMetadataBlock (v0.68 THE METADATA PERSONAS) — the PM twin of the
+  // engine's chatMetadataPreamble: PM turns bypass the engine, so the
+  // live controls block rides the client-composed system message. Same
+  // shape, same live values (state._tweaks carries botLib/botDL — the
+  // tweaks blob loads on chat open; absent = enabled, the same default).
+  function pmMetadataBlock(state) {
+    var t = (state && state._tweaks) || {};
+    var libOn = !!(state.libAuto || state.templateAuto || state.skillsAuto);
+    if (t.botLib === false) libOn = false;   // the tweaks half (either off = off)
+    var dlOn = libOn && t.botDL !== false;
+    var eff = state.effort || 'med';
+    var lines = [
+      '## This chat\u2019s controls (what the user can flip \u2014 name the pill + the path when relevant)',
+      '- effort (toolbar pill, currently "' + eff + '"): how deeply you reason per turn (low / med / high ladder).',
+      '- web search: ON by default \u2014 you search whenever a live fact matters.',
+      state.deepResearch
+        ? '- deep research: currently ON \u2014 be thorough, multi-source, cross-referenced, cited.'
+        : '- deep research: currently OFF (armed via the lib pill\u2019s + when a template owns the composer).',
+      libOn
+        ? '- Bot Library (the \ud83e\uddf0 lib toolbar pill + \u2726 tweaks \u2192 Bot Library): currently ON \u2014 you may browse, download and use the app\u2019s library on the fly.'
+        : '- Bot Library (the \ud83e\uddf0 lib toolbar pill + \u2726 tweaks \u2192 Bot Library): currently OFF \u2014 you can browse + recommend only; downloads/loads refuse until the user flips it back on.',
+      dlOn
+        ? '- Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles): currently ON \u2014 you may download new bundles and use them right away.'
+        : '- Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles): currently OFF \u2014 only bundles already in the user\u2019s library ("Yours") are usable; new downloads refuse with that switch path.',
+      (state.template && state.template.name)
+        ? '- active template (the \u29c9 chip above the composer): "' + state.template.name + '" \u2014 its methodology is armed for every turn of this chat.'
+        : '- active template: none armed (the user can apply one from the library\u2019s USE button).',
+      (state.slidingWindow && state.slidingWindow > 0)
+        ? '- context: the last ' + state.slidingWindow + ' messages ride each turn (the sliding window; \u2726 tweaks \u2192 mind).'
+        : '- context: the whole chat rides each turn (no sliding window).',
+      '- \u2726 tweaks (the header pill): this chat\u2019s OWN look \u2014 icon, colors, text sizes, background \u2014 purely cosmetic, plus the library switches above.'
+    ];
+    return '\n\n' + lines.join('\n');
+  }
+
+  // pmLibraryPreamble (v0.68) — the PM twin of the engine's
+  // libraryPreamble (chat.go): the default persona's LIBRARY discipline
+  // block, conditional on the effective lib gate. PM turns reach the hub
+  // through the ACTION tool protocol (hublib), so the phrasing says
+  // ACTION; the discipline mirrors the engine's MUST/SHOULD/MAY/MUST NOT
+  // block. Appended ONLY to the default persona (the engine's contract).
+  function pmLibraryPreamble(state) {
+    var t = (state && state._tweaks) || {};
+    var libOn = !!(state.libAuto || state.templateAuto || state.skillsAuto);
+    if (t.botLib === false) libOn = false;
+    if (libOn) {
+      return '\n\n## The Doomalay Library\n' +
+        'This chat\u2019s library is ON. The Doomalay app has a LIBRARY \u2014 a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the hublib ACTION tool (search by keyword, popular, recent, by tag).\n\n' +
+        '## Library discipline\n' +
+        'MUST: Before answering any question that could be solved by an existing library entry (a methodology, a skill, a persona, a theme, a script), call hublib with a 1-3 keyword query and report the top result(s) in one line. Never answer from parametric memory for capability questions.\n' +
+        'SHOULD: Recommend the smallest entry that solves the actual sub-problem; cite name + the one capability you\u2019d use, and offer to download it for the user via the same tool.\n' +
+        'MAY: Pull an entry via hublib once you have decided it is the right fit; the download lands in the user\u2019s library (\u201cYours\u201d) and is immediately usable in this chat.\n' +
+        'MUST NOT use a library entry when: the task fits in a few lines of trivial code or text; the entry\u2019s surface area exceeds the problem\u2019s; the user explicitly asked for a from-scratch implementation; or pulling it would steer away from the user\u2019s stated direction rather than toward it.\n';
+    }
+    return '\n\n## The Doomalay Library\n' +
+      'This chat\u2019s library switch is OFF (the user can flip it via the \ud83e\uddf0 lib toolbar pill or \u2726 tweaks \u2192 Bot Library). The Doomalay app still HAS a library \u2014 a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the hublib ACTION tool.\n\n' +
+      '## Library discipline (browse-only mode)\n' +
+      'MUST: When the user asks about capabilities (\u201ccan the app do X?\u201d, \u201cis there a skill for Y?\u201d), call hublib with a 1-3 keyword query and report the top result(s) in one line \u2014 never answer from parametric memory.\n' +
+      'SHOULD: Recommend entries by name + one-line capability; tell the user to flip the Bot Library switch ON to download + use them.\n' +
+      'MUST NOT attempt to download or load entries \u2014 downloads refuse until the user flips the Bot Library switch back on. Do not pretend the library is unavailable; it IS available, just download-gated.\n';
+  }
+
   // v0.19: the PM system message mirrors the engine's systemPromptFor —
   // a live identity line + the chat's persona (or the default persona) +
   // the artifact protocol when the persona doesn't carry it. PM turns
@@ -2199,6 +2261,9 @@
   // inside the persona are substituted with the live values.
   // v0.26: multi-persona resolution + {name}/{skills}/custom keys —
   // mirrors engine personas.go (trigger > shuffle > always > legacy).
+  // v0.68: the metadata block (pmMetadataBlock) rides every PM system
+  // message — default or custom persona — so the bot always knows the
+  // chat's controls + their live state.
   function pmSystemMessage(state, model, metrics) {
     var displayName = prettyModel(model);
     var head = 'You are ' + (displayName || 'an AI assistant') +
@@ -2240,10 +2305,14 @@
       sys += (window.Persona && window.Persona.substituteAll)
         ? window.Persona.substituteAll(defPersona, state.chatName, model, state.provider)
         : substituteVars(DEFAULT_PERSONA, model, state.provider);
-      return sys; // the default persona carries the artifact protocol
+      // v0.68: the PM default persona rides the LIBRARY discipline block
+      // (the engine's libraryPreamble twin) + the metadata block — the
+      // PM default now knows the library exists AND every control's
+      // live state, exactly like the engine path.
+      return sys + pmLibraryPreamble(state) + pmMetadataBlock(state); // the default persona carries the artifact protocol
     }
     if (!/artifact/i.test(personaText)) sys += '\n\n' + ARTIFACT_PROMPT;
-    return sys;
+    return sys + pmMetadataBlock(state);
   }
 
   function runPMTurn(text, state, bodyEl, icon) {
@@ -2566,18 +2635,25 @@
     // default flip.
 
     // v0.60 pt C.9: THE LIB PILL (replaces the template + skills pills):
-    // the toolbar is [effort · x] + [🛠 lib | +]. TWO hotboxes:
+    // the toolbar is [effort · x] + [🛠 lib | + | <bundle>]. TWO hotboxes +
+    // one indicator segment:
     //   · the LABEL press toggles the chat's lib_auto gate (ON: the bot
     //     browses AND uses the library on the fly; OFF: it can still
     //     browse + recommend — downloads/loads refuse with the switch
     //     path, engine + brain both enforce).
     //   · the + press opens the PUBLIC LIBRARY with THIS chat connected
     //     (Hub.open(undefined, {chat}) — the whole library, any type).
-    // The + is DYNAMIC: it shows the name of the template/skill in use
-    // THIS turn (tool_use/tool_result events — see paintSegPlus), the
-    // active manual template shows persistently, and an unused slot is
-    // just '+'. The old whole-pill ⧉ template browse action is replaced
-    // by the + (the sheet stays reachable via the library's Yours rows).
+    //   · v0.68 THE ACTIVE-BUNDLE SEGMENT (user spec: "another pill that
+    //     connects to the lib pill, right of the +") — a third segment in
+    //     the wrap that DYNAMICALLY APPEARS showing the bundle/template/
+    //     skill in use for the CURRENT turn, whether the user armed it or
+    //     the bot reached for it on its own. It is a DETERMINISTIC
+    //     derivation of the event log (see turnBundleOf + bundleHint):
+    //     a user message (live or replayed) re-arms it to the manual
+    //     template or hides it, and this turn's tool events fill it — so
+    //     a fresh-open replay lands every chat in its OWN exact last-turn
+    //     state, identical every time. The + itself stays a plain '+'
+    //     (the name lives in the dedicated segment now).
     bar.appendChild(libPill(bodyEl, state, icon));
 
     syncTemplateChip(bodyEl, state, icon);
@@ -2597,6 +2673,8 @@
         state.templateAuto = false; // v0.60: the lib gate resets with the rest
         state.skillsAuto = false;
         state.libAuto = false;
+        // v0.68: the bundle segment hides with the rest of the indicators.
+        armTurnBundle(bodyEl, state);
         persistCaps(state, icon);
         renderToolbar(bar, state, levels, icon, bodyEl);
       });
@@ -2844,6 +2922,128 @@
     return '+';
   }
 
+  // ── v0.68 THE ACTIVE-BUNDLE STATE MACHINE (deterministic) ───────────
+  // state._turnBundle = {kind, name} | null — WHAT THE PILL SHOWS.
+  // The rules (applied identically to LIVE events and REPLAYED history,
+  // which is what makes flipping chats deterministic):
+  //   1. a USER message (live send, live echo, or replayed row) RE-ARMS
+  //      the pill to the chat's armed manual template, or hides it — a
+  //      fresh turn starts fresh;
+  //   2. tool events (template_show / dtemplate / skills / a hublib
+  //      download, live or replayed) set it to what the turn ACTUALLY
+  //      uses — the "bot decided by itself" case;
+  //   3. a hublist card event whose summary starts "downloaded ·" (the
+  //      brain's download confirmation) sets it with the card's type;
+  //   4. applyTemplate() arms it immediately (the user-selected case);
+  //      the template chip ✕ + the toolbar 'clear' drop it.
+  // After a full replay the pill therefore reads EXACTLY what the last
+  // turn used (or the armed template) — same events in, same pill out,
+  // every open, every chat.
+  var BUNDLE_GLYPHS = {
+    template: '⧉', skill: '✦', script: '⚙', doc: '▤', bundle: '⤓'
+  };
+  function bundleGlyph(kind) {
+    return BUNDLE_GLYPHS[String(kind || '')] || BUNDLE_GLYPHS.bundle;
+  }
+
+  // turnBundleOf — PURE: a tool event payload → the bundle it names (or
+  // null). Covers BOTH halves of every path:
+  //   engine ACTION tools: template_show (the tool_use summary IS the id)
+  //   brain dt tools:      dtemplate's result "TEMPLATE <id> (…", the
+  //                         skills result "=== SKILL LOADED: <name> ==="
+  //   hublib downloads:    engine PM bridge "DOWNLOADED — <name> (<typ>)",
+  //                         brain "downloaded '<name>' — …"
+  function turnBundleOf(pay) {
+    if (!pay) return null;
+    var name = String(pay.name || '').toLowerCase();
+    var text = String(pay.text || pay.summary || '');
+    if (name === 'template_show') {
+      var id = String(pay.summary || '').trim();
+      return id ? { kind: 'template', name: id } : null;
+    }
+    if (name === 'dtemplate') {
+      var m = text.match(/TEMPLATE\s+([\w.-]+)\s*\(/) ||
+              text.match(/template[\"']?\s*[:=]\s*[\"']?([\w.-]+)/i);
+      if (m) return { kind: 'template', name: m[1] };
+      return null;
+    }
+    if (name === 'skills' || name === 'skill') {
+      var m2 = text.match(/SKILL LOADED:\s*([\w.-]+)/);
+      if (m2) return { kind: 'skill', name: m2[1] };
+      return null;
+    }
+    if (name === 'hublib') {
+      // the download RESULT is the "use" — browse/detail/downloaded don't
+      // count (browsing isn't using).
+      var eng = text.match(/DOWNLOADED\s+—\s+(.+?)\s+\((\w+)\)/);   // engine PM bridge
+      if (eng) return { kind: eng[2], name: eng[1] };
+      var br = text.match(/^downloaded\s+'([^']+)'/i);               // brain dt_hublib
+      if (br) return { kind: 'bundle', name: br[1] };
+      return null;
+    }
+    return null;
+  }
+
+  // hublistBundleOf — PURE: a hublist event {summary, items} → the
+  // downloaded bundle it confirms (the brain emits "downloaded · <name>"
+  // with one already-downloaded card; the card carries the real type).
+  function hublistBundleOf(summary, items) {
+    var s = String(summary || '');
+    if (s.indexOf('downloaded') !== 0) return null;   // "hub · N skills" = a browse
+    var name = s.indexOf('·') >= 0 ? s.split('·').slice(1).join('·').trim() : '';
+    if (!name) return null;
+    var kind = 'bundle';
+    if (items && items.length && items[0] && items[0].type) kind = String(items[0].type);
+    return { kind: kind, name: name };
+  }
+
+  // bundleHint — the event seam: derive + record + paint (live paints
+  // only when this chat owns the toolbar; the state carries it for the
+  // reopen render either way).
+  function bundleHint(bodyEl, state, pay) {
+    if (!state || !pay) return;
+    var b = turnBundleOf(pay);
+    if (!b) return;
+    state._turnBundle = b;
+    paintSegBundle(bodyEl, state);
+  }
+
+  // armTurnBundle — rule 1 (a fresh turn re-arms to the manual template
+  // or hides). Called from doSend + the replayed/live 'user' seam.
+  function armTurnBundle(bodyEl, state) {
+    state._turnBundle = (state.template && state.template.name)
+      ? { kind: 'template', name: state.template.name }
+      : null;
+    paintSegBundle(bodyEl, state);
+  }
+
+  // paintSegBundle — the LIVE half: swap the segment's text/visibility
+  // without re-rendering the toolbar (the turn is streaming; a full
+  // re-render would drop it). Detached/stale bodyEls are fine — the
+  // querySelector just misses and the state survives for the reopen.
+  function paintSegBundle(bodyEl, state) {
+    var host = bodyEl && bodyEl.querySelector ? bodyEl : null;
+    if (!host && currentCtx && currentCtx.bodyEl) host = currentCtx.bodyEl;
+    if (!host) return;
+    var seg = host.querySelector('#seg-lib-bundle');
+    if (!seg) return;
+    var b = state && state._turnBundle;
+    if (!b || !b.name) {
+      if (seg.style.display !== 'none') {
+        seg.style.display = 'none';
+        seg.textContent = '';
+        seg.removeAttribute('aria-label');
+        seg.removeAttribute('title');
+      }
+      return;
+    }
+    var label = bundleGlyph(b.kind) + ' ' + String(b.name);
+    if (seg.textContent !== label) seg.textContent = label;
+    seg.setAttribute('aria-label', 'in use this turn — ' + b.kind + ': ' + b.name);
+    seg.title = b.kind + ' in use this turn — tap to open the library';
+    if (seg.style.display !== '') seg.style.display = '';
+  }
+
   function shortCap(name) {
     var s = String(name || '').trim();
     if (!s) return '+';
@@ -2892,18 +3092,18 @@
 
     var plus = document.createElement('button');
     plus.id = 'seg-lib-plus';
-    plus.textContent = segPlusLabel(state, 'lib');
+    plus.textContent = '+';
     plus.title = 'open the public library — every type, this chat connected';
     plus.setAttribute('aria-label', plus.title);
+    // v0.68: the + is a plain '+' again — the in-use name moved to the
+    // dedicated ACTIVE-BUNDLE segment right of it (the user's refined
+    // spec); its color just follows the wrap state.
     plus.style.cssText = 'border:none;border-left:1px solid ' +
       (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
-      'background:transparent;color:' +
-      ((state.template || state._turnTemplate || state._turnSkill)
-        ? (active ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)') +
-      ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
-      'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
-      '-webkit-tap-highlight-color:transparent';
-    plus.addEventListener('click', function () {
+      'background:transparent;color:' + (active ? 'var(--on-accent)' : 'var(--text-3)') +
+      ';padding:4px 10px 4px 8px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;' +
+      'white-space:nowrap;-webkit-tap-highlight-color:transparent';
+    var openLib = function () {
       if (!window.Hub) {
         if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the library is not available');
         return;
@@ -2919,10 +3119,33 @@
         };
       }
       window.Hub.open(undefined, { chat: chat });
-    });
+    };
+    plus.addEventListener('click', openLib);
+
+    // v0.68 THE ACTIVE-BUNDLE SEGMENT — right of the +, inside the wrap
+    // (visually CONNECTED to the lib pill). Hidden until something is in
+    // use this turn; carries its OWN accent-1 window (tint fallback + the
+    // gradient twin + fixed attachment — the inline-catcher + painter
+    // re-anchor it inside the transformed panel) so it reads as an
+    // activity indicator even when the wrap itself is the quiet rail.
+    var seg = document.createElement('button');
+    seg.id = 'seg-lib-bundle';
+    seg.style.cssText = 'display:none;border:none;' +
+      'border-left:1px solid rgba(var(--accent-rgb),0.45);' +
+      'background-color:rgba(var(--accent-rgb),0.12);' +
+      'background-image:var(--accent-gradient, none);' +
+      'background-attachment:fixed;' +
+      'color:var(--on-accent);padding:4px 12px 4px 9px;font-size:11px;font-weight:600;' +
+      'font-family:inherit;cursor:pointer;white-space:nowrap;max-width:150px;overflow:hidden;' +
+      'text-overflow:ellipsis;flex-shrink:1;-webkit-tap-highlight-color:transparent';
+    seg.addEventListener('click', openLib);
 
     wrap.appendChild(lab);
     wrap.appendChild(plus);
+    wrap.appendChild(seg);
+    // paint the current state (a mid-turn toolbar re-render keeps the
+    // segment; a fresh open derives it from the replay)
+    paintSegBundle(bodyEl, state);
     return wrap;
   }
 
@@ -3007,27 +3230,28 @@
     return wrap;
   }
 
-  // paintSegPlus — the LIVE half of the dynamic +: tool events call this
-  // to swap the + segment's text without re-rendering the toolbar (the
-  // turn is streaming; a full re-render would drop it).
+  // paintSegPlus — the LIVE + refresher. v0.68: the + is a plain '+'
+  // (the in-use name lives in the ACTIVE-BUNDLE segment now — see
+  // paintSegBundle); this keeps the + color in sync with the wrap state
+  // and delegates the bundle segment paint so every existing call site
+  // (sends, tool events) refreshes BOTH halves without a toolbar render
+  // (the turn is streaming; a full re-render would drop it).
   function paintSegPlus(bodyEl, state) {
     if (!bodyEl || !state) return;
     var lp = bodyEl.querySelector('#seg-lib-plus');
     if (lp) {
-      var nl = segPlusLabel(state, 'lib');
-      if (lp.textContent !== nl) lp.textContent = nl;
       var wrapOn = !!(state.libAuto || state.templateAuto || state.skillsAuto ||
         state.template || state.deepResearch);
-      lp.style.color = (nl !== '+' &&
-        (state.template || state._turnTemplate || state._turnSkill))
-        ? (wrapOn ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)';
+      if (lp.textContent !== '+') lp.textContent = '+';
+      lp.style.color = wrapOn ? 'var(--on-accent)' : 'var(--text-3)';
     }
+    paintSegBundle(bodyEl, state);
   }
 
-  // turnTemplateHint — feed the dynamic + from tool events (user item 6:
-  // "the + icon should change dynamically to the name of the template/
-  // skill that is currently being used. This updates dynamically as the
-  // templates or skills being used that turn").
+  // turnTemplateHint — the legacy dynamic-+ tracker (v0.52 user item 6).
+  // v0.68: the + itself no longer shows the name, but _turnTemplate/
+  // _turnSkill stay maintained for the record; the DEDICATED segment is
+  // fed by bundleHint (called at the same seams).
   //   template_show (direct)  → the summary IS the template id
   //   dtemplate (brain)       → the tool_result text names the template
   //   skills (brain)          → "=== SKILL LOADED: <name> ==="
@@ -3072,6 +3296,10 @@
       state.template = null;
       state.deepResearch = false;
     }
+    // v0.68: the user-selected case — the segment shows the armed
+    // template the moment it's applied (the "easy" half of the spec;
+    // the bot-autonomous half fills it from tool events).
+    armTurnBundle(c.bodyEl, state);
     persistCaps(state, icon);
     // v0.52 FIX: the old flow always came from the template SHEET (a
     // stacked view — its pop fired 'doomalay:root-restored', which
@@ -3118,6 +3346,10 @@
       '<button class="tpl-chip-x" title="clear the template" aria-label="Clear the active template">✕</button>';
     b.querySelector('.tpl-chip-x').addEventListener('click', function () {
       state.template = null;
+      // v0.68: dropping the armed template drops the segment's manual
+      // show too (a streaming turn's next tool event re-fills its real
+      // usage if it uses something).
+      armTurnBundle(bodyEl, state);
       persistCaps(state, icon);
       if (b.parentNode) b.parentNode.removeChild(b);
       var tb = bodyEl.querySelector('#chat-toolbar');
@@ -3623,12 +3855,24 @@
           if (ev.i) tgt.ei = ev.i;
         }
         if (ures.pend >= 0 && state._pendingSends) state._pendingSends.splice(ures.pend, 1);
+        // v0.68: the turn officially begins — the active-bundle segment
+        // re-arms (idempotent with doSend's own reset; a manual template
+        // counts as in-use for the coming turn, else hidden until this
+        // turn's tool events name what it uses).
+        armTurnBundle(bodyEl, state);
         return;
       }
       var uMsg = { role: 'user', text: ev.text || '', ts: evTsMs(ev) };
       if (ev.i) uMsg.ei = ev.i;
       state.messages.push(uMsg);
       appendMessage(msgContainer, scrollEl, uMsg, bodyEl, state._icon, state);
+      // v0.68: a REPLAYED user row — the SAME fresh-turn rule applied to
+      // history: everything below this row belongs to a new turn, so the
+      // segment re-arms (manual template or hidden) and this turn's tool
+      // events refill it as they replay. A fresh open therefore lands
+      // every chat in its own exact last-turn state — the determinism
+      // the flip-thru-chats case needs (same events in, same pill out).
+      armTurnBundle(bodyEl, state);
       // v0.19: NO auto-title — the chat keeps its default random name from
       // the list until the user renames it themselves (tap the name in the
       // panel header).
@@ -3712,7 +3956,10 @@
       // model reaches for THIS turn (the tool_use half — template_show's
       // summary IS the id; the brain's tool_use has the name only, its
       // tool_result below carries the named markers).
+      // v0.68: the DEDICATED segment tracks the same turn (bundleHint —
+      // live + replayed, the deterministic derivation).
       turnTemplateHint(bodyEl, state, pay);
+      bundleHint(bodyEl, state, pay);
       var tuMsg = { role: 'tool', text: pay.summary || pay.name || 'tool', tool: true, payload: pay, ts: evTsMs(ev) };
       if (ev.i) tuMsg.ei = ev.i;
       state.messages.push(tuMsg);
@@ -3728,6 +3975,9 @@
       // markers ("=== SKILL LOADED: <name> ===", "TEMPLATE <id> (…)" —
       // the tool_use half had an empty summary there).
       turnTemplateHint(bodyEl, state, pay2);
+      // v0.68: hublib downloads land here too ("DOWNLOADED — name (typ)"
+      // engine-side, "downloaded 'name' — …" brain-side).
+      bundleHint(bodyEl, state, pay2);
       var trMsg = { role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2, ts: evTsMs(ev) };
       if (ev.i) trMsg.ei = ev.i;
       state.messages.push(trMsg);
@@ -3771,6 +4021,14 @@
         if (ev.i) hubMsg.ei = ev.i;
         state.messages.push(hubMsg);
         appendMessage(msgContainer, scrollEl, hubMsg, bodyEl, state._icon, state);
+        // v0.68: a "downloaded · <name>" confirmation IS a use — the
+        // dedicated segment picks it up with the card's real type
+        // (live + replayed, the same deterministic derivation).
+        var dlb = hublistBundleOf(hsum, hitems);
+        if (dlb) {
+          state._turnBundle = dlb;
+          paintSegBundle(bodyEl, state);
+        }
       }
     } else if (type === 'hide') {
       // v0.37: an edit/delete/regenerate (this device or another) masked
@@ -4730,6 +4988,10 @@
     // re-fills it from the tool events as the turn runs).
     state._turnTemplate = null;
     state._turnSkill = null;
+    // v0.68 THE ACTIVE-BUNDLE SEGMENT: the same fresh-turn rule — re-arm
+    // to the chat's manual template (it IS what this turn will use) or
+    // hide; the turn's tool events fill the real usage as it lands.
+    armTurnBundle(bodyEl, state);
     paintSegPlus(bodyEl, state);
 
     // v0.37: an edit was committed — drop the banner WITHOUT restoring,

@@ -344,15 +344,29 @@
   // Absent = ENABLED — every pre-switch chat keeps full bot library access,
   // and the brain re-reads the blob on EVERY call ("on the fly": flip the
   // switch mid-conversation and the next turn obeys). OFF keeps browse +
-  // recommend working; only downloads/loads refuse. Only this key may enter
-  // the blob through this path.
-  var BOX_KEYS = ['botLib'];
+  // recommend working; only downloads/loads refuse. Only these keys may
+  // enter the blob through this path.
+  // v0.68: botDL — CAN DOWNLOAD BUNDLES (the user's second switch, under
+  // Bot Library): ON the bot may download new bundles and use them; OFF
+  // it only uses what's already downloaded. Same absent=enabled default,
+  // same live re-read, enforced engine-side + brain-side AFTER botLib
+  // (botLib off already blocks everything).
+  var BOX_KEYS = ['botLib', 'botDL'];
 
   function setBox(state, key, v) {
     if (BOX_KEYS.indexOf(key) < 0) return;
     touch(state);
     state._tweaks[key] = !!v;
     persist(state);
+  }
+
+  // v0.68: the ON:/OFF: hint formatter (user spec: "let the description
+  // start with ON: xyz, then OFF: xyz. And format it better please") —
+  // the two states render as two bolded-labeled lines so the switch's
+  // exact effect reads at a glance.
+  function onOffHint(onText, offText) {
+    return '<b style="color:var(--text-1)">ON:</b> ' + onText +
+      '<br><b style="color:var(--text-1)">OFF:</b> ' + offText;
   }
 
   // a switch row in the shared appearance.js style — theme vars only.
@@ -773,8 +787,18 @@
             '<button data-action="tweaks-sizes-reset" data-scope="chat" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px;width:100%">inherit the global sizes again</button>'
           ) +
           sec('Bot Library',
-            '<p class="hint">The single switch behind the lib pill. ON: the bot browses, downloads AND uses the library on the fly. OFF: the bot can still browse + recommend — downloads and skill loads refuse with the switch path. Flips apply on the very next bot turn — no restart.</p>' +
-            boxRow('botLib', 'Bot Library', 'the bot may browse + download + use the library (skills, templates, scripts, docs)', t.botLib !== false)
+            '<p class="hint">The switches behind the lib pill. Flips apply on the very next bot turn — no restart.</p>' +
+            boxRow('botLib', 'Bot Library',
+              onOffHint(
+                'the bot browses, downloads AND uses the library on the fly (skills, templates, scripts, docs).',
+                'the bot can still browse + recommend — downloads and skill loads refuse with the switch path.'),
+              t.botLib !== false) +
+            '<div style="height:10px"></div>' +
+            boxRow('botDL', 'Can download bundles',
+              onOffHint(
+                'the bot may download new bundles and use them right away.',
+                'the bot only uses bundles already in Your library — new downloads wait until this is back on.'),
+              t.botDL !== false)
           ) +
           sec('Background',
             '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +

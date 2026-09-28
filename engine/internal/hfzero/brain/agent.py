@@ -74,6 +74,8 @@ async def run_turn(
     template_auto: bool = False,   # v0.52: the [template|+] pill (legacy)
     skills_auto: bool = False,     # v0.52: the [skills|+] pill (legacy)
     lib_auto: bool = False,       # v0.60 pt C.9: THE LIB PILL (the single gate)
+    bot_lib: bool | None = None,  # v0.68: the effective Bot Library gate
+    bot_dl: bool | None = None,   # v0.68: the effective Can-download-bundles gate
 ) -> AsyncIterator[dict]:
     """Run one chat turn. Yields events as dicts.
 
@@ -103,12 +105,20 @@ async def run_turn(
     lib_on = bool(lib_auto or template_auto or skills_auto)
     template_auto = lib_on
     skills_auto = lib_on
+    # v0.68: the effective tweaks gates (None = an old engine payload →
+    # fall back to the lib gate's value; the engine's own system_prompt
+    # carries the full live metadata block either way).
+    if bot_lib is None:
+        bot_lib = lib_on
+    if bot_dl is None:
+        bot_dl = lib_on
 
     # Build the system prompt.
     if not system_prompt:
         system_prompt = _build_system_prompt(model, mode, workspace, web_search, deep_research,
                                             workspaces=workspaces,
-                                            template_auto=template_auto, skills_auto=skills_auto)
+                                            template_auto=template_auto, skills_auto=skills_auto,
+                                            bot_lib=bot_lib, bot_dl=bot_dl)
 
     # Build messages (include history if provided).
     messages = list(history) if history else []
@@ -976,7 +986,8 @@ def _build_tools(workspace: str, web_search: bool,
 
 def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool,
                         workspaces: list = None, template_auto: bool = False,
-                        skills_auto: bool = False) -> str:
+                        skills_auto: bool = False, bot_lib: bool = True,
+                        bot_dl: bool = True) -> str:
     """Build the system prompt for the agent."""
     parts = [f"You are Doomalay, an autonomous AI assistant running via {model}."]
 
@@ -1102,6 +1113,26 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
                      "(`hublib` tool) carries more, downloadable on demand")
 
     parts.append("When you use a tool, explain what you're doing and why. Be concise but complete.")
+
+    # v0.68 THE METADATA PERSONAS — the compact controls block (the engine
+    # path gets the full live-valued version via its system_prompt; this is
+    # the standalone-brain fallback). Basic info on every pill so the bot
+    # can name the flip path when the user asks.
+    parts.append(
+        "THIS CHAT'S CONTROLS (what the user can flip — name the pill + the path when relevant):\n"
+        "- effort (toolbar pill): how deeply you reason per turn (low/med/high).\n"
+        "- web search: ON by default — search whenever a live fact matters.\n"
+        "- deep research: thorough multi-source research mode (" + ("currently ON" if deep_research else "currently OFF") + ").\n"
+        "- Bot Library (the 🛠 lib toolbar pill + ✦ tweaks → Bot Library): "
+        + ("currently ON — you may browse, download and use the app's library on the fly."
+           if bot_lib else
+           "currently OFF — browse + recommend only; downloads/loads refuse until the user flips it back on.") + "\n"
+        "- Can download bundles (✦ tweaks → Bot Library → Can download bundles): "
+        + ("currently ON — you may download new bundles and use them right away."
+           if bot_dl else
+           "currently OFF — only bundles already in the user's library (\"Yours\") are usable; new downloads refuse with that switch path.") + "\n"
+        "- ✦ tweaks (the header pill): this chat's own look — icon, colors, text sizes, background — plus the library switches above.\n"
+    )
     return "\n\n".join(parts)
 
 

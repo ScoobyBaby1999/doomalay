@@ -242,7 +242,7 @@ func (s *Server) sessionLibOn(sessID string) bool {
 
 // tweaksBotLibOn — the per-chat tweaks Bot Library switch (absent = on).
 func (s *Server) tweaksBotLibOn(sessID string) bool {
-        if sessID == "" {
+        if sessID == "" || s.db == nil {
                 return true
         }
         raw, err := s.db.GetSetting(chatTweaksKey(sessID))
@@ -254,6 +254,32 @@ func (s *Server) tweaksBotLibOn(sessID string) bool {
                 return true
         }
         v, ok := blob["botLib"]
+        if !ok {
+                return true
+        }
+        on, _ := v.(bool)
+        return on
+}
+
+// tweaksBotDLOn — v0.68: the per-chat tweaks CAN DOWNLOAD BUNDLES switch
+// (absent = on). ON: the bot may download new bundles and use them; OFF:
+// only what's already downloaded ("Yours") — downloads refuse with the
+// exact switch path. Enforced AFTER tweaksBotLibOn (botLib off already
+// blocks every download; botDL only narrows further when botLib is on).
+// Same live re-read on every call — a mid-chat flip applies next turn.
+func (s *Server) tweaksBotDLOn(sessID string) bool {
+        if sessID == "" || s.db == nil {
+                return true
+        }
+        raw, err := s.db.GetSetting(chatTweaksKey(sessID))
+        if err != nil || strings.TrimSpace(raw) == "" {
+                return true
+        }
+        var blob map[string]any
+        if err := json.Unmarshal([]byte(raw), &blob); err != nil {
+                return true
+        }
+        v, ok := blob["botDL"]
         if !ok {
                 return true
         }
@@ -487,6 +513,13 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 }
                 if !s.tweaksBotLibOn(session) {
                         return "", "the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to download"
+                }
+                // v0.68: CAN DOWNLOAD BUNDLES — OFF means the bot works
+                // with what's already in the user's library only. (Merged
+                // into the extracted dispatch so BOTH the PM bridge and the
+                // direct-path ACTION runner carry the gate.)
+                if !s.tweaksBotDLOn(session) {
+                        return "", "the chat's Can download bundles switch is OFF — only already-downloaded bundles are usable; flip ✦ tweaks → Bot Library → Can download bundles back on to download new ones"
                 }
                 typ := get("type")
                 if !hublibPMTypes[typ] {

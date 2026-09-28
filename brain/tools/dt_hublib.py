@@ -54,7 +54,12 @@ HUBLIB_TYPES = ("template", "skill", "script", "doc")
 # v0.60 pt C.9: THE LIB PILL — ONE gatekeeping switch ("Bot Library" in
 # ✦ tweaks, key botLib; absent = enabled). Legacy bots wrote per-type
 # botTemplates/botSkills keys: both-false reads as off, anything else on.
+# v0.68: botDL — CAN DOWNLOAD BUNDLES ("Can download bundles" in
+# ✦ tweaks → Bot Library, key botDL; absent = enabled). OFF = the bot
+# only uses already-downloaded bundles; new downloads refuse with the
+# exact switch path. Enforced AFTER botLib (botLib off blocks everything).
 LIB_KEY = "botLib"
+DL_KEY = "botDL"
 LEGACY_BOX_KEYS = ("botTemplates", "botSkills")
 TYPE_LABELS = {"template": "templates", "skill": "skills",
                "script": "scripts", "doc": "docs"}
@@ -68,6 +73,7 @@ DEFAULT_TIMEOUT = 8.0
 SLOW_TIMEOUT = 30.0  # browse/detail/download fan out over HF repos
 
 BOX_LABEL_SWITCH = "✦ tweaks → Bot Library"
+DL_BOX_LABEL_SWITCH = "✦ tweaks → Bot Library → Can download bundles"
 
 
 def _now() -> str:
@@ -129,6 +135,25 @@ def lib_enabled(tweaks: dict | None) -> tuple[bool, str]:
             "the Bot Library switch is OFF for this chat — ask the user to "
             f"switch it back on ({BOX_LABEL_SWITCH}), then retry. You can "
             "still browse and recommend: say what you found and what to enable."
+        )
+    return True, ""
+
+
+def dl_enabled(tweaks: dict | None) -> tuple[bool, str]:
+    """Is the chat's CAN DOWNLOAD BUNDLES switch ON? (v0.68)
+
+    OFF means the model may only USE what's already downloaded — the
+    download action refuses with the exact switch path, but browse /
+    detail / downloaded / recommending all keep working (same shape as
+    the botLib gate: an opt-OUT, absent = enabled, re-read every call).
+    Call AFTER lib_enabled — a botLib-off chat never reaches this gate.
+    """
+    if isinstance(tweaks, dict) and tweaks.get(DL_KEY) is False:
+        return False, (
+            "the Can download bundles switch is OFF for this chat — only "
+            "already-downloaded bundles are usable. Ask the user to switch "
+            f"it back on ({DL_BOX_LABEL_SWITCH}) to download new ones, or "
+            "pick from the downloaded list (action='downloaded')."
         )
     return True, ""
 
@@ -505,6 +530,12 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
         if not ok:
             _note("hublib_lib_off", type=typ)
             return f"hublib: {msg}"
+        # v0.68: the second gate — Can download bundles OFF = browse +
+        # use-downloaded only (the same refusal shape, the deeper path).
+        ok_dl, msg_dl = dl_enabled(tweaks)
+        if not ok_dl:
+            _note("hublib_dl_off", type=typ)
+            return f"hublib: {msg_dl}"
 
     try:
         return _dispatch(action, typ=typ, q=q, tag=tag, sort=sort, ref=ref,
@@ -896,6 +927,22 @@ if __name__ == "__main__":  # pragma: no cover — manual smoke check
               "Bot Library switch is OFF" in out)
         out = run("browse", typ="template", client=gated)
         check("gate: browse unaffected by lib off", "no templates" in out)
+
+        # v0.68: the Can-download-bundles gate — absent = on; botDL False
+        # refuses downloads with the deeper switch path, browse still works.
+        check("dl: absent → enabled", dl_enabled({})[0] and dl_enabled(None)[0])
+        ok_dl, msg_dl = dl_enabled({"botDL": False})
+        check("dl: botDL False → refused + actionable path",
+              not ok_dl and "Can download bundles" in msg_dl
+              and "already-downloaded" in msg_dl)
+        check("dl: botDL True → enabled", dl_enabled({"botDL": True})[0])
+        dlogated = FakeClient(items=ITEMS, tweaks={"botDL": False})
+        out = run("download", typ="skill", ref="tdd", client=dlogated, state_dir=tmp)
+        check("gate: download refused when Can download bundles off",
+              "Can download bundles switch is OFF" in out)
+        out = run("browse", typ="skill", client=dlogated)
+        check("gate: browse unaffected by Can download bundles off",
+              len(out) > 0)
 
         out = run("browse", typ="persona", client=fc)
         check("type: persona refused with pointer",
