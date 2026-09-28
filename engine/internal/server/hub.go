@@ -261,17 +261,81 @@ func (s *Server) handleHubCollectionDelete(w http.ResponseWriter, r *http.Reques
 }
 
 // handleHubCollectionDownload is POST /api/hub/collections/{id}/download —
-// the one-press BUNDLE download (v0.60 pt C.6): every member rides the
-// ordinary Download path; the client applies the per-type side effects
-// (template/skill → the user's library, persona → the chat import,
-// theme → the look) from the returned {groups}.
+// the one-press BUNDLE download (v0.60 pt C.6). v0.67.2: streams progress
+// as Server-Sent Events so the frontend's Hub.downloads registry can drive
+// a phase-aware pill (enqueued → downloading N/M → verifying → complete |
+// failed) that PERSISTS across panel pop/push — fixes the static
+// 'downloading...' pill that reset on screen leave, and the broken
+// obra-bundle download.
+//
+// SSE protocol: each event is `data: {json}\n\n`. The final
+// `data: {"phase":"complete","groups":[...]}\n\n` carries the per-type
+// side-effect payload (template/skill → user library, persona → chat import,
+// theme → look). On error, `data: {"phase":"failed","error":"..."}\n\n`
+// then close. The progress channel is buffered (cap 32) so a slow consumer
+// never blocks the download goroutine.
 func (s *Server) handleHubCollectionDownload(w http.ResponseWriter, r *http.Request) {
-        groups, err := s.hub.DownloadCollection(r.PathValue("id"))
-        if err != nil {
-                hubWriteItemErr(w, err)
+        id := r.PathValue("id")
+        if id == "" {
+                writeError(w, http.StatusBadRequest, "id is required")
                 return
         }
-        writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+        // SSE handshake — mirror hfspace.go:773-780.
+        w.Header().Set("Content-Type", "text/event-stream")
+        w.Header().Set("Cache-Control", "no-cache")
+        w.Header().Set("Connection", "keep-alive")
+        w.Header().Set("X-Accel-Buffering", "no") // defeat nginx buffering so each event flushes
+        flusher, ok := w.(http.Flusher)
+        if !ok {
+                writeError(w, http.StatusInternalServerError, "streaming unsupported")
+                return
+        }
+
+        progress := make(chan hub.DownloadProgress, 32)
+        type dlResult struct {
+                groups []hub.CollectionDownloadGroup
+                err    error
+        }
+        resultCh := make(chan dlResult, 1)
+        go func() {
+                defer close(progress)
+                groups, err := s.hub.DownloadCollectionStream(id, progress)
+                resultCh <- dlResult{groups: groups, err: err}
+        }()
+
+        writeEvent := func(v any) {
+                var b []byte
+                if s, ok := v.([]byte); ok {
+                        b = s
+                } else {
+                        b, _ = json.Marshal(v)
+                }
+                // SSE: `data: <json>\n\n` (the trailing blank line terminates the event)
+                w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
+                flusher.Flush()
+        }
+
+        for {
+                select {
+                case <-r.Context().Done():
+                        return // client disconnected — the goroutine finishes on its own (cap-32 buffer absorbs its writes)
+                case p, ok := <-progress:
+                        if !ok {
+                                // channel closed; the download goroutine finished; read result
+                                res := <-resultCh
+                                if res.err != nil {
+                                        writeEvent(map[string]any{"phase": "failed", "error": res.err.Error()})
+                                } else {
+                                        writeEvent(map[string]any{
+                                                "phase":  "complete",
+                                                "groups": res.groups,
+                                        })
+                                }
+                                return
+                        }
+                        writeEvent(p)
+                }
+        }
 }
 
 // handleHubRepoTree is GET /api/hub/repo/{repo}/tree?path= — one directory

@@ -217,42 +217,132 @@ type CollectionDownloadGroup struct {
         Items []CollectionDownload `json:"items"`
 }
 
-// DownloadCollection downloads EVERY member of a bunch (v0.60 pt C.6: the
-// one-press bundle download). Each member rides the ordinary Download path
-// (local row + downloaded stamp + metric + the per-type counters), so the
-// per-item effects are identical to tapping every card in turn — the client
-// then applies the per-TYPE side effects (template/skill → the user's
-// library, persona → the chat, theme → the look). Individual member
-// failures are skipped (a half-offline bunch still lands its rest); an
-// empty result errors.
+// DownloadProgress (v0.67.2 THE PERSISTENT DOWNLOAD REGISTRY) is one
+// streamed event during a bundle download. The frontend's Hub.downloads
+// registry consumes these to drive the bunch view's download pill
+// (phase-aware, persisted across panel pop/push — fixes the static
+// 'downloading...' pill that reset on screen leave).
+//
+// Phases (per research 1-B — the robust download state machine):
+//   enqueued → downloading (per member) → verifying → complete | failed
+type DownloadProgress struct {
+        Phase  string `json:"phase"`            // enqueued | downloading | verifying | complete | failed
+        Done   int    `json:"done"`
+        Total  int    `json:"total"`
+        Failed int    `json:"failed"`
+        Member string `json:"member,omitempty"` // the item id last attempted
+        Error  string `json:"error,omitempty"`
+}
+
+// DownloadCollection is the synchronous (legacy) path — calls the
+// streaming core with a nil channel. Kept for any non-SSE caller; the
+// v0.67.2 SSE HTTP handler uses DownloadCollectionStream so the user
+// sees real progress.
 func (s *Service) DownloadCollection(id string) ([]CollectionDownloadGroup, error) {
+        return s.DownloadCollectionStream(id, nil)
+}
+
+// DownloadCollectionStream downloads EVERY member of a bunch and streams
+// progress events through `progress` (nil for the synchronous path). Each
+// member rides the ordinary Download path (local row + downloaded stamp +
+// metric + the per-type counters). Individual member failures are skipped
+// (a half-offline bunch still lands its rest) but counted in `failed`; an
+// empty result (no members OR all members failed) errors.
+//
+// The progress channel is buffered (caller-side, cap 32) so a slow
+// consumer never blocks the download. The caller closes the channel
+// after the function returns.
+//
+// v0.67.2: the user reported "pressing download shows a static
+// 'downloading...' pill; leaving and re-entering resets it to 'download
+// all x'; the obra bundle doesn't actually download." The root cause was
+// fire-and-forget POST + no progress + no in-memory registry — the bcur
+// object was destroyed on panel.popView() so the in-flight fetch's .then
+// resolved against stale state. This function + the SSE handler + the
+// frontend Hub.downloads registry together fix it: the registry survives
+// panel pop/push; bunchRender reads it for the pill label; the click
+// handler is non-blocking and lets the registry drive the UI.
+func (s *Service) DownloadCollectionStream(id string, progress chan<- DownloadProgress) ([]CollectionDownloadGroup, error) {
         id = SanitizeCollection(id)
         if id == "" {
                 return nil, ErrNotFoundLocal
         }
-        out := []CollectionDownloadGroup{}
+        // First pass: gather ALL members across every library so the user
+        // sees a real progress count (not a static 'downloading...' pill).
+        // The legacy DownloadCollection gathered+downloaded per-type in one
+        // loop; we split it so the total is known BEFORE the first download.
+        type pending struct {
+                spec LibrarySpec
+                it   Item
+        }
+        var members []pending
         for _, spec := range All() {
                 items, err := s.Items(spec.Type, "", "hearts", "", false)
                 if err != nil {
                         continue
                 }
-                group := CollectionDownloadGroup{Type: spec.Type}
                 for _, it := range items {
-                        if SanitizeCollection(it.Collection) != id {
-                                continue
+                        if SanitizeCollection(it.Collection) == id {
+                                members = append(members, pending{spec, it})
                         }
-                        item, payload, err := s.Download(spec.Type, it.Repo, it.ID)
-                        if err != nil {
-                                continue // member failed — the rest of the bundle still lands
-                        }
-                        group.Items = append(group.Items, CollectionDownload{Item: item, Payload: payload})
-                }
-                if len(group.Items) > 0 {
-                        out = append(out, group)
                 }
         }
-        if len(out) == 0 {
+        total := len(members)
+        if total == 0 {
                 return nil, ErrNotFoundLocal
+        }
+        if progress != nil {
+                progress <- DownloadProgress{Phase: "enqueued", Total: total, Done: 0, Failed: 0}
+        }
+        // Group the downloaded items by type for the final return.
+        groupsByType := map[string]*CollectionDownloadGroup{}
+        order := []string{}
+        done, failed := 0, 0
+        for _, m := range members {
+                item, payload, err := s.Download(m.spec.Type, m.it.Repo, m.it.ID)
+                if err != nil {
+                        // member failed — the rest of the bundle still lands
+                        failed++
+                        if progress != nil {
+                                progress <- DownloadProgress{
+                                        Phase: "downloading", Done: done, Total: total, Failed: failed,
+                                        Member: m.it.ID, Error: err.Error(),
+                                }
+                        }
+                        continue
+                }
+                done++
+                g, ok := groupsByType[m.spec.Type]
+                if !ok {
+                        g = &CollectionDownloadGroup{Type: m.spec.Type}
+                        groupsByType[m.spec.Type] = g
+                        order = append(order, m.spec.Type)
+                }
+                g.Items = append(g.Items, CollectionDownload{Item: item, Payload: payload})
+                if progress != nil {
+                        progress <- DownloadProgress{
+                                Phase: "downloading", Done: done, Total: total, Failed: failed,
+                                Member: item.ID,
+                        }
+                }
+        }
+        if progress != nil {
+                progress <- DownloadProgress{Phase: "verifying", Done: done, Total: total, Failed: failed}
+        }
+        if done == 0 {
+                if progress != nil {
+                        progress <- DownloadProgress{Phase: "failed", Done: 0, Total: total, Failed: failed, Error: "all members failed to download"}
+                }
+                return nil, ErrNotFoundLocal
+        }
+        // Build the output slice in stable type-registration order (the
+        // same shape the legacy DownloadCollection returned).
+        out := make([]CollectionDownloadGroup, 0, len(order))
+        for _, t := range order {
+                out = append(out, *groupsByType[t])
+        }
+        if progress != nil {
+                progress <- DownloadProgress{Phase: "complete", Done: done, Total: total, Failed: failed}
         }
         return out, nil
 }
