@@ -438,6 +438,21 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         duckForCanvas()
     }
 
+    // v0.69: the MOVE half of MainActivity's overlay guard — a moving
+    // finger can only RETRIGGER a duck that already exists (keep the
+    // ~3s peek alive through a continuous canvas drag); it can never
+    // ENGAGE one, so a scroll inside an overlay screen never lowers the
+    // sheet. The ENGAGE decision belongs to hitTestCanvasAsync (DOWN).
+    fun onSpaMove() {
+        if (!showing || !ducked) return
+        resetDuckTimer()
+    }
+
+    // v0.69: read-only exposure of the full dock for MainActivity's
+    // canvas hit-test (the full dock never ducks — checked before the
+    // async probe is even sent).
+    fun isAtFull(): Boolean = atFull
+
     private fun duckForCanvas() {
         if (!showing || atFull) return
         if (ducked) { resetDuckTimer(); return }
@@ -1058,11 +1073,25 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         val projected = dy + vy * PROJECTION_MS
         val fromFrac = 1f - dragStartOffset / h
         val toFrac = fromFrac - projected / h
+        // v0.69 — THE HALF-LINE GUARD (user spec: "The BIB panel should
+        // dock at half view if the user lets go of holding it while
+        // slightly above half view — currently it hides itself completely
+        // if the user lets go before the dock threshold"): the sheet's
+        // VISUAL position at release (the finger-true fraction; the rubber
+        // band only differs past full) outranks the fling. A downward
+        // release while the sheet still sits AT OR ABOVE the half dock
+        // never closes — it springs to the half dock. Below the line the
+        // existing ladder decides exactly as before (a genuine dismiss
+        // fling released below half still closes). The tolerance (~3% of
+        // the height) catches "released exactly at the dock" so the
+        // landing never flips a coin.
+        val curFrac = fromFrac - dy / h
         val target: String
         if (upward && (vy < -FLING_VY || Math.abs(dy) > h * UP_DRAG_FRAC || toFrac >= 0.82f)) {
             target = "full"
         } else if (dragFromFull) {
             target = when {
+                downward && curFrac >= DEFAULT_FRAC - 0.03f -> "default"   // the half-line guard
                 downward && vy > FLING_VY -> "close"
                 downward && dy > h * FULL_CLOSE_FRAC -> "close"
                 downward && (toFrac <= 0.30f || dy > h * FULL_DOCK_FRAC || vy > DOCK_VY) -> "default"
@@ -1070,6 +1099,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         } else {
             target = when {
+                downward && curFrac >= DEFAULT_FRAC - 0.03f -> "default"   // the half-line guard
                 downward && vy > FLING_VY -> "close"
                 downward && dy > h * CLOSE_FRAC -> "close"
                 upward && toFrac >= 0.82f -> "full"

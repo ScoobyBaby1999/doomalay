@@ -144,7 +144,11 @@
     // spaceParallax (Tweaks): 0 = the v0.52 flat lattice (byte-identical
     // behavior), 100 = the full stack. The per-cell jitter hashes
     // re-anchor in each layer's OWN frame (deterministic while sliding).
-    var pdepth = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 60;
+    // v0.69: the default is 0 — the user found the v0.67 stack too much
+    // ("the older one was much better") and asked for the pre-v0.67
+    // feel back. The slider keeps the capability for whoever wants it;
+    // settings.js migrates saved 60s (the old default) to 0 once.
+    var pdepth = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     pdepth = Math.max(0, Math.min(100, pdepth)) / 100;
     var PF_LINE = 1 - 0.38 * pdepth;
     var PF_DOT  = 1 - 0.20 * pdepth;
@@ -582,10 +586,11 @@
   var bgCache = { key: '', tile: null };
   var BG_PARALLAX = 0.35;
   // v0.67 DEEP FIELD: the far plane deepens with the spaceParallax
-  // setting (60 default → 0.296; 0 → exactly the v0.52 0.35).
+  // setting (0 — the v0.69 default — is exactly the v0.52 0.35; the
+  // formula only bends when the user dials the slider up).
   function bgParallaxNow() {
     var st = window.Settings.getState();
-    var d = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 60;
+    var d = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     d = Math.max(0, Math.min(100, d)) / 100;
     return Math.max(0.15, BG_PARALLAX - 0.09 * d);
   }

@@ -399,38 +399,53 @@
       }
     }
 
-    // THE TRIGGERS — a touch on the app behind the panel (the canvas
+    // THE TRIGGERS — a touch on the CANVAS SURFACE behind the panel (the
     // strip it leaves visible): at the half dock it DUCKS (the 30% peek
     // + the canvas focus); while ducked every touch RETRIGGERS the ~3s
     // hold ("unless the user is interacting" — touchmove counts: a
     // continuous canvas drag never expires mid-gesture). Capture-phase
     // + passive: the touch is NEVER eaten — the canvas pans on the very
     // first press, under the gliding panel (BIB parity, PanelBrowserSheet
-    // semantics exactly). THE DESKTOP CONVENTION — the scrim's old
-    // tap-to-close, reborn for the mouse: a clean CLICK outside the
-    // panel closes it (capture stopPropagation — the click never reaches
-    // the canvas widgets, exactly like the scrim never let it); a DRAG
-    // pans the canvas (new, and never a close); touch-generated clicks
-    // are ignored (the touch path owns ducks).
+    // semantics exactly).
+    // v0.69 — THE POSITIVE LIST (user spec: "The panel should not lower
+    // its position when an overlay screen is tapped, only when the
+    // background, canvas, or canvas icon is tapped. Not an overlay
+    // screen."): the trigger is now a positive list — the touch must land
+    // on the canvas itself (#c) or the icon layer (#chatbots, the
+    // canvas icons + their name pills; the off-screen arrows are painted
+    // ON #c). Overlay screens (pickers, sheets, the connect overlay,
+    // settings, dialogs — anything mounted over the app), the floating
+    // chrome (the gear, the dock strip) and the panel's own body are all
+    // OUTSIDE the list — they never duck, exactly like a native app's
+    // back layer stays put while a modal eats the tap.
+    // THE DESKTOP CONVENTION — the scrim's old tap-to-close, reborn for
+    // the mouse: a clean CLICK on the canvas surface closes the panel
+    // (capture stopPropagation — the click never reaches the canvas
+    // widgets, exactly like the scrim never let it); a DRAG pans the
+    // canvas (new, and never a close); clicks elsewhere (overlays,
+    // chrome) are none of ours; touch-generated clicks are ignored (the
+    // touch path owns ducks).
     _wireDuck() {
       if (!this.gestures || !this.gestures.duckForCanvas) return;
       var self = this;
-      var outsidePanel = function (t) {
-        return !!(t && t.closest && !t.closest('#chat-panel'));
+      var onCanvasSurface = function (t) {
+        if (!t || !t.closest) return false;
+        if (t.id === 'c') return true;                    // the canvas itself (the background)
+        return !!t.closest('#chatbots');                  // the icon layer (the canvas icons)
       };
 
       document.addEventListener('touchstart', function (e) {
         if (!self.isOpen()) return;
         if (e.touches.length !== 1) return;          // a second finger mid-gesture is never the trigger
         if (self.gestures.state() === 'full') return;  // the full dock never ducks
-        if (!outsidePanel(e.target)) return;           // panel-internal touches are its own
+        if (!onCanvasSurface(e.target)) return;         // overlays/chrome/panel taps are not ours
         if (self.gestures.isDucked()) self.gestures.retriggerDuck();
         else self.gestures.duckForCanvas();
       }, { capture: true, passive: true });
 
       document.addEventListener('touchmove', function (e) {
         if (!self.isOpen() || !self.gestures.isDucked()) return;
-        if (!outsidePanel(e.target)) return;
+        if (!onCanvasSurface(e.target)) return;
         self.gestures.retriggerDuck();   // continuous interaction keeps the peek
       }, { capture: true, passive: true });
 
@@ -444,7 +459,7 @@
       document.addEventListener('click', function (e) {
         if (!self.isOpen()) return;
         if (e.pointerType && e.pointerType !== 'mouse') return;  // touch/pen → not ours
-        if (!outsidePanel(e.target)) return;
+        if (!onCanvasSurface(e.target)) return;                   // only the canvas surface closes
         // a drag is a pan, not a click — the old scrim never closed on one
         if (downAt && (Math.abs(e.clientX - downAt.x) > 8 ||
                        Math.abs(e.clientY - downAt.y) > 8)) return;

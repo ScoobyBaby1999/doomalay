@@ -45,8 +45,10 @@
     gridRotation: 0,        // 0-100 → max degrees of rotation per line/dot
     // v0.67 THE DEEP FIELD: parallax depth between the canvas planes
     // (lines lag the icons, dots sit between; 0 = flat lattice, 100 =
-    // the full spacey stack; 60 default — see app.js renderGrid).
-    spaceParallax: 60,
+    // the full spacey stack). v0.69: ships 0 — the user preferred the
+    // pre-v0.67 flat lattice ("the older one was much better"); the
+    // Tweaks slider still dials it up on request.
+    spaceParallax: 0,
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────
@@ -67,6 +69,14 @@
       // Merge: saved overrides defaults, but names must be an array.
       const merged = Object.assign({}, defaultState, saved);
       if (!Array.isArray(merged.names)) merged.names = defaultState.names;
+      // v0.69: the deep field ships OFF (the pre-v0.67 flat lattice is
+      // the default again). Anyone who ran v0.67/68 carries the OLD
+      // default (60) in localStorage — reset it ONCE; a deliberately
+      // chosen value (anything ≠ 60) survives untouched.
+      if (saved.spaceParallax === 60 && !saved.spaceParallaxV69) {
+        merged.spaceParallax = defaultState.spaceParallax;
+        merged.spaceParallaxV69 = true;
+      }
       return merged;
     } catch (e) { return Object.assign({}, defaultState); }
   }

@@ -142,7 +142,7 @@ has "$SCR" '"opx":"1"' "open → the computed dim is up (the canvas is visible b
 has "$SCR" '"hit":"canvas"' "elementFromPoint over the canvas area hits the CANVAS, not the scrim (the press pans)"
 
 # ══ 2. THE DUCK — a canvas touch glides the panel to the 30% peek ════
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 DUCK=$(ev "(function(){
   return JSON.stringify({
@@ -160,9 +160,34 @@ has "$DUCK" '"scrimOp":"0"' "ducked → the scrim's dim LIFTS (canvas focus)"
 has "$DUCK" '"flag":true' "window.__doomalayPanelDuck goes true (the native channel's guard reads it)"
 has "$DUCK" '"evt":true' "the doomalay:panel-duck event fired {ducked:true}"
 
+# v0.69 REBASE: the synthetic touchstart carries no touchend, so the
+# browser reads it as a LONG-PRESS and the + New Chat menu blooms over
+# the test point -- every later elementFromPoint(200,100) hit the menu
+# button instead of the canvas (and under the v0.69 positive list a
+# menu tap rightly never ducks). Close the artifact + prove the new
+# contract while here: an OVERLAY/CHROME tap must NOT duck or
+# retrigger; the canvas itself still owns the duck.
+# let the current hold expire + the return glide settle (back to the half dock)
+sleep 3.9
+OVERLAY=$(ev "(function(){
+  var menu = document.getElementById('menu');
+  menu.classList.remove('hidden');
+  var btn = menu.querySelector('button') || menu.firstElementChild;
+  var y0 = window.__y();
+  window.__touch(btn, 'touchstart', 200, 100);
+  var y1 = window.__y();
+  menu.classList.add('hidden');
+  return JSON.stringify({y0: y0, y1: y1, want: Math.round(window.__H * 0.38),
+    flag: window.__doomalayPanelDuck === true});
+})()")
+has "$OVERLAY" '"flag":false' "v0.69: an OVERLAY tap (the + menu button) does NOT duck the panel"
+O_Y=$(echo "$OVERLAY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["y0"])')
+O_W=$(echo "$OVERLAY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["want"])')
+near "$O_Y" "$O_W" 10 "v0.69: the panel kept its half-dock position through the overlay tap"
+
 # ══ 3. THE RETRIGGERABLE HOLD — every touch restarts the ~3s ═════════
 sleep 2.0
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 2.0
 STILL=$(ev "JSON.stringify({y: window.__y(), flag: window.__doomalayPanelDuck === true})")
 has "$STILL" '"flag":true' "a canvas touch at t+2s RETRIGGERS the hold (still ducked at t+4s)"
@@ -190,7 +215,7 @@ has "$EXPY" '"evt":false' "the doomalay:panel-duck event fired {ducked:false}"
 ev "window.__touch(document.querySelector('#chat-panel .handle'), 'touchstart', 200, 350)" >/dev/null
 ev "window.__touch(document.querySelector('#chat-panel .handle'), 'touchend', 200, 350)" >/dev/null
 sleep 0.15   # the tap lands the duck first (press on the canvas while ducked retriggers…)
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 TAP=$(ev "JSON.stringify({y: window.__y(), want: Math.round(window.__H * 0.38)})")
 ev "window.__touch(document.querySelector('#chat-panel .handle'), 'touchstart', 200, 350)" >/dev/null
@@ -203,7 +228,7 @@ near "$T_Y" "$T_W" 10 "THE PRESS RULE — a still tap on the handle returns the 
 has "$TAPR" '"flag":false' "the tap-restore cleared the duck flag"
 
 # 4b. an UPWARD slide from the peek restores (never full)
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 UP=$(ev "JSON.stringify({y: window.__y(), ducked: window.__doomalayPanelDuck === true})")
 has "$UP" '"ducked":true' "re-ducked for the up-slide test"
@@ -218,7 +243,7 @@ U_W=$(echo "$UPR" | python3 -c "import json,sys; print(json.load(sys.stdin)['wan
 near "$U_Y" "$U_W" 10 "THE UP RULE — an upward slide from the peek returns to the ORIGINAL dock, never full"
 
 # 4c. a still press on the panel BODY restores (the content keeps its tap)
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 ev "window.__touch(document.querySelector('#chat-panel .panel-body'), 'touchstart', 200, 600)" >/dev/null
 ev "window.__touch(document.querySelector('#chat-panel .panel-body'), 'touchend', 200, 600)" >/dev/null
@@ -229,7 +254,7 @@ B_W=$(echo "$BODYR" | python3 -c "import json,sys; print(json.load(sys.stdin)['w
 near "$B_Y" "$B_W" 10 "THE PRESS RULE — a still press on the panel body restores the dock"
 
 # ══ 5. THE DOWN RULE — a downward slide from the peek CLOSES ═════════
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 ev "window.__touch(document.querySelector('#chat-panel .handle'), 'touchstart', 200, 500)" >/dev/null
 ev "window.__touch(document.querySelector('#chat-panel .handle'), 'touchmove', 200, 560)" >/dev/null
@@ -252,7 +277,7 @@ sleep 0.9
 FULL=$(ev "JSON.stringify({y: window.__y(), state: 'full-check'})")
 F_Y=$(echo "$FULL" | python3 -c "import json,sys; print(json.load(sys.stdin)['y'])")
 near "$F_Y" 0 10 "dragged up to the FULL dock"
-ev "window.__touch(document.elementFromPoint(200, 100), 'touchstart', 200, 100)" >/dev/null
+ev "window.__touch(document.getElementById('c'), 'touchstart', 200, 100)" >/dev/null
 sleep 0.8
 FULLR=$(ev "JSON.stringify({y: window.__y(), flag: window.__doomalayPanelDuck === true})")
 has "$FULLR" '"flag":false' "THE FULL DOCK never ducks (the flag stays false)"
@@ -310,7 +335,11 @@ has "$KTSHEET" "private var pageTapY = -1f" "Kotlin: the ducked page's still-pre
 has "$KTSHEET" "if (ducked) resetDuckTimer()" "Kotlin: page activity keeps the peek (the retrigger rides the page's DOWN+MOVE)"
 has "$KTSHEET" "!v.canScrollVertically(-1) && ev.rawY > chainDownY" "Kotlin: v0.68.0 — the MOVE branch grew the chain handoff (a top-of-page pull releases the lock)"
 has "$KTSHEET" "if (ducked) cancelDuck(restoreDock = true)" "Kotlin: the chrome acts restore the dock after their action"
-has "$KTMAIN" "a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE" "Kotlin: MainActivity retriggers on continuous canvas drags"
+has "$KTMAIN" "hitTestCanvasAsync(v, ev.x, ev.y)" "Kotlin: v0.69 — the duck ENGAGE rides the DOM hit-test (DOWN only)"
+has "$KTMAIN" "panelSheet?.onSpaMove()" "Kotlin: v0.69 — MOVE only RETRIGGERS an existing duck (never engages)"
+has "$KTMAIN" "t.id==='c'||(t.closest&&t.closest('#chatbots'))" "Kotlin: v0.69 — the hit-test positive list: canvas or icon layer, never overlays"
+has "$KTSHEET" "fun onSpaMove()" "Kotlin: v0.69 — the sheet exposes the retrigger-only MOVE entry"
+has "$KTSHEET" "curFrac >= DEFAULT_FRAC - 0.03f" "Kotlin: v0.69 — THE HALF-LINE GUARD (a release above the half dock never closes)"
 
 # ══ 11. CLEAN ROOM ═══════════════════════════════════════════════════
 ERRS=$(agent-browser errors 2>/dev/null | python3 -c "

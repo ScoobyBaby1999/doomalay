@@ -33,6 +33,35 @@ class MainActivity : Activity() {
         return panelSheet!!
     }
 
+    // v0.69: THE CANVAS HIT-TEST — the duck-engage's DOM gate. The SPA is
+    // asked (async, one evaluateJavascript per press — cheap next to the
+    // 300ms glide it gates) what element actually sits under the finger;
+    // only the canvas surface (#c) or the icon layer (#chatbots) counts
+    // as "the background, canvas, or canvas icon". A "true" answer hands
+    // the press to the sheet's duck logic on the UI thread; anything else
+    // (an overlay screen, the floating chrome) is ignored — the panel
+    // keeps its position. The probe is DEFENSIVE: a dead/early WebView
+    // ("" or an exception) returns false and the duck simply never fires
+    // (the sheet still ducks via its own strip/page touches, and the
+    // retrigger path still works for an already-ducked sheet).
+    private fun hitTestCanvasAsync(v: android.view.View, x: Float, y: Float) {
+        val sheet = panelSheet ?: return
+        if (!sheet.isOpen() || sheet.isAtFull()) return
+        val probe = "(function(){" +
+            "var t=document.elementFromPoint(" + x.toString() + "," + y.toString() + ");" +
+            "return !!(t&&(t.id==='c'||(t.closest&&t.closest('#chatbots'))));" +
+            "})()"
+        try {
+            (v as android.webkit.WebView).evaluateJavascript(probe) { res ->
+                if (res == "true") {
+                    handler.post { panelSheet?.onSpaTouch() }
+                }
+            }
+        } catch (e: Exception) {
+            AppLog.error("canvas hit-test failed", e)
+        }
+    }
+
     // v0.64.0: an OAuth return page landing in the panel sheet's WebView
     // (doomalay://) — the SPA never lost visibility, so its
     // visibilitychange refetch has to be woken manually.
@@ -269,22 +298,35 @@ class MainActivity : Activity() {
             }
             setContentView(webView)
             // v0.64.2: THE SECRET THIRD DOCK — while the native panel
-            // browser sits at the half dock, ANY press on the app behind
+            // browser sits at the half dock, a press on the app behind
             // it (the canvas strip the sheet leaves visible) ducks the
             // sheet to a 30% peek and hands the canvas its focus back
             // (PanelBrowserSheet.duckForCanvas → the __doomalayPanelState
             // broadcast lifts the SPA's scrim dim). The listener returns
             // FALSE — the touch ALWAYS flows on into the SPA, so the
-            // canvas pans immediately under the gliding sheet — and every
-            // retouch retriggers the ~3s re-dock delay.
+            // canvas pans immediately under the gliding sheet.
             // v0.65.1: ACTION_MOVE joins the trigger — a CONTINUOUS
             // canvas drag is "the user is interacting" and must not let
-            // the hold expire mid-gesture (onSpaTouch is idempotent:
-            // already ducked → just the timer reset).
-            webView.setOnTouchListener { _, ev ->
+            // the hold expire mid-gesture.
+            // v0.69 — THE OVERLAY GUARD (user spec: "The panel should
+            // not lower its position when an overlay screen is tapped,
+            // only when the background, canvas, or canvas icon is
+            // tapped. Not an overlay screen."): the ENGAGE (DOWN) now
+            // hit-tests the DOM first — an async elementFromPoint probe
+            // asks the SPA what actually sits under the finger, and only
+            // the canvas surface (#c) or the icon layer (#chatbots) may
+            // duck the sheet. Overlay screens (pickers, sheets, the
+            // connect overlay — anything mounted over the app) and the
+            // floating chrome (the gear, the dock strip) never engage.
+            // ACTION_MOVE only RETRIGGERS an existing duck (onSpaMove) —
+            // it can never lower the sheet by itself, so a scroll inside
+            // an overlay stays inert.
+            webView.setOnTouchListener { v, ev ->
                 val a = ev.actionMasked
-                if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE) {
-                    panelSheet?.onSpaTouch()
+                if (a == MotionEvent.ACTION_DOWN) {
+                    hitTestCanvasAsync(v, ev.x, ev.y)
+                } else if (a == MotionEvent.ACTION_MOVE) {
+                    panelSheet?.onSpaMove()
                 }
                 false
             }

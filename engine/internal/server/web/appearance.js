@@ -745,6 +745,7 @@
         // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
         // v0.67: + THE DEEP FIELD slider (parallax depth between the
         // canvas planes — the spacey stack; see app.js renderGrid).
+        // v0.69: default 0 — the pre-v0.67 flat lattice is the shipped look.
         section('Grid Effects', '' +
           toggleRow('hideGridLines', 'Hide grid lines', s.hideGridLines) +
           toggleRow('hideDots', 'Hide dots', s.hideDots) +
@@ -752,7 +753,7 @@
           gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '') +
           gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '') +
           gridSlider('spaceParallax', 'Space parallax',
-            (typeof s.spaceParallax === 'number') ? s.spaceParallax : 60,
+            (typeof s.spaceParallax === 'number') ? s.spaceParallax : 0,
             'lines lag the icons · dots float between · 0 = flat') +
           '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )
@@ -861,12 +862,12 @@
       Settings.rerender();
     } else if (d.action === 'grid-effects-reset') {
       // v0.45 ITEM 6: reset just the grid effects (hide/scatter/size/rotation)
-      // v0.67: the deep field resets to its DEFAULT (60), not 0 — the
-      // spacey stack is the shipped look, not an effect to disable.
+      // v0.69: the deep field resets to its DEFAULT (0) — the pre-v0.67
+      // flat lattice is the shipped look; the spacey stack is opt-in.
       Settings.setState({
         hideGridLines: false, hideDots: false,
         gridScatter: 0, gridSizeVariation: 0, gridRotation: 0,
-        spaceParallax: 60
+        spaceParallax: 0
       });
       Settings.rerender();
     }
