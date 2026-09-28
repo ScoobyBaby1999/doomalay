@@ -515,6 +515,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                         // Keep the file-save capability alive under custom personas.
                         b.WriteString("\n\n" + artifactSystemPrompt)
                 }
+                b.WriteString(s.libStateLine(sess))
                 return b.String()
         }
         persona := strings.TrimSpace(sess.Persona)
@@ -523,6 +524,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                 // quick vs HF — the HF default knows it lives in a Space
                 // with the full toolchain).
                 b.WriteString("\n\n" + substituteAllVars(defaultPersonaFor(sess), sess.Title, sess.Model, sess.Provider, ph))
+                b.WriteString(s.libStateLine(sess))
                 return b.String()
         }
         b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))
@@ -530,7 +532,39 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
                 // Keep the file-save capability alive under custom personas.
                 b.WriteString("\n\n" + artifactSystemPrompt)
         }
+        b.WriteString(s.libStateLine(sess))
         return b.String()
+}
+
+// libStateLine (v0.67.2) — the LIVE library state, appended to every
+// composed system prompt: which pills/switches gate the bot's library
+// access this session. Without it the model GUESSES the switch state
+// (observed live: a model claimed the library was off when it was on)
+// — now the turn's prompt states the truth.
+func (s *Server) libStateLine(sess *store.Session) string {
+        if sess == nil {
+                return ""
+        }
+        // the pills straight off the in-hand session (no db round-trip);
+        // the tweaks Bot Library switch needs the store — guarded so a
+        // db-less Server (tests) still composes.
+        lib := sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto
+        if s.db != nil {
+                lib = lib && s.tweaksBotLibOn(sess.ID)
+        }
+        tpl := sess.TemplateAuto
+        state := "\n\n[Live library state: the Bot Library switch (the lib pill) is "
+        if lib {
+                state += "ON"
+        } else {
+                state += "OFF — downloads and skill loads refuse with the switch path; browsing and recommending still work"
+        }
+        state += " for this chat"
+        if tpl {
+                state += "; the template auto-search pill is ON"
+        }
+        state += ". The user flips it at ✦ tweaks → Bot Library.]"
+        return state
 }
 
 // handleChatWS is GET /api/chat?session_id=<id>[&since=<lastSeq>] — the
@@ -1164,6 +1198,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // executed against THIS session by the server's tool runner.
                 PersonaToolFn: func(ctx context.Context, name, argJSON string) string {
                         return s.runPersonaTool(sessionID, name, argJSON)
+                },
+                // v0.67.2: THE LIBRARY on the direct path — browse/get/
+                // download the public hub from the quick chats. The runner
+                // enforces the per-chat Bot Library switch per action.
+                HublibToolFn: func(ctx context.Context, argJSON string) string {
+                        return s.runHublibAction(sessionID, argJSON)
                 },
                 // v0.44: the active method template (the template pill) —
                 // the turn pipelines prepend the brief as a METHOD TEMPLATE

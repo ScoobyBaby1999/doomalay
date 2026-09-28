@@ -421,23 +421,33 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
 // hub browse (the pmsdk twin of the brain's dt_hublib).
 func (s *Server) handleToolsHublib(w http.ResponseWriter, r *http.Request) {
         q := r.URL.Query()
-        action := q.Get("action")
-        session := q.Get("session")
+        res, errStr := s.hublibDispatch(q.Get("action"), q.Get, q.Get("session"))
+        if errStr != "" {
+                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "error": errStr})
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "result": res})
+}
+
+// hublibDispatch (v0.67.2, extracted) — the shared hub-lib action core:
+// the HTTP handler (the PM bridge) AND the direct-path ACTION runner
+// (runHublibAction, wired into llm.Chat via ChatRequest.HublibToolFn)
+// both land here. get(k) resolves an argument by key. The per-chat Bot
+// Library switch gates downloads only (browse/get always answer) —
+// exactly the dt_hublib semantics.
+func (s *Server) hublibDispatch(action string, get func(string) string, session string) (string, string) {
         switch action {
-        case "search":
-                typ := q.Get("type")
+        case "search", "": // empty action → the search default (bare "ACTION: hublib {}")
+                typ := get("type")
                 if typ == "" {
                         typ = "skill"
                 }
                 if !hublibPMTypes[typ] {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                                "error": "type must be one of template, skill, script, doc"})
-                        return
+                        return "", "type must be one of template, skill, script, doc"
                 }
-                items, err := s.hub.Items(typ, q.Get("q"), "relevant", "", false)
+                items, err := s.hub.Items(typ, get("q"), "relevant", "", false)
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "error": "hub: " + err.Error()})
-                        return
+                        return "", "hub: " + err.Error()
                 }
                 var b strings.Builder
                 n := len(items)
@@ -457,52 +467,72 @@ func (s *Server) handleToolsHublib(w http.ResponseWriter, r *http.Request) {
                 if n == 0 {
                         b.WriteString("(no items matched — try another query or type)")
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "result": clip(b.String(), hublibOutMax)})
+                return clip(b.String(), hublibOutMax), ""
         case "get":
-                typ := q.Get("type")
+                typ := get("type")
                 if !hublibPMTypes[typ] {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                                "error": "type must be one of template, skill, script, doc"})
-                        return
+                        return "", "type must be one of template, skill, script, doc"
                 }
-                item, payload, err := s.hub.ItemDetail(typ, q.Get("repo"), q.Get("id"))
+                item, payload, err := s.hub.ItemDetail(typ, get("repo"), get("id"))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "error": "hub: " + err.Error()})
-                        return
+                        return "", "hub: " + err.Error()
                 }
                 text := "HUB ITEM — " + item.Name + " (" + typ + ", repo " + item.Repo + ", id " + item.ID + ")\n" +
                         oneLine(item.Description, 200) + "\n\nPAYLOAD HEAD:\n" +
                         clip(payload, hublibPayloadHead, "\n…(clipped — download it to use)")
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "result": clip(text, hublibOutMax)})
+                return clip(text, hublibOutMax), ""
         case "download":
                 if !s.sessionLibOn(session) {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                                "error": "the chat's Bot Library is OFF — you can browse and recommend, but downloads are refused until the user flips ✦ tweaks → Bot Library back on"})
-                        return
+                        return "", "the chat's Bot Library is OFF — you can browse and recommend, but downloads are refused until the user flips ✦ tweaks → Bot Library back on"
                 }
                 if !s.tweaksBotLibOn(session) {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                                "error": "the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to download"})
-                        return
+                        return "", "the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to download"
                 }
-                typ := q.Get("type")
+                typ := get("type")
                 if !hublibPMTypes[typ] {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                                "error": "type must be one of template, skill, script, doc"})
-                        return
+                        return "", "type must be one of template, skill, script, doc"
                 }
-                item, payload, err := s.hub.Download(typ, q.Get("repo"), q.Get("id"))
+                item, payload, err := s.hub.Download(typ, get("repo"), get("id"))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "error": "hub: " + err.Error()})
-                        return
+                        return "", "hub: " + err.Error()
                 }
                 text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. PAYLOAD:\n" +
                         clip(payload, skillsLoadMax, "\n…(payload clipped — ACTION: hublib {\"action\":\"get\"} re-reads the head)")
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "result": clip(text, skillsLoadMax+400)})
+                return clip(text, skillsLoadMax+400), ""
         default:
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib",
-                        "error": "unknown action " + oneLine(action, 30) + ". Valid: search, get, download."})
+                return "", "unknown action " + oneLine(action, 30) + ". Valid: search, get, download."
         }
+}
+
+// runHublibAction (v0.67.2) — the DIRECT-PATH library ACTION runner: the
+// quick chats' "ACTION: hublib {…}" lines land here (via
+// llm.ChatRequest.HublibToolFn), parse their JSON args, and ride the
+// same hublibDispatch as the PM bridge. Returns OBSERVATION-ready text.
+func (s *Server) runHublibAction(sessionID, argJSON string) string {
+        var args map[string]any
+        if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
+                // tolerate a bare string arg ("ACTION: hublib brainstorming") —
+                // treat it as the search query.
+                trimmed := strings.TrimSpace(strings.Trim(argJSON, "\""))
+                if trimmed != "" && !strings.HasPrefix(argJSON, "{") {
+                        args = map[string]any{"action": "search", "q": trimmed}
+                } else {
+                        return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
+                }
+        }
+        action, _ := args["action"].(string)
+        if action == "" {
+                action = "search"
+        }
+        get := func(k string) string {
+                v, _ := args[k].(string)
+                return v
+        }
+        res, errStr := s.hublibDispatch(action, get, sessionID)
+        if errStr != "" {
+                return "OBSERVATION:\nerror: " + errStr
+        }
+        return "OBSERVATION:\n" + res
 }
 
 // hublibPMTypes — the libraries the bot-side hub serves (personas excluded,

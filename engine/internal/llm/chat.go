@@ -57,6 +57,13 @@ type ChatRequest struct {
         // the server (it owns the session store); nil = the tools report
         // "need a session" instead of running.
         PersonaToolFn func(ctx context.Context, name, argJSON string) string `json:"-"`
+
+        // v0.67.2: HUBLIB — the public-hub library ACTION tool for the
+        // direct path (the quick chats). Set by the server (it owns the
+        // hub service + the per-chat Bot Library switch). The runner
+        // enforces the switch per action: browse/get always answer;
+        // download refuses with the exact switch path when OFF.
+        HublibToolFn func(ctx context.Context, argJSON string) string `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1113,6 +1120,42 @@ ACTION: web_search {"query": "<search terms>"}
 ACTION: web_fetch {"url": "<https url>"}
 Cite web sources inline as [1], [2] matching the search result numbering. Never fabricate URLs.`
 
+// composeTurnSystem (v0.67.2, extracted from runWebSearchTurn) — the
+// turn's FULL system prompt: the caller's persona/system message, the
+// active method-template brief, the ACTION tool protocol, the local
+// tools, the web tools, the template-library tools (template pill) and
+// THE LIBRARY (hublib, whenever the server armed the runner). Extracted
+// so tests can assert the composition (the model can only call tools
+// it was offered).
+func composeTurnSystem(req ChatRequest) string {
+        system := req.SystemPrompt
+        if req.TemplateBrief != "" {
+                if system != "" {
+                        system += "\n"
+                }
+                system += templateBriefBlock(req.TemplateID, req.TemplateBrief)
+        }
+        if system != "" {
+                system += "\n"
+        }
+        system += toolsProtocol + "\n\n" + localToolsProtocol
+        system += "\n\n" + webToolsProtocol
+        // v0.52 THE 3 PILLS: the template-library tools ride ONLY when the
+        // chat's template auto-search pill is on (session template_auto —
+        // the [template|+] label press). A chat with the pill off never
+        // advertises the tools, so the model can't burn rounds browsing a
+        // library the user disabled.
+        if req.TemplateAuto {
+                system += "\n\n" + templateToolsProtocol
+        }
+        // v0.67.2: THE LIBRARY rides the direct path whenever the server
+        // armed the hublib runner (the engine build with the hub service).
+        if req.HublibToolFn != nil {
+                system += "\n\n" + hublibToolsProtocol
+        }
+        return system
+}
+
 func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
         ch <- ChatChunk{Type: "status", State: "running"}
 
@@ -1148,30 +1191,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         // req.WebSearch gate left plain turns answering from stale memory
         // or claiming they can't browse). req.WebSearch still controls
         // Path A above (OpenRouter's provider-side search plugin).
-        system := req.SystemPrompt
-        // v0.44 TEMPLATE PILL: the active method template's brief rides
-        // the system prompt BEFORE the tool protocol — "METHOD TEMPLATE
-        // — <id>" + the resolved methodology (the frontend resolved it;
-        // the engine never fetches on the turn path).
-        if req.TemplateBrief != "" {
-                if system != "" {
-                        system += "\n"
-                }
-                system += templateBriefBlock(req.TemplateID, req.TemplateBrief)
-        }
-        if system != "" {
-                system += "\n"
-        }
-        system += toolsProtocol + "\n\n" + localToolsProtocol
-        system += "\n\n" + webToolsProtocol
-        // v0.52 THE 3 PILLS: the template-library tools ride ONLY when the
-        // chat's template auto-search pill is on (session template_auto —
-        // the [template|+] label press). A chat with the pill off never
-        // advertises the tools, so the model can't burn rounds browsing a
-        // library the user disabled.
-        if req.TemplateAuto {
-                system += "\n\n" + templateToolsProtocol
-        }
+        system := composeTurnSystem(req)
 
         roundReq := req
         roundReq.SystemPrompt = system
@@ -1230,7 +1250,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 nudged = true
                                 ch <- ChatChunk{Type: "progress", Text: "model said it can't — reminding it about its tools…"}
                                 history = append(history, Message{Role: "assistant", Content: answer})
-                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string { if req.TemplateAuto { return ", template_list, template_show" } ; return "" }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
+                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string { if req.TemplateAuto { return ", template_list, template_show" } ; return "" }()) + (func() string { if req.HublibToolFn != nil { return ", hublib (search/browse/download the public library)" } ; return "" }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
                                 continue
                         }
                         // Final answer — ALREADY streamed live above.
@@ -1402,6 +1422,27 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: action}
                 return observation
         }
+        if action == "hublib" && req.HublibToolFn != nil {
+                // v0.67.2: THE LIBRARY on the direct path — browse/get/
+                // download the public hub through the server's runner
+                // (it owns the hub service + the per-chat Bot Library
+                // switch; downloads refuse with the switch path when
+                // OFF). Pill + observation mirror the local-tool shape.
+                var args map[string]any
+                summary := ""
+                if json.Unmarshal([]byte(argJSON), &args) == nil {
+                        for _, k := range []string{"q", "id", "action"} {
+                                if v, ok := args[k].(string); ok && v != "" {
+                                        summary = v
+                                        break
+                                }
+                        }
+                }
+                ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary}
+                observation = req.HublibToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "hublib"}
+                return observation
+        }
         if action == "delegate" && req.DelegateFn != nil {
                 // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
                 // one prompt, up to 3 other models answer in parallel.
@@ -1520,7 +1561,7 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                         observation = "OBSERVATION:\n" + text
                         ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
                 default:
-                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)."
+                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string { if req.HublibToolFn != nil { return ", hublib {\"action\": \"search|get|download\", ...} (the public hub library)" } ; return "" }()) + "."
                 }
         }
         return observation
@@ -2423,10 +2464,14 @@ func canonicalToolName(name string) string {
                 return "persona_activate"
         case "placeholder", "set_placeholder", "variable", "set_variable":
                 return "placeholder_set"
-        case "templates", "template", "list_templates", "template_library", "library", "browse_templates":
+        case "templates", "template", "list_templates", "template_library", "browse_templates":
                 return "template_list"
         case "show_template", "template_detail", "get_template", "view_template", "template_info":
                 return "template_show"
+        // v0.67.2: "library" now means THE LIBRARY (the public hub) — the
+        // old template_list shim kept its template-specific aliases.
+        case "hub", "public_hub", "hub_library", "library", "browse_hub", "search_library", "library_search", "browse_library", "download_skill":
+                return "hublib"
         }
         // fuzzy: a near-miss of ANY real tool name (typo-level distance)
         if best, ok := nearestToolName(name); ok {
@@ -2436,12 +2481,13 @@ func canonicalToolName(name string) string {
 }
 
 // allCallableTools is the full known-tool universe for fuzzy matching
-// (local + web + persona + delegate + template — everything the ACTION
-// system runs).
+// (local + web + persona + delegate + template + hublib — everything
+// the ACTION system runs).
 var allCallableTools = append(append([]string{}, LocalToolNames...),
         "web_search", "web_fetch", "delegate",
         "persona_list", "persona_set", "persona_activate", "placeholder_set",
-        "template_list", "template_show")
+        "template_list", "template_show",
+        "hublib")
 
 // nearestToolName returns the closest known tool within Levenshtein
 // distance 2 (false when nothing is close enough to bet on).

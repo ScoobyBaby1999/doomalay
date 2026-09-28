@@ -86,6 +86,17 @@ const templateToolsProtocol = `You also have the method-template library (browse
 ACTION: template_list {} — browse the app's method-template library (ids, names, stage counts): research pipelines, superpowers disciplines, audits, lessons…
 ACTION: template_show {"id": "redteam"} — read one template's full methodology (stages with instructions, or the markdown discipline); FOLLOW it for the task when the user picks one or asks for that method`
 
+// hublibToolsProtocol (v0.67.2): THE LIBRARY on the direct path — the
+// public hub (templates, skills, scripts, docs from every publisher).
+// Composed whenever the server armed HublibToolFn. The Bot Library
+// switch (the lib pill) gates DOWNLOADS only; browsing + recommending
+// always answer — the runner enforces it and names the switch.
+const hublibToolsProtocol = `You also have THE PUBLIC HUB — the community library of templates, skills, scripts and docs (browsable, downloadable, usable on the fly):
+ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — search the hub (omit q for the newest)
+ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — one item's detail + payload head
+ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download it into the user's library + use it now
+Be opportunistic: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name. If nothing fits, say so and proceed without — never force a library item that steers away from the task, and never name an item a real search did not return. If the chat's Bot Library switch is OFF, downloads answer with the exact switch to flip (✦ tweaks → Bot Library); browsing and recommending still work.`
+
 // IsLocalTool reports whether name is a local tool.
 func IsLocalTool(name string) bool {
         for _, n := range LocalToolNames {
