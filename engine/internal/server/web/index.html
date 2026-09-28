@@ -3122,6 +3122,10 @@
   .hub-bunch-hero .hub-bundle-flag { bottom: auto; top: 12px; z-index: 2; }
   /* v0.60 pt C.6: the ONE-PRESS BUNDLE DOWNLOAD — a tinted pill riding the
      bunch hero under the description. */
+  /* v0.67.5: THE LIVE PILL — the download reads the persistent registry:
+     running shows N/M + a progress fill that rides the tone tint
+     (--dl-p, 0..1); done swaps to the ✓ glyph on the --ok tone. Every
+     color rides theme vars (the house rule). */
   .hub-bundle-dl {
     display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
     padding: 8px 14px; border-radius: 999px; cursor: pointer; font-family: inherit;
@@ -3132,9 +3136,30 @@
     text-shadow: 0 1px 4px rgba(var(--bg-panel-rgb), 0.8);
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    position: relative; overflow: hidden;
   }
   .hub-bundle-dl:active { transform: scale(0.97); }
   .hub-bundle-dl .icl { display: block; }
+  /* the running fill — the tone's tint, behind the label, riding the
+     pill's full height; --dl-p is repainted after every member. */
+  .hub-bundle-dl-fill {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: calc(var(--dl-p, 0) * 100%);
+    background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.30);
+    pointer-events: none;
+    transition: width 0.25s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hub-bundle-dl-fill { transition: none; }
+  }
+  .hub-bundle-dl > .icl,
+  .hub-bundle-dl > span { position: relative; }
+  .hub-bundle-dl .hub-bundle-dl-ok { color: var(--ok); font-weight: 800; }
+  .hub-bundle-dl.is-done {
+    border-color: rgba(var(--ok-rgb), 0.65);
+    color: var(--ok);
+  }
+  .hub-bundle-dl.is-running { cursor: default; }
   /* v0.60 pt C.6: the mine view's bundle-group delete 🗑 + the sticky
      confirm bar (the hi-delbar pattern, bottom of the body zone). */
   .hub-group-del {

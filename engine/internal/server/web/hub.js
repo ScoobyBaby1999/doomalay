@@ -77,12 +77,6 @@
 
   // v0.67.2: the PERSISTENT DOWNLOAD REGISTRY — keyed by collection
   // id, value = the live progress entry. Defined at MODULE SCOPE
-  // (inside the IIFE, NOT inside any view) so it survives a panel
-  // pop/push: when the user pops the bunch view (`bcur = null`), the
-  // in-flight SSE stream keeps updating the registry, and re-entering
-  // the bunch reads the live entry instead of starting fresh.
-  var downloads = new Map();
-
   // v0.60 pt B: BROWSE-STATE PERSISTENCE — the library remembers where
   // you were (type, q, sort, tag, mine, page, folded, scroll) across
   // close→reopen. Saved on every user action + throttled scroll + close;
@@ -423,47 +417,19 @@
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
         '</b><i>bundle</i></span>' : '';
-    // v0.60 pt C.6 / v0.67.2: the ONE-PRESS BUNDLE DOWNLOAD. The pill's
-    // label is driven by the PERSISTENT DOWNLOAD REGISTRY (not by a
-    // per-view `bcur.dlBusy` flag) so it survives pop/push of the bunch
-    // view and reflects the live SSE progress.
-    var dlEntry = downloadOf(bcur.id);
-    var dlLabel, dlDisabled;
-    if (!dlEntry) {
-      // no entry, or the 3s "✓ downloaded" window elapsed (downloadStart
-      // deletes the entry itself via setTimeout, so a missing entry IS
-      // the "idle" signal).
-      dlLabel = 'download all ' + (b.members || 0);
-      dlDisabled = false;
-    } else if (dlEntry.phase === 'enqueued') {
-      dlLabel = 'preparing…';
-      dlDisabled = true;
-    } else if (dlEntry.phase === 'downloading') {
-      dlLabel = 'downloading ' + dlEntry.done + '/' + dlEntry.total;
-      if (dlEntry.failed > 0) dlLabel += ' (' + dlEntry.failed + ' failed)';
-      dlDisabled = true;
-    } else if (dlEntry.phase === 'verifying') {
-      dlLabel = 'verifying…';
-      dlDisabled = true;
-    } else if (dlEntry.phase === 'complete') {
-      // within the 3s success window — the registry still holds the
-      // entry, so show the success state.
-      dlLabel = '✓ downloaded';
-      dlDisabled = false;
-    } else if (dlEntry.phase === 'failed') {
-      dlLabel = 'retry';
-      dlDisabled = false;
-    } else {
-      // unknown phase — fall back to idle.
-      dlLabel = 'download all ' + (b.members || 0);
-      dlDisabled = false;
-    }
+    // v0.60 pt C.6 → v0.67.5: the ONE-PRESS BUNDLE DOWNLOAD now reads
+    // THE REGISTRY (bdlEntry) — the pill's state survives leaving the
+    // bundle, opening another, coming back, even restarting the app.
+    // paintDlPill() refreshes it live after every member lands.
+    var dlState = bcur.loading ? null : bdlEntry(bcur.id);
     var allDl = bcur.loading
       ? ''
-      : '<button type="button" class="hub-bundle-dl" id="hub-bundle-dl"' +
-          ' title="download every item in this bundle" aria-label="download the whole bundle"' +
-          (dlDisabled ? ' disabled' : '') + '>' +
-          (statIcon('download', false) || '⤓') + '<span>' + dlLabel + '</span></button>';
+      : '<button type="button" class="hub-bundle-dl' +
+          (dlState && dlState.state === 'running' ? ' is-running' : '') +
+          (dlState && dlState.state === 'done' ? ' is-done' : '') + '" id="hub-bundle-dl"' +
+          ' title="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '"' +
+          ' aria-label="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '">' +
+          dlPillInner(dlState, b.members || 0) + '</button>';
     var hero =
       '<div class="hub-bunch-hero" style="background-image:' +
         ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
@@ -571,29 +537,28 @@
     // the hero's art layer — the bunch's own design
     var heroBg = el.querySelector('[data-bunchbg]');
     if (heroBg) paintBunchBg(heroBg, bunchMeta(bcur.id));
-    // v0.60 pt C.6 / v0.67.2: the one-press bundle download. The
-    // PERSISTENT REGISTRY drives the UI (the pill label comes from
-    // `downloadOf(bcur.id)` in bunchRender), so this handler does NOT
-    // touch `bcur.dlBusy` or mutate `dl.innerHTML` directly — it just
-    // kicks off `downloadStart` and lets the SSE event loop call
-    // `bunchRepaint()` as the registry updates.
+    // v0.60 pt C.6 → v0.67.5: the one-press bundle download — the runner
+    // (registry + per-member fan-out + live pill); the click just arms
+    // it. Running taps say so (no double-run); a done bundle says so
+    // (already yours); partial/stale/error tap = resume/retry.
     var dl = el.querySelector('#hub-bundle-dl');
     if (dl) dl.addEventListener('click', function () {
       if (!bcur) return;
-      var existing = downloadOf(bcur.id);
-      if (existing && (existing.phase === 'enqueued' ||
-          existing.phase === 'downloading' ||
-          existing.phase === 'verifying')) {
-        return; // already in flight — the registry drives the UI
+      var e = bdlEntry(bcur.id);
+      if (e && e.state === 'running') {
+        toast('already downloading — ' + (e.done || 0) + '/' + (e.total || 0), { ms: 1600 });
+        return;
       }
-      doBundleDownload(bcur.id).then(function (res) {
-        toast('downloaded ' + res.downloaded + ' items — the whole bundle is yours');
-        if (bunchTop()) bunchRepaint();
-      }).catch(function (e) {
-        toast((e && e.message) || 'the bundle download failed');
-        if (bunchTop()) bunchRepaint();
-      });
+      if (e && e.state === 'done') {
+        toast('the whole bundle is already yours — ' + (e.total || 0) + ' items', { ms: 2100 });
+        return;
+      }
+      runBundleDownload(bcur.id);
     });
+    // mount-time paint: the render emits the registry state; this stamps
+    // the live --dl-p fill + classes onto it (a download running in the
+    // background repaints into a freshly opened bunch view).
+    if (dl) paintDlPill();
     // v0.63 (user spec pt 4): the section headers toggle their sections
     // (collapsed is the default state — see bunchRender).
     el.querySelectorAll('.hub-bunch-sec-h').forEach(function (h) {
@@ -657,154 +622,11 @@
     marqueeScan(el);
   }
 
-  // v0.67.2: the PERSISTENT DOWNLOAD REGISTRY accessors.
-  // `downloadOf(id)` returns the live entry (or null) so any view
-  // (bunchRender, the grid, item detail) can read the current state
-  // without holding a closure over a `bcur` that may be popped.
-  function downloadOf(id) { return downloads.get(id) || null; }
-
-  // v0.67.2: `downloadStart(id)` kicks off the SSE-streamed bundle
-  // download. Returns a Promise that resolves on phase:'complete'
-  // and rejects on phase:'failed' (or any transport-level error).
-  // The registry entry is created BEFORE the fetch so the pill flips
-  // to "preparing…" immediately and survives any panel pop/push while
-  // the stream is open. Per-type side effects (template/skill →
-  // TemplateSheet.saveFromHub; persona → importPersonaInto; theme →
-  // LookIO.importText; + markDownloaded for every member) fire when
-  // the 'complete' event arrives, NOT when the promise resolves
-  // (they're inside the SSE event handler, before the resolve).
-  function downloadStart(id) {
-    var sid = cur && cur.chat && cur.chat.sessionId ? cur.chat.sessionId : '';
-    var entry = {
-      phase: 'enqueued', total: 0, done: 0, failed: 0,
-      startedAt: Date.now(), error: null
-    };
-    downloads.set(id, entry);
-    if (bunchTop()) bunchRepaint();
-
-    return new Promise(function (resolve, reject) {
-      var settled = false;
-      var appliedThemes = 0;
-      function resolveOnce(v) { if (!settled) { settled = true; resolve(v); } }
-      function rejectOnce(err) {
-        if (settled) return;
-        settled = true;
-        var e = err instanceof Error ? err : new Error(String(err || 'download failed'));
-        entry.phase = 'failed';
-        entry.error = e.message;
-        if (bunchTop()) bunchRepaint();
-        reject(e);
-      }
-      // the per-TYPE side-effect applier — runs once, on the 'complete'
-      // event (the SSE stream carries the groups payload at the end,
-      // exactly like the legacy POST's response body used to).
-      function applySideEffects(groups) {
-        (groups || []).forEach(function (g) {
-          (g.items || []).forEach(function (m) {
-            if (!m || !m.item) return;
-            var it = m.item;
-            markDownloaded(it.type || g.type, it.repo, it.id);
-            if ((it.type === 'template' || it.type === 'skill') &&
-                window.TemplateSheet && window.TemplateSheet.saveFromHub) {
-              window.TemplateSheet.saveFromHub(it, m.payload);
-            }
-            if (it.type === 'persona') importPersonaInto(sid, it, m.payload);
-            if (it.type === 'theme' && window.LookIO && window.LookIO.importText) {
-              appliedThemes++;
-              window.LookIO.importText(m.payload);
-            }
-          });
-        });
-      }
-      // parses one SSE event block (the text between two `\n\n`
-      // separators). The backend emits exactly one `data:` line per
-      // event, but we honor the SSE spec and join multiple `data:`
-      // lines with `\n` before JSON.parse-ing. Lines starting with
-      // `data:` (5 chars) get the prefix stripped; one optional
-      // leading space after the colon is also stripped.
-      function handleEvent(raw) {
-        var dataLines = [];
-        raw.split('\n').forEach(function (line) {
-          if (line.length >= 5 && line.slice(0, 5) === 'data:') {
-            var v = line.slice(5);
-            if (v.charAt(0) === ' ') v = v.slice(1);
-            dataLines.push(v);
-          }
-          // ignore `event:`/`id:`/`retry:`/comment (`:`) lines —
-          // the backend emits none, but stay spec-correct.
-        });
-        if (!dataLines.length) return;
-        var evt;
-        try { evt = JSON.parse(dataLines.join('\n')); } catch (e) { return; }
-        Object.assign(entry, evt);
-        if (bunchTop()) bunchRepaint();
-        if (entry.phase === 'complete' && evt.groups) {
-          applySideEffects(evt.groups);
-          // Keep the entry visible as "✓ downloaded" for ~3s so the
-          // user sees the success, then clear it so the pill reverts
-          // to "download all N" (the bunch now reflects fresh state).
-          setTimeout(function () {
-            if (downloads.get(id) === entry) downloads.delete(id);
-            if (bunchTop()) bunchRepaint();
-          }, 3000);
-          resolveOnce({
-            downloaded: entry.done,
-            failed: entry.failed,
-            groups: evt.groups
-          });
-        } else if (entry.phase === 'failed') {
-          rejectOnce(new Error(entry.error || 'download failed'));
-        }
-      }
-      fetch('/api/hub/collections/' + encodeURIComponent(id) + '/download', {
-        method: 'POST',
-        headers: { 'Accept': 'text/event-stream' }
-      }).then(function (res) {
-        if (!res.ok || !res.body) {
-          var e = new Error('HTTP ' + res.status);
-          e.status = res.status;
-          throw e;
-        }
-        var reader = res.body.getReader();
-        var decoder = new TextDecoder();
-        var buffer = '';
-        function pump() {
-          return reader.read().then(function (chunk) {
-            if (chunk.done) {
-              // drain any trailing partial (best-effort — the spec
-              // guarantees a terminal event arrives before close, so
-              // a non-empty buffer here is rare).
-              if (buffer.trim()) { handleEvent(buffer); buffer = ''; }
-              // if no terminal event arrived, the stream was cut —
-              // surface it as a failure rather than hanging forever.
-              setTimeout(function () {
-                if (!settled) rejectOnce(new Error('the download stream closed before finishing'));
-              }, 0);
-              return;
-            }
-            buffer += decoder.decode(chunk.value, { stream: true });
-            var idx;
-            while ((idx = buffer.indexOf('\n\n')) !== -1) {
-              var raw = buffer.slice(0, idx);
-              buffer = buffer.slice(idx + 2);
-              handleEvent(raw);
-            }
-            return pump();
-          });
-        }
-        return pump();
-      }).catch(rejectOnce);
-    });
-  }
-
-  // v0.60 pt C.6 / v0.67.2: the BUNDLE download — now a thin wrapper
-  // around the persistent-registry SSE driver. Callers (bunchWire's
-  // #hub-bundle-dl click handler) get a promise that resolves with
-  // {downloaded, failed, groups} on success; the registry + the SSE
-  // event loop own the live UI state.
-  function doBundleDownload(id) {
-    return downloadStart(id);
-  }
+  // v0.60 pt C.6 → v0.67.5: doBundleDownload (the single-POST-then-side-
+  // effects flow) is RETIRED — runBundleDownload above replaces it with
+  // the registry + the per-member fan-out (real progress, resumable,
+  // persistent). The server's /api/hub/collections/{id}/download
+  // endpoint stays for other clients; the web app no longer calls it.
 
   // the persona side effect of a bundle download — the hubitem.js
   // importPersona pattern (GET the session → append inactive → PATCH).
@@ -829,6 +651,222 @@
         });
       })
       .catch(function () {}); // the local row already saved — the import is a bonus
+  }
+
+  // ── v0.67.5: THE BUNDLE DOWNLOAD REGISTRY + RUNNER ────────────────
+  // User report: the download pill was a static "downloading…" owned by
+  // the VIEW (bcur.dlBusy) — leave the bundle, come back, and the in-
+  // flight download had silently become "download all N" again; and the
+  // one-POST endpoint returned EVERY member payload in a single JSON,
+  // big enough to stall on obra-sized bundles. THE FIX, in three parts:
+  //
+  // 1. THE REGISTRY (module state + localStorage doomalay.bundledl.v1):
+  //    { state: running|done|partial|error|stale, done, total, failed,
+  //      lastErr, at } keyed by bundle id. Survives view switches AND
+  //    app restarts. A 'running' entry from a dead session loads as
+  //    'stale' — the pill offers RESUME instead of a lying spinner.
+  //
+  // 2. THE RUNNER (runBundleDownload): client-side fan-out over the
+  //    members, 3 wide — each member rides the SAME POST the item
+  //    detail's ⤓ makes (/api/hub/{type}/download {repo,id}), then the
+  //    SAME per-type side effects the old single-POST path applied
+  //    (template/skill → the user's library, persona → the chat, theme
+  //    → the look). Already-downloaded members count instantly (a
+  //    resume only fetches what's missing). Per-member failures are
+  //    counted and never fatal — a half-offline bundle still lands its
+  //    rest, exactly the server's old semantics.
+  //
+  // 3. THE PILL: painted from the registry on every render AND after
+  //    every member (surgical innerHTML swap — listeners live on the
+  //    button). States: idle / N-M-downloading (with a live progress
+  //    fill) / ✓-downloaded-N / resume-N-M (+F failed) / retry. The
+  //    server's collection-download endpoint stays (compat) — the
+  //    client just no longer needs its everything-at-once answer.
+  var BDL_KEY = 'doomalay.bundledl.v1';
+  var bundleDL = null;
+  function bdlLoad() {
+    if (bundleDL) return bundleDL;
+    try { bundleDL = JSON.parse(localStorage.getItem(BDL_KEY)) || {}; }
+    catch (e) { bundleDL = {}; }
+    // a 'running' entry from a previous session is a lie — the runner
+    // died with the page. Mark it stale: the pill offers a resume.
+    Object.keys(bundleDL).forEach(function (id) {
+      if (bundleDL[id] && bundleDL[id].state === 'running') bundleDL[id].state = 'stale';
+    });
+    return bundleDL;
+  }
+  function bdlSave() {
+    try { localStorage.setItem(BDL_KEY, JSON.stringify(bundleDL)); } catch (e) {}
+  }
+  function bdlEntry(id) {
+    var r = bdlLoad();
+    var e = r[id] || null;
+    return (e && typeof e.done === 'number') ? e : null;
+  }
+  function bdlSet(id, entry) {
+    var r = bdlLoad();
+    r[id] = entry;
+    bdlSave();
+  }
+
+  // the per-type side effects of a bundle member download — the exact
+  // ones the old doBundleDownload applied (kept verbatim in spirit).
+  function applyHubSideEffects(type, item, payload) {
+    var chat = cur ? cur.chat : null;
+    var sid = chat && chat.sessionId ? chat.sessionId : '';
+    if ((type === 'template' || type === 'skill') &&
+        window.TemplateSheet && window.TemplateSheet.saveFromHub) {
+      window.TemplateSheet.saveFromHub(item, payload);
+    }
+    if (type === 'persona') importPersonaInto(sid, item, payload);
+    if (type === 'theme' && window.LookIO && window.LookIO.importText) {
+      window.LookIO.importText(payload);
+    }
+  }
+
+  // the pill's inner HTML, from the registry state (fallbackTotal = the
+  // bunch summary's member count when no entry exists yet).
+  function dlPillInner(e, fallbackTotal) {
+    var ico = statIcon('download', false) || '⤓';
+    if (!e) return ico + '<span>download all ' + (fallbackTotal || 0) + '</span>';
+    if (e.state === 'running') {
+      // the live fill rides behind the label (width = --dl-p on the
+      // button; paintDlPill keeps it current after every member).
+      return '<span class="hub-bundle-dl-fill" aria-hidden="true"></span>' + ico +
+        '<span>' + (e.done || 0) + '/' + (e.total || 0) + ' · downloading…</span>';
+    }
+    if (e.state === 'done') {
+      return '<span class="hub-bundle-dl-ok" aria-hidden="true">✓</span><span>downloaded ' +
+        ((e.total || 0) - (e.failed || 0)) + '</span>';
+    }
+    if (e.state === 'partial') {
+      return ico + '<span>resume · ' + ((e.done || 0) - (e.failed || 0)) + '/' +
+        (e.total || 0) + ((e.failed || 0) ? ' · ' + e.failed + ' failed' : '') + '</span>';
+    }
+    if (e.state === 'stale') {
+      return ico + '<span>resume download · ' + (e.done || 0) + '/' + (e.total || 0) + '</span>';
+    }
+    return ico + '<span>retry the download</span>'; // error
+  }
+  function dlPillTitle(e, fallbackTotal) {
+    if (!e) return 'download every item in this bundle';
+    if (e.state === 'running') return 'downloading — ' + (e.done || 0) + ' of ' + (e.total || 0) + ' done';
+    if (e.state === 'done') return 'the whole bundle is downloaded';
+    if (e.state === 'partial') return 'resume — ' + (e.failed || 0) + ' member' + ((e.failed || 0) === 1 ? '' : 's') + ' failed';
+    if (e.state === 'stale') return 'the last download was interrupted — resume it';
+    return 'the download failed — retry';
+  }
+  // paint the pill onto the button (render-time AND after every member:
+  // a surgical swap — the click listener lives on the button itself).
+  function paintDlPill() {
+    if (!bcur || !bcur.panel || !bcur.panel.bodyEl) return;
+    var btn = bcur.panel.bodyEl.querySelector('#hub-bundle-dl');
+    if (!btn) return;
+    var b = bunchMeta(bcur.id);
+    var e = bdlEntry(bcur.id);
+    btn.innerHTML = dlPillInner(e, (b && b.members) || 0);
+    btn.title = dlPillTitle(e, (b && b.members) || 0);
+    btn.setAttribute('aria-label', btn.title);
+    if (e && e.state === 'running' && e.total) {
+      btn.style.setProperty('--dl-p', String(Math.max(0, Math.min(1, (e.done || 0) / e.total))));
+    } else {
+      btn.style.removeProperty('--dl-p');
+    }
+    btn.classList.toggle('is-running', !!(e && e.state === 'running'));
+    btn.classList.toggle('is-done', !!(e && e.state === 'done'));
+  }
+
+  // THE RUNNER — see the block comment above. Returns nothing; the
+  // registry + the pill + a final repaint + a summary toast ARE the UI.
+  function runBundleDownload(id) {
+    var existing = bdlEntry(id);
+    if (existing && existing.state === 'running') return; // one runner per bundle
+    // resolve the member list: the open bunch view's groups when they're
+    // loaded (the button only lives there), else the collection endpoint.
+    var groupsPromise = (bcur && bcur.id === id && bcur.groups && !bcur.loading)
+      ? Promise.resolve(bcur.groups)
+      : api('GET', '/api/hub/collections/' + encodeURIComponent(id) + '/items')
+        .then(function (d) { return (d && d.groups) || []; });
+    groupsPromise.then(function (groups) {
+      var members = [];
+      (groups || []).forEach(function (g) {
+        (g.items || []).forEach(function (it) {
+          if (it && it.repo && it.id) members.push({ type: g.type || it.type, repo: it.repo, id: it.id });
+        });
+      });
+      if (!members.length) throw new Error('the bundle has no downloadable members');
+      // seed the session's downloaded map for every member type FIRST
+      // (seedLocalState only runs for browsed libraries) — a resume
+      // after an app restart then SKIPS the already-downloaded members
+      // instead of re-POSTing them (the engine counts a metric per
+      // download POST, so a blind resume would inflate the counts).
+      var types = {};
+      members.forEach(function (m) { if (m.type) types[m.type] = true; });
+      var seeds = Object.keys(types).map(function (t) { return seedLocalState(t); });
+      var entry = { state: 'running', done: 0, total: members.length, failed: 0, lastErr: '', at: Date.now() };
+      bdlSet(id, entry);
+      paintDlPill();
+      Promise.all(seeds).then(function () { start(); });
+      function start() {
+      var queue = members.slice();
+      var inFlight = 0;
+      function finish() {
+        entry.at = Date.now();
+        entry.state = (entry.failed === 0) ? 'done' : ((entry.done || 0) > (entry.failed || 0) ? 'partial' : 'error');
+        bdlSet(id, entry);
+        paintDlPill();
+        toast(
+          entry.state === 'done' ? 'downloaded ' + entry.total + ' items — the whole bundle is yours'
+          : entry.state === 'partial' ? 'downloaded ' + ((entry.done || 0) - (entry.failed || 0)) + '/' + entry.total +
+            ' — ' + entry.failed + ' failed (resume to retry them)'
+          : 'the bundle download failed' + (entry.lastErr ? ' — ' + entry.lastErr : ''),
+          entry.state === 'done' ? undefined : { ms: 3400 }
+        );
+        if (bunchTop() && bcur && bcur.id === id) bunchRepaint();
+      }
+      function dlOne(m) {
+        // already downloaded this session (the map is seeded from the
+        // engine's rows) — counts instantly, no request, no re-metric.
+        if (isDownloaded(m.type, m.repo, m.id)) {
+          entry.done = (entry.done || 0) + 1;
+          bdlSet(id, entry);
+          paintDlPill();
+          return Promise.resolve();
+        }
+        return api('POST', '/api/hub/' + encodeURIComponent(m.type) + '/download',
+            { repo: m.repo, id: m.id })
+          .then(function (d) {
+            var it = (d && d.item) || { type: m.type, repo: m.repo, id: m.id };
+            var payload = (d && d.payload) || '';
+            markDownloaded(m.type, m.repo, m.id);
+            applyHubSideEffects(m.type, it, payload);
+            entry.done = (entry.done || 0) + 1;
+          })
+          .catch(function (err) {
+            entry.done = (entry.done || 0) + 1;
+            entry.failed = (entry.failed || 0) + 1;
+            entry.lastErr = (err && err.message) || 'a member failed';
+          })
+          .then(function () {
+            entry.at = Date.now();
+            bdlSet(id, entry);
+            paintDlPill();
+          });
+      }
+      function tick() {
+        while (inFlight < 3 && queue.length) {
+          var m = queue.shift();
+          inFlight++;
+          dlOne(m).then(function () { inFlight--; tick(); });
+        }
+        if (!queue.length && inFlight === 0) finish();
+      }
+      tick();
+      }
+      // (end start — the seeded fan-out)
+    }).catch(function (e) {
+      toast((e && e.message) || 'the bundle download failed');
+    });
   }
 
   function collectTags(items) {
@@ -1835,6 +1873,11 @@
             window.TemplateSheet.removeUserTemplate(String(ref.id));
           }
         });
+        // v0.67.5: the download registry follows the delete — a bundle
+        // whose copies were removed must NOT greet the user as "✓
+        // downloaded N" (the pill returns to download-all on the next
+        // open).
+        try { delete bdlLoad()[id]; bdlSave(); } catch (e) {}
         toast('removed ' + ((d && d.deleted) || 0) + ' items — the bundle is off this device');
         if (cur) { cur.mineConfirm = ''; if (cur.mine) loadMine(); else updateBody(); }
       })
@@ -2193,14 +2236,9 @@
     isHearted: isHearted,
     toast: toast,
     idGradient: idGradient,
-    // v0.67.2: the PERSISTENT DOWNLOAD REGISTRY — keyed by collection
-    // id. `downloadOf(id)` returns the live entry (or null);
-    // `downloadStart(id)` kicks off the SSE-streamed download and
-    // returns a Promise that resolves on phase:'complete' and rejects
-    // on phase:'failed' (or any transport-level error). Survives panel
-    // pop/push (it's module-scope, not a view local).
-    downloads: downloads,
-    downloadOf: downloadOf,
-    downloadStart: downloadStart
+    // v0.67.5: the bundle-download registry (read + trigger) — tests and
+    // the chat-side tooling can observe/arm the persistent state.
+    bundleDL: function (id) { return id ? bdlEntry(id) : bdlLoad(); },
+    bundleDownload: runBundleDownload
   };
 })();
