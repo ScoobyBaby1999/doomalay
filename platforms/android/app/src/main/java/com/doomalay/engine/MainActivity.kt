@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -42,6 +43,21 @@ class MainActivity : Activity() {
                     "try{document.dispatchEvent(new Event('visibilitychange'))}catch(e){}", null)
             } catch (e: Exception) {
                 AppLog.error("wakeSpa failed", e)
+            }
+        }
+    }
+
+    // v0.64.2: run JS in the SPA's WebView — the native panel sheet's
+    // state broadcasts ({open, ducked} → window.__doomalayPanelState in
+    // browserdock.js, which manages the SPA's own #chat-scrim dim)
+    // ride this. Guarded so a dead web layer (engine restarting, the
+    // SPA not yet loaded — the hook won't exist) is a silent no-op.
+    fun spaEval(js: String) {
+        if (this::webView.isInitialized) {
+            try {
+                webView.evaluateJavascript(js, null)
+            } catch (e: Exception) {
+                AppLog.error("spaEval failed", e)
             }
         }
     }
@@ -89,6 +105,7 @@ class MainActivity : Activity() {
         proceed()
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun proceed() {
         try {
             AppLog.log("Starting EngineService...")
@@ -251,6 +268,21 @@ class MainActivity : Activity() {
                 }
             }
             setContentView(webView)
+            // v0.64.2: THE SECRET THIRD DOCK — while the native panel
+            // browser sits at the half dock, ANY press on the app behind
+            // it (the canvas strip the sheet leaves visible) ducks the
+            // sheet to a 30% peek and hands the canvas its focus back
+            // (PanelBrowserSheet.duckForCanvas → the __doomalayPanelState
+            // broadcast lifts the SPA's scrim dim). The listener returns
+            // FALSE — the touch ALWAYS flows on into the SPA, so the
+            // canvas pans immediately under the gliding sheet — and every
+            // retouch retriggers the ~3s re-dock delay.
+            webView.setOnTouchListener { _, ev ->
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                    panelSheet?.onSpaTouch()
+                }
+                false
+            }
             // v0.62.3: THE JS BRIDGE — the web UI's InAppBrowser tier calls
             // __doomalayKotlin.openInApp(url, opts) with a live theme
             // snapshot (CSS vars) so the viewer's toolbar follows the app's

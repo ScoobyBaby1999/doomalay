@@ -1,14 +1,22 @@
 package com.doomalay.engine
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.TextUtils
 import android.view.Gravity
@@ -18,6 +26,7 @@ import android.view.ViewOutlineProvider
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -30,63 +39,77 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
 
-// PanelBrowserSheet — v0.64.0 THE NATIVE PANEL BROWSER (PLAN-V0640).
+// PanelBrowserSheet — v0.64.2 THE POLISH WAVE (PLAN-V0642) on top of
+// v0.64.0 THE NATIVE PANEL BROWSER (PLAN-V0640).
 //
-// USER SPEC: "If we can somehow render the native WebView into a
-// scrollable snapable panel, a feature or push that is solely reserved
-// for the APK versions and other versions that support it.. let's do so
-// it's worth it… The panel browser feature is meant for apk and phones
-// only. For desktops, we should not hesitate to redirect users."
+// v0.64.0 SPEC (still the foundation): "If we can somehow render the
+// native WebView into a scrollable snapable panel, a feature or a push
+// that is solely reserved for the APK versions and other versions that
+// support it.. let's do so it's worth it… The panel browser feature is
+// meant for apk and phones only. For desktops, we should not hesitate
+// to redirect users." — the v0.63.x iframe dock could never load what
+// the browser-in-browser loads (X-Frame-Options / CSP frame-ancestors
+// are ENGINE-enforced on iframes; a native WebView is a TOP-LEVEL
+// context those guards do not govern), so the panel browser IS the
+// browser-in-browser's own engine docked as a native bottom sheet
+// inside MainActivity, over the untouched SPA.
 //
-// THE VERDICT THIS CLASS EMBODIES: the v0.63.x dock rendered pages in an
-// <iframe> inside the SPA — X-Frame-Options / CSP frame-ancestors
-// (anti-clickjacking headers the ENGINE itself enforces on iframes)
-// made most big sites refuse, and no JS can ever lift a third party's
-// frame guards. The full-screen browser-in-browser (ViewerActivity)
-// loads every page because it is a NATIVE WebView — a TOP-LEVEL
-// browsing context those guards do not govern. So the panel browser is
-// now THE SAME NATIVE WEBVIEW docked as a bottom sheet INSIDE
-// MainActivity, floating over the untouched SPA:
+// v0.64.2 SPEC (this wave — "The panel browser in browser is actually
+// incredible. It's amazing seriously. Just please let's polish…"):
 //
-//   · THE STRIP (the v0.63.4 spec, natively): [↻ url-pill] —— [‹][⧉][✕]
-//     — the pill is surface-tinted @0.92 alpha with a theme border, tap
-//     = COPY the link (+ toast); ↻ reloads; ‹ walks the WebView's own
-//     history (a REAL history — in-page link clicks included, which the
-//     iframe dock could never see); ⧉ is THE BOX+ARROW (leave the app:
-//     ACTION_VIEW → Chrome Custom Tab → system browser); ✕ dismisses;
-//     the dash stays dead-center (the 1fr·auto·1fr grid, natively).
-//   · THE SNAPS — gesture.js parity, ported 1:1: two docks (full 100% /
-//     default 62% of the content height), drag the strip, fling up →
-//     full, fling down from full → default, fling down from default →
-//     dismiss, deliberate drag past the tuned fractions → dismiss, the
-//     scrim tap dismisses. The same constants (FLING_VY 0.55 px/ms,
-//     CLOSE_FRAC 0.32 …) so the sheet FEELS like the same panel.
-//   · THE WEBVIEW — the ViewerActivity engine: JS + DOM storage, pinch
-//     zoom, the app-global cookie profile (logins shared with the main
-//     WebView), http/https loads in place (frame guards never apply),
-//     doomalay:// dismisses + wakes the SPA's visibilitychange
-//     refetch, other schemes ride ACTION_VIEW, video fullscreen
-//     (onShowCustomView) covers the activity, downloads (pdfs, files)
-//     hand off to the system — the v0.62.3 export path.
-//   · RESUMABLE — closing only hides the overlay; the WebView (its
-//     history, its cookies, its media position) survives to the next
-//     open at the SAME dock. A re-tap of a different link navigates the
-//     living sheet; the same link just resurfaces it.
-//   · THEME — the CSS-var snapshot arrives on EVERY openPanel call
-//     (InAppBrowser v3's themeSnapshot()) and re-tints everything:
-//     sheet/pill/WebView backgrounds, borders, icon + URL tints, the
-//     dash, the loadbar accent. System theme attrs are the fallback —
-//     nothing is hardcoded in use.
+//   · THE PILL POLISH — the four pills up-top ([↻ url] · ‹ · ⧉ · ✕)
+//     become ONE chip family: surface fill + 1dp theme border + an
+//     accent RippleDrawable clipped to each shape (the acts are 34dp
+//     CIRCLES now; the URL pill keeps its capsule; the stray 0.92
+//     alpha is gone so all four read identically). The ↻ glyph gets a
+//     transparent-content circular ripple of its own AND spins while a
+//     page loads. A 1dp hairline (border @ ~32%) under the strip gives
+//     the chrome its edge; the dash widens 36→40dp.
+//   · THE LOADING OVERLAY — "a very polished neat circular loading bar
+//     that uses theme colors + a loading (website link) text while the
+//     panel is loading instead of a black screen". The 2dp top loadbar
+//     is retired; in its place a full-body overlay over the WebView:
+//     a hand-drawn LoadRing (border-@~18% track + a 96° accent arc
+//     with round caps, spun on a linear infinite animator) above the
+//     loading URL (13sp, text3, middle-ellipsized, 280dp cap). Timing:
+//     onPageStarted shows it, onPageCommitVisible (the FIRST PAINT —
+//     a rendered page is never covered) hides it, onPageFinished is
+//     the safety net; a sequence token kills the redirect race.
+//   · THE SECRET THIRD DOCK — "while the panel is open and half docked,
+//     the user can press the canvas and still move it… doing so puts
+//     the canvas back into focus (undarknes it/removes the filter) and
+//     docks the panel to a third secret position - a position that
+//     fills only like 30% of the screen… temporary for ~3 seconds with
+//     a retriggrable delay every time the user retouched the screen."
+//     A press on the app behind the half-docked sheet (the canvas
+//     strip it leaves visible) glides the sheet to the 30% peek;
+//     MainActivity's SPA touch listener (returns FALSE — the touch
+//     always flows on into the SPA, so the canvas pans immediately)
+//     is the trigger; every retouch (canvas OR the ducked panel)
+//     retriggers the 3s hold; expiry glides back to the 62% dock. The
+//     "filter" over the canvas is the SPA's own #chat-scrim dim —
+//     notifyState() broadcasts {open, ducked} to
+//     window.__doomalayPanelState (browserdock.js), which suspends
+//     the scrim's pointer-events while the sheet is up (taps must
+//     reach the canvas) and lifts its opacity while ducked (canvas
+//     focus). THE OLD SCRIM IS RETIRED with its tap-to-dismiss — a
+//     canvas press is a duck now; dismiss stays ✕ / drag-fling /
+//     Android back. The full dock never ducks (no canvas to press);
+//     a hand on the strip cancels the duck (release() owns the
+//     landing).
 //
-// The SPA never navigates and never paints a frame of the browsed page
-// — browserdock.js just calls __doomalayKotlin.openPanel(url, opts) and
-// this sheet docks over it. Every surface without that bridge method
-// (desktop, HF Space, self-host, phone browsers, pre-v0.64 APKs) never
-// sees a panel browser at all — InAppBrowser.open routes them straight
-// to the popup/tab browser-in-browser.
+// Everything else is v0.64.0 verbatim: the strip contract (the pill
+// tap = COPY + toast, ‹ walks the REAL WebView history, ⧉ is THE
+// BOX+ARROW (ACTION_VIEW → Custom Tab → system browser), ✕ dismisses,
+// the dash dead-center), gesture.js parity (FLING_VY 0.55, CLOSE_FRAC
+// 0.32, velocity projection 140ms), the ViewerActivity-grade WebView
+// (cookies shared, video fullscreen, downloads → system, doomalay://
+// → dismiss + wakeSpa), resumable (close only hides), and THEME — the
+// live CSS-var snapshot re-tints everything on every open; system
+// theme attrs are the fallback, nothing hardcoded in use.
 class PanelBrowserSheet(private val activity: MainActivity) {
 
-    // ── gesture.js parity (the web panel's two docks + release tuning) ──
+    // ── gesture.js parity (the web panel's docks + release tuning) ──
     companion object {
         private const val DEFAULT_FRAC = 0.62f     // the half dock (bottom 62%)
         private const val FLING_VY = 0.55f         // px/ms — a genuinely hard swipe
@@ -99,20 +122,26 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         private const val SNAP_MS = 220L           // dock-to-dock glide
         private const val RISE_MS = 250L           // the open rise (gesture.js's open curve)
         private const val CLOSE_MS = 200L          // the dismiss slide
-        private const val MAX_SCRIM = 0.45f        // the dim over the app at full dock
+
+        // v0.64.2: THE SECRET THIRD DOCK — the canvas-duck peek
+        private const val DUCK_FRAC = 0.30f        // the sheet fills only ~30% of the screen
+        private const val DUCK_HOLD_MS = 3000L     // the retriggerable temporary hold
     }
 
     // ── views (built once; re-added if an error screen swapped content) ──
     private var overlay: FrameLayout? = null
-    private var scrim: View? = null
     private var sheet: LinearLayout? = null
     private var pill: LinearLayout? = null
     private var pillText: TextView? = null
+    private var refreshIcon: ImageButton? = null
     private var dash: View? = null
+    private var divider: View? = null
     private var backBtn: ImageButton? = null
     private var extBtn: ImageButton? = null
     private var closeBtn: ImageButton? = null
-    private var loadbar: View? = null
+    private var loading: FrameLayout? = null
+    private var loadRing: LoadRing? = null
+    private var loadText: TextView? = null
     private var webView: WebView? = null
 
     // video fullscreen (the YouTube □ button)
@@ -121,11 +150,27 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
     // geometry: curOffset = px the always-tall sheet is pushed DOWN
-    // (0 = full dock · (1-DEFAULT_FRAC)*H = default · H = closed)
+    // (0 = full dock · (1-DEFAULT_FRAC)*H = default · (1-DUCK_FRAC)*H =
+    // the duck peek · H = closed)
     private var fullH = 0
     private var curOffset = 0f
     private var atFull = false
     private var everOpened = false
+
+    // v0.64.2: the canvas-duck state + its retriggerable hold
+    private var ducked = false
+    private val duckHandler = Handler(Looper.getMainLooper())
+    private val unduckRunnable = Runnable { unduck() }
+
+    // v0.64.2: the loading spins (the ring + the ↻ glyph)
+    private var ringSpin: ValueAnimator? = null
+    private var iconSpin: ObjectAnimator? = null
+    private var loadSeq = 0L
+
+    // v0.64.2: the last glide owns the sheet — animateTo cancels the
+    // prior animator (also fixes the pre-existing close→reopen race,
+    // where a stale close's GONE end-action buried a fresh reopen)
+    private var snapAnim: ValueAnimator? = null
 
     @Volatile private var showing = false
     @Volatile private var liveUrl = ""
@@ -156,8 +201,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             if (w.url == null || w.url != url) w.loadUrl(url)
             showAt(if (everOpened) atFull else false)
             everOpened = true
-        } else if (w.url != url) {
-            w.loadUrl(url)
+        } else {
+            // a tap on another (or the same) link while the sheet is up:
+            // the attention is back on the panel — rise out of any duck
+            if (ducked) cancelDuck(restoreDock = true)
+            if (w.url != url) w.loadUrl(url)
         }
     }
 
@@ -166,9 +214,15 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     fun dismiss() {
         if (!showing) return
+        duckHandler.removeCallbacks(unduckRunnable)
+        ducked = false
         showing = false
+        setLoading(false, null)
         val h = if (fullH > 0) fullH.toFloat() else 1f
-        animateTo(h, CLOSE_MS) { overlay?.visibility = View.GONE }
+        // (the GONE end-action is guarded — a reopen inside CLOSE_MS
+        // cancels this glide, and the cancel-fired end must not bury it)
+        animateTo(h, CLOSE_MS) { if (!showing) overlay?.visibility = View.GONE }
+        notifyState()
     }
 
     // Android back (native — consumed BEFORE the SPA is ever consulted):
@@ -193,23 +247,90 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         ov.post {
             fullH = ov.height
             if (fullH > 0) {
-                curOffset = offsetFor(atFull)
+                curOffset = if (ducked) offsetForDuck() else offsetFor(atFull)
                 sheet?.translationY = curOffset
-                scrim?.alpha = scrimFor(curOffset)
             }
         }
     }
 
+    // ── v0.64.2: THE SECRET THIRD DOCK (the canvas-duck) ─────────────
+    //
+    // MainActivity's SPA touch listener calls this on EVERY press that
+    // lands on the app behind the sheet. At the half dock it ducks
+    // (the 30% peek + the canvas focus broadcast); while ducked it is
+    // the retrigger (the ~3s hold restarts). The full dock ignores it
+    // (no canvas is visible to press). The touch itself is never
+    // eaten — the listener returns false, so the canvas pans on the
+    // very first press, under the gliding sheet.
+    fun onSpaTouch() {
+        if (!showing || atFull) return
+        duckForCanvas()
+    }
+
+    private fun duckForCanvas() {
+        if (!showing || atFull) return
+        if (ducked) { resetDuckTimer(); return }
+        ducked = true
+        if (fullH > 0) animateTo(offsetForDuck(), SNAP_MS) {}
+        resetDuckTimer()
+        notifyState()
+    }
+
+    // the ~3s hold expired — the sheet glides back to the half dock and
+    // the canvas dim is restored (the SPA's scrim re-darkens).
+    private fun unduck() {
+        duckHandler.removeCallbacks(unduckRunnable)
+        if (!showing || !ducked) return
+        ducked = false
+        if (!atFull && fullH > 0) animateTo(offsetForDefault(), SNAP_MS) {}
+        notifyState()
+    }
+
+    // a hand on the strip (a REAL drag, past the slop) or a new open():
+    // the duck dies, and with restoreDock the sheet rises back to the
+    // half dock (open()'s "attention is back on the panel" case).
+    private fun cancelDuck(restoreDock: Boolean) {
+        duckHandler.removeCallbacks(unduckRunnable)
+        if (!ducked) return
+        ducked = false
+        if (restoreDock && showing && !atFull && fullH > 0) {
+            animateTo(offsetForDefault(), SNAP_MS) {}
+        }
+        notifyState()
+    }
+
+    private fun resetDuckTimer() {
+        duckHandler.removeCallbacks(unduckRunnable)
+        duckHandler.postDelayed(unduckRunnable, DUCK_HOLD_MS)
+    }
+
+    private fun offsetForDuck(): Float = fullH * (1f - DUCK_FRAC)
+
+    // the state broadcast — browserdock.js's window.__doomalayPanelState
+    // suspends the SPA's scrim taps while the sheet is up and lifts its
+    // dim while ducked (the canvas focus). Guarded so a dead web layer
+    // (engine restarting, SPA not loaded) is a silent no-op.
+    private fun notifyState() {
+        try {
+            val st = JSONObject()
+            st.put("open", showing)
+            st.put("ducked", ducked)
+            activity.spaEval("window.__doomalayPanelState && window.__doomalayPanelState(" + st.toString() + ")")
+        } catch (e: Exception) {
+            AppLog.error("panel state notify failed", e)
+        }
+    }
+
     // ─────────────────────────────────────────────────────────── view building
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun ensureViews() {
         if (overlay != null && overlay?.parent != null) return
 
         val bg = col("bgPanel", sysColor(android.R.attr.colorBackground, Color.BLACK))
 
         // the pill: [↻ url] — tap = copy, drag = the sheet (disambiguated
-        // by the slop in makeDraggable)
-        val refresh = ImageButton(activity).apply {
+        // by the slop in makeDraggable); the ↻ glyph spins while loading
+        refreshIcon = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_refresh)
             background = null
             setPadding(dip(3), dip(3), dip(3), dip(3))
@@ -226,15 +347,17 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(6), dip(5), dip(10), dip(5))
-            addView(refresh, LinearLayout.LayoutParams(dip(24), dip(24)))
+            addView(refreshIcon, LinearLayout.LayoutParams(dip(24), dip(24)))
             addView(pillText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         pill = pillLocal
 
-        // the dash — the grab hint, dead-center (1fr · auto · 1fr)
+        // the dash — the grab hint, dead-center (1fr · auto · 1fr);
+        // v0.64.2: 36→40dp, a touch wider to read at a glance
         dash = View(activity)
 
-        // ‹ ⧉ ✕ — the three acts. 34dp slots, theme border, icon tint.
+        // ‹ ⧉ ✕ — the three acts. 34dp slots, theme border, icon tint
+        // (v0.64.2: they become full CIRCLES in applyTheme's chip family).
         fun actBtn(drawableRes: Int, title: String): ImageButton {
             val b = ImageButton(activity)
             b.setImageResource(drawableRes)
@@ -268,12 +391,13 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dip(10), dip(7), dip(10), dip(7))
             addView(cellL, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(dash, LinearLayout.LayoutParams(dip(36), dip(4))
+            addView(dash, LinearLayout.LayoutParams(dip(40), dip(4))
                 .apply { gravity = Gravity.CENTER_VERTICAL })
             addView(cellR, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
-        loadbar = View(activity)
+        // v0.64.2: the hairline under the strip — the chrome's edge
+        divider = View(activity)
 
         webView = WebView(activity).apply {
             setBackgroundColor(bg)
@@ -284,6 +408,14 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             settings.displayZoomControls = false
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+            // v0.64.2: activity on the DUCKED panel itself retriggers the
+            // ~3s hold (reading/scrolling the peek keeps the peek) — the
+            // listener returns false, the page handles the touch normally.
+            setOnTouchListener { _, ev ->
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN && ducked) resetDuckTimer()
+                false
+            }
 
             webViewClient = object : WebViewClient() {
                 // TOP-LEVEL navigation — the whole point: frame guards
@@ -323,14 +455,22 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     super.onPageStarted(view, u, favicon)
                     if (u != null) liveUrl = u
                     pillText?.text = u ?: liveUrl
-                    loadbar?.visibility = View.VISIBLE
+                    setLoading(true, u)
+                }
+
+                // v0.64.2: the FIRST PAINT — the exact moment the loading
+                // overlay has done its job (a rendered page is never
+                // covered; onPageFinished stays as the safety net).
+                override fun onPageCommitVisible(view: WebView?, u: String?) {
+                    super.onPageCommitVisible(view, u)
+                    setLoading(false, null)
                 }
 
                 override fun onPageFinished(view: WebView?, u: String?) {
                     super.onPageFinished(view, u)
                     if (u != null) liveUrl = u
                     pillText?.text = u ?: liveUrl
-                    loadbar?.visibility = View.GONE
+                    setLoading(false, null)
                     val canBack = view != null && view.canGoBack()
                     backBtn?.isEnabled = canBack
                     backBtn?.alpha = if (canBack) 1f else 0.38f
@@ -369,10 +509,39 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         }
 
+        // v0.64.2: THE LOADING OVERLAY — the circular bar + the link
+        // text, theme-tinted per open (applyTheme); never consumes a
+        // touch (the strip — the drag surface — lives outside the body,
+        // and taps on a half-painted page pass through).
+        loadRing = LoadRing(activity)
+        loadText = TextView(activity).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            maxWidth = dip(280)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(dip(10), 0, dip(10), 0)
+        }
+        val loadStack = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(loadRing, LinearLayout.LayoutParams(dip(40), dip(40)))
+            addView(loadText, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dip(16)
+            })
+        }
+        loading = FrameLayout(activity).apply {
+            visibility = View.GONE
+            addView(loadStack, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER))
+        }
+
         val body = FrameLayout(activity).apply {
-            addView(loadbar, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dip(2), Gravity.TOP))
             addView(webView, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(loading, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
 
@@ -380,14 +549,19 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(divider, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dip(1)))
             addView(body, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
 
-        scrim = View(activity).apply { setOnClickListener { dismiss() } }
+        // v0.64.2: THE SCRIM IS RETIRED — it never drew anything (the
+        // dim over the canvas is the SPA's own #chat-scrim, managed via
+        // notifyState/browserdock.js), and its tap-to-dismiss is now the
+        // duck: a press on the app behind the sheet falls through the
+        // bare overlay into the SPA WebView, pans the canvas, and ducks
+        // the sheet. Dismiss stays ✕ / drag-fling / Android back.
         overlay = FrameLayout(activity).apply {
-            addView(scrim, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(sheet, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             visibility = View.GONE
@@ -396,7 +570,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         // ── wire the chrome ──────────────────────────────────────────
-        refresh.setOnClickListener { webView?.reload() }
+        refreshIcon?.setOnClickListener { webView?.reload() }
         backBtn?.setOnClickListener { if (webView?.canGoBack() == true) webView?.goBack() }
         extBtn?.setOnClickListener { openExternal(liveUrl) }
         closeBtn?.setOnClickListener { dismiss() }
@@ -431,11 +605,16 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dy = ev.rawY - dragStartY
-                    if (!dragging && Math.abs(dy) > dip(6)) dragging = true
+                    if (!dragging && Math.abs(dy) > dip(6)) {
+                        dragging = true
+                        // a REAL grab takes the sheet out of the duck —
+                        // the hold dies and release() owns the landing
+                        // (a mere tap keeps the duck + its timer)
+                        if (ducked) cancelDuck(restoreDock = false)
+                    }
                     if (dragging && fullH > 0) {
                         curOffset = (dragStartOffset + dy).coerceIn(0f, fullH.toFloat())
                         sheet?.translationY = curOffset
-                        scrim?.alpha = scrimFor(curOffset)
                     }
                     val now = SystemClock.uptimeMillis()
                     val dt = now - lastMoveT
@@ -460,7 +639,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     // gesture.js decide(), ported verbatim: velocity projection leads,
     // the tuned intent thresholds confirm. Three landings on the
-    // fraction line: 0 (closed) / .62 (default) / 1 (full).
+    // fraction line: 0 (closed) / .62 (default) / 1 (full). (The duck
+    // peek is a programmatic dock — release() still decides from
+    // wherever the finger let go, so a deliberate 0.32·H drag from the
+    // duck closes and a fling down closes, exactly like from default.)
     private fun release(vy: Float, dy: Float) {
         if (fullH <= 0) { dismiss(); return }
         val h = fullH.toFloat()
@@ -497,8 +679,6 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // ── geometry + motion ─────────────────────────────────────────────
     private fun offsetForDefault(): Float = fullH * (1f - DEFAULT_FRAC)
     private fun offsetFor(full: Boolean): Float = if (full) 0f else offsetForDefault()
-    private fun scrimFor(offset: Float): Float =
-        if (fullH > 0) MAX_SCRIM * (1f - offset / fullH) else 0f
 
     private fun showAt(full: Boolean) {
         val ov = overlay ?: return
@@ -511,7 +691,6 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // height only exists once VISIBLE), then rise to the dock.
         curOffset = 100000f
         sheet?.translationY = curOffset
-        scrim?.alpha = 0f
         ov.post {
             fullH = ov.height
             if (fullH <= 0) fullH = activity.resources.displayMetrics.heightPixels
@@ -519,17 +698,21 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             sheet?.translationY = curOffset
             animateTo(offsetFor(full), RISE_MS) {}
         }
+        // the sheet owns the layer now — the SPA suspends its scrim taps
+        notifyState()
     }
 
     private fun animateTo(target: Float, ms: Long, end: () -> Unit) {
         val sh = sheet ?: run { end(); return }
-        val a = android.animation.ValueAnimator.ofFloat(curOffset, target)
+        // v0.64.2: the last glide owns the sheet — cancel any animator
+        // still running (duck↔undock↔snap↔close sequences overlap now).
+        snapAnim?.cancel()
+        val a = ValueAnimator.ofFloat(curOffset, target)
         a.duration = ms
         a.interpolator = DecelerateInterpolator(1.2f)
         a.addUpdateListener { an ->
             curOffset = an.animatedValue as Float
             sh.translationY = curOffset
-            scrim?.alpha = scrimFor(curOffset)
         }
         // (AnimatorListenerAdapter: the SDK's onAnimationEnd takes a
         // NON-NULL Animator — a nullable override "overrides nothing"
@@ -537,7 +720,63 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         a.addListener(object : android.animation.AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: android.animation.Animator) { end() }
         })
+        snapAnim = a
         a.start()
+    }
+
+    // ── v0.64.2: the loading overlay driver ──────────────────────────
+    // Show: 110ms fade-in + the spins start. Hide: 160ms fade-out; the
+    // sequence token makes a re-show (a redirect mid-fade) win over the
+    // stale hide's GONE end-action.
+    private fun setLoading(on: Boolean, url: String?) {
+        val ov = loading ?: return
+        if (on) {
+            loadSeq++
+            if (url != null) loadText?.text = url
+            if (ov.visibility != View.VISIBLE) {
+                ov.alpha = 0f
+                ov.visibility = View.VISIBLE
+                ov.animate().alpha(1f).setDuration(110L).start()
+            }
+            startSpins()
+        } else {
+            val seq = ++loadSeq
+            if (ov.visibility == View.VISIBLE) {
+                ov.animate().alpha(0f).setDuration(160L)
+                    .withEndAction { if (loadSeq == seq) ov.visibility = View.GONE }
+                    .start()
+            }
+            stopSpins()
+        }
+    }
+
+    private fun startSpins() {
+        if (ringSpin == null) {
+            val a = ValueAnimator.ofFloat(0f, 360f)
+            a.duration = 1100L
+            a.interpolator = LinearInterpolator()
+            a.repeatCount = ValueAnimator.INFINITE
+            a.addUpdateListener { an -> loadRing?.setSpin(an.animatedValue as Float) }
+            a.start()
+            ringSpin = a
+        }
+        val r = refreshIcon
+        if (iconSpin == null && r != null) {
+            val b = ObjectAnimator.ofFloat(r, View.ROTATION, 0f, 360f)
+            b.duration = 900L
+            b.interpolator = LinearInterpolator()
+            b.repeatCount = ValueAnimator.INFINITE
+            b.start()
+            iconSpin = b
+        }
+    }
+
+    private fun stopSpins() {
+        ringSpin?.cancel()
+        ringSpin = null
+        iconSpin?.cancel()
+        iconSpin = null
+        refreshIcon?.rotation = 0f
     }
 
     // ── the chrome actions ────────────────────────────────────────────
@@ -607,14 +846,33 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         }
 
-        // the pill: surface @0.92, fully rounded, 1dp theme border
-        pill?.background = GradientDrawable().apply {
-            setColor(surface)
-            cornerRadius = dip(200).toFloat()
-            setStroke(dip(1), border)
+        // v0.64.2: ONE CHIP FAMILY — the four pills share the surface
+        // fill + 1dp theme border + full rounding (the acts are 34dp
+        // CIRCLES, radius 17; the pill keeps its capsule; the ↻ glyph a
+        // 12dp hit circle). Every chip ripples in the ACCENT (gated by
+        // state_enabled — the back pill's empty-history state ripples
+        // nothing), clipped to its own shape via the mask.
+        val ripple = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf((accent and 0x00FFFFFF) or 0x42000000, Color.TRANSPARENT))
+        fun chipShape(fill: Int, radiusDp: Int, stroke: Int?): GradientDrawable = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dip(radiusDp).toFloat()
+            if (stroke != null) setStroke(dip(1), stroke)
         }
-        pill?.alpha = 0.92f
+        fun chip(fill: Int, radiusDp: Int, stroke: Int?): RippleDrawable = RippleDrawable(
+            ripple, chipShape(fill, radiusDp, stroke), chipShape(Color.WHITE, radiusDp, null))
+
+        pill?.background = chip(surface, 200, border)
         pillText?.setTextColor(text3)
+        refreshIcon?.imageTintList = ColorStateList.valueOf(text3)
+        refreshIcon?.background = RippleDrawable(ripple,
+            chipShape(Color.TRANSPARENT, 12, null), chipShape(Color.WHITE, 12, null))
+        for (b in listOf(backBtn, extBtn, closeBtn)) {
+            b?.background = chip(surface, 17, border)
+            b?.imageTintList = ColorStateList.valueOf(text1)
+        }
+        backBtn?.alpha = if (backBtn?.isEnabled == true) 1f else 0.38f
 
         // the dash: the theme's own text color @ 30% — the grab hint
         dash?.background = GradientDrawable().apply {
@@ -622,19 +880,15 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             cornerRadius = dip(2).toFloat()
         }
 
-        // the acts: transparent squares with the theme border + icon tint
-        fun actBg(): GradientDrawable = GradientDrawable().apply {
-            setColor(Color.TRANSPARENT)
-            cornerRadius = dip(9).toFloat()
-            setStroke(dip(1), border)
-        }
-        for (b in listOf(backBtn, extBtn, closeBtn)) {
-            b?.background = actBg()
-            b?.imageTintList = ColorStateList.valueOf(text1)
-        }
-        backBtn?.alpha = if (backBtn?.isEnabled == true) 1f else 0.38f
+        // the hairline under the strip: border @ ~32%
+        divider?.setBackgroundColor((border and 0x00FFFFFF) or 0x52000000)
 
-        loadbar?.setBackgroundColor(accent)
+        // the loading overlay: bg + the ring's arc/track + the link text
+        loading?.setBackgroundColor(bg)
+        loadRing?.arcColor = accent
+        loadRing?.trackColor = (border and 0x00FFFFFF) or 0x2E000000
+        loadText?.setTextColor(text3)
+
         webView?.setBackgroundColor(bg)
     }
 
@@ -666,4 +920,38 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     } catch (e: Exception) { lastResort }
 
     private fun dip(v: Int): Int = (v * activity.resources.displayMetrics.density).toInt()
+
+    // ── v0.64.2: THE RING — the circular loading bar ──────────────────
+    // A full-circle track (theme border @ ~18%, applied per open) + a
+    // 96° arc in the theme accent with round caps, spun by startSpins()
+    // on a linear infinite animator. Pure framework — no ProgressBar
+    // defaults, nothing but the snapshot's colors.
+    private class LoadRing(context: Context) : View(context) {
+        var arcColor = Color.LTGRAY
+        var trackColor = Color.GRAY
+        private var rot = 0f
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        init {
+            paint.style = Paint.Style.STROKE
+            paint.strokeCap = Paint.Cap.ROUND
+        }
+        fun setSpin(deg: Float) {
+            rot = deg
+            invalidate()
+        }
+        override fun onDraw(c: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val d = resources.displayMetrics.density
+            val stroke = 3.5f * d
+            paint.strokeWidth = stroke
+            val inset = stroke / 2f + d
+            val oval = RectF(inset, inset, w - inset, h - inset)
+            paint.color = trackColor
+            c.drawArc(oval, 0f, 360f, false, paint)
+            paint.color = arcColor
+            c.drawArc(oval, rot, 96f, false, paint)
+        }
+    }
 }

@@ -1,5 +1,6 @@
-// browserdock.js — v0.64.0 THE NATIVE PANEL BROWSER ROUTER
-// (PLAN-V0640). Exposes: window.InAppBrowser (v3).
+// browserdock.js — v0.64.2 THE PANEL-STATE CHANNEL · v0.64.0 THE
+// NATIVE PANEL BROWSER ROUTER (PLAN-V0640 + PLAN-V0642). Exposes:
+// window.InAppBrowser (v3).
 //
 // USER SPEC: "If we can somehow render the native WebView into a
 // scrollable snapable panel, a feature or push that is solely reserved
@@ -49,6 +50,22 @@
 //     (MainActivity.onBackPressed) before doomalay.handleBack is ever
 //     consulted, and the desktop path never docks.
 //
+// v0.64.2 THE PANEL-STATE CHANNEL (the SECRET THIRD DOCK'S other
+// half): the native sheet calls window.__doomalayPanelState({open,
+// ducked}) on every state change (PanelBrowserSheet.notifyState). The
+// "filter" over the canvas while the sheet is up is the SPA's OWN
+// #chat-scrim dim (the chat panel's backdrop) — so the channel keeps
+// the two layers coherent:
+//   open    → the scrim suspends its pointer-events: a press on the
+//             visible app must reach the CANVAS (it pans it, and the
+//             native listener ducks the sheet to the 30% peek) — the
+//             scrim's own tap-to-close would eat the press and close
+//             the chat instead.
+//   ducked  → the canvas is IN FOCUS: the scrim's dim lifts (its
+//             0.25s CSS opacity transition rides the sheet's glide).
+//   closed  → both restored — the dim + the scrim's tap-to-close
+//             behave exactly as before the sheet ever existed.
+//
 // RETIRED WITH THE IFRAME DOCK (v0.63.4–63.6): the panel view, the
 // frame sandbox + bust-guard, the /api/preview verdict on the open
 // path, the auto-route, the strip DOM + .pb-* CSS, panel.js's
@@ -70,6 +87,34 @@
       border: pick('--border')
     };
   }
+
+  // ── v0.64.2: THE PANEL-STATE CHANNEL ───────────────────────────
+  // The native sheet's {open, ducked} broadcasts land here (see the
+  // header). Inline styles ride on top of #chat-scrim's .open class
+  // rules (inline > class), so the class system is never touched —
+  // clearing the inline styles restores the world exactly. Desktop /
+  // HF / self-host never register a native sheet, so this is never
+  // called there — zero impact off the APK.
+  function panelState(s) {
+    var scrim = document.getElementById('chat-scrim');
+    if (scrim) {
+      if (s && s.open) {
+        // the sheet owns the layer: the scrim may keep its dim but
+        // never eats a tap (a canvas press ducks the sheet + pans)
+        scrim.style.pointerEvents = 'none';
+        // ducked = the canvas holds the focus: lift the dim
+        scrim.style.opacity = s.ducked ? '0' : '';
+      } else {
+        scrim.style.pointerEvents = '';
+        scrim.style.opacity = '';
+      }
+    }
+    try {
+      document.dispatchEvent(new CustomEvent('doomalay:panel-state',
+        { detail: (s && typeof s === 'object') ? s : {} }));
+    } catch (e) {}
+  }
+  window.__doomalayPanelState = panelState;
 
   // ══ THE FALLBACK TIERS (v0.62.3 verbatim — the full-screen
   //    browser-in-browser + the desktop window) ═════════════════════
