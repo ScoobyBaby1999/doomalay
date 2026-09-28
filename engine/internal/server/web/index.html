@@ -1452,6 +1452,17 @@
     text-underline-offset: 2px; font-weight: 600;
     cursor: pointer;
   }
+  /* v0.65 FIX: user-bubble content INHERITS the bubble's ink. .fmt's
+     text-1 used to paint OVER .msg-user's --on-accent — invisible user
+     text on light accents (Mono's #d4d4d4 bubble + near-white body
+     text, caught by the theme suite). Links keep their underline
+     affordance but ride the same ink. (fmt-slot GRADIENT rules keep
+     their higher specificity — a deliberate gradient slot wins.) */
+  .fmt-user { color: inherit; }
+  .fmt-user a.fmt-link {
+    color: inherit;
+    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  }
   .fmt-link-cue { color: var(--fmt-link); opacity: 0.75; font-size: 0.85em; }
 
   /* ── v0.44 GRADIENT TEXT — the fmt slot twins ─────────────────────
@@ -3945,6 +3956,15 @@
     background-clip: text;
     color: transparent;
     -webkit-text-fill-color: transparent;
+  }
+  /* v0.65 HARDENING: the canvas name pill is backdrop-filtered — on some
+     Chromium/WebView builds the backdrop-filter + background-clip:text
+     combination paints an OPAQUE WHITE box (the blur layer ignores the
+     text clip). The pill is already 85%-opaque; the blur is imperceptible
+     there — drop it while the name rides the gradient clip. */
+  [data-text-grad] .chatbot .name {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
   /* v0.45 ITEM 4 fix (kept): --bg-app-rgb was referenced (L282, L1451)
      but never defined — per-theme statics below; theme.js now also writes

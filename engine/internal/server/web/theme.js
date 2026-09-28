@@ -259,13 +259,6 @@
           docEl.style.setProperty(pair, triplet);
           docEl._themeOverrideKeys.push(pair);
         }
-        // v0.49: --on-accent — the text color that stays readable ON the
-        // accent fill (user bubbles, accent buttons). Derived from the
-        // accent SOLID's luminance; the theme default is white.
-        if (k === '--accent') {
-          docEl.style.setProperty('--on-accent', onColorFor(twins.solid));
-          docEl._themeOverrideKeys.push('--on-accent');
-        }
       });
     }
     if (textGrad) docEl.setAttribute('data-text-grad', '1');
@@ -281,23 +274,44 @@
       docEl.style.setProperty('--bg-panel-rgb', panelTriplet);
       docEl._themeOverrideKeys.push('--bg-panel-rgb');
     }
-    // v0.57: --veil-ink — the layer system's veil direction, derived from
-    // the RESOLVED text color's luminance: light text → BLACK ink (the veil
-    // darkens loud patterns so light text reads), dark text (light themes)
-    // → WHITE ink (the veil calms toward bright). Read from the computed
-    // --text-1 so a Primary-text override flips the veils live too.
-    var t1 = getComputedStyle(docEl).getPropertyValue('--text-1').trim();
-    var inkM = /^#([0-9a-fA-F]{6})$/.exec(t1);
+    // v0.65 FIX: --on-accent derived for BASE THEMES too. It used to stay
+    // the static :root #ffffff unless the user overrode Accent 1 — so
+    // light accents (Mono's #d4d4d4) painted WHITE text on a light bubble
+    // = invisible user messages. Read the RESOLVED --accent (theme block
+    // or override twin — overrides write the solid before this runs) and
+    // derive the readable ink by luminance, exactly like the old override
+    // path did (same onColorFor contract).
+    var accResolved = String(getComputedStyle(docEl)
+      .getPropertyValue('--accent') || '').trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(accResolved)) {
+      docEl.style.setProperty('--on-accent', onColorFor(accResolved));
+      docEl._themeOverrideKeys.push('--on-accent');
+    }
+    // v0.57→v0.65 FIX: --veil-ink — the layer system's veil direction.
+    // It used to derive from the RESOLVED TEXT color's luminance, which
+    // sounded right but had a fatal case: a dark Primary-text override on
+    // a dark theme flipped the veils to WHITE — every Layer-2/3 card and
+    // pill then painted a 36-48% WHITE wash over dark surfaces (the theme
+    // suite's live repro: the model-gate pills turned opaque milky-white
+    // "boxes"; the user's "changing the primary text color turns the pill
+    // opaque white" report). The veil's job is to calm the SURFACE it
+    // paints ON — so the direction now follows the RESOLVED SURFACE
+    // luminance: dark surfaces → BLACK ink (dark themes keep today's
+    // exact look), light surfaces → WHITE ink (paper/frost keep theirs).
+    // A dark-text-on-dark-surfaces user choice no longer washes the UI.
+    var s1 = String(getComputedStyle(docEl)
+      .getPropertyValue('--surface-1') || '').trim();
+    var inkM = /^#([0-9a-fA-F]{6})$/.exec(s1);
     if (inkM) {
-      var t1Lum = (function (h) {
+      var s1Lum = (function (h) {
         var r = parseInt(h.slice(0, 2), 16) / 255;
         var g = parseInt(h.slice(2, 4), 16) / 255;
         var b = parseInt(h.slice(4, 6), 16) / 255;
         var lin = function (c) { return (c <= 0.03928) ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
         return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
       })(inkM[1]);
-      docEl.style.setProperty('--veil-ink', (t1Lum > 0.45) ? '#000000' : '#ffffff');
-      docEl.style.setProperty('--veil-ink-rgb', (t1Lum > 0.45) ? '0, 0, 0' : '255, 255, 255');
+      docEl.style.setProperty('--veil-ink', (s1Lum > 0.45) ? '#ffffff' : '#000000');
+      docEl.style.setProperty('--veil-ink-rgb', (s1Lum > 0.45) ? '255, 255, 255' : '0, 0, 0');
       docEl._themeOverrideKeys.push('--veil-ink', '--veil-ink-rgb');
     }
 
