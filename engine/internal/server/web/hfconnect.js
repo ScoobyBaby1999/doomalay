@@ -90,7 +90,18 @@
   // (window.open without setSupportMultipleWindows does nothing useful) —
   // same-tab there is safe: handleUrl intercepts the HF redirect into the
   // external browser and the SPA document is never replaced.
+  // v0.67.1: BIB-capable builds (the v0.64+ APK's native panel) dock the
+  // OAuth page in the PANEL BROWSER instead — the sheet handles the
+  // doomalay:// return (dismiss + wakeSpa), so the SPA never navigates
+  // and the visibility refetch fires exactly like the same-tab path.
+  // Returns null there (the sheet owns the wake — no popup to watch).
   function openAuthPopup(url) {
+    if (window.InAppBrowser && window.__doomalayKotlin &&
+        typeof window.__doomalayKotlin.openPanel === 'function') {
+      var abs = url;
+      try { abs = new URL(url, window.location.origin).href; } catch (e) {}
+      if (window.InAppBrowser.open(abs) === 'native-panel') return null;
+    }
     if (/\bwv\b/.test(navigator.userAgent || '')) { window.location.href = url; return null; }
     var p = null;
     try { p = window.open(url, 'doomalay-hf', 'width=520,height=680'); } catch (e) {}
@@ -211,6 +222,9 @@
     });
     var open = stateEl.querySelector('#hfc-open');
     if (open) open.addEventListener('click', function () {
+      // v0.67.1: the BIB panel first (capable builds), the fallback tiers
+      // (viewer / popup / tab) everywhere else.
+      if (window.InAppBrowser && window.InAppBrowser.open) { window.InAppBrowser.open(uri); return; }
       window.open(uri, '_blank');
     });
   }
@@ -305,6 +319,10 @@
     var link = el.querySelector('#hfc-gettoken');
     if (link) link.addEventListener('click', function (e) {
       e.preventDefault();
+      // v0.67.1: the token console docks in the BIB panel on capable
+      // builds (user spec: every redirect uses the panel, never the
+      // default browser screen); other builds keep the popup/tab.
+      if (window.InAppBrowser && window.InAppBrowser.open) { window.InAppBrowser.open('https://huggingface.co/settings/tokens'); return; }
       window.open('https://huggingface.co/settings/tokens', '_blank');
     });
 

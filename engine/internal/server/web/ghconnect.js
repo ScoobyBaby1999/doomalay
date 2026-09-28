@@ -144,7 +144,18 @@
   }
   // openAuthPopup — popup FIRST so the app tab never navigates (see
   // hfconnect.js; the Android WebView takes the same-tab path).
+  // v0.67.1: BIB-capable builds (the v0.64+ APK's native panel) dock the
+  // OAuth page in the PANEL BROWSER instead — the sheet handles the
+  // doomalay:// return (dismiss + wakeSpa), so the SPA never navigates
+  // and the visibility refetch fires exactly like the same-tab path.
+  // Returns null there (the sheet owns the wake — no popup to watch).
   function openAuthPopup(url) {
+    if (window.InAppBrowser && window.__doomalayKotlin &&
+        typeof window.__doomalayKotlin.openPanel === 'function') {
+      var abs = url;
+      try { abs = new URL(url, window.location.origin).href; } catch (e) {}
+      if (window.InAppBrowser.open(abs) === 'native-panel') return null;
+    }
     if (/\bwv\b/.test(navigator.userAgent || '')) { window.location.href = url; return null; }
     var p = null;
     try { p = window.open(url, 'doomalay-gh', 'width=520,height=680'); } catch (e) {}
@@ -277,6 +288,9 @@
     });
     var open = stateEl.querySelector('#ghc-open');
     if (open) open.addEventListener('click', function () {
+      // v0.67.1: the BIB panel first (capable builds), the fallback tiers
+      // (viewer / popup / tab) everywhere else.
+      if (window.InAppBrowser && window.InAppBrowser.open) { window.InAppBrowser.open(openUri); return; }
       window.open(openUri, '_blank');
     });
   }
@@ -394,6 +408,10 @@
     var link = el.querySelector('#ghc-gettoken');
     if (link) link.addEventListener('click', function (e) {
       e.preventDefault();
+      // v0.67.1: the token console docks in the BIB panel on capable
+      // builds (user spec: every redirect uses the panel, never the
+      // default browser screen); other builds keep the popup/tab.
+      if (window.InAppBrowser && window.InAppBrowser.open) { window.InAppBrowser.open('https://github.com/settings/tokens'); return; }
       window.open('https://github.com/settings/tokens', '_blank');
     });
 
