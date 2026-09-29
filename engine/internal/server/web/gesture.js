@@ -190,9 +190,14 @@
 
   // v0.29: elements that OWN their touch gestures — the sheet must never
   // hijack a drag meant for them.
+  // v0.77: checkboxes + switches join the list — the animate-toggle-off
+  // bug (reproduced on the rig): a finger drifting >24px down on a 42×24
+  // switch ran the sheet hijack's preventDefault, which killed the
+  // synthetic click — the toggle could never be turned off with a sloppy
+  // tap. A tap on a toggle is always the toggle's, never the sheet's.
   function ownsGesture(target) {
     if (!target || !target.closest) return false;
-    return !!target.closest('input[type="range"], textarea, .no-sheet-drag');
+    return !!target.closest('input[type="range"], input[type="checkbox"], .app-switch, textarea, .no-sheet-drag');
   }
 
   function attach(panel, opts) {
@@ -225,6 +230,18 @@
     function duckForCanvas() {
       if (curY >= H - 1) return;           // not on screen — nothing to duck
       if (currentState === 'full') return; // the full dock never ducks
+      // v0.77 THE CLOSING GUARD (the stuck-30% bug, reproduced on the rig):
+      // a canvas touch arriving DURING the close-dismiss (~150ms window)
+      // used to run springY() → stopAll() → stopDismiss() — the closing
+      // spring died mid-flight with `.closing` + pointer-events:none
+      // already armed and nothing left to clear them: the panel re-docked
+      // at 30% completely interaction-dead (hit-tests skipped it — every
+      // touch fell through to the canvas), "doesn't go down or render
+      // taps", and only a full close→open cycle (the Android back)
+      // recovered. A CLOSING panel is never duckable — the touch still
+      // pans the canvas (the document handler is untouched) and the
+      // dismiss completes on its own.
+      if (panelEl.classList.contains('closing')) return;
       if (ducked) { resetDuckTimer(); return; }
       ducked = true;
       springY(curY, yForDuck(), 0);        // the glide (the settle spring)

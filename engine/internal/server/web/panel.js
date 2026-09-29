@@ -438,6 +438,12 @@
         if (!self.isOpen()) return;
         if (e.touches.length !== 1) return;          // a second finger mid-gesture is never the trigger
         if (self.gestures.state() === 'full') return;  // the full dock never ducks
+        // v0.77 THE CLOSING GUARD (twin of gesture.js's own): a panel that
+        // is closing (the fling-dismiss keeps .open during its ~150ms
+        // slide) is never duckable — the trigger passing through here
+        // while gesture.js's guard somehow didn't (a stale build, a
+        // wrapper, whatever) must not resurrect the stuck-30% panel.
+        if (self.panelEl.classList.contains('closing')) return;
         if (!onCanvasSurface(e.target)) return;         // overlays/chrome/panel taps are not ours
         if (self.gestures.isDucked()) self.gestures.retriggerDuck();
         else self.gestures.duckForCanvas();

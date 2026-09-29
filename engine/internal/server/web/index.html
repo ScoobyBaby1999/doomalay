@@ -934,6 +934,18 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+  /* v0.77 THE HIT-SLOP (the animate-toggle-off bug, reproduced on the rig):
+  *  the switch visual is 42×24 — far under the 44px touch floor, and a
+  *  finger that drifts even ~10px landed the tap on a neighbor (the
+  *  browser dispatches the click at the touch-END point). A transparent
+  *  ::after extends the tappable zone to 62×46 around the visual — sloppy
+  *  taps still hit the label (the ::after belongs to it, so the label
+  *  forwards the click to the checkbox). The visual stays 42×24. */
+  .app-switch::after {
+    content: '';
+    position: absolute;
+    inset: -11px -16px;
+  }
   .setting-row label {
     font-size: var(--ui-fs);
     color: var(--text-1);
