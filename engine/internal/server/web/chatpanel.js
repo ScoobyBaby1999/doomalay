@@ -1012,7 +1012,7 @@
           // Sticky input bar — stays visible while scrolled.
           // v0.34: the input rides the chat scale too (typing in the size
           // you read); the textarea grows to at most ~3× its min height.
-          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-2);border-top:1px solid var(--surface-3);padding:calc(10px * var(--chat-scale,1)) 16px calc(12px * var(--chat-scale,1));z-index:2">' +
+          '<div id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1);border-top:1px solid var(--surface-3);padding:calc(10px * var(--chat-scale,1)) 16px calc(12px * var(--chat-scale,1));z-index:2">' +
           '<div id="chat-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>' +
           '<div style="display:flex;gap:8px">' +
             '<textarea id="chat-input" placeholder="' + esc(type.placeholder) + '" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:calc(10px * var(--chat-scale,1)) calc(12px * var(--chat-scale,1));border-radius:8px;font-size:calc(var(--chat-fs,16px) - 1px);font-family:inherit;resize:none;outline:none;min-height:calc(40px * var(--chat-scale,1));max-height:calc(120px * var(--chat-scale,1));line-height:1.4" rows="1">' + (state.draftText || '') + '</textarea>' +

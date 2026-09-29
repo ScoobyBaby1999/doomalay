@@ -309,7 +309,11 @@
   .chatbot .icon {
     width: 56px; height: 56px;
     border-radius: 50%;
-    background: var(--border);
+    /* v0.72: the disc is RAISED CHROME on the canvas — it paints the
+       surface-2 variable (and its projection via the Layer-3 rule), not
+       --border (a disc wearing the border family was never the intent;
+       "the chatbot itself… doesn't render the theme"). */
+    background: var(--surface-2);
     border: 2px solid var(--text-3-dim);
     display: flex;
     align-items: center;
@@ -1881,7 +1885,10 @@
   /* ── sources cards (tappable, pretty) — v0.34 chat-scaled; v0.38 COLLAPSIBLE ── */
   .src-wrap {
     align-self: stretch; max-width: 95%;
-    background: var(--bg-app); border: 1px solid var(--surface-2);
+    /* v0.72: the box's own field is the OVERLAY background (its Layer
+       rule windows bg-app + the border ring); the old surface-2 divider
+       read as a hairline from the wrong family. */
+    background: var(--bg-app); border: 1px solid var(--border);
     border-radius: 12px; padding: calc(8px * var(--chat-scale)) calc(10px * var(--chat-scale));
   }
   .src-wrap > .src-wrap-label {
@@ -1923,7 +1930,7 @@
      one-press download buttons). Theme variables ONLY — no hex anywhere. ── */
   .hub-wrap {
     align-self: stretch; max-width: 95%;
-    background: var(--bg-app); border: 1px solid var(--surface-2);
+    background: var(--bg-app); border: 1px solid var(--border);
     border-radius: 12px; padding: calc(8px * var(--chat-scale)) calc(10px * var(--chat-scale));
   }
   .hub-wrap > .hub-wrap-label {
@@ -3905,20 +3912,46 @@
     text-shadow: var(--text-shadow);
   }
 
-  /* — Layer 2: cards on surfaces. 2 layers: the surface-1 projection
-     (padding-box) + the border ring (border-box) — both fixed → windows
-     into the SAME field the panel paints (seamless, the boundary reads
-     through the ring). 'none' twins keep the plain solid look. v0.66:
-     the veil layer is GONE — the card is a pure projection window. */
+  /* — Layer 2: cards on surfaces. v0.72 THE PLATE SYSTEM: 3 layers —
+     the surface-1 projection (when the twin is live) over an OPAQUE
+     FLAT PLATE of the same variable, then the border ring. THE LEAK
+     THIS KILLS (user spec: "changing the borders color theme variable
+     seems to leak into surface raised, and colors the entire
+     collapsible pill… the header collapsible pill backgrounds
+     themselves change"): with the old 2-layer rule, a border gradient
+     over a SOLID surface painted the whole card — layer 2 clipped to
+     border-box covered the padding area too (nothing sat over it), so
+     every card wore the full border sweep as its body. The plate
+     ALWAYS covers the padding-box, so the border layer can only ever
+     read in the 1px ring. The plate is a same-stop gradient of the
+     variable itself — byte-identical to the old solid look when no
+     twin is live, invisible under the twin when one is. */
   .settings-section, .hub-card, .pv-row, .msg-assistant, .ts-row,
   .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
-  .cv-section, .mb-more, .wsx-opt, .src-wrap, .hub-wrap {
-    background-image: var(--surface-1-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
-    background-attachment: fixed, fixed;
+  .cv-section, .mb-more, .wsx-opt {
+    background-image: var(--surface-1-gradient, none),
+                      linear-gradient(var(--surface-1), var(--surface-1)),
+                      var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
+    text-shadow: var(--text-shadow);
+  }
+  /* v0.72: src-wrap / hub-wrap moved OUT of Layer 2 — they are the
+     chat's OVERLAY-CLASS boxes (their documented base is --bg-app, not
+     surface-1), so their window rides the bg-app projection with its
+     own plate + the border ring. Their base border moves to --border
+     (borders follow the border variable — the old --surface-2 divider
+     read as a hairline from the wrong family). */
+  .src-wrap, .hub-wrap {
+    background-image: var(--bg-app-gradient, none),
+                      linear-gradient(var(--bg-app), var(--bg-app)),
+                      var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
     text-shadow: var(--text-shadow);
   }
 
@@ -3926,7 +3959,12 @@
      SURFACE-2 projection (a different field than the cards behind them,
      so they always read as raised chrome). v0.66: no veil — pure
      windows. Includes the untyped inputs the input[type=text] selector
-     misses. */
+     misses. v0.72: the chat's OUTLINE pills join the family — the
+     dashed tool-progress pill + the chatbot's own chrome (the icon
+     disc + the metadata name pill + the sandbox corner badge) — every
+     pill that appears in/around chat now windows its variable (user
+     spec: "the pills in the chat metadata and the chatbot itself…
+     still don't render the gradients or theme very nicely or at all"). */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
   .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover,
@@ -3937,8 +3975,25 @@
   .tw-iconcell, .chat-find-chip, .sm-ghost, #chat-send-more, .gr-dir,
   .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
   .wsc-brsel, .kbd, .pv-btn, .gr-editor, .gr-swatches, .gr-tools,
-  #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn {
+  #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn,
+  .tool-pill-progress, .chatbot .icon, .chatbot .name {
     background-image: var(--surface-2-gradient, none);
+    background-attachment: fixed;
+  }
+  /* v0.72: the chatbot's METADATA pill — the name rides the OVERLAY
+     field (bg-app) too: it floats over the CANVAS, and its documented
+     base is rgba(--bg-app, 0.85). A live bg-app twin makes it a real
+     window (opaque, readable over any art); a solid bg-app keeps the
+     translucent pill exactly as before. */
+  .chatbot .name {
+    background-image: var(--surface-2-gradient, none), var(--bg-app-gradient, none);
+    background-attachment: fixed, fixed;
+  }
+  /* v0.72: the sandbox corner badge — its documented base is
+     surface-1, so it windows the SURFACE-1 field (not the raised one):
+     the badge reads as a cut of the panel behind the icon disc. */
+  .chatbot .sandbox-badge {
+    background-image: var(--surface-1-gradient, none);
     background-attachment: fixed;
   }
   /* v0.49: the chat panel + settings pages are SURFACES — their gradient
@@ -3975,11 +4030,18 @@
      inline preview stays local — editor previews are the documented
      exception to the projection model). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
-  .color-row-reset {
-    background-image: var(--surface-2-gradient, none), var(--border-gradient, none);
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
-    background-attachment: fixed, fixed;
+  .color-row-reset, .settings-nav .tab {
+    /* v0.72: THE PLATE SYSTEM (the Layer-2 note above) — the flat
+       surface-2 plate always covers the padding-box, so the border
+       sweep can only read in its ring, never as the pill's fill. The
+       settings-nav tabs join the group (outline pills — their ring
+       follows the border variable like every other outline). */
+    background-image: var(--surface-2-gradient, none),
+                      linear-gradient(var(--surface-2), var(--surface-2)),
+                      var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
   }
   /* v0.57→v0.66 HEADERS — the bg-app projection window (the v0.49
      "overlay background = overlay screens · collapsible headers · scrims"

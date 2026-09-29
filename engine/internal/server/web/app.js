@@ -253,7 +253,12 @@
         } else {
           for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
             var iyS = Math.round((y + offsetY * scale) / scaledGrid);
-            var segLen = (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2);
+            // v0.76 (the rebased v0.73 wave's floor, grafted): the
+            // ±170% small end would draw a NEGATIVE length (an inverted
+            // segment) — the floor keeps it a visible speck-streak, the
+            // "very small, almost like a shooting star" ask.
+            var segLen = Math.max(scaledGrid * 0.06,
+              (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
             var segW = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
             // v0.75 ANIMATE LINES (user spec: "move randomly either up
             // or down the relative direction they are facing at random
@@ -299,7 +304,8 @@
         } else {
           for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
             var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
-            var segLen2 = (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2);
+            var segLen2 = Math.max(scaledGrid * 0.06,
+              (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
             var segW2 = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
             var drift2 = 0;
             if (animLines) {

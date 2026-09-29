@@ -125,6 +125,17 @@
   function writeY(y) {
     curY = y;
     panelEl.style.transform = 'translate3d(0,' + y + 'px,0)';
+    // v0.72: every position write re-anchors the projection windows —
+    // the painter (theme.js PROJ) converts fixed-attachment gradients
+    // into explicit viewport-fitted offsets inside this transformed
+    // root, but it only repaints when POKED. The old pokes came from
+    // the CANVAS physics tick alone — with the canvas idle (the common
+    // case) a panel glide (spring/rise/drag/settle — all rAF writes,
+    // no CSS transitions, no mutations) left every pill inside showing
+    // the region it occupied BEFORE the move, forever, until some
+    // unrelated scroll or mutation happened (the "tiling issues" —
+    // windows sampling regions that don't match where they sit).
+    if (window.DoomProjection) window.DoomProjection.poke();
   }
   function writeVis(y) {
     panelEl.style.setProperty('--panel-vis-h', visForY(y) + 'px');

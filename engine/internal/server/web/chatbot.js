@@ -115,7 +115,10 @@
       const iconSet = fam.icons || [];
 
       this._iconEl.innerHTML = '';
-      this._iconEl.style.background = '';
+      // v0.72: the reset clears the COLOR only — the old shorthand reset
+      // also wiped background-image, killing the disc's surface-2
+      // projection window on every re-render.
+      this._iconEl.style.backgroundColor = '';
 
       // v0.52: the custom browsed icon outranks the family set
       var custom = this.customIconURL();
@@ -134,10 +137,16 @@
       } else {
         // v0.24: the DEFAULT family tint follows the theme (DOM style can
         // use var() directly); branded families keep their own colors.
+        // v0.72: the tint rides background-COLOR, never the shorthand —
+        // the shorthand reset the image layer, so the disc never wore
+        // its surface-2 projection window (user spec: "the chatbot
+        // itself… still doesn't render the gradients or theme"). The
+        // family tint stays as the base; a gradiented surface-2 paints
+        // its window over it (the user's field outranks the brand tint).
         if (this.family === 'default' || !fam.color) {
-          this._iconEl.style.background = 'var(--border-strong)';
+          this._iconEl.style.backgroundColor = 'var(--border-strong)';
         } else {
-          this._iconEl.style.background = fam.color;
+          this._iconEl.style.backgroundColor = fam.color;
         }
         this._iconEl.textContent = (this.name || '?').charAt(0).toUpperCase();
       }
