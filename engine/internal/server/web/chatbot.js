@@ -109,9 +109,17 @@
 
     _renderIcon() {
       const cfg = window.DoomalayConfig;
+      // v0.76.6: resolve the family EXPLICITLY — the old chain fell
+      // through to families.default for unknown families, whose canvas
+      // hex (#4a4a5e) then painted the DISC as a brand tint (an
+      // opaque foreign base under the surface-2 window — the
+      // leak-audit finding). Only a REAL branded family carries a
+      // brand disc; default + unknown families window surface-2 with
+      // a surface-2 base.
       const fam = (cfg && cfg.families && cfg.families[this.family]) ||
                   (cfg && cfg.families && cfg.families.default) ||
-                  { color: 'var(--border-strong)', icons: [] }; // family data — theme.js re-tints 'default'
+                  { color: 'var(--surface-2)', icons: [] }; // family data — theme.js re-tints 'default'
+      const branded = !!(cfg && cfg.families && cfg.families[this.family] && cfg.families[this.family].color);
       const iconSet = fam.icons || [];
 
       this._iconEl.innerHTML = '';
@@ -143,8 +151,13 @@
         // itself… still doesn't render the gradients or theme"). The
         // family tint stays as the base; a gradiented surface-2 paints
         // its window over it (the user's field outranks the brand tint).
-        if (this.family === 'default' || !fam.color) {
-          this._iconEl.style.backgroundColor = 'var(--border-strong)';
+        // v0.76.6: the DEFAULT base is var(--surface-2) — the disc's
+        // window IS the surface-2 family (the Layer-3 group), so a SOLID
+        // surface-2 must read on the disc too (it painted border-strong,
+        // the wrong family — the leak-audit finding: base and window
+        // must belong to the same variable, always).
+        if (this.family === 'default' || !fam.color || !branded) {
+          this._iconEl.style.backgroundColor = 'var(--surface-2)';
         } else {
           this._iconEl.style.backgroundColor = fam.color;
         }

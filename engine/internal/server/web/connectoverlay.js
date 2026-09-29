@@ -49,6 +49,31 @@
   var histDepth = 0;    // history entries WE pushed (one per stack level)
   var suppress = 0;     // popstates from our own history.go/back drains
 
+  // ── v0.76.6 THE HISTORY FLOOR (the about:blank kill) ─────────────
+  // RED-TEAM FINDING (live, this suite): open +model → close → open
+  // +sandbox → close — the second close's drainHistory() issued a
+  // batch history.go(-n) with n desynced by the FIRST drain's still-
+  // pending async transition: the walk went PAST the app's first
+  // history entry and the whole SPA landed on about:blank — dead
+  // screen, unrecoverable without a reload. Integer counters can never
+  // be trusted across async history transitions; the WORLD can:
+  //   · every step validates the CURRENT entry is ours
+  //     (history.state.__connectOverlay) before issuing back();
+  //   · drains walk ONE entry at a time, re-driven by the popstate
+  //     handler, which re-syncs histDepth from the landing marker
+  //     (marker k ⇒ k+1 backs to the base);
+  //   · landing on a non-marker entry (the app root, another screen,
+  //     the browser's initial blank) ENDS the walk — the floor. The
+  //     worst case is a couple of extra backs through our own dead
+  //     entries; never a step below our zone.
+  function oursNow() {
+    try { return !!(history.state && typeof history.state.__connectOverlay === 'number'); }
+    catch (e) { return false; }
+  }
+  function resyncDepth() {
+    histDepth = oursNow() ? (history.state.__connectOverlay + 1) : 0;
+  }
+
   function pushEntry() {
     try {
       history.pushState({ __connectOverlay: histDepth }, '');
@@ -57,20 +82,27 @@
   }
 
   function consumeEntry() {
-    if (histDepth > 0) {
+    if (histDepth > 0 && oursNow()) {
       suppress++;
       histDepth--;
       try { history.back(); } catch (e) { suppress--; histDepth++; }
+    } else {
+      histDepth = 0;   // not standing on our entry — the floor; nothing to consume
     }
   }
 
+  // one validated step of a drain; the popstate handler re-drives the
+  // next until the floor (a non-marker entry) or histDepth 0.
+  function stepDrain() {
+    if (histDepth <= 0) return;
+    if (!oursNow()) { histDepth = 0; return; }   // THE FLOOR
+    suppress++;
+    histDepth--;
+    try { history.back(); } catch (e) { suppress--; histDepth++; }
+  }
+
   function drainHistory() {
-    if (histDepth > 0) {
-      var n = histDepth;
-      suppress += n;
-      histDepth = 0;
-      try { history.go(-n); } catch (e) { suppress -= n; }
-    }
+    stepDrain();
   }
 
   // ONE back press (gesture / Esc): pop a level, or close at the root.
@@ -84,9 +116,16 @@
   }
 
   window.addEventListener('popstate', function () {
-    if (suppress > 0) { suppress--; return; }        // our own drain
-    if (histDepth > 0) histDepth--;                   // the browser ate one of ours
-    if (isOpen()) backOne();                          // user back gesture
+    if (suppress > 0) {
+      suppress--;                                     // our own step landed
+      resyncDepth();                                  // the world is the truth
+    } else {
+      if (histDepth > 0) histDepth--;                 // the browser ate one of ours
+      if (isOpen()) { backOne(); return; }            // user back gesture
+      resyncDepth();
+    }
+    // finish an in-flight close-drain / clean our orphaned entries
+    if (histDepth > 0 && !isOpen()) stepDrain();
   });
 
   window.addEventListener('keydown', function (e) {
