@@ -92,10 +92,12 @@
                                // (== DUCK_TAP_SLOP, so the press rule and the
                                // grab rule partition every touch exactly:
                                // <10 still press → restore, >10 drag → close)
-  var DUCK_FLING_VY = 0.25;    // px/ms — a downward flick closes the peek (the EMA
+  var DUCK_FLING_VY = 0.2;     // px/ms — a downward flick closes the peek (the EMA
                                // needs ~3 samples to converge, so a real flick's
                                // 1.5-3 px/ms crosses by the 2nd-3rd move; a slow
-                               // deliberate nudge sits under 0.1 and never trips)
+                               // deliberate nudge sits under 0.1 and never trips —
+                               // 0.2 keeps a 2x margin between them while riding
+                               // out real-event timer jitter)
 
   // ── v0.42 THE ALWAYS-TALL GEOMETRY ──────────────────────────────
   // H is the drag-math source of truth (innerHeight — dynamic toolbars),

@@ -165,20 +165,22 @@ check "2b THE FIX — the body slide on scrolled content CLOSES" "$(ev "window._
 # ══ 3. THE VELOCITY CLAUSE — a short fast flick closes ══════════════
 if reopenPanel; then ok "3-pre the panel reopened"; else bad "3-pre the panel would not reopen"; fi
 if duckAndWait; then ok "3-pre-b the panel ducked"; else bad "3-pre-b the panel would not duck"; fi
-# dy = 10 (NOT > the 10px threshold) but fast: 3 moves of ~3.3px every
-# 8ms → inst ≈ 0.42 px/ms, the EMA crosses 0.25 by the 3rd sample. The
-# sequence runs INSIDE one eval (setTimeout chain) — separate evals are
-# 50-200ms apart and can never build velocity.
+# dy = 10 (NOT > the 10px threshold) but fast: 4 moves of 2.5px every
+# 6ms → inst ≈ 0.42 px/ms, the EMA crosses 0.2 by the 3rd-4th sample
+# even with setTimeout jitter stretching a gap to ~15ms. The sequence
+# runs INSIDE one eval (setTimeout chain) — separate evals are 50-200ms
+# apart and can never build velocity.
 ev "new Promise(function(res){
   var h = document.querySelector('#chat-panel .handle');
   window.__touch(h, 'touchstart', 200, 500);
-  setTimeout(function(){ window.__touch(h, 'touchmove', 200, 503.5); }, 8);
-  setTimeout(function(){ window.__touch(h, 'touchmove', 200, 507); }, 16);
+  setTimeout(function(){ window.__touch(h, 'touchmove', 200, 502.5); }, 6);
+  setTimeout(function(){ window.__touch(h, 'touchmove', 200, 505); }, 12);
+  setTimeout(function(){ window.__touch(h, 'touchmove', 200, 507.5); }, 18);
   setTimeout(function(){ window.__touch(h, 'touchmove', 200, 510); }, 24);
-  setTimeout(function(){ window.__touch(h, 'touchend', 200, 510); res('flicked'); }, 32);
+  setTimeout(function(){ window.__touch(h, 'touchend', 200, 510); res('flicked'); }, 30);
 })" >/dev/null
 sleep 1.5
-check "3a the 10px FLICK closes (vy > 0.25 outranks the short dy)" "$(ev "window.__isOpen() ? 'open' : 'closed'")" "closed"
+check "3a the 10px FLICK closes (vy > 0.2 outranks the short dy)" "$(ev "window.__isOpen() ? 'open' : 'closed'")" "closed"
 
 # ══ 4. THE STILL PRESS restores (the v0.65.1 rule, unchanged) ═══════
 if reopenPanel; then ok "4-pre the panel reopened"; else bad "4-pre the panel would not reopen"; fi
@@ -248,7 +250,7 @@ has "K8j the web ducked body slop is 10px" "$GJ_SRC" "var DUCK_BODY_SLOP = 10"
 has "K8k the web ducked grab skips the scroller gate (mid-drag too)" "$GJ_SRC" "var duckGrab = ducked;"
 has "K8l the web release's dy-or-flick clause" "$GJ_SRC" "dy > DUCK_TAP_SLOP || track.vy > DUCK_FLING_VY"
 has "K8m the web expiry guard" "$GJ_SRC" "if (track.active || track.bodyStart) { resetDuckTimer(); return; }"
-has "K8n the flick threshold sits between a nudge and a flick" "$GJ_SRC" "var DUCK_FLING_VY = 0.25"
+has "K8n the flick threshold sits between a nudge and a flick" "$GJ_SRC" "var DUCK_FLING_VY = 0.2"
 
 # page errors across the whole ride
 ERRS=$(agent-browser errors 2>/dev/null | grep -c "error" || true)
