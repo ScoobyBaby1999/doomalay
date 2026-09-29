@@ -114,19 +114,34 @@ BADGEINK=$(ev "(function(){
 check "the badge ink is readable white (avg mesh luminance < 168)" "$BADGEINK" "rgb(255, 255, 255)"
 
 # ══ B. USE THE WHOLE BUNDLE ════════════════════════════════════════════
-# open the bunch view, wait for the member groups, then press use-bundle
+# open the bunch view, wait for the member groups, download the bundle
+# (v0.72 THE PARITY CARD: the ▶ use-bundle FAB only exists once the
+# bundle is DOWNLOADED — the user spec "the use bundle circular play
+# icon looking pill if the bundle is downloaded"), then press it.
 ev "(function(){ var b = document.querySelector('.hub-card--bunch[data-bunch]'); if (b) b.click(); return 'clicked'; })()" >/dev/null; sleep 2.5
-USEBTN=$(ev "(function(){
+USE0=$(ev "(function(){
   var u = document.getElementById('hub-bundle-use');
-  return JSON.stringify({exists: !!u, label: u ? u.textContent.trim() : ''});
+  return JSON.stringify({existsBeforeDownload: !!u});
 })()")
-has "the bunch view has the ▣ use-bundle pill" "$USEBTN" '"exists":true'
-has "the use-bundle pill is labeled" "$USEBTN" 'use bundle'
-# wait for the groups to load, then click it
+has "the ▶ use-bundle FAB is hidden before the download (v0.72 contract)" "$USE0" '"existsBeforeDownload":false'
+# wait for the groups to load, then download the whole bundle
 for i in $(seq 1 10); do
   N=$(ev "(window.Hub && document.querySelector('.hub-bunch-sec') ? 'ready' : 'wait')" 2>/dev/null)
   [ "$N" = "ready" ] && break; sleep 0.5
 done
+ev "document.getElementById('hub-bundle-dl').click(); 'dl'" >/dev/null
+DLST=""
+for i in $(seq 1 20); do
+  DLST=$(ev "(window.Hub.bundleDL('superpowers-mock')||{}).state || 'none'" 2>/dev/null)
+  [ "$DLST" = "done" ] && break; sleep 0.4
+done
+check "the bundle downloaded (registry done)" "$DLST" "done"
+USEBTN=$(ev "(function(){
+  var u = document.getElementById('hub-bundle-use');
+  return JSON.stringify({exists: !!u, label: u ? u.getAttribute('aria-label') : ''});
+})()")
+has "the bunch view has the ▶ use-bundle FAB once downloaded" "$USEBTN" '"exists":true'
+has "the use-bundle FAB is labeled" "$USEBTN" 'use the whole bundle'
 # stub the PM bridge so the turn is captured without the real service
 ev "window.__pmTurns = [];
 window.PMBridge = { streamChat: function (opts) {

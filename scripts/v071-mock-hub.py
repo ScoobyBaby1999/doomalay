@@ -18,7 +18,7 @@ INDEX = [
     {
         "id": "skill-alpha-aaaaaa", "type": "skill", "name": "skill alpha",
         "description": "the alpha methodology", "author": "mockuser",
-        "repo": REPO, "tags": ["superpowers", "testing"],
+        "repo": REPO, "tags": ["superpowers", "testing", "research", "writing", "brainstorm"],
         "createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-01-02T00:00:00Z",
         "hearts": 3, "downloads": 5,
         "design": {"kind": "gradient", "colors": ["#f59e0b", "#ef4444", "#7c3aed"], "dir": "mesh"},
@@ -27,7 +27,7 @@ INDEX = [
     {
         "id": "skill-beta-bbbbbb", "type": "skill", "name": "skill beta",
         "description": "the beta methodology", "author": "mockuser",
-        "repo": REPO, "tags": ["superpowers"],
+        "repo": REPO, "tags": ["superpowers", "planning"],
         "createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-01-03T00:00:00Z",
         "hearts": 1, "downloads": 2,
         "design": {"kind": "gradient", "colors": ["#f59e0b", "#ef4444", "#7c3aed"], "dir": "mesh"},
@@ -62,6 +62,22 @@ class H(BaseHTTPRequestHandler):
             if flt == "doomalay-skill" or "doomalay-" in search or "superpowers" in search:
                 return self._json([{"id": REPO, "tags": ["doomalay-skill"], "likes": 2, "downloads": 7}])
             return self._json([])
+        # v0.72: the repo CARD (remoteItem's download path asks for it
+        # before falling back to the corpus scan — without this the
+        # bundle's ⤓ fan-out 404s "item not found" even though the
+        # listing scans fine).
+        if u.path == "/api/datasets/" + REPO:
+            return self._json({"id": REPO, "author": "mockuser", "private": False,
+                               "lastModified": "2025-01-03T00:00:00Z", "likes": 2,
+                               "downloads": 7, "tags": ["doomalay-skill"]})
+        if u.path.startswith("/api/datasets/" + REPO + "/tree/main"):
+            # the conventional corpus tree: items/index.json + the two
+            # payload files (scanRepo's fallback listing)
+            return self._json([
+                {"type": "file", "path": "items/index.json", "size": 900},
+                {"type": "file", "path": "items/skill-alpha-aaaaaa.md", "size": 40},
+                {"type": "file", "path": "items/skill-beta-bbbbbb.md", "size": 40},
+            ])
         if u.path.startswith("/datasets/") and "/resolve/main/" in u.path:
             repo_file = u.path[len("/datasets/"):]
             path = repo_file.split("/resolve/main/", 1)[1]

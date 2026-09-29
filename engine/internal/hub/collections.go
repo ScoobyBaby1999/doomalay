@@ -40,12 +40,18 @@ type CollectionSummary struct {
 	Downloads int            `json:"downloads"` // Σ member downloads
 	ByType    map[string]int `json:"byType"`    // members per library type
 	UpdatedAt string         `json:"updatedAt"` // newest member update
+	// v0.72: THE TAG ROW — every member tag votes once per member
+	// carrying it; Tags carries the top vote-getters (ties break
+	// alphabetically for determinism, capped at 16 so a giant bundle
+	// can't bloat the listing payload). The bunch detail card renders
+	// the first five + "+N" (THE PARITY CARD: a bundle's card is
+	// laid out exactly like a single item's).
+	Tags []string `json:"tags"`
 	// v0.58 (user spec pt 2): the bunch's card ART — the curated override
 	// for known bunches, else the newest member's card design (any
 	// publisher brands their own bunch by giving their items a look).
 	// Zero value = the client paints its deterministic hash gradient.
-	Design Design `json:"design"`
-}
+	Design Design `json:"design"`}
 
 // Collections derives every collection bunch across all registered
 // libraries, optionally filtered by a search substring over the bunch id,
@@ -67,6 +73,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 		descs     []string
 		descSet   map[string]bool
 		tags      map[string]int // v0.56: first-tag votes across members
+		allTags   map[string]int // v0.72: EVERY-tag votes (the detail card's tag row)
 		// v0.58: the newest member carrying a usable card design — the
 		// bunch card's art when no curated override exists.
 		bestDesign   Design
@@ -86,7 +93,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 			}
 			a := bunches[id]
 			if a == nil {
-				a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, descSet: map[string]bool{}}
+				a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, allTags: map[string]int{}, descSet: map[string]bool{}}
 				bunches[id] = a
 			}
 			a.sum.Members++
@@ -103,6 +110,15 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 			// most common becomes the bunch's badge tag.
 			if len(it.Tags) > 0 {
 				a.tags[it.Tags[0]]++
+			}
+			// v0.72: every tag a member carries votes once per
+			// member — the tag row shows what the bundle is
+			// ABOUT, not just what its first items lead with
+			// (a member's second tag is as real as its first).
+			for _, tg := range it.Tags {
+				if tg = strings.TrimSpace(tg); tg != "" {
+					a.allTags[tg]++
+				}
 			}
 			a.names = append(a.names, strings.ToLower(it.Name))
 			// v0.73: the matcher widened — descriptions (deduped
@@ -181,6 +197,24 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 			continue
 		}
 		a.sum.Tag = bestTag
+		// v0.72: THE TAG ROW — the every-tag votes, most votes
+		// first (ties alphabetical), capped at 16. The client
+		// shows the top five + "+N"; the cap keeps a 200-member
+		// bundle's listing payload honest.
+		tagList := make([]string, 0, len(a.allTags))
+		for t := range a.allTags {
+			tagList = append(tagList, t)
+		}
+		sort.SliceStable(tagList, func(i, j int) bool {
+			if a.allTags[tagList[i]] != a.allTags[tagList[j]] {
+				return a.allTags[tagList[i]] > a.allTags[tagList[j]]
+			}
+			return tagList[i] < tagList[j]
+		})
+		if len(tagList) > 16 {
+			tagList = tagList[:16]
+		}
+		a.sum.Tags = tagList
 		a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
 		out = append(out, a.sum)
 	}
@@ -193,8 +227,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil
-}
+	return out, nil}
 
 // CollectionMembers is one library's slice of a bunch.
 type CollectionMembers struct {

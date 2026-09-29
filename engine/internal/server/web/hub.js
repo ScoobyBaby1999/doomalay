@@ -487,6 +487,16 @@
 
   // the bunch view render — a hero (the bunch's own design + flag) + the
   // cross-library member sections, one grid per type.
+  // v0.72: THE PARITY CARD (user spec: "it shouldn't look different from
+  // viewing single files… every item published in the library should act
+  // as a bundle, even if it has just 1 item/file within — visually it
+  // should look and function the same"). The hero body mirrors hi-head's
+  // EXACT row stack — name+icon / description / meta / TAGS (top 5 +
+  // "+N") / counts (Σ hearts · Σ downloads) — and the two rectangular
+  // pills retire in favor of the SAME circular FAB row the single-item
+  // view wears: ⤓ download (live N/M + a progress ring) · ♥ endorse
+  // (locked until downloaded, exactly the single-item rule) · ▶ use
+  // bundle (when downloaded) · 🗑 delete-your-copies (the confirm bar).
   function bunchRender() {
     if (!bcur) return '';
     var b = bunchMeta(bcur.id);
@@ -502,27 +512,33 @@
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
         '</b><i>bundle</i></span>' : '';
-    // v0.60 pt C.6 → v0.67.5: the ONE-PRESS BUNDLE DOWNLOAD now reads
-    // THE REGISTRY (bdlEntry) — the pill's state survives leaving the
-    // bundle, opening another, coming back, even restarting the app.
-    // paintDlPill() refreshes it live after every member lands.
+    // the parity pieces (see bunchMembers / bundleHeartState below)
+    var members = bunchMembers();
     var dlState = bcur.loading ? null : bdlEntry(bcur.id);
-    var allDl = bcur.loading
-      ? ''
-      : '<button type="button" class="hub-bundle-dl' +
-          (dlState && dlState.state === 'running' ? ' is-running' : '') +
-          (dlState && dlState.state === 'done' ? ' is-done' : '') + '" id="hub-bundle-dl"' +
-          ' title="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '"' +
-          ' aria-label="' + escAttr(dlPillTitle(dlState, b.members || 0)) + '">' +
-          dlPillInner(dlState, b.members || 0) + '</button>' +
-        // v0.71: USE THE WHOLE BUNDLE — attach the bundle to the connected
-        // chat; the bot reads the manifest and picks the member per task
-        // (user spec: "we should be able to use an entire bundle… the bot
-        // can then read the docs and the bundle itself and decide which
-        // skill, ext is best to use").
-        '<button type="button" class="hub-bundle-dl hub-bundle-use" id="hub-bundle-use"' +
-          ' title="use the whole bundle — the bot reads it and picks the right member for each task"' +
-          ' aria-label="use the whole bundle">▣<span>use bundle</span></button>';
+    var downloaded = !!(!bcur.loading && dlState && dlState.state === 'done');
+    var allHearted = bundleHeartState(members);
+    // THE TAG ROW — the server's vote-ranked tags; the first five ride
+    // hi-chips (the single item's exact chip), the rest fold into "+N"
+    // (the title carries the full list for hover/long-press readers).
+    var tags = (b && Array.isArray(b.tags)) ? b.tags : [];
+    var shown = tags.slice(0, 5);
+    var chips = shown.map(function (t) {
+      return '<span class="hi-chip">#' + esc(t) + '</span>';
+    }).join('');
+    if (tags.length > 5) {
+      chips += '<span class="hi-chip hi-chip--info" title="' + escAttr(tags.slice(5).join(', ')) +
+        '">+' + (tags.length - 5) + '</span>';
+    }
+    var chipsRow = chips
+      ? '<div class="hi-chips">' + chips + '</div>' : '';
+    // THE COUNTS ROW — Σ member hearts + Σ member downloads (the
+    // summary aggregates them server-side; a downloaded member counts
+    // its +1, exactly the single item's served counters).
+    var countsRow =
+      '<div class="hi-counts">' +
+        '<span>' + heartGlyph(false) + '<b>' + (b.hearts || 0) + '</b></span>' +
+        '<span>' + dlGlyph() + '<b>' + (b.downloads || 0) + '</b></span>' +
+      '</div>';
     var hero =
       '<div class="hub-bunch-hero" style="background-image:' +
         ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
@@ -533,8 +549,11 @@
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
             '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
           '</div>' +
-          '<div class="hub-bunch-hero-desc">' + esc((b.members || 0) + ' bundled items — ' + bits.join(' · ')) + '</div>' +
-          allDl +
+          '<div class="hi-desc hub-bunch-hero-desc">' + esc(bits.join(' · ') || '—') + '</div>' +
+          '<div class="hi-meta">' + esc((b.members || 0) + ' item' + ((b.members || 0) === 1 ? '' : 's')) +
+            (b.updatedAt ? ' · updated ' + esc(String(b.updatedAt).slice(0, 10)) : '') + '</div>' +
+          chipsRow +
+          countsRow +
         '</div>' +
         flag +
       '</div>';
@@ -585,8 +604,95 @@
         body = viewPill + memFilterRow(groups) + secs;
       }
     }
+    // v0.72: THE FAB ROW — the single-item view's exact chrome (hi-fabs /
+    // hi-fab, sticky-docked at the body's foot). The confirm bar swaps
+    // the whole row, exactly like hubitem's delete flow.
+    var dlTitle = dlPillTitle(dlState, b.members || 0);
+    var fabs =
+      '<div class="hi-fabs">' +
+        (bcur.confirmDel
+          ? '<div class="hi-delbar" id="hub-bundle-delbar" role="alertdialog" aria-label="confirm delete">' +
+              '<span class="hi-delbar-text">Remove every downloaded item of <b>' + esc(bcur.id) +
+                '</b> from your device?</span>' +
+              '<button type="button" class="hi-delbar-btn" data-del="keep">keep</button>' +
+              '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-del="remove">remove</button>' +
+            '</div>'
+          : '') +
+        (downloaded && !bcur.confirmDel
+          ? '<button class="hi-fab hi-fab--use" id="hub-bundle-use" type="button"' +
+              ' title="use the whole bundle — the bot reads it and picks the right member for each task"' +
+              ' aria-label="use the whole bundle">' + fabGlyph('play') + '</button>'
+          : '') +
+        (!bcur.confirmDel
+          ? '<button class="hi-fab' + (dlState && dlState.state === 'done' ? ' is-done' : '') +
+              (dlState && dlState.state === 'running' ? ' is-running' : '') + '" id="hub-bundle-dl" type="button"' +
+              ' title="' + escAttr(dlTitle) + '" aria-label="' + escAttr(dlTitle) + '">' +
+              dlFabInner(dlState, b.members || 0) + '</button>'
+          : '') +
+        (!bcur.confirmDel
+          ? '<button class="hi-fab hi-fab--heart' + (allHearted ? ' on' : '') +
+              (downloaded ? '' : ' locked') + '" id="hub-bundle-heart" type="button"' +
+              (downloaded ? ' title="endorse every item in the bundle"' : ' title="download first"') +
+              ' aria-label="endorse the bundle">' + fabGlyph('heart', allHearted) + '</button>'
+          : '') +
+        (downloaded && !bcur.confirmDel
+          ? '<button class="hi-fab hi-fab--del" id="hub-bundle-del" type="button"' +
+              ' title="delete your copies" aria-label="delete your copies of this bundle">' +
+              fabGlyph('trash-2') + '</button>'
+          : '') +
+      '</div>';
     return '<div class="hub-root hub-root--bunch" data-tone="' + escAttr((cur && cur.type) || '') + '">' + hero +
-      '<div class="hub-bodyzone">' + body + '</div></div>';
+      '<div class="hub-bodyzone">' + body + '</div>' + fabs + '</div>';
+  }
+
+  // v0.72: the bundle's flat member list (type + repo + id + the item) —
+  // the heart state, the endorse fan-out, and the use-bundle manifest all
+  // read it. Empty while the groups load (the FABs account for that).
+  function bunchMembers() {
+    var out = [];
+    ((bcur && bcur.groups) || []).forEach(function (g) {
+      (g.items || []).forEach(function (it) {
+        if (it) out.push({ type: g.type || it.type || 'item', repo: it.repo || '', id: it.id || '', item: it });
+      });
+    });
+    return out;
+  }
+
+  // v0.72: the bundle heart state — ON only when EVERY member is hearted
+  // (an all-or-nothing read; the fan-out makes the tap land exactly there).
+  // No members yet (loading) = not on.
+  function bundleHeartState(members) {
+    if (!members || !members.length) return false;
+    for (var i = 0; i < members.length; i++) {
+      var m = members[i];
+      if (!isHearted(m.type, m.repo, m.id)) return false;
+    }
+    return true;
+  }
+
+  // v0.72: the FAB glyphs — the single-item view's exact IconLib shapes
+  // (26px, the heart fills when on; the DOS fallbacks match hubitem's).
+  function fabGlyph(name, filled) {
+    var I = window.IconLib;
+    if (!I || !I.has(name)) {
+      return { heart: '♥', download: '⤓', 'pen-line': '✎', play: '▶', 'trash-2': '🗑' }[name] || '';
+    }
+    var s = I.svg(name, 26);
+    if (filled) s = s.replace('fill="none"', 'fill="currentColor"');
+    return s;
+  }
+
+  // v0.72: the download FAB's inner HTML, from the registry state — the
+  // pill's old wordy labels die with the pill; a 62px circle carries a
+  // glyph or a terse N/M, and the progress ring (CSS, --dl-p) carries
+  // the live fill while running.
+  function dlFabInner(e, fallbackTotal) {
+    if (!e) return fabGlyph('download');
+    if (e.state === 'running') {
+      return '<span class="hub-dl-count">' + (e.done || 0) + '/' + (e.total || fallbackTotal || 0) + '</span>';
+    }
+    if (e.state === 'done') return '<span class="hub-dl-ok">✓</span>';
+    return fabGlyph('download'); // partial / stale / error → the ⤓ (the title explains)
   }
 
   // v0.73.6: THE MEMBER FILTER — a bundle can hold dozens to thousands of
@@ -653,10 +759,10 @@
     // the hero's art layer — the bunch's own design
     var heroBg = el.querySelector('[data-bunchbg]');
     if (heroBg) paintBunchBg(heroBg, bunchMeta(bcur.id));
-    // v0.60 pt C.6 → v0.67.5: the one-press bundle download — the runner
-    // (registry + per-member fan-out + live pill); the click just arms
-    // it. Running taps say so (no double-run); a done bundle says so
-    // (already yours); partial/stale/error tap = resume/retry.
+    // v0.60 pt C.6 → v0.72: the one-press bundle download — the runner
+    // (registry + per-member fan-out) lives on the ⤓ FAB now; the click
+    // just arms it. Running taps say so (no double-run); a done bundle
+    // says so (already yours); partial/stale/error tap = resume/retry.
     var dl = el.querySelector('#hub-bundle-dl');
     if (dl) dl.addEventListener('click', function () {
       if (!bcur) return;
@@ -672,13 +778,51 @@
       runBundleDownload(bcur.id);
     });
     // mount-time paint: the render emits the registry state; this stamps
-    // the live --dl-p fill + classes onto it (a download running in the
+    // the live --dl-p ring + classes onto it (a download running in the
     // background repaints into a freshly opened bunch view).
     if (dl) paintDlPill();
+    // v0.72: THE ENDORSE FAN-OUT — the bundle heart acts exactly like a
+    // single item's: locked until the bundle is downloaded (the engine
+    // guards per member anyway), then one tap endorses EVERY member (or
+    // removes them all when the bundle is fully hearted). Failures are
+    // counted and reported, never fatal.
+    var heart = el.querySelector('#hub-bundle-heart');
+    if (heart) heart.addEventListener('click', function () {
+      if (!bcur) return;
+      var members = bunchMembers();
+      if (!members.length) {
+        toast('the bundle is still loading — try again in a moment', { ms: 2400 });
+        return;
+      }
+      var e = bdlEntry(bcur.id);
+      if (!(e && e.state === 'done')) {
+        toast('download first — endorsing needs a download', { ms: 2400 });
+        return;
+      }
+      setBundleHeart(!bundleHeartState(members), members);
+    });
+    // v0.72: THE DELETE FAB — the mine view's doBundleDelete (engine
+    // rows + session marks + "Yours" copies + the registry), behind the
+    // same keep/remove confirm bar the single item wears.
+    var del = el.querySelector('#hub-bundle-del');
+    if (del) del.addEventListener('click', function () {
+      if (!bcur) return;
+      bcur.confirmDel = true;
+      bunchRepaint();
+    });
+    var dbar = el.querySelector('#hub-bundle-delbar');
+    if (dbar) dbar.querySelectorAll('[data-del]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        if (!bcur) return;
+        if (b2.getAttribute('data-del') === 'remove') { doBundleDelete(bcur.id); bcur.confirmDel = false; return; }
+        bcur.confirmDel = false;
+        bunchRepaint();
+      });
+    });
     // v0.71: USE THE WHOLE BUNDLE — hand the connected chat the bundle
     // manifest (type/name/desc/repo/id per member, from the loaded
     // groups); ChatPanel.applyBundle arms the lib gate + the PM turn's
-    // decision protocol.
+    // decision protocol. v0.72: it's the ▶ FAB (shown once downloaded).
     var use = el.querySelector('#hub-bundle-use');
     if (use) use.addEventListener('click', function () {
       if (!bcur) return;
@@ -691,18 +835,15 @@
         toast('this build has no bundle support');
         return;
       }
-      var members = [];
-      (bcur.groups || []).forEach(function (g) {
-        (g.items || []).forEach(function (it) {
-          if (!it) return;
-          members.push({
-            type: g.type || it.type || 'item',
-            name: it.name || it.id || '?',
-            desc: it.description || '',
-            repo: it.repo || '',
-            id: it.id || ''
-          });
-        });
+      var members = bunchMembers().map(function (m) {
+        var it = m.item || {};
+        return {
+          type: m.type,
+          name: it.name || m.id || '?',
+          desc: it.description || '',
+          repo: m.repo,
+          id: m.id
+        };
       });
       if (!members.length) {
         toast('the bundle is still loading — try again in a moment', { ms: 2400 });
@@ -886,30 +1027,8 @@
     }
   }
 
-  // the pill's inner HTML, from the registry state (fallbackTotal = the
-  // bunch summary's member count when no entry exists yet).
-  function dlPillInner(e, fallbackTotal) {
-    var ico = statIcon('download', false) || '⤓';
-    if (!e) return ico + '<span>download all ' + (fallbackTotal || 0) + '</span>';
-    if (e.state === 'running') {
-      // the live fill rides behind the label (width = --dl-p on the
-      // button; paintDlPill keeps it current after every member).
-      return '<span class="hub-bundle-dl-fill" aria-hidden="true"></span>' + ico +
-        '<span>' + (e.done || 0) + '/' + (e.total || 0) + ' · downloading…</span>';
-    }
-    if (e.state === 'done') {
-      return '<span class="hub-bundle-dl-ok" aria-hidden="true">✓</span><span>downloaded ' +
-        ((e.total || 0) - (e.failed || 0)) + '</span>';
-    }
-    if (e.state === 'partial') {
-      return ico + '<span>resume · ' + ((e.done || 0) - (e.failed || 0)) + '/' +
-        (e.total || 0) + ((e.failed || 0) ? ' · ' + e.failed + ' failed' : '') + '</span>';
-    }
-    if (e.state === 'stale') {
-      return ico + '<span>resume download · ' + (e.done || 0) + '/' + (e.total || 0) + '</span>';
-    }
-    return ico + '<span>retry the download</span>'; // error
-  }
+  // the download FAB's title, from the registry state (fallbackTotal =
+  // the bunch summary's member count when no entry exists yet).
   function dlPillTitle(e, fallbackTotal) {
     if (!e) return 'download every item in this bundle';
     if (e.state === 'running') return 'downloading — ' + (e.done || 0) + ' of ' + (e.total || 0) + ' done';
@@ -918,15 +1037,18 @@
     if (e.state === 'stale') return 'the last download was interrupted — resume it';
     return 'the download failed — retry';
   }
-  // paint the pill onto the button (render-time AND after every member:
-  // a surgical swap — the click listener lives on the button itself).
+  // paint the download FAB (render-time AND after every member: a
+  // surgical swap — the click listener lives on the button itself).
+  // v0.72: the pill became the ⤓ FAB; the N/M count + the --dl-p ring
+  // replace the old wordy label + fill bar, and is-done/is-running ride
+  // the same classes (the FAB's own CSS styles them).
   function paintDlPill() {
     if (!bcur || !bcur.panel || !bcur.panel.bodyEl) return;
     var btn = bcur.panel.bodyEl.querySelector('#hub-bundle-dl');
     if (!btn) return;
     var b = bunchMeta(bcur.id);
     var e = bdlEntry(bcur.id);
-    btn.innerHTML = dlPillInner(e, (b && b.members) || 0);
+    btn.innerHTML = dlFabInner(e, (b && b.members) || 0);
     btn.title = dlPillTitle(e, (b && b.members) || 0);
     btn.setAttribute('aria-label', btn.title);
     if (e && e.state === 'running' && e.total) {
@@ -936,6 +1058,67 @@
     }
     btn.classList.toggle('is-running', !!(e && e.state === 'running'));
     btn.classList.toggle('is-done', !!(e && e.state === 'done'));
+  }
+
+  // v0.72: THE ENDORSE FAN-OUT — endorse (or un-endorse) every member of
+  // the open bundle, 3 wide (the download runner's cadence). Each member
+  // rides the SAME endpoint a single item's ♥ uses; the engine's
+  // download-first rule is pre-checked (the FAB is locked until the
+  // bundle is downloaded) but per-member failures are still counted and
+  // reported honestly. The summary's Σ hearts nudges by the landed count
+  // (each endorse is +1 on that member's item — the engine's counters).
+  function setBundleHeart(on, members) {
+    if (!bcur || !members || !members.length) return;
+    toast(on ? 'endorsing the bundle…' : 'removing the endorsements…', { hold: true });
+    var targets = members.filter(function (m) {
+      return isHearted(m.type, m.repo, m.id) !== on;
+    });
+    if (!targets.length) {
+      toast(on ? 'the whole bundle is already endorsed ♥' : 'nothing to remove');
+      return;
+    }
+    var landed = 0, failed = 0;
+    var queue = targets.slice();
+    var inFlight = 0;
+    function done() {
+      if (landed + failed < targets.length) return;
+      var meta = bunchMeta(bcur.id);
+      if (meta && landed) meta.hearts = Math.max(0, (meta.hearts || 0) + (on ? landed : -landed));
+      toast(on
+        ? (failed ? 'endorsed ' + landed + '/' + targets.length + ' — ' + failed + ' skipped' :
+            'endorsed the whole bundle — ' + landed + ' item' + (landed === 1 ? '' : 's') + ' ♥')
+        : (failed ? 'removed ' + landed + '/' + targets.length + ' — ' + failed + ' failed' :
+            'endorsements removed — ' + landed + ' item' + (landed === 1 ? '' : 's')),
+        failed ? { ms: 3200 } : undefined);
+      if (bunchTop()) bunchRepaint();
+      else if (isTop()) updateBody();
+    }
+    // one member per call (the parameter owns the closure — a var in the
+    // loop below would be reassigned before the async callbacks fire)
+    function one(m) {
+      inFlight++;
+      api('POST', '/api/hub/' + encodeURIComponent(m.type) +
+          (on ? '/endorse' : '/unendorse'), { repo: m.repo, id: m.id })
+        .then(function (d) {
+          setHearted(m.type, m.repo, m.id, on);
+          if (d && d.item && cur) refreshItem(d.item);
+          landed++;
+        })
+        .catch(function (e2) {
+          failed++;
+          toast((e2 && e2.message) || 'a member failed', { ms: 2400 });
+        })
+        .then(function () {
+          inFlight--;
+          if (!queue.length && inFlight === 0) done();
+          else pump();
+        });
+    }
+    function pump() {
+      while (inFlight < 3 && queue.length) one(queue.shift());
+      if (!queue.length && inFlight === 0) done();
+    }
+    pump();
   }
 
   // THE RUNNER — see the block comment above. Returns nothing; the
@@ -2069,10 +2252,23 @@
         // open).
         try { delete bdlLoad()[id]; bdlSave(); } catch (e) {}
         toast('removed ' + ((d && d.deleted) || 0) + ' items — the bundle is off this device');
+        // v0.72: THE PARITY CARD — deleted FROM the bunch view (the 🗑
+        // FAB), the view STAYS (the FABs reset: ⤓ idle, ♥ locked); the
+        // mine view keeps its own reload-the-list behavior.
+        if (bcur && bcur.id === id && bunchTop()) {
+          bcur.confirmDel = false;
+          bunchRepaint();
+          return;
+        }
         if (cur) { cur.mineConfirm = ''; if (cur.mine) loadMine(); else updateBody(); }
       })
       .catch(function (e) {
         toast((e && e.message) || 'the bundle delete failed');
+        if (bcur && bcur.id === id && bunchTop()) {
+          bcur.confirmDel = false;
+          bunchRepaint();
+          return;
+        }
         if (cur) { cur.mineConfirm = ''; updateBody(); }
       });
   }
