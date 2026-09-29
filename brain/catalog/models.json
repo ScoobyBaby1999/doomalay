@@ -4,6 +4,11 @@
   "//2": "ordered first) and bounces to the next on any failure. Curated 2026-06 from",
   "//3": "live testing. Tiers below are organisational only; any request can name any",
   "//4": "logical model or a physical 'provider/model' slot directly.",
+  "//5": "2026-09 refresh: NVIDIA retired 11 curated ids (glm-5.1, deepseek-v4-* on",
+  "//6": "nvidia, all qwen3.5/step-3.7/llama-4/minimax/mistral slots — verified dead",
+  "//7": "against integrate.api.nvidia.com/v1/models). Live successors added (glm-5.3,",
+  "//8": "glm-5.3-flash, kimi-k3, deepseek-v4.1-flash); dead candidates swapped to the",
+  "//9": "providers that still serve them; mistral entries removed (dead everywhere).",
 
   "logical_models": {
     "kimi-k2.6": {
@@ -19,21 +24,39 @@
         {"provider": "privatemodeai", "model": "kimi-k2.6", "ctx": 256000}
       ]
     },
+    "kimi-k3": {
+      "//": "2026-09: Kimi's current generation — live on nvidia + both opencode pools.",
+      "family": "kimi-k2",
+      "candidates": [
+        {"provider": "nvidia", "model": "moonshotai/kimi-k3", "ctx": 262144},
+        {"provider": "opencode-zen", "model": "kimi-k3", "ctx": 131072},
+        {"provider": "opencode-go", "model": "kimi-k3", "ctx": 131072}
+      ]
+    },
     "deepseek-v4-flash": {
       "//": "Primary DeepSeek (2026-06). Augmented with opencode-zen/opencode-go fallback.",
+      "//1": "2026-09: nvidia EOL'd deepseek-ai/deepseek-v4-flash — see deepseek-v4.1-flash.",
       "family": "deepseek-v4-flash",
       "candidates": [
-        {"provider": "nvidia", "model": "deepseek-ai/deepseek-v4-flash", "ctx": 262144},
         {"provider": "github-models", "model": "deepseek/deepseek-v3-0324", "ctx": 8000},
         {"provider": "opencode-zen", "model": "deepseek-v4-flash", "ctx": 131072},
         {"provider": "opencode-go", "model": "deepseek-v4-flash", "ctx": 131072}
       ]
     },
+    "deepseek-v4.1-flash": {
+      "//": "2026-09: the current DeepSeek generation (nvidia + opencode both live).",
+      "family": "deepseek-v4-flash",
+      "candidates": [
+        {"provider": "nvidia", "model": "deepseek-ai/deepseek-v4.1-flash", "ctx": 262144},
+        {"provider": "opencode-zen", "model": "deepseek-v4.1-flash", "ctx": 131072},
+        {"provider": "opencode-go", "model": "deepseek-v4.1-flash", "ctx": 131072}
+      ]
+    },
     "deepseek-v4-pro": {
       "//": "DEMOTED 2026-06: queue >1k, ReadTimeout-prone. Prefer deepseek-v4-flash.",
+      "//1": "2026-09: nvidia EOL'd deepseek-ai/deepseek-v4-pro (no pro successor there).",
       "family": "deepseek-v4",
       "candidates": [
-        {"provider": "nvidia", "model": "deepseek-ai/deepseek-v4-pro", "ctx": 163840},
         {"provider": "opencode-zen", "model": "deepseek-v4-pro", "ctx": 131072},
         {"provider": "opencode-go", "model": "deepseek-v4-pro", "ctx": 131072}
       ]
@@ -45,11 +68,30 @@
       ]
     },
     "glm-5.1": {
+      "//": "2026-09: nvidia EOL'd z-ai/glm-5.1 — the current generations are glm-5.3",
+      "//1": "and glm-5.3-flash (nvidia); opencode keeps serving 5.1.",
       "family": "glm",
       "candidates": [
-        {"provider": "nvidia", "model": "z-ai/glm-5.1", "ctx": 131072},
         {"provider": "opencode-zen", "model": "glm-5.1", "ctx": 131072},
         {"provider": "opencode-go", "model": "glm-5.1", "ctx": 131072}
+      ]
+    },
+    "glm-5.3": {
+      "//": "2026-09: the current GLM generation (nvidia + both opencode pools).",
+      "family": "glm",
+      "candidates": [
+        {"provider": "nvidia", "model": "z-ai/glm-5.3", "ctx": 131072},
+        {"provider": "opencode-zen", "model": "glm-5.3", "ctx": 131072},
+        {"provider": "opencode-go", "model": "glm-5.3", "ctx": 131072}
+      ]
+    },
+    "glm-5.3-flash": {
+      "//": "2026-09: the fast GLM tier — the frontend auto-pick's known-good first.",
+      "family": "glm",
+      "candidates": [
+        {"provider": "nvidia", "model": "z-ai/glm-5.3-flash", "ctx": 131072},
+        {"provider": "opencode-zen", "model": "glm-5.3-flash", "ctx": 131072},
+        {"provider": "opencode-go", "model": "glm-5.3-flash", "ctx": 131072}
       ]
     },
     "glm-5.2": {
@@ -100,9 +142,10 @@
       ]
     },
     "step-flash": {
+      "//": "2026-09: nvidia EOL'd stepfun-ai/step-3.7-flash; openrouter still serves it.",
       "family": "step-3.7",
       "candidates": [
-        {"provider": "nvidia", "model": "stepfun-ai/step-3.7-flash", "ctx": 131072}
+        {"provider": "openrouter", "model": "stepfun/step-3.7-flash", "ctx": 131072}
       ]
     },
     "gemma-4": {
@@ -115,43 +158,31 @@
       ]
     },
 
-    "//roster-2026-06": "Additions below all live-probed OK (docs/ROSTER-2026-06.md); all stronger than gemma-4.",
+    "//roster-2026-06": "Additions below all live-probed OK (docs/ROSTER-2026-06.md); all stronger than gemma-4. 2026-09: nvidia retired all three qwen3.5 slots + llama-4 + minimax — swapped to their live providers.",
     "qwen3.5-397b": {
       "family": "qwen3.5-397b",
       "candidates": [
-        {"provider": "nvidia", "model": "qwen/qwen3.5-397b-a17b", "ctx": 262144}
+        {"provider": "openrouter", "model": "qwen/qwen3.5-397b-a17b", "ctx": 262144}
       ]
     },
     "qwen3.5-122b": {
       "family": "qwen3.5-122b",
       "candidates": [
-        {"provider": "nvidia", "model": "qwen/qwen3.5-122b-a10b", "ctx": 262144}
+        {"provider": "openrouter", "model": "qwen/qwen3.5-122b-a10b", "ctx": 262144}
       ]
     },
     "llama-4-maverick": {
       "family": "llama-4-maverick",
       "candidates": [
-        {"provider": "nvidia", "model": "meta/llama-4-maverick-17b-128e-instruct", "ctx": 262144}
+        {"provider": "openrouter", "model": "meta-llama/llama-4-maverick", "ctx": 262144}
       ]
     },
     "minimax-m2.7": {
+      "//": "2026-09: nvidia EOL'd minimaxai/minimax-m2.7; opencode keeps serving it.",
       "family": "minimax-m2",
       "candidates": [
-        {"provider": "nvidia", "model": "minimaxai/minimax-m2.7", "ctx": 262144},
         {"provider": "opencode-zen", "model": "minimax-m2.7", "ctx": 131072},
         {"provider": "opencode-go", "model": "minimax-m2.7", "ctx": 131072}
-      ]
-    },
-    "mistral-medium-3.5": {
-      "family": "mistral-medium-3.5",
-      "candidates": [
-        {"provider": "nvidia", "model": "mistralai/mistral-medium-3.5-128b", "ctx": 131072}
-      ]
-    },
-    "mistral-small-4": {
-      "family": "mistral-small-4",
-      "candidates": [
-        {"provider": "nvidia", "model": "mistralai/mistral-small-4-119b-2603", "ctx": 131072}
       ]
     },
 
@@ -223,9 +254,9 @@
       ]
     },
     "qwen3.6-plus": {
+      "//": "2026-09: nvidia EOL'd its qwen slots; opencode serves the current qwen.",
       "family": "qwen3.6",
       "candidates": [
-        {"provider": "nvidia", "model": "qwen/qwen3.5-122b-a10b", "ctx": 262144},
         {"provider": "opencode-zen", "model": "qwen3.6-plus", "ctx": 131072},
         {"provider": "opencode-go", "model": "qwen3.6-plus", "ctx": 131072}
       ]

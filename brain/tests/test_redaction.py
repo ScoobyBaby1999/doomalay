@@ -91,6 +91,23 @@ check("/chat error wrapper redacts", "redact.redact_dict(ev)" in src)
 check("/chat except path redacts", '"message": redact.redact(str(e))' in src)
 check("/judge error paths redact", src.count("redact.redact") >= 3)
 
+print("── v0.75.5+: the raw-HTTP reflection sink (HTTPException details)")
+# Red-team finding: a key-shaped model id came back VERBATIM in the 400
+# "could not resolve model …" detail (the SSE choke points were clean; the
+# FastAPI layer wasn't). The detail construction must pass redact().
+sentinel_model = "sk-SENTINELKEY1234567890XYZ"
+detail = redact.redact(f"could not resolve model {sentinel_model} (provider )")
+check("key-shaped model id not reflected",
+      sentinel_model not in detail and "‹redacted:key›" in detail, detail)
+check("/chat 400 model echo redacts",
+      'detail=redact.redact(f"could not resolve model {model}' in src)
+check("/chat 401 key echo redacts",
+      'detail=redact.redact(f"no API key set for {env_var}' in src)
+check("/panel 500 exception redacts",
+      'detail=redact.redact(str(e))' in src)
+check("/templates 404 echo redacts",
+      'detail=redact.redact(f"template {template_id} not found' in src)
+
 print(f"\n{len(FAIL)} failures")
 if FAIL:
     for f in FAIL:
