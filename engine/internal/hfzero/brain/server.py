@@ -504,7 +504,7 @@ def get_template(template_id: str):
                 for t in reg:
                     if isinstance(t, dict) and t.get("id") == template_id:
                         return _to_jsonable(t)
-        raise HTTPException(status_code=404, detail=f"template {template_id} not found")
+        raise HTTPException(status_code=404, detail=redact.redact(f"template {template_id} not found"))
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"templates module not loaded: {e}")
 
@@ -567,7 +567,7 @@ def update_panel(config: dict):
             json.dump(config, f, indent=2)
         return {"ok": True}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=redact.redact(str(e)))
 
 
 @app.post("/judge")
@@ -811,7 +811,10 @@ async def chat(request: Request):
                     break
 
     if not env_var:
-        raise HTTPException(status_code=400, detail=f"could not resolve model {model} (provider {provider})")
+        # v0.75.5+: the raw-HTTP twin of the SSE choke points — the model
+        # string is fully request-controlled and phase-4's contract is
+        # "every error sink" (a key-shaped model id must not reflect back).
+        raise HTTPException(status_code=400, detail=redact.redact(f"could not resolve model {model} (provider {provider})"))
 
     # v0.72 BYOK: the user's own key (X-Env header) first; the space's own
     # secret (os.environ — the community public keys) as the fallback.
@@ -819,7 +822,7 @@ async def chat(request: Request):
     if not api_key:
         raise HTTPException(
             status_code=401,
-            detail=f"no API key set for {env_var} (provider {provider})",
+            detail=redact.redact(f"no API key set for {env_var} (provider {provider})"),
         )
 
     # v0.75 ERROR ATTRIBUTION: whose key is this turn riding? Every error
