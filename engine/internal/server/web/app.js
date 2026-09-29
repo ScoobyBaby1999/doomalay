@@ -133,44 +133,70 @@
 
     // v0.45 ITEM 6: grid quick options — read once per redraw.
     var st = window.Settings.getState();
-    // ── v0.67 THE DEEP FIELD (user spec: "add a little more of a
-    // parallax feel when scrolling between the canvas, the lines, the
-    // dots, and the icons on screen. Make it feel more spacey like
-    // it's in space") ──
-    // The lattice is no longer one plane: lines and dots each ride
-    // their own parallax factor, so a pan reveals four depth planes —
-    // canvas background (deepening) → lines → dots → icons (the
-    // interaction plane, factor 1: drag/fling physics stay world-true).
-    // spaceParallax (Tweaks): 0 = the v0.52 flat lattice (byte-identical
-    // behavior), 100 = the full stack. The per-cell jitter hashes
-    // re-anchor in each layer's OWN frame (deterministic while sliding).
-    // v0.69: the default is 0 — the user found the v0.67 stack too much
-    // ("the older one was much better") and asked for the pre-v0.67
-    // feel back. The slider keeps the capability for whoever wants it;
-    // settings.js migrates saved 60s (the old default) to 0 once.
-    var pdepth = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
-    pdepth = Math.max(0, Math.min(100, pdepth)) / 100;
-    var PF_LINE = 1 - 0.38 * pdepth;
-    var PF_DOT  = 1 - 0.20 * pdepth;
+    // ── v0.75 THE AMPLIFIER (user spec: rename the slider, REPLACE the
+    // method — the v0.67 differential lag "makes it worse not better
+    // visually"; at 0 the default behavior is untouched) ──
+    // The lattice is ONE FLAT PLANE again: lines and dots always ride
+    // pan factor 1 (the v0.67 PF_LINE/PF_DOT lag that slid lines against
+    // dots is deleted). Amplify parallax instead DEEPENS the field
+    // around the untouched lattice:
+    //   · two scattered STAR LAYERS riding slower pan factors (0.55 / 0.28)
+    //     — dimmer, smaller, density scaled by the amplification;
+    //   · the backdrop camera slows (0.35 → 0.20 at full).
+    // amp 0 draws zero stars and keeps the camera at exactly 0.35 — the
+    // byte-identical default.
+    var amp = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
+    amp = Math.max(0, Math.min(100, amp)) / 100;
     var hideLines = !!st.hideGridLines;
     var hideDots = !!st.hideDots;
-    var scatter = (typeof st.gridScatter === 'number') ? st.gridScatter : 0;       // 0-100 → up to ~scatter px
-    var sizeVar = (typeof st.gridSizeVariation === 'number') ? st.gridSizeVariation : 0; // 0-100 → ±50%
-    var rotVar = (typeof st.gridRotation === 'number') ? st.gridRotation : 0;      // 0-100 → up to rotVar deg
-    var scatterPx = scatter * 0.6;        // scale factor — 100 → 60px max
-    // v0.52 (user spec item 7): the variation limit is wider — 100 now
-    // means ±85%, so some dots nearly vanish and some grow huge, lines
+    // v0.75 THE TWO COLUMNS: every effect is per-side (dots/lines). The
+    // legacy shared keys still leak through numOr (imported pre-v0.75
+    // look bundles keep painting without a reload).
+    function numOr(v, legacy) {
+      if (typeof v === 'number') return v;
+      if (typeof legacy === 'number') return legacy;
+      return 0;
+    }
+    var scatterL = numOr(st.lineScatter, st.gridScatter);   // 0-100
+    var scatterD = numOr(st.dotScatter, st.gridScatter);    // 0-100
+    var sizeVarL = numOr(st.lineSizeVariation, st.gridSizeVariation);
+    var sizeVarD = numOr(st.dotSizeVariation, st.gridSizeVariation);
+    var rotVarL = numOr(st.lineRotation, st.gridRotation);  // 0-100 → deg
+    var rotVarD = numOr(st.dotRotation, st.gridRotation);   // 0-100 → deg
+    var biasL = (typeof st.lineSizeBias === 'number') ? st.lineSizeBias : 0;  // -100..100
+    var biasD = (typeof st.dotSizeBias === 'number') ? st.dotSizeBias : 0;    // -100..100
+    var animDots = !!st.dotAnimate;   // v0.75: twinkle
+    var animLines = !!st.lineAnimate; // v0.75: axis drift
+    var scatterPxL = scatterL * 0.6;        // 100 → 60px max
+    var scatterPxD = scatterD * 0.6;
+    // v0.75 (user spec item 2): the variation limit is DOUBLED — 100 now
+    // means ±170%, so some dots nearly vanish and some grow huge, lines
     // get hair-thin and extra long. The paint floors keep them visible.
-    var sizeFrac = sizeVar / 100 * 0.85;  // 100 → ±85% of base
-    var rotDeg = rotVar * 0.6;            // 100 → 60deg max
+    var sizeFracL = sizeVarL / 100 * 1.7;  // 100 → ±170% of base
+    var sizeFracD = sizeVarD / 100 * 1.7;
+    var rotDegL = rotVarL * 0.6;           // 100 → 60deg max
+    var rotDegD = rotVarD * 0.6;
+    // v0.75 SIZE BIAS: a power warp on the per-element size hash — a
+    // positive bias pushes the draw toward LARGER sizes, negative toward
+    // smaller. Even at the max bias MOST elements go the biased way and
+    // a FEW stay the opposite (+100 → ~94% above mid, −100 → ~84% below
+    // mid); 0 is the identity (no warp, the pre-v0.75 distribution).
+    var bExpL = Math.pow(2, -2 * (biasL / 100));
+    var bExpD = Math.pow(2, -2 * (biasD / 100));
+    function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
+    function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
+    // v0.75 ANIMATE: the ambient clock (stable per-element phases come
+    // from the hashes — no per-dot state, no drift).
+    var animT = performance.now() / 1000;
+    var dbgStars = 0, dbgDots = 0, dbgSegs = 0;
 
     const scaledGrid = gridSpacing() * scale;
-    // v0.67: each lattice plane wraps ITS OWN parallaxed pan — lines
-    // lag the icons, dots sit between (the depth stack).
-    const startX = ((-offsetX * scale * PF_LINE) % scaledGrid + scaledGrid) % scaledGrid;
-    const startY = ((-offsetY * scale * PF_LINE) % scaledGrid + scaledGrid) % scaledGrid;
-    const dStartX = ((-offsetX * scale * PF_DOT) % scaledGrid + scaledGrid) % scaledGrid;
-    const dStartY = ((-offsetY * scale * PF_DOT) % scaledGrid + scaledGrid) % scaledGrid;
+    // v0.75: ONE frame — the lattice never lags (the v0.67 per-plane
+    // anchoring is gone with the lag itself).
+    const startX = ((-offsetX * scale) % scaledGrid + scaledGrid) % scaledGrid;
+    const startY = ((-offsetY * scale) % scaledGrid + scaledGrid) % scaledGrid;
+    const dStartX = startX;
+    const dStartY = startY;
 
     // ── v0.45 ITEM 6: stable per-cell hash so jitter is deterministic ──
     // (the same grid cell always gets the same offset/size/rotation — no
@@ -199,17 +225,21 @@
       // and width, not just width"): when Size variation is on, each line
       // renders as per-cell SEGMENTS centered on the intersections —
       // the segment's LENGTH and THICKNESS both ride the variation (the
-      // dots' behavior, applied to lines). sizeVar 0 = full continuous
+      // dots' behavior, applied to lines). size 0 = full continuous
       // lines exactly as before.
-      var segMode = sizeFrac > 0;
+      // v0.75: animated lines render as segments too — a full line
+      // translated along its own axis is invisible, so the drift needs
+      // the finite form (the base length 1.35× spacing overlaps the
+      // neighbors and still reads continuous).
+      var segMode = sizeFracL > 0 || animLines;
+      var baseSegLen = scaledGrid * 1.35;
       for (let x = startX; x < W; x += scaledGrid) {
         // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
-        // v0.67: anchored in the LINE plane's parallax frame.
-        var ix = Math.round((x + offsetX * scale * PF_LINE) / scaledGrid);
+        var ix = Math.round((x + offsetX * scale) / scaledGrid);
         var h1 = hashCell(ix, 0);
-        var dx = scatterPx * (h1 - 0.5) * 2;
-        var rot = rotDeg * (hashCell(ix, 1) - 0.5) * 2;  // radians
-        var lwBase = 1 * (1 + sizeFrac * (hashCell(ix, 2) - 0.5) * 2);
+        var dx = scatterPxL * (h1 - 0.5) * 2;
+        var rot = rotDegL * (hashCell(ix, 1) - 0.5) * 2;  // radians
+        var lwBase = 1 * (1 + sizeFracL * (warpL(hashCell(ix, 2)) - 0.5) * 2);
         if (lineSampler) ctx.strokeStyle = lineSampler(x, H / 2);
         ctx.save();
         ctx.translate(x + dx, 0);
@@ -222,26 +252,40 @@
           ctx.stroke();
         } else {
           for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
-            var iyS = Math.round((y + offsetY * scale * PF_LINE) / scaledGrid);
-            var segLen = scaledGrid * (1 + sizeFrac * (hashCell(ix + 5, iyS) - 0.5) * 2);
-            var segW = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ix + 9, iyS) - 0.5) * 2));
+            var iyS = Math.round((y + offsetY * scale) / scaledGrid);
+            var segLen = (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2);
+            var segW = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
+            // v0.75 ANIMATE LINES (user spec: "move randomly either up
+            // or down the relative direction they are facing at random
+            // speeds"): each segment oscillates ALONG the line's own
+            // (rotated) axis — inside this rotated frame the local Y IS
+            // the facing direction. Random speed + direction per
+            // segment; a sinusoid keeps them near their anchor.
+            var drift = 0;
+            if (animLines) {
+              var dsp = 0.15 + hashCell(ix + 17, iyS + 17) * 0.75;    // rad/s
+              var ddir = hashCell(ix + 19, iyS + 19) < 0.5 ? -1 : 1; // up or down
+              drift = Math.sin(animT * dsp + hashCell(ix + 23, iyS + 23) * 6.283)
+                      * scaledGrid * 0.22 * ddir;
+            }
             if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
             ctx.lineWidth = segW;
             ctx.beginPath();
-            ctx.moveTo(0, y - segLen / 2);
-            ctx.lineTo(0, y + segLen / 2);
+            ctx.moveTo(0, y - segLen / 2 + drift);
+            ctx.lineTo(0, y + segLen / 2 + drift);
             ctx.stroke();
+            dbgSegs++;
           }
         }
         ctx.restore();
         lineIdx++;
       }
       for (let y = startY; y < H; y += scaledGrid) {
-        var iy = Math.round((y + offsetY * scale * PF_LINE) / scaledGrid);
+        var iy = Math.round((y + offsetY * scale) / scaledGrid);
         var h2 = hashCell(0, iy);
-        var dy = scatterPx * (h2 - 0.5) * 2;
-        var rot2 = rotDeg * (hashCell(1, iy) - 0.5) * 2;
-        var lw2Base = 1 * (1 + sizeFrac * (hashCell(2, iy) - 0.5) * 2);
+        var dy = scatterPxL * (h2 - 0.5) * 2;
+        var rot2 = rotDegL * (hashCell(1, iy) - 0.5) * 2;
+        var lw2Base = 1 * (1 + sizeFracL * (warpL(hashCell(2, iy)) - 0.5) * 2);
         if (lineSampler) ctx.strokeStyle = lineSampler(W / 2, y);
         ctx.save();
         ctx.translate(0, y + dy);
@@ -254,15 +298,23 @@
           ctx.stroke();
         } else {
           for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
-            var ixS = Math.round((x2 + offsetX * scale * PF_LINE) / scaledGrid);
-            var segLen2 = scaledGrid * (1 + sizeFrac * (hashCell(ixS, iy + 5) - 0.5) * 2);
-            var segW2 = Math.max(0.12, 1 * (1 + sizeFrac * (hashCell(ixS, iy + 9) - 0.5) * 2));
+            var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
+            var segLen2 = (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2);
+            var segW2 = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
+            var drift2 = 0;
+            if (animLines) {
+              var dsp2 = 0.15 + hashCell(ixS + 17, iy + 17) * 0.75;
+              var ddir2 = hashCell(ixS + 19, iy + 19) < 0.5 ? -1 : 1;
+              drift2 = Math.sin(animT * dsp2 + hashCell(ixS + 23, iy + 23) * 6.283)
+                      * scaledGrid * 0.22 * ddir2;
+            }
             if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
             ctx.lineWidth = segW2;
             ctx.beginPath();
-            ctx.moveTo(x2 - segLen2 / 2, 0);
-            ctx.lineTo(x2 + segLen2 / 2, 0);
+            ctx.moveTo(x2 - segLen2 / 2 + drift2, 0);
+            ctx.lineTo(x2 + segLen2 / 2 + drift2, 0);
             ctx.stroke();
+            dbgSegs++;
           }
         }
         ctx.restore();
@@ -280,31 +332,81 @@
       // without shimmer.
       var dotSampler = makePatternSampler(dotSpec, dotFallback);
       const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
-      // v0.67: the dots ride their OWN plane (dStartX/dStartY + the
-      // dot-frame hash anchors) — panning slides them against the line
-      // lattice; the offset reads as specks floating between the lines
-      // (stars between the constellations — the spacey depth the user
-      // asked for; spaceParallax 0 re-flattens the lattice exactly).
       for (let x = dStartX; x < W; x += scaledGrid) {
         for (let y = dStartY; y < H; y += scaledGrid) {
           // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
-          var dix = Math.round((x + offsetX * scale * PF_DOT) / scaledGrid);
-          var diy = Math.round((y + offsetY * scale * PF_DOT) / scaledGrid);
+          var dix = Math.round((x + offsetX * scale) / scaledGrid);
+          var diy = Math.round((y + offsetY * scale) / scaledGrid);
           var hd = hashCell(dix, diy);
-          var hd2 = hashCell(dix + 7, diy + 7);
-          var jx = scatterPx * (hd - 0.5) * 2;
-          var jy = scatterPx * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
-          var jr = dotR * (1 + sizeFrac * (hd2 - 0.5) * 2);
+          // v0.75: the size hash is BIAS-WARPED (favor larger/smaller).
+          var hd2 = warpD(hashCell(dix + 7, diy + 7));
+          var jx = scatterPxD * (hd - 0.5) * 2;
+          var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
+          var jr = dotR * (1 + sizeFracD * (hd2 - 0.5) * 2);
+          var jrot = rotDegD * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
+          // v0.75 ANIMATE DOTS — the twinkle (user spec: "rotate and
+          // grow/shrink at varying speeds"): a scale PULSE (grow/shrink,
+          // ±40%) + a small ORBIT around the lattice anchor (the visible
+          // rotation — a circle spinning in place is invisible), each
+          // dot at its own speed/phase/direction, brightness riding the
+          // pulse so it reads as a twinkle. Stable hashes = no state.
+          var tox = 0, toy = 0, tal = 1;
+          if (animDots) {
+            var tsp = 0.5 + hashCell(dix + 21, diy + 21) * 1.8;   // pulse rad/s
+            var tph = hashCell(dix + 23, diy + 23) * 6.283;
+            var pulse = Math.sin(animT * tsp + tph);
+            jr *= 1 + 0.4 * pulse;
+            tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
+            var osp = (0.25 + hashCell(dix + 27, diy + 27) * 0.9)   // orbit rad/s
+                      * (hashCell(dix + 29, diy + 29) < 0.5 ? -1 : 1);
+            var orR = scaledGrid * (0.06 + 0.08 * hashCell(dix + 31, diy + 31));
+            var orA = animT * osp + tph;
+            tox = Math.cos(orA) * orR; toy = Math.sin(orA) * orR;
+          }
           if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
-          var jrot = rotDeg * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
           ctx.save();
-          ctx.translate(x + jx, y + jy);
+          if (tal < 1) ctx.globalAlpha = tal;
+          ctx.translate(x + jx + tox, y + jy + toy);
           if (jrot) ctx.rotate(jrot * Math.PI / 180);
           ctx.beginPath();
           ctx.arc(0, 0, Math.max(0.15, jr), 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
+          dbgDots++;
         }
+      }
+      // ── v0.75 THE AMPLIFIER'S STARFIELD ──
+      // Two scattered far layers around the untouched lattice: smaller,
+      // dimmer, riding slower pan factors — a pan reads as true depth
+      // (near lattice fast, far stars slow). Density scales with the
+      // amplification; amp 0 draws nothing. Anchored per-layer (stable
+      // hashes — no shimmer while sliding). Hidden with the dots.
+      if (amp > 0) {
+        starLayer(0.55, 1.8, 0.55, 0.55, 101);
+        starLayer(0.28, 2.6, 0.32, 0.40, 211);
+      }
+      function starLayer(pf, cellMul, rMul, gate, salt) {
+        var sGrid = scaledGrid * cellMul;
+        var sx0 = ((-offsetX * scale * pf) % sGrid + sGrid) % sGrid;
+        var sy0 = ((-offsetY * scale * pf) % sGrid + sGrid) % sGrid;
+        var starR = Math.max(0.4, dotR * rMul);
+        for (let x = sx0; x < W; x += sGrid) {
+          for (let y = sy0; y < H; y += sGrid) {
+            var six = Math.round((x + offsetX * scale * pf) / sGrid);
+            var siy = Math.round((y + offsetY * scale * pf) / sGrid);
+            var hq = hashCell(six * 3 + salt, siy * 3 - salt);
+            if (hq >= amp * gate) continue; // density rides the amplification
+            var fx = x + (hashCell(six + salt, siy) - 0.5) * sGrid * 0.9;
+            var fy = y + (hashCell(six, siy + salt) - 0.5) * sGrid * 0.9;
+            if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
+            ctx.globalAlpha = 0.28 + 0.3 * hashCell(six + 1 + salt, siy + 1);
+            ctx.beginPath();
+            ctx.arc(fx, fy, starR * (0.6 + 0.8 * hashCell(six + 2, siy + 2 + salt)), 0, Math.PI * 2);
+            ctx.fill();
+            dbgStars++;
+          }
+        }
+        ctx.globalAlpha = 1;
       }
     }
 
@@ -315,6 +417,9 @@
       ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();
     }
+    // v0.75: the honest instrument — the suite's parallax proof and any
+    // future red-team read the last frame's counters (stars/dots/segs).
+    window.DoomalayDebug = { stars: dbgStars, dots: dbgDots, segs: dbgSegs, amp: amp };
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────
@@ -571,7 +676,7 @@
     };
   }
 
-  // ── v0.52 THE PARALLAX BACKGROUND (user spec item 7: "let's change the
+  // v0.52 THE PARALLAX BACKGROUND (user spec item 7: "let's change the
   // canvas background color to not be static… have the colors and
   // background move with the canvas as the user scrolls… giving a 3d
   // space effect") ──
@@ -585,14 +690,15 @@
   // and the wrap keeps the parallax infinite without ever sliding off.
   var bgCache = { key: '', tile: null };
   var BG_PARALLAX = 0.35;
-  // v0.67 DEEP FIELD: the far plane deepens with the spaceParallax
-  // setting (0 — the v0.69 default — is exactly the v0.52 0.35; the
-  // formula only bends when the user dials the slider up).
+  // v0.75 THE AMPLIFIER: the far plane deepens with the Amplify
+  // parallax setting (0 — the default — is exactly the v0.52 0.35; the
+  // camera only slows when the user dials the amplifier up, pairing
+  // with the star layers for the deep-space read).
   function bgParallaxNow() {
     var st = window.Settings.getState();
     var d = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     d = Math.max(0, Math.min(100, d)) / 100;
-    return Math.max(0.15, BG_PARALLAX - 0.09 * d);
+    return Math.max(0.15, BG_PARALLAX - 0.15 * d);
   }
   // v0.54: the color-space tile is MULT× the viewport — the mirror
   // period grows to 2·MULT screens of pan, textures cover-fit larger
@@ -997,7 +1103,14 @@
     }
   };
 
-  // ── Animation loop ────────────────────────────────────────────
+  // ── Animation loop ──────────────────────────────────────────────
+  // v0.75 AMBIENT: the grid animate toggles (dot twinkle / line drift)
+  // keep the rAF loop alive on their own — no motion, no save spam
+  // (the offsets don't change, so scheduleSave is never touched).
+  function ambientActive() {
+    var st = window.Settings.getState();
+    return !!(st && (st.dotAnimate || st.lineAnimate));
+  }
   function update() {
     world.step();
     renderGrid();
@@ -1006,6 +1119,8 @@
     // v0.67: the icons ride transforms — the projection painter
     // re-anchors their gradient windows to the viewport each frame.
     if (window.DoomProjection) window.DoomProjection.poke();
+    // v0.75: an animate toggle ON means the canvas never rests.
+    if (ambientActive()) startAnimation();
   }
 
   function tick() {
@@ -1028,6 +1143,7 @@
     renderOffScreenArrows();
     if (window.DoomProjection) window.DoomProjection.poke();
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
+    else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save
     else { animating = false; scheduleSave(); }
   }
 
@@ -1659,6 +1775,9 @@
   // Re-render on settings change (live color updates).
   window.Settings.onChange(function () {
     update();
+    // v0.75: an animate toggle flipping ON starts the ambient loop (a
+    // plain update() renders one frame — the twinkle/drift needs rAF).
+    if (ambientActive()) startAnimation();
     // Also sync the names list to the NamePicker so new chatbots use edited names.
     const names = window.Settings.getState().names;
     if (Array.isArray(names) && names.length > 0) {

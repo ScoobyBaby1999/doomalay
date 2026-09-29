@@ -43,6 +43,13 @@
     gridScatter: 0,         // 0-100 → max px displacement per dot/line intersection
     gridSizeVariation: 0,   // 0-100 → max % radius/length delta
     gridRotation: 0,        // 0-100 → max degrees of rotation per line/dot
+    // ── v0.75 THE TWO COLUMNS: every grid effect is per-side (dots/lines) ──
+    // (the legacy shared keys above still migrate in — see loadState)
+    dotScatter: 0, lineScatter: 0,         // 0-100 → max px displacement
+    dotSizeVariation: 0, lineSizeVariation: 0, // 0-100 → ±170% (v0.75 doubled range)
+    dotSizeBias: 0, lineSizeBias: 0,       // -100..100 → favors smaller/larger
+    dotRotation: 0, lineRotation: 0,       // 0-100 → max degrees of rotation
+    dotAnimate: false, lineAnimate: false,  // v0.75 animate: twinkle / drift
     // v0.67 THE DEEP FIELD: parallax depth between the canvas planes
     // (lines lag the icons, dots sit between; 0 = flat lattice, 100 =
     // the full spacey stack). v0.69: ships 0 — the user preferred the
@@ -76,6 +83,23 @@
       if (saved.spaceParallax === 60 && !saved.spaceParallaxV69) {
         merged.spaceParallax = defaultState.spaceParallax;
         merged.spaceParallaxV69 = true;
+      }
+      // v0.75 TWO COLUMNS: the shared effect keys split into per-side
+      // twins (dots/lines). Anyone carrying a legacy value gets it copied
+      // to BOTH sides once — the look they dialed in survives the split.
+      // (Renderers also fall back to the legacy key when a twin is absent,
+      // so an IMPORTED pre-v0.75 look bundle works without a reload.)
+      if (!saved.gridV75) {
+        if (typeof merged.gridScatter === 'number' && typeof saved.dotScatter !== 'number') {
+          merged.dotScatter = merged.lineScatter = merged.gridScatter;
+        }
+        if (typeof merged.gridSizeVariation === 'number' && typeof saved.dotSizeVariation !== 'number') {
+          merged.dotSizeVariation = merged.lineSizeVariation = merged.gridSizeVariation;
+        }
+        if (typeof merged.gridRotation === 'number' && typeof saved.dotRotation !== 'number') {
+          merged.dotRotation = merged.lineRotation = merged.gridRotation;
+        }
+        merged.gridV75 = true;
       }
       return merged;
     } catch (e) { return Object.assign({}, defaultState); }

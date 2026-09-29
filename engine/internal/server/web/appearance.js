@@ -743,18 +743,15 @@
           rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5, '')
         ) +
         // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
-        // v0.67: + THE DEEP FIELD slider (parallax depth between the
-        // canvas planes — the spacey stack; see app.js renderGrid).
-        // v0.69: default 0 — the pre-v0.67 flat lattice is the shipped look.
+        // v0.75 THE TWO COLUMNS: every effect is per-side now (dots/lines).
+        // Amplify parallax rides full-width above the columns (it deepens
+        // the whole canvas — the new v0.75 method: deep star layers + a
+        // deeper backdrop, NEVER the v0.67 line/dot lag that read worse).
         section('Grid Effects', '' +
-          toggleRow('hideGridLines', 'Hide grid lines', s.hideGridLines) +
-          toggleRow('hideDots', 'Hide dots', s.hideDots) +
-          gridSlider('gridScatter', 'Scatter', s.gridScatter || 0, '') +
-          gridSlider('gridSizeVariation', 'Size variation', s.gridSizeVariation || 0, '') +
-          gridSlider('gridRotation', 'Rotation', s.gridRotation || 0, '') +
-          gridSlider('spaceParallax', 'Space parallax',
+          gridSlider('spaceParallax', 'Amplify parallax',
             (typeof s.spaceParallax === 'number') ? s.spaceParallax : 0,
-            'lines lag the icons · dots float between · 0 = flat') +
+            'deep star layers + a deeper backdrop · 0 = default') +
+          gridEffectsColumns(s) +
           '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )
       );
@@ -801,7 +798,9 @@
             '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">checking your connections…</div>' +
           '</div>' +
           '<p style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);margin:8px 0 0;line-height:1.45">' +
-            'Logging out removes the saved token from this device only — the account itself is untouched.</p>'
+            'Logging out removes the saved token from this device only — the account itself is untouched.</p>' +
+          '<p style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);margin:6px 0 0;line-height:1.45">' +
+            'Provider keys ride only the turn that uses them (your key, your bill) — but a shared Space still processes the chat itself, so keep secrets out of it.</p>'
         ) +
         // v0.52 (user spec item 8): the LOOK BUNDLE — export the entire
         // settings state (photos + bump maps included — they are dataURLs
@@ -1001,9 +1000,16 @@
       // v0.45 ITEM 6: reset just the grid effects (hide/scatter/size/rotation)
       // v0.69: the deep field resets to its DEFAULT (0) — the pre-v0.67
       // flat lattice is the shipped look; the spacey stack is opt-in.
+      // v0.75: BOTH columns reset (all the per-side twins) + the legacy
+      // keys (imported looks read them) + the amplifier.
       Settings.setState({
         hideGridLines: false, hideDots: false,
         gridScatter: 0, gridSizeVariation: 0, gridRotation: 0,
+        dotScatter: 0, lineScatter: 0,
+        dotSizeVariation: 0, lineSizeVariation: 0,
+        dotSizeBias: 0, lineSizeBias: 0,
+        dotRotation: 0, lineRotation: 0,
+        dotAnimate: false, lineAnimate: false,
         spaceParallax: 0
       });
       Settings.rerender();
@@ -1069,7 +1075,11 @@
     '</div>';
   }
   // v0.45 ITEM 6: a 0-100 slider for the grid effects (scatter/size/rotation).
-  function gridSlider(key, label, value, hint) {
+  // v0.75: min/max parameterized (the size-bias slider spans -100..100);
+  // existing 0-100 callers pass nothing and keep the old behavior.
+  function gridSlider(key, label, value, hint, min, max) {
+    if (typeof min !== 'number') min = 0;
+    if (typeof max !== 'number') max = 100;
     return '<div class="setting-row" style="flex-direction:column;align-items:stretch;gap:6px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center">' +
       '<label>' + label + '</label>' +
@@ -1077,9 +1087,52 @@
       'data-range-display="' + key + '" data-suffix="">' + value + '</span>' +
       '</div>' +
       '<input type="range" class="app-range" data-setting-key="' + key + '" data-setting-event="input" ' +
-      'data-setting-transform="number" min="0" max="100" step="1" value="' + value + '" ' +
+      'data-setting-transform="number" min="' + min + '" max="' + max + '" step="1" value="' + value + '" ' +
       'style="accent-color:var(--accent);height:32px;cursor:pointer">' +
       (hint ? '<p class="hint" style="margin:0">' + hint + '</p>' : '') +
+      '</div>';
+  }
+
+  // v0.75 THE TWO COLUMNS — one for the dots, one for the lines, every
+  // option duplicated per side (user spec: "let's have two columns when
+  // grid effects is expanded, one for dots and one for the lines… the
+  // options are basically duplicated"). The legacy shared keys still
+  // leak through numOr() (an imported pre-v0.75 look keeps painting).
+  function numOr(v, legacy) {
+    if (typeof v === 'number') return v;
+    if (typeof legacy === 'number') return legacy;
+    return 0;
+  }
+  function gridEffectsColumns(s) {
+    var legSc = s.gridScatter, legSv = s.gridSizeVariation, legRo = s.gridRotation;
+    function col(title, hideKey, hideOn, animKey, animOn, scKey, scVal, svKey, svVal, biKey, biVal, roKey, roVal) {
+      return '<div style="flex:1 1 160px;min-width:150px;display:flex;flex-direction:column;gap:8px;' +
+        'background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px">' +
+        '<div style="font-size:calc(var(--ui-small-fs) + 1px);font-weight:600;color:var(--text-1);' +
+          'letter-spacing:0.02em">' + title + '</div>' +
+        toggleRow(hideKey, 'Hide', hideOn) +
+        toggleRow(animKey, 'Animate', animOn) +
+        gridSlider(scKey, 'Scatter', scVal, '', 0, 100) +
+        gridSlider(svKey, 'Size variation', svVal, '', 0, 100) +
+        gridSlider(biKey, 'Size bias', biVal, '− favors smaller · + favors larger', -100, 100) +
+        gridSlider(roKey, 'Rotation', roVal, '', 0, 100) +
+        '</div>';
+    }
+    return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start">' +
+      col('Dots',
+        'hideDots', !!s.hideDots,
+        'dotAnimate', !!s.dotAnimate,
+        'dotScatter', numOr(s.dotScatter, legSc),
+        'dotSizeVariation', numOr(s.dotSizeVariation, legSv),
+        'dotSizeBias', (typeof s.dotSizeBias === 'number') ? s.dotSizeBias : 0,
+        'dotRotation', numOr(s.dotRotation, legRo)) +
+      col('Lines',
+        'hideGridLines', !!s.hideGridLines,
+        'lineAnimate', !!s.lineAnimate,
+        'lineScatter', numOr(s.lineScatter, legSc),
+        'lineSizeVariation', numOr(s.lineSizeVariation, legSv),
+        'lineSizeBias', (typeof s.lineSizeBias === 'number') ? s.lineSizeBias : 0,
+        'lineRotation', numOr(s.lineRotation, legRo)) +
       '</div>';
   }
 

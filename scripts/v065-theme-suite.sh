@@ -496,14 +496,17 @@ if phase_allowed p20; then
   sleep 0.4
 fi
 
-# p21 — v0.67 THE DEEP FIELD: the parallax proof. Pan the canvas by a
-#     known amount; the LINES and DOTS must shift by DIFFERENT amounts
-#     (their own planes: line 0.772 / dot 0.88 at the default depth 60;
-#     flat would shift both identically). Measured by pixel-fold analysis
-#     and recorded in the manifest.
+# p21 — v0.75 THE AMPLIFIER: the parallax proof, new contract. The
+#     v0.67 differential lag (lines sliding against dots) is DELETED —
+#     the lattice is one flat plane. The proof now asserts: (1) at
+#     amplify 100 the STARFIELD exists (DoomalayDebug.stars > 0) and the
+#     lattice shifts FLAT (lineShift == dotShift == the pan, mod 48);
+#     (2) at amplify 0 the stars vanish (stars == 0) — the default is
+#     untouched. Measured by pixel-fold analysis + the honest counters.
 if phase_allowed p21; then
-  echo "── p21 the deep field (parallax planes)"
+  echo "── p21 the amplifier (flat lattice + starfield)"
   nav home
+  ev "Settings.setState({spaceParallax:100})" >/dev/null; sleep 0.4
   shot p21 home-before
   ev "(function(){
     var c=document.getElementById('c');
@@ -514,11 +517,16 @@ if phase_allowed p21; then
   })(); 'panned'" >/dev/null
   sleep 2.2
   shot p21 home-after
-  python3 - "$OUT/p21__home-before.png" "$OUT/p21__home-after.png" <<'PYPLL' >> "$OUT/manifest.ndjson"
+  STARS_ON=$(ev "JSON.stringify(window.DoomalayDebug||{})")
+  ev "Settings.setState({spaceParallax:0})" >/dev/null; sleep 0.4
+  STARS_OFF=$(ev "JSON.stringify(window.DoomalayDebug||{})")
+  python3 - "$OUT/p21__home-before.png" "$OUT/p21__home-after.png" "$STARS_ON" "$STARS_OFF" <<'PYPLL' >> "$OUT/manifest.ndjson"
 import sys, json
 try:
     from PIL import Image
     b = Image.open(sys.argv[1]).convert('RGB'); a = Image.open(sys.argv[2]).convert('RGB')
+    stars_on = json.loads(sys.argv[3] or '{}')
+    stars_off = json.loads(sys.argv[4] or '{}')
     W, H = b.size
     def line_shift(y):
         def xs(img):
@@ -548,12 +556,17 @@ try:
         return (ca[0] - cb[0]) % 48
     ls = next((s for s in (line_shift(y) for y in (100, 300, 500)) if s is not None), None)
     ds = next((s for s in (dot_shift(y) for y in (335, 383, 431, 479)) if s is not None), None)
+    stars_high = int(stars_on.get('stars', 0) or 0)
+    stars_zero = int(stars_off.get('stars', 0) or 0)
+    def _near(a, b, tol=1):  # mod-48 fold centroids carry ±1px noise
+        return a is not None and b is not None and min(abs(a-b), 48-abs(a-b)) <= tol
     verdict = 'INCONCLUSIVE'
-    if ls is not None and ds is not None and ls != ds:
-        verdict = 'PARALLAX_CONFIRMED'
-    elif ls is not None and ds is not None and ls == ds:
-        verdict = 'FLAT_SUSPECTED'
-    print(json.dumps({"kind":"parallax","phase":"p21","lineShiftMod48":ls,"dotShiftMod48":ds,"verdict":verdict}))
+    if stars_high > 0 and stars_zero == 0 and _near(ls, ds):
+        verdict = 'PARALLAX_CONFIRMED'   # stars ON at 100, OFF at 0, lattice flat
+    elif ls is not None and ds is not None and not _near(ls, ds):
+        verdict = 'LAG_SUSPECTED'        # the v0.67 shimmer crept back
+    print(json.dumps({"kind":"parallax","phase":"p21","lineShiftMod48":ls,"dotShiftMod48":ds,
+                      "starsAt100":stars_high,"starsAt0":stars_zero,"verdict":verdict}))
 except Exception as e:
     print(json.dumps({"kind":"parallax","phase":"p21","error":str(e)}))
 PYPLL
