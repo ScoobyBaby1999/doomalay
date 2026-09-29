@@ -1,6 +1,6 @@
 // providers.js — the cloud provider picker (ported from doomalaysocreate).
 //
-// Opens as a blur-background overlay with the provider catalog. A smooth
+// Opens as a full-screen overlay (crisp background, v0.76) with the provider catalog. A smooth
 // iPhone-style Free ⇄ Paid slider replaces the old tabs + "⬆ Paid" button:
 // tap or drag the thumb, it slides and recolors (green = free, gold = paid).
 //

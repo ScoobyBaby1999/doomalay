@@ -1,8 +1,9 @@
-// connectoverlay.js — reusable full-screen overlay with blur background.
+// connectoverlay.js — reusable full-screen overlay (crisp background).
 //
 // Used by the sandbox picker, model picker, and any nested panel that needs
-// to overlay the entire screen with a blurred backdrop. Content-agnostic:
-// the caller provides HTML, the overlay handles show/hide/blur/scrim-tap.
+// to overlay the entire screen. Content-agnostic: the caller provides
+// HTML, the overlay handles show/hide/scrim-tap. v0.76: the background
+// renders UNTOUCHED behind the open overlay (no veil, no backdrop blur).
 //
 // Has smooth open/close transitions (fade + scale) — not instant.
 //
@@ -156,16 +157,18 @@
       // still be visible with the overlay screen rendered on top instead
       // of the current leakage of colors"): the scrim no longer paints the
       // user-customizable OVERLAY background (--bg-app — its color washed
-      // the whole screen outside the card = the leak). It now composes
-      // rgba(var(--bg-panel-rgb), 0.55) — a TRANSLUCENT dark veil of the
-      // CANVAS color (theme.js derives the triplet every apply), so the
-      // authentic app shows through, darkened.
+      // the whole screen outside the card = the leak).
       // v0.74: the backdrop BLUR is gone (the user's overlay-effects
       // report: "remove all these effects and just render the canvas
-      // over whatever was before") — the veil alone darkens what's
-      // behind, and a full-screen blur was one of the heaviest
-      // first-paint costs on WebView (plus its notorious clip bugs).
-      'background:rgba(var(--bg-panel-rgb), 0.55);' +
+      // over whatever was before") — a full-screen blur was one of the
+      // heaviest first-paint costs on WebView (plus its notorious clip
+      // bugs).
+      // v0.77 THE POST-PROCESS REMOVAL (user spec: "remove the blur and
+      // other post process effects we apply to the background or anything
+      // that isn't the overlay screen"): the 0.55 dark veil is gone TOO —
+      // the background renders UNTOUCHED while the overlay is open (the
+      // card carries its own opaque background + border + shadow for
+      // separation). The element stays as the tap-to-close surface.
       'opacity:0;transition:opacity 0.25s ease;';
     cardEl = document.createElement('div');
     cardEl.style.cssText =

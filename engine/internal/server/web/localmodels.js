@@ -1,6 +1,6 @@
 // localmodels.js — the local model picker (Ollama detection + RAM recommendation).
 //
-// Opens as a blur-background overlay. Probes the engine's /api/local-models
+// Opens as a full-screen overlay (crisp background, v0.76). Probes the engine's /api/local-models
 // endpoint (which checks for Ollama at localhost:11434). Shows:
 //   - Detected local models (if Ollama is running)
 //   - RAM-based recommendation (if no Ollama)

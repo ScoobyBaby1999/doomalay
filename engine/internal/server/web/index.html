@@ -2063,9 +2063,14 @@
   .art-scrim {
     position: absolute; inset: 0;
     /* v0.74: the full-screen blur is GONE (the user's "remove all
-       these effects and just render over whatever was before") — a
-       plain translucent veil darkens the app behind the drawer. */
-    background: rgba(0,0,0,0.55);
+       these effects and just render over whatever was before").
+       v0.77 THE POST-PROCESS REMOVAL (user spec: "remove the blur and
+       other post process effects we apply to the background or anything
+       that isn't the overlay screen"): the 0.55 veil is gone TOO — the
+       background renders UNTOUCHED behind the drawer (which carries its
+       own opaque surface). The element stays as the tap-to-close
+       surface. */
+    background: transparent;
   }
   .art-panel {
     position: absolute; left: 0; right: 0; bottom: 0; top: 6vh;
