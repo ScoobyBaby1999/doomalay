@@ -148,10 +148,16 @@
     body.innerHTML = G.editor(pfx, spec, edOpts || {});
     try { rewire(); } catch (e) { /* never fatal */ }
     // the '· customized' marker appears once an override exists
+    // v0.77.7: the marker wears the .crc-mark CLASS — its color lives in
+    // index.html (var(--accent)), so the derived gates convert it to a
+    // real accent-1 GLYPH WINDOW when accent-1 is a gradient, and the
+    // text-grad override retires the z-fight (the old inline
+    // color:var(--accent) painted OVER the parent's clipped text-1
+    // field — both colors rendering over each other, the user's report).
     var name = row.querySelector('.color-row-name');
     if (name && !name.querySelector('.crc-mark')) {
       name.insertAdjacentHTML('beforeend',
-        ' <span class="crc-mark" style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>');
+        ' <span class="crc-mark">· customized</span>');
     }
     return true;
   }
@@ -544,7 +550,7 @@
     // v0.45 ITEM 5: collapsed color row with per-row reset
     return colorRowCollapsed({
       pfx: 'fmt-' + key, label: label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
-        (customized ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· this chat</span>' : ''),
+        (customized ? ' <span class="crc-mark crc-mark--chat">· this chat</span>' : ''),
       spec: spec, editorHtml: editorHtml,
       fmtSlot: key, fmtScope: scope,
       onReset: onReset
@@ -673,7 +679,7 @@
       // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS var's override)
       rows += colorRowCollapsed({
         pfx: pfx,
-        label: c.label + (stored ? ' <span style="font-size:var(--ui-micro-fs);color:var(--accent);font-weight:600">· customized</span>' : '') +
+        label: c.label + (stored ? ' <span class="crc-mark">· customized</span>' : '') +
           (c.hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + c.hint + '</span>' : ''),
         spec: spec, editorHtml: editorHtml,
         onReset: onReset

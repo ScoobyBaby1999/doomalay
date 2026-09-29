@@ -4235,6 +4235,33 @@
     background-clip: text;
     color: transparent;
   }
+  /* ══ v0.77.7 THE CUSTOMIZED MARKER — ONE VARIABLE, NO Z-FIGHT ════
+     User report: "the dynamic customized text that appears next to
+     titles or rows that where customised still use multiple variables,
+     meaning when both primary and accent 1 colors are set, they both
+     color the customized and try to override each other on the z axis."
+     The marker spans sat inside text-grad parents (`.color-row-name`,
+     `.settings-section h3 span`) — the parent's clipped --text-1 field
+     painted under the span's own accent color (both in the glyph
+     region). The marker now owns its ink: the CLASS carries the color
+     (a stylesheet rule the derived gates can see — accent-1 gradient
+     turns it into a real accent glyph window), and this override
+     retires any inherited text-grad window (no !important war with the
+     gates: they load later in <head> and win at equal !important). */
+  .crc-mark {
+    color: var(--accent);
+    font-size: var(--ui-micro-fs);
+    font-weight: 600;
+  }
+  .crc-mark--chat { color: var(--accent-2); }
+  [data-text-grad] .crc-mark {
+    background-image: none !important;
+    -webkit-background-clip: border-box !important;
+    background-clip: border-box !important;
+    background-attachment: scroll !important;
+    color: var(--accent) !important;
+  }
+  [data-text-grad] .crc-mark--chat { color: var(--accent-2) !important; }
   /* v0.65 HARDENING: the canvas name pill is backdrop-filtered — on some
      Chromium/WebView builds the backdrop-filter + background-clip:text
      combination paints an OPAQUE WHITE box (the blur layer ignores the

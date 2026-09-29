@@ -130,6 +130,40 @@
       parseInt(h.slice(4, 6), 16);
   }
 
+  // v0.77.7 mixHex(a, b, t) → the linear blend a·(1−t)+b·t as a hex —
+  // the secondary-text derivation's only math (kept beside hexTriplet).
+  function mixHex(a, b, t) {
+    var ma = /^#([0-9a-fA-F]{6})$/.exec(String(a));
+    var mb = /^#([0-9a-fA-F]{6})$/.exec(String(b));
+    if (!ma || !mb) return null;
+    var out = '#';
+    for (var i = 0; i < 3; i++) {
+      var ca = parseInt(ma[1].slice(i * 2, i * 2 + 2), 16);
+      var cb = parseInt(mb[1].slice(i * 2, i * 2 + 2), 16);
+      var v = Math.round(ca + (cb - ca) * t);
+      out += (v < 16 ? '0' : '') + v.toString(16);
+    }
+    return out;
+  }
+
+  // v0.77.7 avgStops(colors) → the mean of a palette (the representative
+  // tone of a gradient for derivations — the first stop can be an outlier).
+  function avgStops(colors) {
+    if (!colors || !colors.length) return null;
+    var r = 0, g = 0, b = 0, n = 0;
+    for (var i = 0; i < colors.length; i++) {
+      var m = /^#([0-9a-fA-F]{6})$/.exec(String(colors[i]));
+      if (!m) continue;
+      r += parseInt(m[1].slice(0, 2), 16);
+      g += parseInt(m[1].slice(2, 4), 16);
+      b += parseInt(m[1].slice(4, 6), 16);
+      n++;
+    }
+    if (!n) return null;
+    var hex = function (v) { v = Math.round(v / n); return (v < 16 ? '0' : '') + v.toString(16); };
+    return '#' + hex(r) + hex(g) + hex(b);
+  }
+
   // v0.56 deriveBorderTwins(raw) — the BORDER-SAFE twin. Root cause (user
   // report: "outlines don't follow the gradient and display the first
   // color" + "changing the borders option changes the entire scrollable
@@ -227,6 +261,9 @@
     // extends to body text + labels — every text-1 consumer is a
     // window when the user paints Primary text as a field).
     var textGrad = false;
+    // v0.77.7: the --text-1 override's raw spec + solid twin — the
+    // secondary-text derivation reads them after the loop.
+    var text1Spec = null, twinsText1Solid = '';
     // v0.67: per-accent gradient gates — [data-aN-grad] on the root
     // while accent N's twin is a real image. index.html's EVERY-WINDOW
     // pass converts the remaining accent-TINTED pills/badges/labels
@@ -257,6 +294,12 @@
         if (k === '--border' && twins.grad !== 'none') {
           docEl.style.setProperty('--border-strong-gradient', twins.grad);
           docEl._themeOverrideKeys.push('--border-strong-gradient');
+        }
+        if (k === '--text-1') {
+          // v0.77.7: the secondary-text derivation's inputs — the RAW
+          // spec (for the average stop) + the solid twin (the fallback).
+          text1Spec = overrides[k];
+          twinsText1Solid = twins.solid;
         }
         if (k === '--text-1' && twins.grad !== 'none') textGrad = true;
         if (accGrad.hasOwnProperty(k) && twins.grad !== 'none') accGrad[k] = true;
@@ -334,6 +377,34 @@
     // A dark-text-on-dark-surfaces user choice no longer washes the UI.
     var s1 = String(getComputedStyle(docEl)
       .getPropertyValue('--surface-1') || '').trim();
+    // v0.77.7 THE SECONDARY-TEXT DERIVATION — user report: "the
+    // description of what the row does seems to not follow any theme
+    // color and remains grey. Same as most text when the rows are
+    // expanded." Base themes hand-tune their text-2/3/3-dim triplets,
+    // so a user-painted Primary text left the hints + descriptions on
+    // the theme's grey. When --text-1 carries an override, the
+    // secondary tones now DERIVE from it — blends toward the resolved
+    // surface-1 (the surface descriptions sit on), keeping the
+    // 1 > 2 > 3 hierarchy while following the customized palette. A
+    // gradient's AVERAGE stop is the representative tone (the first
+    // stop can be an outlier).
+    if (text1Spec) {
+      var t1Tone = avgStops(text1Spec.colors) ||
+        (/^#[0-9a-fA-F]{6}$/.test(twinsText1Solid || '') ? twinsText1Solid : null);
+      var t1Mix = mixHex(t1Tone, s1, 0.38);
+      if (t1Tone && t1Mix) {
+        docEl.style.setProperty('--text-2', t1Mix);
+        docEl.style.setProperty('--text-3', mixHex(t1Tone, s1, 0.62) || t1Mix);
+        docEl.style.setProperty('--text-3-dim', mixHex(t1Tone, s1, 0.76) || t1Mix);
+        docEl._themeOverrideKeys.push('--text-2', '--text-3', '--text-3-dim');
+        // the rgb triplets (rgba composition users) stay consistent
+        var t2Tri = hexTriplet(t1Mix);
+        if (t2Tri) {
+          docEl.style.setProperty('--text-2-rgb', t2Tri);
+          docEl._themeOverrideKeys.push('--text-2-rgb');
+        }
+      }
+    }
     var inkM = /^#([0-9a-fA-F]{6})$/.exec(s1);
     if (inkM) {
       var s1Lum = (function (h) {
