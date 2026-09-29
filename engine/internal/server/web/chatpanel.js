@@ -2243,25 +2243,28 @@
   // block, conditional on the effective lib gate. PM turns reach the hub
   // through the ACTION tool protocol (hublib), so the phrasing says
   // ACTION; the discipline mirrors the engine's MUST/SHOULD/MAY/MUST NOT
-  // block. Appended ONLY to the default persona (the engine's contract).
+  // block. v0.73: the everything-is-a-bundle contract — six types,
+  // bundles, per-type use, BOTH gates. Appended ONLY to the default
+  // persona (the engine's contract).
   function pmLibraryPreamble(state) {
     var t = (state && state._tweaks) || {};
     var libOn = !!(state.libAuto || state.templateAuto || state.skillsAuto);
     if (t.botLib === false) libOn = false;
     if (libOn) {
       return '\n\n## The Doomalay Library\n' +
-        'This chat\u2019s library is ON. The Doomalay app has a LIBRARY \u2014 a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the hublib ACTION tool (search by keyword, popular, recent, by tag).\n\n' +
+        'This chat\u2019s library is ON. The Doomalay app has a LIBRARY \u2014 the public hub where EVERY type is browsable, downloadable and usable: personas, templates, skills, themes, scripts, and docs (each single item is a bundle of one), plus curated BUNDLES (collections that work together). Browsing is via the hublib ACTION tool (search by keyword, popular, recent, by tag, by type; bundles lists the curated collections \u2014 always narrow with q or tag).\n\n' +
         '## Library discipline\n' +
         'MUST: Before answering any question that could be solved by an existing library entry (a methodology, a skill, a persona, a theme, a script), call hublib with a 1-3 keyword query and report the top result(s) in one line. Never answer from parametric memory for capability questions.\n' +
         'SHOULD: Recommend the smallest entry that solves the actual sub-problem; cite name + the one capability you\u2019d use, and offer to download it for the user via the same tool.\n' +
-        'MAY: Pull an entry via hublib once you have decided it is the right fit; the download lands in the user\u2019s library (\u201cYours\u201d) and is immediately usable in this chat.\n' +
-        'MUST NOT use a library entry when: the task fits in a few lines of trivial code or text; the entry\u2019s surface area exceeds the problem\u2019s; the user explicitly asked for a from-scratch implementation; or pulling it would steer away from the user\u2019s stated direction rather than toward it.\n';
+        'MAY: Pull an entry via hublib once you have decided it is the right fit; the download lands in the user\u2019s library (\u201cYours\u201d) and is immediately usable in this chat. USE each type the way it is meant: load a SKILL before the work it covers and follow it; follow a template\u2019s methodology; arm a downloaded PERSONA with persona_set {"from": "<name>", "activate": true}; a THEME describes a look the user applies from the hub page; scripts and docs are reference reading. For BUNDLES: browse the member list first, pick the member that fits the actual sub-problem \u2014 never the whole bundle at once.\n' +
+        'MUST NOT use a library entry when: the task fits in a few lines of trivial code or text; the entry\u2019s surface area exceeds the problem\u2019s; the user explicitly asked for a from-scratch implementation; or pulling it would steer away from the user\u2019s stated direction rather than toward it.\n' +
+        'GATES: the Bot Library switch (this one) gates USE; Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles) gates downloading NEW entries. When you download or load something, say which item you are using \u2014 it displays next to the lib+ pill for the user.\n';
     }
     return '\n\n## The Doomalay Library\n' +
-      'This chat\u2019s library switch is OFF (the user can flip it via the \ud83e\uddf0 lib toolbar pill or \u2726 tweaks \u2192 Bot Library). The Doomalay app still HAS a library \u2014 a catalog of community and personal entries across six categories: personas, templates, skills, themes, scripts, and docs. Browsing is via the hublib ACTION tool.\n\n' +
+      'This chat\u2019s library switch is OFF (the user can flip it via the \U0001F6E0 lib toolbar pill or \u2726 tweaks \u2192 Bot Library). The Doomalay app still HAS a library \u2014 the public hub where every type is browsable: personas, templates, skills, themes, scripts, and docs (each single item is a bundle of one), plus curated BUNDLES (collections that work together). Browsing is via the hublib ACTION tool.\n\n' +
       '## Library discipline (browse-only mode)\n' +
       'MUST: When the user asks about capabilities (\u201ccan the app do X?\u201d, \u201cis there a skill for Y?\u201d), call hublib with a 1-3 keyword query and report the top result(s) in one line \u2014 never answer from parametric memory.\n' +
-      'SHOULD: Recommend entries by name + one-line capability; tell the user to flip the Bot Library switch ON to download + use them.\n' +
+      'SHOULD: Recommend entries by name + one-line capability; tell the user to flip the Bot Library switch ON to download + use them (and Can download bundles ON for new downloads).\n' +
       'MUST NOT attempt to download or load entries \u2014 downloads refuse until the user flips the Bot Library switch back on. Do not pretend the library is unavailable; it IS available, just download-gated.\n';
   }
 
@@ -2999,7 +3002,8 @@
   // turn used (or the armed template) — same events in, same pill out,
   // every open, every chat.
   var BUNDLE_GLYPHS = {
-    template: '⧉', skill: '✦', script: '⚙', doc: '▤', bundle: '⤓'
+    template: '⧉', skill: '✦', script: '⚙', doc: '▤', bundle: '⤓',
+    persona: '☺', theme: '◐'
   };
   function bundleGlyph(kind) {
     return BUNDLE_GLYPHS[String(kind || '')] || BUNDLE_GLYPHS.bundle;
@@ -3033,6 +3037,14 @@
       // live + replay).
       var m2 = text.match(/SKILL LOADED\s*[:—]?\s*([\w.-]+)/);
       if (m2) return { kind: 'skill', name: m2[1].replace(/\.+$/, '') };
+      return null;
+    }
+    if (name === 'persona_set' || name === 'persona_activate') {
+      // v0.73: the persona hand — an armed persona (from the hub or the
+      // bot's own) shows the pill. The deterministic marker rides the
+      // observation (both engine + PM shapes, live + replay).
+      var pm = text.match(/PERSONA\s+ACTIVE\s*[—:\-]\s*(.+?)(?:[.\n]|$)/i);
+      if (pm) return { kind: 'persona', name: pm[1].trim() };
       return null;
     }
     if (name === 'hublib') {
