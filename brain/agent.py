@@ -2,8 +2,8 @@
 
 This is the maximal-capability agent: Strands SDK with the full tool suite
 (shell, file_read, file_write, editor, web_search, web_fetch, http_request,
-calculator, memory, delegate, agent_panel, git, current_time, env, grep, glob,
-think, journal, memorize, slug, retrieve).
+calculator, memory, current_time, env, grep, glob, think, journal, memorize,
+slug, retrieve + the doomalay dt registry).
 
 V0 BUG FIXES (vs the old c-branch agent_sessions.py):
   1. Fresh Strands Agent per turn — NEVER reuse (old code reused a
@@ -837,6 +837,18 @@ def _build_tools(workspace: str, web_search: bool,
                                                  dir=str(ws), prefix="repl_") as fh:
                     fh.write(code)
                     p = fh.name
+                # v0.76.4 THE DEMOTED-UID READ FIX: the temp file is written
+                # by the BRAIN process (root on a shared space, default 0600
+                # root-owned) but EXECUTED by the demoted per-session uid —
+                # observed live on the community space as "Permission
+                # denied" on every python_repl call under uid isolation.
+                # World-readable fixes it (the workspace dir itself is 0700
+                # uid-owned, so only the sandbox uid can reach the file).
+                try:
+                    import os as _os
+                    _os.chmod(p, 0o644)
+                except Exception:
+                    pass
                 try:
                     result = subprocess.run(
                         [sys.executable, p], cwd=str(ws), capture_output=True,
@@ -1335,9 +1347,9 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
     # from the registry in _build_tools — the prompt must not advertise
     # what isn't there).
     _discipline_lines = [
-        "- swarm: fan a list of tasks out to PARALLEL sub-agents at once (the "
-        "swarm node — prefer over repeated delegate calls whenever 2+ "
-        "independent sub-tasks exist)",
+        "- swarm: fan a list of tasks out to PARALLEL sub-agents at once "
+        "(whenever 2+ independent sub-tasks exist — this harness has no "
+        "single-task delegate tool)",
         "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
         "question, searches, fetches pages, refines queries over rounds, "
         "synthesizes a cited brief. Use for ANY current-events question "
@@ -1364,6 +1376,9 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
         "skills, scripts and docs — search/popular, tappable one-press "
         "download cards for the user (downloads need the chat's Bot Library "
         "switch ON), payload in hand to follow",
+        "- persona: switch this chat's personas — list, import a DOWNLOADED "
+        "hub persona (set from, activate) or write a fresh character sheet; "
+        "the active persona shapes every later turn",
         "- artifact: create AND surgically EDIT (find/replace, line splices, "
         "inserts, dry_run) the REAL chat artifacts — including files made in "
         "earlier turns; write deliverables HERE, not just as chat text",
@@ -1408,7 +1423,9 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
                      "- *list/search skills* → the `skills` tool: action='list' or 'search'\n"
                      "- *read a skill's companion files* → the `skills` tool: "
                      "action='read', skill='…', path='…'\n"
-                     "- *dispatch a subagent* → the `delegate` tool\n"
+                     "- *dispatch a subagent* → the `swarm` tool (parallel "
+                     "fan-out; one focused task → just do it yourself — this "
+                     "harness has no single-task delegate tool)\n"
                      "- *create/update todos* → the `timemgr` tool (tasks)\n"
                      "- *the skill library* is the chat's library — the hub "
                      "(`hublib` tool) carries more, downloadable on demand")

@@ -473,7 +473,7 @@ TOOL_DESCRIPTION = (
     "(repo/id or a bare name from the last browse), downloaded (what this "
     "chat already has), bundles (list the curated collections), bundle "
     "(one bundle's members with each member's when-to-use description), "
-    "download_bundle (every member at once), libraries, help. BUNDLES: "
+    "download_bundle (every member at once), help. BUNDLES: "
     "use when a task spans a whole methodology suite (e.g. superpowers) "
     "— browse the bundle first, pick the member that fits the actual "
     "sub-problem, never the whole bundle at once. Per-chat Templates/"
@@ -541,8 +541,20 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
         return (f"unknown action '{action}' — try one of " + " | ".join(sorted(known))
                 + " (or action='help' for the cheat-sheet)")
     if typ not in HUBLIB_TYPES:
-        return ("hublib serves templates, skills, scripts, docs, personas "
-                f"and themes (got '{typ or 'empty'}).")
+        # v0.76.4 MODEL ERGONOMICS: the old shape ('got \'empty\'') made
+        # models thrash (observed live: eight consecutive empty-type calls
+        # in one turn). The error now carries the exact call to make.
+        if action in ("bundles", "bundle", "download_bundle"):
+            return ("bundle actions take no type — call hublib with "
+                    f"action='{action}' (and id for bundle/download_bundle).")
+        if action == "downloaded":
+            return ("downloaded lists one type at a time — add type= one of "
+                    "template, skill, script, doc, persona, theme (e.g. "
+                    "action='downloaded', type='skill').")
+        return (f"this action needs type= one of template, skill, script, "
+                "doc, persona, theme — e.g. hublib(action='browse', "
+                "type='skill', q='brainstorm'). Bundle-level browsing is "
+                "action='bundles' (no type).")
 
     # ── THE LIB GATE — read on the fly, every call. v0.60 pt C.9: OFF means
     # browse + recommend still work (the model tells the user what it found);
@@ -815,19 +827,23 @@ def _resolve_target(client: Any, state_dir: Path | str | None, typ: str,
 
 
 HELP_TEXT = (
-    "hublib — the PUBLIC HUB's template + skill libraries, from chat.\n"
+    "hublib — the PUBLIC HUB's libraries, from chat (ALL SIX types).\n"
     "actions (action=…):\n"
-    "• browse — search the community hub: type='template'|'skill', optional "
-    "q=, sort=recent|downloads|hearts|relevant, tag=. Also shows the user "
-    "tappable cards with one-press download.\n"
+    "• browse — search the community hub: type='template'|'skill'|'script'|"
+    "'doc'|'persona'|'theme', optional q=, sort=recent|downloads|hearts|"
+    "relevant, tag=. Also shows the user tappable cards with one-press "
+    "download.\n"
     "• detail — full item + payload preview: type + (ref='name' or repo+id).\n"
-    "• download — save an item into the chat's library (template sheet → "
-    "Yours) and get its payload to follow: type + (ref='name' or repo+id).\n"
-    "• downloaded — what this chat already has: type=…\n"
-    "• libraries — the hub's libraries + local counts.\n"
-    "gating: the per-chat ✦ tweaks 'Bot Library' boxes (Templates / Skills) "
-    "switch each type on/off — checked on every call, mid-chat flips apply "
-    "immediately."
+    "• download — save an item into the chat's library and get its payload "
+    "to follow: type + (ref='name' or repo+id).\n"
+    "• downloaded — what this chat already has (all types).\n"
+    "• bundles — the curated collections (no type).\n"
+    "• bundle — one bundle's members with each member's when-to-use "
+    "description (id=…, no type).\n"
+    "• download_bundle — every member of a bundle at once (id=…, no type).\n"
+    "gating: the chat's Bot Library switch (the lib pill / ✦ tweaks) gates "
+    "downloads — OFF keeps browse + recommend working — checked on every "
+    "call, mid-chat flips apply immediately."
 )
 
 
@@ -880,8 +896,10 @@ def build(ctx) -> list:
 
             Args:
                 action: one of browse | detail | download | downloaded |
-                    libraries | help.
-                type: 'template' or 'skill' (required except help/libraries).
+                    bundles | bundle | download_bundle | help. The bundle
+                    actions and 'downloaded' take NO type.
+                type: 'template' or 'skill' (required for browse/detail/
+                    download; not used by the bundle actions).
                 q: search terms (action="browse").
                 tag: exact tag filter, e.g. 'superpowers-obra' (browse).
                 sort: recent | downloads | hearts | relevant (browse).
