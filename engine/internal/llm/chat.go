@@ -64,6 +64,10 @@ type ChatRequest struct {
         // enforces the switch per action: browse/get always answer;
         // download refuses with the exact switch path when OFF.
         HublibToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+        // v0.72: the skills hand on the direct path — bootstrap/list/
+        // search/load a downloaded skill's methodology (the PM bridge's
+        // /api/tools/skills twin, riding the quick chats).
+        SkillsToolFn func(ctx context.Context, argJSON string) string `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -78,6 +82,12 @@ type ChatRequest struct {
         // TEMPLATE block. Empty = no template.
         TemplateID    string `json:"-"`
         TemplateBrief string `json:"-"`
+        // v0.72: THE ATTACHED BUNDLE — when the user armed a whole bundle
+        // (the v0.71 use-bundle flow), BundleManifest carries the
+        // composed manifest block (members + the pick/load protocol);
+        // composeTurnSystem prepends it above everything. Mirrors the PM
+        // path's opts.bundle handling in vendor/pm/pmsdk.js.
+        BundleManifest string `json:"-"`
         // v0.44 SELF-ENABLE (user spec: the model may reach for the template
         // library itself): the brain's base URL so the template_list /
         // template_show ACTION tools can browse /templates. "" (APK / brain
@@ -1141,6 +1151,16 @@ Cite web sources inline as [1], [2] matching the search result numbering. Never 
 // it was offered).
 func composeTurnSystem(req ChatRequest) string {
         system := req.SystemPrompt
+        // v0.72: THE ATTACHED BUNDLE manifest rides ABOVE everything (the
+        // model reads the bundle first, every turn) — the pmsdk PM-turn
+        // twin of this block rides vendor/pm/pmsdk.js. Keep the two
+        // protocols in sync.
+        if req.BundleManifest != "" {
+                if system != "" {
+                        system += "\n"
+                }
+                system += req.BundleManifest + "\n"
+        }
         if req.TemplateBrief != "" {
                 if system != "" {
                         system += "\n"
@@ -1164,6 +1184,13 @@ func composeTurnSystem(req ChatRequest) string {
         // armed the hublib runner (the engine build with the hub service).
         if req.HublibToolFn != nil {
                 system += "\n\n" + hublibToolsProtocol
+        }
+        // v0.72: the skills hand rides the direct path whenever the
+        // server armed the runner — the quick chats can bootstrap the
+        // superpowers discipline and LOAD downloaded skills as armed
+        // methodologies (the exact capability the PM path already had).
+        if req.SkillsToolFn != nil {
+                system += "\n\n" + skillsToolsProtocol
         }
         return system
 }
@@ -1262,7 +1289,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 nudged = true
                                 ch <- ChatChunk{Type: "progress", Text: "model said it can't — reminding it about its tools…"}
                                 history = append(history, Message{Role: "assistant", Content: answer})
-                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string { if req.TemplateAuto { return ", template_list, template_show" } ; return "" }()) + (func() string { if req.HublibToolFn != nil { return ", hublib (search/browse/download the public library)" } ; return "" }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
+                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string { if req.TemplateAuto { return ", template_list, template_show" } ; return "" }()) + (func() string { if req.HublibToolFn != nil { return ", hublib (search/browse/download the public library AND its bundles)" } ; return "" }()) + (func() string { if req.SkillsToolFn != nil { return ", skills (load downloaded skill methodologies)" } ; return "" }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
                                 continue
                         }
                         // Final answer — ALREADY streamed live above.
@@ -1455,6 +1482,28 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "hublib"}
                 return observation
         }
+        if action == "skills" && req.SkillsToolFn != nil {
+                // v0.72: THE SKILLS HAND on the direct path — bootstrap/
+                // list/search/load a DOWNLOADED skill's methodology
+                // through the server's runner (same dispatch as the PM
+                // bridge). The load result's "SKILL LOADED — <name>"
+                // head feeds the active-bundle pill (deterministic:
+                // tool_use/tool_result ride the event log, replays match).
+                var args map[string]any
+                summary := ""
+                if json.Unmarshal([]byte(argJSON), &args) == nil {
+                        for _, k := range []string{"skill", "q", "action"} {
+                                if v, ok := args[k].(string); ok && v != "" {
+                                        summary = v
+                                        break
+                                }
+                        }
+                }
+                ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary}
+                observation = req.SkillsToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "skills"}
+                return observation
+        }
         if action == "delegate" && req.DelegateFn != nil {
                 // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
                 // one prompt, up to 3 other models answer in parallel.
@@ -1573,7 +1622,7 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                         observation = "OBSERVATION:\n" + text
                         ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
                 default:
-                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string { if req.HublibToolFn != nil { return ", hublib {\"action\": \"search|get|download\", ...} (the public hub library)" } ; return "" }()) + "."
+                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string { if req.HublibToolFn != nil { return ", hublib {\"action\": \"search|get|download|bundles|bundle|download_bundle\", ...} (the public hub library AND its bundles)" } ; return "" }()) + (func() string { if req.SkillsToolFn != nil { return ", skills {\"action\": \"bootstrap|list|search|load|files|read\", ...} (the installed skill methodologies)" } ; return "" }()) + "."
                 }
         }
         return observation

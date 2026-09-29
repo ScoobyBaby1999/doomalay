@@ -86,16 +86,31 @@ const templateToolsProtocol = `You also have the method-template library (browse
 ACTION: template_list {} — browse the app's method-template library (ids, names, stage counts): research pipelines, superpowers disciplines, audits, lessons…
 ACTION: template_show {"id": "redteam"} — read one template's full methodology (stages with instructions, or the markdown discipline); FOLLOW it for the task when the user picks one or asks for that method`
 
-// hublibToolsProtocol (v0.67.2): THE LIBRARY on the direct path — the
-// public hub (templates, skills, scripts, docs from every publisher).
-// Composed whenever the server armed HublibToolFn. The Bot Library
-// switch (the lib pill) gates DOWNLOADS only; browsing + recommending
-// always answer — the runner enforces it and names the switch.
-const hublibToolsProtocol = `You also have THE PUBLIC HUB — the community library of templates, skills, scripts and docs (browsable, downloadable, usable on the fly):
+// hublibToolsProtocol (v0.67.2 + v0.72): THE LIBRARY on the direct path —
+// the public hub (templates, skills, scripts, docs from every publisher)
+// + the BUNDLES (curated collections). Composed whenever the server armed
+// HublibToolFn. The Bot Library switch (the lib pill) gates DOWNLOADS
+// only; browsing + recommending always answer — the runner enforces it
+// and names the switch.
+const hublibToolsProtocol = `You also have THE PUBLIC HUB — the community library of templates, skills, scripts and docs (browsable, downloadable, usable on the fly) and its BUNDLES (curated collections of items that work together):
+ACTION: hublib {"action": "bundles", "q": "…"} — list the hub's bundles (member censuses; q filters)
+ACTION: hublib {"action": "bundle", "id": "…"} — one bundle's full member list with each member's when-to-use description
+ACTION: hublib {"action": "download_bundle", "id": "…"} — download every member of a bundle into the user's library
 ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — search the hub (omit q for the newest)
 ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — one item's detail + payload head
 ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download it into the user's library + use it now
-Be opportunistic: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name. If nothing fits, say so and proceed without — never force a library item that steers away from the task, and never name an item a real search did not return. If the chat's Bot Library switch is OFF, downloads answer with the exact switch to flip (✦ tweaks → Bot Library); browsing and recommending still work.`
+Be opportunistic: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name. BUNDLES: browse (bundle action) BEFORE using — the members' descriptions state when each fires; pick the member that fits the actual sub-problem, never the whole bundle at once; for the superpowers bundle the workflow order rides the bundle detail. If nothing fits, say so and proceed without — never force a library item that steers away from the task, and never name an item a real search did not return. If the chat's Bot Library switch is OFF, downloads answer with the exact switch to flip (✦ tweaks → Bot Library); browsing and recommending still work.`
+
+// skillsToolsProtocol (v0.72): THE SKILLS HAND on the direct path — the
+// downloaded skills live on-device as armed methodologies. Composed
+// whenever the server armed SkillsToolFn. Descriptions carry ONLY
+// triggering conditions (obra's convention — the body is the method).
+const skillsToolsProtocol = `You also have THE SKILLS LIBRARY — methodologies downloaded into this app (e.g. the superpowers suite), loadable and followable on the fly:
+ACTION: skills {"action": "bootstrap"} — the superpowers skill discipline (the selection rules: load a skill BEFORE any work it covers)
+ACTION: skills {"action": "list"} / {"action": "search", "q": "brainstorm"} — the installed skills, each line's description = when to use it
+ACTION: skills {"action": "load", "skill": "<name>"} — load one skill's full methodology and FOLLOW it for the work it covers
+ACTION: skills {"action": "files"/"read", "skill": "…", "path": "…"} — a skill's companion files (scripts, references)
+A skill is a method to FOLLOW, not text to summarize: after loading, work the way it prescribes and say which skill you are using. Load the smallest fitting skill; if none fits, say so and proceed without. Skills pair with the hub: ACTION: hublib {"action": "download", …} lands new skills here (then load them with skills).`
 
 // IsLocalTool reports whether name is a local tool.
 func IsLocalTool(name string) bool {
