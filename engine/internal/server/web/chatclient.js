@@ -248,6 +248,10 @@
       if (opts.deep_research !== undefined) payload.deep_research = !!opts.deep_research;
       if (opts.template_id !== undefined && opts.template_id !== null && opts.template_id !== '') payload.template_id = opts.template_id;
       if (opts.template_brief !== undefined && opts.template_brief !== null && opts.template_brief !== '') payload.template_brief = opts.template_brief;
+      // v0.72: the attached WHOLE BUNDLE rides WS sends too (the PM
+      // path's opts.bundle twin — the engine composes the manifest for
+      // the direct turn's system).
+      if (opts.bundle !== undefined && opts.bundle !== null && opts.bundle.members && opts.bundle.members.length) payload.bundle = opts.bundle;
       if (opts.model !== undefined && opts.model !== null && opts.model !== '') payload.model = opts.model;
       if (opts.provider !== undefined && opts.provider !== null && opts.provider !== '') payload.provider = opts.provider;
     }

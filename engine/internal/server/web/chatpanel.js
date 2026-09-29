@@ -2187,6 +2187,12 @@
           opts.template_id = state.template.id || '';
           opts.template_brief = state.template.brief;
         }
+        // v0.72: the attached WHOLE BUNDLE rides the WS turn (the PM
+        // path has carried it since v0.71 — the engine now composes the
+        // manifest into the direct turn's system too).
+        if (state.bundle && state.bundle.members && state.bundle.members.length) {
+          opts.bundle = state.bundle;
+        }
         state.client.send(text, opts);
       },
 
@@ -3021,13 +3027,20 @@
       return null;
     }
     if (name === 'skills' || name === 'skill') {
-      var m2 = text.match(/SKILL LOADED:\s*([\w.-]+)/);
-      if (m2) return { kind: 'skill', name: m2[1] };
+      // v0.72: the engine's loader head is "SKILL LOADED — <name>" (space
+      // em-dash space); the brain's is "=== SKILL LOADED: <name> ==="
+      // (colon direct). BOTH set the pill (deterministic: same text shape
+      // live + replay).
+      var m2 = text.match(/SKILL LOADED\s*[:—]?\s*([\w.-]+)/);
+      if (m2) return { kind: 'skill', name: m2[1].replace(/\.+$/, '') };
       return null;
     }
     if (name === 'hublib') {
       // the download RESULT is the "use" — browse/detail/downloaded don't
-      // count (browsing isn't using).
+      // count (browsing isn't using). v0.72: the whole-bundle download
+      // matches FIRST (its head is "DOWNLOADED BUNDLE — <id> · …").
+      var bdl = text.match(/DOWNLOADED\s+BUNDLE\s+[—-]\s*([\w.-]+)/);
+      if (bdl) return { kind: 'bundle', name: bdl[1] };
       var eng = text.match(/DOWNLOADED\s+—\s+(.+?)\s+\((\w+)\)/);   // engine PM bridge
       if (eng) return { kind: eng[2], name: eng[1] };
       var br = text.match(/^downloaded\s+'([^']+)'/i);               // brain dt_hublib

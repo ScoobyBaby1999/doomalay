@@ -6,6 +6,7 @@ import (
         "fmt"
         "log"
         "net/http"
+        "sort"
         "strconv"
         "strings"
         "sync"
@@ -892,6 +893,7 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         // the sheet's own PATCH persists the selection for reload.
         tplID, _ := msg["template_id"].(string)
         tplBrief, _ := msg["template_brief"].(string)
+        bundManifest := ""
         if strings.TrimSpace(tplBrief) != "" {
                 brainReq["template_id"] = tplID
                 brainReq["template_brief"] = tplBrief
@@ -909,6 +911,22 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                         brainReq["system_prompt"] = "METHOD TEMPLATE — " + label +
                                 "\nFollow this template's methodology for this task:\n" +
                                 strings.TrimSpace(tplBrief) + "\n\n" + sp
+                }
+        }
+        // v0.72: THE ATTACHED BUNDLE — the WS twin of the PM path's
+        // opts.bundle (pmsdk.js). {name, id, members:[{type,name,desc,
+        // repo,id}]} rides the send; the engine composes the manifest
+        // block (members + the pick/load protocol) for BOTH paths (brain:
+        // prepended to the system prompt here; direct: llm.ChatRequest.
+        // BundleManifest via brainReq["bundle_manifest"] at the proxy
+        // call sites).
+        if bRaw, ok := msg["bundle"].(map[string]any); ok {
+                if manifest := bundleManifestText(bRaw); manifest != "" {
+                        bundManifest = manifest
+                        brainReq["bundle_manifest"] = manifest
+                        if sp, ok2 := brainReq["system_prompt"].(string); ok2 && sp != "" {
+                                brainReq["system_prompt"] = manifest + "\n\n" + sp
+                        }
                 }
         }
         // Persist capability changes so the next turn / reload keeps them.
@@ -1027,11 +1045,11 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 }); jerr == nil {
                         _ = pipe.send(b)
                 }
-                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, &terminal)
+                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal)
         } else if s.brain != nil && s.brain.Healthy() {
                 s.streamFromBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal)
         } else {
-                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, &terminal)
+                s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal)
         }
 }
 
@@ -1170,7 +1188,8 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
                 }
                 tplID, _ := brainReq["template_id"].(string)
                 tplBrief, _ := brainReq["template_brief"].(string)
-                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, terminal)
+                bundManifest, _ := brainReq["bundle_manifest"].(string)
+                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
                 return
         }
         s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
@@ -1193,7 +1212,8 @@ func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID 
                 }
                 tplID, _ := brainReq["template_id"].(string)
                 tplBrief, _ := brainReq["template_brief"].(string)
-                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, terminal)
+                bundManifest, _ := brainReq["bundle_manifest"].(string)
+                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
                 return
         }
         s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
@@ -1210,7 +1230,7 @@ func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID 
 // v0.44: tplID/tplBrief carry the composer's active method template (the
 // template pill) into llm.ChatRequest; s.brain's URL arms the
 // template_list/template_show ACTION tools (nil brain = they degrade).
-func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText, tplID, tplBrief string, terminal *bool) {
+func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText, tplID, tplBrief, bundleManifest string, terminal *bool) {
         if s.vault == nil {
                 s.emit(pipe, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
                 s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
@@ -1288,17 +1308,28 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 HublibToolFn: func(ctx context.Context, argJSON string) string {
                         return s.runHublibAction(sessionID, argJSON)
                 },
+                // v0.72: THE SKILLS HAND on the direct path — the quick
+                // chats bootstrap the superpowers discipline and LOAD
+                // downloaded skills as armed methodologies (the PM
+                // bridge's /api/tools/skills twin, same dispatch).
+                SkillsToolFn: func(ctx context.Context, argJSON string) string {
+                        return s.runSkillsAction(sessionID, argJSON)
+                },
                 // v0.44: the active method template (the template pill) —
                 // the turn pipelines prepend the brief as a METHOD TEMPLATE
-                // system block.
-                TemplateID:    tplID,
-                TemplateBrief: tplBrief,
+                // system block. v0.72: the attached whole bundle's manifest
+                // rides above it (composeTurnSystem).
+                TemplateID:     tplID,
+                TemplateBrief:  tplBrief,
+                BundleManifest: bundleManifest,
                 // v0.52 THE 3 PILLS: the per-chat auto-search toggles —
                 // TemplateAuto gates the template ACTION tools on the
                 // direct path (off = the tools are not offered, so the
                 // model cannot burn turns browsing a library the user
-                // disabled). SkillsAuto rides for the brain path (direct
-                // chats have no skills tooling).
+                // disabled). SkillsAuto rides for the brain path; the
+                // v0.72 skills hand rides the direct path via
+                // SkillsToolFn above (the dispatch enforces the lib pill
+                // on bootstrap/load).
                 TemplateAuto: sess.TemplateAuto,
                 SkillsAuto:   sess.SkillsAuto,
         }
@@ -1737,4 +1768,85 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
         }
         b, _ := json.Marshal(out)
         _ = pipe.send(b)
+}
+
+// bundleManifestText (v0.72) — composes THE ATTACHED BUNDLE manifest block
+// from the WS send's bundle payload ({name, id, tag?, members:[{type, name,
+// desc, repo, id}]}). The PM path composes the same protocol client-side
+// (vendor/pm/pmsdk.js, v0.71); this is the engine twin for WS/direct turns
+// so BOTH paths teach the same pick-load-follow discipline. Skills-first
+// member ordering, descriptions clipped to 140 (they are when-to-use
+// conditions), the superpowers workflow appended when it is superpowers.
+func bundleManifestText(b map[string]any) string {
+        if b == nil {
+                return ""
+        }
+        str := func(k string) string {
+                v, _ := b[k].(string)
+                return strings.TrimSpace(v)
+        }
+        name, id, tag := str("name"), str("id"), str("tag")
+        rawMembers, _ := b["members"].([]any)
+        if len(rawMembers) == 0 {
+                return ""
+        }
+        type member struct {
+                typ, name, desc, repo, id string
+        }
+        order := map[string]int{"skill": 0, "script": 1, "template": 2, "doc": 3, "persona": 4}
+        members := make([]member, 0, len(rawMembers))
+        for _, rm := range rawMembers {
+                m, ok := rm.(map[string]any)
+                if !ok {
+                        continue
+                }
+                ms := func(k string) string {
+                        v, _ := m[k].(string)
+                        return strings.TrimSpace(v)
+                }
+                members = append(members, member{ms("type"), ms("name"), ms("desc"), ms("repo"), ms("id")})
+        }
+        sort.SliceStable(members, func(i, j int) bool {
+                if order[members[i].typ] != order[members[j].typ] {
+                        return order[members[i].typ] < order[members[j].typ]
+                }
+                return members[i].name < members[j].name
+        })
+        if len(members) > 60 {
+                members = members[:60]
+        }
+        label := name
+        if label == "" {
+                label = id
+        }
+        var sb strings.Builder
+        sb.WriteString("THE ATTACHED BUNDLE — " + label)
+        if tag != "" {
+                sb.WriteString(" (#" + tag + ")")
+        }
+        sb.WriteString(" — " + strconv.Itoa(len(rawMembers)) + " members\n")
+        sb.WriteString("The user attached this WHOLE bundle instead of one member. For EVERY request:\n")
+        sb.WriteString("1. Review the members below against the task BEFORE answering.\n")
+        sb.WriteString("2. Decide which member(s) fit the work best — never guess or answer from memory when a member covers it. The descriptions state WHEN each member fires; pick the smallest fitting one, never the whole bundle at once.\n")
+        sb.WriteString("3. LOAD the pick BEFORE starting: an installed skill via ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}; any hub member (skill/template/doc/script) via ACTION: hublib {\"action\":\"download\",\"type\":\"…\",\"repo\":\"…\",\"id\":\"…\"} then load it — the type/repo/id ride the manifest lines.\n")
+        sb.WriteString("4. Follow the loaded member to the letter, and say briefly WHICH member you used and why.\n")
+        if wf := superpowersWorkflowBlock(id, true); wf != "" {
+                sb.WriteString(wf)
+        }
+        sb.WriteString("Members:\n")
+        for _, m := range members {
+                sb.WriteString("· " + m.typ + " — " + m.name)
+                if m.desc != "" {
+                        d := m.desc
+                        if len(d) > 140 {
+                                d = d[:140] + "…"
+                        }
+                        sb.WriteString(" — " + d)
+                }
+                if m.repo != "" && m.id != "" {
+                        sb.WriteString(" [" + m.repo + " / " + m.id + "]")
+                }
+                sb.WriteString("\n")
+        }
+        return sb.String()
 }
