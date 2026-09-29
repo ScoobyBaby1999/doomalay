@@ -333,7 +333,9 @@ has "$KTSHEET" "try { webView?.onPause() } catch (e: Exception) {}" "Kotlin: the
 has "$KTSHEET" "try { w.onResume() } catch (e: Exception) {}" "Kotlin: the re-open RESUMES it (the pairing)"
 has "$KTSHEET" "private var pageTapY = -1f" "Kotlin: the ducked page's still-press detector"
 has "$KTSHEET" "if (ducked) resetDuckTimer()" "Kotlin: page activity keeps the peek (the retrigger rides the page's DOWN+MOVE)"
-has "$KTSHEET" "!v.canScrollVertically(-1) && ev.rawY > chainDownY" "Kotlin: v0.68.0 — the MOVE branch grew the chain handoff (a top-of-page pull releases the lock)"
+# v0.72 rebase: the handoff's at-top gate became atTopForChain (!ducked && …)
+has "$KTSHEET" "val atTopForChain = !ducked && !v.canScrollVertically(-1)" "Kotlin: v0.68.0→v0.72 — the MOVE branch's chain handoff (at-top pulls release the lock; v0.72 drops the gate while ducked)"
+has "$KTSHEET" "atTopForChain && ev.rawY > chainDownY" "Kotlin: the handoff fires on the downward pull"
 has "$KTSHEET" "if (ducked) cancelDuck(restoreDock = true)" "Kotlin: the chrome acts restore the dock after their action"
 has "$KTMAIN" "hitTestCanvasAsync(v, ev.x, ev.y)" "Kotlin: v0.69 — the duck ENGAGE rides the DOM hit-test (DOWN only)"
 has "$KTMAIN" "panelSheet?.onSpaMove()" "Kotlin: v0.69 — MOVE only RETRIGGERS an existing duck (never engages)"

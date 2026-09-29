@@ -139,7 +139,9 @@ has "$KTSHEET" "private inner class DragBodyLayout(context: Context) : FrameLayo
 has "$KTSHEET" "override fun onInterceptTouchEvent(ev: MotionEvent): Boolean" "Kotlin: the body intercepts the stream (the WebView gets a clean CANCEL)"
 has "$KTSHEET" "dragActivate(ev.rawY - dip(CHAIN_REBASE_DP))" "Kotlin: the hijack hands the finger to the SHARED drag machine, −6dp rebased"
 has "$KTSHEET" "requestDisallowInterceptTouchEvent(false)" "Kotlin: the WebView releases the parent lock on a qualifying pull"
-has "$KTSHEET" "!v.canScrollVertically(-1) && ev.rawY > chainDownY" "Kotlin: the release fires only at the page's very top, pulling DOWN"
+# v0.72 rebase: the at-top gate became atTopForChain (!ducked && …)
+has "$KTSHEET" "val atTopForChain = !ducked && !v.canScrollVertically(-1)" "Kotlin: v0.72 — the release fires at the page's very top pulling DOWN (the gate drops while ducked)"
+has "$KTSHEET" "atTopForChain && ev.rawY > chainDownY" "Kotlin: the handoff fires on the downward pull"
 has "$KTSHEET" "ev.pointerCount != 1 || chainMulti || dragging" "Kotlin: the single-driver rule (no chain mid-drag, no second finger)"
 has "$KTSHEET" "overScrollMode = View.OVER_SCROLL_NEVER" "Kotlin: the overscroll glow never fights the chain"
 has "$KTSHEET" "MotionEvent.ACTION_MOVE -> if (dragging) dragFollow(ev.rawY)" "Kotlin: the body drives the same dragFollow the strip uses"

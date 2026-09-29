@@ -80,6 +80,22 @@
   var DUCK_FRAC = 0.30;        // the peek fills ~30% of the screen
   var DUCK_HOLD_MS = 3000;     // the retriggerable temporary hold
   var DUCK_TAP_SLOP = 10;      // px — a still press on the peek (not a scroll)
+  // v0.72: THE EASY SLIDE-DOWN (user spec: "we have to make it easier
+  // for them to be slide down and go out of render… if the user slides
+  // down when the panel is 30% dock the panel should go away"). While
+  // DUCKED, the body chain grabs after 12px (not 24) and IGNORES the
+  // inner-scroller gate — a downward slide on the peek is DISMISS
+  // intent, not content scrolling (the peek is a 3-second glance, the
+  // canvas owns the focus). And a downward VELOCITY counts even when
+  // the travel is short (a flick, not a drag).
+  var DUCK_BODY_SLOP = 10;     // px of pull-down before a DUCKED body grabs
+                               // (== DUCK_TAP_SLOP, so the press rule and the
+                               // grab rule partition every touch exactly:
+                               // <10 still press → restore, >10 drag → close)
+  var DUCK_FLING_VY = 0.25;    // px/ms — a downward flick closes the peek (the EMA
+                               // needs ~3 samples to converge, so a real flick's
+                               // 1.5-3 px/ms crosses by the 2nd-3rd move; a slow
+                               // deliberate nudge sits under 0.1 and never trips)
 
   // ── v0.42 THE ALWAYS-TALL GEOMETRY ──────────────────────────────
   // H is the drag-math source of truth (innerHeight — dynamic toolbars),
@@ -192,10 +208,17 @@
       resetDuckTimer();
       fireDuck();
     }
-    // the hold expired — home to the half dock, dim restored
+    // the hold expired — home to the half dock, dim restored.
+    // v0.72: THE EXPIRY GUARD — a finger still on the sheet (an anchor
+    // drag running, or a body press being held) IS interaction: the
+    // hold RETRIGGERS instead of firing. The old behavior rose the
+    // panel mid-press, and the drag that followed started from the
+    // half dock — not ducked — so the slide-down went back to the hard
+    // decide() ladder (the "hard to slide away" report's other half).
     function unduck() {
       if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
       if (!ducked) return;
+      if (track.active || track.bodyStart) { resetDuckTimer(); return; }
       ducked = false;
       if (curY < H - 1) springY(curY, yForState(currentState), 0);
       fireDuck();
@@ -482,11 +505,15 @@
         // mere tap (dy≈0, the natural anchor case) — returns it to the
         // ORIGINAL dock ("goes back to it's original position" — the
         // half dock, never full).
+        // v0.72: THE EASY SLIDE-DOWN — a downward FLING counts even
+        // when the travel is short (vy > DUCK_FLING_VY; a 6px flick at
+        // speed is unambiguous intent, and the ducked body hijack's
+        // rebase eats most of a short drag's dy).
         if (duckTimer) { clearTimeout(duckTimer); duckTimer = 0; }
         var wasDucked = ducked;
         ducked = false;
         if (wasDucked) fireDuck();
-        next = (dy > DUCK_TAP_SLOP) ? 'CLOSE' : 'default';
+        next = (dy > DUCK_TAP_SLOP || track.vy > DUCK_FLING_VY) ? 'CLOSE' : 'default';
       } else {
         next = decide(track.vy, dy);
       }
@@ -702,9 +729,21 @@
         bs.maxDy = Math.max(bs.maxDy || 0, Math.abs(dy));
 
         if (dy <= 0) return; // upward = plain scrolling, never ours
-        if (bs.sc && bs.sc.scrollTop > 0) return; // inner scroller still owns it
+        // v0.72: THE EASY SLIDE-DOWN — while DUCKED, a downward pull is
+        // DISMISS intent even when the content is scrolled (the peek is
+        // a glance; the scroller gate only applies to the real docks),
+        // and the grab slop halves (10px vs 24 — the release rule then
+        // closes on the rebased dy or a flick). NOTE: duckGrab is just
+        // `ducked` — NOT `!track.active`: once the hijack fires, the
+        // following moves belong to the drag and must reach move();
+        // gating them on !track.active re-armed the scroller gate
+        // mid-drag and the release saw a 6px dy (the bug this line
+        // fixed after its own first test).
+        var duckGrab = ducked;
+        if (!duckGrab && bs.sc && bs.sc.scrollTop > 0) return; // inner scroller still owns it
 
-        if (dy > BODY_SLOP) {
+        var slop = duckGrab ? DUCK_BODY_SLOP : BODY_SLOP;
+        if (dy > slop) {
           if (!track.active) {
             if (e.cancelable) e.preventDefault();
             // rebase so the sheet doesn't jump by the slop amount

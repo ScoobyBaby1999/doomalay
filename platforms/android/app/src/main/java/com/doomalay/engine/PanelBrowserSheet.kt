@@ -218,6 +218,14 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // v0.68.0: THE BODY CHAIN (gesture.js's scroll chain, constant
         // for constant) + THE SPRINGS (its settle + dismiss physics)
         private const val BODY_SLOP_DP = 24        // px of pull-down before the sheet grabs (gesture.js BODY_SLOP)
+        // v0.72: THE EASY SLIDE-DOWN — while DUCKED, the WebView chain
+        // grabs after 10dp (not 24) and DROPS the page-at-top gate: a
+        // downward pull on the 30% peek is DISMISS intent, not content
+        // scrolling (user spec: "if the user slides down when the panel
+        // is 30% dock the panel should go away"). release()'s
+        // dragFromDuck path already closes on any dy>0, so the slop is
+        // the only thing between the finger and the away-slide.
+        private const val DUCK_CHAIN_SLOP_DP = 10  // px of pull-down before a DUCKED page grabs
         private const val CHAIN_REBASE_DP = 6      // the no-jump rebase at hijack (gesture.js y0 = y − 6)
         private const val ANCHOR_SLOP_DP = 6       // the anchor's tap-vs-drag slop
         private const val SETTLE_STIFF = 170f      // the settle spring (critically damped)
@@ -267,7 +275,18 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // v0.64.2: the canvas-duck state + its retriggerable hold
     private var ducked = false
     private val duckHandler = Handler(Looper.getMainLooper())
-    private val unduckRunnable = Runnable { unduck() }
+    // v0.72: THE EXPIRY GUARD — a finger still ON the sheet (the strip,
+    // the capsule, or the WebView page) IS interaction: the hold
+    // RETRIGGERS instead of firing. The old behavior rose the sheet
+    // mid-press, and the drag that followed started from the half dock
+    // (not ducked), so the slide-down hit the hard decide() ladder —
+    // the "hard to slide away" report's other half (gesture.js's
+    // track.active/track.bodyStart guard, native).
+    private val fingerOnSheet = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val unduckRunnable = Runnable {
+        if (fingerOnSheet.get()) { resetDuckTimer(); return@Runnable }
+        unduck()
+    }
 
     // v0.64.2: the loading spins (the ring + the ↻ glyph)
     private var ringSpin: ValueAnimator? = null
@@ -385,6 +404,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private fun beginClose() {
         duckHandler.removeCallbacks(unduckRunnable)
         ducked = false
+        fingerOnSheet.set(false)   // v0.72: a closed sheet owes no expiry guard
         showing = false
         setLoading(false, null)
         // v0.65.1: "slides down and stops rendering" — the hidden sheet
@@ -649,6 +669,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             // RELEASED so the body layout can intercept and the sheet
             // can follow the finger (gesture.js's scroll chain, the
             // native edition; the WebView gets a clean CANCEL).
+            // v0.72: THE EASY SLIDE-DOWN — while DUCKED the handoff
+            // DROPS the page-at-top gate (a downward pull on the peek
+            // is dismiss intent even when the page is scrolled — the
+            // 3-second glance never outranks the swipe-away), and the
+            // page's DOWN/UP feed the fingerOnSheet expiry guard.
             setOnTouchListener { v, ev ->
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
@@ -658,19 +683,24 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                         // same field the strip's DOWN captures; one driver)
                         dragFromDuck = ducked
                         if (ducked) resetDuckTimer()
+                        fingerOnSheet.set(true)   // v0.72: the expiry guard — the finger is on the page
                         pageTapY = ev.rawY        // the tap origin
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> { chainMulti = true }
                     MotionEvent.ACTION_MOVE -> {
                         if (ducked) resetDuckTimer()
+                        // v0.72: ducked → no atTop gate (a downward pull
+                        // on the peek hands off, wherever the page sits)
+                        val atTopForChain = !ducked && !v.canScrollVertically(-1)
                         if (!chainMulti && ev.pointerCount == 1 &&
-                                !v.canScrollVertically(-1) && ev.rawY > chainDownY) {
+                                atTopForChain && ev.rawY > chainDownY) {
                             try {
                                 v.parent.requestDisallowInterceptTouchEvent(false)
                             } catch (e: Exception) {}
                         }
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        fingerOnSheet.set(false)   // v0.72: the press ended
                         if (ev.actionMasked == MotionEvent.ACTION_UP && ducked && pageTapY >= 0f) {
                             if (Math.abs(ev.rawY - pageTapY) <= dip(6)) {
                                 cancelDuck(restoreDock = true)
@@ -822,19 +852,30 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // HIJACKED into the sheet's own drag — the WebView gets a clean
         // CANCEL, the finger never loses control, and release() decides
         // full/default/close exactly like the web panel's body.
+        // v0.72: THE EASY SLIDE-DOWN — while DUCKED the rule DROPS the
+        // at-top gate (a downward pull on the 30% peek is dismiss
+        // intent wherever the page is scrolled) and the slop drops to
+        // 10dp (release()'s dragFromDuck path closes on any dy>0, so
+        // the slop is the whole distance between the finger and the
+        // away-slide).
         val body = DragBodyLayout(activity).apply {
             addView(webView, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addView(loading, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             // the hijack rule (every MOVE until it fires): one finger,
-            // the page at its very top, a deliberate downward pull
+            // the page at its very top (dropped while ducked), a
+            // deliberate downward pull
             chainRule = { ev ->
                 if (ev.pointerCount != 1 || chainMulti || dragging) false
                 else {
                     val w = webView
-                    val atTop = w == null || !w.canScrollVertically(-1)
-                    atTop && (ev.rawY - chainDownY) > dip(BODY_SLOP_DP)
+                    val pull = ev.rawY - chainDownY
+                    if (ducked) pull > dip(DUCK_CHAIN_SLOP_DP)
+                    else {
+                        val atTop = w == null || !w.canScrollVertically(-1)
+                        atTop && pull > dip(BODY_SLOP_DP)
+                    }
                 }
             }
         }
@@ -910,6 +951,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     if (dragging) return@setOnTouchListener false   // one driver (a chain grab owns the finger)
+                    fingerOnSheet.set(true)   // v0.72: the expiry guard — the finger is on the sheet
                     dragStartY = ev.rawY
                     dragFromDuck = ducked
                     lastMoveY = ev.rawY
@@ -931,6 +973,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     cancelLongPress()
                     val fired = longFired
                     longFired = false
+                    fingerOnSheet.set(false)   // v0.72: the press ended (dragEnd clears its own)
                     if (dragging) {
                         dragEnd()
                     } else if (ev.actionMasked == MotionEvent.ACTION_UP && !fired) {
@@ -997,6 +1040,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     private fun dragEnd() {
         dragging = false
+        fingerOnSheet.set(false)   // v0.72: the drag (any driver) ended — the expiry guard stands down
         stopDragRender()
         // the FINGER's dy, not the rubber-banded sheet offset (gesture.js end)
         release(velY, lastMoveY - dragStartY)
