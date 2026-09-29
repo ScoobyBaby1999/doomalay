@@ -256,6 +256,30 @@ func nativeToolSpecs(req ChatRequest) []map[string]any {
 			}, "action"),
 		)
 	}
+	// v0.73: THE PERSONA HAND on the native path — the self-management
+	// tools were ACTION-protocol-only (v0.28), so native-function-calling
+	// providers (NVIDIA & friends) could only WRITE "ACTION: persona_set"
+	// as prose (observed live in the red team). The manifest entry makes
+	// them real tool_calls; executeAction routes them to PersonaToolFn.
+	if req.PersonaToolFn != nil {
+		specs = append(specs,
+			nativeToolSpec("persona_list", "List YOUR personas and placeholders in this chat (id, name, mode, preview) — includes the hub personas you could import.", map[string]jsonSchemaProp{}),
+			nativeToolSpec("persona_set", "Create, edit or import a persona. Omit id to create; {\"from\": \"<hub persona name>\", \"activate\": true} imports a DOWNLOADED library persona and makes it the active one (you become it); activate:true makes any target the one always-active persona.", map[string]jsonSchemaProp{
+				"id":       strProp("An existing persona id (edit)."),
+				"name":     strProp("The persona's name."),
+				"text":     strProp("The persona's system-prompt text."),
+				"from":     strProp("Import a hub persona you downloaded (its name or id) instead of inline text."),
+				"activate": {Type: "boolean", Description: "Make it the always-active persona."},
+			}),
+			nativeToolSpec("persona_activate", "Become a listed persona (deactivates the previous one); {\"id\": \"\"} deactivates all (back to the app default).", map[string]jsonSchemaProp{
+				"id": strProp("The persona id from persona_list (empty deactivates all)."),
+			}),
+			nativeToolSpec("placeholder_set", "Set a {placeholder} usable in personas and triggers.", map[string]jsonSchemaProp{
+				"key":   strProp("The placeholder name."),
+				"value": strProp("The placeholder value."),
+			}, "key", "value"),
+		)
+	}
 	// delegate when armed
 	if req.DelegateFn != nil {
 		specs = append(specs, nativeToolSpec("delegate", "Consult up to 3 other models in parallel and get their answers.", map[string]jsonSchemaProp{
