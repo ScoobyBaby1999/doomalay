@@ -382,6 +382,91 @@
     bcur.panel.replaceView(bunchView(), { keepScroll: true });
   }
 
+  // v0.73.6: THE MEMBER FILTER — the live DOM filter behind the bundle
+  // detail's filter row (memFilterRow renders it, bunchWire calls here).
+  // Matching is a lowercase substring over each card's NAME + DESCRIPTION
+  // (the two lines a member is known by — the same fields the hub's own
+  // search matches). While a query is live: non-matching cards hide,
+  // sections with matches expand (chevron + aria follow the class), the
+  // per-section badge and the row's count chip show the LIVE counts, and
+  // sections with zero matches hide entirely. Clearing (✕ or Esc or
+  // emptying) restores the exact fold state the user had (bcur.secOpen is
+  // never mutated here — the folded class is re-derived from it).
+  function wireMemberFilter(el) {
+    if (!bcur || !el) return;
+    var input = el.querySelector('#hub-memq');
+    if (!input) return;
+    var apply = function () {
+      var q = String(bcur.mq || '').trim().toLowerCase();
+      var secs = el.querySelectorAll('.hub-bunch-sec');
+      var shown = 0, total = 0;
+      secs.forEach(function (sec) {
+        var t = sec.getAttribute('data-sec');
+        var badge = sec.querySelector('.hub-bunch-sec-n');
+        var origN = badge ? (badge.getAttribute('data-n') || badge.textContent) : '';
+        var cards = sec.querySelectorAll('.hub-card');
+        var vis = 0;
+        cards.forEach(function (card) {
+          total++;
+          var name = card.querySelector('.hub-card-name-in');
+          var desc = card.querySelector('.hub-card-desc');
+          var txt = ((name ? name.textContent : '') + ' ' + (desc ? desc.textContent : '')).toLowerCase();
+          var hit = !q || txt.indexOf(q) >= 0;
+          card.style.display = hit ? '' : 'none';
+          if (hit) vis++;
+        });
+        var head = sec.querySelector('.hub-bunch-sec-h');
+        if (q) {
+          sec.style.display = vis ? '' : 'none';
+          if (vis) {
+            sec.classList.remove('folded');
+            if (head) head.setAttribute('aria-expanded', 'true');
+          }
+          if (badge) badge.textContent = String(vis);
+        } else {
+          sec.style.display = '';
+          var want = !!(bcur.secOpen && bcur.secOpen[t]);
+          sec.classList.toggle('folded', !want);
+          if (head) head.setAttribute('aria-expanded', want ? 'true' : 'false');
+          if (badge) badge.textContent = String(origN);
+        }
+        shown += vis;
+      });
+      var x = el.querySelector('#hub-memq-x');
+      var n = el.querySelector('#hub-memq-n');
+      var empty = el.querySelector('#hub-memq-empty');
+      if (x) x.hidden = !q;
+      if (n) { n.hidden = !q; n.textContent = q ? (shown + ' of ' + total) : ''; }
+      if (empty) {
+        empty.hidden = !(q && shown === 0);
+        if (q && shown === 0) empty.textContent = 'no members match “' + q + '” — clear the filter or try another word';
+      }
+    };
+    input.addEventListener('input', function () {
+      bcur.mq = input.value;
+      apply();
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        input.value = '';
+        bcur.mq = '';
+        apply();
+        input.focus();
+      }
+    });
+    var clearBtn = el.querySelector('#hub-memq-x');
+    if (clearBtn) clearBtn.addEventListener('click', function () {
+      input.value = '';
+      bcur.mq = '';
+      apply();
+      input.focus();
+    });
+    // a repaint (section flip / view switch / download pill) re-rendered
+    // the row — the value rode in via bcur.mq; re-apply the card filter.
+    if (String(bcur.mq || '')) apply();
+  }
+
   function fetchBunch(id) {
     if (!bcur) return;
     var seq = bcur.seq = (bcur.seq || 0) + 1;
@@ -490,18 +575,41 @@
           secs += '<div class="hub-bunch-sec' + (open ? '' : ' folded') + '" data-sec="' + escAttr(g.type) + '">' +
             '<div class="hub-bunch-sec-h" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">' +
               libIcon(g.type) + ' ' + esc(shortType(g.type)) + 's' +
-              ' <span class="hub-bunch-sec-n">' + g.items.length + '</span>' +
+              ' <span class="hub-bunch-sec-n" data-n="' + g.items.length + '">' + g.items.length + '</span>' +
               '<span class="hub-sec-chev" aria-hidden="true">▸</span></div>' +
             '<div class="hub-grid" style="--hub-cols:' + clampCols(cur && cur.grid, bcur.panel && bcur.panel.bodyEl ? bcur.panel.bodyEl.clientWidth : 320) + '">' +
               g.items.map(cardHTML).join('') +
             '</div>' +
           '</div>';
         });
-        body = viewPill + secs;
+        body = viewPill + memFilterRow(groups) + secs;
       }
     }
     return '<div class="hub-root hub-root--bunch" data-tone="' + escAttr((cur && cur.type) || '') + '">' + hero +
       '<div class="hub-bodyzone">' + body + '</div></div>';
+  }
+
+  // v0.73.6: THE MEMBER FILTER — a bundle can hold dozens to thousands of
+  // members (the hub's own search narrows bundles; THIS narrows INSIDE
+  // one). Live DOM filter over each card's name + description: typing
+  // never re-renders (focus is never lost), matching sections expand for
+  // the duration, and clearing restores the user's fold state exactly
+  // (bcur.secOpen is never touched by the filter). Only bundles with 8+
+  // members get the row — smaller ones read at a glance.
+  function memFilterRow(groups) {
+    var total = 0;
+    (groups || []).forEach(function (g) { total += (g.items || []).length; });
+    if (total < 8) return '';
+    var mq = String((bcur && bcur.mq) || '');
+    return '<div class="hub-memrow" id="hub-memrow">' +
+        '<input id="hub-memq" type="text" inputmode="search" class="hub-search"' +
+          ' placeholder="filter members — name or description" value="' + escAttr(mq) + '"' +
+          ' aria-label="filter the members of this bundle">' +
+        '<button type="button" id="hub-memq-x" class="hub-memq-x"' + (mq ? '' : ' hidden') +
+          ' aria-label="clear the member filter" title="clear">✕</button>' +
+        '<span class="hub-memq-n" id="hub-memq-n"' + (mq ? '' : ' hidden') + '></span>' +
+      '</div>' +
+      '<div class="hub-memq-empty" id="hub-memq-empty" hidden>no members match — clear the filter or try another word</div>';
   }
 
   // the bunch view's meta — the collections list the GRID loaded (this
@@ -626,6 +734,11 @@
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
       });
     });
+    // v0.73.6: THE MEMBER FILTER (see memFilterRow) — wired AFTER the
+    // section headers so a repaint (section flip / view switch / download
+    // pill repaint) re-applies the live filter from bcur.mq and the
+    // input keeps its text (the render carries value=bcur.mq).
+    wireMemberFilter(el);
     // v0.60 pt C.8: the [cards|repo] pill — repo mounts the artifacts-style
     // tree; file rows matching a member's payload File open ITS card.
     var seg = el.querySelector('.hi-viewseg');

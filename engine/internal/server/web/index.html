@@ -3060,6 +3060,34 @@
     border-radius: 999px; padding: 0 8px; color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
+  /* v0.73.6: THE MEMBER FILTER — the bundle detail's own search row
+     (mirrors the hub's top search pill; only bundles with 8+ members
+     get it). The count chip reads "N of M" while a query is live; the
+     ✕ clears; Esc clears; empty-match line sits under the row. */
+  .hub-memrow {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 12px; flex: 0 0 auto;
+  }
+  .hub-memrow .hub-search { flex: 1 1 auto; min-width: 0; }
+  .hub-memq-x {
+    flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; color: var(--text-2); cursor: pointer;
+    font-size: 13px; line-height: 1; font-family: inherit;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .hub-memq-x:hover { color: var(--hub-tone, var(--accent)); border-color: var(--hub-tone, var(--accent)); }
+  .hub-memq-n {
+    flex: 0 0 auto; font-size: var(--ui-small-fs); color: var(--text-3);
+    font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 2px;
+  }
+  .hub-memq-empty {
+    margin: -4px 0 12px; font-size: var(--ui-small-fs); color: var(--text-3);
+    padding: 10px 12px; background: var(--surface-1);
+    border: 1px dashed var(--border); border-radius: 10px;
+  }
   /* v0.58 (pt 2): THE BUNDLE FLAG — a horizontal for-sale-style badge off
      the card's left edge (anchored just above the foot), showing "#tag"
      bold. The paint is the bunch's OWN design color (inline, per-item
