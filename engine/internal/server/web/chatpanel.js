@@ -2548,11 +2548,23 @@
       return { input_tokens: tin, output_tokens: tout,
                total_tokens: Number(u.total_tokens) || (tin + tout) };
     };
-    var finish = function (errText, usage) {
+    var finish = function (errText, usage, finalText) {
       clearHint();
       state.isStreaming = false;
       if (state.client) state.client.turnActive = false; // v0.44 (CAUSE #3): the PM turn is over
       hideActivity(bodyEl, state);
+      // v0.77.5 NEVER-LOSE-CONTENT (the third net): the bridge's return
+      // value is the turn's AUTHORITATIVE text — when the live deltas
+      // never landed (a suppressed final round, a pump loss), streamMsg
+      // is missing or empty and the turn would end silent. Render + let
+      // the persist below carry it — the direct-equivalent of the
+      // engine's turn-end full assistant event (server/chat.go).
+      if (!errText && finalText && finalText.trim() &&
+          (!streamMsg || !(streamMsg.text || '').trim())) {
+        var m = getStreamMsg();
+        m.text = finalText;
+        updateMessageEl(bodyEl, m, false, state);
+      }
       // v0.27: turn end — the header meters (ring + cost) refresh.
       refreshHeaderMeters(bodyEl, state);
       completeAllStreaming(bodyEl, state); // v0.25: every thinking bubble + cursor stops animating
@@ -2688,7 +2700,7 @@
         if (st === 'running') showHint('establishing PrivateMode secure channel…');
       }
     }).then(function (result) {
-      finish(null, normUsage(result && result.usage));
+      finish(null, normUsage(result && result.usage), (result && result.text) || '');
       return result;
     }).catch(function (e) {
       finish(friendlyError(e && e.message ? e.message : 'PrivateMode turn failed'));

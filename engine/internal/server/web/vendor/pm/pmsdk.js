@@ -604,6 +604,21 @@ async function runToolLoop(c, opts) {
     usage = mergeUsage(usage, res.usage);
     var reply = (res.text || '').trim();
 
+    // v0.77.5 NEVER-LOSE-CONTENT — the twin of the Go loop's flush
+    // (llm/chat.go "turn ended idle with NO reply — flush it now"): a
+    // round that entered SUPPRESSION (decided='action' — its prose
+    // carried a recap ACTION line) but turns out to BE the final
+    // answer (the phantom filter, below) never enqueued a single
+    // delta; without this flush the turn ends with tool pills + a
+    // silent screen. Flush the whole text through onDelta ONCE — the
+    // emitted flag guarantees no double-render (emitted rounds already
+    // streamed live).
+    var flushFinal = function (roundRes, text) {
+      if (text && roundRes && !roundRes.emitted && opts.onDelta) {
+        try { opts.onDelta(text); } catch (e) { /* never fatal */ }
+      }
+    };
+
     var act = findActions(reply);
     if (!act.length) {
       // v0.24 AUTO-PROCEED NUDGE (same as the engine loop): models that
@@ -628,6 +643,7 @@ async function runToolLoop(c, opts) {
         continue;
       }
       finalText = reply;
+      flushFinal(res, finalText);
       break;
     }
     // v0.38 PHANTOM-ACTION FILTER (mirrors the Go engine's actionHasRequiredArg):
@@ -643,6 +659,7 @@ async function runToolLoop(c, opts) {
     }
     if (!live.length) {
       finalText = reply;
+      flushFinal(res, finalText);   // the suppressed recap round IS the answer
       break;
     }
     act = live;
@@ -676,6 +693,7 @@ async function runToolLoop(c, opts) {
     messages.push({ role: 'user', content: 'Tool budget exhausted. Give your FINAL answer now from what you have (no ACTION line), citing sources as [n] if any.' });
     var last = await roundTrip(c, opts, messages);
     finalText = (last.text || '').trim();
+    flushFinal(last, finalText);   // the forced final can itself end suppressed
   }
 
   opts.onStatus && opts.onStatus('idle');
@@ -1030,11 +1048,21 @@ async function roundTrip(c, opts, messages) {
     if (res.aborted || !res.err) {
       // v0.20 EMPTY-ROUND GUARD — PM sometimes returns a 200 stream with
       // zero tokens. One retry, then a visible error (not a silent no-op).
-      if (!res.aborted && (res.text || '').trim() === '' && !res.usage) {
-        res = await roundTripOnce(c, opts, messages);
-        if ((res.text || '').trim() === '' && !res.aborted && !res.err) {
-          res.err = new Error('the model returned an empty response — try again or pick a different model');
+      // v0.77.5: keyed on TEXT — the old `&& !res.usage` was DEAD CODE
+      // (every request sends stream_options.include_usage, so a usage-
+      // only chunk kept every empty round resolving as SUCCESS: a
+      // thinking-model round that finished in reasoning_content, or a
+      // proxy-truncated stream ending cleanly after the usage chunk,
+      // returned text='' → the tool loop broke with finalText='' → the
+      // turn "succeeded" with no output at all — the user's chained-
+      // tools-then-nothing report, silent live AND on replay). Exactly
+      // the twin the Go loop fixed (llm/chat.go errEmptyRound).
+      if (!res.aborted && (res.text || '').trim() === '') {
+        var retryRound = await roundTripOnce(c, opts, messages);
+        if ((retryRound.text || '').trim() === '' && !retryRound.aborted && !retryRound.err) {
+          retryRound.err = new Error('the model returned an empty response — try again or pick a different model');
         }
+        res = retryRound;
       }
       if (res.err) throw pmError('PrivateMode: ' + friendlyPMError(res.err.message));
       return res;
@@ -1226,5 +1254,9 @@ async function roundTripOnce(c, opts, messages) {
 
 window.PMBridge = {
   streamChat: streamChat,
-  available: function () { return typeof WebSocket !== 'undefined' && typeof WebAssembly !== 'undefined'; }
+  available: function () { return typeof WebSocket !== 'undefined' && typeof WebAssembly !== 'undefined'; },
+  // v0.77.5: the rig suite drives the REAL loop with a scripted fake core
+  // (chunk-level SSE shapes — the empty-round and phantom-recap exits).
+  // Production code never touches this hook.
+  __test: { runToolLoop: runToolLoop, roundTrip: roundTrip }
 };
