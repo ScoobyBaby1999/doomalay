@@ -44,6 +44,67 @@ try:
 except ImportError:
     _HAS_STRANDS = False
 
+
+class BrainLiteLLMModel(LiteLLMModel):
+    """v0.76.2 THINKING STREAMS: strands 0.1.5's OpenAIModel only maps the
+    Bedrock-style reasoningContent delta — OpenAI-style providers (NVIDIA's
+    deepseek, Qwen, Kimi…) stream ``delta.reasoning_content`` and the stock
+    stream() DROPS it, so a reasoning model's whole thinking phase was
+    silent dead air (2+ minutes of nothing between events on slow turns).
+    This subclass re-emits those deltas as reasoning chunks (→ the
+    callback's reasoningText → thinking events → the PWA's reasoning pill),
+    and keeps every other behavior byte-identical to the pinned parent.
+
+    Round-trip safety: strands' block-stop assembly only appends a
+    reasoningContent block when the message has NO text and NO tool_use —
+    mixed reasoning→tool turns drop the reasoning from the history (same
+    as the native Bedrock path), so tool rounds never see reasoning
+    content in the request.
+    """
+
+    def stream(self, request: dict):
+        response = self.client.chat.completions.create(**request)
+
+        yield {"chunk_type": "message_start"}
+        yield {"chunk_type": "content_start", "data_type": "text"}
+
+        tool_calls: dict[int, list] = {}
+
+        for event in response:
+            choice = event.choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is not None:
+                reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if reasoning:
+                    yield {"chunk_type": "content_delta", "data_type": "reasoning", "data": reasoning}
+                if getattr(delta, "content", None):
+                    yield {"chunk_type": "content_delta", "data_type": "text", "data": delta.content}
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    tool_calls.setdefault(tool_call.index, []).append(tool_call)
+            if getattr(choice, "finish_reason", None):
+                break
+
+        yield {"chunk_type": "content_stop", "data_type": "text"}
+
+        for tool_deltas in tool_calls.values():
+            yield {"chunk_type": "content_start", "data_type": "tool", "data": tool_deltas[0]}
+            for tool_delta in tool_deltas:
+                yield {"chunk_type": "content_delta", "data_type": "tool", "data": tool_delta}
+            yield {"chunk_type": "content_stop", "data_type": "tool"}
+
+        yield {"chunk_type": "message_stop", "data": getattr(choice, "finish_reason", None)}
+
+        # Skip remaining events as we don't have use for anything except the final usage payload
+        for event in response:
+            _ = event
+
+        yield {"chunk_type": "metadata", "data": getattr(event, "usage", None)}
+
+    def format_chunk(self, event: dict):
+        if event.get("chunk_type") == "content_delta" and event.get("data_type") == "reasoning":
+            return {"contentBlockDelta": {"delta": {"reasoningContent": {"text": event.get("data") or ""}}}}
+        return super().format_chunk(event)
+
 # Brain modules
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -217,7 +278,7 @@ async def _run_strands_agent(
         }
         if litellm_base:
             client_args["base_url"] = litellm_base
-        llm = LiteLLMModel(
+        llm = BrainLiteLLMModel(
             model_id=litellm_id,
             client_args=client_args,
             stream=True,
@@ -593,8 +654,8 @@ def _run_subagent_inner(task: str, model: str, workspace: str,
             _litellm.in_memory_llm_clients_cache.flush_cache()
         except Exception:
             pass
-        llm = LiteLLMModel(model_id=litellm_id, client_args=client_args,
-                           stream=True)
+        llm = BrainLiteLLMModel(model_id=litellm_id, client_args=client_args,
+                                stream=True)
         tools = _build_tools(workspace or ".", web_search=False,
                              session_id=f"sub-{sub_id}", callback=None,
                              model=model)
@@ -710,6 +771,23 @@ def _build_tools(workspace: str, web_search: bool,
             m = _im("strands_tools." + mod)
             fn = getattr(m, mod, None)
             if fn is not None:
+                # v0.76.2 THE DROPPED BUILT-INS: strands_tools' 0.1.x exports
+                # carry the spec on the MODULE (TOOL_SPEC = {...}) while the
+                # inner function ships bare — strands' registry only accepts
+                # decorated functions or fn.TOOL_SPEC, so seven built-ins
+                # (file_read/file_write/http_request/environment/journal/
+                # retrieve/shell) silently DROPPED with "unrecognized tool
+                # specification" warnings while the system prompt advertised
+                # them (models burned rounds on "Unknown tool" — observed
+                # live on the community space). Attach the module's spec to
+                # the function: the registry's FunctionTool path accepts it.
+                # Name collisions resolve later-wins in the registry dict —
+                # the custom workspace shell/python guards below and the
+                # v0.75.4 guard twins intentionally override these.
+                if not hasattr(fn, "TOOL_SPEC"):
+                    _spec = getattr(m, "TOOL_SPEC", None)
+                    if isinstance(_spec, dict) and _spec.get("name"):
+                        fn.TOOL_SPEC = dict(_spec)
                 tools.append(fn)
         except Exception:
             continue
@@ -1032,30 +1110,44 @@ def _build_tools(workspace: str, web_search: bool,
             def _guard_file_tool(orig):
                 spec = dict(getattr(orig, "TOOL_SPEC", None) or {})
                 name = _tool_name_of(orig)
-                kw = {}
-                if spec.get("description"):
-                    kw["description"] = spec["description"]
-                if spec.get("inputSchema"):
-                    kw["inputSchema"] = spec["inputSchema"]
 
                 def guarded(*args, **kwargs):
                     # both calling conventions land here: classic kwargs
                     # or the ToolUse dict whose ["input"] carries the params
                     params = {}
+                    tu_id = ""
                     if args and isinstance(args[0], dict) and "input" in args[0]:
                         try:
                             params = dict(args[0].get("input") or {})
                         except Exception:
                             params = {}
+                        tu_id = str(args[0].get("toolUseId") or "")
                     params.update(kwargs)
                     bad = sandboxing.violating_path_arg(params, _ws_guard)
                     if bad is not None:
-                        return ("[error: paths outside this chat's workspace are not "
-                                f"allowed on this sandbox: {bad}]")
+                        return {
+                            "toolUseId": tu_id or "unknown",
+                            "status": "error",
+                            "content": [{"text": ("[error: paths outside this chat's "
+                                                  "workspace are not allowed on this "
+                                                  f"sandbox: {bad}]")}],
+                        }
                     return orig(*args, **kwargs)
 
+                # v0.76.2 NO RE-DECORATION (the guard fix): the v0.75.4 twin
+                # re-decorated a *args/**kwargs wrapper with the original
+                # spec — strands' @tool validates against the WRAPPER's
+                # signature ("Field required: args"), so every guarded
+                # file-tool call on a shared sandbox FAILED since v0.75.4
+                # (observed as validation errors, never as path guards).
+                # Attach the spec directly (the registry's FunctionTool
+                # path): the manifest keeps the ORIGINAL schema, invoke
+                # passes the ToolUse dict through, the guard runs before
+                # orig, and orig's own decorator validates for real.
                 guarded.__name__ = "guarded_" + (name or "tool")
-                return strands_tool(name=name, **kw)(guarded) if kw else strands_tool(name=name)(guarded)
+                if spec.get("name"):
+                    guarded.TOOL_SPEC = dict(spec)
+                return guarded
 
             def _env_twin():
                 @strands_tool(name="environment", description=(
@@ -1086,7 +1178,111 @@ def _build_tools(workspace: str, web_search: bool,
         except Exception:
             pass
 
+    # ── v0.76.2 THE TOOL-RESULT EVENTS (the silent-round fix) ──────────
+    # The brain path emitted tool_use but NEVER tool_result — strands
+    # delivers results as internal messages, not stream events, so every
+    # tool round was a black hole between the tool_use pill and the next
+    # model answer (up to minutes of dead air on reasoning models; the
+    # PWA's tool pills never completed; bundle/skill hint markers in tool
+    # results never fired on the brain path). Wrap every tool so its
+    # completion pushes a tool_result event onto the callback queue —
+    # name + text + tool_use_id + is_error, the same shape the direct
+    # path emits. Sub-agent turns (callback=None) skip the wrap.
+    if callback is not None and tools:
+        tools = _emit_tool_results(tools, callback)
+
     return tools
+
+
+def _emit_tool_results(tools, callback):
+    """Wrap each tool so its completion emits a tool_result event.
+
+    The wrap preserves each tool's registration shape: decorated functions
+    and spec-carrying plain functions keep their name + description +
+    inputSchema (re-decorated with the ORIGINAL spec — the decorator's
+    own schema inference never runs); the call passes through with the
+    exact args/kwargs strands supplied (both the ToolUse-dict and the
+    classic-kwargs conventions), and the return value flows back
+    unchanged. Only the event emission is added — best-effort, never a
+    failure mode for the tool itself."""
+
+    def _spec_of(t):
+        spec = getattr(t, "TOOL_SPEC", None)
+        if isinstance(spec, dict) and spec.get("name"):
+            return dict(spec)
+        return None
+
+    def _name_of(t):
+        s = _spec_of(t)
+        if s:
+            return s["name"]
+        return getattr(t, "tool_name", None) or getattr(t, "__name__", "") or ""
+
+    out = []
+    for t in tools:
+        try:
+            spec = _spec_of(t)
+            name = _name_of(t)
+            if not name or spec is None:
+                out.append(t)  # unknown shape — pass through untouched
+                continue
+
+            def _wrap(orig, tname, tspec):
+                def wrapped(*args, **kwargs):
+                    result = orig(*args, **kwargs)
+                    try:
+                        tu_id = ""
+                        if args and isinstance(args[0], dict) and "toolUseId" in args[0]:
+                            tu_id = str(args[0].get("toolUseId") or "")
+                        # normalize non-dict returns to the ToolResult shape
+                        # (strands' executor does result.get() — a bare string
+                        # would kill the tool round silently)
+                        if not (isinstance(result, dict) and "content" in result):
+                            result = {
+                                "toolUseId": tu_id or "unknown",
+                                "status": "success",
+                                "content": [{"text": str(result)}],
+                            }
+                            if args and isinstance(args[0], dict) and "toolUseId" in args[0]:
+                                result["toolUseId"] = tu_id or "unknown"
+                        text = ""
+                        is_err = False
+                        if isinstance(result, dict):
+                            is_err = result.get("status") == "error"
+                            for part in result.get("content") or []:
+                                if isinstance(part, dict) and "text" in part:
+                                    text += str(part["text"])
+                                elif isinstance(part, str):
+                                    text += part
+                        text = (text or "").strip()[:600]
+                        callback._emit({
+                            "type": "tool_result",
+                            "name": tname,
+                            "text": text or "(empty)",
+                            "tool_use_id": tu_id,
+                            "is_error": bool(is_err),
+                        })
+                    except Exception:
+                        pass  # never let telemetry break the tool
+                    return result
+                # v0.76.2 NO RE-DECORATION: strands' @tool builds its input
+                # validation from the SIGNATURE — a *args/**kwargs wrapper
+                # re-decorated with the original inputSchema still VALIDATES
+                # against the wrapper's signature ("Field required: args" —
+                # every call fails; the v0.75.4 guard twins shipped exactly
+                # this bug). Attaching TOOL_SPEC directly takes the registry's
+                # FunctionTool path instead: the spec drives the manifest,
+                # FunctionTool.invoke passes the ToolUse dict through to us
+                # untouched, and orig's OWN decorator validates against the
+                # REAL schema. The dict travels: args[0] IS the ToolUse.
+                wrapped.__name__ = "emit_" + tname
+                wrapped.TOOL_SPEC = dict(tspec)
+                return wrapped
+
+            out.append(_wrap(t, name, spec))
+        except Exception:
+            out.append(t)
+    return out
 
 
 def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool,

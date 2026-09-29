@@ -525,11 +525,45 @@ def _opted_in() -> set[str]:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
+def _env_names(env_var) -> list:
+    #   env_var may be a single name or a list (first present wins).
+    return [env_var] if isinstance(env_var, str) else list(env_var or [])
+
+
+def _first_env_ctx(env_var, extra: dict) -> str:
+    #   v0.76.1 BYOK REGISTRY: same lookup as _first_env but with a per-request
+    #   dict layered OVER os.environ — the BYOK value (X-Env header the engine
+    #   sent) wins, the .env / os.environ secret (community keys on a shared
+    #   space) is the fallback.
+    for name in _env_names(env_var):
+        val = (extra.get(name) or os.environ.get(name, "")).strip()
+        if val:
+            return val
+    return ""
+
+
 def make_provider_registry() -> list[provider]:
     #   build the live provider list from providers_catalog.json. a provider is
     #   registered only when its key (and any 'requires' vars) are present, and it
     #   is either pool=="core" or explicitly opted in via OPTIN_PROVIDERS.
     load_env()
+    #   v0.76.1 BYOK REGISTRY FIX: the per-request X-Env values (reqenv's
+    #   ContextVar — bound by /chat, /models and /judge BEFORE this call)
+    #   register providers that have no os.environ secret. Since v0.72 BYOK
+    #   keys never touch os.environ, a pure-BYOK user's /chat used to 400
+    #   with "could not resolve model" — the registry only ever saw the
+    #   process env (the shared space survived on its community secrets).
+    #   Presence-only keyed names (X-Keyed-Providers — the engine's /models
+    #   probe) register with an EMPTY value: catalog display only; the real
+    #   key resolves at /chat time via reqenv.resolve_key. Outside a request
+    #   context reqenv returns {} — never worse than the old behavior.
+    try:
+        import reqenv
+        req_env = reqenv.get_request_env() or {}
+        req_keyed = reqenv.get_request_keyed() or frozenset()
+    except Exception:
+        req_env = {}
+        req_keyed = frozenset()
     opted_in = _opted_in()
     providers: list[provider] = []
     for entry in load_provider_catalog():
@@ -537,19 +571,20 @@ def make_provider_registry() -> list[provider]:
         pool = entry.get("pool", "core")
         if pool != "core" and name not in opted_in:
             continue
-        api_key = _first_env(entry.get("env_var"))
-        if not api_key:
+        api_key = _first_env_ctx(entry.get("env_var"), req_env)
+        if not api_key and not any(n in req_keyed for n in _env_names(entry.get("env_var"))):
             continue
-        #       extra required env vars (e.g. CF_ACCOUNT_ID) must all be present.
+        #       extra required env vars (e.g. CF_ACCOUNT_ID) must all be present
+        #       (BYOK value or os.environ — same merge).
         requires = entry.get("requires", [])
-        missing = [v for v in requires if not os.environ.get(v, "").strip()]
+        missing = [v for v in requires if not (req_env.get(v) or os.environ.get(v, "")).strip()]
         if missing:
             log_event("provider_skipped", provider=name, reason=f"missing {missing}")
             continue
         #       fill {VAR} placeholders in the base_url from the environment.
         url = entry["base_url"]
         for var in requires:
-            url = url.replace("{" + var + "}", os.environ.get(var, "").strip())
+            url = url.replace("{" + var + "}", (req_env.get(var) or os.environ.get(var, "")).strip())
         #       Log resolved URL (masked) so we can diagnose Cloudflare ConnectError
         masked_url = url.replace(api_key, "***API_KEY***") if api_key else url
         log_event("provider_url_resolved", provider=name, url=masked_url[:120])

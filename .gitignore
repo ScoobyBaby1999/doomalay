@@ -51,3 +51,4 @@ platforms/hf-space/engine/doomalay-engine
 app/tsconfig.tsbuildinfo
 brain/.chat-ws/
 node_modules
+brain/.venv
