@@ -54,6 +54,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
 )
 
 // hfOAuthClientID is the OAuth app's client_id.
@@ -1408,22 +1409,50 @@ func randomState(n int) string {
 // v0.74: third-party remotes (the "public:"-prefixed cache entries + the
 // shared community brain) receive the FILTERED env — BYOK provider keys +
 // HF tokens only; own spaces keep the full vault.
+// v0.75: the third-party remotes also get the PRESENCE-ONLY keyed list
+// (provider env-var names, no values) — /models needs "which providers
+// can this user use", and that call must not carry the values.
 func (s *Server) fanOutRemoteEnv() {
         if s.vault == nil {
                 return
         }
         env := s.vault.AsEnv()
         third := s.thirdPartyRemoteEnv()
+        keyed := keyedProviderNames(third)
         s.remoteMu.RLock()
         defer s.remoteMu.RUnlock()
         for key, rb := range s.remotes {
                 if strings.HasPrefix(key, "public:") {
                         rb.SetEnv(third)
+                        rb.SetKeyedProviders(keyed)
                 } else {
                         rb.SetEnv(env)
                 }
         }
         if s.sharedBrain != nil {
                 s.sharedBrain.SetEnv(third)
+                s.sharedBrain.SetKeyedProviders(keyed)
         }
+}
+
+// keyedProviderNames extracts the provider env-var names from a filtered
+// third-party env (the presence list for /models — names only, never
+// values). The HF tokens are not providers and stay off the list.
+func keyedProviderNames(third map[string]string) []string {
+        out := make([]string, 0, len(third))
+        for k := range third {
+                if _, ok := secrets.PROVIDER_KEY_ALLOWLIST[k]; !ok {
+                        continue
+                }
+                if strings.HasSuffix(k, "_EXTRA") {
+                        continue
+                }
+                switch k {
+                case "DOOMALAY_HF_TOKEN", "HF_TOKEN", "HUGGINGFACE_TOKEN":
+                        continue
+                }
+                out = append(out, k)
+        }
+        sort.Strings(out)
+        return out
 }

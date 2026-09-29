@@ -38,6 +38,7 @@ type RemoteBrain struct {
         spaceTk string            // own mode: the X-Space-Token secret
         hfTkFn  func() string     // shared mode: returns the user's HF token
         env     map[string]string // provider keys → X-Env-* headers
+        keyed   []string          // v0.75: presence-only names for /models
         healthy bool
         client  *http.Client
 }
@@ -109,13 +110,15 @@ func (rb *RemoteBrain) MarkUnhealthy() {
 }
 
 // probe checks /health and flips the flag accordingly.
+// v0.75: NO provider keys ride the probe — /health never reads them, so
+// the smallest possible secret surface (auth token only) crosses.
 func (rb *RemoteBrain) probe(url string) bool {
         cli := &http.Client{Timeout: 15 * time.Second}
         req, err := http.NewRequest("GET", url+"/health", nil)
         if err != nil {
                 return false
         }
-        rb.applyAuth(req, nil)
+        rb.applyAuth(req, map[string]string{})
         resp, err := cli.Do(req)
         if err != nil {
                 return false
@@ -157,6 +160,12 @@ func (rb *RemoteBrain) ProbeTimeout(dur time.Duration) bool {
 }
 
 // applyAuth sets the auth + provider-key headers on a request.
+// v0.75 KEY-IN-FLIGHT MINIMIZATION: the env argument is EXPLICIT —
+//   · nil            → rb.env (the own-space full vault; the legacy shape)
+//   · a map          → EXACTLY those keys (the per-turn scoped set a
+//                      shared/public space receives — see chat.go
+//                      turnRemoteEnv) or an EMPTY map (keyless: the
+//                      health probe carries no provider keys at all).
 func (rb *RemoteBrain) applyAuth(req *http.Request, env map[string]string) {
         rb.mu.RLock()
         spaceTk := rb.spaceTk
@@ -187,9 +196,33 @@ func (rb *RemoteBrain) applyAuth(req *http.Request, env map[string]string) {
         }
 }
 
+// SetKeyedProviders sets the presence-only provider list sent on /models
+// (v0.75: the catalog needs to know WHICH providers the user can use, but
+// the VALUES never cross on that call — X-Keyed-Providers carries names
+// only; the brain's reqenv treats them as "has key" without a value).
+func (rb *RemoteBrain) SetKeyedProviders(names []string) {
+        if rb == nil {
+                return
+        }
+        rb.mu.Lock()
+        rb.keyed = names
+        rb.mu.Unlock()
+}
+
+// keyedHeader builds the X-Keyed-Providers value (comma-joined env names).
+func (rb *RemoteBrain) keyedHeader() string {
+        rb.mu.RLock()
+        names := rb.keyed
+        rb.mu.RUnlock()
+        return strings.Join(names, ",")
+}
+
 // Chat proxies one agent turn to the remote brain — same SSE event stream
 // shape as the local Brain.Chat (each "data: {json}" line → one event map).
-func (rb *RemoteBrain) Chat(ctx context.Context, req map[string]any) (<-chan map[string]any, <-chan error, error) {
+// v0.75: turnEnv scopes the provider keys on THIS request — nil keeps the
+// legacy full-env behavior (own spaces); a map sends exactly those keys
+// (the shared/public per-turn minimal set; an empty map sends none).
+func (rb *RemoteBrain) Chat(ctx context.Context, req map[string]any, turnEnv map[string]string) (<-chan map[string]any, <-chan error, error) {
         if rb == nil {
                 return nil, nil, fmt.Errorf("no remote brain")
         }
@@ -205,8 +238,8 @@ func (rb *RemoteBrain) Chat(ctx context.Context, req map[string]any) (<-chan map
                 return nil, nil, err
         }
         httpReq.Header.Set("Content-Type", "application/json")
-        rb.applyAuth(httpReq, nil)
-        httpReq.Header.Set("User-Agent", "doomalay-engine/0.46")
+        rb.applyAuth(httpReq, turnEnv)
+        httpReq.Header.Set("User-Agent", "doomalay-engine/0.75")
 
         resp, err := rb.client.Do(httpReq)
         if err != nil {
@@ -222,7 +255,10 @@ func (rb *RemoteBrain) Chat(ctx context.Context, req map[string]any) (<-chan map
                 if resp.StatusCode == 429 {
                         return nil, nil, fmt.Errorf("shared sandbox is busy (429) — retry in a moment or create your own space")
                 }
-                return nil, nil, fmt.Errorf("space chat %d: %s", resp.StatusCode, string(bts))
+                // v0.75: the space's error body is REDACTED before it can
+                // reach any log or event (a compromised space could echo
+                // the headers it saw).
+                return nil, nil, fmt.Errorf("space chat %d: %s", resp.StatusCode, redactBody(string(bts)))
         }
         rb.mu.Lock()
         rb.healthy = true
@@ -276,6 +312,9 @@ func (rb *RemoteBrain) Chat(ctx context.Context, req map[string]any) (<-chan map
 }
 
 // Models proxies GET /models (provider catalog) with the same auth.
+// v0.75: presence-only — X-Keyed-Providers carries the NAMES of the
+// providers the user has keys for, NEVER the values (the catalog call
+// only needs "which providers are usable"). X-Env-* values stay home.
 func (rb *RemoteBrain) Models(ctx context.Context) (json.RawMessage, error) {
         if rb == nil {
                 return nil, fmt.Errorf("no remote brain")
@@ -287,7 +326,10 @@ func (rb *RemoteBrain) Models(ctx context.Context) (json.RawMessage, error) {
         if err != nil {
                 return nil, err
         }
-        rb.applyAuth(req, nil)
+        rb.applyAuth(req, map[string]string{}) // no X-Env values on /models
+        if ks := rb.keyedHeader(); ks != "" {
+                req.Header.Set("X-Keyed-Providers", ks)
+        }
         cli := &http.Client{Timeout: 30 * time.Second}
         resp, err := cli.Do(req)
         if err != nil {
@@ -296,7 +338,8 @@ func (rb *RemoteBrain) Models(ctx context.Context) (json.RawMessage, error) {
         defer resp.Body.Close()
         body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<22))
         if resp.StatusCode != 200 {
-                return nil, fmt.Errorf("space models %d: %s", resp.StatusCode, string(body))
+                // v0.75: same redaction discipline as /chat errors.
+                return nil, fmt.Errorf("space models %d: %s", resp.StatusCode, redactBody(string(body)))
         }
         return json.RawMessage(body), nil
 }

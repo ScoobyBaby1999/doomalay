@@ -1058,6 +1058,63 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         }
 }
 
+// turnRemoteEnv — the v0.75 per-turn minimal key set a THIRD-PARTY
+// remote brain (the shared community space, or someone else's public
+// space) receives: the resolved provider's key (+ its EXTRA field,
+// e.g. the cloudflare account) + the HF tokens. One intercepted request
+// leaks exactly ONE provider key — never the whole BYOK set (the v0.74
+// structural finding, fixed). Own spaces keep the full vault (they are
+// the user's own machines). Known trade: a sub-agent turn on the space
+// that routes to a DIFFERENT provider falls back to the space's own
+// community keys (os.environ there) instead of the user's key for that
+// provider — the deliberate price of the minimized surface.
+func (s *Server) turnRemoteEnv(sess *store.Session) map[string]string {
+        third := s.thirdPartyRemoteEnv()
+        var envVar, extra string
+        provider := ""
+        if sess != nil {
+                provider = sess.Provider
+        }
+        if provider != "" {
+                if catalog, err := llm.LoadCatalog(); err == nil {
+                        if cfg, ok := catalog[provider]; ok {
+                                envVar, extra = cfg.EnvVar, cfg.ExtraEnvVar
+                        }
+                }
+        }
+        // Legacy/edge: no provider on the session — the model id's
+        // prefix carries it ("nvidia/z-ai/glm-5.3-flash").
+        if envVar == "" && sess != nil {
+                if i := strings.Index(sess.Model, "/"); i > 0 {
+                        if catalog, err := llm.LoadCatalog(); err == nil {
+                                if cfg, ok := catalog[sess.Model[:i]]; ok {
+                                        envVar, extra = cfg.EnvVar, cfg.ExtraEnvVar
+                                }
+                        }
+                }
+        }
+        if envVar == "" {
+                return third // unknown provider: never worse than the v0.74 shape
+        }
+        out := make(map[string]string, 4)
+        if v, ok := third[envVar]; ok && v != "" {
+                out[envVar] = v
+        }
+        if extra != "" {
+                if v, ok := third[extra]; ok && v != "" {
+                        out[extra] = v
+                }
+        }
+        // the HF tokens — hf-token-auth on the shared space + dt_hf's
+        // per-request publish path (the ContextVar reads these).
+        for _, k := range []string{"DOOMALAY_HF_TOKEN", "HF_TOKEN", "HUGGINGFACE_TOKEN"} {
+                if v, ok := third[k]; ok && v != "" {
+                        out[k] = v
+                }
+        }
+        return out
+}
+
 // thirdPartyEnvDenied: vault entries that ARE allowlisted (users can set
 // them through the keys API) but must NEVER cross to a third-party remote —
 // the forges + the OAuth pair belong to THIS device's hub/workspace
@@ -1225,6 +1282,14 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
         delete(brainReq, "workspace")
         delete(brainReq, "workspaces")
 
+        // v0.75 KEY-IN-FLIGHT MINIMIZATION: a third-party space receives
+        // ONLY this turn's provider key (+ HF tokens) — own spaces keep
+        // the full vault. nil = rb.env (the legacy own-mode shape).
+        var turnEnv map[string]string
+        if rb.Mode != "own" {
+                turnEnv = s.turnRemoteEnv(sess)
+        }
+
         // First turn on this space (or it slept — HF gc's after 48h idle):
         // wake it with a patient probe so the user sees WHY it's slow.
         if !rb.Healthy() {
@@ -1237,7 +1302,7 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
                 rb.ProbeTimeout(75 * time.Second)
         }
 
-        events, errs, err := rb.Chat(ctx, brainReq)
+        events, errs, err := rb.Chat(ctx, brainReq, turnEnv)
         if err != nil {
                 rb.MarkUnhealthy()
                 if b, jerr := json.Marshal(map[string]any{
@@ -1611,6 +1676,18 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 if evType == "error" && ctx.Err() == context.Canceled {
                         continue
                 }
+                // v0.75 IN-FLIGHT REDACTION: every error event's text fields
+                // are scrubbed BEFORE anything downstream sees them — the
+                // chat_events persistence, the WS forward, the replay — a
+                // provider that echoes the Authorization header, a tool
+                // result that prints a key: nothing survives in flight.
+                if evType == "error" {
+                        for _, k := range []string{"message", "error", "text", "detail"} {
+                                if v, ok := ev[k].(string); ok {
+                                        ev[k] = Redact(v)
+                                }
+                        }
+                }
                 // v0.23 NO-SILENCE: progress events are EPHEMERAL — forwarded
                 // to the live WS only, never persisted, no i/seq (replay never
                 // sees them; the indicator is a live-UI concern).
@@ -1686,11 +1763,28 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 case "error":
                         // v0.13: error events carry "message" (human text) +
                         // "error" (code) — persist the human-readable one.
-                        if t, ok := ev["message"].(string); ok {
-                                content = t
-                        } else if t, ok := ev["text"].(string); ok {
-                                content = t
-                        } else if t, ok := ev["error"].(string); ok {
+                        // v0.75: persist the FULL error payload as JSON
+                        // (message + provider + model + key_source + suggest)
+                        // — the replay parser (chatpanel) lifts the fields
+                        // back out, so a reopened chat keeps the BYOK
+                        // attribution ("your key" vs "the community key")
+                        // and the model-gone chips exactly as live.
+                        errEv := map[string]any{}
+                        for _, k := range []string{"message", "error", "provider", "model", "key_source", "env_var"} {
+                                if v, ok := ev[k]; ok && v != nil {
+                                        errEv[k] = v
+                                }
+                        }
+                        if sug, ok := ev["suggest"].([]any); ok && len(sug) > 0 {
+                                errEv["suggest"] = sug
+                        }
+                        if len(errEv) == 0 {
+                                if t, ok := ev["text"].(string); ok {
+                                        content = t
+                                }
+                        } else if b, err := json.Marshal(errEv); err == nil {
+                                content = string(b)
+                        } else if t, ok := ev["message"].(string); ok {
                                 content = t
                         }
                 case "sources":
