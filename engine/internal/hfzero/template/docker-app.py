@@ -69,18 +69,23 @@ brain_app = brain_mod.app  # the brain's FastAPI (health/models/templates/chat/j
 OPEN_PATHS = {"/", "/health"}
 OPEN_PREFIXES = ("/ui", "/favicon.ico", "/assets/")
 
-_hf_token_cache: dict[str, tuple[bool, float]] = {}
+_hf_token_cache: dict[str, tuple[bool, str, float]] = {}
 
 
-def _hf_token_valid(token: str) -> bool:
-    """Validate an HF access token via whoami-v2 (5-min cache)."""
+def _hf_token_valid(token: str) -> tuple[bool, str]:
+    """Validate an HF access token via whoami-v2 (5-min cache).
+
+    v0.75: returns (ok, username) — the verified identity feeds the
+    per-user workspace namespace (ROOT/<user>/<session>) so one user's
+    turn can never even NAME another user's workspace.
+    """
     now = time.time()
     hit = _hf_token_cache.get(token)
     if hit is not None:
-        ok, until = hit
+        ok, name, until = hit
         if now < until:
-            return ok
-    ok = False
+            return ok, name
+    ok, name = False, ""
     try:
         import urllib.request
         req = urllib.request.Request(
@@ -88,28 +93,36 @@ def _hf_token_valid(token: str) -> bool:
             headers={"Authorization": "Bearer " + token})
         with urllib.request.urlopen(req, timeout=10) as r:
             ok = r.status == 200
+            if ok:
+                who = json.loads(r.read().decode("utf-8", "replace") or "{}")
+                name = str(who.get("name") or "")
     except Exception:
-        ok = False
-    _hf_token_cache[token] = (ok, now + 300)
+        ok, name = False, ""
+    _hf_token_cache[token] = (ok, name, now + 300)
     if len(_hf_token_cache) > 4096:  # bound the cache
         _hf_token_cache.clear()
-    return ok
+    return ok, name
 
 
-def _authorized(path: str, headers: dict) -> tuple[bool, str]:
+def _authorized(path: str, headers: dict) -> tuple[bool, str, str]:
+    """(ok, verified-user, why). The user feeds the workspace namespace
+    (v0.75 shared-disk isolation) — own-token mode is a single trusted
+    operator ("owner")."""
     if ALLOW_UNAUTHED:
-        return True, ""
+        return True, "dev", ""
     if SPACE_TOKEN:
         got = headers.get("x-space-token", "")
         if got and _ct_equal(got, SPACE_TOKEN):
-            return True, ""
-        return False, "missing or invalid X-Space-Token"
+            return True, "owner", ""
+        return False, "", "missing or invalid X-Space-Token"
     if SHARED_MODE:
         got = headers.get("x-hf-token", "")
-        if got and _hf_token_valid(got):
-            return True, ""
-        return False, "missing/invalid X-HF-Token (connect Hugging Face in the Doomalay app)"
-    return False, "space not configured for access (no DOOMALAY_SPACE_TOKEN / shared mode)"
+        if got:
+            ok, name = _hf_token_valid(got)
+            if ok:
+                return True, name or "anon", ""
+        return False, "", "missing/invalid X-HF-Token (connect Hugging Face in the Doomalay app)"
+    return False, "", "space not configured for access (no DOOMALAY_SPACE_TOKEN / shared mode)"
 
 
 def _ct_equal(a: str, b: str) -> bool:
@@ -141,7 +154,7 @@ class DoomalayGate:
                 headers[k.decode("latin-1").lower()] = v.decode("latin-1")
             except Exception:
                 pass
-        ok, why = _authorized(path, headers)
+        ok, user, why = _authorized(path, headers)
         if not ok:
             resp = JSONResponse({"error": "unauthorized", "detail": why}, status_code=401)
             await resp(scope, receive, send)
@@ -156,17 +169,24 @@ class DoomalayGate:
                 return
             _CHAT_SEM["n"] += 1
             try:
-                await self.app(scope, self._sanitized(receive), send)
+                await self.app(scope, self._sanitized(receive, user), send)
             finally:
                 _CHAT_SEM["n"] -= 1
             return
         await self.app(scope, receive, send)
 
     @staticmethod
-    def _sanitized(receive):
+    def _sanitized(receive, user: str = ""):
         """Rewrite the /chat JSON body: sanitize session_id, force a scoped
         server-side workspace. The brain reads request.json() through this
-        channel — everything else passes through untouched."""
+        channel — everything else passes through untouched.
+
+        v0.75 SHARED-DISK ISOLATION: the workspace lands under the VERIFIED
+        HF username's namespace (ROOT/<user>/<name-or-sid>) and the body
+        carries sandbox_user — one user's turn can't name another's
+        workspace, and the brain's sandboxing layer (uid demotion + tool
+        guards) keys off the same path. The username is whitelisted like
+        the session id — traversal/absolute paths never survive."""
 
         async def _run():
             body = b""
@@ -183,7 +203,9 @@ class DoomalayGate:
                 sid = re.sub(r"[^a-zA-Z0-9_-]", "", str(data.get("session_id", "")))[:64]
                 data["session_id"] = sid or "anon"
                 ws_name = re.sub(r"[^a-zA-Z0-9_-]", "", str(data.get("workspace", "")))[:64]
-                data["workspace"] = str(WORKSPACES_ROOT / (ws_name or sid or "anon"))
+                uname = re.sub(r"[^a-zA-Z0-9_-]", "", str(user or ""))[:32] or "anon"
+                data["workspace"] = str(WORKSPACES_ROOT / uname / (ws_name or sid or "anon"))
+                data["sandbox_user"] = uname
                 body = json.dumps(data).encode()
             except Exception:
                 pass  # non-JSON or broken body — the brain's own 400s handle it
@@ -213,6 +235,10 @@ def root():
 @app.get("/health")
 def health():
     h = {"status": "ok", "sandbox": "docker", "hardware": "cpu-basic"}
+    try:
+        h["isolation"] = "uid" if (os.geteuid() == 0 and SHARED_MODE) else "cooperative"
+    except Exception:
+        h["isolation"] = "unknown"
     try:
         tools = os.listdir(str(HERE / "brain" / "tools"))
         h["brain_tools"] = len([t for t in tools if t.endswith(".py")])

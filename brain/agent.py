@@ -47,6 +47,10 @@ except ImportError:
 # Brain modules
 sys.path.insert(0, str(Path(__file__).parent))
 
+# v0.75: shared-disk isolation (prepare_workspace / demote / the tool
+# guards' path checks — brain/sandboxing.py).
+import sandboxing  # noqa: E402
+
 # LiteLLM (fallback when Strands is unavailable)
 try:
     import litellm
@@ -681,6 +685,18 @@ def _build_tools(workspace: str, web_search: bool,
     """
     tools = []
 
+    # v0.75 SHARED-DISK ISOLATION (brain/sandboxing.py — the Phase 3
+    # hardening): every subprocess tool (shell / python_repl / install /
+    # parallel) drops to a per-workspace unprivileged uid before exec
+    # (workspaces are 0700 + uid-owned — a shell can no longer READ
+    # another session's or user's workspace even by absolute path), and
+    # the in-process strands file tools get a path guard to the same
+    # root. Armed when the brain runs as root on a shared deployment;
+    # cooperative (namespace + guards only) elsewhere — never worse than
+    # pre-v0.75.
+    _sandbox = None
+    _preexec = None
+
     # Strands built-in tools (v0.38: import ONE BY ONE — strands-agents-tools
     # renamed modules across releases (env→environment, no glob/grep/memorize/
     # slug), and ONE stale name in a single big import used to silently drop
@@ -702,6 +718,9 @@ def _build_tools(workspace: str, web_search: bool,
     if workspace:
         ws = Path(workspace)
         ws.mkdir(parents=True, exist_ok=True)
+        _sandbox = sandboxing.prepare_workspace(ws)
+        if _sandbox.get("uid"):
+            _preexec = sandboxing.demote(_sandbox["uid"])
 
         @strands_tool(name="shell", description="Execute a shell command in the workspace. Returns stdout, stderr, and exit code.")
         def shell(command: str) -> str:
@@ -710,7 +729,8 @@ def _build_tools(workspace: str, web_search: bool,
                 result = subprocess.run(
                     command, shell=True, cwd=str(ws),
                     capture_output=True, text=True, timeout=300,
-                    env=_safe_env(),
+                    env=sandboxing.safe_subprocess_env(ws, _safe_env()),
+                    preexec_fn=_preexec,
                 )
                 output = result.stdout
                 if result.stderr:
@@ -742,7 +762,9 @@ def _build_tools(workspace: str, web_search: bool,
                 try:
                     result = subprocess.run(
                         [sys.executable, p], cwd=str(ws), capture_output=True,
-                        text=True, timeout=300, env=_safe_env())
+                        text=True, timeout=300,
+                        env=sandboxing.safe_subprocess_env(ws, _safe_env()),
+                        preexec_fn=_preexec)
                     output = result.stdout
                     if result.stderr:
                         output = (output + "\n[stderr]\n" if output else "") + result.stderr
@@ -785,7 +807,9 @@ def _build_tools(workspace: str, web_search: bool,
                 return f"unknown manager '{manager}' (pip | npm | apt)"
             try:
                 result = subprocess.run(cmd, cwd=str(ws), capture_output=True,
-                                        text=True, timeout=600, env=_safe_env())
+                                        text=True, timeout=600,
+                                        env=sandboxing.safe_subprocess_env(ws, _safe_env()),
+                                        preexec_fn=_preexec)
                 output = result.stdout
                 if result.stderr:
                     output = (output + "\n[stderr]\n" if output else "") + result.stderr
@@ -816,13 +840,13 @@ def _build_tools(workspace: str, web_search: bool,
                 return "no commands given"
             if len(cmds) > 16:
                 return "too many commands (max 16 per call)"
-            env = _safe_env()
+            env = sandboxing.safe_subprocess_env(ws, _safe_env())
 
             def _one(cmd):
                 try:
                     r = subprocess.run(cmd, shell=True, cwd=str(ws),
                                        capture_output=True, text=True,
-                                       timeout=300, env=env)
+                                       timeout=300, env=env, preexec_fn=_preexec)
                     out = r.stdout
                     if r.stderr:
                         out = (out + "\n[stderr]\n" if out else "") + r.stderr
@@ -985,6 +1009,82 @@ def _build_tools(workspace: str, web_search: bool,
             tools.extend(dt_tools)
     except Exception:
         pass
+
+    # ── v0.75 THE TOOL GUARDS (shared-disk isolation, in-process half) ──
+    # The red-team finding: strands' file tools (file_read / file_write /
+    # editor / glob / grep) run IN the brain's process — root on a shared
+    # space — with NO path restriction, and strands' ``environment`` tool
+    # can list (and even SET, process-globally!) env vars: the community
+    # keys were one prompt away. Every guarded tool keeps the ORIGINAL's
+    # name + schema (the LLM sees no difference); the call gets a path
+    # guard to this chat's workspace, and the env tool becomes a
+    # secret-stripped READ-ONLY twin (set/delete refuse).
+    if workspace:
+        try:
+            _ws_guard = Path(workspace).resolve()
+
+            def _tool_name_of(t):
+                spec = getattr(t, "TOOL_SPEC", None) or {}
+                if isinstance(spec, dict) and spec.get("name"):
+                    return spec["name"]
+                return getattr(t, "tool_name", None) or getattr(t, "__name__", None) or ""
+
+            def _guard_file_tool(orig):
+                spec = dict(getattr(orig, "TOOL_SPEC", None) or {})
+                name = _tool_name_of(orig)
+                kw = {}
+                if spec.get("description"):
+                    kw["description"] = spec["description"]
+                if spec.get("inputSchema"):
+                    kw["inputSchema"] = spec["inputSchema"]
+
+                def guarded(*args, **kwargs):
+                    # both calling conventions land here: classic kwargs
+                    # or the ToolUse dict whose ["input"] carries the params
+                    params = {}
+                    if args and isinstance(args[0], dict) and "input" in args[0]:
+                        try:
+                            params = dict(args[0].get("input") or {})
+                        except Exception:
+                            params = {}
+                    params.update(kwargs)
+                    bad = sandboxing.violating_path_arg(params, _ws_guard)
+                    if bad is not None:
+                        return ("[error: paths outside this chat's workspace are not "
+                                f"allowed on this sandbox: {bad}]")
+                    return orig(*args, **kwargs)
+
+                guarded.__name__ = "guarded_" + (name or "tool")
+                return strands_tool(name=name, **kw)(guarded) if kw else strands_tool(name=name)(guarded)
+
+            def _env_twin():
+                @strands_tool(name="environment", description=(
+                    "Read the sandbox environment (read-only, secrets "
+                    "stripped). Writes are refused on shared sandboxes."))
+                def env_twin(action: str = "list", prefix: str = "", **kwargs) -> str:
+                    if action not in ("list", "get"):
+                        return ("[error: environment writes are disabled on this "
+                                "sandbox (shared deployment — process env is "
+                                "common to every user's turns)]")
+                    view = sandboxing.safe_subprocess_env(_ws_guard, _safe_env())
+                    if prefix:
+                        view = {k: v for k, v in view.items() if k.startswith(prefix)}
+                    return "\n".join(f"{k}={v}" for k, v in sorted(view.items())) or "(none)"
+                return env_twin
+
+            _guards = []
+            _seen = set()
+            for t in tools:
+                nm = _tool_name_of(t)
+                if nm in ("file_read", "file_write", "editor", "glob", "grep") and nm not in _seen:
+                    _seen.add(nm)
+                    _guards.append(_guard_file_tool(t))
+                elif nm in ("environment", "env") and nm not in _seen:
+                    _seen.add(nm)
+                    _guards.append(_env_twin())
+            tools.extend(_guards)  # later-wins in the strands registry
+        except Exception:
+            pass
 
     return tools
 
