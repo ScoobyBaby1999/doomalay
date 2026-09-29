@@ -112,7 +112,8 @@ HERO=$(ev "(function(){
 # v0.76.7: THE FOLDABLE HERO — the content line ("N bundled items — x
 # docs · y skills…", the user's collapsed-header layout) rides hi-desc;
 # the meta row is the single item's exact by-line.
-has "B1 the bunch hero renders the content line" "$HERO" '"desc":"2 bundled items — 2 skills"'
+has "B1 the hero renders the description (not the census)" "$HERO" '"desc":"the alpha methodology"'
+has "B1b the census rides the info line beneath" "$(ev "(document.querySelector('.hub-bunch-hero .hub-bunch-hero-info')||{textContent:'none'}).textContent" )" "2 bundled items — 2 skills"
 has "B2 the meta row (by {author} · updated)" "$HERO" '"meta":"by mockuser · updated 2025-01-03"'
 # top 5 tags (superpowers, brainstorm, planning, research, testing) + "+1" (writing folds)
 check "B3 the tag row shows the top 5 + the +N fold" \
@@ -120,8 +121,8 @@ check "B3 the tag row shows the top 5 + the +N fold" \
   '["#superpowers", "#brainstorm", "#planning", "#research", "#testing", "+1"]'
 has "B4 the +N chip carries the folded tags in its title" \
   "$(ev "(document.querySelector('.hub-bunch-hero .hi-chip--info')||{}).title || 'none'")" "writing"
-has "B5 Σ member hearts (3+1)" "$HERO" '"hearts":"4"'
-has "B6 Σ member downloads (5+2)" "$HERO" '"dls":"7"'
+has "B5 the per-user bundle hearts (0 — no events yet)" "$HERO" '"hearts":"0"'
+has "B6 the per-user bundle downloads (0 — not yet)" "$HERO" '"dls":"0"'
 
 # B7: structural parity with the single-item view — same classes, same order
 PARITY=$(ev "(function(){
@@ -130,7 +131,7 @@ PARITY=$(ev "(function(){
   var item = document.querySelector('.hi-head'); // the single item view (if mounted)
   return JSON.stringify({ bunch: rows('.hub-bunch-hero'), order: ['.hi-desc','.hi-meta','.hi-chips','.hi-counts'] });
 })()")
-has "B7 the bunch hero uses the single item's exact row classes" "$PARITY" '"bunch":"hi-desc>hi-meta>hi-chips>hi-counts"'
+has "B7 the hero rows (desc+info beneath)" "$PARITY" '"bunch":"hi-desc>hi-desc>hi-meta>hi-chips>hi-counts"'
 
 # ══ C. THE FAB LIFECYCLE ════════════════════════════════════════════
 FABS0=$(ev "(function(){
@@ -209,24 +210,25 @@ has "C9 the ♥ UNLOCKS after the download" "$FABS1" '"heart":"hi-fab hi-fab--he
 check "C10 the ▶ appears once downloaded" "$(ev "!!document.getElementById('hub-bundle-use')" | tr 'A-Z' 'a-z')" "true"
 check "C11 the 🗑 appears once downloaded" "$(ev "!!document.getElementById('hub-bundle-del')" | tr 'A-Z' 'a-z')" "true"
 
-# the endorse fan-out: both members → Σ hearts 4 → 6, the ♥ goes on
+# v0.77.10: THE ONE BUNDLE HEART — the ♥ endorses the COLLECTION (one
+# per user), never a member fan-out: 0 → 1
 ev "document.getElementById('hub-bundle-heart').click(); 'heart'" >/dev/null; sleep 2
 HEART1=$(ev "(function(){
   var h = document.getElementById('hub-bundle-heart');
   var c = document.querySelector('.hub-bunch-hero .hi-counts b');
   return JSON.stringify({ cls: h.className, hearts: c.textContent });
 })()")
-has "C12 the ♥ goes ON (every member endorsed)" "$HEART1" '"cls":"hi-fab hi-fab--heart on"'
-has "C13 Σ hearts follows the fan-out (4 → 6)" "$HEART1" '"hearts":"6"'
-# the engine's own counters agree (each member +1)
+has "C12 the ♥ goes ON (the collection endorsed)" "$HEART1" '"cls":"hi-fab hi-fab--heart on"'
+has "C13 the ONE bundle heart (0 → 1, never +2 members)" "$HEART1" '"hearts":"1"'
+# the engine's own counters agree (the collection-level count)
 CHECKHEARTS=$(curl -s "$BASE/api/hub/collections" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 for c in d.get("collections", []):
     if c["id"] == "superpowers-mock": print(c.get("hearts")); break')
-check "C14 the served Σ hearts counts both endorsements" "$CHECKHEARTS" "6"
+check "C14 the served hearts = the per-user collection count (1)" "$CHECKHEARTS" "1"
 
-# the un-endorse fan-out
+# the un-endorse (the toggle)
 ev "document.getElementById('hub-bundle-heart').click(); 'unheart'" >/dev/null; sleep 2
 HEART2=$(ev "(function(){
   var h = document.getElementById('hub-bundle-heart');
@@ -234,7 +236,7 @@ HEART2=$(ev "(function(){
   return JSON.stringify({ cls: h.className, hearts: c.textContent });
 })()")
 has "C15 the ♥ flips back off" "$HEART2" '"cls":"hi-fab hi-fab--heart"'
-has "C16 Σ hearts returns to 4" "$HEART2" '"hearts":"4"'
+has "C16 the bundle heart returns to 0" "$HEART2" '"hearts":"0"'
 
 # the locked heart explains itself
 ev "(function(){ localStorage.setItem('doomalay.bundledl.v1','{}'); return 'reg-cleared'; })()" >/dev/null

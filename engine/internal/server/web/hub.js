@@ -857,7 +857,11 @@
         toast('download first — endorsing needs a download', { ms: 2400 });
         return;
       }
-      setBundleHeart(!bundleHeartState(members), members);
+      // v0.77.10: the direction rides the COLLECTION's served heart (one
+      // per user) — the member fan-out state is retired
+      var hb = bunchMeta(bcur.id);
+      var nowOn = (hb && typeof hb.hearted === 'boolean') ? hb.hearted : bundleHeartState(members);
+      setBundleHeart(!nowOn, members);
     });
     // v0.72: THE DELETE FAB — the mine view's doBundleDelete (engine
     // rows + session marks + "Yours" copies + the registry), behind the

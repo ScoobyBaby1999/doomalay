@@ -628,6 +628,10 @@ func (s *Service) DeleteCollection(id string) ([]CollectionDeleted, error) {
         if len(refs) == 0 {
                 return nil, ErrNotFoundLocal
         }
+        // v0.77.10: deleting your copies unhearts the bundle (the heart
+        // gate is download-first — a bundle you no longer have cannot
+        // stay endorsed).
+        _ = s.db.SetSetting("hub.collection.heart."+id, "0")
         s.Invalidate("") // counts changed
         return refs, nil
 }
