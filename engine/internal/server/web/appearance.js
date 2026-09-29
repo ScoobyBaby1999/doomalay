@@ -750,7 +750,7 @@
         section('Grid Effects', '' +
           gridSlider('spaceParallax', 'Amplify parallax',
             (typeof s.spaceParallax === 'number') ? s.spaceParallax : 0,
-            'deep star layers + a deeper backdrop · 0 = default') +
+            'a 3-layer depth stack — near dust, mid + far stars, a deep backdrop · 0 = default') +
           gridEffectsColumns(s) +
           '<button data-action="grid-effects-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset effects</button>'
         )

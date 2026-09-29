@@ -136,15 +136,19 @@
     // ── v0.75 THE AMPLIFIER (user spec: rename the slider, REPLACE the
     // method — the v0.67 differential lag "makes it worse not better
     // visually"; at 0 the default behavior is untouched) ──
-    // The lattice is ONE FLAT PLANE again: lines and dots always ride
-    // pan factor 1 (the v0.67 PF_LINE/PF_DOT lag that slid lines against
-    // dots is deleted). Amplify parallax instead DEEPENS the field
-    // around the untouched lattice:
-    //   · two scattered STAR LAYERS riding slower pan factors (0.55 / 0.28)
-    //     — dimmer, smaller, density scaled by the amplification;
-    //   · the backdrop camera slows (0.35 → 0.20 at full).
-    // amp 0 draws zero stars and keeps the camera at exactly 0.35 — the
-    // byte-identical default.
+    // v0.77 THE VISIBILITY REWORK (user spec: "not very noticeable, change
+    // method again or make it more noticeable"): the v0.75 stack painted
+    // sub-pixel stars (r ≈ 0.45px) and only slowed the backdrop 0.35→0.20
+    // — real depth, beneath perception. The amplifier now builds a
+    // THREE-LAYER stack with real contrast:
+    //   · NEAR — a sparse foreground of big soft-glow orbs riding pan
+    //     factor 1.6 (FASTER than the lattice: foreground parallax, the
+    //     strongest depth cue; ~6-8 per viewport);
+    //   · MID — medium stars at 0.5 (half the lattice's speed);
+    //   · FAR — a dense field of small stars at 0.16 (nearly pinned);
+    //   · the backdrop camera slows 0.35 → 0.08 at full amp.
+    // The lattice itself stays ONE FLAT PLANE at pan factor 1 (amp 0 is
+    // still the byte-identical default: zero stars, camera 0.35).
     var amp = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     amp = Math.max(0, Math.min(100, amp)) / 100;
     var hideLines = !!st.hideGridLines;
@@ -209,6 +213,115 @@
       return ((h >>> 0) % 1000000) / 1000000;
     }
 
+    // ── v0.77 THE AMPLIFIER'S THREE-LAYER STARFIELD ──
+    // (pf, cellMul, rMul, gate, aBase, glow, salt) — declared at function
+    // scope so the far/mid layers can paint BEFORE the lattice (true
+    // depth: behind the lines) and the near layer after the dots
+    // (foreground). Anchored per-layer with stable hashes — no shimmer
+    // while sliding. Density rides the amplification; amp 0 draws nothing.
+    // Hidden with the dots (the starfield is dots-family). The NEAR orbs
+    // paint a LIGHT-LIFTED dot color (shadeHex +0.42 toward white — still
+    // the theme's palette, just catching the light: on the default
+    // midnight the raw dot color is #2e2e3a on #0a0a0b and a literal
+    // read is invisible; the VLM red-team caught exactly that).
+    function starLayer(pf, cellMul, rMul, gate, aBase, glow, salt) {
+      var sGrid = scaledGrid * cellMul;
+      var sx0 = ((-offsetX * scale * pf) % sGrid + sGrid) % sGrid;
+      var sy0 = ((-offsetY * scale * pf) % sGrid + sGrid) % sGrid;
+      var starR = Math.max(0.4, dotRBase * rMul);
+      var baseFill = null;
+      if (glow) {
+        // the near layer's lifted tone: the current fill (pattern sample or
+        // the theme solid) lightened 42% toward white
+        try {
+          var cur = ctx.fillStyle;
+          var mHex = /^#([0-9a-fA-F]{6})$/.exec(String(typeof cur === 'string' ? cur : ''));
+          if (mHex) baseFill = shadeHex(cur, 0.42);
+        } catch (e) {}
+      }
+      for (let x = sx0; x < W; x += sGrid) {
+        for (let y = sy0; y < H; y += sGrid) {
+          var six = Math.round((x + offsetX * scale * pf) / sGrid);
+          var siy = Math.round((y + offsetY * scale * pf) / sGrid);
+          var hq = hashCell(six * 3 + salt, siy * 3 - salt);
+          if (hq >= amp * gate) continue; // density rides the amplification
+          var fx = x + (hashCell(six + salt, siy) - 0.5) * sGrid * 0.9;
+          var fy = y + (hashCell(six, siy + salt) - 0.5) * sGrid * 0.9;
+          var rr = starR * (0.6 + 0.8 * hashCell(six + 2, siy + 2 + salt));
+          if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
+          if (glow && baseFill) ctx.fillStyle = baseFill;
+          ctx.globalAlpha = aBase + 0.18 * hashCell(six + 1 + salt, siy + 1);
+          if (glow && rr >= 1.6) {
+            // the near orbs: a soft halo (color → transparent) under the
+            // solid core — reads as close dust catching the light.
+            try {
+              var hg = ctx.createRadialGradient(fx, fy, rr * 0.35, fx, fy, rr * 2.6);
+              hg.addColorStop(0, ctx.fillStyle);
+              hg.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx.globalAlpha *= 0.55;
+              ctx.beginPath();
+              ctx.arc(fx, fy, rr * 2.6, 0, Math.PI * 2);
+              ctx.fillStyle = hg;
+              ctx.fill();
+              ctx.globalAlpha = aBase + 0.18 * hashCell(six + 1 + salt, siy + 1);
+              if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
+              if (baseFill) ctx.fillStyle = baseFill;
+            } catch (e) {}
+          }
+          ctx.beginPath();
+          ctx.arc(fx, fy, rr, 0, Math.PI * 2);
+          ctx.fill();
+          dbgStars++;
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // the dot color + pattern sampler (v0.77: hoisted to function scope —
+    // the amplifier's far/mid star layers sample the same field, and they
+    // paint before the dots block runs)
+    var dotSpec = specs && specs.dotColor;
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var dotSampler = makePatternSampler(dotSpec, dotFallback);
+
+    // the base dot radius (v0.76: hoisted to function scope — the
+    // amplifier's star layers scale against it and the far/mid layers
+    // paint before the dots block runs)
+    var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+
+    // v0.77 THE SHOOTING-STAR SHUTTLE (user spec: "make them shoot like
+    // shooting stars back and forth, moving slowly at first, then at an
+    // exponential curve they move fast to the new location then back at
+    // another exponential curve with slight variations"). Each segment
+    // flies ALONG its own axis between two points: the forward leg eases
+    // IN on one exponent (slow start → hard arrival), the return leg on
+    // ANOTHER (per-segment variation: distance, duration, sharpness,
+    // direction, phase — all from the stable cell hashes, no state). The
+    // normalized speed rides back for the brightness ramp — the meteor
+    // brightens as it rushes.
+    function shuttle(hx, hy) {
+      var dur  = 1.6 + hashCell(hx + 17, hy + 17) * 2.4;    // s per leg
+      var kF   = 2.6 + hashCell(hx + 19, hy + 19) * 1.6;    // forward exponent
+      var kB   = 2.2 + hashCell(hx + 21, hy + 21) * 1.6;     // back exponent (the variation)
+      var dist = 0.45 + hashCell(hx + 23, hy + 23) * 0.75;   // × spacing
+      var dir  = hashCell(hx + 25, hy + 25) < 0.5 ? -1 : 1; // along its axis
+      var ph   = hashCell(hx + 27, hy + 27) * dur;           // phase stagger
+      var u = ((animT + ph) / dur) % 2;
+      var legFwd = u < 1;
+      var s = legFwd ? u : 2 - u;                             // leg progress 0..1
+      var k = legFwd ? kF : kB;
+      var ek = Math.exp(k);
+      var eased = (Math.exp(k * s) - 1) / (ek - 1);          // exponential ease-in
+      var travel = legFwd ? (eased - 0.5) : (0.5 - eased);   // −0.5…+0.5 of dist
+      return { off: dir * dist * travel, spd: Math.exp(k * (s - 1)) };
+    }
+
+    // the FAR + MID layers paint BEHIND the lattice (true far planes)
+    if (!hideDots && amp > 0) {
+      starLayer(0.16, 1.65, 0.62, 0.42, 0.48, false, 211);   // FAR — dense, pinned
+      starLayer(0.50, 2.20, 1.15, 0.50, 0.68, false, 113);   // MID — half speed
+    }
+
     if (!hideLines) {
       var lineSpec = specs && specs.lineColor;
       var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
@@ -253,32 +366,43 @@
         } else {
           for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
             var iyS = Math.round((y + offsetY * scale) / scaledGrid);
-            // v0.76 (the rebased v0.73 wave's floor, grafted): the
-            // ±170% small end would draw a NEGATIVE length (an inverted
-            // segment) — the floor keeps it a visible speck-streak, the
-            // "very small, almost like a shooting star" ask.
-            var segLen = Math.max(scaledGrid * 0.06,
-              (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
-            var segW = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
-            // v0.75 ANIMATE LINES (user spec: "move randomly either up
-            // or down the relative direction they are facing at random
-            // speeds"): each segment oscillates ALONG the line's own
-            // (rotated) axis — inside this rotated frame the local Y IS
-            // the facing direction. Random speed + direction per
-            // segment; a sinusoid keeps them near their anchor.
-            var drift = 0;
+            // v0.77: in animate mode (with size variation off) the dash
+            // gets its own random length and width — the user's
+            // "shrinking them by width or height or both at random
+            // variations", folded into the shooting-star spec. The lengths
+            // stay WELL UNDER the spacing (0.3–0.85×): v0.75.1's 1.35×
+            // overlaps read as a CONTINUOUS line (the VLM red-team saw
+            // zero motion) — a shooting star needs the separated form.
+            // (the v0.73 wave's ±170% floor rides the size-variation
+            // path: the small end would draw a NEGATIVE length — an
+            // inverted segment; the floor keeps it a visible speck-streak.)
+            var segLen = (animLines && sizeFracL === 0)
+              ? scaledGrid * (0.30 + hashCell(ix + 31, iyS + 33) * 0.55)
+              : Math.max(scaledGrid * 0.06,
+                  (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
+            var segW = Math.max(0.12,
+              (animLines ? (0.9 + hashCell(ix + 35, iyS + 37) * 0.9) : 1) *
+              (1 + sizeFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
+            // v0.77 ANIMATE LINES — THE SHOOTING STAR: the segment
+            // shuttles ALONG the line's own (rotated) axis — inside this
+            // rotated frame the local Y IS the facing direction — with
+            // the exponential two-curve flight (see shuttle). Brightness
+            // rides the speed: the dash dims at rest, flashes as it
+            // rushes.
+            var drift = 0, tal = 1;
             if (animLines) {
-              var dsp = 0.15 + hashCell(ix + 17, iyS + 17) * 0.75;    // rad/s
-              var ddir = hashCell(ix + 19, iyS + 19) < 0.5 ? -1 : 1; // up or down
-              drift = Math.sin(animT * dsp + hashCell(ix + 23, iyS + 23) * 6.283)
-                      * scaledGrid * 0.22 * ddir;
+              var sh = shuttle(ix + 41, iyS + 43);
+              drift = sh.off * scaledGrid;
+              tal = 0.42 + 0.58 * sh.spd;
             }
             if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
             ctx.lineWidth = segW;
+            if (tal < 1) ctx.globalAlpha = tal;
             ctx.beginPath();
             ctx.moveTo(0, y - segLen / 2 + drift);
             ctx.lineTo(0, y + segLen / 2 + drift);
             ctx.stroke();
+            if (tal < 1) ctx.globalAlpha = 1;
             dbgSegs++;
           }
         }
@@ -304,22 +428,31 @@
         } else {
           for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
             var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
-            var segLen2 = Math.max(scaledGrid * 0.06,
-              (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
-            var segW2 = Math.max(0.12, 1 * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
-            var drift2 = 0;
+            // v0.77: the shooting-star twin of the vertical block —
+            // separated random dash lengths + widths in animate mode
+            // (with the v0.73 ±170% floor riding the size-variation path,
+            // exactly as the vertical block).
+            var segLen2 = (animLines && sizeFracL === 0)
+              ? scaledGrid * (0.30 + hashCell(ixS + 33, iy + 31) * 0.55)
+              : Math.max(scaledGrid * 0.06,
+                  (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
+            var segW2 = Math.max(0.12,
+              (animLines ? (0.9 + hashCell(ixS + 37, iy + 35) * 0.9) : 1) *
+              (1 + sizeFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
+            var drift2 = 0, tal2 = 1;
             if (animLines) {
-              var dsp2 = 0.15 + hashCell(ixS + 17, iy + 17) * 0.75;
-              var ddir2 = hashCell(ixS + 19, iy + 19) < 0.5 ? -1 : 1;
-              drift2 = Math.sin(animT * dsp2 + hashCell(ixS + 23, iy + 23) * 6.283)
-                      * scaledGrid * 0.22 * ddir2;
+              var sh2 = shuttle(ixS + 47, iy + 49);   // decorrelated salts from the vertical axis
+              drift2 = sh2.off * scaledGrid;
+              tal2 = 0.42 + 0.58 * sh2.spd;
             }
             if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
             ctx.lineWidth = segW2;
+            if (tal2 < 1) ctx.globalAlpha = tal2;
             ctx.beginPath();
             ctx.moveTo(x2 - segLen2 / 2 + drift2, 0);
             ctx.lineTo(x2 + segLen2 / 2 + drift2, 0);
             ctx.stroke();
+            if (tal2 < 1) ctx.globalAlpha = 1;
             dbgSegs++;
           }
         }
@@ -328,16 +461,14 @@
     }
 
     if (!hideDots) {
-      var dotSpec = specs && specs.dotColor;
-      var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
       ctx.fillStyle = gridPaint(dotSpec, dotFallback);
       // v0.54: pattern-aware per-dot sampling — each dot picks its color
       // from the SAME gradient/pattern field the background paints
       // (sweeps, mesh spots, checker cells, stripe bands, ray sectors…),
       // world-anchored so panning slides the palette through the lattice
-      // without shimmer.
-      var dotSampler = makePatternSampler(dotSpec, dotFallback);
-      const dotR = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+      // without shimmer. (dotSpec/dotSampler live at function scope since
+      // v0.76 — the star layers share them.)
+      const dotR = dotRBase;
       for (let x = dStartX; x < W; x += scaledGrid) {
         for (let y = dStartY; y < H; y += scaledGrid) {
           // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
@@ -381,38 +512,12 @@
           dbgDots++;
         }
       }
-      // ── v0.75 THE AMPLIFIER'S STARFIELD ──
-      // Two scattered far layers around the untouched lattice: smaller,
-      // dimmer, riding slower pan factors — a pan reads as true depth
-      // (near lattice fast, far stars slow). Density scales with the
-      // amplification; amp 0 draws nothing. Anchored per-layer (stable
-      // hashes — no shimmer while sliding). Hidden with the dots.
+      // ── v0.77 THE AMPLIFIER'S NEAR LAYER ──
+      // A sparse FOREGROUND of big soft-glow orbs riding pan factor 1.6 —
+      // FASTER than the lattice, the strongest depth cue (close dust), in
+      // a light-lifted tone so they actually READ on dark themes.
       if (amp > 0) {
-        starLayer(0.55, 1.8, 0.55, 0.55, 101);
-        starLayer(0.28, 2.6, 0.32, 0.40, 211);
-      }
-      function starLayer(pf, cellMul, rMul, gate, salt) {
-        var sGrid = scaledGrid * cellMul;
-        var sx0 = ((-offsetX * scale * pf) % sGrid + sGrid) % sGrid;
-        var sy0 = ((-offsetY * scale * pf) % sGrid + sGrid) % sGrid;
-        var starR = Math.max(0.4, dotR * rMul);
-        for (let x = sx0; x < W; x += sGrid) {
-          for (let y = sy0; y < H; y += sGrid) {
-            var six = Math.round((x + offsetX * scale * pf) / sGrid);
-            var siy = Math.round((y + offsetY * scale * pf) / sGrid);
-            var hq = hashCell(six * 3 + salt, siy * 3 - salt);
-            if (hq >= amp * gate) continue; // density rides the amplification
-            var fx = x + (hashCell(six + salt, siy) - 0.5) * sGrid * 0.9;
-            var fy = y + (hashCell(six, siy + salt) - 0.5) * sGrid * 0.9;
-            if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
-            ctx.globalAlpha = 0.28 + 0.3 * hashCell(six + 1 + salt, siy + 1);
-            ctx.beginPath();
-            ctx.arc(fx, fy, starR * (0.6 + 0.8 * hashCell(six + 2, siy + 2 + salt)), 0, Math.PI * 2);
-            ctx.fill();
-            dbgStars++;
-          }
-        }
-        ctx.globalAlpha = 1;
+        starLayer(1.6, 4.0, 4.2, 0.55, 0.92, true, 307);
       }
     }
 
@@ -700,11 +805,14 @@
   // parallax setting (0 — the default — is exactly the v0.52 0.35; the
   // camera only slows when the user dials the amplifier up, pairing
   // with the star layers for the deep-space read).
+  // v0.77: the deepening is DRAMATIC (user spec: "not very noticeable") —
+  // 0.35 → 0.08 at full amp (the old 0.20 barely read). The background
+  // nearly pins in place while the lattice sweeps — unmistakable depth.
   function bgParallaxNow() {
     var st = window.Settings.getState();
     var d = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     d = Math.max(0, Math.min(100, d)) / 100;
-    return Math.max(0.15, BG_PARALLAX - 0.15 * d);
+    return Math.max(0.08, BG_PARALLAX - 0.27 * d);
   }
   // v0.54: the color-space tile is MULT× the viewport — the mirror
   // period grows to 2·MULT screens of pan, textures cover-fit larger
