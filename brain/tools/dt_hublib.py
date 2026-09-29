@@ -189,6 +189,10 @@ def card_for_item(item: dict, downloaded: bool = False) -> dict:
         "name": str(it.get("name") or "item"),
         "description": _one_liner(str(it.get("description") or "")),
         "author": str(it.get("author") or ""),
+        # v0.77.6: THE UPSTREAM CREDIT — the model MUST see what a item is
+        # a PORT of ("superpowers by scoobybaby1999" was really obra's
+        # work; the user's spec: never let the port read as original).
+        "upstream": str(it.get("upstream") or ""),
         "tags": [str(t) for t in tags[:4]],
         "hearts": _int(it.get("hearts")),
         "downloads": _int(it.get("downloads")),
@@ -629,9 +633,15 @@ def _dispatch(action: str, *, typ: str, q: str, tag: str, sort: str,
             return f"hublib: {out['error']}"
         item = out.get("item") if isinstance(out.get("item"), dict) else {}
         payload = str(out.get("payload") or "")
+        # v0.77.6: the upstream credit rides the byline — a port reads
+        # "by <publisher> — ported from <upstream>", never as original.
+        credit = str(item.get("upstream") or "").strip()
+        byline = f"by {item.get('author') or '?'}"
+        if credit:
+            byline += f" — ported from {credit}"
         head = (f"{item.get('name') or row['id']} — "
                 f"{_one_liner(str(item.get('description') or ''), 140)}\n"
-                f"by {item.get('author') or '?'} · ♥{_int(item.get('hearts'))} "
+                f"{byline} · ♥{_int(item.get('hearts'))} "
                 f"⤓{_int(item.get('downloads'))} · tags: "
                 f"{', '.join(item.get('tags') or []) or '—'}\n")
         return _clip(head + "\npayload preview:\n" + _clip(payload, 2600,

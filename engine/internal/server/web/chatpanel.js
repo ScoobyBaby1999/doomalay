@@ -285,6 +285,12 @@
         effort: (sessionData && (sessionData.Effort || sessionData.effort)) || 'med',
         webSearch: !!(sessionData && (sessionData.WebSearch || sessionData.web_search)),
         deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
+        // v0.77.6: the lib pill defaults ON — ONE SETTING with the ✦ tweaks
+        // Bot Library switch (whose absent = enabled default it mirrors;
+        // the user's enabled-in-tweaks / disabled-in-new-chats mismatch).
+        libAuto: true,
+        templateAuto: false,
+        skillsAuto: false,
         // v0.44: the active method template (the template pill) —
         // {id, name, brief}; null = none. Deep research (one of the
         // default templates) keeps using deepResearch above.
@@ -2859,6 +2865,10 @@
         state.templateAuto = false; // v0.60: the lib gate resets with the rest
         state.skillsAuto = false;
         state.libAuto = false;
+        // v0.77.6: the clear is a lib flip too — the tweaks switch follows
+        if (window.ChatTweaks && window.ChatTweaks.syncLibPill) {
+          window.ChatTweaks.syncLibPill(state, false);
+        }
         // v0.68: the bundle segment hides with the rest of the indicators.
         armTurnBundle(bodyEl, state);
         persistCaps(state, icon);
@@ -3294,6 +3304,12 @@
       // keep the legacy flags in lockstep (old engine payloads read them)
       state.templateAuto = state.libAuto;
       state.skillsAuto = state.libAuto;
+      // v0.77.6: ONE SETTING, TWO VIEWS — the pill writes the tweaks
+      // blob's botLib too, so the ✦ tweaks → Bot Library switch always
+      // reflects the flip (user spec: toggling either toggles the other).
+      if (window.ChatTweaks && window.ChatTweaks.syncLibPill) {
+        window.ChatTweaks.syncLibPill(state, state.libAuto);
+      }
       persistCaps(state, icon);
       renderToolbar(bodyEl.querySelector('#chat-toolbar'), state,
         state._effortLevels, icon, bodyEl);
@@ -3816,11 +3832,22 @@
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
         // v0.60 pt C.9: restore the lib gate (the lib pill's state; the
         // legacy pill flags promote through the OR for old sessions).
+        // v0.77.6: the default is ON — ONE SETTING with the ✦ tweaks
+        // Bot Library switch (absent = enabled there too; the mismatch
+        // the user reported — enabled in tweaks, off in a new chat — is
+        // gone). An explicit false (the user turned the pill off) heals
+        // the blob so the switch reads the same.
         if (typeof data.LibAuto === 'boolean') state.libAuto = data.LibAuto;
         if (typeof data.TemplateAuto === 'boolean') state.templateAuto = data.TemplateAuto;
         if (typeof data.SkillsAuto === 'boolean') state.skillsAuto = data.SkillsAuto;
+        // v0.77.6: pre-column chats (no lib_auto) default ON — the SAME
+        // default as the ✦ tweaks Bot Library switch (absent = enabled).
+        // The old false-promote was the mismatch's other half.
         if (typeof data.LibAuto !== 'boolean') {
-          state.libAuto = !!(state.templateAuto || state.skillsAuto);
+          state.libAuto = true;
+        }
+        if (state.libAuto === false && window.ChatTweaks && window.ChatTweaks.syncLibPill) {
+          window.ChatTweaks.syncLibPill(state, false);
         }
         // v0.71: restore the attached WHOLE-BUNDLE manifest (localStorage,
         // keyed by session — see applyBundle).
@@ -5570,6 +5597,12 @@
     applyTemplate: applyTemplate,
     applyBundle: applyBundle,
     render: render,
+    // v0.77.6: the tweaks view's load-reconcile re-PATCHes the session
+    // flags (a healed pre-sync disagreement) through the same writer the
+    // pill uses.
+    persistCaps: function (state) {
+      if (state && state._icon) persistCaps(state, state._icon);
+    },
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },
     // v0.42: the global keyboard layer's Ctrl/Cmd+F hook — open the

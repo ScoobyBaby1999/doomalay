@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""superpowers-corpus.py — the obra/superpowers corpus generator (v2).
+"""superpowers-corpus.py — the obra/superpowers corpus generator (v3).
 
 Mirrors the upstream obra/superpowers tree into the
 ScoobyBaby1999/doomalay-superpowers HF dataset and keeps the hub-native
@@ -17,6 +17,14 @@ Item ids/descriptions/tags/createdAt are PRESERVED from the live index
 (downloads + heart state + the local overlay key on them); only file,
 icon and files change. Idempotent: re-running refreshes the tree and
 rewrites the metas.
+
+v3 (v0.77.6): THE UPSTREAM CREDIT — every item carries
+upstream="obra/superpowers — Jesse Vincent (obra), MIT" so the hub
+bylines, the bundle hero and every bot-facing tool read "by
+ScoobyBaby1999 — ported from obra/superpowers" (a port NEVER reads as
+the publisher's original work), and collections/superpowers-obra.json
+lands as the bundle's editorial manifest (description + credit — the
+hero's real description, v0.77.10's data).
 
 Usage:
   python3 tools/superpowers-corpus.py \
@@ -39,6 +47,36 @@ from pathlib import Path
 API = "https://huggingface.co"
 MIRROR_DIRS = ("skills", "docs", "scripts", "tests", "assets")
 ICON = "file:assets/superpowers-small.svg"  # the upstream brand icon
+# v3 (v0.77.6): THE UPSTREAM CREDIT — every item carries it; the hub
+# bylines, the bundle hero and every bot-facing tool read "by
+# ScoobyBaby1999 — ported from obra/superpowers" (a port NEVER reads as
+# the publisher's original work).
+UPSTREAM_CREDIT = "obra/superpowers — Jesse Vincent (obra), MIT"
+# v3: the bundle's editorial manifest (the hero's real description, the
+# v0.77.10 data contract).
+COLLECTION_MANIFEST = {
+    "description": (
+        "Jesse Vincent's celebrated superpowers — the brainstorming, "
+        "planning, debugging and discipline workflows for AI agents. "
+        "Ported 1:1 from obra/superpowers (MIT, © 2025 Jesse Vincent); "
+        "the port and this listing are maintained by ScoobyBaby1999."
+    ),
+    "upstream": "obra/superpowers by Jesse Vincent (obra)",
+    "by": "ScoobyBaby1999",
+}
+# v3: the credit every item carries — the bylines + bot tools surface it
+UPSTREAM_CREDIT = "obra/superpowers — Jesse Vincent (obra), MIT"
+# v3: the bundle's editorial manifest (the hero's real description)
+COLLECTION_MANIFEST = {
+    "description": (
+        "Jesse Vincent's celebrated superpowers — the brainstorming, "
+        "planning, debugging and discipline workflows for AI agents. "
+        "Ported 1:1 from obra/superpowers (MIT, © 2025 Jesse Vincent); "
+        "the port and this listing are maintained by ScoobyBaby1999."
+    ),
+    "upstream": "obra/superpowers by Jesse Vincent (obra)",
+    "by": "ScoobyBaby1999",
+}
 
 
 def hf_get(token, url):
@@ -141,6 +179,7 @@ def main():
         rel = matched[it["id"]]
         it["file"] = rel                       # the tree path IS the payload
         it["icon"] = ICON                      # the upstream brand icon
+        it["upstream"] = UPSTREAM_CREDIT       # v3: the credit, always
         # companions: the OTHER files sharing the payload's directory
         # (a skill's scripts/spec docs ride the skill folder)
         if rel.startswith("skills/"):
@@ -153,8 +192,8 @@ def main():
 
     # ── 5. the commit ops ────────────────────────────────────────────────
     ops = [{"key": "header", "value": {
-        "summary": "corpus v2: mirror the upstream tree + tree-path metas",
-        "description": "skills/docs/scripts/tests/assets mirrored from obra/superpowers; items[].file points at the tree; the superpowers-small.svg icon"}}]
+        "summary": "corpus v3: the upstream credit + the bundle manifest",
+        "description": "every item carries upstream=\"obra/superpowers — Jesse Vincent (obra), MIT\"; collections/superpowers-obra.json lands as the bundle's editorial manifest (description + credit)"}}]
     for rel, b in sorted(tree_files.items()):
         ops.append({"key": "file", "value": {
             "path": rel,
@@ -170,6 +209,12 @@ def main():
         "path": "items/index.json",
         "content": base64.b64encode(
             json.dumps(new_index, indent=2).encode()).decode(),
+        "encoding": "base64"}})
+    # v3: the bundle's editorial manifest — the hero's real description
+    ops.append({"key": "file", "value": {
+        "path": "collections/superpowers-obra.json",
+        "content": base64.b64encode(
+            json.dumps(COLLECTION_MANIFEST, indent=2).encode()).decode(),
         "encoding": "base64"}})
     # the old flat payload copies move to the tree — delete them
     deleted = 0

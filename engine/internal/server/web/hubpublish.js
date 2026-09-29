@@ -175,6 +175,8 @@
       iconPNG: '',
       iconSVG: '',
       collection: prefill.collection || '',
+      // v0.77.6: the upstream credit ("ported from") — prefilled on edit.
+      upstream: prefill.upstream || '',
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
       design: preDesign,
@@ -200,6 +202,7 @@
       name: c.name, desc: c.desc, tags: c.tags.slice().sort(), icon: c.icon,
       iconPNG: c.iconPNG || '', iconSVG: c.iconSVG || '',
       collection: c.collection, design: designOut(), pngBase64: c.pngBase64,
+      upstream: c.upstream || '',
       payload: c.payload, stageCount: c.stageCount || 0,
       files: (c.files || []).map(function (f) { return { path: f.path, content: f.content }; })
     });
@@ -323,6 +326,9 @@
             '<div class="pv-section-label">bunch / collection <span class="hp-opt">optional</span></div>' +
             '<input id="hp-collection" class="pv-input" placeholder="e.g. my-toolkit" value="' + escAttr(c.collection) + '">' +
             '<p class="pv-hint" style="margin:4px 0 0">items sharing a bunch id render as ONE grouped listing — the bundle card wears the newest member\u2019s card design, so give your items a look to brand it.</p>' +
+            '<div class="pv-section-label">ported from <span class="hp-opt">optional</span></div>' +
+            '<input id="hp-upstream" class="pv-input" placeholder="e.g. obra/superpowers by Jesse Vincent" value="' + escAttr(c.upstream || '') + '">' +
+            '<p class="pv-hint" style="margin:4px 0 0">crediting the ORIGINAL work — the byline reads “by you — ported from …”, and the bot always says whose work it really is. Leave empty for original work.</p>' +
           '</div>' +
         '</div>' +
 
@@ -510,6 +516,9 @@
     // v0.52: the bunch field + the icon picker grid (tap toggles; "—" = none)
     var coll = el.querySelector('#hp-collection');
     if (coll) coll.addEventListener('input', function () { c.collection = coll.value; dirtyPaint(); });
+    // v0.77.6: the upstream credit field
+    var ups = el.querySelector('#hp-upstream');
+    if (ups) ups.addEventListener('input', function () { c.upstream = ups.value; dirtyPaint(); });
     el.querySelectorAll('[data-icn]').forEach(function (b) {
       b.addEventListener('click', function () {
         c.icon = b.getAttribute('data-icn') || '';
@@ -806,6 +815,10 @@
       icon_png_base64: cur.iconPNG || '',
       icon_svg: cur.iconSVG || '',
       collection: cur.collection || '',
+      // v0.77.6: THE UPSTREAM CREDIT — "ported from" rides the publish;
+      // the bylines + every bot-facing tool surface it so a port never
+      // reads as the publisher's original work.
+      upstream: cur.upstream || '',
       stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
       files: files
     }).then(function (d) {

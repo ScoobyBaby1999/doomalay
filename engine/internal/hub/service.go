@@ -897,6 +897,10 @@ type PublishRequest struct {
         IconPNGBase64 string `json:"icon_png_base64"`
         IconSVG       string `json:"icon_svg"`
         Collection  string         `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
+        // v0.77.6: THE UPSTREAM CREDIT — "ported from" (optional). The
+        // publisher stays the author; this credits the ORIGINAL work so
+        // ports never read as original (the superpowers-by-obra report).
+        Upstream    string         `json:"upstream"`
         StageCount  int            `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
         // v0.60 pt C.8: REPO PUBLISHING — the files section. Each file is a
         // repo-relative path (folders allowed) committed at
@@ -992,6 +996,7 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 Tags:       SanitizeTags(req.Tags),
                 Icon:       SanitizeIcon(req.Icon),
                 Collection: SanitizeCollection(req.Collection),
+                Upstream:   SanitizeUpstream(req.Upstream),
                 CreatedAt:  now, UpdatedAt: now,
                 Design: normalizeDesign(req.Design),
                 File:   "items/" + id + spec.PayloadExt,

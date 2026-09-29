@@ -230,6 +230,7 @@
             '</div>' +
             '<div class="hi-desc">' + esc(it.description || '—') + '</div>' +
             '<div class="hi-meta">by ' + esc(it.author || 'unknown') +
+              (it.upstream ? ' — ported from ' + esc(String(it.upstream).trim()) : '') +
               (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') + '</div>' +
             chipsRow +
             '<div class="hi-counts">' +

@@ -50,8 +50,15 @@ type Item struct {
         // web/icons.js — "" renders no icon column) and the optional collection
         // bunch this item belongs to ("superpowers-obra") — items sharing a
         // collection render as ONE grouped listing that opens the members.
-        Icon        string   `json:"icon"`
-        Collection  string   `json:"collection"`
+        Icon       string   `json:"icon"`
+        Collection string   `json:"collection"`
+        // v0.77.6: THE UPSTREAM CREDIT — the ORIGINAL work this item is a
+        // port/derivative of ("obra/superpowers by Jesse Vincent"). The
+        // publisher (Author) stays who PUBLISHED it; the bylines, the hub
+        // cards and every bot-facing tool surface the credit so a port
+        // NEVER reads as the publisher's own work (user spec: "We have to
+        // make it super clear this is a port by obra. Not done by me.").
+        Upstream string `json:"upstream,omitempty"`
         // v0.58 (user spec pt 10): templates carry a deterministic stage count
         // — auto-counted from the payload's stages[] at scan/publish time, or
         // the manual override from the publish form. 0 = unknown (never shown).
@@ -102,6 +109,18 @@ func ItemID(name, author string) string {
         }
         sum := sha256.Sum256([]byte(slug + "\x00" + author))
         return slug + "-" + hex.EncodeToString(sum[:])[:6]
+}
+
+// SanitizeUpstream normalizes the "ported from" credit: trimmed,
+// single-spaced, capped at 120 chars ("obra/superpowers by Jesse Vincent").
+// No structural rules — it is display text that rides the bylines + the
+// bot-facing tools verbatim. Empty stays empty (original work).
+func SanitizeUpstream(raw string) string {
+        raw = strings.Join(strings.Fields(raw), " ")
+        if len(raw) > 120 {
+                raw = raw[:120]
+        }
+        return raw
 }
 
 // SanitizeIcon normalizes a card icon / collection name: lowercase,

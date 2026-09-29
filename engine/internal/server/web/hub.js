@@ -502,6 +502,14 @@
   // the user's spec — "name, x bundled items - x docs, y skills, ext…"
   // (the content line STAYS; chips + the by-line fold away). The
   // expanded stack is the single item's exact row order.
+  // v0.77.6: THE UPSTREAM CREDIT — "by <publisher> — ported from <upstream>"
+  // on every byline (user spec: a port must NEVER read as the publisher's
+  // own work). Empty upstream = original work = no suffix.
+  function creditSuffix(upstream) {
+    var u = String(upstream || '').trim();
+    return u ? ' — ported from ' + esc(u) : '';
+  }
+
   function bunchRender() {
     if (!bcur) return '';
     var b = bunchMeta(bcur.id);
@@ -564,7 +572,7 @@
             '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
           '</div>' +
           '<div class="hi-desc hub-bunch-hero-desc">' + esc(contentLine || '—') + '</div>' +
-          '<div class="hi-meta">by ' + esc(b.by || 'unknown') +
+          '<div class="hi-meta">by ' + esc(b.by || 'unknown') + creditSuffix(b.upstream) +
             (b.updatedAt ? ' · updated ' + esc(String(b.updatedAt).slice(0, 10)) : '') + '</div>' +
           chipsRow +
           countsRow +
@@ -1682,7 +1690,7 @@
             '<span class="hub-card-name"><span class="hub-card-name-in">' + esc(it.name) + '</span></span>' +
           '</span>' +
           '<span class="hub-card-desc">' + esc(sub) + '</span>' +
-          '<span class="hub-card-author">by ' + esc(it.author || 'unknown') + '</span>' +
+          '<span class="hub-card-author">by ' + esc(it.author || 'unknown') + creditSuffix(it.upstream) + '</span>' +
           '<span class="hub-card-foot">' +
             '<span class="hub-card-stat' + (hearted ? ' on' : '') + '" data-heart="1" role="button"' +
               ' tabindex="0" aria-label="endorse">' + heartGlyph(hearted) + '<b>' + (it.hearts || 0) + '</b></span>' +

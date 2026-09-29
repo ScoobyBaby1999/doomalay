@@ -273,6 +273,27 @@
         foldLegacyBg(state);
         state._tweaksLoaded = true;
         state._tweaksPromise = null;
+        // v0.77.6: THE LOAD RECONCILE — pre-sync chats could carry the
+        // pill OFF with the blob's default ON (or an explicit blob OFF
+        // the pill never saw). The effective gate is the AND; a
+        // disagreement heals here: an explicit blob OFF wins (the user
+        // turned the switch off on purpose), otherwise the blob follows
+        // the pill. One tiny PUT, once, then every later flip dual-writes.
+        try {
+          if (typeof state.libAuto === 'boolean') {
+            if (state.libAuto && state._tweaks.botLib === false) {
+              state.libAuto = false;
+              state.templateAuto = false;
+              state.skillsAuto = false;
+              if (window.ChatPanel && window.ChatPanel.persistCaps) {
+                window.ChatPanel.persistCaps(state, state._icon);
+              }
+            } else if (!state.libAuto && state._tweaks.botLib !== false) {
+              state._tweaks.botLib = false;
+              persist(state);
+            }
+          }
+        } catch (e) { /* never fatal */ }
         apply(state);
         return state._tweaks;
       })
@@ -358,6 +379,22 @@
     touch(state);
     state._tweaks[key] = !!v;
     persist(state);
+    // v0.77.6: ONE SETTING, TWO VIEWS — the tweaks Bot Library switch and
+    // the chat's 🛠 lib pill are THE SAME toggle (user spec: "toggling one
+    // from either place toggles the other"). The switch writes the session
+    // flag too, so the pill (and the engine's lib_auto gate) flip in
+    // lockstep; the tweaks default (absent = ON) and the new-chat pill
+    // default now agree.
+    if (key === 'botLib' && state.sessionId) {
+      state.libAuto = !!v;
+      state.templateAuto = !!v;   // legacy lockstep (the pill's contract)
+      state.skillsAuto = !!v;
+      fetch('/api/sessions/' + state.sessionId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lib_auto: !!v, template_auto: !!v, skills_auto: !!v })
+      }).catch(function () { /* the blob write above is the durable one */ });
+    }
   }
 
   // v0.68: the ON:/OFF: hint formatter (user spec: "let the description
@@ -741,6 +778,11 @@
         var sec = A.section || function (t, inner) { return '<div>' + inner + '</div>'; };
         var e = effective(state);
         var t = state._tweaks || {};
+        // v0.77.6: ONE SETTING, TWO VIEWS — the switch shows the EFFECTIVE
+        // gate (the pill flag AND the blob), exactly what the engine's
+        // libStateLine ANDs; every toggle dual-writes so they can never
+        // disagree after a flip.
+        var libOn = (state.libAuto !== false) && (t.botLib !== false);
         var own = t.fmtOverrides || {};
         var bgSet = !!t.bg;
         var bgIsImage = !!(t.bg && t.bg.type === 'image');
@@ -792,7 +834,7 @@
               onOffHint(
                 'the bot browses, downloads AND uses the library on the fly (skills, templates, scripts, docs).',
                 'the bot can still browse + recommend — downloads and skill loads refuse with the switch path.'),
-              t.botLib !== false) +
+              libOn) +
             '<div style="height:10px"></div>' +
             boxRow('botDL', 'Can download bundles',
               onOffHint(
@@ -1163,9 +1205,24 @@
     };
   }
 
+  // v0.77.6: syncLibPill — the pill-side half of the ONE-SETTING contract:
+  // the chat's 🛠 lib pill writes the tweaks blob's botLib so the switch
+  // reflects the flip (and the engine's AND-gate stays coherent).
+  function syncLibPill(state, on) {
+    if (!state || !state.sessionId) return;
+    if (!state._tweaks || typeof state._tweaks !== 'object') {
+      state._tweaks = {};
+      state._tweaksLoaded = true;
+    }
+    state._tweaks.botLib = !!on;
+    touch(state);
+    persist(state);
+  }
+
   window.ChatTweaks = {
     open: open,
     attach: attach,
+    syncLibPill: syncLibPill,
     // v0.38: per-chat box preferences — ChatPanel calls these with an
     // EXPLICIT state (not the attached view state) so background turns
     // never write the foreground chat's prefs.
