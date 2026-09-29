@@ -222,6 +222,13 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 {"workspaces", "token_env", "ALTER TABLE workspaces ADD COLUMN token_env TEXT"},
                 {"workspaces", "default_branch", "ALTER TABLE workspaces ADD COLUMN default_branch TEXT"},
                 {"workspaces", "meta", "ALTER TABLE workspaces ADD COLUMN meta TEXT"},
+                // v0.77.10: the bundle-counting wave — via_collection marks a
+                // row downloaded as PART of a bundle (its +1 rides the
+                // COLLECTION, not the member; a direct download keeps 0),
+                // collection indexes the row's bunch for the per-collection
+                // local state queries (downloaded? hearted?).
+                {"hub_items", "via_collection", "ALTER TABLE hub_items ADD COLUMN via_collection INTEGER NOT NULL DEFAULT 0"},
+                {"hub_items", "collection", "ALTER TABLE hub_items ADD COLUMN collection TEXT NOT NULL DEFAULT ''"},
         }
         for _, m := range migrations {
                 if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {

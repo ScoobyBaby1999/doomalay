@@ -91,6 +91,9 @@ type LocalState struct {
         HeartedAt    string
         Downloaded   bool
         DownloadedAt string
+        // v0.77.10: downloaded as part of a BUNDLE — the member's own +1
+        // is suppressed (the download counted on the collection).
+        ViaCollection bool
 }
 
 // slugRun keeps [a-z0-9] runs; everything else collapses into one '-'.

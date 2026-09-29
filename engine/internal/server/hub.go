@@ -426,6 +426,23 @@ func (s *Server) handleHubEndorse(endorse bool) http.HandlerFunc {
 	}
 }
 
+// handleHubCollectionEndorse is POST /api/hub/collections/{id}/endorse
+// (and /unendorse) — v0.77.10: ONE heart per user on the WHOLE bundle
+// (the user's spec: "if one user endorses the bundle it counts as 1"),
+// never a fan-out over the members. Requires the bundle downloaded.
+func (s *Server) handleHubCollectionEndorse(endorse bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		hearts, err := s.hub.EndorseCollection(r.PathValue("id"), endorse)
+		if err != nil {
+			hubWriteItemErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "hearted": endorse, "hearts": hearts,
+		})
+	}
+}
+
 // handleHubPublish is POST /api/hub/{type}/publish
 // {name,description,tags,design:{kind,colors},payload,pngBase64} — writes
 // to the connected user's per-type HF dataset repo.

@@ -18,8 +18,12 @@
 package hub
 
 import (
+        "encoding/json"
         "sort"
         "strings"
+        "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // CollectionSummary is one bunch: N items (possibly across libraries)
@@ -51,6 +55,21 @@ type CollectionSummary struct {
         // byline reads "by <publisher> — ported from <upstream>" so the
         // credit rides every surface the author does.
         Upstream string `json:"upstream,omitempty"`
+        // v0.77.10: THE DESCRIPTION — the bundle's editorial one-or-two
+        // line description (the publisher's collections/<id>.json
+        // manifest; the fallback is the most-endorsed member's text).
+        // The header shows this FIRST, the deterministic census line
+        // BENEATH it (the user's spec — the census was never a
+        // description).
+        Description string `json:"description,omitempty"`
+        // v0.77.10: THE PER-USER BUNDLE COUNTERS — Hearts/Downloads count
+        // USERS of the WHOLE BUNDLE (per-user idempotent collection
+        // events + the local +1), never Σ members: one user downloading
+        // a 64-item bundle counts as ONE, and endorsing it as ONE.
+        // Members display their OWN counts PLUS these (the member view
+        // rides applyCollectionCounts).
+        Hearted    bool `json:"hearted"`    // the local state (any member hearted / the collection event era)
+        Downloaded bool `json:"downloaded"`  // any member row carries a download stamp
         // v0.72: THE TAG ROW — every member tag votes once per member
         // carrying it; Tags carries the top vote-getters (ties break
         // alphabetically for determinism, capped at 16 so a giant bundle
@@ -88,6 +107,13 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
                 allTags   map[string]int // v0.72: EVERY-tag votes (the detail card's tag row)
                 authors   map[string]int // v0.76.7: member-author votes (the by-line)
                 upstreams map[string]int // v0.77.6: member-upstream votes (the credit)
+                // v0.77.10: the DESCRIPTION fallback — the most-endorsed
+                // member's text (ties break alphabetically); the publisher's
+                // collections/<id>.json manifest OVERRIDES it when present.
+                bestDesc     string
+                bestDescRank int
+                // v0.77.10: the distinct member repos (the manifest probe)
+                repos map[string]bool
                 // v0.58: the newest member carrying a usable card design — the
                 // bunch card's art when no curated override exists.
                 bestDesign   Design
@@ -107,7 +133,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
                         }
                         a := bunches[id]
                         if a == nil {
-                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, allTags: map[string]int{}, authors: map[string]int{}, upstreams: map[string]int{}, descSet: map[string]bool{}}
+                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, allTags: map[string]int{}, authors: map[string]int{}, upstreams: map[string]int{}, descSet: map[string]bool{}, repos: map[string]bool{}}
                                 bunches[id] = a
                         }
                         a.sum.Members++
@@ -143,6 +169,17 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
                         // credit (a ported bundle credits its source)
                         if up := strings.TrimSpace(it.Upstream); up != "" {
                                 a.upstreams[up]++
+                        }
+                        // v0.77.10: the description fallback vote — the most
+                        // endorsed member wins (ties alphabetical)
+                        if d := strings.TrimSpace(it.Description); d != "" {
+                                rank := it.Hearts*1000 - len(d)
+                                if rank > a.bestDescRank || (rank == a.bestDescRank && d < a.bestDesc) {
+                                        a.bestDesc, a.bestDescRank = d, rank
+                                }
+                        }
+                        if it.Repo != "" {
+                                a.repos[it.Repo] = true
                         }
                         // v0.73: the matcher widened — descriptions (deduped
                         // per bunch) now vote too, so a q like "brainstorm"
@@ -256,6 +293,25 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
                         }
                 }
                 a.sum.Upstream = bestUp
+                // v0.77.10: THE DESCRIPTION — the publisher's manifest wins
+                // (collections/<id>.json in any member repo; cached 10min),
+                // else the most-endorsed member's text (deterministic).
+                a.sum.Description = s.collectionDescription(a.sum.ID, a.repos, a.bestDesc)
+                // v0.77.10: THE PER-USER BUNDLE COUNTERS — the bunch card
+                // counts USERS of the WHOLE bundle (one download/endorse per
+                // user, on the collection), never Σ members.
+                own := s.currentUser() + "/" + metricsRepo
+                ch, cd := collectionCounts(s.allMetrics(), own, CollectionTarget(a.sum.ID))
+                a.sum.Hearts = ch
+                a.sum.Downloads = cd
+                if via := LocalViaCollections(s.db); via[a.sum.ID] {
+                        a.sum.Downloads++ // the local +1 (the applyCounts pattern)
+                }
+                a.sum.Downloaded, a.sum.Hearted = LocalCollectionState(s.db, a.sum.ID)
+                if collectionHearted(s.db, a.sum.ID) {
+                        a.sum.Hearted = true
+                        a.sum.Hearts++ // the local +1 (once, never per member)
+                }
                 a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
                 out = append(out, a.sum)
         }
@@ -303,6 +359,78 @@ func (s *Service) CollectionItems(id string) ([]CollectionMembers, error) {
                 }
         }
         return out, nil
+}
+
+// collectionDescription resolves a bunch's editorial description
+// (v0.77.10): the publisher's collections/<id>.json manifest (probed in
+// each distinct member repo, cached 10 minutes) wins; the fallback is
+// the caller's deterministic member text (the most-endorsed member's).
+func (s *Service) collectionDescription(id string, repos map[string]bool, fallback string) string {
+        cid := SanitizeCollection(id)
+        for repo := range repos {
+                key := repo + "|" + cid
+                s.manifestMu.Lock()
+                hit, ok := s.manifests[key]
+                s.manifestMu.Unlock()
+                if !ok || time.Since(hit.at) > 10*time.Minute {
+                        var m CollectionManifest
+                        if body, err := s.hf.FetchFile(repo, "collections/"+cid+".json"); err == nil {
+                                _ = json.Unmarshal(body, &m)
+                        }
+                        s.manifestMu.Lock()
+                        s.manifests[key] = cachedManifest{m: m, at: time.Now()}
+                        s.manifestMu.Unlock()
+                        hit = cachedManifest{m: m, at: time.Now()}
+                }
+                if d := strings.TrimSpace(hit.m.Description); d != "" {
+                        return d
+                }
+        }
+        return fallback
+}
+
+// EndorseCollection hearts a BUNDLE as ONE (v0.77.10, the user's spec:
+// "if one user endorses the bundle it counts as 1" — never +45 on the
+// members). Requires the bundle downloaded (any member row carries a
+// stamp — the same endorse-before-download rule as items). The event is
+// toggle-idempotent per user; the members' own counters never move.
+func (s *Service) EndorseCollection(id string, endorse bool) (hearts int, err error) {
+        id = SanitizeCollection(id)
+        if id == "" {
+                return 0, ErrNotFoundLocal
+        }
+        downloaded, _ := LocalCollectionState(s.db, id)
+        if !downloaded {
+                return 0, ErrNotDownloaded
+        }
+        op := "unheart"
+        if endorse {
+                op = "heart"
+        }
+        s.appendMetricToggle(op, CollectionTarget(id))
+        // the LOCAL heart marker (the member rows never move — a bundle
+        // heart is ONE heart on the collection, not a member fan-out)
+        _ = s.db.SetSetting("hub.collection.heart."+id, boolStr(endorse))
+        s.Invalidate("") // the federated views re-read
+        own := s.currentUser() + "/" + metricsRepo
+        h, _ := collectionCounts(s.allMetrics(), own, CollectionTarget(id))
+        if endorse {
+                h++ // the local +1 (the applyCounts pattern)
+        }
+        return h, nil
+}
+
+// collectionHearted reads the local bundle-heart marker (v0.77.10).
+func collectionHearted(db *store.DB, id string) bool {
+        v, _ := db.GetSetting("hub.collection.heart." + id)
+        return v == "1"
+}
+
+func boolStr(b bool) string {
+        if b {
+                return "1"
+        }
+        return "0"
 }
 
 // usableDesign reports whether a design can paint a card (a gradient with
@@ -405,11 +533,15 @@ func (s *Service) DownloadCollectionStream(id string, progress chan<- DownloadPr
                 progress <- DownloadProgress{Phase: "enqueued", Total: total, Done: 0, Failed: 0}
         }
         // Group the downloaded items by type for the final return.
+        // v0.77.10: members ride downloadCore(via=true) — NO per-member
+        // download events (one user's bundle download counts ONCE, on the
+        // collection — the user's "counts as 1 regardless of the contents
+        // and amount of files within").
         groupsByType := map[string]*CollectionDownloadGroup{}
         order := []string{}
         done, failed := 0, 0
         for _, m := range members {
-                item, payload, err := s.Download(m.spec.Type, m.it.Repo, m.it.ID)
+                item, payload, err := s.downloadCore(m.spec.Type, m.it.Repo, m.it.ID, true)
                 if err != nil {
                         // member failed — the rest of the bundle still lands
                         failed++
@@ -439,6 +571,11 @@ func (s *Service) DownloadCollectionStream(id string, progress chan<- DownloadPr
         if progress != nil {
                 progress <- DownloadProgress{Phase: "verifying", Done: done, Total: total, Failed: failed}
         }
+        // v0.77.10: THE ONE EVENT — the bundle's own download counter
+        // (per-user idempotent); the members' own counters stay untouched.
+        if done > 0 {
+                s.appendMetricToggle("download", CollectionTarget(id))
+        }
         if done == 0 {
                 if progress != nil {
                         progress <- DownloadProgress{Phase: "failed", Done: 0, Total: total, Failed: failed, Error: "all members failed to download"}
@@ -451,6 +588,7 @@ func (s *Service) DownloadCollectionStream(id string, progress chan<- DownloadPr
         for _, t := range order {
                 out = append(out, *groupsByType[t])
         }
+        s.Invalidate("") // the collection counters changed
         if progress != nil {
                 progress <- DownloadProgress{Phase: "complete", Done: done, Total: total, Failed: failed}
         }

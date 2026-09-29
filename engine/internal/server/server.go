@@ -242,6 +242,9 @@ func (s *Server) routes() {
         // v0.60 pt C.6: the bundle download + bundle delete-your-copy.
         s.mux.HandleFunc("POST /api/hub/collections/{id}/download", s.handleHubCollectionDownload)
         s.mux.HandleFunc("POST /api/hub/collections/{id}/delete", s.handleHubCollectionDelete)
+        // v0.77.10: the per-user bundle endorse (ONE heart on the collection)
+        s.mux.HandleFunc("POST /api/hub/collections/{id}/endorse", s.handleHubCollectionEndorse(true))
+        s.mux.HandleFunc("POST /api/hub/collections/{id}/unendorse", s.handleHubCollectionEndorse(false))
         // v0.60 pt C.8: THE REPO VIEW — one tree level + one file from any
         // public dataset repo (the [cards|repo] pill's backing endpoints).
         s.mux.HandleFunc("GET /api/hub/repo/{repo}/tree", s.handleHubRepoTree)

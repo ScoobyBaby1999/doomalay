@@ -522,13 +522,23 @@
     Object.keys(byType).forEach(function (t) {
       bits.push(byType[t] + ' ' + shortType(t) + (byType[t] === 1 ? '' : 's'));
     });
-    // v0.76.7: THE CONTENT LINE — the bundle's "description": the member
-    // census, "N bundled items — x docs · y skills …" (the line the
-    // user named for the collapsed header; it rides hi-desc in BOTH
-    // states — a bundle's honest description IS its census).
+    // v0.77.10: THE DESCRIPTION + THE INFO LINE — the user's spec: the
+    // header shows the bundle's REAL one-or-two-line description (the
+    // publisher's manifest — "superpowers-obra should have a very simple
+    // description of what it does, and that it's a port from obra"),
+    // and the deterministic census — "N bundled items — x docs · y
+    // skills…" — rides BENEATH it as the info text (it was never a
+    // description). The server resolves the manifest (the corpus pass
+    // committed collections/superpowers-obra.json); the fallback is the
+    // most-endorsed member's text.
     var total = b.members || 0;
     var contentLine = total + ' bundled item' + (total === 1 ? '' : 's') +
       (bits.length ? ' — ' + bits.join(' · ') : '');
+    var descLine = String(b.description || '').trim();
+    var descRow = descLine
+      ? '<div class="hi-desc hub-bunch-hero-desc">' + esc(descLine) + '</div>' +
+        '<div class="hi-desc hub-bunch-hero-info" style="font-size:calc(var(--ui-small-fs) - 1px);opacity:0.82">' + esc(contentLine) + '</div>'
+      : '<div class="hi-desc hub-bunch-hero-desc">' + esc(contentLine) + '</div>';
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
         '</b><i>bundle</i></span>' : '';
@@ -536,7 +546,10 @@
     var members = bunchMembers();
     var dlState = bcur.loading ? null : bdlEntry(bcur.id);
     var downloaded = !!(!bcur.loading && dlState && dlState.state === 'done');
-    var allHearted = bundleHeartState(members);
+    // v0.77.10: the heart state = the COLLECTION's own heart (one per
+    // user), served with the summary; the legacy all-members read stays
+    // as the fallback for pre-wave states.
+    var allHearted = (b && typeof b.hearted === 'boolean') ? b.hearted : bundleHeartState(members);
     // THE TAG ROW — the server's vote-ranked tags; the first five ride
     // hi-chips (the single item's exact chip), the rest fold into "+N"
     // (the title carries the full list for hover/long-press readers).
@@ -571,7 +584,7 @@
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
             '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
           '</div>' +
-          '<div class="hi-desc hub-bunch-hero-desc">' + esc(contentLine || '—') + '</div>' +
+          descRow +
           '<div class="hi-meta">by ' + esc(b.by || 'unknown') + creditSuffix(b.upstream) +
             (b.updatedAt ? ' · updated ' + esc(String(b.updatedAt).slice(0, 10)) : '') + '</div>' +
           chipsRow +
@@ -1105,65 +1118,34 @@
     btn.classList.toggle('is-done', !!(e && e.state === 'done'));
   }
 
-  // v0.72: THE ENDORSE FAN-OUT — endorse (or un-endorse) every member of
-  // the open bundle, 3 wide (the download runner's cadence). Each member
-  // rides the SAME endpoint a single item's ♥ uses; the engine's
-  // download-first rule is pre-checked (the FAB is locked until the
-  // bundle is downloaded) but per-member failures are still counted and
-  // reported honestly. The summary's Σ hearts nudges by the landed count
-  // (each endorse is +1 on that member's item — the engine's counters).
+  // v0.77.10: THE ONE BUNDLE HEART — endorse (or un-endorse) the WHOLE
+  // bundle as ONE per-user heart on the collection (the user's spec:
+  // "if one user endorses the bundle it counts as 1" — never a fan-out
+  // over the members: a 45-member bundle reads +1, not +45). The engine
+  // gates on the bundle being downloaded (the same endorse-before-
+  // download rule); the members' own counters never move (a member view
+  // shows its own hearts PLUS the bundle's — the server-side
+  // applyCollectionCounts).
   function setBundleHeart(on, members) {
-    if (!bcur || !members || !members.length) return;
-    toast(on ? 'endorsing the bundle…' : 'removing the endorsements…', { hold: true });
-    var targets = members.filter(function (m) {
-      return isHearted(m.type, m.repo, m.id) !== on;
-    });
-    if (!targets.length) {
-      toast(on ? 'the whole bundle is already endorsed ♥' : 'nothing to remove');
-      return;
-    }
-    var landed = 0, failed = 0;
-    var queue = targets.slice();
-    var inFlight = 0;
-    function done() {
-      if (landed + failed < targets.length) return;
-      var meta = bunchMeta(bcur.id);
-      if (meta && landed) meta.hearts = Math.max(0, (meta.hearts || 0) + (on ? landed : -landed));
-      toast(on
-        ? (failed ? 'endorsed ' + landed + '/' + targets.length + ' — ' + failed + ' skipped' :
-            'endorsed the whole bundle — ' + landed + ' item' + (landed === 1 ? '' : 's') + ' ♥')
-        : (failed ? 'removed ' + landed + '/' + targets.length + ' — ' + failed + ' failed' :
-            'endorsements removed — ' + landed + ' item' + (landed === 1 ? '' : 's')),
-        failed ? { ms: 3200 } : undefined);
-      if (bunchTop()) bunchRepaint();
-      else if (isTop()) updateBody();
-    }
-    // one member per call (the parameter owns the closure — a var in the
-    // loop below would be reassigned before the async callbacks fire)
-    function one(m) {
-      inFlight++;
-      api('POST', '/api/hub/' + encodeURIComponent(m.type) +
-          (on ? '/endorse' : '/unendorse'), { repo: m.repo, id: m.id })
-        .then(function (d) {
-          setHearted(m.type, m.repo, m.id, on);
-          if (d && d.item && cur) refreshItem(d.item);
-          landed++;
-        })
-        .catch(function (e2) {
-          failed++;
-          toast((e2 && e2.message) || 'a member failed', { ms: 2400 });
-        })
-        .then(function () {
-          inFlight--;
-          if (!queue.length && inFlight === 0) done();
-          else pump();
-        });
-    }
-    function pump() {
-      while (inFlight < 3 && queue.length) one(queue.shift());
-      if (!queue.length && inFlight === 0) done();
-    }
-    pump();
+    if (!bcur) return;
+    toast(on ? 'endorsing the bundle…' : 'removing the endorsement…', { hold: true });
+    api('POST', '/api/hub/collections/' + encodeURIComponent(bcur.id) +
+        (on ? '/endorse' : '/unendorse'), {})
+      .then(function (d) {
+        var meta = bunchMeta(bcur.id);
+        if (meta) {
+          meta.hearts = (d && typeof d.hearts === 'number') ? d.hearts
+            : Math.max(0, (meta.hearts || 0) + (on ? 1 : -1));
+          meta.hearted = on;
+        }
+        toast(on ? 'endorsed the bundle ♥ — one heart, the whole bundle'
+                 : 'endorsement removed');
+        if (bunchTop()) bunchRepaint();
+        else if (isTop()) updateBody();
+      })
+      .catch(function (e2) {
+        toast((e2 && e2.message) || 'could not endorse the bundle', { ms: 2400 });
+      });
   }
 
   // THE RUNNER — see the block comment above. Returns nothing; the
