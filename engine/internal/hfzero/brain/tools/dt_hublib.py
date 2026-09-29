@@ -349,6 +349,19 @@ class HubLibClient:
         return self._request("GET", f"/api/hub/{_quote_seg(typ)}/downloads",
                              slow=True)
 
+    # v0.72: THE BUNDLE SURFACE — collections (bunches) list/detail/download.
+    def collections(self, q: str = "") -> dict:
+        return self._request("GET", "/api/hub/collections",
+                             params={"q": q} if q else None, slow=True)
+
+    def collection_items(self, cid: str) -> dict:
+        return self._request("GET", f"/api/hub/collections/{_quote_seg(cid)}/items",
+                             slow=True)
+
+    def download_collection(self, cid: str) -> dict:
+        return self._request("POST", f"/api/hub/collections/{_quote_seg(cid)}/download",
+                             json_body={}, slow=True)
+
     def tweaks(self) -> dict:
         """The chat's tweak blob — THE BOXES. 404 (no session bound, e.g. a
         workspace-less sub-agent) is not an error: no chat → no boxes →
@@ -451,8 +464,14 @@ TOOL_DESCRIPTION = (
     "browse (search + filter, also shows the user tappable cards with "
     "one-press download), detail (full item + payload preview), download "
     "(repo/id or a bare name from the last browse), downloaded (what this "
-    "chat already has), libraries, help. Per-chat Templates/Skills boxes "
-    "(tweaks) gate each type — disabled boxes return how to re-enable."
+    "chat already has), bundles (list the curated collections), bundle "
+    "(one bundle's members with each member's when-to-use description), "
+    "download_bundle (every member at once), libraries, help. BUNDLES: "
+    "use when a task spans a whole methodology suite (e.g. superpowers) "
+    "— browse the bundle first, pick the member that fits the actual "
+    "sub-problem, never the whole bundle at once. Per-chat Templates/"
+    "Skills boxes (tweaks) gate each type — disabled boxes return how "
+    "to re-enable."
 )
 
 
@@ -509,7 +528,8 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
 
     # ── every hub-touching action validates the verb FIRST (an unknown
     # action must say so, not complain about a missing type), then the type
-    known = {"browse", "detail", "download", "downloaded"}
+    known = {"browse", "detail", "download", "downloaded",
+             "bundles", "bundle", "download_bundle"}
     if action not in known:
         return (f"unknown action '{action}' — try one of " + " | ".join(sorted(known))
                 + " (or action='help' for the cheat-sheet)")
@@ -525,16 +545,16 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
         tweaks = read_boxes(client.tweaks())
     except Exception:
         tweaks = {}
-    if action == "download":
+    if action in ("download", "download_bundle"):
         ok, msg = lib_enabled(tweaks)
         if not ok:
-            _note("hublib_lib_off", type=typ)
+            _note("hublib_lib_off", type=type)
             return f"hublib: {msg}"
         # v0.68: the second gate — Can download bundles OFF = browse +
         # use-downloaded only (the same refusal shape, the deeper path).
         ok_dl, msg_dl = dl_enabled(tweaks)
         if not ok_dl:
-            _note("hublib_dl_off", type=typ)
+            _note("hublib_dl_off", type=type)
             return f"hublib: {msg_dl}"
 
     try:
@@ -633,6 +653,110 @@ def _dispatch(action: str, *, typ: str, q: str, tag: str, sort: str,
                 lines.append(f"• {it.get('name')} "
                              f"({it.get('repo') or 'local'}/{it.get('id')})")
         return _clip("\n".join(lines), MAX_OUT)
+
+    # ── v0.72: THE BUNDLE HANDS — list/detail/download whole bunches ────
+    if action == "bundles":
+        out = _safe(lambda: client.collections(q=q))
+        if not isinstance(out, dict):
+            out = {"error": str(out)}
+        if "error" in out:
+            return f"hublib: {out['error']}"
+        cols = out.get("collections")
+        if not isinstance(cols, list) or not cols:
+            return ("no bundles in the hub right now — browse items "
+                    "directly (action='browse').")
+        lines = ["hub bundles (detail one with action='bundle', id='…'; "
+                 "download every member with action='download_bundle'):"]
+        for c in cols[:12]:
+            if not isinstance(c, dict):
+                continue
+            by = c.get("byType") if isinstance(c.get("byType"), dict) else {}
+            by_s = ", ".join(f"{_int(v)} {k}s" for k, v in
+                             sorted(by.items(), key=lambda kv: -_int(kv[1])))
+            tag = f" | #{c.get('tag')}" if c.get("tag") else ""
+            lines.append(f"• {c.get('id')}{tag} | {_int(c.get('members'))} "
+                         f"members ({by_s}) | e.g. "
+                         f"{_one_liner(str(c.get('sample') or ''), 40)}")
+        return _clip("\n".join(lines), MAX_OUT)
+
+    if action == "bundle":
+        cid = str(ref or repo or item_id or q or "").strip()
+        if not cid:
+            return ("bundle needs {id: '<bundle id>'} — action='bundles' "
+                    "lists them.")
+        out = _safe(lambda: client.collection_items(cid))
+        if not isinstance(out, dict):
+            out = {"error": str(out)}
+        if "error" in out:
+            return f"hublib: {out['error']}"
+        groups = out.get("collections") or out.get("groups") or out.get("items")
+        if not isinstance(groups, list) or not groups:
+            return (f"no bundle '{cid}' — action='bundles' lists what exists.")
+        lines = [f"bundle {cid} — members (each line's description = when "
+                 "to use it):"]
+        order = {"skill": 0, "script": 1, "template": 2, "doc": 3}
+        flat = []
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            gtyp = str(g.get("type") or "item")
+            for it in g.get("items") or []:
+                if isinstance(it, dict):
+                    flat.append((order.get(gtyp, 4), gtyp, it))
+        flat.sort(key=lambda t: (t[0], str(t[2].get("name") or "")))
+        for _, gtyp, it in flat[:24]:
+            lines.append(f"• {gtyp} — {it.get('name')} | "
+                         f"{it.get('repo')}/{it.get('id')} | "
+                         f"{_one_liner(str(it.get('description') or ''), 120)}")
+        if len(flat) > 24:
+            lines.append(f"… {len(flat) - 24} more members")
+        lines.append("pick the member that fits the actual sub-problem; "
+                     "download it (action='download') or the whole bundle "
+                     "(action='download_bundle').")
+        return _clip("\n".join(lines), MAX_OUT)
+
+    if action == "download_bundle":
+        cid = str(ref or repo or item_id or q or "").strip()
+        if not cid:
+            return ("download_bundle needs {id: '<bundle id>'} — "
+                    "action='bundles' lists them.")
+        out = _safe(lambda: client.download_collection(cid))
+        if not isinstance(out, dict):
+            out = {"error": str(out)}
+        if "error" in out:
+            return f"hublib: {out['error']}"
+        groups = out.get("groups") or out.get("collections") or out.get("items")
+        if not isinstance(groups, list) or not groups:
+            return (f"no bundle '{cid}' — action='bundles' lists what exists.")
+        total = 0
+        per = {}
+        names = []
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            gtyp = str(g.get("type") or "item")
+            items = g.get("items") or []
+            per[gtyp] = per.get(gtyp, 0) + len(items)
+            total += len(items)
+            for it in items[:6]:
+                if isinstance(it, dict) and gtyp == "skill":
+                    names.append(str(it.get("name") or ""))
+        by_s = ", ".join(f"{v} {k}s" for k, v in
+                         sorted(per.items(), key=lambda kv: -kv[1]))
+        emit_hub_event(emit, f"downloaded · {cid}",
+                       [card_for_item({"id": cid, "type": "skill",
+                                       "name": cid}, True)])
+        log("hublib_download_bundle", id=cid, total=total)
+        tail = ""
+        if names:
+            tail = ("\nthe skills (load them when the work they covers "
+                    "starts): " + ", ".join(names[:8]))
+        return _clip(
+            f"downloaded '{cid}' — the WHOLE bundle, {total} items "
+            f"({by_s}), now in the user's library (Yours).{tail}\n"
+            "pick the member that fits the actual sub-problem and follow "
+            "it; never run the whole bundle at a task it was not designed "
+            "for.", MAX_OUT)
 
     return (f"unknown action '{action}' — " + HELP_TEXT.split("\n")[0]
             + "\n(call action='help' for the full cheat-sheet)")
