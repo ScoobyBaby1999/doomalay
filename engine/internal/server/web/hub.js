@@ -497,6 +497,11 @@
   // view wears: ⤓ download (live N/M + a progress ring) · ♥ endorse
   // (locked until downloaded, exactly the single-item rule) · ▶ use
   // bundle (when downloaded) · 🗑 delete-your-copies (the confirm bar).
+  // v0.76.7: THE FOLDABLE HERO — the user's bundle-page parity ask: the
+  // hero folds like hi-head (tap the head), and the COLLAPSED layout is
+  // the user's spec — "name, x bundled items - x docs, y skills, ext…"
+  // (the content line STAYS; chips + the by-line fold away). The
+  // expanded stack is the single item's exact row order.
   function bunchRender() {
     if (!bcur) return '';
     var b = bunchMeta(bcur.id);
@@ -509,6 +514,13 @@
     Object.keys(byType).forEach(function (t) {
       bits.push(byType[t] + ' ' + shortType(t) + (byType[t] === 1 ? '' : 's'));
     });
+    // v0.76.7: THE CONTENT LINE — the bundle's "description": the member
+    // census, "N bundled items — x docs · y skills …" (the line the
+    // user named for the collapsed header; it rides hi-desc in BOTH
+    // states — a bundle's honest description IS its census).
+    var total = b.members || 0;
+    var contentLine = total + ' bundled item' + (total === 1 ? '' : 's') +
+      (bits.length ? ' — ' + bits.join(' · ') : '');
     var flag = (b.tag || '').trim()
       ? '<span class="hub-bundle-flag"' + flagStyle(b) + '><b>#' + esc(String(b.tag).trim()) +
         '</b><i>bundle</i></span>' : '';
@@ -540,7 +552,9 @@
         '<span>' + dlGlyph() + '<b>' + (b.downloads || 0) + '</b></span>' +
       '</div>';
     var hero =
-      '<div class="hub-bunch-hero" style="background-image:' +
+      '<div class="hub-bunch-hero' + ((bcur && bcur.folded) ? ' folded' : '') + '" id="hub-bunch-hero"' +
+        ' role="button" tabindex="0" aria-expanded="' + ((bcur && bcur.folded) ? 'false' : 'true') + '"' +
+        ' aria-label="fold the bundle card" style="background-image:' +
         ((window.Hub && window.Hub.idGradient) ? window.Hub.idGradient(bcur.id) : 'none') + '">' +
         '<span class="hub-bunch-hero-bg" data-bunchbg="1"></span>' +
         '<span class="hub-bunch-hero-scrim" aria-hidden="true"></span>' +
@@ -549,12 +563,13 @@
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
             '<span class="hub-bunch-hero-name">' + esc(bcur.id) + '</span>' +
           '</div>' +
-          '<div class="hi-desc hub-bunch-hero-desc">' + esc(bits.join(' · ') || '—') + '</div>' +
-          '<div class="hi-meta">' + esc((b.members || 0) + ' item' + ((b.members || 0) === 1 ? '' : 's')) +
+          '<div class="hi-desc hub-bunch-hero-desc">' + esc(contentLine || '—') + '</div>' +
+          '<div class="hi-meta">by ' + esc(b.by || 'unknown') +
             (b.updatedAt ? ' · updated ' + esc(String(b.updatedAt).slice(0, 10)) : '') + '</div>' +
           chipsRow +
           countsRow +
         '</div>' +
+        '<span class="hi-fold-ico">' + ((bcur && bcur.folded) ? '▸' : '▾') + '</span>' +
         flag +
       '</div>';
     var body = '';
@@ -745,6 +760,28 @@
   function bunchWire(el) {
     if (!bcur || !el) return;
     var c = cur;
+    // v0.76.7: THE FOLDABLE HERO — the single item's exact interaction
+    // (tap the head, the rows collapse; no re-render, the class flips).
+    // The content line stays (the user's collapsed layout); chips, the
+    // by-line and the counts fold away.
+    var hero = el.querySelector('#hub-bunch-hero');
+    if (hero) {
+      var foldHero = function () {
+        hero.classList.toggle('folded');
+        var fico = hero.querySelector('.hi-fold-ico');
+        if (fico) fico.textContent = hero.classList.contains('folded') ? '▸' : '▾';
+        hero.setAttribute('aria-expanded', hero.classList.contains('folded') ? 'false' : 'true');
+        if (bcur) bcur.folded = hero.classList.contains('folded');
+      };
+      hero.addEventListener('click', function (e) {
+        // taps on the FAB row / interactive children must not fold
+        if (e.target && e.target.closest && e.target.closest('.hi-fabs, button')) return;
+        foldHero();
+      });
+      hero.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); foldHero(); }
+      });
+    }
     // member cards → the item detail (the same open path the grid uses)
     el.querySelectorAll('[data-item]').forEach(function (b) {
       var id = b.getAttribute('data-item');

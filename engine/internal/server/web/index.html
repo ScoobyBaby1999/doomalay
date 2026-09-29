@@ -3182,6 +3182,23 @@
   }
   .hub-bunch-hero .hi-meta { margin-top: 2px; }
   .hub-bunch-hero .hi-counts .icl { filter: drop-shadow(0 1px 2px rgba(var(--bg-panel-rgb), 0.7)); }
+  /* v0.76.7: THE FOLDABLE HERO — the hi-head.folded pattern, with the
+     bundle's CONTENT LINE kept (the user's collapsed layout: "name,
+     x bundled items - x docs, y skills…"); the chips, the by-line and
+     the stat icons fold away, the art dims, the bar compacts. */
+  .hub-bunch-hero { cursor: pointer; }
+  .hub-bunch-hero .hi-fold-ico {
+    position: absolute; top: 8px; right: 10px; color: var(--text-2);
+    font-size: var(--ui-small-fs);
+    text-shadow: 0 1px 4px rgba(var(--bg-panel-rgb), 0.8);
+  }
+  .hub-bunch-hero.folded .hub-bunch-hero-bg,
+  .hub-bunch-hero.folded .hub-bunch-hero-scrim { opacity: 0.25; }
+  .hub-bunch-hero.folded { min-height: 0; }
+  .hub-bunch-hero.folded .hub-bunch-hero-body { padding: 10px 14px 8px; }
+  .hub-bunch-hero.folded .hi-chips,
+  .hub-bunch-hero.folded .hi-meta,
+  .hub-bunch-hero.folded .hi-counts { display: none; }
   /* the bunch root fills the panel body like hi-root does, so the FAB
      row's margin-top:auto + sticky dock behave exactly as the single
      item view's (short content → the FABs still land at the foot). */

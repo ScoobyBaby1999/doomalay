@@ -40,6 +40,12 @@ type CollectionSummary struct {
 	Downloads int            `json:"downloads"` // Σ member downloads
 	ByType    map[string]int `json:"byType"`    // members per library type
 	UpdatedAt string         `json:"updatedAt"` // newest member update
+	// v0.76.7: THE BY-LINE — the bundle's aggregate author (the member
+	// author with the most members; ties break alphabetically — the
+	// Tag pattern). The bunch detail card's "by X" row (the single
+	// item's exact meta line): a bundle published by one publisher
+	// reads "by mockuser", a mixed one reads its plurality author.
+	By string `json:"by"`
 	// v0.72: THE TAG ROW — every member tag votes once per member
 	// carrying it; Tags carries the top vote-getters (ties break
 	// alphabetically for determinism, capped at 16 so a giant bundle
@@ -51,7 +57,8 @@ type CollectionSummary struct {
 	// for known bunches, else the newest member's card design (any
 	// publisher brands their own bunch by giving their items a look).
 	// Zero value = the client paints its deterministic hash gradient.
-	Design Design `json:"design"`}
+	Design Design `json:"design"`
+}
 
 // Collections derives every collection bunch across all registered
 // libraries, optionally filtered by a search substring over the bunch id,
@@ -74,6 +81,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 		descSet   map[string]bool
 		tags      map[string]int // v0.56: first-tag votes across members
 		allTags   map[string]int // v0.72: EVERY-tag votes (the detail card's tag row)
+		authors   map[string]int // v0.76.7: member-author votes (the by-line)
 		// v0.58: the newest member carrying a usable card design — the
 		// bunch card's art when no curated override exists.
 		bestDesign   Design
@@ -93,7 +101,7 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 			}
 			a := bunches[id]
 			if a == nil {
-				a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, allTags: map[string]int{}, descSet: map[string]bool{}}
+				a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, allTags: map[string]int{}, authors: map[string]int{}, descSet: map[string]bool{}}
 				bunches[id] = a
 			}
 			a.sum.Members++
@@ -121,6 +129,10 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 				}
 			}
 			a.names = append(a.names, strings.ToLower(it.Name))
+			// v0.76.7: the by-line vote — the plurality member author
+			if au := strings.TrimSpace(it.Author); au != "" {
+				a.authors[au]++
+			}
 			// v0.73: the matcher widened — descriptions (deduped
 			// per bunch) now vote too, so a q like "brainstorm"
 			// finds bundles whose members carry that word in
@@ -215,6 +227,15 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 			tagList = tagList[:16]
 		}
 		a.sum.Tags = tagList
+		// v0.76.7: THE BY-LINE — the plurality member author (ties
+		// break alphabetically, the Tag pattern)
+		bestBy, bestByN := "", 0
+		for au, n := range a.authors {
+			if n > bestByN || (n == bestByN && au < bestBy) {
+				bestBy, bestByN = au, n
+			}
+		}
+		a.sum.By = bestBy
 		a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
 		out = append(out, a.sum)
 	}
@@ -227,7 +248,8 @@ func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary,
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil}
+	return out, nil
+}
 
 // CollectionMembers is one library's slice of a bunch.
 type CollectionMembers struct {

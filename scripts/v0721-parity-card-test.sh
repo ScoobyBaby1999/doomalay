@@ -109,8 +109,11 @@ HERO=$(ev "(function(){
     dls: counts.length > 1 ? counts[1].textContent : '-'
   });
 })()")
-has "B1 the bunch hero renders" "$HERO" '"desc":"2 skills"'
-has "B2 the meta row (N items · updated)" "$HERO" '"meta":"2 items · updated 2025-01-03"'
+# v0.76.7: THE FOLDABLE HERO — the content line ("N bundled items — x
+# docs · y skills…", the user's collapsed-header layout) rides hi-desc;
+# the meta row is the single item's exact by-line.
+has "B1 the bunch hero renders the content line" "$HERO" '"desc":"2 bundled items — 2 skills"'
+has "B2 the meta row (by {author} · updated)" "$HERO" '"meta":"by mockuser · updated 2025-01-03"'
 # top 5 tags (superpowers, brainstorm, planning, research, testing) + "+1" (writing folds)
 check "B3 the tag row shows the top 5 + the +N fold" \
   "$(echo "$HERO" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d["chips"]))')" \
@@ -141,6 +144,45 @@ FABS0=$(ev "(function(){
     use: !!u, del: !!d
   });
 })()")
+# ── v0.76.7: THE FOLDABLE HERO (tap → collapse; the content line STAYS) ──
+FOLD=$(ev "(function(){
+  var h = document.getElementById('hub-bunch-hero');
+  if (!h) return 'no-hero';
+  var cs = function(el){ return el && getComputedStyle(el).display !== 'none'; };
+  return JSON.stringify({
+    role: h.getAttribute('role'),
+    expanded: h.getAttribute('aria-expanded'),
+    foldIco: !!h.querySelector('.hi-fold-ico'),
+    metaVisible: cs(h.querySelector('.hi-meta')),
+    chipsVisible: cs(h.querySelector('.hi-chips')),
+    countsVisible: cs(h.querySelector('.hi-counts')),
+    descVisible: cs(h.querySelector('.hi-desc'))
+  });
+})()")
+has "F1 the hero carries the fold affordances (role/aria/fold-ico)" "$FOLD" '"role":"button","expanded":"true","foldIco":true'
+has "F2 expanded: meta + chips + counts + the content line all visible" "$FOLD" '"metaVisible":true,"chipsVisible":true,"countsVisible":true,"descVisible":true'
+ev "document.getElementById('hub-bunch-hero').click()" >/dev/null; sleep 0.3
+FOLD2=$(ev "(function(){
+  var h = document.getElementById('hub-bunch-hero');
+  if (!h) return 'no-hero';
+  var cs = function(el){ return el && getComputedStyle(el).display !== 'none'; };
+  return JSON.stringify({
+    folded: h.classList.contains('folded'),
+    ico: (h.querySelector('.hi-fold-ico')||{}).textContent,
+    metaVisible: cs(h.querySelector('.hi-meta')),
+    chipsVisible: cs(h.querySelector('.hi-chips')),
+    countsVisible: cs(h.querySelector('.hi-counts')),
+    descVisible: cs(h.querySelector('.hi-desc')),
+    nameVisible: cs(h.querySelector('.hub-bunch-hero-name'))
+  });
+})()")
+has "F3 the tap FOLDS the hero" "$FOLD2" '"folded":true'
+has "F4 folded: the fold glyph flips (▾→▸)" "$FOLD2" '"ico":"▸"'
+has "F5 folded: the CONTENT LINE stays (the user's collapsed layout)" "$FOLD2" '"descVisible":true'
+has "F6 folded: name + content line, chips/meta/counts folded" "$FOLD2" '"metaVisible":false,"chipsVisible":false,"countsVisible":false,"descVisible":true,"nameVisible":true'
+ev "document.getElementById('hub-bunch-hero').click()" >/dev/null; sleep 0.3
+has "F7 the second tap UNFOLDS" "$(ev "document.getElementById('hub-bunch-hero').classList.contains('folded') ? 'folded' : 'open'")" "open"
+
 has "C1 the ⤓ FAB exists (idle)" "$FABS0" '"dl":"hi-fab"'
 has "C2 the idle title offers the bundle download" "$FABS0" 'download every item in this bundle'
 has "C3 the ♥ renders LOCKED before any download" "$FABS0" '"heart":"hi-fab hi-fab--heart locked"'
