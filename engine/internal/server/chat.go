@@ -1587,9 +1587,45 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
 		// replay rebuilds the exact same box the live path rendered
 		// (unknown types persist EMPTY content — the box would vanish
 		// on reload without this line).
-		case "thinking", "assistant_delta", "assistant", "tool_result", "title", "hublist":
+		case "thinking", "assistant_delta", "assistant", "title", "hublist":
 			if t, ok := ev["text"].(string); ok {
 				content = t
+			}
+		case "tool_use", "tool_result":
+			// v0.73: THE DETERMINISTIC REPLAY — tool events persist
+			// as the JSON payload {name, summary, text} (the PM-bridge
+			// shape). The bare "name summary" / text-only shapes lost
+			// the tool NAME on replay, so the chatpanel's lift
+			// (JSON.parse(pay.text)) fell back to {type, text} — the
+			// active-bundle pill derivation (turnBundleOf) and the
+			// transcript's tool pills both degraded after a reload.
+			// Live events carry name/summary top-level and are
+			// unchanged; only the persisted content becomes the
+			// self-describing shape the replay can lift.
+			toolEv := map[string]any{}
+			if v, ok := ev["name"].(string); ok && v != "" {
+				toolEv["name"] = v
+			}
+			if v, ok := ev["summary"].(string); ok && v != "" {
+				toolEv["summary"] = v
+			}
+			if v, ok := ev["text"].(string); ok && v != "" {
+				toolEv["text"] = v
+			}
+			if len(toolEv) == 0 {
+				if v, ok := ev["text"].(string); ok {
+					content = v // the odd text-only tool event stays honest
+				}
+			} else if b, err := json.Marshal(toolEv); err == nil {
+				content = string(b)
+			}
+			if content == "" { // legacy fallback: name summary
+				name, _ := ev["name"].(string)
+				summary, _ := ev["summary"].(string)
+				content = name
+				if summary != "" {
+					content += " " + summary
+				}
 			}
 		case "error":
 			// v0.13: error events carry "message" (human text) +
@@ -1604,13 +1640,6 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
 		case "sources":
 			b, _ := json.Marshal(ev["sources"])
 			content = string(b)
-		case "tool_use":
-			name, _ := ev["name"].(string)
-			summary, _ := ev["summary"].(string)
-			content = name
-			if summary != "" {
-				content += " " + summary
-			}
 		case "status":
 			// Store the full status object as JSON (state + usage).
 			state, _ := ev["state"].(string)
