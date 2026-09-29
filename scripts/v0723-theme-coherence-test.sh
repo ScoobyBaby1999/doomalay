@@ -179,11 +179,15 @@ ev "window.__touch = function(el, type, x, y) { var t = new Touch({ identifier: 
 # at full dock (the panel opened full via the gear? it opens at the default
 # dock) — dock it FULL first via an upward handle drag
 ev "new Promise(function(res){ var h = document.querySelector('#chat-panel .handle'); window.__touch(h, 'touchstart', 200, 500); var i = 0; function step(){ i++; window.__touch(h, 'touchmove', 200, 500 - i*40); if (i < 8) setTimeout(step, 50); else { window.__touch(h, 'touchend', 200, 180); res('up'); } } setTimeout(step, 50); })" >/dev/null; sleep 1.6
-ANCHOR_FULL=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); return t ? t.style.backgroundPosition + '@' + Math.round(t.getBoundingClientRect().top) : 'no-tabs'; })()")
+# v0.74 rebase: the inline anchor is now calc(var(--proj-tx) ± Bpx) — the
+# painter's two-speed contract. The RESOLVED (computed) position is still
+# exactly -rect.left/-rect.top, so C4 reads computed (contract-equivalent,
+# and it verifies the REAL rendering anchor, not the baked string).
+ANCHOR_FULL=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); return t ? getComputedStyle(t).backgroundPosition + '@' + Math.round(t.getBoundingClientRect().top) : 'no-tabs'; })()")
 sleep 0.2
 # glide DOWN to the half dock (slow — a fling would close)
 ev "new Promise(function(res){ var h = document.querySelector('#chat-panel .handle'); window.__touch(h, 'touchstart', 200, 300); var i = 0; function step(){ i++; window.__touch(h, 'touchmove', 200, 300 + i*18); if (i < 9) setTimeout(step, 60); else { window.__touch(h, 'touchend', 200, 462); res('down'); } } setTimeout(step, 60); })" >/dev/null; sleep 1.8
-ANCHOR_HALF=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); var m = getComputedStyle(document.getElementById('chat-panel')).transform; return JSON.stringify({pos: t.style.backgroundPosition, top: Math.round(t.getBoundingClientRect().top), y: m.slice(m.lastIndexOf(',')+1, -1)}); })()")
+ANCHOR_HALF=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); var m = getComputedStyle(document.getElementById('chat-panel')).transform; return JSON.stringify({pos: getComputedStyle(t).backgroundPosition, top: Math.round(t.getBoundingClientRect().top), y: m.slice(m.lastIndexOf(',')+1, -1)}); })()")
 ok "C1 the tab anchor existed at the full dock ($ANCHOR_FULL)"
 has "C2 the glide landed at the half dock" "$ANCHOR_HALF" '"y":" 288.8"'
 AF_Y=$(echo "$ANCHOR_FULL" | sed 's/.*@//' | tr -d ' ')
@@ -203,7 +207,9 @@ else
   bad "C4 the anchor is stale/empty after the glide ($C4 | pos='$AH_POS')"
 fi
 
-# ══ D. THE PARALLAX SLIDER ═══════════════════════════════════════════
+# ══ D. THE PARALLAX SLIDER (v0.76 contract: origin's v0.75 AMPLIFIER
+# superseded the old differential-lag model + 300 cap — the rebase
+# kept THEIR method and grafted OUR paint floors; these anchors follow) ══
 # Grid Effects lives on the SIZING page — navigate there first
 ev "(function(){ var t = document.querySelector('.settings-nav .tab[data-page=sizing]'); if (t) t.click(); return 'sizing'; })()" >/dev/null; sleep 1.2
 SLIDER=$(ev "(function(){
@@ -211,29 +217,28 @@ SLIDER=$(ev "(function(){
   if (!r) return 'no-slider';
   return JSON.stringify({max: r.max, min: r.min, val: r.value});
 })()")
-has "D1 the space parallax slider maxes at 300" "$SLIDER" '"max":"300"'
-ev "Settings.setState({spaceParallax: 280})" >/dev/null; sleep 0.5
+has "D1 the Amplify-parallax slider keeps its 0-100 range (the v0.75 method)" "$SLIDER" '"max":"100"'
+ev "Settings.setState({spaceParallax: 80})" >/dev/null; sleep 0.5
 SSTATE=$(ev "Settings.getState().spaceParallax")
-check "D2a a deep value (280) round-trips through the settings store" "$SSTATE" "280"
+check "D2a a deep value (80) round-trips through the settings store" "$SSTATE" "80"
 # re-mount the sizing page (a live setState doesn't rebuild the page's
 # sliders) and read the slider's value back
 ev "(function(){ var g = document.querySelector('.settings-nav .tab[data-page=general]'); if (g) g.click(); return 'flip'; })()" >/dev/null; sleep 0.6
 ev "(function(){ var z = document.querySelector('.settings-nav .tab[data-page=sizing]'); if (z) z.click(); return 'back'; })()" >/dev/null; sleep 0.9
 SVAL=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=spaceParallax]'); return r ? r.value : 'gone'; })()")
-check "D2b the re-mounted slider carries the deep value" "$SVAL" "280"
+check "D2b the re-mounted slider carries the deep value" "$SVAL" "80"
 APPJS=$(curl -s "$BASE/app.js")
-has "D3 the lattice clamp allows the 3× depth" "$APPJS" "Math.min(300, pdepth)) / 100"
-has "D4 the far-plane clamp follows (bgParallax bottoms at 0.15)" "$APPJS" "Math.max(0.15, BG_PARALLAX - 0.09 * d)"
-# 100 must stay the classic stack (the formula unchanged at the knee)
-has "D5 the PF factors keep their formula" "$APPJS" "var PF_LINE = 1 - 0.38 * pdepth;"
+has "D3 the AMPLIFIER clamp (deep star layers, not the old lag)" "$APPJS" "Math.min(100, amp)) / 100"
+has "D4 the backdrop camera deepens (0.15 floor at full amp)" "$APPJS" "Math.max(0.15, BG_PARALLAX - 0.15 * d)"
+# the v0.67 differential lag is DELETED — the lattice is one flat plane
+nohas "D5 the v0.67 PF line/dot lag is GONE (one flat plane)" "$APPJS" "PF_LINE"
 
-# ══ E. STAR SIZES ════════════════════════════════════════════════════
-has "E1 the size-variation cap is ±150%" "$APPJS" "var sizeFrac = sizeVar / 100 * 1.5;"
-has "E2 the vertical segments floor at 6% of a cell (the shooting star)" "$APPJS" "Math.max(scaledGrid * 0.06,"
-has "E3 the horizontal segments floor too" "$APPJS" "Math.max(scaledGrid * 0.06,
-              scaledGrid * (1 + sizeFrac * (hashCell(ixS, iy + 5)"
-SVLIDER=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=gridSizeVariation]'); return r ? JSON.stringify({max: r.max}) : 'no-slider'; })()")
-check "E4 the size-variation slider keeps its 0-100 range (the EFFECT deepens)" "$(echo "$SVLIDER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])' 2>/dev/null || echo x)" "100"
+# ══ E. STAR SIZES (v0.76: per-side ±170% (origin v0.75) + OUR floors) ══
+has "E1 the size-variation cap is ±170% (per-side, v0.75)" "$APPJS" "var sizeFracL = sizeVarL / 100 * 1.7;"
+has "E2 the vertical segments floor at 6% of a cell (the shooting star)" "$APPJS" "var segLen = Math.max(scaledGrid * 0.06,"
+has "E3 the horizontal segments floor too" "$APPJS" "var segLen2 = Math.max(scaledGrid * 0.06,"
+SVLIDER=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=lineSizeVariation]'); return r ? JSON.stringify({max: r.max}) : 'no-slider'; })()")
+check "E4 the per-side size-variation slider keeps its 0-100 range" "$(echo "$SVLIDER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])' 2>/dev/null || echo x)" "100"
 
 # page errors across the whole ride
 ERRS=$(agent-browser errors 2>/dev/null | grep -c "error" || true)

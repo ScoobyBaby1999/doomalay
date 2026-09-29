@@ -348,6 +348,38 @@
       docEl._themeOverrideKeys.push('--veil-ink', '--veil-ink-rgb');
     }
 
+    // v0.74: BRIGHT-SURFACE INK GATES. User report (the settings colors
+    // wave): "Surface raised … any color that is bright looks horrible."
+    // The projection model paints what the user chose — a bright
+    // surface-2 makes every Layer-3 pill a bright window, and the light
+    // --text-1/2 ink that reads beautifully on the dark base themes is
+    // invisible on it. The accents already solved this exact problem
+    // with --on-accent-N (v0.66): derive the readable ink from the
+    // RESOLVED solid twin and gate a flip rule. The gates only fire
+    // when the user actually paints a BRIGHT surface (luminance >
+    // 0.45) — every base theme leaves them unset and renders
+    // byte-identical.
+    var BRIGHT_VARS = [
+      { v: '--surface-1', ink: '--on-surface-1', gate: 'data-bright-s1' },
+      { v: '--surface-2', ink: '--on-surface-2', gate: 'data-bright-s2' },
+      { v: '--bg-app',    ink: '--on-bg-app',    gate: 'data-bright-bg' }
+    ];
+    BRIGHT_VARS.forEach(function (B) {
+      var resolved = String(getComputedStyle(docEl).getPropertyValue(B.v) || '').trim();
+      var bm = /^#([0-9a-fA-F]{6})$/.exec(resolved);
+      if (bm) {
+        var hex = '#' + bm[1];
+        var ink = onColorFor(hex);
+        docEl.style.setProperty(B.ink, ink);
+        docEl._themeOverrideKeys.push(B.ink);
+        // dark ink ⇒ the surface is bright ⇒ trip the gate
+        if (ink !== '#ffffff') docEl.setAttribute(B.gate, '1');
+        else docEl.removeAttribute(B.gate);
+      } else {
+        docEl.removeAttribute(B.gate);
+      }
+    });
+
     // 2. chat markdown scheme — only when the user hasn't pinned their own
     //    (a non-default scheme OR any per-slot override = pinned)
     if (window.Formatter) {
@@ -555,12 +587,153 @@
     // painter can never drift from the CSS — including styles the
     // modules inject at runtime (re-collected when <style> nodes
     // appear).
+    //
+    // ══ v0.74 THE TWO-SPEED PAINTER (the panel-FPS wave) ═══════════
+    // User report: "using [the panel] feels slow and it moves in a very
+    // glitchy and low fps manner… at rest it's fine." Root cause: the
+    // v0.72.3c stale-window fix poked the painter on EVERY writeY —
+    // and poke() ran the FULL paint: per transformed root a
+    // querySelectorAll(MEGA-SELECTOR), then PER ELEMENT a
+    // getComputedStyle (style recalc!), a getBoundingClientRect
+    // (layout read) and a style write, interleaved read-write per
+    // element (layout thrash). On a phone with a hundred windows in
+    // the sheet that is 30-50ms of JS per frame — the panel glide
+    // itself became the jank.
+    // THE FIX — decompose the anchor. Every window inside a
+    // TRANSLATION-ONLY root satisfies
+    //     viewportLeft = baseLeft + rootTx
+    // so the painter bakes the translation-INVARIANT constant per
+    // element ONCE (at full-paint time) and writes
+    //     background-position:
+    //       calc(var(--proj-tx, 0px) + <Bx>px) calc(var(--proj-ty, 0px) + <By>px)
+    // where --proj-tx/--proj-ty live on the ROOT, updated per frame in
+    // ONE CSSOM rule write ([data-proj-root="N"]{--proj-tx:…}) — the
+    // browser moves every window in that root with a single style
+    // recalc, no JS per element, no layout reads at all.
+    //   · motion()  — the cheap per-frame path (writeY rides it): read
+    //     each root's matrix, write its two vars. Non-translation
+    //     matrices (chatbot scale under zoom ≠ 1) fall back to a full
+    //     paint for that frame — never wrong, just dearer.
+    //   · paint()   — the full path (scroll / resize / DOM change /
+    //     theme apply / layout transitions): batched READ phase (all
+    //     gCS + gBCR first — no interleaved writes, no thrash) then a
+    //     write phase that only touches elements whose bake changed.
+    // The MutationObserver learned to tell the panel's own transform
+    // writes (root style, transform-only → motion) from real DOM
+    // changes (→ full), and layout-property transitions
+    // (grid-template-rows un-collapses, height animations) now hold
+    // the per-frame repaint window open — the "surface raised bleeds
+    // into its scroll box whenever a setting un-collapses" report:
+    // windows kept pre-animation anchors for the whole 280ms unfold.
     var PROJ = (function () {
       if (!HAS_DOM) return null;   // the node harness mounts a stub window — no DOM, no painter
       var SEL = null;             // the compiled projection selector
       var painted = [];           // elements carrying painter styles
-      var dirty = false, moving = 0, rafId = 0;
+      var rootReg = [];           // tracked transformed roots: {el, key, rule}
+      var varSheet = null;        // the CSSOM sheet holding the per-root var rules
+      var rootSet = null;         // Set of root elements (rebuilt with rootReg)
+      var nextKey = 0;
+      var dirty = false, movingRoot = 0, movingLayout = 0, rafId = 0;
       var STYLE_RE = /var\(--[a-z0-9-]*gradient/;
+
+      // ── the root registry: keys + one CSSOM rule per root ──────
+      // The vars are written through CSSOM (styleEl.sheet rules), NOT
+      // inline setProperty on the root: CSSOM mutations bypass the
+      // MutationObserver, so the painter never re-triggers itself.
+      function ensureVarSheet() {
+        if (varSheet && varSheet.isConnected) return;
+        varSheet = document.createElement('style');
+        varSheet.id = 'doom-proj-vars';
+        document.head.appendChild(varSheet);
+        // rebuild the rules for any roots registered before the sheet
+        for (var i = 0; i < rootReg.length; i++) ensureRule(rootReg[i]);
+      }
+      function ensureRule(R) {
+        if (R.rule) return;
+        try {
+          varSheet.sheet.insertRule('[data-proj-root="' + R.key + '"]{' +
+            '--proj-tx:0px;--proj-ty:0px;}', varSheet.sheet.cssRules.length);
+          R.rule = varSheet.sheet.cssRules[varSheet.sheet.cssRules.length - 1];
+        } catch (e) { R.rule = null; }
+      }
+      function syncRoots() {
+        ensureVarSheet();
+        var found = [];
+        var els = document.querySelectorAll(
+          '#chat-panel, #connect-overlay, .chatbot, .hub-sheet, .tpl-sheet');
+        var keep = [];
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          var t = '';
+          try { t = getComputedStyle(el).transform; } catch (e) {}
+          if (!t || t === 'none') continue;   // untransformed: CSS fixed attachment already works
+          found.push(el);
+          var R = null;
+          for (var r = 0; r < rootReg.length; r++) {
+            if (rootReg[r].el === el) { R = rootReg[r]; break; }
+          }
+          if (!R) {
+            R = { el: el, key: nextKey++, rule: null };
+            el.setAttribute('data-proj-root', String(R.key));
+            ensureRule(R);
+          }
+          keep.push(R);
+        }
+        // roots that lost their transform/spot: drop the attribute + rule
+        for (var d = 0; d < rootReg.length; d++) {
+          if (found.indexOf(rootReg[d].el) === -1) {
+            rootReg[d].el.removeAttribute('data-proj-root');
+          }
+        }
+        rootReg = keep;
+      }
+
+      // readMatrix — the computed transform as {tx, ty, translateOnly}
+      // matrix3d (translate3d serializes as matrix3d in Chromium)
+      // collapses to translation-only when the linear part is identity.
+      function readMatrix(el) {
+        var t = '';
+        try { t = getComputedStyle(el).transform; } catch (e) {}
+        if (!t || t === 'none') return { tx: 0, ty: 0, translateOnly: true };
+        var m = /matrix3d\(([^)]+)\)/.exec(t);
+        if (m) {
+          var v3 = m[1].split(',').map(parseFloat);
+          if (v3.length === 16 &&
+              v3[0] === 1 && v3[1] === 0 && v3[4] === 0 && v3[5] === 1) {
+            return { tx: v3[12], ty: v3[13], translateOnly: true };
+          }
+          return { tx: 0, ty: 0, translateOnly: false };
+        }
+        m = /matrix\(([^)]+)\)/.exec(t);
+        if (m) {
+          var v = m[1].split(',').map(parseFloat);
+          if (v[0] === 1 && v[1] === 0 && v[2] === 0 && v[3] === 1) {
+            return { tx: v[4], ty: v[5], translateOnly: true };
+          }
+          return { tx: 0, ty: 0, translateOnly: false };
+        }
+        return { tx: 0, ty: 0, translateOnly: false };
+      }
+
+      function setVars(R, x, y) {
+        if (!R.rule) return;
+        try {
+          R.rule.style.setProperty('--proj-tx', x + 'px');
+          R.rule.style.setProperty('--proj-ty', y + 'px');
+        } catch (e) {}
+      }
+
+      // motionTick — the CHEAP path: one CSSOM var write per root.
+      // A non-translation matrix (scale/rotate) can't ride the
+      // decomposition → flag a full paint (correct, just dearer).
+      function motionTick() {
+        for (var i = 0; i < rootReg.length; i++) {
+          var R = rootReg[i];
+          var M = readMatrix(R.el);
+          if (M.translateOnly) setVars(R, -M.tx, -M.ty);
+          else { setVars(R, 0, 0); dirty = true; }
+        }
+      }
 
       function collect() {
         var sels = [];
@@ -590,41 +763,56 @@
         SEL = sels.length ? sels.join(',') : null;
       }
 
-      function transformedRoots() {
-        var out = [];
-        var roots = document.querySelectorAll(
-          '#chat-panel, #connect-overlay, .chatbot, .hub-sheet, .tpl-sheet');
-        for (var i = 0; i < roots.length; i++) {
-          var t = '';
-          try { t = getComputedStyle(roots[i]).transform; } catch (e) {}
-          if (t && t !== 'none') out.push(roots[i]);
-        }
-        return out;
+      function num(v) { return (Math.round(v * 10) / 10); }
+      function fmtCalc(varName, b) {
+        // calc(var(--proj-tx, 0px) + Bpx) with sign-aware formatting
+        return 'calc(var(' + varName + ', 0px) ' + (b < 0 ? '- ' : '+ ') +
+          Math.abs(num(b)) + 'px)';
       }
 
       function paint() {
         if (!SEL) collect();
         if (!SEL) return;
+        syncRoots();
         var vw = window.innerWidth, vh = window.innerHeight;
         var size = vw + 'px ' + vh + 'px';
-        var roots = transformedRoots();
-        var keep = [];
-        // paint every projection element inside a transformed root
-        for (var ri = 0; ri < roots.length; ri++) {
+        // ── READ PHASE (batched — no writes between reads) ────────
+        var reads = [];
+        for (var ri = 0; ri < rootReg.length; ri++) {
+          var R = rootReg[ri];
           var els;
-          try { els = roots[ri].querySelectorAll(SEL); } catch (e) { SEL = null; return; }
+          try { els = R.el.querySelectorAll(SEL); } catch (e) { SEL = null; return; }
+          var M = readMatrix(R.el);
           for (var i = 0; i < els.length; i++) {
             var el = els[i];
-            var img = getComputedStyle(el).backgroundImage;
-            if (!img || img === 'none') continue;   // a solid twin — nothing to anchor
+            if (!el.__projPainted) {
+              var img = getComputedStyle(el).backgroundImage;
+              if (!img || img === 'none') continue;   // a solid twin — nothing to anchor
+              el.__projPainted = true;
+            }
             var r = el.getBoundingClientRect();
             if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
-            var pos = (-r.left).toFixed(1) + 'px ' + (-r.top).toFixed(1) + 'px';
-            if (el.style.backgroundPosition !== pos) el.style.backgroundPosition = pos;
-            if (el.style.backgroundSize !== size) el.style.backgroundSize = size;
-            if (el.style.backgroundAttachment !== 'scroll') el.style.backgroundAttachment = 'scroll';
-            keep.push(el);
+            // the translation-invariant base: strip the root's CURRENT
+            // translation so the per-frame vars can re-add it
+            reads.push({ el: el, R: R,
+              bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
+              by: M.translateOnly ? (-r.top + M.ty) : -r.top,
+              pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' +
+                   fmtCalc('--proj-ty', M.translateOnly ? (-r.top + M.ty) : -r.top) });
           }
+        }
+        // ── WRITE PHASE (only what changed — a no-op bake writes
+        //    nothing, fires no MutationObserver, settles at once) ──
+        var keep = [];
+        for (var w = 0; w < reads.length; w++) {
+          var it = reads[w];
+          if (it.el.__projPos !== it.pos) {
+            it.el.style.backgroundPosition = it.pos;
+            it.el.__projPos = it.pos;
+          }
+          if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
+          if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
+          keep.push(it.el);
         }
         // clear every previously-painted element that lost its anchor this
         // pass — it left the transformed scopes, went offscreen, or its
@@ -636,8 +824,11 @@
           el2.style.removeProperty('background-position');
           el2.style.removeProperty('background-size');
           el2.style.removeProperty('background-attachment');
+          el2.__projPainted = false;
+          el2.__projPos = null;
         }
         painted = keep;
+        motionTick();   // the vars land current right after the bake
       }
 
       function schedule() {
@@ -645,40 +836,94 @@
       }
       function run() {
         rafId = 0;
-        if (dirty || moving > 0) { paint(); dirty = false; }
-        if (moving > 0) { moving = Math.max(0, moving - 1); schedule(); }
+        var hadRoot = movingRoot > 0;
+        if (dirty || movingLayout > 0) {
+          paint();
+          dirty = false;
+          if (movingLayout > 0) movingLayout--;
+        } else if (movingRoot > 0) {
+          motionTick();
+        }
+        if (movingRoot > 0) movingRoot--;
+        // settle: when a motion window closes, one final full paint
+        // re-validates every anchor at rest (cheap insurance — most
+        // bakes are no-ops and write nothing).
+        if (hadRoot && movingRoot === 0 && !dirty && movingLayout === 0) paint();
+        if (dirty || movingRoot > 0 || movingLayout > 0) schedule();
       }
       function mark() { dirty = true; schedule(); }
+      function motion() { movingRoot = 3; schedule(); }
+      // movingLayout — the LAYOUT window: any transition on a property
+      // that can move element boxes (grid-template-rows un-collapses,
+      // height, width…) repaints per frame while it animates; cosmetic
+      // transitions (opacity, color, box-shadow…) only mark once.
+      var MOVER_RE = /^(transform|all|grid-template-rows|grid-template-columns|height|max-height|min-height|width|max-width|min-width|top|left|right|bottom|margin[^ ]*|padding[^ ]*|flex-basis|font-size|inset[^ ]*|translate)$/;
 
       // ── the triggers ──
       if (typeof MutationObserver === 'function') {
         var mo = new MutationObserver(function (muts) {
+          var full = true;
+          // a new stylesheet re-derives the projection selector set
           for (var i = 0; i < muts.length; i++) {
-            var m = muts[i];
-            if (m.type === 'childList') {
-              for (var j = 0; j < m.addedNodes.length; j++) {
-                var n = m.addedNodes[j];
-                if (n.nodeType === 1 && (n.tagName === 'STYLE' || n.tagName === 'LINK')) {
-                  SEL = null;   // a new stylesheet — re-derive the selectors
-                }
+            var mm = muts[i];
+            if (mm.type !== 'childList') continue;
+            for (var j = 0; j < mm.addedNodes.length; j++) {
+              var nn = mm.addedNodes[j];
+              if (nn.nodeType === 1 && (nn.tagName === 'STYLE' || nn.tagName === 'LINK') &&
+                  nn.id !== 'doom-proj-vars' && nn.id !== 'doom-derived-gates') {
+                SEL = null;
               }
             }
           }
-          mark();
+          // a root's OWN style write where only transform/translate
+          // changed is the glide driver (writeY) — the motion path
+          // covers it; anything else is a real change → full paint.
+          if (muts.length && rootReg.length) {
+            full = false;
+            for (var i = 0; i < muts.length; i++) {
+              var m = muts[i];
+              if (m.type !== 'attributes' || m.attributeName !== 'style' ||
+                  !m.target || m.target.__projTracked !== true) { full = true; break; }
+              var now = m.target.getAttribute('style') || '';
+              var old = m.oldValue || '';
+              var strip = function (s) {
+                return s.replace(/(^|;)\s*(transform|translate)\s*:[^;]*/g, ';');
+              };
+              if (strip(now) !== strip(old)) { full = true; break; }
+            }
+          }
+          if (full) mark(); else motion();
         });
         mo.observe(document.documentElement, {
-          childList: true, subtree: true,
-          attributes: true, attributeFilter: ['style', 'class']
+          childList: true, subtree: true, attributes: true,
+          attributeFilter: ['style', 'class'], attributeOldValue: true
         });
+        // keep the tracked flag on registry elements current
+        var flagSync = function () {
+          for (var i = 0; i < rootReg.length; i++) rootReg[i].el.__projTracked = true;
+        };
+        var origSync = syncRoots;
+        syncRoots = function () { origSync(); flagSync(); };
       }
       document.addEventListener('scroll', mark, true);
       window.addEventListener('resize', function () { SEL = null; mark(); });
       // CSS transitions don't fire attribute mutations (computed values
       // interpolate) — the transform rides need explicit tracking.
+      // v0.74: LAYOUT properties (the un-collapse grid animations) hold
+      // the per-frame repaint window too; ROOT transforms ride motion().
       ['transitionrun', 'transitionstart'].forEach(function (ev) {
         document.addEventListener(ev, function (e) {
           var pn = (e.propertyName || '');
-          if (pn === 'transform' || pn === 'all' || pn === '') { moving = 3; mark(); }
+          var onRoot = e.target && e.target.__projTracked === true;
+          if (MOVER_RE.test(pn)) {
+            if (onRoot && (pn === 'transform' || pn === 'all' || pn === 'translate')) {
+              motion();
+            } else {
+              movingLayout = 5; mark();   // a layout animation — full repaints per frame
+            }
+          } else {
+            mark();                 // cosmetic — one repaint at the end settles it
+          }
         }, true);
       });
       ['transitionend', 'transitioncancel'].forEach(function (ev) {
@@ -687,11 +932,12 @@
 
       return {
         poke: mark,             // app.js's physics tick calls this per frame
+        motion: motion,         // v0.74: the CHEAP per-frame path (writeY rides it)
         repaint: function () { SEL = null; paint(); },
         paint: paint
       };
     })();
-    window.DoomProjection = PROJ || { poke: function(){}, repaint: function(){}, paint: function(){} };
+    window.DoomProjection = PROJ || { poke: function(){}, motion: function(){}, repaint: function(){}, paint: function(){} };
 
     // ══ v0.70 THE DERIVED GATES ════════════════════════════════════
     // The systematic half of the accuracy wave (user spec: "Just have

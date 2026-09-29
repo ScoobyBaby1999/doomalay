@@ -120,9 +120,13 @@
       // the whole screen outside the card = the leak). It now composes
       // rgba(var(--bg-panel-rgb), 0.55) — a TRANSLUCENT dark veil of the
       // CANVAS color (theme.js derives the triplet every apply), so the
-      // authentic app shows through, darkened + blurred.
+      // authentic app shows through, darkened.
+      // v0.74: the backdrop BLUR is gone (the user's overlay-effects
+      // report: "remove all these effects and just render the canvas
+      // over whatever was before") — the veil alone darkens what's
+      // behind, and a full-screen blur was one of the heaviest
+      // first-paint costs on WebView (plus its notorious clip bugs).
       'background:rgba(var(--bg-panel-rgb), 0.55);' +
-      'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
       'opacity:0;transition:opacity 0.25s ease;';
     cardEl = document.createElement('div');
     cardEl.style.cssText =

@@ -137,7 +137,17 @@
     // the region it occupied BEFORE the move, forever, until some
     // unrelated scroll or mutation happened (the "tiling issues" —
     // windows sampling regions that don't match where they sit).
-    if (window.DoomProjection) window.DoomProjection.poke();
+    // v0.74: the poke became the CHEAP motion() path — the panel is a
+    // translation-only root, so the painter just updates its
+    // --proj-tx/--proj-ty vars (one CSSOM write) and every window
+    // re-anchors in the browser's own style pass. The old full paint
+    // per frame (a getComputedStyle + getBoundingClientRect PER WINDOW
+    // per frame) was the panel-glide jank itself.
+    if (window.DoomProjection && window.DoomProjection.motion) {
+      window.DoomProjection.motion();
+    } else if (window.DoomProjection) {
+      window.DoomProjection.poke();
+    }
   }
   function writeVis(y) {
     panelEl.style.setProperty('--panel-vis-h', visForY(y) + 'px');

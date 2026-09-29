@@ -87,9 +87,10 @@
         'background:rgba(var(--ok-rgb),0.10)}' +
       // the PINNED connect row (edit A9): sticky bottom — v0.62: a real
       // THEME-GRADIENT pill (the old dashed-border row read as unthemed).
+      // v0.74: the backdrop blur is retired (the overlay-effects wave) —
+      // the fill rises to 96% so the sticky row reads over the list.
       '.wsx-conn-wrap{position:sticky;bottom:0;z-index:3;margin-top:4px;' +
-        'padding:8px 12px 10px;background:color-mix(in srgb, var(--surface-1) 92%, transparent);' +
-        'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);' +
+        'padding:8px 12px 10px;background:color-mix(in srgb, var(--surface-1) 96%, transparent);' +
         'border-top:1px solid var(--surface-2)}' +
       // v0.63: the connect pill — SMALLER HEIGHT, more polished (user spec
       // pt 2): single line, tighter gradient, a hairline inner glow.

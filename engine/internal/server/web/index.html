@@ -335,11 +335,14 @@
     font-size: var(--ui-small-fs);
     font-weight: 600;
     color: var(--text-2);
-    background: rgba(var(--bg-app-rgb, 10,10,11), 0.85);
+    background: rgba(var(--bg-app-rgb, 10,10,11), 0.92);
     padding: 2px 8px;
     border-radius: 6px;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    /* v0.74: backdrop-filter RETIRED — the user's "remove all these
+       effects" + the WebView blur bugs (see the v0.65 note) + the
+       permanent GPU cost of blurring the canvas under every bot.
+       The fill rises 0.85 → 0.92 so the pill stays legible over any
+       art without the blur. */
     white-space: nowrap;
     max-width: 80px;
     overflow: hidden;
@@ -415,7 +418,9 @@
     right: max(16px, env(safe-area-inset-right));
     width: 44px;
     height: 44px;
-    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
+    /* v0.74: the backdrop blur is gone (the overlay-effects wave) —
+       the fill carries the legibility on its own now. */
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -424,8 +429,6 @@
     cursor: pointer;
     z-index: 500;
     -webkit-tap-highlight-color: transparent;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     transition: background 0.15s, transform 0.1s;
   }
   #settings-btn:active {
@@ -459,7 +462,7 @@
     right: calc(max(16px, env(safe-area-inset-right)) + 52px); /* gear 44px + 8px gap */
     width: 44px;
     height: 44px;
-    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -472,8 +475,6 @@
     cursor: pointer;
     z-index: 500;
     -webkit-tap-highlight-color: transparent;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     transition: background 0.15s, transform 0.1s;
     font-family: inherit;
     touch-action: manipulation;
@@ -496,7 +497,7 @@
   .dock-btn {
     width: 44px;
     height: 44px;
-    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
     border: 1px solid var(--surface-3);
     border-radius: 12px;
     display: flex;
@@ -504,8 +505,6 @@
     justify-content: center;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     transition: background 0.15s, transform 0.1s;
     touch-action: manipulation;
   }
@@ -2051,8 +2050,10 @@
   #artifacts-overlay.open .art-panel { transform: translateY(0); opacity: 1; }
   .art-scrim {
     position: absolute; inset: 0;
+    /* v0.74: the full-screen blur is GONE (the user's "remove all
+       these effects and just render over whatever was before") — a
+       plain translucent veil darkens the app behind the drawer. */
     background: rgba(0,0,0,0.55);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   }
   .art-panel {
     position: absolute; left: 0; right: 0; bottom: 0; top: 6vh;
@@ -2691,8 +2692,11 @@
     position: sticky; top: 0; z-index: 6;
     display: flex; flex-direction: column; gap: 6px;
     padding: 8px 11px 6px;
-    background: color-mix(in srgb, var(--surface-1) 72%, transparent);
-    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    /* v0.74: the 12px backdrop blur is GONE — it blurred + distorted
+       the canvas and the cards scrolling under the dock on every
+       frame, one of the heaviest constant GPU costs in the library.
+       The fill rises 72% → 90% so the dock stays readable bare. */
+    background: color-mix(in srgb, var(--surface-1) 90%, transparent);
     border: 1px solid var(--surface-2);
     border-radius: 16px;
     box-shadow: 0 4px 16px rgba(var(--bg-app-rgb), 0.28);
@@ -2984,9 +2988,14 @@
     text-shadow: 0 1px 6px rgba(0,0,0,0.45);
   }
   /* v0.58 (pt 6): the inner name span — long names slowly slide across
-     (the marquee; marqueeScan measures + paints --slide-d/--slide-t). */
-  .hub-card-name-in { display: inline-block; white-space: nowrap; will-change: transform; }
+     (the marquee; marqueeScan measures + paints --slide-d/--slide-t).
+     v0.74: will-change rides the .marquee class ONLY — the always-on
+     promotion composited every card name in the library (the
+     shadow-only-names bug on WebView; see the [data-text-grad]
+     .hub-card-name-in note in the projection block). */
+  .hub-card-name-in { display: inline-block; white-space: nowrap; }
   .hub-card-name.marquee { text-overflow: clip; }
+  .hub-card-name.marquee .hub-card-name-in { will-change: transform; }
   .hub-card-name.marquee .hub-card-name-in {
     animation: hub-name-slide var(--slide-t, 6s) ease-in-out infinite alternate;
   }
@@ -3980,6 +3989,65 @@
     background-image: var(--surface-2-gradient, none);
     background-attachment: fixed;
   }
+  /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
+     User report: "Surface raised … any color that is bright looks
+     horrible." A bright surface-2 makes every Layer-3 pill a bright
+     window — the light --text-1/2 ink vanishes on it. theme.js
+     derives --on-surface-N (the --on-accent pattern) from the
+     RESOLVED solid and trips [data-bright-sN] when it's the dark ink;
+     these flips then carry the readable color. Base themes never
+     trip the gates — byte-identical rendering. No !important: an
+     element's OWN color rule still wins by source order where it
+     comes later, which is exactly the escape hatch semantic colors
+     (links, accents, warn states) need. */
+  [data-bright-s2] .app-range, [data-bright-s2] input[type=text],
+  [data-bright-s2] input[type=password], [data-bright-s2] input[type=email],
+  [data-bright-s2] input[type=number], [data-bright-s2] textarea,
+  [data-bright-s2] select, [data-bright-s2] .app-switch-track,
+  [data-bright-s2] .color-row-reset, [data-bright-s2] .err-switch,
+  [data-bright-s2] .chat-jump, [data-bright-s2] .ts-chip,
+  [data-bright-s2] .art-rename-input, [data-bright-s2] .art-sheet-input,
+  [data-bright-s2] .art-toast, [data-bright-s2] .hub-searchico,
+  [data-bright-s2] .hub-libpill, [data-bright-s2] .hub-bunch-sec-n,
+  [data-bright-s2] .hub-bunch-chip, [data-bright-s2] .hub-nav,
+  [data-bright-s2] .hp-icocell, [data-bright-s2] .hi-fab, [data-bright-s2] .hp-color,
+  [data-bright-s2] .hp-mini, [data-bright-s2] .hp-pick, [data-bright-s2] .dx-pill,
+  [data-bright-s2] .gr-color, [data-bright-s2] .gr-mini, [data-bright-s2] .crop-btn,
+  [data-bright-s2] .hp-focus-btn, [data-bright-s2] .tw-iconcell,
+  [data-bright-s2] .chat-find-chip, [data-bright-s2] .sm-ghost,
+  [data-bright-s2] #chat-send-more, [data-bright-s2] .gr-dir,
+  [data-bright-s2] .cv-input, [data-bright-s2] .cv-chip, [data-bright-s2] .cv-badge,
+  [data-bright-s2] .cv-count-chip, [data-bright-s2] .wsx-input, [data-bright-s2] .wsx-act,
+  [data-bright-s2] .wsc-brsel, [data-bright-s2] .kbd, [data-bright-s2] .pv-btn,
+  [data-bright-s2] .gr-editor, [data-bright-s2] .gr-swatches, [data-bright-s2] .gr-tools,
+  [data-bright-s2] #pe-name, [data-bright-s2] #ph-key, [data-bright-s2] #ph-val,
+  [data-bright-s2] #menu, [data-bright-s2] .settings-nav .tab, [data-bright-s2] .util-btn {
+    color: var(--on-surface-2, var(--text-1));
+    text-shadow: none;
+  }
+  /* bright Layer-2 cards: the readable ink + the dark-theme
+     text-shadow retired (a dark shadow under dark text on a bright
+     card was its own smudge artifact). */
+  [data-bright-s1] .settings-section, [data-bright-s1] .hub-card,
+  [data-bright-s1] .pv-row, [data-bright-s1] .msg-assistant,
+  [data-bright-s1] .ts-row, [data-bright-s1] .hmsg-card,
+  [data-bright-s1] .starter-chip, [data-bright-s1] .fmt-codecard,
+  [data-bright-s1] .fmt-yt, [data-bright-s1] .fmt-code, [data-bright-s1] .fmt-pre,
+  [data-bright-s1] .code-card, [data-bright-s1] .artifact-card,
+  [data-bright-s1] .art-panel, [data-bright-s1] .art-row, [data-bright-s1] .art-ed-body,
+  [data-bright-s1] .art-sheet, [data-bright-s1] .cm-s-doomalay.CodeMirror,
+  [data-bright-s1] .hp-sec, [data-bright-s1] #send-menu, [data-bright-s1] .kb-card,
+  [data-bright-s1] .cv-section, [data-bright-s1] .mb-more, [data-bright-s1] .wsx-opt {
+    color: var(--on-surface-1, var(--text-1));
+    text-shadow: none;
+  }
+  /* a bright overlay background: the overlay screens + their headers. */
+  [data-bright-bg] #connect-overlay, [data-bright-bg] .settings-section h3,
+  [data-bright-bg] #chat-header, [data-bright-bg] .pub-head-bar,
+  [data-bright-bg] .src-wrap, [data-bright-bg] .hub-wrap {
+    color: var(--on-bg-app, var(--text-1));
+    text-shadow: none;
+  }
   /* v0.72: the chatbot's METADATA pill — the name rides the OVERLAY
      field (bg-app) too: it floats over the CANVAS, and its documented
      base is rgba(--bg-app, 0.85). A live bg-app twin makes it a real
@@ -4076,7 +4144,6 @@
   [data-text-grad] .settings-section h3 span,
   [data-text-grad] .pub-title,
   [data-text-grad] .chatbot .name,
-  [data-text-grad] .hub-card-name,
   [data-text-grad] .gatelock-title,
   [data-text-grad] .panel-header .meta .name,
   [data-text-grad] .wsx-title,
@@ -4106,7 +4173,33 @@
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    -webkit-text-fill-color: transparent;
+    /* v0.74 FIX: NO -webkit-text-fill-color here — it INHERITS, so it
+       killed every child that sets its own color (the '· customized'
+       accent marker, links, code tokens: the user's "primary text…
+       paints over text that accents color, both colors try to render
+       over each other" report). color: transparent alone clips the
+       element's own glyphs; explicit-color children keep their ink —
+       exactly what the comment above always promised. */
+  }
+  /* v0.74 THE LIBRARY CARD NAMES — the marquee fix. User report:
+     "the library where the main text disappears or renders only as a
+     shadow — maybe from the scrollable text functionality". The
+     card name's INNER span (.hub-card-name-in) carried ALWAYS-ON
+     will-change:transform (the marquee), promoting it to its own
+     compositing layer — on WebView builds the parent's
+     background-clip:text can't punch through a composited child, so
+     every name in the library rendered as its text-shadow alone.
+     The window now lives on the SPAN ITSELF: its clipped background
+     and its glyphs paint (and slide) as ONE atomic unit, immune to
+     the promotion; will-change is scoped to .marquee only, so short
+     names lose the pointless layer entirely. */
+  [data-text-grad] .hub-card-name-in {
+    background-image: var(--text-1-gradient);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
   /* v0.65 HARDENING: the canvas name pill is backdrop-filtered — on some
      Chromium/WebView builds the backdrop-filter + background-clip:text
