@@ -549,7 +549,11 @@
           window.CropUI.open({
             file: f,
             aspect: 1,          // the icon column is square
-            maxEdge: 256,        // a marker, not a poster
+            // the engine's icon contract: a real PNG ≤64KB — the marker
+            // stays a marker (soft edge cap + locked format + budget)
+            maxEdge: 256,
+            maxBytes: 60 * 1024,
+            format: 'image/png',
             onDone: function (b64) {
               c.iconPNG = b64;
               c.iconSVG = '';
@@ -671,7 +675,10 @@
         window.CropUI.open({
           file: f,
           aspect: 1.5,       // the card/detail header's landscape frame
-          maxEdge: 1024,      // clarity kept — never stretched to fit
+          // the card art must be PNG (the engine's isPNG design mark);
+          // the ladder stays PNG and shrinks only if the 6MB cap looms
+          maxBytes: 5.9 * 1024 * 1024,
+          format: 'image/png',
           onDone: function (b64, meta) {
             c.pngBase64 = b64;
             rebuild();

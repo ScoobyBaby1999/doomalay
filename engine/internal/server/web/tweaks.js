@@ -921,9 +921,12 @@
               window.CropUI.open({
                 file: f,
                 aspect: 1,        // SQUARE — the avatar renders as a circle
-                maxEdge: 512,
+                // v0.77.4: the original-resolution contract — the crop
+                // keeps the source resolution; the byte budget (the
+                // engine's icon cap is 2MB) rides the encode ladder
+                maxBytes: 1.9 * 1024 * 1024,
                 onDone: function (b64, dims) {
-                  var blob = b64ToBlob(b64, 'image/png');
+                  var blob = b64ToBlob(b64, dims && dims.mime);
                   if (!blob) {
                     if (iconStatus) iconStatus.textContent = 'couldn\u2019t read that image — try another';
                     return;
@@ -1083,10 +1086,13 @@
               window.CropUI.open({
                 file: f,
                 aspect: aspect,
-                maxEdge: 1600,   // the crop comes from the ORIGINAL pixels
+                // v0.77.4: full clarity — no resolution cap; the engine's
+                // background cap is 4MB, the ladder stays under it
+                maxBytes: 3.9 * 1024 * 1024,
                 onDone: function (b64, dims) {
-                  // CropUI outputs PNG (raw base64) — a Blob for the PUT
-                  var blob = b64ToBlob(b64, 'image/png');
+                  // CropUI's crop rides its own mime (PNG or JPEG per
+                  // the ladder; the engine sniffs magic bytes anyway)
+                  var blob = b64ToBlob(b64, dims && dims.mime);
                   if (!blob) {
                     if (status) status.textContent = 'couldn\u2019t read that image — try another';
                     return;

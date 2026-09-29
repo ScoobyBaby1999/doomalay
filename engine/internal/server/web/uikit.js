@@ -1108,6 +1108,59 @@
       if (cb) cb();
     }
 
+    // v0.77.4 THE ORIGINAL-RESOLUTION CONTRACT (user spec: "let's not
+    // decompress the image if possible and keep it at the resolution it
+    // came"): the crop renders at FULL source resolution — no maxEdge
+    // downscale — and re-encodes ONCE. The format ladder honors the
+    // caller's byte budget (the engine's upload caps) in quality steps
+    // before it ever touches resolution, and only downscale-programs as
+    // the LAST resort: PNG (lossless, alpha) → JPEG 0.92 → JPEG 0.85 →
+    // progressive ×0.85 shrinks. When the frame covers the WHOLE
+    // un-rotated image the ORIGINAL bytes pass through untouched — zero
+    // recompression, the exact file the user picked.
+    function encodeLadder(cv, budget, lockMime) {
+      // lockMime ("image/png") — the hub publish contract: icons + card
+      // art must BE PNG (the engine validates the magic bytes and the
+      // 64KB icon cap); the ladder stays on the locked format and can
+      // only shrink, never re-format.
+      var tries = (lockMime === 'image/png')
+        ? [{ mime: 'image/png', q: null }]
+        : [
+            { mime: 'image/png', q: null },
+            { mime: 'image/jpeg', q: 0.92 },
+            { mime: 'image/jpeg', q: 0.85 }
+          ];
+      var best = null, i;
+      var over = function (url) { return !!budget && (url.length * 0.75) > budget; };
+      for (i = 0; i < tries.length; i++) {
+        var url = '';
+        try {
+          url = (tries[i].q == null) ? cv.toDataURL(tries[i].mime)
+                                     : cv.toDataURL(tries[i].mime, tries[i].q);
+        } catch (e) { url = ''; }
+        if (url && url.indexOf('base64,') >= 0) {
+          best = { url: url, mime: tries[i].mime };
+          if (!over(url)) return best;
+        }
+      }
+      // still over budget — shrink reluctantly, quality first
+      var k = 1;
+      while (best && over(best.url) && k > 0.4) {
+        k *= 0.85;
+        var c2 = document.createElement('canvas');
+        c2.width = Math.max(1, Math.round(cv.width * k));
+        c2.height = Math.max(1, Math.round(cv.height * k));
+        c2.getContext('2d').drawImage(cv, 0, 0, c2.width, c2.height);
+        try {
+          best = { url: (lockMime === 'image/png') ? c2.toDataURL('image/png')
+                                                   : c2.toDataURL('image/jpeg', 0.85),
+                   mime: lockMime || 'image/jpeg' };
+        }
+        catch (e) { break; }
+      }
+      return best;
+    }
+
     function apply() {
       if (!st || !st.img) return;
       var f = st.frame;                 // the frame rect (CSS px)
@@ -1116,22 +1169,65 @@
       var sy = Math.max(0, Math.min(st.nat.h, -st.y / s));
       var sw = Math.min(st.nat.w - sx, f.w / s);
       var sh = Math.min(st.nat.h - sy, f.h / s);
-      var out = Math.min(1, st.maxEdge / Math.max(sw, sh));
-      var cw = Math.max(1, Math.round(sw * out));
-      var ch = Math.max(1, Math.round(sh * out));
-      var cv = document.createElement('canvas');
-      cv.width = cw; cv.height = ch;
-      cv.getContext('2d').drawImage(st.img, sx, sy, sw, sh, 0, 0, cw, ch);
-      var dataURL;
-      try { dataURL = cv.toDataURL('image/png'); } catch (e) { dataURL = ''; }
-      if (!dataURL || dataURL.indexOf('base64,') < 0) {
-        if (st.onErr) st.onErr('could not encode the crop');
-        return;
+      // capture everything the async passthrough needs NOW — the user
+      // can cancel while the FileReader is in flight (st goes null)
+      var S = {
+        img: st.img, nat: { w: st.nat.w, h: st.nat.h },
+        rot: st.rot || 0, srcBlob: st.srcBlob || null,
+        maxBytes: st.maxBytes || 0, maxEdge: st.maxEdge || 0,
+        format: st.format || '',
+        onDone: st.onDone, onErr: st.onErr
+      };
+      // v0.77.4: the PASSTHROUGH — an un-rotated (mod 360°) crop that
+      // covers the whole source is the original file, byte for byte
+      // (a format lock still re-encodes: the engine's PNG contract)
+      var full = ((S.rot % 4) === 0 && S.srcBlob &&
+        (!S.format || S.srcBlob.type === S.format) &&
+        sx <= 0.5 && sy <= 0.5 && sw >= S.nat.w - 0.5 && sh >= S.nat.h - 0.5);
+      var done = function (b64, w, h, mime) {
+        if (!st) return;                 // canceled mid-flight — no callback
+        var cb = S.onDone;
+        close();
+        if (cb) cb(b64, { width: w, height: h, mime: mime || 'image/png' });
+      };
+      var encodeAndDone = function () {
+        if (!st) return;                 // canceled mid-FileReader
+        var cw = Math.max(1, Math.round(sw));
+        var ch = Math.max(1, Math.round(sh));
+        // a soft edge cap survives for callers that NEED one (the hub
+        // icon's 64KB PNG contract); the default path ignores it
+        var softCap = S.maxEdge || 0;
+        if (softCap > 0 && Math.max(sw, sh) > softCap) {
+          var kk = softCap / Math.max(sw, sh);
+          cw = Math.max(1, Math.round(sw * kk));
+          ch = Math.max(1, Math.round(sh * kk));
+        }
+        var cv = document.createElement('canvas');
+        cv.width = cw; cv.height = ch;
+        cv.getContext('2d').drawImage(S.img, sx, sy, sw, sh, 0, 0, cw, ch);
+        var enc = encodeLadder(cv, S.maxBytes, S.format || '');
+        if (!enc) {
+          if (S.onErr) S.onErr('could not encode the crop');
+          return;
+        }
+        done(enc.url.slice(enc.url.indexOf('base64,') + 7), cw, ch, enc.mime);
+      };
+      if (full) {
+        var fr = new FileReader();
+        fr.onload = function () {
+          var u = String(fr.result || '');
+          var at = u.indexOf('base64,');
+          if (at >= 0) {
+            done(u.slice(at + 7), S.nat.w, S.nat.h,
+              (S.srcBlob && S.srcBlob.type) || 'image/png');
+          } else {
+            encodeAndDone();   // unreadable → the normal path
+          }
+        };
+        fr.onerror = encodeAndDone;
+        try { fr.readAsDataURL(S.srcBlob); return; } catch (e) { /* fall through */ }
       }
-      var b64 = dataURL.slice(dataURL.indexOf('base64,') + 7);
-      var cb = st.onDone;
-      close();
-      if (cb) cb(b64, { width: cw, height: ch });
+      encodeAndDone();
     }
 
     // position + clamp the image under the frame
@@ -1173,11 +1269,12 @@
       place();
     }
 
-    // rotate 90° ↻ — baked into the SOURCE bitmap so apply() crops
-    // the rotated pixels at full fidelity (the canvas IS a valid
-    // CanvasImageSource, so no load wait: st.nat swaps immediately
-    // and measure()+reset() reflow the frame; the <img> only needs a
-    // display copy of the dataURL)
+    // rotate 90° ↻ — v0.77.4: the rotation bakes into a FULL-FIDELITY
+    // canvas (the crop source — zero re-encode; the old path baked a
+    // JPEG 0.9 copy and every rotate cost a lossy generation BEFORE the
+    // crop even ran). The <img> display copy is a small JPEG of that
+    // canvas (≤720px — preview-only, never the output). st.rot counts
+    // quarter-turns so apply() knows the passthrough is off.
     function rotate90() {
       if (!st || !st.img) return;
       var w = st.nat.h, h = st.nat.w;    // dimensions swap
@@ -1187,9 +1284,20 @@
       ctx.translate(w / 2, h / 2);
       ctx.rotate(Math.PI / 2);           // 90° clockwise
       ctx.drawImage(st.img, -st.nat.w / 2, -st.nat.h / 2);
-      var dataURL = '';
-      try { dataURL = cv.toDataURL('image/jpeg', 0.9); } catch (e) { dataURL = ''; }
-      if (!dataURL || dataURL.indexOf('base64,') < 0) {
+      var disp = '';
+      try {
+        var k = Math.min(1, 720 / Math.max(w, h));
+        if (k < 1) {
+          var dc = document.createElement('canvas');
+          dc.width = Math.max(1, Math.round(w * k));
+          dc.height = Math.max(1, Math.round(h * k));
+          dc.getContext('2d').drawImage(cv, 0, 0, dc.width, dc.height);
+          disp = dc.toDataURL('image/jpeg', 0.85);
+        } else {
+          disp = cv.toDataURL('image/jpeg', 0.85);
+        }
+      } catch (e) { disp = ''; }
+      if (!disp) {
         if (st.onErr) st.onErr('could not rotate');
         return;
       }
@@ -1197,9 +1305,10 @@
         try { URL.revokeObjectURL(st.url); } catch (e) {}
         st.url = '';
       }
-      st.img = cv;                       // apply() draws from this
+      st.img = cv;                       // apply() draws from this — lossless
+      st.rot = (st.rot || 0) + 1;
       st.nat = { w: w, h: h };
-      st.imgEl.src = dataURL;            // display-only copy
+      st.imgEl.src = disp;               // display-only preview
       measure();
       reset();
     }
@@ -1213,7 +1322,16 @@
         st = {
           el: null, img: img, url: url || '',
           nat: { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height },
-          aspect: aspect, maxEdge: opts.maxEdge || 1024,
+          aspect: aspect,
+          // v0.77.4: maxEdge is now a SOFT cap callers may opt into (the
+          // hub icon's 64KB PNG marker contract); maxBytes is the wire
+          // budget the encode ladder honors (quality first, resolution
+          // LAST); format locks the ladder when the server demands PNG
+          maxEdge: opts.maxEdge || 0,
+          maxBytes: opts.maxBytes || 0,
+          format: opts.format || '',
+          rot: 0,
+          srcBlob: opts.file || opts.blob || null,
           zoom: 1, x: 0, y: 0, frame: { w: 0, h: 0 }, cover: 1,
           onDone: opts.onDone || null, onCancel: opts.onCancel || null,
           onErr: opts.onErr || null
@@ -1386,8 +1504,15 @@
       };
       stage.addEventListener('pointerup', release);
       stage.addEventListener('pointercancel', release);
-      stage.addEventListener('pointerout', release);
-      stage.addEventListener('pointerleave', release);
+      // v0.77.4 THE DEAD-DRAG FIX: pointerout/pointerleave are GONE.
+      // pointerdown calls setPointerCapture(stage) — per the Pointer
+      // Events spec the browser then fires a pointerout at the PREVIOUS
+      // target (.crop-img) which BUBBLES to the stage, and the old
+      // listeners released the pointer IMMEDIATELY after down: every
+      // pointermove hit the untracked-hover guard and drag never moved
+      // (mouse or touch; only the zoom slider worked — the user's exact
+      // report). With capture held, up/cancel are the only releases
+      // that matter (the W3C evCache pattern).
 
       document.addEventListener('keydown', onKey, true);
       st._onResize = function () { if (st) { measure(); reset(); } };
