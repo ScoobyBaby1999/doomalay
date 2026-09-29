@@ -136,19 +136,35 @@
     // ── v0.75 THE AMPLIFIER (user spec: rename the slider, REPLACE the
     // method — the v0.67 differential lag "makes it worse not better
     // visually"; at 0 the default behavior is untouched) ──
-    // v0.77 THE VISIBILITY REWORK (user spec: "not very noticeable, change
-    // method again or make it more noticeable"): the v0.75 stack painted
-    // sub-pixel stars (r ≈ 0.45px) and only slowed the backdrop 0.35→0.20
-    // — real depth, beneath perception. The amplifier now builds a
-    // THREE-LAYER stack with real contrast:
-    //   · NEAR — a sparse foreground of big soft-glow orbs riding pan
-    //     factor 1.6 (FASTER than the lattice: foreground parallax, the
-    //     strongest depth cue; ~6-8 per viewport);
-    //   · MID — medium stars at 0.5 (half the lattice's speed);
-    //   · FAR — a dense field of small stars at 0.16 (nearly pinned);
-    //   · the backdrop camera slows 0.35 → 0.08 at full amp.
-    // The lattice itself stays ONE FLAT PLANE at pan factor 1 (amp 0 is
-    // still the byte-identical default: zero stars, camera 0.35).
+    // v0.77.9 THE SIZE-DEPTH LATTICE (user spec: "upping the parallax
+    // should not just spawn big circles in random positions… it should
+    // detect programatically and deterministically using our animate
+    // and size and scale random settings and make larger circles and
+    // lines appear closer then everything, even icons, and the smaller
+    // they get the further they look in parallax. So instead of hard
+    // coding it, make it so that it depends on the user settings, where
+    // biggest dots and lines parallax the furthest and smallest ones
+    // parallax the least. The current effect and method is nice, I like
+    // it, but I just would like it to use the user settings instead of
+    // hard coding the parallax dots and lines."). The v0.77 spawned
+    // starfield (FAR/MID/NEAR orbs at hardcoded pan factors) is GONE;
+    // the depth now derives from the LATTICE'S OWN elements:
+    //   · each dot's size hash (the user's size-variation + bias warp)
+    //     picks its depth band — 5 bands, far→near;
+    //   · each LINE's width hash picks the line's band (its segments
+    //     ride together — a line stays coherent);
+    //   · band k rides pan factor 1 + amp·(0.25 + 0.75·spread_k),
+    //     spread ∈ [-0.85, +0.65] — at full amp the pf range is
+    //     [0.61, 1.74]: the biggest dots move FASTER than the icons
+    //     (pf > 1, in front), the smallest nearly pin (pf < 1, behind);
+    //   · uniform sizes (variation off) = the mid plane (pf ≈ 1.18 at
+    //     full amp) — the whole lattice floats, no fake stars;
+    //   · the biggest elements keep the soft-glow halo + light-lifted
+    //     tone of the v0.77 stack (the look the user likes) — on the
+    //     USER'S OWN dots, not spawned circles;
+    //   · the backdrop camera still slows 0.35 → 0.08 at full amp.
+    // amp 0 is the byte-identical single-plane default (ONE band,
+    // pf exactly 1, no filter, zero glow).
     var amp = (typeof st.spaceParallax === 'number') ? st.spaceParallax : 0;
     amp = Math.max(0, Math.min(100, amp)) / 100;
     var hideLines = !!st.hideGridLines;
@@ -192,7 +208,7 @@
     // v0.75 ANIMATE: the ambient clock (stable per-element phases come
     // from the hashes — no per-dot state, no drift).
     var animT = performance.now() / 1000;
-    var dbgStars = 0, dbgDots = 0, dbgSegs = 0;
+    var dbgDots = 0, dbgSegs = 0;
 
     const scaledGrid = gridSpacing() * scale;
     // v0.75: ONE frame — the lattice never lags (the v0.67 per-plane
@@ -213,69 +229,35 @@
       return ((h >>> 0) % 1000000) / 1000000;
     }
 
-    // ── v0.77 THE AMPLIFIER'S THREE-LAYER STARFIELD ──
-    // (pf, cellMul, rMul, gate, aBase, glow, salt) — declared at function
-    // scope so the far/mid layers can paint BEFORE the lattice (true
-    // depth: behind the lines) and the near layer after the dots
-    // (foreground). Anchored per-layer with stable hashes — no shimmer
-    // while sliding. Density rides the amplification; amp 0 draws nothing.
-    // Hidden with the dots (the starfield is dots-family). The NEAR orbs
-    // paint a LIGHT-LIFTED dot color (shadeHex +0.42 toward white — still
-    // the theme's palette, just catching the light: on the default
-    // midnight the raw dot color is #2e2e3a on #0a0a0b and a literal
-    // read is invisible; the VLM red-team caught exactly that).
-    function starLayer(pf, cellMul, rMul, gate, aBase, glow, salt) {
-      var sGrid = scaledGrid * cellMul;
-      var sx0 = ((-offsetX * scale * pf) % sGrid + sGrid) % sGrid;
-      var sy0 = ((-offsetY * scale * pf) % sGrid + sGrid) % sGrid;
-      var starR = Math.max(0.4, dotRBase * rMul);
-      var baseFill = null;
-      if (glow) {
-        // the near layer's lifted tone: the current fill (pattern sample or
-        // the theme solid) lightened 42% toward white
-        try {
-          var cur = ctx.fillStyle;
-          var mHex = /^#([0-9a-fA-F]{6})$/.exec(String(typeof cur === 'string' ? cur : ''));
-          if (mHex) baseFill = shadeHex(cur, 0.42);
-        } catch (e) {}
-      }
-      for (let x = sx0; x < W; x += sGrid) {
-        for (let y = sy0; y < H; y += sGrid) {
-          var six = Math.round((x + offsetX * scale * pf) / sGrid);
-          var siy = Math.round((y + offsetY * scale * pf) / sGrid);
-          var hq = hashCell(six * 3 + salt, siy * 3 - salt);
-          if (hq >= amp * gate) continue; // density rides the amplification
-          var fx = x + (hashCell(six + salt, siy) - 0.5) * sGrid * 0.9;
-          var fy = y + (hashCell(six, siy + salt) - 0.5) * sGrid * 0.9;
-          var rr = starR * (0.6 + 0.8 * hashCell(six + 2, siy + 2 + salt));
-          if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
-          if (glow && baseFill) ctx.fillStyle = baseFill;
-          ctx.globalAlpha = aBase + 0.18 * hashCell(six + 1 + salt, siy + 1);
-          if (glow && rr >= 1.6) {
-            // the near orbs: a soft halo (color → transparent) under the
-            // solid core — reads as close dust catching the light.
-            try {
-              var hg = ctx.createRadialGradient(fx, fy, rr * 0.35, fx, fy, rr * 2.6);
-              hg.addColorStop(0, ctx.fillStyle);
-              hg.addColorStop(1, 'rgba(0,0,0,0)');
-              ctx.globalAlpha *= 0.55;
-              ctx.beginPath();
-              ctx.arc(fx, fy, rr * 2.6, 0, Math.PI * 2);
-              ctx.fillStyle = hg;
-              ctx.fill();
-              ctx.globalAlpha = aBase + 0.18 * hashCell(six + 1 + salt, siy + 1);
-              if (dotSampler) ctx.fillStyle = dotSampler(fx, fy);
-              if (baseFill) ctx.fillStyle = baseFill;
-            } catch (e) {}
-          }
-          ctx.beginPath();
-          ctx.arc(fx, fy, rr, 0, Math.PI * 2);
-          ctx.fill();
-          dbgStars++;
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
+    // ── v0.77.9 THE DEPTH-BAND MACHINERY ─────────────────────────────
+    // BANDS planes, far → near; the biggest elements ride the LAST band.
+    // Deterministic: membership comes from the stable per-cell size
+    // hashes (the same ones that size the elements), so nothing shimmers
+    // or respawns while sliding — the v0.77 stack's random spawns are
+    // gone entirely.
+    var AMP_BANDS = 5;
+    var bandSpread = function (k) { return -0.85 + 1.5 * (k / (AMP_BANDS - 1)); };
+    var bandPF = function (k) { return 1 + amp * (0.25 + 0.75 * bandSpread(k)); };
+    // the plane starts: each band wraps its own modulo (the starLayer
+    // pattern — self-consistent infinite planes at their own pf)
+    var bandStart = function (off, pf, grid) {
+      return ((-off * scale * pf) % grid + grid) % grid;
+    };
+    // membership: the depth rides the SAME hash that sizes the element
+    // (uniform sizes → the mid plane, no spread to fake)
+    var depthT = function (h, sizeFrac) { return sizeFrac > 0.02 ? h : 0.5; };
+    var bandOf = function (t) {
+      var k = Math.floor(t * AMP_BANDS);
+      return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k);
+    };
+    // the near-band glow: the light-lifted tone + the soft halo (the
+    // v0.77 look) on the USER'S OWN biggest dots — never spawned ones
+    var glowFill = null;
+    try {
+      var curFill = ctx.fillStyle;
+      var mHex2 = /^#([0-9a-fA-F]{6})$/.exec(String(typeof curFill === 'string' ? curFill : ''));
+      if (mHex2) glowFill = shadeHex(curFill, 0.42);
+    } catch (e) {}
 
     // the dot color + pattern sampler (v0.77: hoisted to function scope —
     // the amplifier's far/mid star layers sample the same field, and they
@@ -316,13 +298,16 @@
       return { off: dir * dist * travel, spd: Math.exp(k * (s - 1)) };
     }
 
-    // the FAR + MID layers paint BEHIND the lattice (true far planes)
-    if (!hideDots && amp > 0) {
-      starLayer(0.16, 1.65, 0.62, 0.42, 0.48, false, 211);   // FAR — dense, pinned
-      starLayer(0.50, 2.20, 1.15, 0.50, 0.68, false, 113);   // MID — half speed
-    }
-
+    // v0.77.9: the line passes run PER BAND (far → near); amp 0 is the
+    // single unfiltered plane (pf exactly 1 — byte-identical default).
+    var lineBands = amp > 0 ? AMP_BANDS : 1;
+    var dbgLineBands = [];
     if (!hideLines) {
+     for (var lb = 0; lb < lineBands; lb++) {
+      var lPF = lineBands === 1 ? 1 : bandPF(lb);
+      var lStartX = lineBands === 1 ? startX : bandStart(offsetX, lPF, scaledGrid);
+      var lStartY = lineBands === 1 ? startY : bandStart(offsetY, lPF, scaledGrid);
+      var lBandN = 0;
       var lineSpec = specs && specs.lineColor;
       var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
       ctx.strokeStyle = gridPaint(lineSpec, lineFallback);
@@ -346,9 +331,13 @@
       // neighbors and still reads continuous).
       var segMode = sizeFracL > 0 || animLines;
       var baseSegLen = scaledGrid * 1.35;
-      for (let x = startX; x < W; x += scaledGrid) {
+      for (let x = lStartX; x < W; x += scaledGrid) {
         // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
-        var ix = Math.round((x + offsetX * scale) / scaledGrid);
+        var ix = Math.round((x + offsetX * scale * lPF) / scaledGrid);
+        // v0.77.9: the line's depth band rides its WIDTH hash — the
+        // whole line (all its segments) stays one coherent plane
+        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(ix, 2)), sizeFracL)) !== lb) continue;
+        lBandN++;
         var h1 = hashCell(ix, 0);
         var dx = scatterPxL * (h1 - 0.5) * 2;
         var rot = rotDegL * (hashCell(ix, 1) - 0.5) * 2;  // radians
@@ -364,8 +353,8 @@
           ctx.lineTo(0, H);
           ctx.stroke();
         } else {
-          for (let y = startY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
-            var iyS = Math.round((y + offsetY * scale) / scaledGrid);
+          for (let y = lStartY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
+            var iyS = Math.round((y + offsetY * scale * lPF) / scaledGrid);
             // v0.77: in animate mode (with size variation off) the dash
             // gets its own random length and width — the user's
             // "shrinking them by width or height or both at random
@@ -409,8 +398,11 @@
         ctx.restore();
         lineIdx++;
       }
-      for (let y = startY; y < H; y += scaledGrid) {
-        var iy = Math.round((y + offsetY * scale) / scaledGrid);
+      for (let y = lStartY; y < H; y += scaledGrid) {
+        var iy = Math.round((y + offsetY * scale * lPF) / scaledGrid);
+        // v0.77.9: the horizontal line's band rides its width hash
+        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(2, iy)), sizeFracL)) !== lb) continue;
+        lBandN++;
         var h2 = hashCell(0, iy);
         var dy = scatterPxL * (h2 - 0.5) * 2;
         var rot2 = rotDegL * (hashCell(1, iy) - 0.5) * 2;
@@ -426,8 +418,8 @@
           ctx.lineTo(W, 0);
           ctx.stroke();
         } else {
-          for (let x2 = startX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
-            var ixS = Math.round((x2 + offsetX * scale) / scaledGrid);
+          for (let x2 = lStartX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
+            var ixS = Math.round((x2 + offsetX * scale * lPF) / scaledGrid);
             // v0.77: the shooting-star twin of the vertical block —
             // separated random dash lengths + widths in animate mode
             // (with the v0.73 ±170% floor riding the size-variation path,
@@ -458,25 +450,38 @@
         }
         ctx.restore();
       }
+      dbgLineBands.push(lBandN);
+     }
     }
 
+    // v0.77.9: the dot passes run PER BAND (far → near); amp 0 is the
+    // single unfiltered plane (pf exactly 1 — byte-identical default).
+    var dotBands = amp > 0 ? AMP_BANDS : 1;
+    var dbgDotBands = [];
     if (!hideDots) {
+     for (var db = 0; db < dotBands; db++) {
+      var dPF = dotBands === 1 ? 1 : bandPF(db);
+      var dStartX2 = dotBands === 1 ? dStartX : bandStart(offsetX, dPF, scaledGrid);
+      var dStartY2 = dotBands === 1 ? dStartY : bandStart(offsetY, dPF, scaledGrid);
+      var dBandN = 0;
       ctx.fillStyle = gridPaint(dotSpec, dotFallback);
       // v0.54: pattern-aware per-dot sampling — each dot picks its color
       // from the SAME gradient/pattern field the background paints
       // (sweeps, mesh spots, checker cells, stripe bands, ray sectors…),
       // world-anchored so panning slides the palette through the lattice
-      // without shimmer. (dotSpec/dotSampler live at function scope since
-      // v0.76 — the star layers share them.)
+      // without shimmer. (dotSpec/dotSampler live at function scope.)
       const dotR = dotRBase;
-      for (let x = dStartX; x < W; x += scaledGrid) {
-        for (let y = dStartY; y < H; y += scaledGrid) {
+      for (let x = dStartX2; x < W; x += scaledGrid) {
+        for (let y = dStartY2; y < H; y += scaledGrid) {
           // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
-          var dix = Math.round((x + offsetX * scale) / scaledGrid);
-          var diy = Math.round((y + offsetY * scale) / scaledGrid);
+          var dix = Math.round((x + offsetX * scale * dPF) / scaledGrid);
+          var diy = Math.round((y + offsetY * scale * dPF) / scaledGrid);
           var hd = hashCell(dix, diy);
           // v0.75: the size hash is BIAS-WARPED (favor larger/smaller).
           var hd2 = warpD(hashCell(dix + 7, diy + 7));
+          // v0.77.9: the SIZE picks the DEPTH — biggest = closest
+          if (dotBands > 1 && bandOf(depthT(hd2, sizeFracD)) !== db) continue;
+          dBandN++;
           var jx = scatterPxD * (hd - 0.5) * 2;
           var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
           var jr = dotR * (1 + sizeFracD * (hd2 - 0.5) * 2);
@@ -501,8 +506,30 @@
             tox = Math.cos(orA) * orR; toy = Math.sin(orA) * orR;
           }
           if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
+          // v0.77.9: the near band's BIGGEST dots catch the light — the
+          // v0.77 glow look on the user's own elements (a halo under the
+          // core + the light-lifted tone), never spawned circles
+          var nearGlow = dotBands > 1 && db === AMP_BANDS - 1 &&
+            jr >= dotRBase * 1.6 && glowFill;
+          if (nearGlow) ctx.fillStyle = glowFill;
           ctx.save();
           if (tal < 1) ctx.globalAlpha = tal;
+          if (nearGlow && jr >= 1.6) {
+            try {
+              var hg2 = ctx.createRadialGradient(x + jx + tox, y + jy + toy, jr * 0.35, x + jx + tox, y + jy + toy, jr * 2.6);
+              hg2.addColorStop(0, ctx.fillStyle);
+              hg2.addColorStop(1, 'rgba(0,0,0,0)');
+              var ga = ctx.globalAlpha;
+              ctx.globalAlpha = ga * 0.55;
+              ctx.beginPath();
+              ctx.arc(x + jx + tox, y + jy + toy, jr * 2.6, 0, Math.PI * 2);
+              ctx.fillStyle = hg2;
+              ctx.fill();
+              ctx.globalAlpha = ga;
+              if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
+              if (glowFill) ctx.fillStyle = glowFill;
+            } catch (e) {}
+          }
           ctx.translate(x + jx + tox, y + jy + toy);
           if (jrot) ctx.rotate(jrot * Math.PI / 180);
           ctx.beginPath();
@@ -512,13 +539,8 @@
           dbgDots++;
         }
       }
-      // ── v0.77 THE AMPLIFIER'S NEAR LAYER ──
-      // A sparse FOREGROUND of big soft-glow orbs riding pan factor 1.6 —
-      // FASTER than the lattice, the strongest depth cue (close dust), in
-      // a light-lifted tone so they actually READ on dark themes.
-      if (amp > 0) {
-        starLayer(1.6, 4.0, 4.2, 0.55, 0.92, true, 307);
-      }
+      dbgDotBands.push(dBandN);
+     }
     }
 
     const o = worldToScreen(0, 0);
@@ -529,8 +551,11 @@
       ctx.fill();
     }
     // v0.75: the honest instrument — the suite's parallax proof and any
-    // future red-team read the last frame's counters (stars/dots/segs).
-    window.DoomalayDebug = { stars: dbgStars, dots: dbgDots, segs: dbgSegs, amp: amp };
+    // future red-team read the last frame's counters. v0.77.9: stars is
+    // always 0 (the spawned starfield is retired); the per-band counts +
+    // pan factors carry the size-depth contract.
+    window.DoomalayDebug = { stars: 0, dots: dbgDots, segs: dbgSegs, amp: amp,
+      dotBands: dbgDotBands, lineBands: dbgLineBands };
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────

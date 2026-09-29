@@ -496,18 +496,21 @@ if phase_allowed p20; then
   sleep 0.4
 fi
 
-# p21 — v0.75 THE AMPLIFIER: the parallax proof, new contract. The
-#     v0.67 differential lag (lines sliding against dots) is DELETED —
-#     the lattice is one flat plane. The proof now asserts: (1) at
-#     amplify 100 the STARFIELD exists (DoomalayDebug.stars > 0) and the
-#     lattice shifts FLAT (lineShift == dotShift == the pan, mod 48);
-#     (2) at amplify 0 the stars vanish (stars == 0) — the default is
-#     untouched. Measured by pixel-fold analysis + the honest counters.
+# p21 — v0.77.9 THE SIZE-DEPTH LATTICE: the amplifier's new contract.
+#     The spawned starfield is RETIRED (the user's spec: depth derives
+#     from THEIR dots + lines via the size settings, never random
+#     spawns). The proof asserts: (1) at amplify 100 + size variation
+#     the FIVE depth bands are populated (DoomalayDebug.dotBands, all
+#     non-zero, sum == dots) with ZERO spawned stars; (2) at amplify 0
+#     the single-plane default (one band, stars == 0). The pixel-fold
+#     flat-lattice check is retired with the starfield — depth now
+#     DELIBERATELY differentiates the shifts (biggest dots move most).
 if phase_allowed p21; then
-  echo "── p21 the amplifier (flat lattice + starfield)"
+  echo "── p21 the amplifier (size-depth lattice)"
   nav home
-  ev "Settings.setState({spaceParallax:100})" >/dev/null; sleep 0.4
-  shot p21 home-before
+  ev "Settings.setState({spaceParallax:100, dotSizeVariation:70, lineSizeVariation:70})" >/dev/null; sleep 0.6
+  shot p21 depth-on
+  DEPTH_ON=$(ev "JSON.stringify(window.DoomalayDebug||{})")
   ev "(function(){
     var c=document.getElementById('c');
     function fire(t,x,y){c.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));}
@@ -516,63 +519,30 @@ if phase_allowed p21; then
     fire('mouseup',100,420);
   })(); 'panned'" >/dev/null
   sleep 2.2
-  shot p21 home-after
-  STARS_ON=$(ev "JSON.stringify(window.DoomalayDebug||{})")
-  ev "Settings.setState({spaceParallax:0})" >/dev/null; sleep 0.4
-  STARS_OFF=$(ev "JSON.stringify(window.DoomalayDebug||{})")
-  python3 - "$OUT/p21__home-before.png" "$OUT/p21__home-after.png" "$STARS_ON" "$STARS_OFF" <<'PYPLL' >> "$OUT/manifest.ndjson"
+  shot p21 depth-panned
+  ev "Settings.setState({spaceParallax:0, dotSizeVariation:0, lineSizeVariation:0})" >/dev/null; sleep 0.6
+  DEPTH_OFF=$(ev "JSON.stringify(window.DoomalayDebug||{})")
+  python3 - "$DEPTH_ON" "$DEPTH_OFF" <<'PYPLL' >> "$OUT/manifest.ndjson"
 import sys, json
 try:
-    from PIL import Image
-    b = Image.open(sys.argv[1]).convert('RGB'); a = Image.open(sys.argv[2]).convert('RGB')
-    stars_on = json.loads(sys.argv[3] or '{}')
-    stars_off = json.loads(sys.argv[4] or '{}')
-    W, H = b.size
-    def line_shift(y):
-        def xs(img):
-            out, run = [], None
-            bg = sum(img.getpixel((10, y)))
-            for x in range(W):
-                if sum(img.getpixel((x, y))) > bg + 12:
-                    run = [x, x] if run is None else [run[0], x]
-                else:
-                    if run: out.append((run[0]+run[1])//2)
-                    run = None
-            if run: out.append((run[0]+run[1])//2)
-            return out
-        xb, xa = xs(b), xs(a)
-        if not xb or not xa: return None
-        return (xa[0] - xb[0]) % 48
-    def dot_shift(y):
-        def cols(img):
-            out = [x for x in range(2, W-2) if sum(img.getpixel((x, y))) > 100]
-            g = []
-            for x in out:
-                if g and x - g[-1][-1] <= 2: g[-1].append(x)
-                else: g.append([x])
-            return [sum(q)//len(q) for q in g]
-        cb, ca = cols(b), cols(a)
-        if not cb or not ca: return None
-        return (ca[0] - cb[0]) % 48
-    ls = next((s for s in (line_shift(y) for y in (100, 300, 500)) if s is not None), None)
-    ds = next((s for s in (dot_shift(y) for y in (335, 383, 431, 479)) if s is not None), None)
-    stars_high = int(stars_on.get('stars', 0) or 0)
-    stars_zero = int(stars_off.get('stars', 0) or 0)
-    def _near(a, b, tol=1):  # mod-48 fold centroids carry ±1px noise
-        return a is not None and b is not None and min(abs(a-b), 48-abs(a-b)) <= tol
+    on = json.loads(sys.argv[1] or '{}')
+    off = json.loads(sys.argv[2] or '{}')
+    bands = on.get('dotBands') or []
+    line_bands = on.get('lineBands') or []
+    stars_on = int(on.get('stars', 0) or 0)
+    stars_off = int(off.get('stars', 0) or 0)
+    off_bands = off.get('dotBands') or []
+    depth_ok = (len(bands) == 5 and all(b > 0 for b in bands) and
+                sum(bands) == int(on.get('dots', 0) or 0) and len(line_bands) == 5)
+    default_ok = (stars_off == 0 and len(off_bands) == 1)
     verdict = 'INCONCLUSIVE'
-    if stars_high > 0 and stars_zero == 0 and _near(ls, ds):
-        verdict = 'PARALLAX_CONFIRMED'   # stars ON at 100, OFF at 0, lattice flat
-    elif ls is not None and ds is not None and not _near(ls, ds):
-        verdict = 'LAG_SUSPECTED'        # the v0.67 shimmer crept back
-    print(json.dumps({"kind":"parallax","phase":"p21","lineShiftMod48":ls,"dotShiftMod48":ds,
-                      "starsAt100":stars_high,"starsAt0":stars_zero,"verdict":verdict}))
+    if depth_ok and stars_on == 0 and default_ok:
+        verdict = 'SIZE_DEPTH_CONFIRMED'   # 5 populated bands, no spawns, the default intact
+    print(json.dumps({"kind":"parallax","phase":"p21","dotBands":bands,"lineBands":line_bands,
+                      "starsAt100":stars_on,"starsAt0":stars_off,"verdict":verdict}))
 except Exception as e:
-    print(json.dumps({"kind":"parallax","phase":"p21","error":str(e)}))
+    print(json.dumps({"kind":"parallax","phase":"p21","error":str(e)[:120]}))
 PYPLL
-  # reset the pan (the next phases need the icon on-screen)
-  ev "(function(){var s=JSON.parse(localStorage.getItem('doomalay.state.v2')||'{}');s.offset={x:0,y:0};localStorage.setItem('doomalay.state.v2',JSON.stringify(s));})(); 'reset'" >/dev/null
-  ab reload >/dev/null; sleep 1.5
 fi
 
 # ── assemble the manifest ────────────────────────────────────────
