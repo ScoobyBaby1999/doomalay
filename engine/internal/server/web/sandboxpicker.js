@@ -291,7 +291,8 @@
         '</div>' +
         '<div class="hf-age-note">paste it in <b>“use a public space”</b> below — or use the one-tap button.</div>' +
         '<div class="hf-age-sec">🔑 bring your own key</div>' +
-        '<div class="hf-age-note">chats on the community Space use <b>your own provider key</b> (never the shared one) when you add one.</div>' +
+        '<div class="hf-age-note">chats on the community Space use <b>your own provider key</b> (never the shared one) when you add one — your key, your bill.</div>' +
+        '<div class="hf-age-note">the community Space still <b>processes your chat</b> to run the turn — BYOK changes who pays, not who reads: keep secrets and personal info out of it.</div>' +
         '<div class="hf-age-actions">' +
           '<button id="hf-age-key" class="hf-age-btn hf-age-btn-ghost">🔑 add your own key</button>' +
           '<button id="hf-age-go" class="hf-age-btn hf-age-btn-go">🌍 use the community space for this chat</button>' +

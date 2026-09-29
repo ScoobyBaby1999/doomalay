@@ -2602,6 +2602,14 @@
     if (/\b429\b|rate.?limit|too many requests/i.test(t)) {
       return 'the model is at capacity (429) — wait ~15s and try again, or switch models (each model has its own limit)';
     }
+    // v0.75 (BYOK truth): the free-tier key class — some providers
+    // restrict certain keys to their own app/property (observed live:
+    // OpenCode keys raised FreeTierError on the shared sandbox). A key
+    // that "works" elsewhere still 403s here; the honest fix is another
+    // provider or key type, not a retry.
+    if (/free.?tier|freetier|restricted to (this|our|the) (app|client|property)/i.test(t)) {
+      return 'this provider restricts some keys to its own app — bring a different key type or switch providers (Settings → Cloud Providers)';
+    }
     if (/minimum client version|upgrade the proxy/i.test(t)) {
       return 'PrivateMode upgraded their encrypted protocol — the app\u2019s secure client needs an update to reach it';
     }
@@ -2610,6 +2618,9 @@
     }
     if (/\b404\b|not found for account/i.test(t)) {
       return 'this model is no longer available for your account — pick another model';
+    }
+    if (/\b401\b|unauthorized|invalid api key|authentication/i.test(t)) {
+      return t + ' — the key was rejected at the provider';
     }
     if (/\b5\d\d\b/.test(t) && !/:\s*5\d\d\s*:\s*5\d\d/.test(t)) {
       return t + ' — provider error (model may be at capacity); try again or switch models';
@@ -4338,6 +4349,17 @@
       state.isStreaming = false;
       hideActivity(bodyEl, state);
       var errText = friendlyError(src.message || src.error || src.text || 'Unknown error');
+      // v0.75 BYOK TRUTH: whose key was this turn riding? The brain
+      // stamps every error event (live + persisted — the replay parser
+      // lifts the same fields), so the user sees "your key was rejected"
+      // vs "the community key is unavailable" instead of an anonymous
+      // 401 they can't act on.
+      if (src.key_source === 'user') {
+        errText += ' — this turn used YOUR key' + (src.env_var ? ' (' + src.env_var + ')' : '') +
+                   '; check it in Settings → Cloud Providers';
+      } else if (src.key_source === 'shared') {
+        errText += ' — the community key backed this turn (bring your own key in Settings → Cloud Providers for your own capacity)';
+      }
       if (src.provider) {
         errText += ' (via ' + src.provider + (src.model ? ' · ' + src.model : '') + ')';
       }

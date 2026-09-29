@@ -41,6 +41,7 @@ from fastapi.responses import StreamingResponse
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import run_turn  # noqa: E402
 import reqenv  # noqa: E402  — v0.72: per-request BYOK (X-Env-* as values, never global env writes)
+import redact  # noqa: E402  — v0.75: in-flight redaction at every error sink
 
 # v0.43 — stranded-coroutine watchdog (KEEP): every strands run_async loop
 # registers itself here; a global thread dumps any task still pending after
@@ -166,7 +167,11 @@ def list_models(refresh: bool = False, request: Request = None):
     """
     # v0.72 BYOK: per-request key presence — the user's own X-Env keys
     # (shared spaces) OR the space's own secrets. Never a global env write.
+    # v0.75: X-Keyed-Providers (presence-only names, no values) counts
+    # too — the engine's minimized /models fan-out rides this.
     req_env = reqenv.extract(request) if request is not None else {}
+    req_keyed = reqenv.extract_keyed(request) if request is not None else frozenset()
+    reqenv.set_request_env(req_env, req_keyed)
 
     catalog = load_provider_catalog()  # list of dicts (from providers_catalog.json)
     models_catalog = load_models_catalog()  # logical → (provider, model) mapping
@@ -195,13 +200,15 @@ def list_models(refresh: bool = False, request: Request = None):
     all_models = []
     for name, cfg in providers_dict.items():
         env_var = cfg["env_var"]
-        # env_var can be a string or a list (the old catalog format allows multiple).
+        # v0.75: reqenv.has_key covers the three surfaces — this
+        # request's X-Env values, the presence-only keyed set, and the
+        # space's own secrets.
         if isinstance(env_var, list):
-            has_key = any(req_env.get(str(v)) or os.environ.get(str(v)) for v in env_var if v)
+            has_key = reqenv.has_key([str(v) for v in env_var if v])
             env_var_str = str(env_var[0]) if env_var else ""
         else:
             env_var_str = str(env_var)
-            has_key = bool(req_env.get(env_var_str) or os.environ.get(env_var_str))
+            has_key = reqenv.has_key(env_var_str)
         model_count = 0
         if has_key:
             # Count models from the models_catalog for this provider.
@@ -579,16 +586,20 @@ async def judge(request: Request):
     # v0.72 BYOK: per-request keys (the user's own on shared spaces) —
     # never a global env write (the old injection raced concurrent turns).
     req_env = reqenv.extract(request)
-    reqenv.set_request_env(req_env)
+    reqenv.set_request_env(req_env, reqenv.extract_keyed(request))
 
     async def event_stream():
         try:
             async for ev in _run_judge_panel(user_input, template, count, session_id):
+                if isinstance(ev, dict) and ev.get("type") in ("error", "judge_error"):
+                    redact.redact_dict(ev)
+                    ev.setdefault("key_source", "user" if req_env else "shared")
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             traceback.print_exc()
-            err_ev = {"type": "error", "error": "judge", "message": str(e)}
+            err_ev = {"type": "error", "error": "judge", "message": redact.redact(str(e)),
+                      "key_source": "user" if req_env else "shared"}
             yield f"data: {json.dumps(err_ev)}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -723,7 +734,7 @@ async def chat(request: Request):
 
     # v0.72: per-request env — the user's own keys (BYOK), never a global write.
     req_env = reqenv.extract(request)
-    reqenv.set_request_env(req_env)
+    reqenv.set_request_env(req_env, reqenv.extract_keyed(request))
 
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
@@ -811,6 +822,12 @@ async def chat(request: Request):
             detail=f"no API key set for {env_var} (provider {provider})",
         )
 
+    # v0.75 ERROR ATTRIBUTION: whose key is this turn riding? Every error
+    # event the stream emits carries it — the app then says "your key was
+    # rejected" vs "the community key is unavailable" instead of a bare
+    # 401 the user can't act on.
+    key_source = "user" if req_env.get(env_var) else "shared"
+
     async def event_stream():
         try:
             async for ev in run_turn(
@@ -843,11 +860,23 @@ async def chat(request: Request):
                 bot_lib=body.get("bot_lib"),
                 bot_dl=body.get("bot_dl"),
             ):
+                if isinstance(ev, dict) and ev.get("type") == "error":
+                    # v0.75: the attribution + the honest provider name —
+                    # every error the turn produces (auth, provider 401/403,
+                    # internal) carries the same marker. The message is
+                    # REDACTED in flight (a provider that echoes the auth
+                    # header, a tool that prints a key — nothing survives).
+                    redact.redact_dict(ev)
+                    ev.setdefault("key_source", key_source)
+                    ev.setdefault("env_var", env_var)
                 yield f"data: {json.dumps(ev)}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             traceback.print_exc()
-            err_ev = {"type": "error", "error": "brain", "message": str(e)}
+            err_ev = {
+                "type": "error", "error": "brain", "message": redact.redact(str(e)),
+                "key_source": key_source, "env_var": env_var,
+            }
             yield f"data: {json.dumps(err_ev)}\n\n"
             yield "data: [DONE]\n\n"
 
