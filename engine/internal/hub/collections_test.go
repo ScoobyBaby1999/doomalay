@@ -89,7 +89,7 @@ func TestCollectionsDerivesBunchesAcrossLibraries(t *testing.T) {
 	seedCorpusRepoV52(t, m)
 	svc := newTestService(t, m)
 
-	bunches, err := svc.Collections("", false)
+	bunches, err := svc.Collections("", "", false)
 	if err != nil {
 		t.Fatalf("collections: %v", err)
 	}
@@ -113,17 +113,17 @@ func TestCollectionsDerivesBunchesAcrossLibraries(t *testing.T) {
 	}
 
 	// the text filter matches the bunch id…
-	hits, _ := svc.Collections("obra", false)
+	hits, _ := svc.Collections("obra", "", false)
 	if len(hits) != 1 {
 		t.Fatalf("filter by id: %d", len(hits))
 	}
 	// …and a member name…
-	hits, _ = svc.Collections("writing plans", false)
+	hits, _ = svc.Collections("writing plans", "", false)
 	if len(hits) != 1 {
 		t.Fatalf("filter by member name: %d", len(hits))
 	}
 	// …but not what isn't there.
-	hits, _ = svc.Collections("nonexistent", false)
+	hits, _ = svc.Collections("nonexistent", "", false)
 	if len(hits) != 0 {
 		t.Fatalf("filter should miss: %d", len(hits))
 	}

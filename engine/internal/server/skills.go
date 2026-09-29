@@ -21,10 +21,14 @@
 //
 //   GET /api/tools/hublib?action=libraries|search|get|download — the bot-side
 //          hub browse (mirrors the brain's dt_hublib): search across the
-//          template/skill/script/doc libraries, item detail with payload
-//          head, download (the SAME hub.Download the ⤓ button makes —
+//          template/skill/script/doc/persona/theme libraries, item detail with
+//          payload head, download (the SAME hub.Download the ⤓ button makes —
 //          the item lands in the engine's hub_items rows and the payload
 //          rides back so the model can follow the methodology at once).
+//   v0.73: ALL SIX types are bot-usable (personas land + arm via persona_set
+//          {"from": …}; themes land + describe — the user applies looks from
+//          the hub page). bundles/bundle/download_bundle ride the same
+//          dispatch (v0.72).
 //
 // GATES (v0.60 pt C.9 semantics, server-side second line of defense —
 // the client only arms the protocol when the pill is on):
@@ -571,7 +575,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         typ = "skill"
                 }
                 if !hublibPMTypes[typ] {
-                        return "", "type must be one of template, skill, script, doc"
+                        return "", "type must be one of template, skill, script, doc, persona, theme"
                 }
                 items, err := s.hub.Items(typ, get("q"), "relevant", "", false)
                 if err != nil {
@@ -599,7 +603,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
         case "get":
                 typ := get("type")
                 if !hublibPMTypes[typ] {
-                        return "", "type must be one of template, skill, script, doc"
+                        return "", "type must be one of template, skill, script, doc, persona, theme"
                 }
                 item, payload, err := s.hub.ItemDetail(typ, get("repo"), get("id"))
                 if err != nil {
@@ -625,13 +629,31 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 }
                 typ := get("type")
                 if !hublibPMTypes[typ] {
-                        return "", "type must be one of template, skill, script, doc"
+                        return "", "type must be one of template, skill, script, doc, persona, theme"
                 }
                 item, payload, err := s.hub.Download(typ, get("repo"), get("id"))
                 if err != nil {
                         return "", "hub: " + err.Error()
                 }
-                text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. PAYLOAD:\n" +
+                // v0.73: the per-type USE line — the download observation must
+                // teach what to DO with what just landed (the user spec: every
+                // type is usable autonomously, individually or as a bundle).
+                var useLine string
+                switch typ {
+                case "persona":
+                        useLine = "USE IT: ACTION: persona_set {\"from\": \"" + item.Name + "\", \"activate\": true} imports it into this chat and makes it the active persona (you become it)."
+                case "theme":
+                        useLine = "USE: the user applies looks from the hub item page (the whole app repaints); you can describe its design from the payload above."
+                case "template":
+                        useLine = "USE IT: follow the methodology in the payload above for the task at hand (say which template you are using)."
+                case "skill":
+                        useLine = "USE IT: ACTION: skills {\"action\":\"load\",\"skill\":\"" + item.Name + "\"} arms it as the methodology to follow."
+                case "script":
+                        useLine = "USE: read it as reference (repo tooling) — follow its convention when the task matches it; scripts are not executed in the app."
+                default: // doc
+                        useLine = "USE: background reading — consult it when the task touches its subject."
+                }
+                text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. " + useLine + "\nPAYLOAD:\n" +
                         clip(payload, skillsLoadMax, "\n…(payload clipped — ACTION: hublib {\"action\":\"get\"} re-reads the head)")
                 return clip(text, skillsLoadMax+400), ""
         case "bundles":
@@ -639,16 +661,32 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 // nothing). One line per bunch: id, badge tag, member
                 // census, hearts/downloads, and the sample name so the
                 // model can JUDGE fit before pulling detail.
-                cols, err := s.hub.Collections(get("q"), false)
+                // v0.73: q matches id+names+descriptions+tags and tag=
+                // filters by badge — the millions-proof contract (always
+                // narrow; the list caps and says so).
+                q := get("q")
+                tag := get("tag")
+                cols, err := s.hub.Collections(q, tag, false)
                 if err != nil {
                         return "", "hub: " + err.Error()
                 }
                 var b strings.Builder
-                b.WriteString("HUB BUNDLES (curated collections — detail one with ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}; download all members with {\"action\":\"download_bundle\",\"id\":\"…\"}):\n")
+                b.WriteString("HUB BUNDLES (curated collections — detail one with ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}; download all members with {\"action\":\"download_bundle\",\"id\":\"…\"}):")
+                if q != "" || tag != "" {
+                        b.WriteString(" [filtered")
+                        if q != "" {
+                                b.WriteString(" q=\"" + oneLine(q, 30) + "\"")
+                        }
+                        if tag != "" {
+                                b.WriteString(" tag=\"" + oneLine(tag, 30) + "\"")
+                        }
+                        b.WriteString("]")
+                }
+                b.WriteString("\n")
                 n := 0
                 for _, c := range cols {
                         if n >= hublibListMax {
-                                b.WriteString("… " + strconv.Itoa(len(cols)-n) + " more — narrow the query\n")
+                                b.WriteString("… " + strconv.Itoa(len(cols)-n) + " more — narrow the query (q matches ids, member names, descriptions and tags; tag filters by badge)\n")
                                 break
                         }
                         b.WriteString("- " + c.ID)
@@ -661,7 +699,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         n++
                 }
                 if n == 0 {
-                        b.WriteString("(no bundles matched — try a shorter query, or browse items directly with {\"action\":\"search\"})\n")
+                        b.WriteString("(no bundles matched — try a shorter query or a tag, or browse items directly with {\"action\":\"search\"})\n")
                 }
                 return clip(b.String(), hublibOutMax), ""
         case "bundle":
@@ -735,7 +773,7 @@ func SanitizedBundleID(raw string) string {
 // byTypeLine renders a member census "15 skills, 4 scripts" (skills
 // first — the actionable type leads).
 func byTypeLine(m map[string]int) string {
-        order := []string{"skill", "script", "template", "doc", "persona"}
+        order := []string{"skill", "script", "template", "doc", "persona", "theme"}
         var parts []string
         for _, t := range order {
                 if m[t] > 0 {
@@ -786,7 +824,7 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
                 return "", "hub: " + err.Error()
         }
         if len(groups) == 0 {
-                return "", "no bundle '" + oneLine(rawID, 40) + "' — ACTION: hublib {\"action\":\"bundles\"} lists what exists"
+                return "", "no bundle '" + oneLine(rawID, 40) + "' — " + s.hublibItemFallback(rawID) + " — ACTION: hublib {\"action\":\"bundles\"} lists the curated bundles"
         }
         // the downloaded markers (per type) — one hub query per present type.
         dlMark := func(typ, repo, itemID string) string {
@@ -801,7 +839,7 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
                 }
                 return ""
         }
-        order := map[string]int{"skill": 0, "script": 1, "template": 2, "doc": 3, "persona": 4}
+        order := map[string]int{"skill": 0, "script": 1, "template": 2, "doc": 3, "persona": 4, "theme": 5}
         sort.Slice(groups, func(i, j int) bool { return order[groups[i].Type] < order[groups[j].Type] })
         perType := map[string]int{}
         for _, g := range groups {
@@ -857,6 +895,39 @@ func sumMembers(m map[string]int) int {
         return n
 }
 
+// hublibItemFallback (v0.73) — the user spec: "everything counts a bundle,
+// even if it contains just 1 item". When `bundle {id}` misses every
+// collection, the id may name a SINGLE hub item — search each library for
+// a name/id hit (both the raw id and the sanitized dash-form, so "noir
+// detective" and "noir-detective" both land) and answer with the redirect
+// instead of a dead end, so the model lands on search/get/download for the
+// one-item bundle.
+func (s *Server) hublibItemFallback(rawID string) string {
+        want := strings.ToLower(strings.TrimSpace(rawID))
+        if want == "" {
+                return "no bundle id given"
+        }
+        variants := []string{want, SanitizedBundleID(want)}
+        for _, typ := range []string{"skill", "template", "persona", "theme", "script", "doc"} {
+                for _, v := range variants {
+                        if v == "" {
+                                continue
+                        }
+                        items, err := s.hub.Items(typ, v, "relevant", "", false)
+                        if err != nil {
+                                continue
+                        }
+                        for _, it := range items {
+                                nl := strings.ToLower(it.Name)
+                                if nl == v || strings.Contains(nl, v) || strings.Contains(strings.ToLower(it.ID), v) {
+                                        return "but there is a " + typ + " '" + it.Name + "' (repo " + it.Repo + ", id " + it.ID + ") — a one-item bundle: ACTION: hublib {\"action\":\"get\",\"type\":\"" + typ + "\",\"repo\":\"" + it.Repo + "\",\"id\":\"" + it.ID + "\"} for detail, or \"download\" to land it"
+                                }
+                        }
+                }
+        }
+        return "nothing matches that id"
+}
+
 // runHublibAction (v0.67.2) — the DIRECT-PATH library ACTION runner: the
 // quick chats' "ACTION: hublib {…}" lines land here (via
 // llm.ChatRequest.HublibToolFn), parse their JSON args, and ride the
@@ -888,10 +959,12 @@ func (s *Server) runHublibAction(sessionID, argJSON string) string {
         return "OBSERVATION:\n" + res
 }
 
-// hublibPMTypes — the libraries the bot-side hub serves (personas excluded,
-// same policy as dt_hublib).
+// hublibPMTypes — the libraries the bot-side hub serves. v0.73: ALL SIX
+// types (personas + themes joined — the user spec: everything is a bundle,
+// every type individually usable; a persona arms via persona_set {"from"}).
 var hublibPMTypes = map[string]bool{
         "template": true, "skill": true, "script": true, "doc": true,
+        "persona": true, "theme": true,
 }
 
 // oneLine flattens + clips to n chars.

@@ -225,18 +225,19 @@ func nativeToolSpecs(req ChatRequest) []map[string]any {
                         "id": strProp("The template id from template_list."),
                 }, "id"),
         )
-        // v0.67.2 + v0.72: THE LIBRARY — the public hub (templates, skills,
-        // scripts, docs from every publisher) AND its BUNDLES (curated
-        // collections), browsable + downloadable on the fly. Same runner
-        // as the ACTION protocol path (executeAction routes it to the
-        // server's hublibDispatch; the per-chat Bot Library switch gates
-        // downloads only).
+        // v0.67.2 + v0.72 + v0.73: THE LIBRARY — the public hub (ALL SIX item
+        // types: templates, skills, scripts, docs, personas, themes) AND its
+        // BUNDLES (curated collections), browsable + downloadable on the fly.
+        // Same runner as the ACTION protocol path (executeAction routes it to
+        // the server's hublibDispatch; the two chat switches — Bot Library
+        // and Can download bundles — gate use/downloads).
         if req.HublibToolFn != nil {
                 specs = append(specs,
-                        nativeToolSpec("hublib", "Search/browse/download the PUBLIC HUB — the community library of templates, skills, scripts, docs AND BUNDLES (curated collections). Bundle detail lists every member's when-to-use description; browse before using, pick the member that fits, never the whole bundle at once.", map[string]jsonSchemaProp{
-                                "action": {Type: "string", Description: "'bundles' (list collections), 'bundle' (one bundle's members + when-to-use descriptions), 'download_bundle' (download every member), 'search' (browse items), 'get' (one item's detail + payload head) or 'download'.", Enum: []string{"bundles", "bundle", "download_bundle", "search", "get", "download"}},
+                        nativeToolSpec("hublib", "Search/browse/download the PUBLIC HUB — the community library of templates, skills, scripts, docs, personas, themes (every single item is a bundle of one) AND BUNDLES (curated collections). Bundle detail lists every member's when-to-use description; browse before using, pick the member that fits, never the whole bundle at once.", map[string]jsonSchemaProp{
+                                "action": {Type: "string", Description: "'bundles' (list collections, narrow with q/tag), 'bundle' (one bundle's members + when-to-use descriptions), 'download_bundle' (download every member), 'search' (browse items), 'get' (one item's detail + payload head) or 'download'.", Enum: []string{"bundles", "bundle", "download_bundle", "search", "get", "download"}},
                                 "q":      strProp("Search query (search/bundles; empty = newest)."),
-                                "type":   {Type: "string", Description: "Library type.", Enum: []string{"template", "skill", "script", "doc"}},
+                                "tag":    strProp("Badge tag filter (bundles only)."),
+                                "type":   {Type: "string", Description: "Library type.", Enum: []string{"template", "skill", "script", "doc", "persona", "theme"}},
                                 "repo":   strProp("The item's repo (get/download, from a search result)."),
                                 "id":     strProp("The item's or bundle's id (get/download/download_bundle/bundle, from a result)."),
                         }, "action"),

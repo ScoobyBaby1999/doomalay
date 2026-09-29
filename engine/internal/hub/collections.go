@@ -48,12 +48,15 @@ type CollectionSummary struct {
 }
 
 // Collections derives every collection bunch across all registered
-// libraries, optionally filtered by a search substring over the bunch id
-// and member names. Sorted: most members first, then hearts, then name.
+// libraries, optionally filtered by a search substring over the bunch id,
+// member names, member descriptions and member tags (v0.73: the matcher
+// widened for million-entry hubs — a q must be able to find a needle), and
+// by a badge tag filter. Sorted: most members first, then hearts, then name.
 // One pass per library reuses Items() so the local overlay + federated
 // counters ride in (a downloaded member counts its +1 in the bunch sum).
-func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, error) {
+func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary, error) {
         q = strings.ToLower(strings.TrimSpace(q))
+        tag = strings.ToLower(strings.TrimSpace(tag))
         type agg struct {
                 sum   CollectionSummary
                 icons map[string]int
@@ -61,6 +64,8 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                 // — a file:<path> icon resolves against ITS contributor.
                 iconRepos map[string]string
                 names     []string
+                descs     []string
+                descSet   map[string]bool
                 tags      map[string]int // v0.56: first-tag votes across members
                 // v0.58: the newest member carrying a usable card design — the
                 // bunch card's art when no curated override exists.
@@ -81,7 +86,7 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         }
                         a := bunches[id]
                         if a == nil {
-                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}}
+                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, descSet: map[string]bool{}}
                                 bunches[id] = a
                         }
                         a.sum.Members++
@@ -100,6 +105,14 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                                 a.tags[it.Tags[0]]++
                         }
                         a.names = append(a.names, strings.ToLower(it.Name))
+                        // v0.73: the matcher widened — descriptions (deduped
+                        // per bunch) now vote too, so a q like "brainstorm"
+                        // finds bundles whose members carry that word in
+                        // their when-to-use text.
+                        if d := strings.ToLower(strings.Join(strings.Fields(it.Description), " ")); d != "" && !a.descSet[d] {
+                                a.descSet[d] = true
+                                a.descs = append(a.descs, d)
+                        }
                         if a.sum.Sample == "" {
                                 a.sum.Sample = it.Name
                         }
@@ -126,6 +139,22 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                                 }
                         }
                         if !hit {
+                                for _, d := range a.descs {
+                                        if strings.Contains(d, q) {
+                                                hit = true
+                                                break
+                                        }
+                                }
+                        }
+                        if !hit {
+                                for t := range a.tags {
+                                        if strings.Contains(strings.ToLower(t), q) {
+                                                hit = true
+                                                break
+                                        }
+                                }
+                        }
+                        if !hit {
                                 continue
                         }
                 }
@@ -145,6 +174,11 @@ func (s *Service) Collections(q string, refresh bool) ([]CollectionSummary, erro
                         if n > bestTagN || (n == bestTagN && t < bestTag) {
                                 bestTag, bestTagN = t, n
                         }
+                }
+                // v0.73: the tag filter — badge-exact (case-insensitive),
+                // applied AFTER the vote so it filters on the final badge.
+                if tag != "" && strings.ToLower(bestTag) != tag {
+                        continue
                 }
                 a.sum.Tag = bestTag
                 a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)

@@ -101,14 +101,15 @@ func (s *Server) handleHubItems(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, http.StatusOK, map[string]any{"type": typ, "items": items, "total": len(items)})
 }
 
-// handleHubCollections is GET /api/hub/collections?q= (refresh=1 bypasses
-// the remote cache) — the collection BUNCHES derived across every library
-// (v0.52 user spec: many templates + skills clamp into one listing; the
-// member list itself comes from each library's items, matched client-side
-// on the item.collection field).
+// handleHubCollections is GET /api/hub/collections?q=&tag= (refresh=1
+// bypasses the remote cache) — the collection BUNCHES derived across every
+// library (v0.52 user spec: many templates + skills clamp into one listing;
+// the member list itself comes from each library's items, matched
+// client-side on the item.collection field). v0.73: the matcher rides
+// id+names+descriptions+tags, and tag= filters by the bunch's badge.
 func (s *Server) handleHubCollections(w http.ResponseWriter, r *http.Request) {
         refresh := r.URL.Query().Get("refresh") == "1"
-        bunches, err := s.hub.Collections(r.URL.Query().Get("q"), refresh)
+        bunches, err := s.hub.Collections(r.URL.Query().Get("q"), r.URL.Query().Get("tag"), refresh)
         if err != nil {
                 hubWriteItemErr(w, err)
                 return

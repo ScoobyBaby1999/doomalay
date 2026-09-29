@@ -71,7 +71,7 @@ ACTION: archive_create {"name": "b.tar.gz", "files": [{"name": "a.txt", "content
 ACTION: archive_extract {"artifact": "b.7z"} — unpack ANY archive (zip, 7z, rar, tar, tar.gz, tar.bz2, tar.xz, tar.zst, gz, bz2, xz, zst — detected from the bytes, not the name) and extract its files as artifacts.
 ACTION: delegate {"prompt": "<question>", "models": ["nvidia/nvidia/nemotron-3.5-lightning-30b-a3b", "privatemodeai/kimi-k2.6"]} — consult up to 3 OTHER models in parallel and weigh their answers (multi-model swarm)
 ACTION: persona_list {} — list YOUR personas and placeholders in this chat (id, name, mode, preview)
-ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous)
+ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous). {"from": "<hub persona name>", "activate": true} imports a persona you DOWNLOADED from the hub library (personas are library items too) and activates it in one step.
 ACTION: persona_activate {"id": "p_123"} — become a listed persona (deactivates the previous one); {"id": ""} deactivates all (back to the app default)
 ACTION: placeholder_set {"key": "mood", "value": "playful"} — set a {placeholder} usable in personas and triggers
 For REAL files (Word/Excel/zip) ALWAYS use docx_create/xlsx_create/zip_create instead of hand-writing base64 into the chat — the tools build valid binaries the user can download. After a file tool reports "Saved as artifact", do NOT also emit an artifact block for that same file — that would attach it twice.
@@ -86,20 +86,23 @@ const templateToolsProtocol = `You also have the method-template library (browse
 ACTION: template_list {} — browse the app's method-template library (ids, names, stage counts): research pipelines, superpowers disciplines, audits, lessons…
 ACTION: template_show {"id": "redteam"} — read one template's full methodology (stages with instructions, or the markdown discipline); FOLLOW it for the task when the user picks one or asks for that method`
 
-// hublibToolsProtocol (v0.67.2 + v0.72): THE LIBRARY on the direct path —
-// the public hub (templates, skills, scripts, docs from every publisher)
-// + the BUNDLES (curated collections). Composed whenever the server armed
-// HublibToolFn. The Bot Library switch (the lib pill) gates DOWNLOADS
-// only; browsing + recommending always answer — the runner enforces it
-// and names the switch.
-const hublibToolsProtocol = `You also have THE PUBLIC HUB — the community library of templates, skills, scripts and docs (browsable, downloadable, usable on the fly) and its BUNDLES (curated collections of items that work together):
-ACTION: hublib {"action": "bundles", "q": "…"} — list the hub's bundles (member censuses; q filters)
+// hublibToolsProtocol (v0.67.2 + v0.72 + v0.73): THE LIBRARY on the direct
+// path — the public hub (templates, skills, scripts, docs, personas, themes
+// from every publisher — ALL SIX types, every one a bundle of one) + the
+// BUNDLES (curated collections). Composed whenever the server armed
+// HublibToolFn. The two chat switches gate it: Bot Library (the lib pill /
+// ✦ tweaks → Bot Library) gates USE; Can download bundles (✦ tweaks →
+// Bot Library → Can download bundles) gates DOWNLOADS. Browsing +
+// recommending always answer — the runner enforces both and names the
+// switch.
+const hublibToolsProtocol = `You also have THE PUBLIC HUB — the community library where EVERY item type is browsable, downloadable and usable on the fly: templates, skills, scripts, docs, personas, themes (each single item is a bundle of one), plus the BUNDLES (curated collections of items that work together):
+ACTION: hublib {"action": "bundles", "q": "…", "tag": "…"} — list the hub's bundles (member censuses; q filters by id/name/description, tag by badge — ALWAYS narrow with q or tag rather than pulling everything)
 ACTION: hublib {"action": "bundle", "id": "…"} — one bundle's full member list with each member's when-to-use description
 ACTION: hublib {"action": "download_bundle", "id": "…"} — download every member of a bundle into the user's library
-ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template"} — search the hub (omit q for the newest)
+ACTION: hublib {"action": "search", "q": "research", "type": "skill|doc|script|template|persona|theme"} — search any library (omit q for the newest)
 ACTION: hublib {"action": "get", "type": "…", "repo": "…", "id": "…"} — one item's detail + payload head
-ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download it into the user's library + use it now
-Be opportunistic: when a task would plausibly benefit from a hub item (a methodology to follow, a template to reuse, a script to run), search for one and recommend the hits by name. BUNDLES: browse (bundle action) BEFORE using — the members' descriptions state when each fires; pick the member that fits the actual sub-problem, never the whole bundle at once; for the superpowers bundle the workflow order rides the bundle detail. If nothing fits, say so and proceed without — never force a library item that steers away from the task, and never name an item a real search did not return. If the chat's Bot Library switch is OFF, downloads answer with the exact switch to flip (✦ tweaks → Bot Library); browsing and recommending still work.`
+ACTION: hublib {"action": "download", "type": "…", "repo": "…", "id": "…"} — download it into the user's library + use it now (the observation states the per-type use)
+USING each type: skill → ACTION: skills {"action":"load","skill":"…"} follows its methodology; template → follow the payload's methodology for the task; persona → ACTION: persona_set {"from": "<name>", "activate": true} makes it the active persona (you become it); theme → the user applies looks from the hub page (describe it from the payload); script/doc → reference reading. Be opportunistic: when a task would plausibly benefit from a hub item, search for one and recommend the hits by name. BUNDLES: browse (bundle action) BEFORE using — the members' descriptions state when each fires; pick the member that fits the actual sub-problem, never the whole bundle at once; for the superpowers bundle the workflow order rides the bundle detail. If nothing fits, say so and proceed without — never force a library item that steers away from the task, and never name an item a real search did not return. TWO GATES: the Bot Library switch (the lib pill / ✦ tweaks → Bot Library) must be ON to load/use entries, and Can download bundles (✦ tweaks → Bot Library → Can download bundles) must be ON to download NEW ones — when either is OFF the tools answer with the exact switch to flip; browsing and recommending always work. When you download or load something, say which item you are using — it displays next to the lib+ pill for the user.`
 
 // skillsToolsProtocol (v0.72): THE SKILLS HAND on the direct path — the
 // downloaded skills live on-device as armed methodologies. Composed

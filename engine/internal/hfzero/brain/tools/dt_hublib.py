@@ -45,11 +45,14 @@ from typing import Any, Callable
 
 TOOL_NAMES = ["hublib"]  # primary (only) tool name built below
 
-# The hub libraries hublib serves. Personas are deliberately excluded: their
-# import flow (persona picker → chat personas) is a different engine path
-# with its own UX. v0.60 pt C.9: scripts + docs join (the port's repo
-# companions — browsable + recommendable; payloads land the same way).
-HUBLIB_TYPES = ("template", "skill", "script", "doc")
+# The hub libraries hublib serves. v0.73: ALL SIX types (personas +
+# themes joined — the user spec: everything counts a bundle, every type
+# individually usable). A downloaded persona arms via the chat's persona
+# tools (persona_set {"from": …, "activate": true} on the engine path);
+# a theme's payload describes a look the user applies from the hub page.
+# v0.60 pt C.9: scripts + docs (the port's repo companions — browsable +
+# recommendable; payloads land the same way).
+HUBLIB_TYPES = ("template", "skill", "script", "doc", "persona", "theme")
 
 # v0.60 pt C.9: THE LIB PILL — ONE gatekeeping switch ("Bot Library" in
 # ✦ tweaks, key botLib; absent = enabled). Legacy bots wrote per-type
@@ -450,8 +453,12 @@ def _format_items(items: list[dict], dl_ids: set[str], typ: str,
 
 
 TOOL_DESCRIPTION = (
-    "Browse the PUBLIC HUB's community template and skill libraries and "
-    "download items into this chat's library. Use when the user wants to "
+    "Browse the PUBLIC HUB's community libraries — ALL SIX types (templates, "
+    "skills, scripts, docs, personas, themes; every single item is a bundle "
+    "of one) — and download items into this chat's library. A downloaded "
+    "persona arms with persona_set {\"from\": …, \"activate\": true} (the bot "
+    "becomes it); a theme's payload describes a look the user applies from "
+    "the hub page. Use when the user wants to "
     "find, explore, compare or get templates (method pipelines like "
     "deep-research, brainstorm, TDD flows) or skills (methodologies) from "
     "the community — or asks what's available/new/popular. ALSO use "
@@ -521,9 +528,9 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
                     f"• {lib.get('type')}: {lib.get('label')} — "
                     f"{_int(lib.get('localCount'))} downloaded locally. "
                     f"{_one_liner(str(lib.get('desc') or ''), 80)}")
-        lines.append("hublib browses + downloads the template, skill, script "
-                     "and doc libraries; the persona library imports through "
-                     "the hub panel's persona picker.")
+        lines.append("hublib browses + downloads ALL SIX libraries — "
+                     "templates, skills, scripts, docs, personas and themes "
+                     "(every single item is a bundle of one).")
         return "\n".join(lines)
 
     # ── every hub-touching action validates the verb FIRST (an unknown
@@ -534,8 +541,8 @@ def run(action: str, *, typ: str = "", q: str = "", tag: str = "",
         return (f"unknown action '{action}' — try one of " + " | ".join(sorted(known))
                 + " (or action='help' for the cheat-sheet)")
     if typ not in HUBLIB_TYPES:
-        return ("hublib serves templates, skills, scripts and docs "
-                f"(got '{typ or 'empty'}). Personas import via the hub panel.")
+        return ("hublib serves templates, skills, scripts, docs, personas "
+                f"and themes (got '{typ or 'empty'}).")
 
     # ── THE LIB GATE — read on the fly, every call. v0.60 pt C.9: OFF means
     # browse + recommend still work (the model tells the user what it found);
@@ -972,6 +979,11 @@ if __name__ == "__main__":  # pragma: no cover — manual smoke check
              "description": "idea generation flow",
              "author": "someone", "tags": ["superpowers-obra"],
              "hearts": 1, "downloads": 4},
+            {"type": "persona", "repo": "someone/doomalay-personas",
+             "id": "noir-detective-789", "name": "noir detective",
+             "description": "a hard-boiled investigator persona",
+             "author": "someone", "tags": ["persona"],
+             "hearts": 2, "downloads": 5},
         ]
         check("lib: absent tweaks → enabled", lib_enabled({})[0])
         check("lib: unreadable tweaks → enabled",
@@ -1069,8 +1081,11 @@ if __name__ == "__main__":  # pragma: no cover — manual smoke check
               len(out) > 0)
 
         out = run("browse", typ="persona", client=fc)
-        check("type: persona refused with pointer",
-              "templates, skills, scripts and docs" in out)
+        check("type: persona served (v0.73 six types)",
+              "1 persona" in out and "noir detective" in out)
+        out = run("browse", typ="frob", client=fc)
+        check("type: unknown refused with the six",
+              "personas" in out and "themes" in out)
         dead = FakeClient()
         dead.items = lambda *a, **k: {"error": "engine unreachable at x: boom"}
         dead.downloads = lambda *a, **k: {"error": "engine unreachable at x: boom"}
