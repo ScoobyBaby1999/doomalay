@@ -33,7 +33,14 @@ func newV072Server(t *testing.T) *Server {
         t.Helper()
         m := newMockHubHF(t)
         s := newHubTestServer(t, m)
+        seedV072Superpowers(t, m)
+        return s
+}
 
+// seedV072Superpowers seeds the superpowers-shaped bundle onto a mock
+// (shared with the v0.73 wave's richer fixture).
+func seedV072Superpowers(t *testing.T, m *mockHubHF) {
+        t.Helper()
         sk1 := hub.Item{ID: "superpowers-brainstorming-69b7f5", Type: "skill", Name: "Superpowers Brainstorming",
                 Description: "You MUST use this before any creative work", Author: "obra", Repo: "mockuser/doomalay-superpowers",
                 Tags: []string{"superpowers"}, Collection: "superpowers-obra", File: "items/superpowers-brainstorming-69b7f5.md",
@@ -68,7 +75,6 @@ func newV072Server(t *testing.T) *Server {
                 "items/readme-doc-222222.md": "# README\n\nthe bundle",
                 "items/spec-doc-333333.md":   "# The Spec\n\nthe design",
         })
-        return s
 }
 
 func v072Get(args map[string]string) func(string) string {

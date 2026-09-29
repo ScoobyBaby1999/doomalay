@@ -18,8 +18,8 @@
 package hub
 
 import (
-        "sort"
-        "strings"
+	"sort"
+	"strings"
 )
 
 // CollectionSummary is one bunch: N items (possibly across libraries)
@@ -30,21 +30,21 @@ import (
 // bright text for bundles that dynamically displays the first tag or #
 // the bundle uses"). Empty = no badge.
 type CollectionSummary struct {
-        ID        string         `json:"id"`
-        Icon      string         `json:"icon"`   // most common member icon ("" = no icon)
-        Sample    string         `json:"sample"` // first member name (a display fallback)
-        Tag       string         `json:"tag"`    // most-common first member tag ("" = none)
-        Repo      string         `json:"repo"`    // v0.61 (icons): the icon file's repo (file: icons)
-        Members   int            `json:"members"`
-        Hearts    int            `json:"hearts"`    // Σ member hearts
-        Downloads int            `json:"downloads"` // Σ member downloads
-        ByType    map[string]int `json:"byType"`    // members per library type
-        UpdatedAt string         `json:"updatedAt"` // newest member update
-        // v0.58 (user spec pt 2): the bunch's card ART — the curated override
-        // for known bunches, else the newest member's card design (any
-        // publisher brands their own bunch by giving their items a look).
-        // Zero value = the client paints its deterministic hash gradient.
-        Design Design `json:"design"`
+	ID        string         `json:"id"`
+	Icon      string         `json:"icon"`   // most common member icon ("" = no icon)
+	Sample    string         `json:"sample"` // first member name (a display fallback)
+	Tag       string         `json:"tag"`    // most-common first member tag ("" = none)
+	Repo      string         `json:"repo"`   // v0.61 (icons): the icon file's repo (file: icons)
+	Members   int            `json:"members"`
+	Hearts    int            `json:"hearts"`    // Σ member hearts
+	Downloads int            `json:"downloads"` // Σ member downloads
+	ByType    map[string]int `json:"byType"`    // members per library type
+	UpdatedAt string         `json:"updatedAt"` // newest member update
+	// v0.58 (user spec pt 2): the bunch's card ART — the curated override
+	// for known bunches, else the newest member's card design (any
+	// publisher brands their own bunch by giving their items a look).
+	// Zero value = the client paints its deterministic hash gradient.
+	Design Design `json:"design"`
 }
 
 // Collections derives every collection bunch across all registered
@@ -55,151 +55,151 @@ type CollectionSummary struct {
 // One pass per library reuses Items() so the local overlay + federated
 // counters ride in (a downloaded member counts its +1 in the bunch sum).
 func (s *Service) Collections(q, tag string, refresh bool) ([]CollectionSummary, error) {
-        q = strings.ToLower(strings.TrimSpace(q))
-        tag = strings.ToLower(strings.TrimSpace(tag))
-        type agg struct {
-                sum   CollectionSummary
-                icons map[string]int
-                // v0.61 (icons): the repo each icon name was first seen in
-                // — a file:<path> icon resolves against ITS contributor.
-                iconRepos map[string]string
-                names     []string
-                descs     []string
-                descSet   map[string]bool
-                tags      map[string]int // v0.56: first-tag votes across members
-                // v0.58: the newest member carrying a usable card design — the
-                // bunch card's art when no curated override exists.
-                bestDesign   Design
-                bestDesignAt int64
-        }
-        bunches := map[string]*agg{}
+	q = strings.ToLower(strings.TrimSpace(q))
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	type agg struct {
+		sum   CollectionSummary
+		icons map[string]int
+		// v0.61 (icons): the repo each icon name was first seen in
+		// — a file:<path> icon resolves against ITS contributor.
+		iconRepos map[string]string
+		names     []string
+		descs     []string
+		descSet   map[string]bool
+		tags      map[string]int // v0.56: first-tag votes across members
+		// v0.58: the newest member carrying a usable card design — the
+		// bunch card's art when no curated override exists.
+		bestDesign   Design
+		bestDesignAt int64
+	}
+	bunches := map[string]*agg{}
 
-        for _, spec := range All() {
-                items, err := s.Items(spec.Type, "", "recent", "", refresh)
-                if err != nil {
-                        continue // one broken library never breaks the bunches
-                }
-                for _, it := range items {
-                        id := SanitizeCollection(it.Collection)
-                        if id == "" {
-                                continue
-                        }
-                        a := bunches[id]
-                        if a == nil {
-                                a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, descSet: map[string]bool{}}
-                                bunches[id] = a
-                        }
-                        a.sum.Members++
-                        a.sum.Hearts += it.Hearts
-                        a.sum.Downloads += it.Downloads
-                        a.sum.ByType[it.Type]++
-                        if it.Icon != "" {
-                                a.icons[it.Icon]++
-                                if _, seen := a.iconRepos[it.Icon]; !seen {
-                                        a.iconRepos[it.Icon] = it.Repo
-                                }
-                        }
-                        // v0.56: each member's FIRST tag votes once — the
-                        // most common becomes the bunch's badge tag.
-                        if len(it.Tags) > 0 {
-                                a.tags[it.Tags[0]]++
-                        }
-                        a.names = append(a.names, strings.ToLower(it.Name))
-                        // v0.73: the matcher widened — descriptions (deduped
-                        // per bunch) now vote too, so a q like "brainstorm"
-                        // finds bundles whose members carry that word in
-                        // their when-to-use text.
-                        if d := strings.ToLower(strings.Join(strings.Fields(it.Description), " ")); d != "" && !a.descSet[d] {
-                                a.descSet[d] = true
-                                a.descs = append(a.descs, d)
-                        }
-                        if a.sum.Sample == "" {
-                                a.sum.Sample = it.Name
-                        }
-                        if ParseTime(it.UpdatedAt) > ParseTime(a.sum.UpdatedAt) {
-                                a.sum.UpdatedAt = it.UpdatedAt
-                        }
-                        // v0.58: track the NEWEST member that carries a usable
-                        // design — that's the bunch's inherited look.
-                        if usableDesign(it.Design) && ParseTime(it.UpdatedAt) > a.bestDesignAt {
-                                a.bestDesignAt = ParseTime(it.UpdatedAt)
-                                a.bestDesign = it.Design
-                        }
-                }
-        }
+	for _, spec := range All() {
+		items, err := s.Items(spec.Type, "", "recent", "", refresh)
+		if err != nil {
+			continue // one broken library never breaks the bunches
+		}
+		for _, it := range items {
+			id := SanitizeCollection(it.Collection)
+			if id == "" {
+				continue
+			}
+			a := bunches[id]
+			if a == nil {
+				a = &agg{sum: CollectionSummary{ID: id, ByType: map[string]int{}}, icons: map[string]int{}, iconRepos: map[string]string{}, tags: map[string]int{}, descSet: map[string]bool{}}
+				bunches[id] = a
+			}
+			a.sum.Members++
+			a.sum.Hearts += it.Hearts
+			a.sum.Downloads += it.Downloads
+			a.sum.ByType[it.Type]++
+			if it.Icon != "" {
+				a.icons[it.Icon]++
+				if _, seen := a.iconRepos[it.Icon]; !seen {
+					a.iconRepos[it.Icon] = it.Repo
+				}
+			}
+			// v0.56: each member's FIRST tag votes once — the
+			// most common becomes the bunch's badge tag.
+			if len(it.Tags) > 0 {
+				a.tags[it.Tags[0]]++
+			}
+			a.names = append(a.names, strings.ToLower(it.Name))
+			// v0.73: the matcher widened — descriptions (deduped
+			// per bunch) now vote too, so a q like "brainstorm"
+			// finds bundles whose members carry that word in
+			// their when-to-use text.
+			if d := strings.ToLower(strings.Join(strings.Fields(it.Description), " ")); d != "" && !a.descSet[d] {
+				a.descSet[d] = true
+				a.descs = append(a.descs, d)
+			}
+			if a.sum.Sample == "" {
+				a.sum.Sample = it.Name
+			}
+			if ParseTime(it.UpdatedAt) > ParseTime(a.sum.UpdatedAt) {
+				a.sum.UpdatedAt = it.UpdatedAt
+			}
+			// v0.58: track the NEWEST member that carries a usable
+			// design — that's the bunch's inherited look.
+			if usableDesign(it.Design) && ParseTime(it.UpdatedAt) > a.bestDesignAt {
+				a.bestDesignAt = ParseTime(it.UpdatedAt)
+				a.bestDesign = it.Design
+			}
+		}
+	}
 
-        out := make([]CollectionSummary, 0, len(bunches))
-        for _, a := range bunches {
-                if q != "" {
-                        hit := strings.Contains(a.sum.ID, q)
-                        for _, n := range a.names {
-                                if strings.Contains(n, q) {
-                                        hit = true
-                                        break
-                                }
-                        }
-                        if !hit {
-                                for _, d := range a.descs {
-                                        if strings.Contains(d, q) {
-                                                hit = true
-                                                break
-                                        }
-                                }
-                        }
-                        if !hit {
-                                for t := range a.tags {
-                                        if strings.Contains(strings.ToLower(t), q) {
-                                                hit = true
-                                                break
-                                        }
-                                }
-                        }
-                        if !hit {
-                                continue
-                        }
-                }
-                // the bunch icon: the members' most common icon
-                best, bestN := "", 0
-                for name, n := range a.icons {
-                        if n > bestN || (n == bestN && name < best) {
-                                best, bestN = name, n
-                        }
-                }
-                a.sum.Icon = best
-                a.sum.Repo = a.iconRepos[best] // v0.61 (icons): where the icon file lives
-                // v0.56: the bunch tag — the members' most common FIRST tag
-                // (ties break alphabetically for determinism).
-                bestTag, bestTagN := "", 0
-                for t, n := range a.tags {
-                        if n > bestTagN || (n == bestTagN && t < bestTag) {
-                                bestTag, bestTagN = t, n
-                        }
-                }
-                // v0.73: the tag filter — badge-exact (case-insensitive),
-                // applied AFTER the vote so it filters on the final badge.
-                if tag != "" && strings.ToLower(bestTag) != tag {
-                        continue
-                }
-                a.sum.Tag = bestTag
-                a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
-                out = append(out, a.sum)
-        }
-        sort.SliceStable(out, func(i, j int) bool {
-                if out[i].Members != out[j].Members {
-                        return out[i].Members > out[j].Members
-                }
-                if out[i].Hearts != out[j].Hearts {
-                        return out[i].Hearts > out[j].Hearts
-                }
-                return out[i].ID < out[j].ID
-        })
-        return out, nil
+	out := make([]CollectionSummary, 0, len(bunches))
+	for _, a := range bunches {
+		if q != "" {
+			hit := strings.Contains(a.sum.ID, q)
+			for _, n := range a.names {
+				if strings.Contains(n, q) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				for _, d := range a.descs {
+					if strings.Contains(d, q) {
+						hit = true
+						break
+					}
+				}
+			}
+			if !hit {
+				for t := range a.tags {
+					if strings.Contains(strings.ToLower(t), q) {
+						hit = true
+						break
+					}
+				}
+			}
+			if !hit {
+				continue
+			}
+		}
+		// the bunch icon: the members' most common icon
+		best, bestN := "", 0
+		for name, n := range a.icons {
+			if n > bestN || (n == bestN && name < best) {
+				best, bestN = name, n
+			}
+		}
+		a.sum.Icon = best
+		a.sum.Repo = a.iconRepos[best] // v0.61 (icons): where the icon file lives
+		// v0.56: the bunch tag — the members' most common FIRST tag
+		// (ties break alphabetically for determinism).
+		bestTag, bestTagN := "", 0
+		for t, n := range a.tags {
+			if n > bestTagN || (n == bestTagN && t < bestTag) {
+				bestTag, bestTagN = t, n
+			}
+		}
+		// v0.73: the tag filter — badge-exact (case-insensitive),
+		// applied AFTER the vote so it filters on the final badge.
+		if tag != "" && strings.ToLower(bestTag) != tag {
+			continue
+		}
+		a.sum.Tag = bestTag
+		a.sum.Design = bunchDesign(a.sum.ID, a.bestDesign)
+		out = append(out, a.sum)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Members != out[j].Members {
+			return out[i].Members > out[j].Members
+		}
+		if out[i].Hearts != out[j].Hearts {
+			return out[i].Hearts > out[j].Hearts
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
 }
 
 // CollectionMembers is one library's slice of a bunch.
 type CollectionMembers struct {
-        Type  string `json:"type"`
-        Items []Item `json:"items"`
+	Type  string `json:"type"`
+	Items []Item `json:"items"`
 }
 
 // CollectionItems returns the members of one bunch grouped per library,
@@ -207,33 +207,33 @@ type CollectionMembers struct {
 // Unknown/empty ids return an empty set, never an error — the hub just
 // shows "nothing here".
 func (s *Service) CollectionItems(id string) ([]CollectionMembers, error) {
-        id = SanitizeCollection(id)
-        out := []CollectionMembers{}
-        if id == "" {
-                return out, nil
-        }
-        for _, spec := range All() {
-                items, err := s.Items(spec.Type, "", "hearts", "", false)
-                if err != nil {
-                        continue
-                }
-                members := make([]Item, 0, 4)
-                for _, it := range items {
-                        if SanitizeCollection(it.Collection) == id {
-                                members = append(members, it)
-                        }
-                }
-                if len(members) > 0 {
-                        out = append(out, CollectionMembers{Type: spec.Type, Items: members})
-                }
-        }
-        return out, nil
+	id = SanitizeCollection(id)
+	out := []CollectionMembers{}
+	if id == "" {
+		return out, nil
+	}
+	for _, spec := range All() {
+		items, err := s.Items(spec.Type, "", "hearts", "", false)
+		if err != nil {
+			continue
+		}
+		members := make([]Item, 0, 4)
+		for _, it := range items {
+			if SanitizeCollection(it.Collection) == id {
+				members = append(members, it)
+			}
+		}
+		if len(members) > 0 {
+			out = append(out, CollectionMembers{Type: spec.Type, Items: members})
+		}
+	}
+	return out, nil
 }
 
 // usableDesign reports whether a design can paint a card (a gradient with
 // stops, or a PNG). Zero/"none" designs don't count.
 func usableDesign(d Design) bool {
-        return (d.Kind == "gradient" && len(d.Colors) > 0) || d.Kind == "png"
+	return (d.Kind == "gradient" && len(d.Colors) > 0) || d.Kind == "png"
 }
 
 // ── v0.60 pt C.6: EVERYTHING IS A BUNDLE — collection downloads + deletes ──
@@ -241,14 +241,14 @@ func usableDesign(d Design) bool {
 // CollectionDownload is one downloaded member of a bunch (item + payload,
 // the same shape a single-item download returns).
 type CollectionDownload struct {
-        Item    Item   `json:"item"`
-        Payload string `json:"payload"`
+	Item    Item   `json:"item"`
+	Payload string `json:"payload"`
 }
 
 // CollectionDownloadGroup is one library's slice of a downloaded bunch.
 type CollectionDownloadGroup struct {
-        Type  string               `json:"type"`
-        Items []CollectionDownload `json:"items"`
+	Type  string               `json:"type"`
+	Items []CollectionDownload `json:"items"`
 }
 
 // DownloadProgress (v0.67.2 THE PERSISTENT DOWNLOAD REGISTRY) is one
@@ -258,14 +258,15 @@ type CollectionDownloadGroup struct {
 // 'downloading...' pill that reset on screen leave).
 //
 // Phases (per research 1-B — the robust download state machine):
-//   enqueued → downloading (per member) → verifying → complete | failed
+//
+//	enqueued → downloading (per member) → verifying → complete | failed
 type DownloadProgress struct {
-        Phase  string `json:"phase"`            // enqueued | downloading | verifying | complete | failed
-        Done   int    `json:"done"`
-        Total  int    `json:"total"`
-        Failed int    `json:"failed"`
-        Member string `json:"member,omitempty"` // the item id last attempted
-        Error  string `json:"error,omitempty"`
+	Phase  string `json:"phase"` // enqueued | downloading | verifying | complete | failed
+	Done   int    `json:"done"`
+	Total  int    `json:"total"`
+	Failed int    `json:"failed"`
+	Member string `json:"member,omitempty"` // the item id last attempted
+	Error  string `json:"error,omitempty"`
 }
 
 // DownloadCollection is the synchronous (legacy) path — calls the
@@ -273,7 +274,7 @@ type DownloadProgress struct {
 // v0.67.2 SSE HTTP handler uses DownloadCollectionStream so the user
 // sees real progress.
 func (s *Service) DownloadCollection(id string) ([]CollectionDownloadGroup, error) {
-        return s.DownloadCollectionStream(id, nil)
+	return s.DownloadCollectionStream(id, nil)
 }
 
 // DownloadCollectionStream downloads EVERY member of a bunch and streams
@@ -297,136 +298,136 @@ func (s *Service) DownloadCollection(id string) ([]CollectionDownloadGroup, erro
 // panel pop/push; bunchRender reads it for the pill label; the click
 // handler is non-blocking and lets the registry drive the UI.
 func (s *Service) DownloadCollectionStream(id string, progress chan<- DownloadProgress) ([]CollectionDownloadGroup, error) {
-        id = SanitizeCollection(id)
-        if id == "" {
-                return nil, ErrNotFoundLocal
-        }
-        // First pass: gather ALL members across every library so the user
-        // sees a real progress count (not a static 'downloading...' pill).
-        // The legacy DownloadCollection gathered+downloaded per-type in one
-        // loop; we split it so the total is known BEFORE the first download.
-        type pending struct {
-                spec LibrarySpec
-                it   Item
-        }
-        var members []pending
-        for _, spec := range All() {
-                items, err := s.Items(spec.Type, "", "hearts", "", false)
-                if err != nil {
-                        continue
-                }
-                for _, it := range items {
-                        if SanitizeCollection(it.Collection) == id {
-                                members = append(members, pending{spec, it})
-                        }
-                }
-        }
-        total := len(members)
-        if total == 0 {
-                return nil, ErrNotFoundLocal
-        }
-        if progress != nil {
-                progress <- DownloadProgress{Phase: "enqueued", Total: total, Done: 0, Failed: 0}
-        }
-        // Group the downloaded items by type for the final return.
-        groupsByType := map[string]*CollectionDownloadGroup{}
-        order := []string{}
-        done, failed := 0, 0
-        for _, m := range members {
-                item, payload, err := s.Download(m.spec.Type, m.it.Repo, m.it.ID)
-                if err != nil {
-                        // member failed — the rest of the bundle still lands
-                        failed++
-                        if progress != nil {
-                                progress <- DownloadProgress{
-                                        Phase: "downloading", Done: done, Total: total, Failed: failed,
-                                        Member: m.it.ID, Error: err.Error(),
-                                }
-                        }
-                        continue
-                }
-                done++
-                g, ok := groupsByType[m.spec.Type]
-                if !ok {
-                        g = &CollectionDownloadGroup{Type: m.spec.Type}
-                        groupsByType[m.spec.Type] = g
-                        order = append(order, m.spec.Type)
-                }
-                g.Items = append(g.Items, CollectionDownload{Item: item, Payload: payload})
-                if progress != nil {
-                        progress <- DownloadProgress{
-                                Phase: "downloading", Done: done, Total: total, Failed: failed,
-                                Member: item.ID,
-                        }
-                }
-        }
-        if progress != nil {
-                progress <- DownloadProgress{Phase: "verifying", Done: done, Total: total, Failed: failed}
-        }
-        if done == 0 {
-                if progress != nil {
-                        progress <- DownloadProgress{Phase: "failed", Done: 0, Total: total, Failed: failed, Error: "all members failed to download"}
-                }
-                return nil, ErrNotFoundLocal
-        }
-        // Build the output slice in stable type-registration order (the
-        // same shape the legacy DownloadCollection returned).
-        out := make([]CollectionDownloadGroup, 0, len(order))
-        for _, t := range order {
-                out = append(out, *groupsByType[t])
-        }
-        if progress != nil {
-                progress <- DownloadProgress{Phase: "complete", Done: done, Total: total, Failed: failed}
-        }
-        return out, nil
+	id = SanitizeCollection(id)
+	if id == "" {
+		return nil, ErrNotFoundLocal
+	}
+	// First pass: gather ALL members across every library so the user
+	// sees a real progress count (not a static 'downloading...' pill).
+	// The legacy DownloadCollection gathered+downloaded per-type in one
+	// loop; we split it so the total is known BEFORE the first download.
+	type pending struct {
+		spec LibrarySpec
+		it   Item
+	}
+	var members []pending
+	for _, spec := range All() {
+		items, err := s.Items(spec.Type, "", "hearts", "", false)
+		if err != nil {
+			continue
+		}
+		for _, it := range items {
+			if SanitizeCollection(it.Collection) == id {
+				members = append(members, pending{spec, it})
+			}
+		}
+	}
+	total := len(members)
+	if total == 0 {
+		return nil, ErrNotFoundLocal
+	}
+	if progress != nil {
+		progress <- DownloadProgress{Phase: "enqueued", Total: total, Done: 0, Failed: 0}
+	}
+	// Group the downloaded items by type for the final return.
+	groupsByType := map[string]*CollectionDownloadGroup{}
+	order := []string{}
+	done, failed := 0, 0
+	for _, m := range members {
+		item, payload, err := s.Download(m.spec.Type, m.it.Repo, m.it.ID)
+		if err != nil {
+			// member failed — the rest of the bundle still lands
+			failed++
+			if progress != nil {
+				progress <- DownloadProgress{
+					Phase: "downloading", Done: done, Total: total, Failed: failed,
+					Member: m.it.ID, Error: err.Error(),
+				}
+			}
+			continue
+		}
+		done++
+		g, ok := groupsByType[m.spec.Type]
+		if !ok {
+			g = &CollectionDownloadGroup{Type: m.spec.Type}
+			groupsByType[m.spec.Type] = g
+			order = append(order, m.spec.Type)
+		}
+		g.Items = append(g.Items, CollectionDownload{Item: item, Payload: payload})
+		if progress != nil {
+			progress <- DownloadProgress{
+				Phase: "downloading", Done: done, Total: total, Failed: failed,
+				Member: item.ID,
+			}
+		}
+	}
+	if progress != nil {
+		progress <- DownloadProgress{Phase: "verifying", Done: done, Total: total, Failed: failed}
+	}
+	if done == 0 {
+		if progress != nil {
+			progress <- DownloadProgress{Phase: "failed", Done: 0, Total: total, Failed: failed, Error: "all members failed to download"}
+		}
+		return nil, ErrNotFoundLocal
+	}
+	// Build the output slice in stable type-registration order (the
+	// same shape the legacy DownloadCollection returned).
+	out := make([]CollectionDownloadGroup, 0, len(order))
+	for _, t := range order {
+		out = append(out, *groupsByType[t])
+	}
+	if progress != nil {
+		progress <- DownloadProgress{Phase: "complete", Done: done, Total: total, Failed: failed}
+	}
+	return out, nil
 }
 
 // CollectionDeleted is one removed local row (the client cleans its
 // session marks + "Yours" copies from the list).
 type CollectionDeleted struct {
-        Type string `json:"type"`
-        ID   string `json:"id"`
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 // DeleteCollection removes every locally-downloaded member of a bunch
 // (v0.60 pt C.6: the delete-your-copy rule, bundle edition — the remote
 // listings are untouched). Returns the removed rows.
 func (s *Service) DeleteCollection(id string) ([]CollectionDeleted, error) {
-        id = SanitizeCollection(id)
-        if id == "" {
-                return nil, ErrNotFoundLocal
-        }
-        var refs []CollectionDeleted
-        for _, spec := range All() {
-                rows, err := ListLocal(s.db, spec.Type)
-                if err != nil {
-                        continue
-                }
-                for _, row := range rows {
-                        if row.DownloadedAt == "" || SanitizeCollection(row.Item.Collection) != id {
-                                continue // publish-only records + other bunches stay
-                        }
-                        if err := DeleteLocalItem(s.db, spec.Type, row.Item.ID); err == nil {
-                                refs = append(refs, CollectionDeleted{Type: spec.Type, ID: row.Item.ID})
-                        }
-                }
-        }
-        if len(refs) == 0 {
-                return nil, ErrNotFoundLocal
-        }
-        s.Invalidate("") // counts changed
-        return refs, nil
+	id = SanitizeCollection(id)
+	if id == "" {
+		return nil, ErrNotFoundLocal
+	}
+	var refs []CollectionDeleted
+	for _, spec := range All() {
+		rows, err := ListLocal(s.db, spec.Type)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			if row.DownloadedAt == "" || SanitizeCollection(row.Item.Collection) != id {
+				continue // publish-only records + other bunches stay
+			}
+			if err := DeleteLocalItem(s.db, spec.Type, row.Item.ID); err == nil {
+				refs = append(refs, CollectionDeleted{Type: spec.Type, ID: row.Item.ID})
+			}
+		}
+	}
+	if len(refs) == 0 {
+		return nil, ErrNotFoundLocal
+	}
+	s.Invalidate("") // counts changed
+	return refs, nil
 }
 
 // builtinBunchDesigns — curated art for known bunches (v0.58 user spec pt 2:
 // "let's make the superpowers bundle have a random color + random gradient
 // of your choosing"). superpowers-obra, the flagship port, wears a hot mesh.
 var builtinBunchDesigns = map[string]Design{
-        "superpowers-obra": {
-                Kind:   "gradient",
-                Colors: []string{"#f59e0b", "#ef4444", "#7c3aed"},
-                Dir:    "mesh",
-        },
+	"superpowers-obra": {
+		Kind:   "gradient",
+		Colors: []string{"#f59e0b", "#ef4444", "#7c3aed"},
+		Dir:    "mesh",
+	},
 }
 
 // bunchDesign resolves a bunch's card art: the curated override wins, else
@@ -434,8 +435,8 @@ var builtinBunchDesigns = map[string]Design{
 // else the zero Design — the client then paints its deterministic hash
 // gradient from the bunch id, so EVERY bundle has stable art.
 func bunchDesign(id string, newest Design) Design {
-        if d, ok := builtinBunchDesigns[id]; ok {
-                return d
-        }
-        return newest
+	if d, ok := builtinBunchDesigns[id]; ok {
+		return d
+	}
+	return newest
 }
