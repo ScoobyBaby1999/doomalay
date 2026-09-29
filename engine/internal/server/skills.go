@@ -51,6 +51,7 @@ import (
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
 )
 
 // Output caps — mirror the brain's dt_skills so both halves of the port
@@ -362,29 +363,37 @@ func (s *Server) tweaksBotDLOn(sessID string) bool {
 }
 
 // handleToolsSkills is GET /api/tools/skills — the PM bridge's skills
-// half. `result` is the OBSERVATION-ready text (pmsdk wraps it).
+// half. `result` is the OBSERVATION-ready text (pmsdk wraps it). The
+// body lives in skillsDispatch (v0.72) so the DIRECT-path ACTION runner
+// (runSkillsAction — the quick chats) rides the exact same core.
 func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
-        action := r.URL.Query().Get("action")
-        session := r.URL.Query().Get("session")
+        q := r.URL.Query()
+        res, errStr := s.skillsDispatch(q.Get("action"), q.Get, q.Get("session"))
+        if errStr != "" {
+                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": errStr})
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": res})
+}
+
+// skillsDispatch (v0.72, extracted from handleToolsSkills) — the shared
+// skills action core: the PM bridge (HTTP) AND the direct-path ACTION
+// runner both land here. get(k) resolves an argument by key. bootstrap +
+// load are lib-gated (the pill); list/search/files/read always answer.
+func (s *Server) skillsDispatch(action string, get func(string) string, session string) (string, string) {
         entries, err := s.skillsIndex()
         if err != nil {
-                writeJSON(w, http.StatusOK, map[string]any{
-                        "tool": "skills", "error": "skills library unavailable: " + err.Error()})
-                return
+                return "", "skills library unavailable: " + err.Error()
         }
         switch action {
         case "bootstrap":
                 if !s.sessionLibOn(session) {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "the chat's Bot Library is OFF — flip the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on first"})
-                        return
+                        return "", "the chat's Bot Library is OFF — flip the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on first"
                 }
                 body, err := os.ReadFile(filepath.Join(s.skillsDir(),
                         "superpowers-using-superpowers", "SKILL.md"))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "bootstrap skill missing: " + err.Error()})
-                        return
+                        return "", "bootstrap skill missing: " + err.Error()
                 }
                 text := "SUPERPOWERS — THE SKILL DISCIPLINE (injected, active):\n\n" +
                         stripFrontmatter(string(body)) +
@@ -392,12 +401,14 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
                         "- *invoke a skill* → ACTION: skills {\"action\": \"load\", \"skill\": \"<name>\"}\n" +
                         "- *list/search skills* → ACTION: skills {\"action\": \"list\"} or {\"action\": \"search\", \"q\": \"…\"}\n" +
                         "- *read a skill's companion files* → ACTION: skills {\"action\": \"files\"/\"read\", \"skill\": \"…\", \"path\": \"…\"}\n" +
+                        "- *list/browse bundles* → ACTION: hublib {\"action\": \"bundles\", \"q\": \"…\"} then {\"action\": \"bundle\", \"id\": \"…\"}\n" +
                         "- *browse the public hub* → ACTION: hublib {\"action\": \"search\", \"q\": \"…\", \"type\": \"skill|doc|script|template\"}\n" +
                         "- *download a hub item* → ACTION: hublib {\"action\": \"download\", \"type\": \"…\", \"repo\": \"…\", \"id\": \"…\"}\n" +
+                        "- *download a whole bundle* → ACTION: hublib {\"action\": \"download_bundle\", \"id\": \"…\"}\n" +
                         "- *dispatch a subagent* → ACTION: delegate {\"prompt\": \"…\"}\n" +
                         "- *create/update todos* → the timemgr equivalents: ACTION: json_tool / text_stats (plain notes)\n" +
                         " — load a skill BEFORE starting any work it covers."
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": text})
+                return text, ""
         case "list":
                 var b strings.Builder
                 b.WriteString("SKILLS LIBRARY (load one with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}):\n")
@@ -408,13 +419,11 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
                         }
                         b.WriteString("- " + e.Name + " — " + oneLine(e.Description, 120) + "\n")
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": clip(b.String(), hublibOutMax)})
+                return clip(b.String(), hublibOutMax), ""
         case "search":
-                q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+                q := strings.ToLower(strings.TrimSpace(get("q")))
                 if q == "" {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "empty query. Usage: ACTION: skills {\"action\": \"search\", \"q\": \"brainstorm\"}"})
-                        return
+                        return "", "empty query. Usage: ACTION: skills {\"action\": \"search\", \"q\": \"brainstorm\"}"
                 }
                 type hit struct {
                         e skillsEntry
@@ -450,38 +459,31 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
                                 b.WriteString("- " + hits[i].e.Name + " — " + oneLine(hits[i].e.Description, 140) + "\n")
                         }
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": clip(b.String(), hublibOutMax)})
+                return clip(b.String(), hublibOutMax), ""
         case "load":
                 if !s.sessionLibOn(session) {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "the chat's Bot Library is OFF — you can browse and recommend, but loads are refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"})
-                        return
+                        return "", "the chat's Bot Library is OFF — you can browse and recommend, but loads are refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"
                 }
-                ref := r.URL.Query().Get("skill")
+                ref := get("skill")
                 e := resolveSkill(entries, ref)
                 if e == nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                                "error": "no skill named " + oneLine(ref, 60) + " — ACTION: skills {\"action\":\"list\"} shows the library"})
-                        return
+                        return "", "no skill named " + oneLine(ref, 60) + " — ACTION: skills {\"action\":\"list\"} shows the library"
                 }
                 body, err := os.ReadFile(filepath.Join(s.skillsDir(), e.Dir, "SKILL.md"))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "read failed: " + err.Error()})
-                        return
+                        return "", "read failed: " + err.Error()
                 }
                 text := "SKILL LOADED — " + e.Name + ". Follow this methodology now.\n\n" +
                         clip(stripFrontmatter(string(body)), skillsLoadMax, "\n…(body clipped — ACTION: skills {\"action\":\"read\",\"skill\":\""+e.Name+"\",\"path\":\"SKILL.md\"} for the tail)")
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": text})
+                return text, ""
         case "files":
-                e := resolveSkill(entries, r.URL.Query().Get("skill"))
+                e := resolveSkill(entries, get("skill"))
                 if e == nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "no such skill"})
-                        return
+                        return "", "no such skill"
                 }
                 kids, err := os.ReadDir(filepath.Join(s.skillsDir(), e.Dir))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "read failed: " + err.Error()})
-                        return
+                        return "", "read failed: " + err.Error()
                 }
                 var b strings.Builder
                 b.WriteString("COMPANION FILES of " + e.Name + " (read with ACTION: skills {\"action\":\"read\",\"skill\":\"" + e.Name + "\",\"path\":\"…\"}):\n")
@@ -491,30 +493,56 @@ func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
                         }
                         b.WriteString("- " + k.Name() + "\n")
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": clip(b.String(), hublibOutMax)})
+                return clip(b.String(), hublibOutMax), ""
         case "read":
-                e := resolveSkill(entries, r.URL.Query().Get("skill"))
+                e := resolveSkill(entries, get("skill"))
                 if e == nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "no such skill"})
-                        return
+                        return "", "no such skill"
                 }
-                p := r.URL.Query().Get("path")
+                p := get("path")
                 clean := filepath.Clean("/" + p) // traversal-proof
                 if strings.Contains(clean, "..") {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "bad path"})
-                        return
+                        return "", "bad path"
                 }
                 b, err := os.ReadFile(filepath.Join(s.skillsDir(), e.Dir, clean))
                 if err != nil {
-                        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": "read failed: " + err.Error()})
-                        return
+                        return "", "read failed: " + err.Error()
                 }
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                        "result": clip(string(b), skillsReadMax, "\n…(clipped — the full file rides the load envelope)")})
+                return clip(string(b), skillsReadMax, "\n…(clipped — the full file rides the load envelope)"), ""
         default:
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills",
-                        "error": "unknown action " + oneLine(action, 30) + ". Valid: bootstrap, list, search, load, files, read."})
+                return "", "unknown action " + oneLine(action, 30) + ". Valid: bootstrap, list, search, load, files, read."
         }
+}
+
+// runSkillsAction (v0.72) — the DIRECT-PATH skills ACTION runner: the
+// quick chats' "ACTION: skills {…}" lines land here (via
+// llm.ChatRequest.SkillsToolFn), parse their JSON args, and ride the
+// same skillsDispatch as the PM bridge. Returns OBSERVATION-ready text.
+// The load result's "SKILL LOADED — <name>" head is what the active-bundle
+// pill matches (turnBundleOf) — deterministic on live turns AND replays.
+func (s *Server) runSkillsAction(sessionID, argJSON string) string {
+        var args map[string]any
+        if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
+                trimmed := strings.TrimSpace(strings.Trim(argJSON, "\""))
+                if trimmed != "" && !strings.HasPrefix(argJSON, "{") {
+                        args = map[string]any{"action": "search", "q": trimmed}
+                } else {
+                        return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
+                }
+        }
+        action, _ := args["action"].(string)
+        if action == "" {
+                action = "list"
+        }
+        get := func(k string) string {
+                v, _ := args[k].(string)
+                return v
+        }
+        res, errStr := s.skillsDispatch(action, get, sessionID)
+        if errStr != "" {
+                return "OBSERVATION:\nerror: " + errStr
+        }
+        return "OBSERVATION:\n" + res
 }
 
 // handleToolsHublib is GET /api/tools/hublib — the PM bridge's bot-side
@@ -606,9 +634,227 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. PAYLOAD:\n" +
                         clip(payload, skillsLoadMax, "\n…(payload clipped — ACTION: hublib {\"action\":\"get\"} re-reads the head)")
                 return clip(text, skillsLoadMax+400), ""
+        case "bundles":
+                // v0.72: THE BUNDLE LIST — never gated (browsing changes
+                // nothing). One line per bunch: id, badge tag, member
+                // census, hearts/downloads, and the sample name so the
+                // model can JUDGE fit before pulling detail.
+                cols, err := s.hub.Collections(get("q"), false)
+                if err != nil {
+                        return "", "hub: " + err.Error()
+                }
+                var b strings.Builder
+                b.WriteString("HUB BUNDLES (curated collections — detail one with ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}; download all members with {\"action\":\"download_bundle\",\"id\":\"…\"}):\n")
+                n := 0
+                for _, c := range cols {
+                        if n >= hublibListMax {
+                                b.WriteString("… " + strconv.Itoa(len(cols)-n) + " more — narrow the query\n")
+                                break
+                        }
+                        b.WriteString("- " + c.ID)
+                        if c.Tag != "" {
+                                b.WriteString(" | #" + c.Tag)
+                        }
+                        b.WriteString(" | " + strconv.Itoa(c.Members) + " members (" + byTypeLine(c.ByType) + ")" +
+                                " | ♥ " + strconv.Itoa(c.Hearts) + " | ⤓ " + strconv.Itoa(c.Downloads) +
+                                " | e.g. " + oneLine(c.Sample, 40) + "\n")
+                        n++
+                }
+                if n == 0 {
+                        b.WriteString("(no bundles matched — try a shorter query, or browse items directly with {\"action\":\"search\"})\n")
+                }
+                return clip(b.String(), hublibOutMax), ""
+        case "bundle":
+                // v0.72: THE BUNDLE DETAIL — never gated. The member lines
+                // carry the DESCRIPTIONS VERBATIM (they are when-to-use
+                // conditions — obra's convention), so the model can match
+                // member→sub-problem BEFORE downloading anything. Skills
+                // first (the actionable methodologies), then scripts, then
+                // templates, docs last (reference reading).
+                return s.hublibBundleDetail(get("id"))
+        case "download_bundle":
+                // v0.72: THE WHOLE-BUNDLE DOWNLOAD — same gates as a single
+                // download (lib pill + tweaks Bot Library + Can download
+                // bundles). Landing the bundle arms the user's library; the
+                // OBSERVATION teaches what to do NEXT (load members, which
+                // ones matter, the superpowers workflow when it is).
+                if !s.sessionLibOn(session) {
+                        return "", "the chat's Bot Library is OFF — you can browse and recommend, but downloads are refused until the user flips ✦ tweaks → Bot Library back on"
+                }
+                if !s.tweaksBotLibOn(session) {
+                        return "", "the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to download"
+                }
+                if !s.tweaksBotDLOn(session) {
+                        return "", "the chat's Can download bundles switch is OFF — only already-downloaded bundles are usable; flip ✦ tweaks → Bot Library → Can download bundles back on to download new ones"
+                }
+                id := get("id")
+                if strings.TrimSpace(id) == "" {
+                        return "", "download_bundle needs {\"id\": \"<bundle id>\"} — ACTION: hublib {\"action\":\"bundles\"} lists them"
+                }
+                groups, err := s.hub.DownloadCollection(id)
+                if err != nil {
+                        return "", "hub: " + err.Error()
+                }
+                total := 0
+                perType := map[string]int{}
+                var skillHeads []string
+                for _, g := range groups {
+                        perType[g.Type] += len(g.Items)
+                        total += len(g.Items)
+                        if g.Type == "skill" {
+                                for _, it := range g.Items {
+                                        if len(skillHeads) < 3 {
+                                                skillHeads = append(skillHeads, "### "+it.Item.Name+" — "+oneLine(it.Item.Description, 90)+"\n"+clip(stripFrontmatter(it.Payload), 1200, "\n…(head clipped — get the rest via ACTION: hublib {\"action\":\"get\",\"type\":\"skill\",\"repo\":\""+it.Item.Repo+"\",\"id\":\""+it.Item.ID+"\"} or load the installed skill)")+"\n")
+                                        }
+                                }
+                        }
+                }
+                var b strings.Builder
+                b.WriteString("DOWNLOADED BUNDLE — " + SanitizedBundleID(id) + " · " + strconv.Itoa(total) + " items (" + byTypeLine(perType) + ") — every member is now in the user's library (\"Yours\").\n")
+                b.WriteString(superpowersWorkflowBlock(id, true))
+                if len(skillHeads) > 0 {
+                        b.WriteString("\nTHE SKILLS' HEADS (the actionable methodologies — load one with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"} when the work it covers starts):\n")
+                        for _, h := range skillHeads {
+                                b.WriteString(h)
+                        }
+                }
+                b.WriteString("\nNEXT: pick the member that fits the actual sub-problem (descriptions state when to use each), LOAD it before starting, follow it to the letter, and say which member you used and why. Never run the whole bundle at a task it was not designed for — browse first (ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}), use the smallest fitting member.\n")
+                return clip(b.String(), hublibOutMax), ""
         default:
-                return "", "unknown action " + oneLine(action, 30) + ". Valid: search, get, download."
+                return "", "unknown action " + oneLine(action, 30) + ". Valid: search, get, download, bundles, bundle, download_bundle."
         }
+}
+
+// SanitizedBundleID normalizes a bundle id the same way the hub does
+// (hub.SanitizeCollection — a member's collection and the bunch card's
+// id must meet on the same key).
+func SanitizedBundleID(raw string) string {
+        return hub.SanitizeCollection(raw)
+}
+
+// byTypeLine renders a member census "15 skills, 4 scripts" (skills
+// first — the actionable type leads).
+func byTypeLine(m map[string]int) string {
+        order := []string{"skill", "script", "template", "doc", "persona"}
+        var parts []string
+        for _, t := range order {
+                if m[t] > 0 {
+                        plural := t + "s"
+                        if m[t] == 1 {
+                                plural = t
+                        }
+                        parts = append(parts, strconv.Itoa(m[t])+" "+plural)
+                }
+        }
+        if len(parts) == 0 {
+                return "no members"
+        }
+        return strings.Join(parts, ", ")
+}
+
+// superpowersWorkflowBlock — v0.72 (user spec: "for superpowers - which
+// skills and which scripts it runs when"). The obra superpowers bundle is
+// a WORKFLOW, not a pile: the members' descriptions say WHEN each fires;
+// this block says the ORDER. Derived from the repo's README "The Basic
+// Workflow" (brainstorm → worktrees → plans → subagent/inline execution →
+// TDD → review → finish) plus the cross-cutting debug/verify rules.
+// Only rendered for superpowers bundles (id or tag match) — other
+// bundles get the generic selection line instead.
+func superpowersWorkflowBlock(bundleID string, compact bool) string {
+        id := SanitizedBundleID(bundleID)
+        if id != "superpowers-obra" && !strings.HasPrefix(id, "superpowers") {
+                return ""
+        }
+        if compact {
+                return "\nWORKFLOW (superpowers): brainstorming → writing-plans → subagent-driven-development (fresh subagent per task) or executing-plans (inline) → test-driven-development → requesting-code-review → finishing-a-development-branch. Cross-cutting: systematic-debugging on ANY failure; verification-before-completion BEFORE claiming done. Use the bootstrap (superpowers-using-superpowers) at conversation start; its rule: if there is even a 1% chance a skill applies, load it first — process skills before implementation skills.\n"
+        }
+        return "\nWORKFLOW (superpowers): 1. brainstorming (before ANY creative work — it teases out the spec) → 2. writing-plans (once you have requirements; bite-sized tasks) → 3. subagent-driven-development (fresh subagent per task, per-task review) or executing-plans (inline, one final review) → 4. test-driven-development (RED-GREEN-REFACTOR during implementation) → 5. requesting-code-review (between tasks; critical issues block) → 6. finishing-a-development-branch (verify → merge/PR).\nCross-cutting: systematic-debugging the moment anything fails; verification-before-completion before ANY claim of done; dispatching-parallel-agents for 2+ independent tasks; receiving-code-review with rigor (never performative agreement).\nTHE BOOTSTRAP: superpowers-using-superpowers at conversation start — its rule: if there is even a 1% chance a skill applies, you MUST load it BEFORE responding; process skills run before implementation skills; user instructions always outrank the skills.\nSCRIPTS: this bundle's loose scripts are repo-maintainer tools (versioning/lint/packaging) — reference reading, not task methodology. The real helper scripts (task-brief, sdd-workspace, review-package, task-start, task-done) live INSIDE the skills as companion files — read them with ACTION: skills {\"action\":\"files\"/\"read\",\"skill\":\"…\"} when a loaded skill references one; they define what runs when, per skill.\n"
+}
+
+// hublibBundleDetail — v0.72: the `bundle` action body (never gated).
+// Members grouped per type, skills first; each line carries the member's
+// VERBATIM description (the when-to-use condition) + a downloaded marker
+// so the model knows what is already local. Docs collapse to a census +
+// the first few names (they are reference reading, not actionable).
+func (s *Server) hublibBundleDetail(rawID string) (string, string) {
+        id := SanitizedBundleID(rawID)
+        if id == "" {
+                return "", "bundle needs {\"id\": \"<bundle id>\"} — ACTION: hublib {\"action\":\"bundles\"} lists them"
+        }
+        groups, err := s.hub.CollectionItems(id)
+        if err != nil {
+                return "", "hub: " + err.Error()
+        }
+        if len(groups) == 0 {
+                return "", "no bundle '" + oneLine(rawID, 40) + "' — ACTION: hublib {\"action\":\"bundles\"} lists what exists"
+        }
+        // the downloaded markers (per type) — one hub query per present type.
+        dlMark := func(typ, repo, itemID string) string {
+                rows, err := s.hub.Downloads(typ)
+                if err != nil {
+                        return ""
+                }
+                for _, r := range rows {
+                        if r.Item.Repo == repo && r.Item.ID == itemID {
+                                return " [✓ downloaded]"
+                        }
+                }
+                return ""
+        }
+        order := map[string]int{"skill": 0, "script": 1, "template": 2, "doc": 3, "persona": 4}
+        sort.Slice(groups, func(i, j int) bool { return order[groups[i].Type] < order[groups[j].Type] })
+        perType := map[string]int{}
+        for _, g := range groups {
+                perType[g.Type] += len(g.Items)
+        }
+        var b strings.Builder
+        b.WriteString("BUNDLE — " + id + " — " + strconv.Itoa(sumMembers(perType)) + " members (" + byTypeLine(perType) + ")\n")
+        b.WriteString(superpowersWorkflowBlock(id, false))
+        b.WriteString("\nSELECTION: match the member to the actual sub-problem — the descriptions below state WHEN each fires. Load the smallest fitting member BEFORE starting; say which member you used and why; when nothing fits, say so and proceed without the bundle (never force a member onto a task it was not written for).\n")
+        for _, g := range groups {
+                switch g.Type {
+                case "doc":
+                        // docs: census + first names only (reference reading)
+                        var names []string
+                        for i, it := range g.Items {
+                                if i < 4 {
+                                        names = append(names, oneLine(it.Name, 40))
+                                }
+                        }
+                        b.WriteString("\nDOCS (" + strconv.Itoa(len(g.Items)) + " — background reading; get detail only when a task points at one): " + strings.Join(names, ", "))
+                        if len(g.Items) > 4 {
+                                b.WriteString(" …")
+                        }
+                        b.WriteString("\n")
+                default:
+                        plural := strings.ToUpper(g.Type) + "S"
+                        if len(g.Items) == 1 {
+                                plural = strings.ToUpper(g.Type)
+                        }
+                        b.WriteString("\n" + plural + " (each line's description = when to use it" +
+                                "; download with ACTION: hublib {\"action\":\"download\",\"type\":\"" + g.Type + "\",\"repo\":\"…\",\"id\":\"…\"}):")
+                        if g.Type == "skill" {
+                                b.WriteString(" — or, once downloaded, load the methodology with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}")
+                        }
+                        b.WriteString("\n")
+                        for _, it := range g.Items {
+                                b.WriteString("- " + it.Name + dlMark(g.Type, it.Repo, it.ID) +
+                                        " | repo: " + it.Repo + " | id: " + it.ID +
+                                        " | " + oneLine(it.Description, 130) + "\n")
+                        }
+                }
+        }
+        b.WriteString("\nDownload EVERYTHING at once: ACTION: hublib {\"action\":\"download_bundle\",\"id\":\"" + id + "\"} (gated on the chat's library switches).\n")
+        return clip(b.String(), hublibOutMax), ""
+}
+
+// sumMembers totals a by-type census.
+func sumMembers(m map[string]int) int {
+        n := 0
+        for _, v := range m {
+                n += v
+        }
+        return n
 }
 
 // runHublibAction (v0.67.2) — the DIRECT-PATH library ACTION runner: the
