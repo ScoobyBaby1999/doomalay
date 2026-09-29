@@ -323,6 +323,30 @@
       if (accGrad[av]) docEl.setAttribute(A_ATTR[av], '1');
       else docEl.removeAttribute(A_ATTR[av]);
     });
+    // v0.77.8: the SURFACE + BORDER gates — the derived windows/rings fire
+    // when their variable's twin is live (exactly the accent model).
+    var S_ATTR = { '--surface-1': 'data-s1-grad', '--surface-2': 'data-s2-grad',
+      '--bg-app': 'data-bg-grad' };
+    var surfGrad = { '--surface-1': false, '--surface-2': false, '--bg-app': false };
+    var borderGrad = false;
+    if (overrides) {
+      Object.keys(overrides).forEach(function (k) {
+        if (S_ATTR[k]) {
+          var tw = deriveTwins(overrides[k]);
+          if (tw.grad !== 'none') surfGrad[k] = true;
+        }
+        if (k === '--border') {
+          var bt = deriveBorderTwins(overrides['--border']);
+          if (bt.grad !== 'none') borderGrad = true;
+        }
+      });
+    }
+    Object.keys(S_ATTR).forEach(function (sv) {
+      if (surfGrad[sv]) docEl.setAttribute(S_ATTR[sv], '1');
+      else docEl.removeAttribute(S_ATTR[sv]);
+    });
+    if (borderGrad) docEl.setAttribute('data-border-grad', '1');
+    else docEl.removeAttribute('data-border-grad');
 
     // v0.57: --bg-panel-rgb — derived EVERY apply (base themes included):
     // the scrim family (overlay scrim, chat scrim, media viewers) composes
@@ -1053,6 +1077,35 @@
       ];
       var MAX_SEL = 400;   // pathological-sheet guard
 
+      // v0.77.8: THE SURFACE + BORDER FAMILIES — the derived-gate model
+      // extends past the accents. Every variable gets the same contract:
+      // ONE viewport-projected field; every consumer is a window on it.
+      //   · SURF — a stylesheet rule with a plain opaque fill of
+      //     var(--surface-1 | --surface-2 | --bg-app) becomes a window
+      //     on that variable's field when its twin is live (the
+      //     "surface raised still doesn't work" coverage gaps — the
+      //     hand-listed Layer-3 rules missed fills the list never knew).
+      //   · BORDER — a rule with a var(--border) border becomes a
+      //     projected RING: outline rules (no fill) ride the MASK ring
+      //     (radius-safe, see-through interior, no plate needed);
+      //     filled rules ride the PLATE stack (window + plate + ring,
+      //     the v0.72 system derived instead of hand-listed). The
+      //     "some borders render the first color" population joins.
+      var SURF = [
+        { gate: 'data-s1-grad', varName: '--surface-1', img: '--surface-1-gradient', inkGate: 'data-bright-s1', ink: '--on-surface-1' },
+        { gate: 'data-s2-grad', varName: '--surface-2', img: '--surface-2-gradient', inkGate: 'data-bright-s2', ink: '--on-surface-2' },
+        { gate: 'data-bg-grad', varName: '--bg-app',    img: '--bg-app-gradient',    inkGate: 'data-bright-bg', ink: '--on-bg-app' }
+      ];
+      var BORDER_GATE = 'data-border-grad';
+
+      // splitSelector — a grouped selector ('.a, .b') into its parts, so
+      // EVERY part carries its own gate prefix (the v0.70 lesson, now
+      // applied at the source: CSSOM keeps groups as ONE selectorText).
+      function splitSelector(sel) {
+        return String(sel).split(',').map(function (s) { return s.trim(); })
+          .filter(function (s) { return !!s; });
+      }
+
       function ruleAccent(spec, r) {
         // → 'win' | 'glyph' | null for ONE accent config
         var col = (r.style.getPropertyValue('color') || '').trim();
@@ -1080,6 +1133,37 @@
       function derive() {
         var wins = {}, glyphs = {};
         for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; glyphs[ACC[i].gate] = []; }
+        var surfWins = {};   // SURF[i].gate → [selectors]
+        var borderRing = [], borderPlate = { };  // outline mask rings; plate rings keyed by fill var
+        for (var si = 0; si < SURF.length; si++) {
+          surfWins[SURF[si].gate] = [];
+          borderPlate[SURF[si].varName] = [];
+        }
+        var protectedSels = {};   // selectors already carrying a plate/window/ring stack
+        try {
+          // ── pass 1: the PROTECTED set (rules that already manage their
+          // own projection — plates, windows, border-image, the catchers)
+          for (var s = 0; s < document.styleSheets.length; s++) {
+            var rulesP;
+            try { rulesP = document.styleSheets[s].cssRules; } catch (e) { continue; }
+            (function walkP(rs) {
+              for (var i = 0; i < rs.length; i++) {
+                var r = rs[i];
+                if (r.cssRules && r.cssRules.length) walkP(r.cssRules);
+                if (!r.style || !r.selectorText) continue;
+                var st = r.style;
+                var img = st.getPropertyValue('background-image') || '';
+                var bim = st.getPropertyValue('border-image') ||
+                          st.getPropertyValue('border-image-source') || '';
+                if (/var\(--[a-z0-9-]*gradient/.test(img) ||
+                    img.indexOf('linear-gradient(var(') !== -1 || bim.indexOf('var(') !== -1) {
+                  splitSelector(r.selectorText).forEach(function (part) { protectedSels[part] = true; });
+                }
+              }
+            })(rulesP);
+          }
+        } catch (e) { /* a locked sheet is simply skipped */ }
+
         try {
           for (var s = 0; s < document.styleSheets.length; s++) {
             var rules;
@@ -1091,7 +1175,9 @@
                 if (!r.style || !r.selectorText) continue;
                 var sel = r.selectorText;
                 if (sel.indexOf(':') !== -1) continue;                   // pseudo/:not()/hover — skip
-                if (sel.indexOf('[data-a') !== -1 || sel.indexOf('[data-text-grad]') !== -1 ||
+                if (sel.indexOf('[data-a') !== -1 || sel.indexOf('[data-s') !== -1 ||
+                    sel.indexOf('[data-border-grad') !== -1 ||
+                    sel.indexOf('[data-text-grad]') !== -1 ||
                     sel.indexOf('[style*=') !== -1) continue;            // the gate/catcher rules
                 // v0.70 final: the EXPLICIT families — index.html owns
                 // these with tone/prov-SCOPED gate rules (a derived BASE
@@ -1116,9 +1202,58 @@
                 for (var a = 0; a < ACC.length; a++) {
                   var kind = ruleAccent(ACC[a], r);
                   if (kind === 'win' && wins[ACC[a].gate].length < MAX_SEL) {
-                    wins[ACC[a].gate].push(sel);
+                    splitSelector(sel).forEach(function (part) { wins[ACC[a].gate].push(part); });
                   } else if (kind === 'glyph' && glyphs[ACC[a].gate].length < MAX_SEL) {
-                    glyphs[ACC[a].gate].push(sel);
+                    splitSelector(sel).forEach(function (part) { glyphs[ACC[a].gate].push(part); });
+                  }
+                }
+                // v0.77.8: the SURFACE + BORDER derivation
+                var stX = r.style;
+                var bgShorthand = stX.getPropertyValue('background') || '';
+                var bgCol = stX.getPropertyValue('background-color') || '';
+                var bgImgX = stX.getPropertyValue('background-image') || '';
+                var bdX = (stX.getPropertyValue('border-color') || '') + ' ' +
+                          (stX.getPropertyValue('border') || '');
+                var hasBorderVar = bdX.indexOf('var(--border)') !== -1;
+                var parts = splitSelector(sel).filter(function (p) { return !protectedSels[p]; });
+                if (parts.length) {
+                  var fillVar = null;
+                  for (var sf = 0; sf < SURF.length; sf++) {
+                    var vn = SURF[sf].varName;
+                    var isFill = (bgCol === 'var(' + vn + ')') ||
+                      (bgShorthand === 'var(' + vn + ')') ||
+                      (/^var\(--surface-1\)\s*$/.test(bgShorthand) && vn === '--surface-1');
+                    // the exact opaque-fill forms (rgba tints are NOT windows)
+                    if (!isFill && bgShorthand.indexOf('var(' + vn + ')') !== -1 &&
+                        bgShorthand.indexOf('rgba(') === -1 && !bgImgX) {
+                      isFill = true;   // e.g. 'var(--surface-2) no-repeat' — still a plain fill
+                    }
+                    if (isFill) { fillVar = vn; break; }
+                  }
+                  if (fillVar && !bgImgX) {
+                    for (var sf2 = 0; sf2 < SURF.length; sf2++) {
+                      if (SURF[sf2].varName === fillVar &&
+                          surfWins[SURF[sf2].gate].length < MAX_SEL) {
+                        parts.forEach(function (p) { surfWins[SURF[sf2].gate].push(p); });
+                        break;
+                      }
+                    }
+                  }
+                  if (hasBorderVar) {
+                    var bgEmpty = !bgCol && !bgShorthand && !bgImgX;
+                    // 'transparent'/'none' fills are outlines too (the
+                    // #chat-send pattern: background:transparent)
+                    var bgVoid = bgEmpty ||
+                      (/^(transparent|none)\s*$/i.test(bgCol) && !bgShorthand && !bgImgX) ||
+                      (/^(transparent|none)\s*$/i.test(bgShorthand) && !bgCol && !bgImgX);
+                    if (fillVar) {
+                      if (borderPlate[fillVar].length < MAX_SEL) {
+                        parts.forEach(function (p) { borderPlate[fillVar].push(p); });
+                      }
+                    } else if (bgVoid && borderRing.length < MAX_SEL) {
+                      // a pure outline (no background of any kind)
+                      parts.forEach(function (p) { borderRing.push(p); });
+                    }
                   }
                 }
               }
@@ -1148,6 +1283,60 @@
               'background-attachment:fixed!important;' +
               '-webkit-background-clip:text!important;background-clip:text!important;' +
               'color:transparent!important;}';
+          }
+        }
+        // ── v0.77.8: the SURFACE windows + their bright-ink flips ──────
+        for (var sw = 0; sw < SURF.length; sw++) {
+          var SP = SURF[sw];
+          if (surfWins[SP.gate].length) {
+            var surfSel = surfWins[SP.gate].map(function (s) {
+              return '[' + SP.gate + '] ' + s;
+            }).join(',');
+            css += surfSel + '{' +
+              'background-image:var(' + SP.img + ',none)!important;' +
+              'background-attachment:fixed!important;}';
+            // the readable-ink flip when the surface paints bright
+            var inkSel = surfWins[SP.gate].map(function (s) {
+              return '[' + SP.inkGate + '] ' + s;
+            }).join(',');
+            css += inkSel + '{color:var(' + SP.ink + ',var(--text-1));text-shadow:none;}';
+          }
+        }
+        // ── v0.77.8: the BORDER rings ─────────────────────────────────
+        // (a) the OUTLINE mask ring — the border field clipped to the
+        //     border strip (radius-safe, see-through interior, no plate);
+        //     the solid border-color steps aside so the ring reads.
+        if (borderRing.length) {
+          var ringSel = borderRing.map(function (s) {
+            return '[' + BORDER_GATE + '] ' + s;
+          }).join(',');
+          css += ringSel + '{' +
+            'background-image:var(--border-gradient,none)!important;' +
+            'background-attachment:fixed!important;' +
+            'border-color:transparent!important;' +
+            '-webkit-mask:linear-gradient(#fff 0 0) padding-box,linear-gradient(#fff 0 0);' +
+            '-webkit-mask-composite:xor;' +
+            'mask:linear-gradient(#fff 0 0) padding-box,linear-gradient(#fff 0 0);' +
+            'mask-composite:exclude;}';
+        }
+        // (b) the PLATE rings — a filled bordered rule gets the v0.72
+        //     stack DERIVED for it: its own fill's window + the opaque
+        //     plate + the border ring (clips + fixed attachment). The
+        //     fill variable IS the plate variable — derivable by
+        //     definition.
+        for (var pp = 0; pp < SURF.length; pp++) {
+          var PV = SURF[pp];
+          if (borderPlate[PV.varName].length) {
+            var plateSel = borderPlate[PV.varName].map(function (s) {
+              return '[' + BORDER_GATE + '] ' + s;
+            }).join(',');
+            css += plateSel + '{' +
+              'background-image:var(' + PV.img + ',none),' +
+                'linear-gradient(var(' + PV.varName + '),var(' + PV.varName + ')),' +
+                'var(--border-gradient,none);' +
+              'background-origin:padding-box,padding-box,border-box;' +
+              'background-clip:padding-box,padding-box,border-box;' +
+              'background-attachment:fixed,fixed,fixed;}';
           }
         }
         if (css !== lastCSS) {

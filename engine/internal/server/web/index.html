@@ -4007,7 +4007,14 @@
      disc + the metadata name pill + the sandbox corner badge) — every
      pill that appears in/around chat now windows its variable (user
      spec: "the pills in the chat metadata and the chatbot itself…
-     still don't render the gradients or theme very nicely or at all"). */
+     still don't render the gradients or theme very nicely or at all").
+     v0.77.8: THE PLATE + RING — the group upgrades from a bare window
+     to the full stack (window + opaque s2 plate + the border ring):
+     the bordered pills among them (the gr-* editors, .color-row-reset,
+     the pickers…) were the "some borders render the FIRST COLOR"
+     population — their window never carried a ring. Border-less
+     members are unaffected (a zero-width border strip hides the ring;
+     the plate is byte-identical to the old solid look). */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
   .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover,
@@ -4020,8 +4027,12 @@
   .wsc-brsel, .kbd, .pv-btn, .gr-editor, .gr-swatches, .gr-tools,
   #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn,
   .tool-pill-progress, .chatbot .icon, .chatbot .name {
-    background-image: var(--surface-2-gradient, none);
-    background-attachment: fixed;
+    background-image: var(--surface-2-gradient, none),
+                      linear-gradient(var(--surface-2), var(--surface-2)),
+                      var(--border-gradient, none);
+    background-origin: padding-box, padding-box, border-box;
+    background-clip: padding-box, padding-box, border-box;
+    background-attachment: fixed, fixed, fixed;
   }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
@@ -4111,20 +4122,90 @@
   /* THE USER'S OWN BUBBLES follow Accent 1 (user spec: "the users own
      texts … should follow theme colors") — the rule lives with the other
      message bubbles above (accent fill + gradient twin + --on-accent). */
-  /* border twin — borders follow --border-gradient when set (the inline
-     `border:` shorthand's reset loses to !important). v0.56: theme.js
-     derives --border-gradient as a SINGLE-LAYER sweep (multi-layer pattern
-     recipes are invalid as border-image and used to leave borders on the
-     solid first color — "outlines don't follow the gradient"). CAVEAT:
-     border-image ignores border-radius — square corners are the explicit
-     gradient-border look; solid borders (the default) are unaffected. The
-     rounded stylesheet-ruled elements below use the radius-safe
-     double-background trick instead. */
-  [style*="border:1px solid var(--border)"],
-  [style*="border: 1px solid var(--border)"],
-  [style*="border:1.5px solid var(--border)"],
-  [style*="border:2px solid var(--border)"] {
-    border-image: var(--border-gradient, none) 1 !important;
+  /* ══ v0.77.8 THE INLINE BORDER RINGS — border-image is RETIRED ════
+     User report: "some items render the first color while other borders
+     render the full gradient, not fit to screen like the rest of the
+     variables." border-image painted an ELEMENT-LOCAL sweep (each border
+     squeezed the whole gradient into its own little box, square corners,
+     never the projected field — architecturally outside the projection:
+     it can't take background-attachment, so the PROJ painter can't
+     anchor it). The [style*] catch now rides the SAME derived-gate
+     recipes as the stylesheet rules (theme.js). The selectors match
+     WIDTH-AGNOSTICALLY ('solid var(--border)' covers 1px / 1.5px / 2px)
+     and per fill variable; border-strong borders ride the
+     --border-strong-gradient twin (v0.57's ride-along). Solid borders
+     (no gradient) are untouched — the natural border-color stands. */
+  [style*="solid var(--border)"][style*="background:transparent"],
+  [style*="solid var(--border)"][style*="background-color: transparent"],
+  [style*="solid var(--border)"]:not([style*="background"]) {
+    background-image: var(--border-gradient, none) !important;
+    background-attachment: fixed !important;
+    border-color: transparent !important;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
+  [style*="solid var(--border-strong)"][style*="background:transparent"],
+  [style*="solid var(--border-strong)"][style*="background-color: transparent"],
+  [style*="solid var(--border-strong)"]:not([style*="background"]) {
+    background-image: var(--border-strong-gradient, none) !important;
+    background-attachment: fixed !important;
+    border-color: transparent !important;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
+  /* the FILLED inline borders — the plate ring, per fill variable
+     (surface-3 has no customizable twin: the plate is the solid look,
+     the ring rides alone) */
+  [style*="solid var(--border)"][style*="background:var(--surface-1)"],
+  [style*="solid var(--border)"][style*="background: var(--surface-1)"],
+  [style*="solid var(--border)"][style*="background-color:var(--surface-1)"],
+  [style*="solid var(--border)"][style*="background-color: var(--surface-1)"] {
+    background-image: var(--surface-1-gradient, none),
+                      linear-gradient(var(--surface-1), var(--surface-1)),
+                      var(--border-gradient, none) !important;
+    background-origin: padding-box, padding-box, border-box !important;
+    background-clip: padding-box, padding-box, border-box !important;
+    background-attachment: fixed, fixed, fixed !important;
+  }
+  [style*="solid var(--border)"][style*="background:var(--surface-2)"],
+  [style*="solid var(--border)"][style*="background: var(--surface-2)"],
+  [style*="solid var(--border)"][style*="background-color:var(--surface-2)"],
+  [style*="solid var(--border)"][style*="background-color: var(--surface-2)"] {
+    background-image: var(--surface-2-gradient, none),
+                      linear-gradient(var(--surface-2), var(--surface-2)),
+                      var(--border-gradient, none) !important;
+    background-origin: padding-box, padding-box, border-box !important;
+    background-clip: padding-box, padding-box, border-box !important;
+    background-attachment: fixed, fixed, fixed !important;
+  }
+  [style*="solid var(--border)"][style*="background:var(--surface-3)"],
+  [style*="solid var(--border)"][style*="background: var(--surface-3)"],
+  [style*="solid var(--border)"][style*="background-color:var(--surface-3)"],
+  [style*="solid var(--border)"][style*="background-color: var(--surface-3)"],
+  [style*="solid var(--border-strong)"][style*="background:var(--surface-3)"],
+  [style*="solid var(--border-strong)"][style*="background: var(--surface-3)"],
+  [style*="solid var(--border-strong)"][style*="background-color:var(--surface-3)"],
+  [style*="solid var(--border-strong)"][style*="background-color: var(--surface-3)"] {
+    background-image: linear-gradient(var(--surface-3), var(--surface-3)),
+                      var(--border-gradient, none) !important;
+    background-origin: padding-box, border-box !important;
+    background-clip: padding-box, border-box !important;
+    background-attachment: fixed, fixed !important;
+  }
+  [style*="solid var(--border)"][style*="background:var(--bg-app)"],
+  [style*="solid var(--border)"][style*="background: var(--bg-app)"],
+  [style*="solid var(--border)"][style*="background-color:var(--bg-app)"],
+  [style*="solid var(--border)"][style*="background-color: var(--bg-app)"] {
+    background-image: var(--bg-app-gradient, none),
+                      linear-gradient(var(--bg-app), var(--bg-app)),
+                      var(--border-gradient, none) !important;
+    background-origin: padding-box, padding-box, border-box !important;
+    background-clip: padding-box, padding-box, border-box !important;
+    background-attachment: fixed, fixed, fixed !important;
   }
   /* RADIUS-SAFE gradient borders for the Layer-3 chrome: the surface-2
      projection, then the border ring. Corners stay round; 'none' twins
