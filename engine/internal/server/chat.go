@@ -585,7 +585,9 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         // v0.68 THE METADATA PERSONAS: every persona (default or custom)
         // gets the live controls block — the bot knows what each pill does
         // + the current state, so it can name the exact flip path on ask.
-        meta := s.chatMetadataPreamble(sess)
+        // v0.78.1: + the live session block (usage, pricing, context,
+        // connections, bound repos) — the bot knows its own dashboard.
+        meta := s.chatMetadataPreamble(sess) + s.sessionContextPreamble(sess)
         if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
                 persona := strings.TrimSpace(spec.Text)
                 if persona == "" {

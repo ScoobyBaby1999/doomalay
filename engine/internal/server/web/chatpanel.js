@@ -2268,6 +2268,96 @@
       'MUST NOT attempt to download or load entries \u2014 downloads refuse until the user flips the Bot Library switch back on. Do not pretend the library is unavailable; it IS available, just download-gated.\n';
   }
 
+  // pmSessionContext (v0.78.1) — the PM twin of the engine's
+  // sessionContextPreamble (sessionctx.go): PM turns bypass the engine,
+  // so the live session dashboard (usage, pricing, context, connections,
+  // bound repos) rides the client-composed system message. Data sources:
+  // state._usage (the header-meter cache, primed per turn by
+  // pmPrimeSessionContext — the payload now carries `rates` too) +
+  // state._pmConn (the connections/workspaces snapshot). Keep the text
+  // in sync with the engine twin.
+  function pmSessionContext(state) {
+    var u = (state && state._usage) || {};
+    var ctx = u.context || {};
+    var tot = u.totals || {};
+    var conn = (state && state._pmConn) || {};
+    var lines = ['## Your session (live \u2014 what you are and what you\u2019re connected to)'];
+    if (ctx.limit > 0) {
+      var used = ctx.usedTokens || 0;
+      var remain = Math.max(0, ctx.limit - used);
+      lines.push('- Context window: ~' + ctx.limit.toLocaleString() + ' tokens; this turn rides ~' +
+        used.toLocaleString() + ' (' + (ctx.fillPct || 0) + '% full, ~' + remain.toLocaleString() + ' still free' +
+        (ctx.compacted ? ', older turns compacted to a summary' : '') + ').');
+    }
+    if (tot.turns > 0) {
+      var ul = '- This chat so far: ' + tot.turns + ' turn(s), ' + (tot.tokensIn || 0).toLocaleString() +
+        ' tokens in / ' + (tot.tokensOut || 0).toLocaleString() + ' tokens out';
+      if (tot.hasCost) ul += ', \u2248$' + (tot.cost || 0).toFixed(2) + ' at list rates.';
+      lines.push(ul);
+    }
+    var r = u.rates || {};
+    if (r.unpriced) {
+      lines.push('- Your rates: no price data for this model \u2014 tokens only, no cost estimate.');
+    } else if (r.free) {
+      lines.push('- Your rates: this tier is FREE ($0) \u2014 list would be $' + (+r.in).toFixed(2) + ' in / $' + (+r.out).toFixed(2) + ' out per 1M tokens.');
+    } else if (r.in != null) {
+      lines.push('- Your rates: $' + (+r.in).toFixed(2) + ' in / $' + (+r.out).toFixed(2) + ' out per 1M tokens (list).');
+    }
+    lines.push('- Connected platforms: ' + [
+      conn.hf ? ('Hugging Face: signed in as ' + conn.hf) : 'Hugging Face: not connected',
+      conn.gh ? ('GitHub: signed in as ' + conn.gh) : 'GitHub: not signed in',
+      conn.gitea ? ('Gitea: signed in as ' + conn.gitea) : 'Gitea: not signed in'
+    ].join('; ') + '.');
+    var bound = conn.bound || [];
+    if (bound.length) {
+      lines.push('- Repos bound to this chat (' + bound.length + '): ' + bound.map(function (w) {
+        return (w.kind || 'repo') + ' ' + (w.name || ((w.owner || '') + '/' + (w.repo || ''))) + ' (' + (w.access || 'read') + ')';
+      }).join(', ') + '.');
+    } else {
+      lines.push('- Repos bound to this chat: none yet.');
+    }
+    lines.push('- You have ' + (conn.totalWorkspaces || 0) + ' workspace(s) connected in total. You CAN be connected to workspaces \u2014 GitHub, Gitea, GitLab, Sourcehut and Hugging Face repos (models, datasets and Spaces) \u2014 many repo structures are available; the user connects them from the library/hub connect flow, and when bound the repo tools can list, grep, read and edit them at the access level shown above (read / partial / full).');
+    if (state && state.sandbox === 'hf') {
+      lines.push('- This chat\u2019s sandbox runs on your Hugging Face Space \u2014 repo tools there can\u2019t reach the device\u2019s engine bridge; run repo work in a quick (on-device) chat when the user needs it.');
+    }
+    return '\n\n' + lines.join('\n');
+  }
+
+  // pmPrimeSessionContext (v0.78.1) — refresh the session-context caches
+  // in parallel (local engine, same origin): usage (+rates), hub auth, forge
+  // accounts, this chat's bound workspaces, the total count. 15s cache;
+  // never rejects \u2014 whatever arrives composes, whatever doesn't degrades
+  // honestly inside the block.
+  function pmPrimeSessionContext(state) {
+    if (!state || !state.sessionId) return Promise.resolve();
+    if (state._pmConnAt && Date.now() - state._pmConnAt < 15000) return Promise.resolve();
+    var sid = state.sessionId;
+    var jj = function (r) { return r.json().catch(function () { return null; }); };
+    return Promise.all([
+      fetch('/api/sessions/' + sid + '/usage').then(jj),
+      fetch('/api/hub/auth/status').then(jj),
+      fetch('/api/workspaces/accounts').then(jj),
+      fetch('/api/sessions/' + sid + '/workspaces').then(jj),
+      fetch('/api/workspaces').then(jj)
+    ]).then(function (rs) {
+      if (rs[0]) state._usage = rs[0];
+      var hub = rs[1] || {};
+      var gh = null, gitea = null;
+      ((rs[2] && rs[2].accounts) || []).forEach(function (a) {
+        if (a.kind === 'github' && a.signed_in) gh = a.login || 'signed in';
+        if (a.kind === 'gitea' && a.signed_in) gitea = a.login || 'signed in';
+      });
+      var bound = (rs[3] && rs[3].workspaces) || [];
+      state._pmConn = {
+        hf: (hub.connected && (hub.username || 'signed in')) || null,
+        gh: gh, gitea: gitea,
+        bound: bound,
+        totalWorkspaces: (rs[4] && Array.isArray(rs[4].workspaces)) ? rs[4].workspaces.length : bound.length
+      };
+      state._pmConnAt = Date.now();
+    }).catch(function () {});
+  }
+
   // v0.19: the PM system message mirrors the engine's systemPromptFor —
   // a live identity line + the chat's persona (or the default persona) +
   // the artifact protocol when the persona doesn't carry it. PM turns
@@ -2345,13 +2435,26 @@
       // (the engine's libraryPreamble twin) + the metadata block — the
       // PM default now knows the library exists AND every control's
       // live state, exactly like the engine path.
-      return sys + pmLibraryPreamble(state) + pmMetadataBlock(state); // the default persona carries the artifact protocol
+      // v0.78.1: + the session dashboard twin (usage/pricing/context/
+      // connections/bound repos).
+      return sys + pmLibraryPreamble(state) + pmMetadataBlock(state) + pmSessionContext(state); // the default persona carries the artifact protocol
     }
     if (!/artifact/i.test(personaText)) sys += '\n\n' + ARTIFACT_PROMPT;
-    return sys + pmMetadataBlock(state);
+    return sys + pmMetadataBlock(state) + pmSessionContext(state);
   }
 
   function runPMTurn(text, state, bodyEl, icon) {
+    // v0.78.1: prime the session-context caches (usage/rates/connections/
+    // workspaces) BEFORE the system message composes; 400ms cap so a cold
+    // engine can't stall the turn — the block degrades honestly instead.
+    // The wrapper keeps the rest of the flow byte-identical.
+    return Promise.race([
+      pmPrimeSessionContext(state),
+      new Promise(function (res) { setTimeout(res, 400); })
+    ]).then(function () { return runPMTurnInner(text, state, bodyEl, icon); });
+  }
+
+  function runPMTurnInner(text, state, bodyEl, icon) {
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var scrollEl = bodyEl.querySelector('#chat-scroll');
     var abort = new AbortController();
