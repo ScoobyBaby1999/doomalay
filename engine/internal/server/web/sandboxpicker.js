@@ -55,8 +55,14 @@
 
   function getJSON(url, opts) {
     return fetch(url, opts || {}).then(function (r) {
-      return r.json().then(function (data) {
-        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        if (!r.ok) {
+          // v0.74: the coded error shape — e.code lets the UI branch without
+          // parsing English (the age card keys off "account_age").
+          var err = new Error(data.error || ('HTTP ' + r.status));
+          if (data && data.code) err.code = data.code;
+          throw err;
+        }
         return data;
       });
     });
@@ -261,6 +267,65 @@
     });
   }
 
+  // ── v0.74: THE AGE CARD ───────────────────────────────────────────
+  // HF's 30+ day account-age refusal, as a friendly themed card instead
+  // of the long raw error blob: the headline (bigger + brighter, themed),
+  // the ⚠ shared-space warning FIRST, the community fallback link
+  // (tap-to-copy + the paste instruction), the BYOK note, and the two
+  // ways out — add your own key, or one-tap the community space.
+  var COMMUNITY_SPACE = 'ScoobyBaby1999/doomalaysocreate';
+  var COMMUNITY_URL = 'https://huggingface.co/spaces/ScoobyBaby1999/doomalaysocreate';
+
+  function renderAgeCard(form, onPick) {
+    form.style.display = '';
+    form.innerHTML =
+      '<div class="hf-age-card" role="alertdialog" aria-label="Hugging Face account age requirement">' +
+        '<div class="hf-age-head">Hugging Face needs your account to be <b>30+ days old</b> to create a Space.</div>' +
+        '<div class="hf-age-sub">a verified email + account age — or a PRO account — unlocks creating your own.</div>' +
+        '<div class="hf-age-warn">⚠ The community Space is shared with everyone.<br>' +
+          '<b>Never share secrets or personal info in it.</b></div>' +
+        '<div class="hf-age-sec">🌍 community fallback</div>' +
+        '<div class="hf-age-copy" id="hf-age-copy" role="button" tabindex="0">' +
+          '<span class="hf-age-url">' + COMMUNITY_URL + '</span>' +
+          '<span class="hf-age-copybtn">tap to copy</span>' +
+        '</div>' +
+        '<div class="hf-age-note">paste it in <b>“use a public space”</b> below — or use the one-tap button.</div>' +
+        '<div class="hf-age-sec">🔑 bring your own key</div>' +
+        '<div class="hf-age-note">chats on the community Space use <b>your own provider key</b> (never the shared one) when you add one.</div>' +
+        '<div class="hf-age-actions">' +
+          '<button id="hf-age-key" class="hf-age-btn hf-age-btn-ghost">🔑 add your own key</button>' +
+          '<button id="hf-age-go" class="hf-age-btn hf-age-btn-go">🌍 use the community space for this chat</button>' +
+        '</div>' +
+      '</div>';
+
+    var copyEl = form.querySelector('#hf-age-copy');
+    if (copyEl) {
+      var doCopy = function () {
+        var done = function () {
+          var b = copyEl.querySelector('.hf-age-copybtn');
+          if (b) { b.textContent = '✓ copied'; setTimeout(function () { b.textContent = 'tap to copy'; }, 1800); }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(COMMUNITY_URL).then(done, done);
+        } else { done(); }
+      };
+      copyEl.addEventListener('click', doCopy);
+      copyEl.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); doCopy(); }
+      });
+    }
+    var keyBtn = form.querySelector('#hf-age-key');
+    if (keyBtn) keyBtn.addEventListener('click', function () {
+      window.ConnectOverlay.close();
+      if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
+    });
+    var goBtn = form.querySelector('#hf-age-go');
+    if (goBtn) goBtn.addEventListener('click', function () {
+      window.ConnectOverlay.close();
+      if (onPick) onPick('hf', { mode: 'public', repo: COMMUNITY_SPACE });
+    });
+  }
+
   // the create flow — everything in-app: the form expands inline, the build
   // watches inline (stage ticks), quota/PRO errors render in-app, and the
   // moment the space is running it is picked (overlay closes into the
@@ -294,6 +359,13 @@
           wireSpacesList(onPick);
         }).catch(function (e) {
           btn.disabled = false; btn.textContent = 'Create';
+          if (prog) prog.innerHTML = '';
+          // v0.74: the coded age gate → the friendly card (bigger + brighter
+          // + themed, with the community fallback + the shared warning).
+          if (e && e.code === 'account_age') {
+            renderAgeCard(form, onPick);
+            return;
+          }
           if (prog) {
             var m = String(e.message || '');
             prog.innerHTML = '<span style="color:var(--err)">' + esc(m) + '</span>';
@@ -486,7 +558,36 @@
       '.hf-public-go{flex-shrink:0;padding:8px 14px;border-radius:999px;border:none;cursor:pointer;' +
         'background:var(--accent-2);color:var(--bg-app);background-image:var(--accent-2-gradient,none);background-attachment:fixed;' +
         'font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;font-family:inherit;' +
-        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}';
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      // v0.74: THE AGE CARD — the friendly 30+ day themed card.
+      '.hf-age-card{margin-top:10px;padding:16px 14px;border-radius:14px;display:flex;flex-direction:column;gap:9px;' +
+        'background:rgba(var(--accent-rgb),0.07);border:1px solid rgba(var(--accent-rgb),0.35)}' +
+      // the headline: LARGER + BRIGHTER (the user spec) — accent ink, bold.
+      '.hf-age-head{font-size:calc(var(--ui-fs) + 2px);line-height:1.4;font-weight:700;color:var(--accent);' +
+        'background-image:var(--accent-gradient,none);background-attachment:fixed;-webkit-background-clip:text;' +
+        'background-clip:text}' +
+      '.hf-age-head b{color:inherit}' +
+      '.hf-age-sub{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45}' +
+      // the shared-space warning — reads FIRST, unmistakable.
+      '.hf-age-warn{padding:10px 12px;border-radius:10px;font-size:calc(var(--ui-small-fs) - 1px);line-height:1.5;' +
+        'color:var(--text-1);background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.45)}' +
+      '.hf-age-warn b{color:var(--accent-2)}' +
+      '.hf-age-sec{margin-top:3px;font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;letter-spacing:0.04em;' +
+        'text-transform:uppercase;color:var(--text-3)}' +
+      '.hf-age-copy{display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;border-radius:10px;' +
+        'background:var(--surface-2);border:1px dashed var(--border);cursor:pointer;' +
+        '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.hf-age-url{flex:1;min-width:0;font-size:calc(var(--ui-small-fs) - 2px);color:var(--accent-2);' +
+        'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.hf-age-copybtn{flex-shrink:0;font-size:calc(var(--ui-small-fs) - 2px);font-weight:600;color:var(--text-3)}' +
+      '.hf-age-note{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);line-height:1.5}' +
+      '.hf-age-note b{color:var(--text-2)}' +
+      '.hf-age-actions{display:flex;flex-direction:column;gap:8px;margin-top:3px}' +
+      '.hf-age-btn{min-height:44px;padding:11px 16px;border-radius:12px;font-size:calc(var(--ui-small-fs));' +
+        'font-weight:600;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.hf-age-btn-go{background:var(--accent);color:var(--on-accent);border:none;' +
+        'background-image:var(--accent-gradient,none);background-attachment:fixed}' +
+      '.hf-age-btn-ghost{background:transparent;color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.5)}';
     document.head.appendChild(s);
   }
   ensureStyles();

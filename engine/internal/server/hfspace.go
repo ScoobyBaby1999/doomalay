@@ -174,6 +174,33 @@ func (s *Server) handleHFAccount(w http.ResponseWriter, r *http.Request) {
 
 // ── space create (THE HACK) ────────────────────────────────────────────────
 
+// isAccountAgeError recognizes HF's account-age refusal on the space-create
+// path (v0.74: the friendly 30+ day card replaces the long raw error blob).
+// Case-insensitive substring table — HF phrases the rule several ways ("must be
+// at least 30 days old", "accounts younger than 30 days", "account is too
+// young"…); every pattern below only ever appears on THIS error path, so the
+// match is safe without a stricter grammar.
+func isAccountAgeError(msg string) bool {
+        m := strings.ToLower(msg)
+        for _, p := range []string{
+                "30 day", "30-day", "30 days", "thirty day", "thirty days",
+                "too young", "account age", "at least 30", "older than 30",
+                "less than 30", "newer than 30", "younger than 30",
+        } {
+                if strings.Contains(m, p) {
+                        return true
+                }
+        }
+        return false
+}
+
+// writeAccountAgeError renders the coded 403 both create flavors share.
+func writeAccountAgeError(w http.ResponseWriter) {
+        writeErrorCode(w, http.StatusForbidden,
+                "Hugging Face needs your account to be 30+ days old to create a Space (a verified email + account age — or PRO)",
+                "account_age")
+}
+
 // handleHFSpaceCreate is POST /api/hf/space/create {name?}
 // Creates a PRIVATE gradio Space on zero-a10g hardware (free tier — the
 // verified loophole), uploads the embedded template + brain, sets the space
@@ -225,6 +252,13 @@ func (s *Server) handleHFSpaceCreate(w http.ResponseWriter, r *http.Request) {
                 // retrying (or a half-finished earlier run) just gets the files
                 // re-committed + the secret re-set below.
                 if !strings.Contains(msg, "already exists") && !strings.Contains(msg, "already created") {
+                        // v0.74: the age rule FIRST — before the quota + PRO checks —
+                        // so neither can shadow it (the age refusal also mentions
+                        // PRO, which used to hijack the message).
+                        if isAccountAgeError(msg) {
+                                writeAccountAgeError(w)
+                                return
+                        }
                         // v0.46 quota reality (live-verified): free accounts get TWO
                         // ZeroGPU spaces. v0.62: point at the spaces list (the
                         // community workspace offer is gone).
@@ -357,6 +391,12 @@ func (s *Server) handleHFSpaceDockerCreate(w http.ResponseWriter, r *http.Reques
         if _, err := hfCli.DoRaw("POST", "/api/repos/create", token, bodyBytes, "application/json"); err != nil {
                 msg := err.Error()
                 if !strings.Contains(msg, "already exists") && !strings.Contains(msg, "already created") {
+                        // v0.74: same age gate as the ZeroGPU flavor (young accounts
+                        // get the friendly card here too).
+                        if isAccountAgeError(msg) {
+                                writeAccountAgeError(w)
+                                return
+                        }
                         writeError(w, http.StatusBadGateway, "create space: "+msg)
                         return
                 }
@@ -1365,17 +1405,25 @@ func randomState(n int) string {
 
 // fanOutRemoteEnv pushes the current vault keys to every live remote brain
 // (own spaces + shared) so HF-chat turns carry fresh provider keys.
+// v0.74: third-party remotes (the "public:"-prefixed cache entries + the
+// shared community brain) receive the FILTERED env — BYOK provider keys +
+// HF tokens only; own spaces keep the full vault.
 func (s *Server) fanOutRemoteEnv() {
         if s.vault == nil {
                 return
         }
         env := s.vault.AsEnv()
+        third := s.thirdPartyRemoteEnv()
         s.remoteMu.RLock()
         defer s.remoteMu.RUnlock()
-        for _, rb := range s.remotes {
-                rb.SetEnv(env)
+        for key, rb := range s.remotes {
+                if strings.HasPrefix(key, "public:") {
+                        rb.SetEnv(third)
+                } else {
+                        rb.SetEnv(env)
+                }
         }
         if s.sharedBrain != nil {
-                s.sharedBrain.SetEnv(env)
+                s.sharedBrain.SetEnv(third)
         }
 }

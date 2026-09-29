@@ -40,6 +40,7 @@ from fastapi.responses import StreamingResponse
 # Brain modules (siblings).
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import run_turn  # noqa: E402
+import reqenv  # noqa: E402  — v0.72: per-request BYOK (X-Env-* as values, never global env writes)
 
 # v0.43 — stranded-coroutine watchdog (KEEP): every strands run_async loop
 # registers itself here; a global thread dumps any task still pending after
@@ -163,12 +164,9 @@ def list_models(refresh: bool = False, request: Request = None):
     make_provider_registry() for the live provider list (only providers
     with keys set are registered).
     """
-    # Inject provider keys from headers.
-    if request is not None:
-        for h_name, h_val in request.headers.items():
-            if h_name.lower().startswith("x-env-"):
-                env_name = h_name[6:].upper()
-                os.environ[env_name] = h_val
+    # v0.72 BYOK: per-request key presence — the user's own X-Env keys
+    # (shared spaces) OR the space's own secrets. Never a global env write.
+    req_env = reqenv.extract(request) if request is not None else {}
 
     catalog = load_provider_catalog()  # list of dicts (from providers_catalog.json)
     models_catalog = load_models_catalog()  # logical → (provider, model) mapping
@@ -199,11 +197,11 @@ def list_models(refresh: bool = False, request: Request = None):
         env_var = cfg["env_var"]
         # env_var can be a string or a list (the old catalog format allows multiple).
         if isinstance(env_var, list):
-            has_key = any(os.environ.get(str(v)) for v in env_var)
+            has_key = any(req_env.get(str(v)) or os.environ.get(str(v)) for v in env_var if v)
             env_var_str = str(env_var[0]) if env_var else ""
         else:
             env_var_str = str(env_var)
-            has_key = bool(os.environ.get(env_var_str))
+            has_key = bool(req_env.get(env_var_str) or os.environ.get(env_var_str))
         model_count = 0
         if has_key:
             # Count models from the models_catalog for this provider.
@@ -578,11 +576,10 @@ async def judge(request: Request):
     count = body.get("count", 3)
     session_id = body.get("chat_session_id", "unknown")
 
-    # Inject provider keys from headers.
-    for h_name, h_val in request.headers.items():
-        if h_name.lower().startswith("x-env-"):
-            env_name = h_name[6:].upper()
-            os.environ[env_name] = h_val
+    # v0.72 BYOK: per-request keys (the user's own on shared spaces) —
+    # never a global env write (the old injection raced concurrent turns).
+    req_env = reqenv.extract(request)
+    reqenv.set_request_env(req_env)
 
     async def event_stream():
         try:
@@ -613,7 +610,7 @@ async def _run_judge_panel(user_input: str, template: str, count: int, session_i
     catalog = load_provider_catalog(CATALOG_PATH)
     available_providers = []
     for name, cfg in catalog.items():
-        if os.environ.get(cfg["env_var"]):
+        if reqenv.has_key(cfg["env_var"]):
             available_providers.append((name, cfg))
 
     if not available_providers:
@@ -634,7 +631,8 @@ async def _run_judge_panel(user_input: str, template: str, count: int, session_i
     import litellm
 
     async def run_one(idx: int, provider_name: str, cfg: dict, model_id: str):
-        api_key = os.environ.get(cfg["env_var"], "")
+        # v0.72 BYOK: req_env (this request's own keys) first, space secret fallback.
+        api_key = reqenv.resolve_key(cfg["env_var"])
         system_prompt = f"You are Judge {idx + 1} ({provider_name}). Review the following input critically and provide your assessment."
         try:
             response = await litellm.acompletion(
@@ -706,6 +704,16 @@ async def chat(request: Request):
           # by the engine's handleTurn. }
 
     Provider keys arrive as X-Env-<ENV_VAR> headers.
+
+    v0.72 BYOK: those headers are PER-REQUEST values (the user's own key
+    on shared spaces), resolved here — req_env first, the space's own
+    os.environ secret (the community public keys) as the fallback. They
+    are NEVER written into os.environ: that write was process-global and
+    raced concurrent shared-space users (B's key overwrote A's mid-turn;
+    B's keyless turn silently used A's leftover). The resolved key is
+    threaded explicitly into run_turn; call-time tool lookups ride
+    reqenv's ContextVar (set below — same async context as the SSE
+    generator + the strands agent's tool calls).
     """
     body = await request.json()
     session_id = body.get("session_id", "unknown")
@@ -713,11 +721,9 @@ async def chat(request: Request):
     model = body.get("model", "")
     provider = body.get("provider", "")
 
-    # Inject provider keys from headers.
-    for h_name, h_val in request.headers.items():
-        if h_name.lower().startswith("x-env-"):
-            env_name = h_name[6:].upper()
-            os.environ[env_name] = h_val
+    # v0.72: per-request env — the user's own keys (BYOK), never a global write.
+    req_env = reqenv.extract(request)
+    reqenv.set_request_env(req_env)
 
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
@@ -796,7 +802,10 @@ async def chat(request: Request):
     if not env_var:
         raise HTTPException(status_code=400, detail=f"could not resolve model {model} (provider {provider})")
 
-    if not os.environ.get(env_var):
+    # v0.72 BYOK: the user's own key (X-Env header) first; the space's own
+    # secret (os.environ — the community public keys) as the fallback.
+    api_key = req_env.get(env_var) or os.environ.get(env_var, "")
+    if not api_key:
         raise HTTPException(
             status_code=401,
             detail=f"no API key set for {env_var} (provider {provider})",
@@ -810,6 +819,10 @@ async def chat(request: Request):
                 model=litellm_model,
                 base_url=base_url,
                 env_var=env_var,
+                # v0.72 BYOK: the per-request key resolved above (the user's
+                # own when present, else the space's secret). Explicit — no
+                # os.environ read inside the turn, no cross-user races.
+                api_key=api_key,
                 system_prompt=body.get("system_prompt", ""),
                 effort=body.get("effort", "med"),
                 workspace=body.get("workspace", ""),

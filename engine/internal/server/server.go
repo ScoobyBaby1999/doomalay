@@ -621,3 +621,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
         writeJSON(w, status, map[string]string{"error": msg})
 }
+
+// writeErrorCode is writeError's coded sibling: same shape plus a machine
+// `code` the PWA can branch on (v0.74: "account_age" drives the friendly
+// age card instead of the long raw HF blob).
+func writeErrorCode(w http.ResponseWriter, status int, msg, code string) {
+        writeJSON(w, status, map[string]string{"error": msg, "code": code})
+}

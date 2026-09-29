@@ -63,6 +63,7 @@ async def run_turn(
     model: str,
     base_url: str,
     env_var: str,
+    api_key: str = "",  # v0.72 BYOK: the per-request key (req_env first, space secret fallback — resolved by the caller so concurrent shared-space turns NEVER race on os.environ)
     system_prompt: str = "",
     effort: str = "med",
     workspace: str = "",
@@ -94,7 +95,11 @@ async def run_turn(
         yield {"type": "status", "state": "error", "usage": None}
         return
 
-    api_key = os.environ.get(env_var, "")
+    # v0.72 BYOK: explicit per-request key (the caller resolved req_env →
+    # os.environ). The fallback keeps old direct callers (tests, local
+    # runs) on the pre-v0.72 behavior.
+    if not api_key:
+        api_key = os.environ.get(env_var, "")
     if not api_key:
         yield {"type": "error", "error": "auth", "message": f"no API key in env {env_var}"}
         yield {"type": "status", "state": "error", "usage": None}

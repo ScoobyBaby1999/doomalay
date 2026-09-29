@@ -769,6 +769,9 @@
       // v0.56 (user spec): NO descriptions in General either — and the
       // old "My Look" section is now IMPORT / EXPORT THEME (the buttons
       // say what they do).
+      // v0.74: hydrate the Connected Accounts rows right after the DOM
+      // lands (registerPage has no mount hook — the render IS the hook).
+      setTimeout(hydrateAccounts, 0);
       return (
         section('Text', '' +
           selectRow('fontFamily', 'Font', s.fontFamily, [
@@ -789,6 +792,17 @@
           'color:var(--text-1);padding:10px 16px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;' +
           'cursor:pointer;width:100%">Reset View (zoom 1×, pan to origin)</button>'
         ) +
+        // v0.74 (user spec): CONNECTED ACCOUNTS — the log-out / disconnect
+        // surface. Every connected service gets a row: status + the action.
+        // Async hydration (the placeholder pattern — the page renders
+        // instantly, the rows fill in).
+        section('Connected Accounts', '' +
+          '<div id="acct-rows" style="display:flex;flex-direction:column;gap:8px">' +
+            '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">checking your connections…</div>' +
+          '</div>' +
+          '<p style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);margin:8px 0 0;line-height:1.45">' +
+            'Logging out removes the saved token from this device only — the account itself is untouched.</p>'
+        ) +
         // v0.52 (user spec item 8): the LOOK BUNDLE — export the entire
         // settings state (photos + bump maps included — they are dataURLs
         // inside the gradient specs) as ONE .doomtheme file; a friend
@@ -806,6 +820,123 @@
       );
     }
   });
+
+  // ── v0.74: CONNECTED ACCOUNTS hydration + actions ───────────────────
+  function acctJSON(url, opts) {
+    return fetch(url, opts || {}).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        return data;
+      });
+    });
+  }
+
+  function acctRow(name, sub, connected, action, btnLabel, btnKind) {
+    return '<div style="display:flex;align-items:center;gap:10px;min-height:44px;padding:9px 12px;' +
+      'border-radius:10px;background:var(--surface-2);border:1px solid var(--border)">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:calc(var(--ui-small-fs));font-weight:600;color:var(--text-1)">' + name + '</div>' +
+        '<div style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);margin-top:1px">' + sub + '</div>' +
+      '</div>' +
+      // NOTE: data-acct (NOT data-action) — these rows land AFTER the
+      // settings page's wireInputs pass, so the generic dispatcher never
+      // sees them; hydrateAccounts attaches direct listeners instead.
+      '<button data-acct="' + action + '" style="flex-shrink:0;min-height:36px;padding:8px 14px;border-radius:9px;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;font-family:inherit;cursor:pointer;' +
+        (connected
+          ? 'background:transparent;border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2)'
+          : 'background:var(--accent);color:var(--on-accent);border:none;background-image:var(--accent-gradient,none);background-attachment:fixed') +
+        '">' + btnLabel + '</button>' +
+      '</div>';
+  }
+
+  function hydrateAccounts() {
+    var host = document.getElementById('acct-rows');
+    if (!host) return;
+    Promise.all([
+      acctJSON('/api/hf/account').catch(function () { return { connected: false, user: '' }; }),
+      acctJSON('/api/workspaces/accounts').catch(function () { return { accounts: [] }; }),
+      acctJSON('/api/keys').catch(function () { return {}; })
+    ]).then(function (res) {
+      var cur = document.getElementById('acct-rows');
+      if (!cur || cur !== host) return; // the page moved on — stop
+      var hf = res[0] || {};
+      var accts = res[1].accounts || [];
+      var keys = res[2] || {};
+      var gh = null, gt = null;
+      (accts || []).forEach(function (a) {
+        if (a.kind === 'github') gh = a;
+        if (a.kind === 'gitea') gt = a;
+      });
+      var keyCount = 0;
+      Object.keys(keys).forEach(function (k) { if (keys[k] && keys[k].has_key) keyCount++; });
+      var html = '';
+      // Hugging Face
+      html += acctRow('🤗 Hugging Face',
+        hf.connected ? ('connected as ' + (hf.user || 'you')) : 'not connected — sandbox chats + the Hub need it',
+        !!hf.connected,
+        hf.connected ? 'acct-hf-out' : 'acct-hf-in',
+        hf.connected ? 'log out' : 'connect', 0);
+      // GitHub
+      var ghIn = !!(gh && gh.signed_in);
+      html += acctRow('🐙 GitHub',
+        ghIn ? ('signed in as ' + (gh.login || 'you')) : 'not connected — hub publishing + workspace forges',
+        ghIn,
+        ghIn ? 'acct-gh-out' : 'acct-gh-in',
+        ghIn ? 'log out' : 'connect', 0);
+      // Gitea — only surfaces when it's actually signed in (self-hosted
+      // forges aren't a default row).
+      if (gt && gt.signed_in) {
+        html += acctRow('🔧 Gitea',
+          'signed in as ' + (gt.login || 'you'), true, 'acct-gt-out', 'log out', 0);
+      }
+      // Cloud providers (BYOK vault)
+      html += acctRow('☁️ Cloud providers',
+        keyCount ? (keyCount + ' API key' + (keyCount === 1 ? '' : 's') + ' set — your chats bill YOUR keys')
+                 : 'no API keys yet — bring your own for every chat',
+        keyCount > 0, 'acct-keys', 'manage', 0);
+      host.innerHTML = html;
+      // The rows land AFTER wireInputs ran — attach the listeners directly.
+      host.querySelectorAll('[data-acct]').forEach(function (btn) {
+        btn.addEventListener('click', function () { acctAction(btn.dataset.acct); });
+      });
+    }).catch(function () {
+      var cur2 = document.getElementById('acct-rows');
+      if (cur2 === host) {
+        host.innerHTML = '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">couldn\'t load your connections — reopen this page to retry.</div>';
+      }
+    });
+  }
+
+  // acctAction — the one implementation behind both the direct row
+  // listeners and the doomalay:action dispatch.
+  function acctAction(action) {
+    if (action === 'acct-hf-out') {
+      acctJSON('/api/hub/auth/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function () { hydrateAccounts(); })
+        .catch(function (err) { if (window.toast) window.toast('HF log out failed: ' + err.message); });
+      return;
+    }
+    if (action === 'acct-hf-in') {
+      if (window.HFConnect) window.HFConnect.openConnectPanel({ onDone: function () { hydrateAccounts(); } });
+      return;
+    }
+    if (action === 'acct-gh-out' || action === 'acct-gt-out') {
+      var kind = action === 'acct-gh-out' ? 'github' : 'gitea';
+      acctJSON('/api/workspaces/accounts?kind=' + kind, { method: 'DELETE' })
+        .then(function () { hydrateAccounts(); })
+        .catch(function (err) { if (window.toast) window.toast('log out failed: ' + err.message); });
+      return;
+    }
+    if (action === 'acct-gh-in') {
+      if (window.GHConnect) window.GHConnect.openConnectPanel({ onDone: function () { hydrateAccounts(); } });
+      return;
+    }
+    if (action === 'acct-keys') {
+      if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
+      return;
+    }
+  }
 
   // theme + grid actions (dispatched via doomalay:action)
   window.addEventListener('doomalay:action', function (e) {
@@ -825,6 +956,12 @@
     }
     if (d.action === 'import-look') {
       if (window.LookIO) window.LookIO.pickImport();
+      return;
+    }
+    // v0.74: the Connected Accounts actions (also reachable via acctAction
+    // — the hydrated rows use direct listeners).
+    if (typeof d.action === 'string' && d.action.indexOf('acct-') === 0) {
+      acctAction(d.action);
       return;
     }
     if (d.action === 'set-theme' && d.data && d.data.theme) {

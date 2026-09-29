@@ -208,8 +208,25 @@ def _get_token(env=None) -> str:
     HF_TOKEN is canonical; HUGGINGFACE_TOKEN accepted as an alias (the old
     app's public_dataset.py accepted both — keep that affordance). The value
     is used for the api client ONLY; it must never appear in any output.
+
+    v0.72 BYOK: the per-request env (the X-Env-* headers the engine sends
+    with the turn) is consulted FIRST — on the SHARED community space the
+    old os.environ write meant user A's token lingered for user B's turns
+    (cross-user leak). The ContextVar carries this request's values; an
+    explicit `env` override still wins; os.environ (the space's own token)
+    is the last resort — never worse than pre-v0.72.
     """
-    e = os.environ if env is None else (env or {})
+    try:
+        import reqenv
+        req = reqenv.get_request_env()
+    except Exception:
+        req = {}
+    if env is not None:
+        e = dict(req)
+        e.update(env or {})
+    else:
+        e = dict(req)
+        e.update({k: v for k, v in os.environ.items() if k not in e})
     # v0.48: DOOMALAY_HF_TOKEN first — the engine vault's name for the
     # connect-flow token (remote.go fans it out as X-Env-DOOMALAY_HF_TOKEN);
     # HF_TOKEN / HUGGINGFACE_TOKEN remain as aliases.
