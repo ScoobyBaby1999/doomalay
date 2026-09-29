@@ -51,7 +51,7 @@ func (s *Server) handleDevUsePublicKeys(w http.ResponseWriter, r *http.Request) 
 		s.brain.SetEnv(s.vault.AsEnv())
 		llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"])
 	}
-	s.fanOutRemoteEnv()
+	s.fanOutRemoteEnv(); s.refreshRedactVals() // v0.75: the exact-value redaction set rides key writes
 	go llm.BuildCatalogV2(s.vault.AsEnv(), true)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        true,

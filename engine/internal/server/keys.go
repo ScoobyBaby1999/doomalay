@@ -75,6 +75,7 @@ func (s *Server) handleKeysSet(w http.ResponseWriter, r *http.Request) {
                 llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"]) // v0.27.1
         }
         s.fanOutRemoteEnv() // v0.46: remote HF sandboxes ride the same keys
+        s.refreshRedactVals() // v0.75: the exact-value redaction set rides key writes
         // v0.42 KEY-TRIGGERED RESYNC (the disappearing-effort-toggle root
         // cause #2, live-verified on the shared engine): POSTing a key used
         // to leave the provider's /api/models group untouched — hasApiKey
@@ -118,6 +119,7 @@ func (s *Server) handleKeysDelete(w http.ResponseWriter, r *http.Request) {
                 llm.SetGitHubToken(s.vault.AsEnv()["GITHUB_TOKEN"]) // v0.27.1
         }
         s.fanOutRemoteEnv() // v0.46
+        s.refreshRedactVals() // v0.75: the exact-value redaction set rides key writes
         writeJSON(w, 200, map[string]any{"ok": true})
 }
 

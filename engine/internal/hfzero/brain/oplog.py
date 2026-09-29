@@ -26,6 +26,16 @@ def log_event(kind: str, **fields: Any) -> None:
         "kind": kind,
     }
     record.update(fields)
+    # v0.75 in-flight redaction: every string field passes the key-shape
+    # scrub (a tool result or error that echoes a key never reaches the
+    # stderr log / the debug ring the space owner shares).
+    try:
+        import redact as _redact
+        for k, v in list(record.items()):
+            if isinstance(v, str):
+                record[k] = _redact.redact(v)
+    except Exception:
+        pass
     try:
         sys.stderr.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
         sys.stderr.flush()
