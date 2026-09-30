@@ -509,7 +509,7 @@ with sync_playwright() as p:
     ok(pg.evaluate("() => window.ConnectOverlay.isOpen()"), "the cloud glyph opens the provider screen (ConnectOverlay)")
     ok("Cloud Providers" in pg.locator("#connect-overlay").inner_text(),
        "…the overlay carries the provider screen's heading")
-    pg.locator("#prov-close").click(); pg.wait_for_timeout(600)
+    pg.locator("#connect-overlay-x").click(); pg.wait_for_timeout(600)
     ok(not pg.evaluate("() => window.ConnectOverlay.isOpen()"), "✕ closes the provider screen")
     # collapse + expand again
     pg.locator("#dock-toggle").click(); pg.wait_for_timeout(400)

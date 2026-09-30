@@ -729,6 +729,21 @@
       if (spec.colors.length > MAX_COLORS) spec.colors.length = MAX_COLORS;
       var colors = spec.colors;
 
+      // ── v0.79.1: mark the editor's own COSMETIC chrome ───────────
+      // paintPreview/paintBanner rewrite these elements' background
+      // per live tick; the projection painter's MutationObserver treats
+      // any untracked style-attr change as a full-paint trigger — 30
+      // wasted full paints per color drag (the "8fps" settings panel).
+      // These elements are decorative literals (never var()-projected
+      // windows) — flagging them keeps the painter deaf to their
+      // repainting.
+      el.querySelectorAll('.gr-preview-bar').forEach(function (pv) { pv.__projCosmetic = true; });
+      var bannerHost = el.closest ? el.closest('.color-row-collapsed') : null;
+      if (bannerHost) {
+        var bn = bannerHost.querySelector('.color-row-banner');
+        if (bn) bn.__projCosmetic = true;
+      }
+
       // the editor's own live preview bar
       function paintPreview() {
         var pv = el.querySelector('.gr-preview-bar');
@@ -764,13 +779,42 @@
         }
       }
 
+      // ── v0.79.1: rAF-COALESCED LIVE UPDATES ──────────────────
+      // The native color wheel + the angle slider fire `input` up to
+      // ~120×/s; each live() used to run the FULL setState cascade
+      // (JSON+localStorage + applyTheme's CSSOM writes + gates + a
+      // canvas repaint) PER EVENT — the "barely usable 8fps" theme
+      // drag (PLAN-V079 §A). Coalesce: ONE live per animation frame,
+      // latest-wins (the spec is mutated in place, so the rAF reads
+      // the freshest value). The trailing `change` (wheel close /
+      // slider release) flushes synchronously so the terminal value
+      // always lands even if the rAF was cancelled.
+      var liveRaf = 0;
+      function flushLive() {
+        if (liveRaf) { cancelAnimationFrame(liveRaf); liveRaf = 0; }
+        paintPreview();
+        paintBanner();
+        if (h.live) h.live();
+      }
+      function scheduleLive() {
+        if (liveRaf) return;
+        liveRaf = requestAnimationFrame(function () {
+          liveRaf = 0;
+          paintPreview();
+          paintBanner();
+          if (h.live) h.live();
+        });
+      }
+
       // swatch values
       el.querySelectorAll('.gr-color').forEach(function (inp) {
         inp.addEventListener('input', function () {
           colors[parseInt(inp.getAttribute('data-gr'), 10) || 0] = inp.value;
-          paintPreview();
-          paintBanner();
-          if (h.live) h.live();
+          scheduleLive();
+        });
+        inp.addEventListener('change', function () {
+          colors[parseInt(inp.getAttribute('data-gr'), 10) || 0] = inp.value;
+          flushLive();
         });
       });
 
@@ -831,9 +875,9 @@
           Math.round(parseFloat(ang.value) || 0)));
         var val = el.querySelector('[data-gr-angle-val]');
         if (val) val.textContent = spec.angle + '°';
-        paintPreview();
-        if (h.live) h.live();
+        scheduleLive();
       });
+      if (ang) ang.addEventListener('change', flushLive);
 
       // texture pick → downscale ≤512 long edge, JPEG q0.8 → dataURL
       var pick = el.querySelector('[data-gr-tex-pick]');

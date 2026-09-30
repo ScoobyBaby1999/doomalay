@@ -239,44 +239,125 @@
     { var: '--accent-4', label: 'Accent 4', rgb: true, hint: 'the fourth accent · scripts + providers' }
   ];
 
+  // ── v0.79.1: THE APPLIED-VALUE LEDGER + PURE-JS VAR RESOLUTION ──
+  // The theme-drag surgery (PLAN-V079 §C). applyTheme used to
+  // remove-then-set ~30–60 root CSSOM properties and read 9–10
+  // resolved values via interleaved getComputedStyle calls PER INPUT
+  // EVENT — each read a forced full-document style recalc after the
+  // writes above it (the style-system edition of layout thrashing;
+  // web.dev/forced-sync-layout). The ledger makes every write a
+  // value-diff (a one-var drag writes exactly that var's 2–3
+  // properties), and the [data-theme] block cache resolves every
+  // previously-read variable in PURE JS (the block is static CSS —
+  // one batched read per theme SWITCH, zero during drags).
+  var appliedVars = {};    // CSS var → live inline value on <html>
+  var appliedAttrs = {};   // attribute → live value on <html> (null = absent)
+  var blockCacheId = null; // the theme id the block cache was read for
+  var blockCache = {};     // [data-theme] block values (the read set below)
+  var BLOCK_READ_SET = ['--bg-panel', '--bg-app', '--surface-1', '--surface-2',
+    '--accent', '--accent-2', '--accent-3', '--accent-4', '--border-strong'];
+  var lastFmtKey = null;   // the applyScheme identity gate
+  var lastTopology = null;  // the gate/painter topology fingerprint
+  var lastMetaColor = '';   // the meta theme-color value guard
+  var lastFamilyTint = '';  // the canvas family tint guard
+
+  function setVar(docEl, k, v) {
+    if (v === null || v === undefined) {
+      if (k in appliedVars) { docEl.style.removeProperty(k); delete appliedVars[k]; }
+      return;
+    }
+    if (appliedVars[k] === v) return;      // byte-identical — no invalidation
+    docEl.style.setProperty(k, v);
+    appliedVars[k] = v;
+  }
+  // setAttr returns true when the attribute actually flipped.
+  function setAttr(docEl, name, v) {
+    var cur = appliedAttrs[name];
+    if (v === null || v === undefined) {
+      if (cur !== null && cur !== undefined) {
+        docEl.removeAttribute(name);
+        appliedAttrs[name] = null;
+        return true;
+      }
+      return false;
+    }
+    if (cur === v) return false;
+    docEl.setAttribute(name, v);
+    appliedAttrs[name] = v;
+    return true;
+  }
+  // buildBlockCache — ONE batched computed-style read of the [data-theme]
+  // block values. Runs ONLY when the theme id changed (the caller clears
+  // the previous theme's inline overrides first, so the read sees the
+  // block itself, never stale override values).
+  function buildBlockCache(docEl, id) {
+    blockCache = {};
+    blockCacheId = id;
+    try {
+      var cs = getComputedStyle(docEl);       // the ONE forced recalc
+      for (var i = 0; i < BLOCK_READ_SET.length; i++) {
+        blockCache[BLOCK_READ_SET[i]] = String(cs.getPropertyValue(BLOCK_READ_SET[i]) || '').trim();
+      }
+    } catch (e) { /* keep the empty cache — callers fall back */ }
+  }
+  // resolvedVar — the value applyTheme is ABOUT to make live, in pure JS:
+  // the override's solid twin when the user customized the var, else the
+  // theme block's value (from the cache). This is exactly what the old
+  // getComputedStyle reads returned, without touching the style system.
+  function resolvedVar(id, overrides, name) {
+    if (overrides && Object.prototype.hasOwnProperty.call(overrides, name)) {
+      var twins = (name === '--border') ? deriveBorderTwins(overrides[name])
+                                        : deriveTwins(overrides[name]);
+      if (twins && twins.solid) return twins.solid;
+    }
+    if (blockCacheId === id && Object.prototype.hasOwnProperty.call(blockCache, name)) {
+      return blockCache[name];
+    }
+    return '';
+  }
+
   function applyTheme(s) {
     var id = THEMES[s.theme] ? s.theme : 'midnight';
     var t = THEMES[id];
-
-    // 1. the variable palette (CSS cascade does the whole UI)
-    document.documentElement.setAttribute('data-theme', id);
-
-    // 1b. v0.26: the user's CUSTOMIZATIONS for this theme — inline CSS
-    // vars beat the [data-theme] block. Applied AFTER the data-theme set;
-    // any vars left over from a previous theme's overrides are cleared
-    // first (inline styles never fall back otherwise).
     var docEl = document.documentElement;
     var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
-    var prevKeys = docEl._themeOverrideKeys || [];
-    prevKeys.forEach(function (k) { docEl.style.removeProperty(k); });
-    docEl._themeOverrideKeys = [];
-    // v0.49: gradient TEXT — when the --text-1 override paints a real
-    // gradient, flag the root so index.html's [data-text-grad] rules
-    // clip the prominent titles/headings to it (v0.67: the pass now
-    // extends to body text + labels — every text-1 consumer is a
-    // window when the user paints Primary text as a field).
+
+    // 1. the variable palette (CSS cascade does the whole UI).
+    // v0.79.1: the theme flip is the ONLY path that pays a style read —
+    // the previous theme's inline overrides clear and the fresh
+    // [data-theme] block resolves in ONE batched computed-style read
+    // (cached until the id changes again). Same-theme applies (the
+    // drags — the "barely usable 8fps" report) never read the style
+    // system at all: every resolved value comes from the cache or the
+    // override twins, computed in pure JS.
+    setAttr(docEl, 'data-theme', id);
+    if (blockCacheId !== id) {
+      for (var rk in appliedVars) { docEl.style.removeProperty(rk); }
+      appliedVars = {};
+      buildBlockCache(docEl, id);
+    }
+
+    // 1b. v0.26: the user's CUSTOMIZATIONS for this theme — inline CSS
+    // vars beat the [data-theme] block. v0.79.1: the DESIRED inline set
+    // is computed PURE first (no interleaved reads), then DIFFED against
+    // the ledger — a drag on one var writes exactly that var's
+    // properties; unchanged values write nothing at all (the old
+    // remove-all-then-set-all was an invalidation storm per event).
+    var want = {};
+    var gradByKey = {};   // override key → isGradient (the topo inputs)
     var textGrad = false;
     // v0.77.7: the --text-1 override's raw spec + solid twin — the
     // secondary-text derivation reads them after the loop.
     var text1Spec = null, twinsText1Solid = '';
     // v0.67: per-accent gradient gates — [data-aN-grad] on the root
-    // while accent N's twin is a real image. index.html's EVERY-WINDOW
-    // pass converts the remaining accent-TINTED pills/badges/labels
-    // into windows on that accent's viewport projection (the v0.66
-    // model, completed). Solid accents never trip the gates → every
-    // base theme renders byte-identical to v0.66.
+    // while accent N's twin is a real image (see the gates in index.html).
     var accGrad = { '--accent': false, '--accent-2': false,
       '--accent-3': false, '--accent-4': false };
     if (overrides) {
       Object.keys(overrides).forEach(function (k) {
         // v0.44: the override value may be a hex (legacy) or a gradient
-        // spec — deriveTwins folds both into the var-TWIN pair and
-        // setProperty writes --X (solid) + --X-gradient (image or 'none';
+        // spec — deriveTwins folds both into the var-TWIN pair and the
+        // write below lands --X (solid) + --X-gradient (image or 'none';
         // consumer rules in index.html layer it over the solid).
         // v0.56: --border uses the SINGLE-LAYER sweep twin (patterns are
         // multi-layer values — invalid as border-image and leaky in the
@@ -284,149 +365,70 @@
         var twins = (k === '--border')
           ? deriveBorderTwins(overrides[k])
           : deriveTwins(overrides[k]);
-        docEl.style.setProperty(k, twins.solid);
-        docEl.style.setProperty(k + '-gradient', twins.grad);
-        docEl._themeOverrideKeys.push(k, k + '-gradient');
+        want[k] = twins.solid;
+        want[k + '-gradient'] = twins.grad;
+        gradByKey[k] = (twins.grad !== 'none');
         // v0.57: --border-strong rides the SAME sweep as --border when the
-        // user overrides it (same family of color → same underlying field;
-        // the chatbot icon tiles + badges follow the palette). No twin is
-        // written when the border is solid (base themes stay flat).
+        // user overrides it (no twin when the border is solid — base
+        // themes stay flat).
         if (k === '--border' && twins.grad !== 'none') {
-          docEl.style.setProperty('--border-strong-gradient', twins.grad);
-          docEl._themeOverrideKeys.push('--border-strong-gradient');
+          want['--border-strong-gradient'] = twins.grad;
         }
         if (k === '--text-1') {
           // v0.77.7: the secondary-text derivation's inputs — the RAW
           // spec (for the average stop) + the solid twin (the fallback).
           text1Spec = overrides[k];
           twinsText1Solid = twins.solid;
+          if (twins.grad !== 'none') textGrad = true;
         }
-        if (k === '--text-1' && twins.grad !== 'none') textGrad = true;
         if (accGrad.hasOwnProperty(k) && twins.grad !== 'none') accGrad[k] = true;
         // auto-derive the -rgb triplet (rgba() composition needs it) —
         // ALWAYS from the SOLID twin (a gradient's stops can't compose
         // rgba(); the first color is the canonical tint, v0.26 contract)
         var pair = RGB_PAIRS[k];
         var triplet = hexTriplet(twins.solid);
-        if (pair && triplet) {
-          docEl.style.setProperty(pair, triplet);
-          docEl._themeOverrideKeys.push(pair);
-        }
+        if (pair && triplet) want[pair] = triplet;
       });
     }
-    if (textGrad) docEl.setAttribute('data-text-grad', '1');
-    else docEl.removeAttribute('data-text-grad');
-    // v0.67: publish the per-accent gates (see accGrad above).
-    var A_ATTR = { '--accent': 'data-a1-grad', '--accent-2': 'data-a2-grad',
-      '--accent-3': 'data-a3-grad', '--accent-4': 'data-a4-grad' };
-    Object.keys(A_ATTR).forEach(function (av) {
-      if (accGrad[av]) docEl.setAttribute(A_ATTR[av], '1');
-      else docEl.removeAttribute(A_ATTR[av]);
-    });
-    // v0.77.8: the SURFACE + BORDER gates — the derived windows/rings fire
-    // when their variable's twin is live (exactly the accent model).
-    var S_ATTR = { '--surface-1': 'data-s1-grad', '--surface-2': 'data-s2-grad',
-      '--bg-app': 'data-bg-grad' };
-    var surfGrad = { '--surface-1': false, '--surface-2': false, '--bg-app': false };
-    var borderGrad = false;
-    if (overrides) {
-      Object.keys(overrides).forEach(function (k) {
-        if (S_ATTR[k]) {
-          var tw = deriveTwins(overrides[k]);
-          if (tw.grad !== 'none') surfGrad[k] = true;
-        }
-        if (k === '--border') {
-          var bt = deriveBorderTwins(overrides['--border']);
-          if (bt.grad !== 'none') borderGrad = true;
-        }
-      });
-    }
-    Object.keys(S_ATTR).forEach(function (sv) {
-      if (surfGrad[sv]) docEl.setAttribute(S_ATTR[sv], '1');
-      else docEl.removeAttribute(S_ATTR[sv]);
-    });
-    if (borderGrad) docEl.setAttribute('data-border-grad', '1');
-    else docEl.removeAttribute('data-border-grad');
 
     // v0.57: --bg-panel-rgb — derived EVERY apply (base themes included):
-    // the scrim family (overlay scrim, chat scrim, media viewers) composes
-    // rgba(var(--bg-panel-rgb), α) so the veils darken the AUTHENTIC canvas
-    // color instead of leaking the user's overlay-background var.
-    var panelTriplet = hexTriplet(
-      getComputedStyle(docEl).getPropertyValue('--bg-panel'));
-    if (panelTriplet) {
-      docEl.style.setProperty('--bg-panel-rgb', panelTriplet);
-      docEl._themeOverrideKeys.push('--bg-panel-rgb');
-    }
-    // v0.65 FIX: --on-accent derived for BASE THEMES too. It used to stay
-    // the static :root #ffffff unless the user overrode Accent 1 — so
-    // light accents (Mono's #d4d4d4) painted WHITE text on a light bubble
-    // = invisible user messages. Read the RESOLVED --accent (theme block
-    // or override twin — overrides write the solid before this runs) and
-    // derive the readable ink by luminance, exactly like the old override
-    // path did (same onColorFor contract).
-    var accResolved = String(getComputedStyle(docEl)
-      .getPropertyValue('--accent') || '').trim();
+    // the scrim family composes rgba(var(--bg-panel-rgb), α). v0.79.1:
+    // resolvedVar is the pure-JS equivalent of the old getComputedStyle
+    // read (override twin or theme block — never the style system).
+    var panelTriplet = hexTriplet(resolvedVar(id, overrides, '--bg-panel'));
+    if (panelTriplet) want['--bg-panel-rgb'] = panelTriplet;
+    // v0.65 FIX: --on-accent derived for BASE THEMES too (light accents
+    // need readable ink on the user bubbles).
+    var accResolved = resolvedVar(id, overrides, '--accent');
     if (/^#[0-9a-fA-F]{6}$/.test(accResolved)) {
-      docEl.style.setProperty('--on-accent', onColorFor(accResolved));
-      docEl._themeOverrideKeys.push('--on-accent');
+      want['--on-accent'] = onColorFor(accResolved);
     }
-    // v0.66: --on-accent-N for EVERY accent (not just Accent 1). The
-    // projection rework makes pills/windows that RENDER accent-N's own
-    // field, so their labels need the same readable-ink derivation the
-    // user bubbles have always had (--on-accent). All four read their
-    // RESOLVED solid twin (theme block or override — overrides were
-    // written above, so this sees the user's palette). Naming follows
-    // the --on-accent convention: --on-accent-2 / -3 / -4.
+    // v0.66: --on-accent-N for EVERY accent (the projection rework makes
+    // pills/windows that RENDER accent-N's own field, so their labels
+    // need the same readable-ink derivation the user bubbles have).
     var ON_VAR = { '--accent-2': '--on-accent-2',
       '--accent-3': '--on-accent-3', '--accent-4': '--on-accent-4' };
     Object.keys(ON_VAR).forEach(function (av) {
-      var v = String(getComputedStyle(docEl).getPropertyValue(av) || '').trim();
-      if (/^#[0-9a-fA-F]{6}$/.test(v)) {
-        docEl.style.setProperty(ON_VAR[av], onColorFor(v));
-        docEl._themeOverrideKeys.push(ON_VAR[av]);
-      }
+      var v = resolvedVar(id, overrides, av);
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) want[ON_VAR[av]] = onColorFor(v);
     });
-    // v0.57→v0.65 FIX: --veil-ink — the layer system's veil direction.
-    // It used to derive from the RESOLVED TEXT color's luminance, which
-    // sounded right but had a fatal case: a dark Primary-text override on
-    // a dark theme flipped the veils to WHITE — every Layer-2/3 card and
-    // pill then painted a 36-48% WHITE wash over dark surfaces (the theme
-    // suite's live repro: the model-gate pills turned opaque milky-white
-    // "boxes"; the user's "changing the primary text color turns the pill
-    // opaque white" report). The veil's job is to calm the SURFACE it
-    // paints ON — so the direction now follows the RESOLVED SURFACE
-    // luminance: dark surfaces → BLACK ink (dark themes keep today's
-    // exact look), light surfaces → WHITE ink (paper/frost keep theirs).
-    // A dark-text-on-dark-surfaces user choice no longer washes the UI.
-    var s1 = String(getComputedStyle(docEl)
-      .getPropertyValue('--surface-1') || '').trim();
-    // v0.77.7 THE SECONDARY-TEXT DERIVATION — user report: "the
-    // description of what the row does seems to not follow any theme
-    // color and remains grey. Same as most text when the rows are
-    // expanded." Base themes hand-tune their text-2/3/3-dim triplets,
-    // so a user-painted Primary text left the hints + descriptions on
-    // the theme's grey. When --text-1 carries an override, the
-    // secondary tones now DERIVE from it — blends toward the resolved
-    // surface-1 (the surface descriptions sit on), keeping the
-    // 1 > 2 > 3 hierarchy while following the customized palette. A
-    // gradient's AVERAGE stop is the representative tone (the first
-    // stop can be an outlier).
+    // v0.57→v0.65 FIX: --veil-ink follows the RESOLVED SURFACE
+    // luminance (dark surfaces → BLACK ink, light → WHITE).
+    var s1 = resolvedVar(id, overrides, '--surface-1');
+    // v0.77.7 THE SECONDARY-TEXT DERIVATION — when --text-1 carries an
+    // override, the secondary tones DERIVE from it (blends toward the
+    // resolved surface-1, keeping the 1 > 2 > 3 hierarchy).
     if (text1Spec) {
       var t1Tone = avgStops(text1Spec.colors) ||
         (/^#[0-9a-fA-F]{6}$/.test(twinsText1Solid || '') ? twinsText1Solid : null);
       var t1Mix = mixHex(t1Tone, s1, 0.38);
       if (t1Tone && t1Mix) {
-        docEl.style.setProperty('--text-2', t1Mix);
-        docEl.style.setProperty('--text-3', mixHex(t1Tone, s1, 0.62) || t1Mix);
-        docEl.style.setProperty('--text-3-dim', mixHex(t1Tone, s1, 0.76) || t1Mix);
-        docEl._themeOverrideKeys.push('--text-2', '--text-3', '--text-3-dim');
+        want['--text-2'] = t1Mix;
+        want['--text-3'] = mixHex(t1Tone, s1, 0.62) || t1Mix;
+        want['--text-3-dim'] = mixHex(t1Tone, s1, 0.76) || t1Mix;
         // the rgb triplets (rgba composition users) stay consistent
         var t2Tri = hexTriplet(t1Mix);
-        if (t2Tri) {
-          docEl.style.setProperty('--text-2-rgb', t2Tri);
-          docEl._themeOverrideKeys.push('--text-2-rgb');
-        }
+        if (t2Tri) want['--text-2-rgb'] = t2Tri;
       }
     }
     var inkM = /^#([0-9a-fA-F]{6})$/.exec(s1);
@@ -438,22 +440,13 @@
         var lin = function (c) { return (c <= 0.03928) ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
         return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
       })(inkM[1]);
-      docEl.style.setProperty('--veil-ink', (s1Lum > 0.45) ? '#ffffff' : '#000000');
-      docEl.style.setProperty('--veil-ink-rgb', (s1Lum > 0.45) ? '255, 255, 255' : '0, 0, 0');
-      docEl._themeOverrideKeys.push('--veil-ink', '--veil-ink-rgb');
+      want['--veil-ink'] = (s1Lum > 0.45) ? '#ffffff' : '#000000';
+      want['--veil-ink-rgb'] = (s1Lum > 0.45) ? '255, 255, 255' : '0, 0, 0';
     }
 
-    // v0.74: BRIGHT-SURFACE INK GATES. User report (the settings colors
-    // wave): "Surface raised … any color that is bright looks horrible."
-    // The projection model paints what the user chose — a bright
-    // surface-2 makes every Layer-3 pill a bright window, and the light
-    // --text-1/2 ink that reads beautifully on the dark base themes is
-    // invisible on it. The accents already solved this exact problem
-    // with --on-accent-N (v0.66): derive the readable ink from the
-    // RESOLVED solid twin and gate a flip rule. The gates only fire
-    // when the user actually paints a BRIGHT surface (luminance >
-    // 0.45) — every base theme leaves them unset and renders
-    // byte-identical.
+    // v0.74: BRIGHT-SURFACE INK GATES — derive the readable ink from the
+    // RESOLVED solid and gate a flip rule (fires only when the user
+    // paints a BRIGHT surface; base themes leave the gates unset).
     var BRIGHT_VARS = [
       { v: '--surface-1', ink: '--on-surface-1', gate: 'data-bright-s1' },
       { v: '--surface-2', ink: '--on-surface-2', gate: 'data-bright-s2' },
@@ -465,74 +458,120 @@
       // the same readable-ink derivation the surfaces have.
       { v: '--border',    ink: '--on-border',    gate: 'data-bright-border' }
     ];
+    var brightGates = {};
     BRIGHT_VARS.forEach(function (B) {
-      var resolved = String(getComputedStyle(docEl).getPropertyValue(B.v) || '').trim();
+      var resolved = resolvedVar(id, overrides, B.v);
       var bm = /^#([0-9a-fA-F]{6})$/.exec(resolved);
       if (bm) {
         var hex = '#' + bm[1];
         var ink = onColorFor(hex);
-        docEl.style.setProperty(B.ink, ink);
-        docEl._themeOverrideKeys.push(B.ink);
+        want[B.ink] = ink;
         // dark ink ⇒ the surface is bright ⇒ trip the gate
-        if (ink !== '#ffffff') docEl.setAttribute(B.gate, '1');
-        else docEl.removeAttribute(B.gate);
+        brightGates[B.gate] = (ink !== '#ffffff') ? '1' : null;
       } else {
-        docEl.removeAttribute(B.gate);
+        brightGates[B.gate] = null;
       }
     });
 
-    // 2. chat markdown scheme — only when the user hasn't pinned their own
-    //    (a non-default scheme OR any per-slot override = pinned)
+    // 2. chat markdown scheme — v0.79.1: the IDENTITY GATE. The scheme
+    // + fmt overrides are byte-stable through a theme drag; the old
+    // unconditional applyScheme re-wrote ~15 root properties + flipped
+    // data-fmt-grad PER INPUT EVENT for nothing.
     if (window.Formatter) {
-      if (!isChatSchemePinned(s)) {
-        window.Formatter.applyScheme(t.scheme, s.fmtOverrides || null);
-      } else {
-        window.Formatter.applyScheme(s.chatScheme || 'teal', s.fmtOverrides || null);
+      var pinned = isChatSchemePinned(s);
+      var schemeName = pinned ? (s.chatScheme || 'teal') : t.scheme;
+      var fmtKey = schemeName + '|' + JSON.stringify(s.fmtOverrides || null);
+      if (fmtKey !== lastFmtKey) {
+        window.Formatter.applyScheme(schemeName, s.fmtOverrides || null);
+        lastFmtKey = fmtKey;
       }
     }
 
     // 3. text sizes — chat (0-100 slider → 12-24px), general + small
-    //    v0.34: --chat-scale rides the chat slider — a unitless ratio of
-    //    the chat font to its 16px default (0.75…1.5). Everything INSIDE
-    //    the message scope (bubble padding, code cards, thinking strips,
-    //    artifact cards, icons) multiplies its px by it, so the whole
-    //    conversation scales as ONE piece: no more text that grows while
-    //    its bubbles, code and spacing stay put (the "wonky formatting").
+    // (v0.34: --chat-scale rides the chat slider so the whole
+    // conversation scales as ONE piece).
     var size = (typeof s.chatTextSize === 'number') ? s.chatTextSize : 50;
-    document.documentElement.style.setProperty('--chat-fs', (12 + (size / 100) * 12).toFixed(1) + 'px');
-    document.documentElement.style.setProperty('--chat-scale', ((12 + (size / 100) * 12) / 16).toFixed(3));
+    want['--chat-fs'] = (12 + (size / 100) * 12).toFixed(1) + 'px';
+    want['--chat-scale'] = ((12 + (size / 100) * 12) / 16).toFixed(3);
     var ui = (typeof s.uiTextSize === 'number') ? s.uiTextSize : 50;   // 0-100 → 12-17px
-    document.documentElement.style.setProperty('--ui-fs', (12 + (ui / 100) * 5).toFixed(1) + 'px');
+    want['--ui-fs'] = (12 + (ui / 100) * 5).toFixed(1) + 'px';
     var sm = (typeof s.smallTextSize === 'number') ? s.smallTextSize : 50; // 0-100 → 9.5-15px
-    document.documentElement.style.setProperty('--ui-small-fs', (9.5 + (sm / 100) * 5.5).toFixed(1) + 'px');
+    want['--ui-small-fs'] = (9.5 + (sm / 100) * 5.5).toFixed(1) + 'px';
+
+    // ── THE WRITE PHASE (v0.79.1) — pure diffs against the ledger ──
+    for (var wk in want) setVar(docEl, wk, want[wk]);
+    for (var dk in appliedVars) if (!(dk in want)) setVar(docEl, dk, null);
+
+    // the root attributes — every flip value-guarded (an attribute set
+    // to the value it already has was still an invalidation).
+    setAttr(docEl, 'data-text-grad', textGrad ? '1' : null);
+    var A_ATTR = { '--accent': 'data-a1-grad', '--accent-2': 'data-a2-grad',
+      '--accent-3': 'data-a3-grad', '--accent-4': 'data-a4-grad' };
+    Object.keys(A_ATTR).forEach(function (av) {
+      setAttr(docEl, A_ATTR[av], accGrad[av] ? '1' : null);
+    });
+    // v0.77.8: the SURFACE + BORDER gates — same gradByKey inputs the
+    // override loop already derived (no re-derivation).
+    var S_ATTR = { '--surface-1': 'data-s1-grad', '--surface-2': 'data-s2-grad',
+      '--bg-app': 'data-bg-grad' };
+    Object.keys(S_ATTR).forEach(function (sv) {
+      setAttr(docEl, S_ATTR[sv], gradByKey[sv] ? '1' : null);
+    });
+    setAttr(docEl, 'data-border-grad', gradByKey['--border'] ? '1' : null);
+    Object.keys(brightGates).forEach(function (g) {
+      setAttr(docEl, g, brightGates[g]);
+    });
 
     // 4. Android status bar tint — needs a REAL hex (no var() in meta).
-    //    v0.49: prefers the CANVAS background solid (the canvas is the
-    //    top-of-screen surface); falls back to the grid bg hex.
+    //    v0.79.1: value-guarded (a drag re-set the same content attr
+    //    per event; now only on a real change).
     var meta = document.getElementById('meta-theme-color');
     if (meta) {
       var cbSpec = canvasBgSpec(s);
       var cbHex = (cbSpec && Array.isArray(cbSpec.colors)) ? solidOf(cbSpec, '') : '';
-      meta.setAttribute('content', isHexColor(cbHex) ? cbHex : effectiveGrid(s).bg);
+      var mc = isHexColor(cbHex) ? cbHex : effectiveGrid(s).bg;
+      if (mc !== lastMetaColor) {
+        meta.setAttribute('content', mc);
+        lastMetaColor = mc;
+      }
     }
 
     // 5. re-tint the default chatbot family so canvas-drawn arrows/icons
     //    follow the theme (the family color is drawn on <canvas>, where
-    //    var() doesn't resolve — it needs a real hex)
+    //    var() doesn't resolve — it needs a real hex). v0.79.1: resolved
+    //    in pure JS + value-guarded.
     if (window.DoomalayConfig && window.DoomalayConfig.families &&
         window.DoomalayConfig.families.default) {
-      window.DoomalayConfig.families.default.color = cssVar('--border-strong') || '#4a4a5e';
+      var tint = resolvedVar(id, overrides, '--border-strong') || '#4a4a5e';
+      if (tint !== lastFamilyTint) {
+        window.DoomalayConfig.families.default.color = tint;
+        lastFamilyTint = tint;
+      }
     }
 
-    // v0.67: after the gates/twins land, re-anchor every projection
-    // window (the painter derives its selectors from the stylesheets
-    // + the fresh gradient twins — see window.DoomProjection below).
-    if (window.DoomProjection) window.DoomProjection.poke();
-    // v0.70: the DERIVED GATES — every accent-painted class in the
-    // stylesheets becomes a window/glyph on that accent's field (the
-    // systematic accuracy pass; see window.DoomGates below). Runs after
-    // the twins so the injected rules resolve against the live palette.
-    if (window.DoomGates) window.DoomGates.refresh();
+    // v0.67→v0.79.1: the TOPOLOGY FINGERPRINT gates the painter + the
+    // derived gates. The projection anchors and the derived gate CSS
+    // are GEOMETRY/STYLESHEET facts — a value-only change (a hue shift,
+    // an angle tweak inside the same gradient-ness, a stop recolor)
+    // moves no box and rewrites no selector, so the full re-anchor the
+    // old code paid per input event buys nothing. The fingerprint
+    // covers: the theme id, the override KEY SET with each var's
+    // solid↔gradient state, and the fmt-grad slots. A real topology
+    // change (a stop added to a solid, a gradient flattened to one
+    // color, a theme switch) re-anchors exactly once.
+    var topo = [id];
+    Object.keys(gradByKey).sort().forEach(function (gk) {
+      topo.push(gk + ':' + (gradByKey[gk] ? 'g' : 's'));
+    });
+    topo.push('fmt:' + (docEl.getAttribute('data-fmt-grad') || ''));
+    var topoKey = topo.join('|');
+    if (topoKey !== lastTopology) {
+      lastTopology = topoKey;
+      // re-anchor every projection window + re-derive the gates (the
+      // painter's selector set may have gained/lost gradient windows)
+      if (window.DoomProjection) window.DoomProjection.repaint();
+      if (window.DoomGates) window.DoomGates.refresh();
+    }
   }
 
   // effectiveGridSpecs merges the user's explicit grid picks over the
@@ -663,7 +702,16 @@
       // #chat-root paint + any future consumer reuses THIS one function
       // (the same math formatter.js's fmtTwins mirrors; the node harness
       // asserts the parity).
-      deriveTwins: deriveTwins
+      deriveTwins: deriveTwins,
+      // v0.79.1: the pure-JS resolved value of a theme var (override twin
+      // or [data-theme] block, from the cache — never the style system).
+      // app.js's canvas fingerprint reads the family tint through it.
+      resolvedThemeVar: function (name) {
+        var st = (window.Settings && window.Settings.getState()) || {};
+        var rid = THEMES[st.theme] ? st.theme : 'midnight';
+        return resolvedVar(rid,
+          (st.themeOverrides && st.themeOverrides[rid]) || null, name);
+      }
     };
 
     // ══ v0.67 THE TRANSFORM-PROOF PROJECTION PAINTER ══════════════
@@ -1172,6 +1220,43 @@
       // transitions (opacity, color, box-shadow…) only mark once.
       var MOVER_RE = /^(transform|all|grid-template-rows|grid-template-columns|height|max-height|min-height|width|max-width|min-width|top|left|right|bottom|margin[^ ]*|padding[^ ]*|flex-basis|font-size|inset[^ ]*|translate)$/;
 
+      // ── v0.79.1: THE VALUE-VAR FILTER ─────────────────────
+      // A style-attribute diff on the THEME ROOTS (<html> via applyTheme/
+      // applyScheme, #chat-root via paintChatFmtTwins) that touches ONLY
+      // non-layout CUSTOM PROPERTIES is a theme/fmt VALUE write — colors
+      // and background images cannot move a box, so the projection
+      // anchors (geometry facts) stay valid and the SEL set (a stylesheet
+      // fact) is unchanged. The old observer full-painted PER THEME DRAG
+      // EVENT for this (the "barely usable 8fps" settings panel). The
+      // layout-affecting custom props (the text sizes) still paint.
+      var LAYOUT_CP = { '--chat-fs': 1, '--chat-scale': 1, '--ui-fs': 1, '--ui-small-fs': 1 };
+      function parseStyleAttrFor(s, out) {
+        var parts = String(s || '').split(';');
+        for (var i = 0; i < parts.length; i++) {
+          var c = parts[i].indexOf(':');
+          if (c < 0) continue;
+          var k = parts[i].slice(0, c).replace(/^\s+|\s+$/g, '');
+          if (k) out[k] = parts[i].slice(c + 1).replace(/^\s+|\s+$/g, '');
+        }
+      }
+      function styleDiffOnlyValueVars(oldS, newS) {
+        if (oldS === newS) return true;
+        var a = {}, b = {};
+        parseStyleAttrFor(oldS, a);
+        parseStyleAttrFor(newS, b);
+        for (var k in a) {
+          if (!(k in b) || a[k] !== b[k]) {
+            if (!(k.charAt(0) === '-' && !LAYOUT_CP[k])) return false;
+          }
+        }
+        for (var k2 in b) {
+          if (!(k2 in a) || a[k2] !== b[k2]) {
+            if (!(k2.charAt(0) === '-' && !LAYOUT_CP[k2])) return false;
+          }
+        }
+        return true;
+      }
+
       // ── the triggers ──
       if (typeof MutationObserver === 'function') {
         var mo = new MutationObserver(function (muts) {
@@ -1188,6 +1273,36 @@
               }
             }
           }
+          // v0.79.1: VALUE NOISE, filtered FIRST. Theme/fmt VALUE writes
+          // on the theme roots (<html> via applyTheme/applyScheme,
+          // #chat-root via paintChatFmtTwins) touch only non-layout
+          // custom properties — colors and images cannot move a box and
+          // never change the stylesheet-derived SEL — so they need
+          // neither a paint nor a motion. The old observer full-painted
+          // PER THEME-DRAG EVENT for these (the "barely usable 8fps"
+          // settings panel), even with no transformed roots registered.
+          var kept = [];
+          for (var vi = 0; vi < muts.length; vi++) {
+            var vm = muts[vi];
+            if (vm.type === 'attributes' && vm.attributeName === 'style' &&
+                vm.target && (vm.target === document.documentElement ||
+                              vm.target.id === 'chat-root') &&
+                styleDiffOnlyValueVars(vm.oldValue || '',
+                  vm.target.getAttribute('style') || '')) {
+              continue;   // a value-only custom-prop write — nothing moved
+            }
+            // v0.79.1: flagged COSMETIC chrome (the GradientUI editor's
+            // own preview bar + row banner repaint per live tick) — a
+            // decorative literal background, never a projected window;
+            // the painter must stay deaf to it.
+            if (vm.type === 'attributes' && vm.attributeName === 'style' &&
+                vm.target && vm.target.__projCosmetic === true) {
+              continue;
+            }
+            kept.push(vm);
+          }
+          if (!kept.length) return;         // pure value noise — done
+          muts = kept;
           // a root's OWN style write where only transform/translate
           // changed is the glide driver (writeY) — the motion path
           // covers it; anything else is a real change → full paint.
@@ -1371,6 +1486,16 @@
           // paints per drag on the rig — the "8fps" panel). Painter-owned
           // noise never re-anchors.
           if (/^background-position/.test(e.propertyName || '')) return;
+          // v0.79.1: COSMETIC transition ends never re-anchor. Anchors are
+          // GEOMETRY facts — a transition that ends on background-color,
+          // border colors, color, box-shadow or opacity cannot have moved
+          // a box, so settling it bought a full paint for nothing. The
+          // live case: the GradientUI dir pills are accent-tinted, so a
+          // theme-color drag restarts their background/border transitions
+          // per frame — every end was a mark() (30 paints per drag, the
+          // settings panel's residual jank). Only GEOMETRY movers (the
+          // MOVER_RE set: height, grid-rows, transform…) still settle.
+          if (!MOVER_RE.test(e.propertyName || '')) return;
           // during a live gesture the whole transition set is drag
           // cascade — the post-gesture retry settles everything once.
           if (window.__doomalayGestureAt &&

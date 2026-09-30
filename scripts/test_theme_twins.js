@@ -46,7 +46,9 @@ var docEl = {
     removeProperty: function (k) { delete rec.props[k]; rec.removed.push(k); }
   },
   setAttribute: function (k, v) { rec.attrs[k] = String(v); },
-  removeAttribute: function (k) { delete rec.attrs[k]; rec.unattr.push(k); }
+  removeAttribute: function (k) { delete rec.attrs[k]; rec.unattr.push(k); },
+  // v0.79.1: applyTheme's topology fingerprint reads data-fmt-grad
+  getAttribute: function (k) { return (k in rec.attrs) ? rec.attrs[k] : null; }
 };
 var rafQueue = [];
 var settingsState = {

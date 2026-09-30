@@ -110,11 +110,38 @@
     catch (e) { console.warn('Settings save failed', e); }
   }
 
+  // ── v0.79.1: DEBOUNCED PERSISTENCE ───────────────────────────
+  // The theme editors + sliders fire setState per INPUT EVENT (the
+  // native color wheel fires up to ~120/s). JSON.stringify of the
+  // whole state + a synchronous localStorage.setItem PER EVENT was
+  // a measurable slice of the "barely usable 8fps" theme-drag (the
+  // panel-perf wave, PLAN-V079 §B). The in-memory state and every
+  // listener stay IMMEDIATE — only the storage write moves, 300ms
+  // after the last change. pagehide/visibility flush so a kill/ship
+  // mid-debounce never loses the edit (the app's own state file does
+  // the same trailing-flush pattern).
+  let saveTimer = 0;
+  function saveSoon() {
+    if (saveTimer) return;
+    saveTimer = setTimeout(function () {
+      saveTimer = 0;
+      save();
+    }, 300);
+  }
+  function flushSave() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; }
+    save();
+  }
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
+
   function getState() { return state; }
 
   function setState(patch) {
     Object.assign(state, patch);
-    save();
+    saveSoon();   // v0.79.1: debounced (was: save() per event)
     // Notify listeners (the app redraws the grid on color change, etc.).
     for (const cb of listeners) { try { cb(state); } catch (e) {} }
   }
@@ -239,6 +266,39 @@
       if (el.dataset.custom) return; // page-module-managed inputs (fmt colors)
       const key = el.dataset.settingKey;
       const ev = el.dataset.settingEvent || 'input';
+      // v0.79.1: RANGE sliders are rAF-coalesced (latest-wins, the
+      // trailing change flushes) — a fast drag fired the full setState
+      // cascade per OS event (up to ~120/s), stacking paints per frame.
+      if (el.type === 'range' && ev === 'input') {
+        let rafId = 0;
+        const fireNow = function () {
+          let val = el.type === 'checkbox' ? el.checked : el.value;
+          const transform = el.dataset.settingTransform;
+          if (transform === 'number') val = parseFloat(val);
+          const patch = {};
+          patch[key] = val;
+          apply(patch);
+          const display = rootEl.querySelector('[data-range-display="' + key + '"]');
+          if (display) {
+            const suffix = display.dataset.suffix !== undefined ? display.dataset.suffix : '×';
+            display.textContent = val + suffix;
+          }
+        };
+        el.addEventListener('input', function () {
+          const display = rootEl.querySelector('[data-range-display="' + key + '"]');
+          if (display) {
+            const suffix = display.dataset.suffix !== undefined ? display.dataset.suffix : '×';
+            display.textContent = el.value + suffix;
+          }
+          if (rafId) return;
+          rafId = requestAnimationFrame(function () { rafId = 0; fireNow(); });
+        });
+        el.addEventListener('change', function () {
+          if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+          fireNow();
+        });
+        return;
+      }
       el.addEventListener(ev, function () {
         let val = el.type === 'checkbox' ? el.checked : el.value;
         const transform = el.dataset.settingTransform;

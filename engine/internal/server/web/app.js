@@ -1956,9 +1956,55 @@
     });
   }
 
+  // ── v0.79.1: THE CANVAS FINGERPRINT GATE + rAF COALESCING ──────
+  // The settings onChange listener used to run update() — a FULL canvas
+  // repaint (the 2× colorspace background tile + every dot/line/icon +
+  // offscreen arrows) — on EVERY settings event, even when the change
+  // had zero canvas effect (an accent, a text color, a fmt slot), and
+  // 5–10 input events per frame stacked 5–10 full repaints in one tick.
+  // The fingerprint captures exactly what renderGrid() reads; the rAF
+  // coalescing guarantees at most ONE update() per frame (latest-wins —
+  // the canvas state is a pure function of the settings).
+  function canvasFingerprint() {
+    const s = window.Settings.getState();
+    const DT = window.DoomTheme || {};
+    const ov = (s.themeOverrides && s.themeOverrides[s.theme || 'midnight']) || null;
+    return [
+      s.theme, s.gridSize, s.spaceParallax, s.hideGridLines, s.hideDots,
+      s.dotScatter, s.lineScatter, s.dotSizeVariation, s.lineSizeVariation,
+      s.dotSizeBias, s.lineSizeBias, s.dotRotation, s.lineRotation,
+      s.dotAnimate, s.lineAnimate,
+      s.gridScatter, s.gridSizeVariation, s.gridRotation,   // legacy fallbacks
+      JSON.stringify(s.bg), JSON.stringify(s.lineColor),
+      JSON.stringify(s.dotColor), JSON.stringify(s.originColor),
+      // the CANVAS-relevant override only: --bg-panel paints the canvas
+      // background (spec + texture); --border-strong tints the canvas
+      // icons. The REST of the overrides (accents, surfaces, text) have
+      // zero canvas effect — an accent drag must NOT repaint the canvas.
+      JSON.stringify((ov && ov['--bg-panel']) || null),
+      (typeof DT.resolvedThemeVar === 'function')
+        ? DT.resolvedThemeVar('--border-strong') : ''
+    ].join('|');
+  }
+  let lastCanvasFp = null;
+  let canvasUpdateRaf = 0;
+  function scheduleCanvasUpdate() {
+    if (canvasUpdateRaf) return;
+    canvasUpdateRaf = requestAnimationFrame(function () {
+      canvasUpdateRaf = 0;
+      update();
+    });
+  }
+
   // Re-render on settings change (live color updates).
   window.Settings.onChange(function () {
-    update();
+    // v0.79.1: only canvas-relevant changes repaint the canvas, and at
+    // most once per frame.
+    const fp = canvasFingerprint();
+    if (fp !== lastCanvasFp) {
+      lastCanvasFp = fp;
+      scheduleCanvasUpdate();
+    }
     // v0.75: an animate toggle flipping ON starts the ambient loop (a
     // plain update() renders one frame — the twinkle/drift needs rAF).
     if (ambientActive()) startAnimation();
