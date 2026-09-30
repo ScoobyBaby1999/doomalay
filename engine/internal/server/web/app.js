@@ -304,7 +304,8 @@
         entities: entitiesForWorker(),
         counts: (window.Atoms && window.Atoms.countsOf) ? window.Atoms.countsOf() : {},
         colors: atomColorsForWorker(),
-        atomsOn: !!(window.Atoms && window.Atoms.active(world.entities))
+        atomsOn: !!(window.Atoms && window.Atoms.active(world.entities) &&
+                    !(window.World3D && window.World3D.atomsOwned()))   // v0.85.4: pixi owns the stars when active
       };
       if (!atomsOnly) {
         var P = buildLatticeParams();
@@ -420,6 +421,9 @@
       updateIconBudget.many = many;
       iconLayer.classList.toggle('many-icons', many);
     }
+    // v0.85.4: the same entity-count change feeds the WORLD LAYER's gate
+    // (auto activates at ≥ 60 — the DOM icon ceiling zone).
+    if (window.World3D) window.World3D.evaluate();
   }
   const namePicker = new ChatIcon.NamePicker(config.names);
   const iconPickers = {};
@@ -461,6 +465,7 @@
     iconLayer.appendChild(icon.el);
     icon.render(offsetX, offsetY, scale);
     updateIconBudget();   // v0.85.1: the icon-layer budget follows the count
+    if (window.World3D) window.World3D.sync();   // v0.85.4: the world layer mirrors the new entity
     hideCanvasEmpty();  // v0.82.2: any creation ends the first-run state
     scheduleSave();
     return icon;
@@ -527,6 +532,7 @@
       icon.render(offsetX, offsetY, scale);
       hideCanvasEmpty();
       scheduleSave();
+      if (window.World3D) window.World3D.sync();   // v0.85.4: the mirror follows
     },
     createWebTabAtCenterAndOpen: function (opts) {
       opts = opts || {};
@@ -559,6 +565,10 @@
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();
     },
+    // v0.85.4: repaint — the world layer calls this when it (de)activates
+    // (the handover needs exactly one fresh frame: activation clears the
+    // stale #c2 stars, deactivation restores them).
+    repaint: function () { update(); },
     // Handle Android back press. Returns true if we closed something (overlay
     // or panel), false if nothing was open. Called by MainActivity.onBackPressed
     // so the back gesture closes overlays/panels instead of exiting the app.
@@ -618,6 +628,10 @@
   function ambientActive() {
     var st = window.Settings.getState();
     if (st && (st.dotAnimate || st.lineAnimate)) return true;
+    // v0.85.4: while the WORLD LAYER owns the atom stars (Pixi's own
+    // ticker drives them), the main rAF loop does NOT keep itself alive
+    // on the atoms' account — the stars are off this thread's books.
+    if (window.World3D && window.World3D.atomsOwned()) return false;
     return !!(window.Atoms && window.Atoms.active(world.entities));
   }
   // v0.84.2: refreshPersonaRings — resolve each chat's ACTIVE persona and
@@ -708,7 +722,8 @@
     }
     if (!covered) {
       var atomsOnly = !moving && !ambientGridActive() &&
-                      window.Atoms && window.Atoms.active(world.entities);
+                      window.Atoms && window.Atoms.active(world.entities) &&
+                      !(window.World3D && window.World3D.atomsOwned());   // v0.85.4: the world layer owns the stars
       if (atomsOnly) {
         // v0.84.1: THE ATOM-ONLY FRAME — nothing else is moving (no pan
         // momentum, no physics drift, no grid animate), so the grid and
@@ -1724,6 +1739,8 @@
     maybeShowCanvasEmpty(!saved);
 
     updateIconBudget();   // v0.85.1: the restored world sets the icon budget
+    // v0.85.4: the world layer evaluates its gate on the restored count
+    if (window.World3D) { window.World3D.evaluate(); window.World3D.sync(); }
     resize();
 
     // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces

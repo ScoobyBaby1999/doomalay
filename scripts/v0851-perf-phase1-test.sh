@@ -84,17 +84,24 @@ ck "the HUD chip paints on-canvas (display block, text present)" \
    "$(python3 -c "
 s='''$CHIP'''.split('|')
 print('yes' if len(s)==2 and s[0]=='block' and int(s[1])>6 else 'no')")" "$CHIP"
-ev "Settings.setState({perfHud:true, dotAnimate:true})" >/dev/null; sleep 1.2
-PERF=$(ev "JSON.stringify(window.DoomalayPerf)")
-ck "the meters live (fps>0 while dotAnimate runs, counters exist)" \
-   "$(python3 -c "
+# headless Chromium can throttle rAF for a visibility flicker (the v0841
+# lesson) — the fps meter needs frames; poke the animate loop + retry.
+PERF="{}"; MOK=no
+for k in 1 2 3; do
+  ev "Settings.setState({perfHud:true, dotAnimate:true})" >/dev/null
+  sleep 1.2
+  PERF=$(ev "JSON.stringify(window.DoomalayPerf)")
+  MOK=$(python3 -c "
 import json
 try:
     p=json.loads('''$PERF''')
     need=['fps','frameMs','longTasks','paints','atomFrames','cacheHits','cacheMisses','batches','nodes','layers']
     ok=all(k in p for k in need) and p.get('fps',0)>0 and p.get('paints',0)>0
     print('yes' if ok else 'no')
-except Exception: print('no')")" "$PERF"
+except Exception: print('no')")
+  [ "$MOK" = "yes" ] && break
+done
+ck "the meters live (fps>0 while dotAnimate runs, counters exist)" "$MOK" "$PERF"
 setstate "{ dotAnimate:false }"
 
 echo "── (2) the batcher, SOLID (the default frame)"

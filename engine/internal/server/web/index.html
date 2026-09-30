@@ -316,6 +316,15 @@
      back for the ONE dragged icon. */
   #chatbots.many-icons .chatbot { will-change: auto; }
   #chatbots.many-icons .chatbot.dragging { will-change: transform; }
+  /* v0.85.4 THE PIXI WORLD LAYER — while the GPU sprites own the visuals,
+     the .chatbot elements become INVISIBLE HIT-TARGETS: no painted
+     content, no compositor texture, opacity restored the moment the
+     layer deactivates. Input NEVER moves (taps/drags/long-press ride
+     these very elements). */
+  #chatbots.pixi3d .chatbot {
+    opacity: 0;
+    will-change: auto;
+  }
   .chatbot .icon {
     width: 56px; height: 56px;
     border-radius: 50%;
@@ -5414,6 +5423,11 @@
      tile + samplers + the lattice cache + the batcher) in ONE file the
      main thread AND gridworker.js both execute. Must load before app.js. -->
 <script src="lattice.js"></script>
+<!-- v0.85.4: THE PIXIJS WORLD LAYER BOOTSTRAP (renderer-path Phase 3) —
+     tiny module, always loaded; the vendored pixi.min.js (~828KB, MIT)
+     injects ONLY when the layer activates (auto at ≥ 60 entities, or
+     worldLayer:'on'). Icons become GPU sprites; the DOM stays input. -->
+<script src="pixiworld.js"></script>
 <!-- v0.85.3: THE MULTI-TAB BROWSER — a browser TAB is a canvas entity
      (webtab.js: WebIcon 'web' — the draggable, persisted icon that acts
      like its own chatbot) and its panel view (webpanel.js: the

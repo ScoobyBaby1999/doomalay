@@ -182,6 +182,21 @@
         '<input type="checkbox" data-setting-key="perfHud" ' + (s.perfHud ? 'checked' : '') + ' style="accent-color:var(--accent);width:16px;height:16px">' +
         '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">Show the perf HUD chip on the canvas</span>' +
       '</label>' +
+      // v0.85.4: the renderer-path controls — the world layer gate (live:
+      // auto/on/off) + the paint worker toggle (boot-time — a change
+      // reloads so the canvas transfer settles cleanly).
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;flex-wrap:wrap">' +
+        '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">World layer (icons as GPU sprites)</span>' +
+        '<select data-setting-key="worldLayer" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:4px 8px;border-radius:6px;font-size:var(--ui-small-fs);font-family:inherit">' +
+          '<option value="auto"' + (s.worldLayer === 'auto' ? ' selected' : '') + '>auto (≥ 60 chats)</option>' +
+          '<option value="on"' + (s.worldLayer === 'on' ? ' selected' : '') + '>always on</option>' +
+          '<option value="off"' + (s.worldLayer === 'off' ? ' selected' : '') + '>off (dom icons)</option>' +
+        '</select>' +
+      '</div>' +
+      '<label style="display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer">' +
+        '<input type="checkbox" id="pf-worker" ' + (s.workerPaint ? 'checked' : '') + ' style="accent-color:var(--accent);width:16px;height:16px">' +
+        '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">Paint the grid in a worker <span style="color:var(--text-3-dim)">(applies on reload)</span></span>' +
+      '</label>' +
       '<p style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);margin:8px 0 0;line-height:1.45">' +
         'The chip and this page are the honest instruments — every perf claim is measured here, never felt. ' +
         'A resting canvas paints 0 frames per second by design (the cheap-frame discipline); fps counts display frames while a meter is watching.</p>'
@@ -241,6 +256,18 @@
     window.Settings.onChange(function (st) {
       if (st && typeof st.perfHud !== 'undefined') applySetting(st);
     });
+    // v0.85.2: the paint-worker toggle lives HERE (not data-setting-key —
+    // a change needs a reload for the canvas transfer to settle, so it
+    // commits the setting + reloads on a confirm-free 300ms grace)
+    document.addEventListener('change', function (e) {
+      var el = e.target;
+      if (el && el.id === 'pf-worker') {
+        window.Settings.setState({ workerPaint: !!el.checked });
+        setTimeout(function () { try { location.reload(); } catch (err) {} }, 300);
+      }
+    });
+    // v0.85.4: the world row lights up once the layer reports itself
+    try { if (window.DoomalayPerf && !window.DoomalayPerf.world) window.DoomalayPerf.world = 'dom icons'; } catch (e) {}
   }
   function applySetting(st) {
     var s = st || (window.Settings && window.Settings.getState()) || {};
