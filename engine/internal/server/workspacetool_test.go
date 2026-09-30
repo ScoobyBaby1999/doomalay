@@ -45,7 +45,7 @@ func fakeV765GitHub(t *testing.T) *httptest.Server {
 			"full_name":      r.PathValue("owner") + "/" + r.PathValue("repo"),
 			"description":    "the fake repo",
 			"default_branch": "main", "stargazers_count": 3, "language": "Go",
-			"html_url": "https://e.test/" + r.PathValue("owner") + "/" + r.PathValue("repo"),
+			"html_url":  "https://e.test/" + r.PathValue("owner") + "/" + r.PathValue("repo"),
 			"clone_url": "https://e.test/x.git",
 		})
 	})
@@ -67,7 +67,7 @@ func fakeV765GitHub(t *testing.T) *httptest.Server {
 		write(w, map[string]any{
 			"name": "README.md", "path": p, "sha": "r1", "size": 42,
 			"encoding": "base64",
-			"content": "IyBoZWxsbwo=", // "# hello"
+			"content":  "IyBoZWxsbwo=", // "# hello"
 		})
 	})
 	mux.HandleFunc("PUT /repos/{owner}/{repo}/contents/{path...}", func(w http.ResponseWriter, r *http.Request) {
@@ -107,9 +107,77 @@ func fakeV765GitHub(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/branches", func(w http.ResponseWriter, r *http.Request) {
 		write(w, []map[string]any{{"name": "main"}, {"name": "dev"}})
 	})
+	// ── v0.81.6 THE FULL REPO HAND fakes ─────────────────────────────
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		write(w, map[string]any{"number": 11, "html_url": "https://e.test/issue/11",
+			"state": "open", "title": b["title"], "user": map[string]any{"login": "z"}})
+	})
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{n}/comments", func(w http.ResponseWriter, r *http.Request) {
+		write(w, map[string]any{"html_url": "https://e.test/issues/" + r.PathValue("n") + "#c1"})
+	})
+	mux.HandleFunc("PATCH /repos/{owner}/{repo}/issues/{n}", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		write(w, map[string]any{"html_url": "https://e.test/issues/" + r.PathValue("n"),
+			"state": b["state"]})
+	})
+	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{n}", func(w http.ResponseWriter, r *http.Request) {
+		// the diff read: Accept application/vnd.github.diff → raw text
+		if strings.Contains(r.Header.Get("Accept"), "vnd.github.diff") {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = io.WriteString(w, "--- a/f.go\n+++ b/f.go\n@@ -1,2 +1,3 @@\n line1\n+added\n line2\n")
+			return
+		}
+		write(w, map[string]any{"number": r.PathValue("n"), "title": "the pr", "state": "open"})
+	})
+	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls/{n}/reviews", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		write(w, map[string]any{"html_url": "https://e.test/pr/" + r.PathValue("n") + "#review",
+			"state": "APPROVED"})
+	})
+	mux.HandleFunc("PUT /repos/{owner}/{repo}/pulls/{n}/merge", func(w http.ResponseWriter, r *http.Request) {
+		write(w, map[string]any{"merged": true, "sha": "merge123", "message": "ok"})
+	})
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		q := str(b["query"])
+		if strings.Contains(q, "createDiscussion") {
+			write(w, map[string]any{"data": map[string]any{"createDiscussion": map[string]any{
+				"discussion": map[string]any{"number": 3, "url": "https://e.test/discuss/3", "title": b["variables"].(map[string]any)["input"].(map[string]any)["title"]}}}})
+			return
+		}
+		// the repositoryId + categories query
+		write(w, map[string]any{"data": map[string]any{"repository": map[string]any{
+			"id": "R_1", "discussionCategories": map[string]any{"nodes": []map[string]any{
+				{"id": "DIC_1", "name": "General"}, {"id": "DIC_2", "name": "Q&A"}}}}}})
+	})
+	mux.HandleFunc("POST /repos/{owner}/{repo}/actions/workflows/{wf}/dispatches", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("DELETE /repos/{owner}/{repo}/contents/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		write(w, map[string]any{"commit": map[string]any{
+			"sha": "del123", "html_url": "https://e.test/commit/del123"}})
+	})
+	mux.HandleFunc("POST /repos/{owner}/{repo}/releases", func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		write(w, map[string]any{"html_url": "https://e.test/releases/" + str(b["tag_name"])})
+	})
+
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func str(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // newV765Server: in-memory store + a session with one bound FULL-access
@@ -367,4 +435,205 @@ func TestV765_RestPrEndpoint(t *testing.T) {
 		t.Fatalf("no head: %d %s", rec.Code, rec.Body.String())
 	}
 	_ = io.Discard
+}
+
+// ── v0.81.6 THE FULL REPO HAND ────────────────────────────────────────────
+// User spec: "the bot should be able to have full access to a repo, grep,
+// ls, read, explore, push, pr, code review, issues, discussions, workflows,
+// everything. Let's implement it all."
+
+// TestV816_FullRepoHandVerbs — every NEW verb's happy path through the
+// SHARED switch (the ACTION runner, the PM tool server, and the /do REST
+// twin all land here) against the fake GitHub API.
+func TestV816_FullRepoHandVerbs(t *testing.T) {
+	s, sid := newV765Server(t)
+
+	out := wsRun(s, sid, `{"action":"branch","ws":"me/fullrepo","name":"feat/x"}`)
+	if !strings.Contains(out, "BRANCH CREATED — feat/x") {
+		t.Fatalf("branch: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"issue_create","ws":"me/fullrepo","title":"Bug","body":"it broke","labels":["bug"]}`)
+	if !strings.Contains(out, "ISSUE OPENED — #11 Bug") || !strings.Contains(out, "e.test/issue/11") {
+		t.Fatalf("issue_create: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"issue_comment","ws":"me/fullrepo","number":11,"body":"triaging"}`)
+	if !strings.Contains(out, "COMMENT POSTED — https://e.test/issues/11#c1") {
+		t.Fatalf("issue_comment: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"issue_close","ws":"me/fullrepo","number":11}`)
+	if !strings.Contains(out, "ISSUE CLOSED") {
+		t.Fatalf("issue_close: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"issue_open","ws":"me/fullrepo","number":11}`)
+	if !strings.Contains(out, "ISSUE OPEN") {
+		t.Fatalf("issue_open: %q", out)
+	}
+	// THE CODE REVIEW READ: the raw unified diff
+	out = wsRun(s, sid, `{"action":"pr_diff","ws":"me/fullrepo","number":4}`)
+	if !strings.Contains(out, "DIFF of PR #4") || !strings.Contains(out, "+++ b/f.go") || !strings.Contains(out, "+added") {
+		t.Fatalf("pr_diff: %q", out)
+	}
+	// THE CODE REVIEW WRITE
+	out = wsRun(s, sid, `{"action":"pr_review","ws":"me/fullrepo","number":4,"body":"looks good","event":"approve"}`)
+	if !strings.Contains(out, "REVIEW SUBMITTED (approve)") {
+		t.Fatalf("pr_review: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"pr_comment","ws":"me/fullrepo","number":4,"body":"nice"}`)
+	if !strings.Contains(out, "PR COMMENT POSTED") {
+		t.Fatalf("pr_comment: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"pr_merge","ws":"me/fullrepo","number":4,"method":"squash"}`)
+	if !strings.Contains(out, "PR MERGED — #4") || !strings.Contains(out, "squash") {
+		t.Fatalf("pr_merge: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"discussion_post","ws":"me/fullrepo","title":"Hello","body":"World","category":"Q&A"}`)
+	if !strings.Contains(out, "DISCUSSION OPENED") || !strings.Contains(out, "in Q&A") || !strings.Contains(out, "e.test/discuss/3") {
+		t.Fatalf("discussion_post: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"workflow_dispatch","ws":"me/fullrepo","workflow":"ci.yml","ref":"main","inputs":{"mode":"test"}}`)
+	if !strings.Contains(out, "WORKFLOW DISPATCHED — ci.yml @ main") {
+		t.Fatalf("workflow_dispatch: %q", out)
+	}
+	// file_delete resolves the blob sha itself (the fake contents GET serves sha r1)
+	out = wsRun(s, sid, `{"action":"file_delete","ws":"me/fullrepo","path":"README.md","message":"cleanup"}`)
+	if !strings.Contains(out, "DELETED — README.md @ main") || !strings.Contains(out, "e.test/commit/del123") {
+		t.Fatalf("file_delete: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"release_create","ws":"me/fullrepo","tag":"v1.2.0","name":"The Release","body":"notes"}`)
+	if !strings.Contains(out, "RELEASE PUBLISHED — v1.2.0") || !strings.Contains(out, "e.test/releases/v1.2.0") {
+		t.Fatalf("release_create: %q", out)
+	}
+}
+
+// TestV816_AccessGates — the tier contract for the new verbs:
+// conversational writes (issues/comments/reviews/discussions) need
+// PARTIAL+; strong writes (merge/delete/release/dispatch) need FULL.
+func TestV816_AccessGates(t *testing.T) {
+	s, sid := newV765Server(t)
+
+	// read tier: everything conversational is refused with the tier named
+	for _, act := range []string{
+		`{"action":"issue_create","ws":"me/readrepo","title":"x"}`,
+		`{"action":"issue_comment","ws":"me/readrepo","number":1,"body":"x"}`,
+		`{"action":"issue_close","ws":"me/readrepo","number":1}`,
+		`{"action":"pr_comment","ws":"me/readrepo","number":1,"body":"x"}`,
+		`{"action":"pr_review","ws":"me/readrepo","number":1,"body":"x"}`,
+		`{"action":"discussion_post","ws":"me/readrepo","title":"x"}`,
+	} {
+		out := wsRun(s, sid, act)
+		if !strings.Contains(out, "read-only") {
+			t.Fatalf("read tier should refuse %s: %q", act, out)
+		}
+	}
+	// partial tier: conversational writes PASS
+	out := wsRun(s, sid, `{"action":"issue_create","ws":"me/partrepo","title":"P"}`)
+	if !strings.Contains(out, "ISSUE OPENED") {
+		t.Fatalf("partial issue_create: %q", out)
+	}
+	out = wsRun(s, sid, `{"action":"pr_review","ws":"me/partrepo","number":4,"body":"ok","event":"comment"}`)
+	if !strings.Contains(out, "REVIEW SUBMITTED") {
+		t.Fatalf("partial pr_review: %q", out)
+	}
+	// partial tier: strong writes are refused with FULL named
+	for _, act := range []string{
+		`{"action":"pr_merge","ws":"me/partrepo","number":4}`,
+		`{"action":"file_delete","ws":"me/partrepo","path":"README.md"}`,
+		`{"action":"workflow_dispatch","ws":"me/partrepo","workflow":"ci.yml"}`,
+		`{"action":"release_create","ws":"me/partrepo","tag":"v1"}`,
+	} {
+		out := wsRun(s, sid, act)
+		if !strings.Contains(out, "FULL access") {
+			t.Fatalf("partial tier should demand FULL for %s: %q", act, out)
+		}
+	}
+}
+
+// TestV816_RestDoEndpoint — the brain path's shared-verb bridge: POST
+// /api/workspaces/{id}/do runs any verb through the same switch and
+// returns the observation as {"result": …}.
+func TestV816_RestDoEndpoint(t *testing.T) {
+	s, sid := newV765Server(t)
+	bound, _ := s.db.ListSessionWorkspaces(sid)
+	var fullID, readID string
+	for _, w := range bound {
+		switch w.Repo {
+		case "fullrepo":
+			fullID = w.ID
+		case "readrepo":
+			readID = w.ID
+		}
+	}
+	rec := hubReq(t, s, "POST", "/api/workspaces/"+fullID+"/do",
+		map[string]any{"action": "issue_create", "title": "From the brain", "body": "via /do"})
+	if rec.Code != 200 {
+		t.Fatalf("do: %d %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(str(out["result"]), "ISSUE OPENED — #11 From the brain") {
+		t.Fatalf("do result: %v", out["result"])
+	}
+	// the access gates ride through the REST twin identically
+	rec = hubReq(t, s, "POST", "/api/workspaces/"+readID+"/do",
+		map[string]any{"action": "issue_create", "title": "nope"})
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(str(out["result"]), "read-only") {
+		t.Fatalf("do gate: %v", out["result"])
+	}
+	// help rides too (the brain tool's teaching path)
+	rec = hubReq(t, s, "POST", "/api/workspaces/"+fullID+"/do", map[string]any{"action": "help"})
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	for _, v := range []string{"pr_diff", "pr_review", "issue_create", "discussion_post", "workflow_dispatch", "release_create"} {
+		if !strings.Contains(str(out["result"]), v) {
+			t.Fatalf("do help missing %q: %q", v, out["result"])
+		}
+	}
+}
+
+// TestV816_PmToolServerRoute — the PrivateMode path's exact HTTP seam:
+// GET /api/tools/local?name=workspace&args=…&session=… answers with the
+// shared switch's observation (the user's repro got "unknown tool" here).
+func TestV816_PmToolServerRoute(t *testing.T) {
+	s, sid := newV765Server(t)
+	args := `{"action":"list"}`
+	path := "/api/tools/local?name=workspace&args=" + urlQueryEscape(args) + "&session=" + sid
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+	if rec.Code != 200 {
+		t.Fatalf("pm route: %d %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(str(out["result"]), "3 connected workspace(s)") {
+		t.Fatalf("pm route result: %v", out["result"])
+	}
+	// a read verb rides the seam too
+	args = `{"action":"readme","ws":"me/fullrepo"}`
+	path = "/api/tools/local?name=workspace&args=" + urlQueryEscape(args) + "&session=" + sid
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(str(out["result"]), "README of me/fullrepo") {
+		t.Fatalf("pm readme: %v", out["result"])
+	}
+	// the unknown-tool message now TEACHES the workspace tool
+	path = "/api/tools/local?name=repo_list&args=" + urlQueryEscape(`{}`) + "&session=" + sid
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.Contains(str(out["result"]), `workspace {"action"`) {
+		t.Fatalf("unknown-tool teach: %v", out["result"])
+	}
 }

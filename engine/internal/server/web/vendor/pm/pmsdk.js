@@ -216,6 +216,29 @@ var PM_TOOLS_PROTOCOL = [
   'ACTION: zip_create {"name": "b.zip", "files": [{"name": "a.txt", "content": "..."}]} — build a real .zip from named text/base64 files. Saved as a downloadable artifact.',
   'ACTION: zip_extract {"artifact": "b.zip"} or {"b64": "<zip bytes>"} — list a zip archive and extract its files as artifacts.',
   'ACTION: delegate {"prompt": "<question>", "models": ["..."]} — consult up to 3 OTHER models in parallel (multi-model swarm)',
+  // v0.81.6 THE FULL REPO HAND: the PM path finally gets the repo tool.
+  // The user's repro: a PM quick chat with a bound repo watched the model
+  // reason "I don't see repo tools in my tool list" and GUESS names
+  // ("repo_list" → unknown tool). The vocabulary was never taught here
+  // and the tool server rejected the calls. Now the ACTION protocol
+  // lists it and tools.go routes it to the shared verb switch.
+  'ACTION: workspace {"action": "help"} — the full map of the repo tool',
+  'ACTION: workspace {"action": "list"} — this chat\'s CONNECTED cloud repos (GitHub/Gitea/GitLab/sourcehut; the session context lists what\'s bound)',
+  'ACTION: workspace {"action": "ls"|"tree", "ws": "owner/repo", "path": "src"} — list directories / the full tree',
+  'ACTION: workspace {"action": "read", "ws": "…", "path": "file.go", "range": "head:80|tail:40|lines:10-60"} — read files',
+  'ACTION: workspace {"action": "grep", "ws": "…", "query": "text"} — search the code',
+  'ACTION: workspace {"action": "view", "ws": "…", "what": "issues|pulls|releases|workflows|runs|commits|branches|discussions"} — the repo\'s boards',
+  'ACTION: workspace {"action": "put", "ws": "…", "path": "f.txt", "content": "…", "branch": "…"} — push (an API commit; FULL access)',
+  'ACTION: workspace {"action": "branch", "ws": "…", "name": "feature"} — create a branch',
+  'ACTION: workspace {"action": "pr", "ws": "…", "head": "branch", "base": "main", "title": "…", "body": "…"} — open a pull request',
+  'ACTION: workspace {"action": "pr_diff", "ws": "…", "number": 12} — a PR\'s raw diff (read it to CODE REVIEW it)',
+  'ACTION: workspace {"action": "pr_review", "ws": "…", "number": 12, "body": "your review", "event": "approve|request_changes|comment"} — submit the review',
+  'ACTION: workspace {"action": "pr_comment"|"issue_comment", "ws": "…", "number": 12, "body": "…"} — comment on a PR or issue',
+  'ACTION: workspace {"action": "issue_create", "ws": "…", "title": "…", "body": "…", "labels": ["bug"]} — file an issue; {"action": "issue_close"|"issue_open", "number": 34} — state',
+  'ACTION: workspace {"action": "discussion_post", "ws": "…", "title": "…", "body": "…", "category": "Q&A"} — open a discussion (GitHub)',
+  'ACTION: workspace {"action": "workflow_dispatch", "ws": "…", "workflow": "ci.yml", "ref": "main", "inputs": {}} — trigger a workflow (FULL access)',
+  'ACTION: workspace {"action": "file_delete", "ws": "…", "path": "f.txt"} / {"action": "release_create", "tag": "v1.2.0", …} / {"action": "fork"} / {"action": "create", "kind": "github", "name": "new-repo"} — the rest of the hand',
+  'When a repo is bound to this chat, USE the workspace tool for anything repo-shaped (ls/read/grep before answering from memory, put+pr to push, pr_diff+pr_review for code review) — never claim you lack repo access while a workspace is connected; if an action is refused for access tier, say exactly what the OBSERVATION said.',
   'ACTION: persona_list {} — list YOUR personas and placeholders in this chat (id, name, mode, preview)',
   'ACTION: persona_set {"id": "p_123", "name": "…", "text": "…", "activate": false} — create or edit your own persona (omit id to create; new ones start inactive; activate:true makes it the one always-active persona and deactivates any previous)',
   'ACTION: persona_activate {"id": "p_123"} — become a listed persona (deactivates the previous one); {"id": ""} deactivates all (back to the app default)',
@@ -763,10 +786,21 @@ var PM_TOOL_ALIASES = {
   skill: 'skills', load_skill: 'skills', skill_load: 'skills', use_skill: 'skills',
   superpowers: 'skills', methodology: 'skills',
   hub: 'hublib', hub_library: 'hublib', library: 'hublib', public_library: 'hublib',
-  browse_hub: 'hublib', download_skill: 'hublib'
+  browse_hub: 'hublib', download_skill: 'hublib',
+  // v0.81.6 THE FULL REPO HAND: repo-tool aliases — the user's live repro
+  // guessed "repo_list" and died on "unknown tool". Every plausible
+  // spelling lands on the real tool (mirror of llm/chat.go's twins).
+  repo: 'workspace', repos: 'workspace', repository: 'workspace', repositories: 'workspace',
+  repo_list: 'workspace', repo_read: 'workspace', repo_ls: 'workspace', repo_tree: 'workspace',
+  repo_grep: 'workspace', repo_write: 'workspace', repo_put: 'workspace', list_repo: 'workspace',
+  read_repo: 'workspace', repo_files: 'workspace', repo_view: 'workspace', repo_info: 'workspace',
+  git: 'workspace', github: 'workspace', gitea: 'workspace', gitlab: 'workspace',
+  git_repo: 'workspace', code_repo: 'workspace', repo_tools: 'workspace', ws: 'workspace'
 };
 
-var PM_ALL_TOOLS = ['calculator', 'time_now', 'uuid', 'random', 'base64', 'hash', 'json_tool', 'text_stats', 'url_encode', 'regex_extract', 'docx_create', 'xlsx_create', 'zip_create', 'zip_extract', 'archive_create', 'archive_extract', 'web_search', 'web_fetch', 'delegate', 'persona_list', 'persona_set', 'persona_activate', 'placeholder_set', 'skills', 'hublib'];
+// v0.81.6: 'workspace' joins the fuzzy-matcher universe (a model that
+// half-remembers the tool name gets corrected instead of dead-ended).
+var PM_ALL_TOOLS = ['calculator', 'time_now', 'uuid', 'random', 'base64', 'hash', 'json_tool', 'text_stats', 'url_encode', 'regex_extract', 'docx_create', 'xlsx_create', 'zip_create', 'zip_extract', 'archive_create', 'archive_extract', 'web_search', 'web_fetch', 'delegate', 'workspace', 'persona_list', 'persona_set', 'persona_activate', 'placeholder_set', 'skills', 'hublib'];
 
 function canonicalToolNameJS(name) {
   var n = String(name || '').toLowerCase().trim();
@@ -869,6 +903,13 @@ function actionHasRequiredArgJS(act) {
     regex_extract: 'pattern', zip_create: 'name', docx_create: 'name',
     xlsx_create: 'name', archive_create: 'name',
     skills: 'action', hublib: 'action'
+    // v0.81.6 NOTE: workspace deliberately has NO required arg — the
+    // user's live repro called `repo_list {"path": "/"}` with no action
+    // verb, and a required-arg entry here phantom-filtered that call
+    // into "final prose" (the ACTION line leaked as the answer). A
+    // workspace call without an action EXECUTES and gets the verb map
+    // (help) back — the teach beats the leak. (Recaps with a real
+    // action re-execute — the same trade every arg-carrying tool makes.)
   }[tool];
   if (!req) return true; // no required arg (time_now, uuid, persona_list…)
   var v = arg[req];
@@ -1004,7 +1045,7 @@ async function execAction(act, opts, allSources) {
   // can re-read what an earlier round saved.
   // v0.25: delegate routes to the engine's swarm fanout (was "unknown
   // tool" — dock CSV event 31).
-  var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.artifact || arg.prompt || arg.name || '';
+  var sum = arg.expr || arg.tz || arg.pattern || arg.mode || arg.algo || arg.artifact || arg.prompt || arg.name || arg.action || '';
   // v0.23: keep the indicator alive across the HTTP round-trip —
   // "building X…" / "running tool…" instead of a frozen chat.
   var progText = /^(docx_create|xlsx_create|zip_create|archive_create)$/.test(tool)
@@ -1095,6 +1136,9 @@ async function roundTripOnce(c, opts, messages) {
   function progVerb(bytes) {
     if (progTool === 'web_search') return 'searching the web…';
     if (progTool === 'web_fetch') return progName ? 'reading ' + progName + '…' : 'fetching page…';
+    // v0.81.6: the repo hand reports its verb ("listing repo…",
+    // "reading file.go…") instead of a generic "working…"
+    if (progTool === 'workspace') return progName ? progName + '…' : 'working the repo…';
     if (/^(docx_create|xlsx_create|zip_create|archive_create)$/.test(progTool)) {
       if (progName) return bytes > 0
         ? 'building ' + progName + ' · ' + humanSize(bytes) + ' so far'

@@ -16,16 +16,18 @@
 //
 // VERBS (kept twin-identical to dt_workspace.py's so both chat paths
 // speak the same language):
-//   help, list, info, tree, ls, read, readme, grep, view,
-//   put, pr, fork, create, discover
+//
+//      help, list, info, tree, ls, read, readme, grep, view,
+//      put, pr, fork, create, discover
 //
 // ACCESS MODEL (the user's read/partial/full tiers):
-//   read    → tree/ls/read/readme/grep/view only
-//   partial → + fork, pr, clone-style write-to-own-copy flows
-//   full    → + put (direct file writes = API commits)
-//   fork: allowed at ANY tier when a token exists (the fork lands in the
-//   user's OWN account — it is not a write to this repo; the read-tier
-//   write path is exactly fork → write → PR).
+//
+//      read    → tree/ls/read/readme/grep/view only
+//      partial → + fork, pr, clone-style write-to-own-copy flows
+//      full    → + put (direct file writes = API commits)
+//      fork: allowed at ANY tier when a token exists (the fork lands in the
+//      user's OWN account — it is not a write to this repo; the read-tier
+//      write path is exactly fork → write → PR).
 //
 // `ws` resolution mirrors the brain's workspace_by_ref: workspace id,
 // owner/repo, bare repo name, or name suffix — case-insensitive.
@@ -46,20 +48,35 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-const wsToolListCap = 60 // rows shown before the "+N more" fold (the brain twin's cap)
-const wsToolBodyCap = 6000 // dt_spec rule 9: model-facing text ≤ ~6000 chars
+const wsToolListCap = 60    // rows shown before the "+N more" fold (the brain twin's cap)
+const wsToolBodyCap = 6000  // dt_spec rule 9: model-facing text ≤ ~6000 chars
+const wsToolDiffCap = 12000 // v0.81.6: a PR diff needs more room than a file read (code review context)
 
 // workspaceVerbs is the canonical verb list (help + unknown-action teach).
-const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, fork, create, discover"
+const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
 
 // runWorkspaceAction executes an "ACTION: workspace {json}" call for the
-// direct path. Returns OBSERVATION-ready text (the ReAct loop feeds it
-// back to the model as the user message).
+// direct path (and, since v0.81.6, the PM tool server + the brain's
+// /do REST twin). Returns OBSERVATION-ready text (the ReAct loop feeds
+// it back to the model as the user message).
 func (s *Server) runWorkspaceAction(ctx context.Context, sessionID, argJSON string) string {
         var args map[string]any
         if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
                 return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
         }
+        // bound rows for THIS chat (device-storage rows are PWA-only — skip,
+        // same as brainReq["workspaces"])
+        bound := s.sessionCloudWorkspaces(sessionID)
+        return s.runWorkspaceVerb(ctx, bound, args)
+}
+
+// runWorkspaceVerb — the ONE verb switch every chat path shares (the
+// direct ACTION runner, the PM tool server's /api/tools/local route,
+// and the brain's POST /api/workspaces/{id}/do REST bridge all land
+// here — one source of truth for the full repo hand). `bound` carries
+// the resolvable workspaces (session-bound for ACTION turns; the single
+// path-id row for the REST twin).
+func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace, args map[string]any) string {
         get := func(k string) string {
                 v, _ := args[k].(string)
                 return strings.TrimSpace(v)
@@ -70,10 +87,6 @@ func (s *Server) runWorkspaceAction(ctx context.Context, sessionID, argJSON stri
                 // "workspace {…}" with no action means the model wants the map.
                 action = "help"
         }
-
-        // bound rows for THIS chat (device-storage rows are PWA-only — skip,
-        // same as brainReq["workspaces"])
-        bound := s.sessionCloudWorkspaces(sessionID)
 
         switch action {
         case "help":
@@ -301,6 +314,300 @@ func (s *Server) runWorkspaceAction(ctx context.Context, sessionID, argJSON stri
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
                 return "OBSERVATION:\nPR OPENED — #" + fmt.Sprint(pr.Number) + " " + pr.Title + " (" + head + " → " + base + ")\nurl: " + pr.URL
+        // ── v0.81.6 THE FULL REPO HAND — the missing verbs (user spec:
+        // "grep,ls,read,explore,push,pr,code review,issues,discussions,
+        // workflows, everything"). Access model: conversational writes
+        // (issues/comments/reviews/discussions) need PARTIAL+; content
+        // and history writes (branch/merge/delete/release/dispatch) need
+        // FULL — the same read → browse / partial → +PR / full → +write
+        // contract the v0.76.5 verbs established.
+        case "branch", "branch_create":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access != forge.AccessFull && ws.Access != forge.AccessPartial {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — creating a branch needs at least partial access (fork it first at read tier)."
+                }
+                name := get("name")
+                if name == "" {
+                        name = get("branch")
+                }
+                if name == "" {
+                        return "OBSERVATION:\nerror: branch needs {\"ws\":…, \"name\":\"new-branch\", \"from\":\"main\"|\"\"}"
+                }
+                url, err := s.wsClient(ws).CreateBranch(ctx, name, get("from"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nBRANCH CREATED — " + name + " " + url +
+                        "\nnext: ACTION: workspace {\"action\":\"put\",\"ws\":\"" + ws.Name + "\",\"path\":\"file\",\"content\":\"…\",\"branch\":\"" + name + "\"} commits to it, then action \"pr\" opens the pull request."
+        case "issue_create", "issue":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — filing issues needs at least partial access."
+                }
+                title := get("title")
+                if title == "" {
+                        return "OBSERVATION:\nerror: issue_create needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"labels\":[\"bug\"]}"
+                }
+                var labels []string
+                if raw, ok := args["labels"].([]any); ok {
+                        for _, l := range raw {
+                                if ls, ok := l.(string); ok && strings.TrimSpace(ls) != "" {
+                                        labels = append(labels, ls)
+                                }
+                        }
+                }
+                issue, err := s.wsClient(ws).CreateIssue(ctx, title, get("body"), labels, s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nISSUE OPENED — #" + fmt.Sprint(issue.Number) + " " + issue.Title + "\nurl: " + issue.URL
+        case "issue_comment", "comment":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — commenting needs at least partial access."
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "issue", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: issue_comment needs {\"ws\":…, \"number\":123, \"body\":\"…\"}"
+                }
+                url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nCOMMENT POSTED — " + url
+        case "issue_close", "issue_open", "issue_state":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — changing issue state needs at least partial access."
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "issue", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: issue_close needs {\"ws\":…, \"number\":123} (issue_open reopens)"
+                }
+                state := "closed"
+                if action == "issue_open" {
+                        state = "open"
+                }
+                if action == "issue_state" {
+                        state = get("state")
+                }
+                url, err := s.wsClient(ws).SetIssueState(ctx, n, state, s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nISSUE " + strings.ToUpper(state) + " — " + url
+        case "pr_diff", "diff":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "pr", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: pr_diff needs {\"ws\":…, \"number\":12} — the raw unified diff of the pull request (read the changes, review them, then pr_review submits your verdict)"
+                }
+                diff, err := s.wsClient(ws).PRDiff(ctx, n, s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                if len(diff) > wsToolDiffCap {
+                        diff = diff[:wsToolDiffCap] + "\n… (diff truncated at " + fmt.Sprint(wsToolDiffCap) + " chars — review the rest with read on the touched files)"
+                }
+                if strings.TrimSpace(diff) == "" {
+                        return "OBSERVATION:\nPR #" + fmt.Sprint(n) + " has an empty diff (no changes)."
+                }
+                return "OBSERVATION:\nDIFF of PR #" + fmt.Sprint(n) + " in " + ws.Name + ":\n" + diff
+        case "pr_comment":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — commenting needs at least partial access."
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "pr", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: pr_comment needs {\"ws\":…, \"number\":12, \"body\":\"…\"}"
+                }
+                url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nPR COMMENT POSTED — " + url
+        case "pr_review", "review":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — submitting reviews needs at least partial access."
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "pr", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: pr_review needs {\"ws\":…, \"number\":12, \"body\":\"your review\", \"event\":\"approve\"|\"request_changes\"|\"comment\"}"
+                }
+                event := get("event")
+                if event == "" {
+                        event = "comment"
+                }
+                url, err := s.wsClient(ws).CreatePRReview(ctx, n, get("body"), event, s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nREVIEW SUBMITTED (" + event + ") — " + url
+        case "pr_merge", "merge":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — merging is a strong write and needs FULL access."
+                }
+                n := wsArgInt(args, "number", 0)
+                if n == 0 {
+                        n = wsArgInt(args, "pr", 0)
+                }
+                if n == 0 {
+                        return "OBSERVATION:\nerror: pr_merge needs {\"ws\":…, \"number\":12, \"method\":\"merge\"|\"squash\"|\"rebase\", \"title\":\"…\", \"message\":\"…\"}"
+                }
+                method := get("method")
+                if method == "" {
+                        method = "merge"
+                }
+                out, err := s.wsClient(ws).MergePullRequest(ctx, n, get("title"), get("message"), method, s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nPR MERGED — #" + fmt.Sprint(n) + " " + out
+        case "discussion_post", "discuss":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access == forge.AccessRead {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — posting discussions needs at least partial access (and Discussions enabled on the repo)."
+                }
+                title := get("title")
+                if title == "" {
+                        return "OBSERVATION:\nerror: discussion_post needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"category\":\"Q&A\"|\"\"}"
+                }
+                out, err := s.wsClient(ws).DiscussionPost(ctx, title, get("body"), get("category"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nDISCUSSION OPENED — " + out
+        case "workflow_dispatch", "dispatch":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — dispatching workflows needs FULL access."
+                }
+                workflow := get("workflow")
+                if workflow == "" {
+                        return "OBSERVATION:\nerror: workflow_dispatch needs {\"ws\":…, \"workflow\":\"ci.yml\", \"ref\":\"main\"|\"\", \"inputs\":{\"key\":\"value\"}}"
+                }
+                ref := get("ref")
+                if ref == "" {
+                        ref = wsBranchOr(ws, "")
+                }
+                var inputs map[string]string
+                if raw, ok := args["inputs"].(map[string]any); ok {
+                        inputs = make(map[string]string, len(raw))
+                        for k, v := range raw {
+                                if vs, ok := v.(string); ok {
+                                        inputs[k] = vs
+                                }
+                        }
+                }
+                if err := s.wsClient(ws).DispatchWorkflow(ctx, workflow, ref, inputs, s.wsToken(ws)); err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nWORKFLOW DISPATCHED — " + workflow + " @ " + ref + " (check the run with action \"view\" {\"what\":\"runs\"})"
+        case "file_delete", "delete":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — deleting files needs FULL access."
+                }
+                path := strings.Trim(get("path"), "/")
+                if path == "" {
+                        return "OBSERVATION:\nerror: file_delete needs {\"ws\":…, \"path\":\"the/file\", \"branch\":\"…\"|\"\", \"message\":\"…\"|\"\"}"
+                }
+                if strings.Contains(path, "..") {
+                        return "OBSERVATION:\nerror: path traversal refused"
+                }
+                branch := get("branch")
+                if branch == "" {
+                        branch = ws.Branch
+                }
+                message := get("message")
+                if message == "" {
+                        message = "doomalay: delete " + path
+                }
+                c := s.wsClient(ws)
+                tok := s.wsToken(ws)
+                // the blob sha is required — fetch it when the model
+                // didn't supply one (the read is cheap and honest)
+                sha := get("sha")
+                if sha == "" {
+                        fc, err := c.File(ctx, path, branch, "", tok)
+                        if err != nil {
+                                return "OBSERVATION:\nerror: could not resolve " + path + "'s blob sha (read it first): " + err.Error()
+                        }
+                        sha = fc.SHA
+                }
+                url, err := c.DeleteFile(ctx, path, branch, message, sha, tok)
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nDELETED — " + path + " @ " + branch + "\ncommit: " + url
+        case "release_create", "release":
+                ws := resolveWSToolRef(bound, get("ws"))
+                if ws == nil {
+                        return wsNotFound(bound, get("ws"))
+                }
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — creating releases needs FULL access."
+                }
+                tag := get("tag")
+                if tag == "" {
+                        return "OBSERVATION:\nerror: release_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"name\":\"…\"|\"\", \"body\":\"notes\"|\"\", \"target\":\"commitish\"|\"\"}"
+                }
+                url, err := s.wsClient(ws).CreateRelease(ctx, tag, get("name"), get("body"), get("target"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + err.Error()
+                }
+                return "OBSERVATION:\nRELEASE PUBLISHED — " + tag + "\nurl: " + url
         case "fork":
                 ws := resolveWSToolRef(bound, get("ws"))
                 if ws == nil {
@@ -585,10 +892,23 @@ func workspaceHelpText(n int) string {
   {"action":"grep","ws":"…","query":"text","limit":30}
   {"action":"view","ws":"…","what":"issues|pulls|commits|branches|releases|workflows|runs|discussions","state":"open"}
   {"action":"put","ws":"…","path":"f.txt","content":"…","message":"…","branch":"…"}  FULL access — an API commit
-  {"action":"pr","ws":"…","head":"branch","base":"main","title":"…","body":"…"}       partial+ — head "owner:branch" for forks
+  {"action":"file_delete","ws":"…","path":"f.txt","branch":"…","message":"…"}        FULL access
+  {"action":"branch","ws":"…","name":"feature","from":"main"}                       partial+ — creates a branch
+  {"action":"pr","ws":"…","head":"branch","base":"main","title":"…","body":"…"}      partial+ — head "owner:branch" for forks
+  {"action":"pr_diff","ws":"…","number":12}                the PR's raw diff — read it to CODE REVIEW
+  {"action":"pr_review","ws":"…","number":12,"body":"…","event":"approve|request_changes|comment"}  partial+
+  {"action":"pr_comment","ws":"…","number":12,"body":"…"} partial+ — PR conversation comment
+  {"action":"pr_merge","ws":"…","number":12,"method":"merge|squash|rebase"}          FULL access
+  {"action":"issue_create","ws":"…","title":"…","body":"…","labels":["bug"]}         partial+
+  {"action":"issue_comment","ws":"…","number":34,"body":"…"}                         partial+
+  {"action":"issue_close","ws":"…","number":34}   {"action":"issue_open",…}          partial+
+  {"action":"discussion_post","ws":"…","title":"…","body":"…","category":"Q&A"|""}   partial+ (GitHub)
+  {"action":"workflow_dispatch","ws":"…","workflow":"ci.yml","ref":"main","inputs":{}}  FULL access
+  {"action":"release_create","ws":"…","tag":"v1.2.0","name":"…","body":"notes"}      FULL access
   {"action":"fork","ws":"…"}                fork into the user's account (needs a token)
   {"action":"create","kind":"github","name":"new-repo","description":"…","license":"mit","private":false}
   {"action":"discover","kind":"github"}     the token account's repos
+CODE REVIEW flow: pr_diff → (your analysis) → pr_review {event, body}.
 "ws" accepts the id, owner/repo, or the repo name.`)
         return sb.String()
 }

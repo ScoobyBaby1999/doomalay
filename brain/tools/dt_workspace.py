@@ -86,6 +86,20 @@ HELP = """workspace — act on this chat's CONNECTED cloud repos (any forge).
                             full access; the CURRENT sha is fetched for you)
   pr ws head [base] [title] [body]  open a pull request (head
                             "owner:branch" for a fork; partial access OK)
+  branch ws name [from]     create a branch (partial+)
+  pr_diff ws number         the PR's raw diff — read it to CODE REVIEW
+  pr_review ws number body [event]  submit the review (approve|
+                            request_changes|comment; partial+)
+  pr_comment ws number body  PR conversation comment (partial+)
+  pr_merge ws number [method]  merge the PR (merge|squash|rebase; FULL)
+  issue_create ws title [body] [labels]  file an issue (partial+)
+  issue_comment ws number body  comment on an issue/PR (partial+)
+  issue_close ws number / issue_open ws number  state (partial+)
+  discussion_post ws title [body] [category]  open a discussion (GitHub)
+  workflow_dispatch ws workflow [ref] [inputs]  trigger a run (FULL)
+  file_delete ws path [branch] [message]  delete a file (FULL)
+  release_create ws tag [name] [body] [target]  publish a release (FULL)
+  CODE REVIEW flow: pr_diff → your analysis → pr_review.
   create ws-ish → create_repo kind name [description] [license] [gitignore]
                             [private] — fresh repo from scratch
   fork ws                   fork into the user's account (partial/read upgrade)
@@ -272,6 +286,13 @@ class WorkspaceClient:
         return self._req("POST", f"/api/workspaces/{wid}/pr", json_body={
             "title": title, "body": body, "head": head, "base": base})
 
+    # v0.81.6 THE FULL REPO HAND: the shared-verb bridge — POST
+    # /api/workspaces/{id}/do runs ANY verb of the engine's ONE switch
+    # (the same source of truth the direct ACTION path + the PM tool
+    # server use). The new write/review verbs ride this.
+    def do(self, wid: str, payload: dict) -> dict:
+        return self._req("POST", f"/api/workspaces/{wid}/do", json_body=payload)
+
     def clone(self, wid: str):
         return self._req("POST", f"/api/workspaces/{wid}/clone")
 
@@ -305,7 +326,8 @@ def run_action(ctx, client: WorkspaceClient, action: str, ws: str = "",
                description: str = "", license_: str = "",
                gitignore: str = "", private: bool = False,
                token: str = "", head: str = "", base: str = "",
-               title: str = "", body: str = "", log=None) -> str:
+               title: str = "", body: str = "", log=None,
+               **extra) -> str:
     """All workspace actions as a plain function (tests + self-test run
     without strands). Returns a string, never raises."""
     try:
@@ -316,7 +338,7 @@ def run_action(ctx, client: WorkspaceClient, action: str, ws: str = "",
                          description=description, license_=license_,
                          gitignore=gitignore, private=private, token=token,
                          head=head, base=base, title=title, body=body,
-                         log=log)
+                         log=log, **extra)
     except Exception as exc:  # noqa: BLE001
         return f"workspace tool error ({action}): {type(exc).__name__}: {exc}"
 
@@ -572,6 +594,52 @@ def _dispatch(ctx, client: WorkspaceClient, action: str, **kw) -> str:
         return (f"PR OPENED — #{rr.get('number')} {rr.get('title')} "
                 f"({kw['head']} → {base})\n{rr.get('url')}")
 
+    # v0.81.6 THE FULL REPO HAND — the NEW verbs (user spec: "grep,ls,read,
+    # explore,push,pr,code review,issues,discussions,workflows, everything")
+    # ride the engine's SHARED verb switch (POST /api/workspaces/{id}/do):
+    # one endpoint, every chat path (the direct ACTION runner, the PM tool
+    # server, and this bridge all land in the same runWorkspaceVerb), the
+    # same OBSERVATION text + access-tier gates everywhere.
+    if action in ("branch", "branch_create",
+                  "issue_create", "issue", "issue_comment", "comment",
+                  "issue_close", "issue_open", "issue_state",
+                  "pr_diff", "diff", "pr_comment", "pr_review", "review",
+                  "pr_merge", "merge",
+                  "discussion_post", "discuss",
+                  "workflow_dispatch", "dispatch",
+                  "file_delete", "delete",
+                  "release_create", "release"):
+        if not kw.get("ws"):
+            return (f"{action} needs ws= (workspace id or owner/repo) — the "
+                    "rest of the args match the engine verb (number=, title=, "
+                    "body=, …; workspace(action='help') lists them all)")
+        row = _resolve_ws(ctx, kw["ws"])
+        payload = {k: v for k, v in kw.items() if k not in ("ws", "log")}
+        payload["action"] = action
+        # labels/inputs arrive as JSON-ish strings from the tool schema —
+        # parse them into the shapes the engine verb expects
+        for listkey in ("labels",):
+            v = payload.get(listkey)
+            if isinstance(v, str) and v.strip():
+                try:
+                    import json as _json
+                    parsed = _json.loads(v)
+                    payload[listkey] = parsed if isinstance(parsed, list) else [v]
+                except Exception:
+                    payload[listkey] = [p.strip() for p in v.split(",") if p.strip()]
+        v = payload.get("inputs")
+        if isinstance(v, str) and v.strip():
+            try:
+                import json as _json
+                payload["inputs"] = _json.loads(v)
+            except Exception:
+                payload.pop("inputs", None)
+        rr = client.do(row.get("id") or kw["ws"], payload)
+        if "error" in rr:
+            return rr["error"]
+        _emit(kw.get("log"), "workspace_" + action, ws=row.get("id") or kw["ws"])
+        return str(rr.get("result") or "(no result)")
+
     if action == "clone":
         if not kw.get("ws"):
             return "clone needs ws= (local blobless clone; needs git on the host)"
@@ -668,9 +736,13 @@ def build(ctx) -> list:
             "access allows (file writes are API commits — full access), "
             "fork, clone locally, create a fresh repo from scratch, "
             "discover the account's repos, and open pull requests. "
-            "Actions: list, info, tree, ls, "
-            "read, readme, grep, view, write, pr, create_repo, fork, clone, "
-            "discover, attach_token, help. `ws` = id or owner/repo."
+            "Actions: list, info, tree, ls, read, readme, grep, view, "
+            "write (push = API commit), pr, branch, pr_diff + pr_review + "
+            "pr_comment + pr_merge (CODE REVIEW), issue_create + "
+            "issue_comment + issue_close, discussion_post, "
+            "workflow_dispatch, file_delete, release_create, create_repo, "
+            "fork, clone, discover, attach_token, help. `ws` = id or "
+            "owner/repo."
             + (f" This chat has {n_ws} bound workspace(s)."
                if n_ws else
                " No workspace is bound to this chat yet — the user connects "
@@ -683,11 +755,20 @@ def build(ctx) -> list:
                       description: str = "", license: str = "",
                       gitignore: str = "", private: bool = False,
                       token: str = "", head: str = "", base: str = "",
-                      title: str = "", body: str = "") -> str:
+                      title: str = "", body: str = "",
+                      # v0.81.6 THE FULL REPO HAND — the new verb args
+                      number: int = 0, event: str = "", labels: str = "",
+                      category: str = "", workflow: str = "",
+                      inputs: str = "", method: str = "",
+                      target: str = "", sha: str = "",
+                      from_: str = "") -> str:
             """Work with this chat's connected cloud repos.
 
             action: list|info|tree|ls|read|readme|grep|view|write|pr|
-                create_repo|fork|clone|discover|attach_token|help
+                branch|issue_create|issue_comment|issue_close|pr_diff|
+                pr_comment|pr_review|pr_merge|discussion_post|
+                workflow_dispatch|file_delete|release_create|create_repo|
+                fork|clone|discover|attach_token|help
             ws: workspace id (12 hex) OR owner/repo OR bare repo name
             path: file/subdirectory path (tree, ls, read, write)
             ref: branch/tag/sha override (defaults to the workspace branch)
@@ -715,7 +796,14 @@ def build(ctx) -> list:
                               description=description, license_=license,
                               gitignore=gitignore, private=private,
                               token=token, head=head, base=base,
-                              title=title, body=body, log=log)
+                              title=title, body=body, log=log,
+                              # v0.81.6: the new verb args (number int;
+                              # labels/inputs are JSON-ish strings — the
+                              # engine's verb switch parses both)
+                              number=number, event=event, labels=labels,
+                              category=category, workflow=workflow,
+                              inputs=inputs, method=method, target=target,
+                              sha=sha, **({"from": from_} if from_ else {}))
 
         return [workspace]
     except Exception:

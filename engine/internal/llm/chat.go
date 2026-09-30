@@ -75,8 +75,8 @@ type ChatRequest struct {
         // carries the CONNECTED CLOUD WORKSPACES block (repo rows) when
         // any are bound — composeTurnSystem prepends it above the
         // protocols, mirroring the brain's _build_system_prompt.
-        WorkspaceToolFn    func(ctx context.Context, argJSON string) string `json:"-"`
-        WorkspaceManifest  string                                   `json:"-"`
+        WorkspaceToolFn   func(ctx context.Context, argJSON string) string `json:"-"`
+        WorkspaceManifest string                                           `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1002,8 +1002,10 @@ func effortBlacklisted(provider, model string) bool {
 // model id, the payload, etc.).
 // v0.69: the Pydantic validation shapes join the trigger list — PM's
 // deployed glm-5.3 rejects out-of-enum values with
-//   {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'),
-//    'msg': "Input should be 'none', 'minima…"}
+//
+//      {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'),
+//       'msg': "Input should be 'none', 'minima…"}
+//
 // which contains NONE of the old trigger words ("unexpected"/"unknown"/…),
 // so the retry-without-param rescue never fired and the raw 400 surfaced
 // (the user's report). A body that names a reasoning field AND carries a
@@ -1321,7 +1323,22 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 nudged = true
                                 ch <- ChatChunk{Type: "progress", Text: "model said it can't — reminding it about its tools…"}
                                 history = append(history, Message{Role: "assistant", Content: answer})
-                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string { if req.TemplateAuto { return ", template_list, template_show" } ; return "" }()) + (func() string { if req.HublibToolFn != nil { return ", hublib (search/browse/download the public library AND its bundles)" } ; return "" }()) + (func() string { if req.SkillsToolFn != nil { return ", skills (load downloaded skill methodologies)" } ; return "" }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
+                                history = append(history, Message{Role: "user", Content: "(system: you DO have tools — this app runs a live tool protocol. web_search and web_fetch give you the live internet right now; calculator, time_now, uuid, random, base64, hash, json_tool, text_stats, url_encode, regex_extract, docx_create, xlsx_create, zip_create, zip_extract, archive_create, archive_extract and delegate all run on-device or in-app" + (func() string {
+                                        if req.TemplateAuto {
+                                                return ", template_list, template_show"
+                                        }
+                                        return ""
+                                }()) + (func() string {
+                                        if req.HublibToolFn != nil {
+                                                return ", hublib (search/browse/download the public library AND its bundles)"
+                                        }
+                                        return ""
+                                }()) + (func() string {
+                                        if req.SkillsToolFn != nil {
+                                                return ", skills (load downloaded skill methodologies)"
+                                        }
+                                        return ""
+                                }()) + ". Your earlier statement that you cannot access or verify this was wrong. Call the right tool NOW with an ACTION line and finish the task.)"})
                                 continue
                         }
                         // Final answer — ALREADY streamed live above.
@@ -1674,7 +1691,25 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                         observation = "OBSERVATION:\n" + text
                         ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
                 default:
-                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string { if req.HublibToolFn != nil { return ", hublib {\"action\": \"search|get|download|bundles|bundle|download_bundle\", ...} (the public hub library AND its bundles)" } ; return "" }()) + (func() string { if req.SkillsToolFn != nil { return ", skills {\"action\": \"bootstrap|list|search|load|files|read\", ...} (the installed skill methodologies)" } ; return "" }()) + "."
+                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string {
+                                if req.HublibToolFn != nil {
+                                        return ", hublib {\"action\": \"search|get|download|bundles|bundle|download_bundle\", ...} (the public hub library AND its bundles)"
+                                }
+                                return ""
+                        }()) + (func() string {
+                                if req.SkillsToolFn != nil {
+                                        return ", skills {\"action\": \"bootstrap|list|search|load|files|read\", ...} (the installed skill methodologies)"
+                                }
+                                return ""
+                        }()) + (func() string {
+                                // v0.81.6: the repo hand joins the teaching — the
+                                // user's repro had the model guessing "repo_list"
+                                // and dead-ending. Name the real tool + verbs.
+                                if req.WorkspaceToolFn != nil {
+                                        return ", workspace {\"action\": \"help|list|ls|read|grep|view|put|pr|pr_diff|pr_review|pr_comment|pr_merge|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|release_create|branch|fork\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, push, PR, code review, issues, discussions, workflows)"
+                                }
+                                return ""
+                        }()) + "."
                 }
         }
         return observation
@@ -2585,6 +2620,14 @@ func canonicalToolName(name string) string {
         // old template_list shim kept its template-specific aliases.
         case "hub", "public_hub", "hub_library", "library", "browse_hub", "search_library", "library_search", "browse_library", "download_skill":
                 return "hublib"
+                // v0.81.6 THE FULL REPO HAND: repo-tool aliases — models name the
+                // connected-repo tool everything BUT its real name (the user's repro
+                // guessed "repo_list"). Every plausible spelling lands on "workspace".
+        case "repo", "repos", "repository", "repositories", "git", "github", "gitea", "gitlab", "sourcehut",
+                "repo_list", "repo_read", "repo_ls", "repo_tree", "repo_grep", "repo_write", "repo_put",
+                "list_repo", "read_repo", "repo_files", "files_repo", "repo_view", "repo_info",
+                "git_repo", "code_repo", "repo_tools", "repose", "workspace_list", "ws":
+                return "workspace"
         }
         // fuzzy: a near-miss of ANY real tool name (typo-level distance)
         if best, ok := nearestToolName(name); ok {
@@ -2600,7 +2643,10 @@ var allCallableTools = append(append([]string{}, LocalToolNames...),
         "web_search", "web_fetch", "delegate",
         "persona_list", "persona_set", "persona_activate", "placeholder_set",
         "template_list", "template_show",
-        "hublib")
+        "hublib",
+        // v0.81.6: the repo hand joins the fuzzy universe (unknown-tool
+        // corrections can now bet on "workspace" too)
+        "workspace")
 
 // nearestToolName returns the closest known tool within Levenshtein
 // distance 2 (false when nothing is close enough to bet on).

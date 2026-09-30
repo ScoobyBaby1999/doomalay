@@ -49,6 +49,24 @@ func (s *Server) handleToolsLocal(w http.ResponseWriter, r *http.Request) {
 		s.handleToolsDelegate(w, r, args)
 		return
 	}
+	// v0.81.6 THE FULL REPO HAND: the PrivateMode ReAct loop gets the
+	// workspace tool too. The user's repro: a PM quick chat with a bound
+	// repo watched the model GUESS tool names ("repo_list" → "unknown
+	// tool") because the PM path's ACTION vocabulary never listed a repo
+	// tool and this server rejected the calls. Route "workspace" to the
+	// SAME shared verb switch the direct path uses (session-bound rows
+	// — the PM chat's connected repos resolve exactly like an ACTION
+	// turn's). pmsdk's protocol now teaches the vocabulary.
+	if name == "workspace" {
+		sessID := r.URL.Query().Get("session")
+		if sessID == "" {
+			writeJSON(w, 200, map[string]any{"tool": name, "result": strings.TrimPrefix("OBSERVATION:\nerror: workspace needs a session — pass {\"session\": \"<id>\"}", "OBSERVATION:\n")})
+			return
+		}
+		out := s.runWorkspaceAction(r.Context(), sessID, args)
+		writeJSON(w, 200, map[string]any{"tool": name, "result": strings.TrimPrefix(out, "OBSERVATION:\n")})
+		return
+	}
 	// v0.28: PERSONA tools — the bot can inspect and rework its own
 	// persona list (user spec: "the chatbot itself does not have access
 	// or a tool to switch its own persona or create a new one… the bot
@@ -67,8 +85,12 @@ func (s *Server) handleToolsLocal(w http.ResponseWriter, r *http.Request) {
 		// from. The old HTTP 400 just surfaced as "tool error" and
 		// burned the retry without teaching the model anything.
 		writeJSON(w, 200, map[string]any{
-			"tool":   name,
-			"result": "error: unknown tool \"" + name + "\". Valid local tools: " + strings.Join(llm.LocalToolNames, ", ") + ". Web tools: web_search {\"query\": \"...\"} and web_fetch {\"url\": \"...\"} (when web search is enabled).",
+			"tool": name,
+			// v0.81.6: the message now TEACHES the repo hand — the user's
+			// repro showed a model guessing "repo_list" and getting a
+			// dead-end. Name the real tool + its shape so the next round
+			// calls it (mirrors the Go loop's canonicalToolName correction).
+			"result": "error: unknown tool \"" + name + "\". Valid local tools: " + strings.Join(llm.LocalToolNames, ", ") + ". Web tools: web_search {\"query\": \"...\"} and web_fetch {\"url\": \"...\"} (when web search is enabled). Repo tools: workspace {\"action\":\"help\"|\"list\"|\"ls\"|\"read\"|\"grep\"|\"view\"|\"put\"|\"pr\"|\"pr_diff\"|\"pr_review\"|\"issue_create\"|\"discussion_post\"|\"workflow_dispatch\"|\"fork\"|\"branch\",\"ws\":\"owner/repo\",\"session\":\"<chat id>\"} — the connected-repo tool.",
 		})
 		return
 	}

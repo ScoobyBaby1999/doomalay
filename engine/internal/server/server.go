@@ -306,6 +306,8 @@ func (s *Server) routes() {
         s.mux.HandleFunc("PUT /api/workspaces/{id}/file", s.handleWorkspacePutFile)
         s.mux.HandleFunc("POST /api/workspaces/{id}/fork", s.handleWorkspaceFork)
         s.mux.HandleFunc("POST /api/workspaces/{id}/pr", s.handleWorkspacePR)
+        // v0.81.6 THE FULL REPO HAND: the brain path's shared-verb REST twin
+        s.mux.HandleFunc("POST /api/workspaces/{id}/do", s.handleWorkspaceDo)
         s.mux.HandleFunc("POST /api/workspaces/{id}/clone", s.handleWorkspaceClone)
         s.mux.HandleFunc("POST /api/workspaces/create-repo", s.handleWorkspaceCreateRepo)
         s.mux.HandleFunc("GET /api/workspaces/licenses", s.handleWorkspaceLicenses)

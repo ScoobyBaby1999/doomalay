@@ -213,6 +213,18 @@ async def run_turn(
                                             workspaces=workspaces,
                                             template_auto=template_auto, skills_auto=skills_auto,
                                             bot_lib=bot_lib, bot_dl=bot_dl)
+    else:
+        # v0.81.6 THE FULL REPO HAND: the engine ALWAYS sends its own system
+        # prompt (persona + session context preamble), so the discipline
+        # block below NEVER rode on engine-driven quick-chat turns — the
+        # model learned the tool NAMES only via the API tools array, and
+        # weaker models reasoned "I don't see repo tools in my tool list"
+        # and guessed names ("repo_list" → unknown tool). APPEND the
+        # tool-first discipline (workspace/explore named, verbs listed) to
+        # whatever the engine composed — the session context's own repo
+        # line now names the tools too (sessionctx.go).
+        system_prompt = system_prompt + "\n\n" + _tool_discipline_block(
+            skills_auto=skills_auto)
 
     # Build messages (include history if provided).
     messages = list(history) if history else []
@@ -1346,6 +1358,86 @@ def _emit_tool_results(tools, callback):
     return out
 
 
+def _tool_discipline_block(skills_auto: bool = False) -> str:
+    """The TOOL-FIRST DISCIPLINE block — every purpose-built tool named
+    with its verbs. v0.81.6: extracted so BOTH prompt paths carry it:
+    _build_system_prompt composes it, and run_turn APPENDS it to the
+    engine's own system prompt (the engine always sends one on quick
+    chats — before this, the discipline never rode those turns and the
+    model guessed tool names: the user's repro watched "repo_list" fail
+    as an unknown tool)."""
+    # chat's auto-search pills are on (the tools themselves are excluded
+    # from the registry in _build_tools — the prompt must not advertise
+    # what isn't there).
+    _discipline_lines = [
+        "- swarm: fan a list of tasks out to PARALLEL sub-agents at once "
+        "(whenever 2+ independent sub-tasks exist — this harness has no "
+        "single-task delegate tool)",
+        "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
+        "question, searches, fetches pages, refines queries over rounds, "
+        "synthesizes a cited brief. Use for ANY current-events question "
+        "instead of guessing from training data",
+        "- timemgr: the time manager — tasks with priorities/deadlines/"
+        "subtasks, natural dates ('tomorrow', 'next friday'), templates, "
+        "pomodoro, today board, stats",
+        "- djournal: the rich journal — mood/tags/highlights/gratitude, "
+        "search, week/month reviews with trends + streaks, prompts, export",
+        "- socreate: the 10x productivity creation loop — start(goal) → plan "
+        "→ execute steps (sub-agents) → critique → iterate until done",
+        # v0.60 pt C.9: THE LIB PILL — one gate. pt C.12: when ON, the
+        # one-line hint is REPLACED by THE BOOTSTRAP — the full
+        # using-superpowers skill injected below (porting guide Part 3:
+        # "the bootstrap is the entire difference between the port
+        # working and not working").
+        ("- lib: the chat's library is ON — the skill discipline below is "
+         "ACTIVE") if skills_auto else None,
+        ("- lib: the chat's Bot Library switch is OFF — you can still BROWSE "
+         "and RECOMMEND (hublib search + the skills index), but loads and "
+         "downloads refuse until the user flips ✦ tweaks → Bot Library back on"
+         ) if not skills_auto else None,
+        "- hublib: browse + recommend the PUBLIC HUB's community templates, "
+        "skills, scripts and docs — search/popular, tappable one-press "
+        "download cards for the user (downloads need the chat's Bot Library "
+        "switch ON), payload in hand to follow",
+        "- persona: switch this chat's personas — list, import a DOWNLOADED "
+        "hub persona (set from, activate) or write a fresh character sheet; "
+        "the active persona shapes every later turn",
+        "- artifact: create AND surgically EDIT (find/replace, line splices, "
+        "inserts, dry_run) the REAL chat artifacts — including files made in "
+        "earlier turns; write deliverables HERE, not just as chat text",
+        # v0.81.6 THE FULL REPO HAND: the verbs are listed now — the user's
+        # spec was "grep,ls,read,explore,push,pr,code review,issues,
+        # discussions,workflows, everything", and the model needs to SEE
+        # them to reach for them.
+        "- workspace: act on this chat's CONNECTED cloud repos (GitHub/"
+        "Gitea/GitLab/any forge) — ls, tree, read (head/tail/line ranges), "
+        "grep, view (issues|pulls|releases|workflows|runs|commits|branches|"
+        "discussions), put (push = API commit, full access), branch, pr, "
+        "pr_diff + pr_review + pr_comment + pr_merge (CODE REVIEW), "
+        "issue_create + issue_comment + issue_close, discussion_post, "
+        "workflow_dispatch, file_delete, release_create, fork, clone, "
+        "create repos, discover — action='help' lists them all",
+        "- explore: the UNBOUNDED repo explorer — give it ANY repo URL (no "
+        "connect needed): full tree walks, batch file reads, grep, history, "
+        "releases, CI runs, issues; paginated, no artificial caps",
+        "- hf: publish results/datasets to the HuggingFace community library",
+        "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
+        "analysis, compare (Stooq)",
+    ]
+    _discipline_lines = [ln for ln in _discipline_lines if ln]
+    return (
+        "TOOL-FIRST DISCIPLINE — you have purpose-built tools; USE THEM:\n"
+        + "\n".join(_discipline_lines)
+        + "\nRules: fresh info → rtsearch (never answer from memory what it can "
+        "verify); tasks/time → timemgr; journaling → djournal; non-trivial "
+        "goal → socreate (parallelize with swarm); market questions → "
+        "stocks; files the user should keep → artifact; repo questions "
+        "(structure, issues, releases, CI, code search) → workspace or "
+        "explore — they reach ANY repo URL, not just connected ones. "
+        "Unsure what a tool offers? Call it with action='help' first."
+    )
+
+
 def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool, deep_research: bool,
                         workspaces: list = None, template_auto: bool = False,
                         skills_auto: bool = False, bot_lib: bool = True,
@@ -1392,68 +1484,7 @@ def _build_system_prompt(model: str, mode: str, workspace: str, web_search: bool
     # use"). Without this block the model improvises text answers for jobs
     # that have dedicated tools.
     # v0.52 THE 3 PILLS: the skills + dtemplate lines ride only when the
-    # chat's auto-search pills are on (the tools themselves are excluded
-    # from the registry in _build_tools — the prompt must not advertise
-    # what isn't there).
-    _discipline_lines = [
-        "- swarm: fan a list of tasks out to PARALLEL sub-agents at once "
-        "(whenever 2+ independent sub-tasks exist — this harness has no "
-        "single-task delegate tool)",
-        "- rtsearch: the REAL-TIME iterative research loop — decomposes a "
-        "question, searches, fetches pages, refines queries over rounds, "
-        "synthesizes a cited brief. Use for ANY current-events question "
-        "instead of guessing from training data",
-        "- timemgr: the time manager — tasks with priorities/deadlines/"
-        "subtasks, natural dates ('tomorrow', 'next friday'), templates, "
-        "pomodoro, today board, stats",
-        "- djournal: the rich journal — mood/tags/highlights/gratitude, "
-        "search, week/month reviews with trends + streaks, prompts, export",
-        "- socreate: the 10x productivity creation loop — start(goal) → plan "
-        "→ execute steps (sub-agents) → critique → iterate until done",
-        # v0.60 pt C.9: THE LIB PILL — one gate. pt C.12: when ON, the
-        # one-line hint is REPLACED by THE BOOTSTRAP — the full
-        # using-superpowers skill injected below (porting guide Part 3:
-        # "the bootstrap is the entire difference between the port
-        # working and not working").
-        ("- lib: the chat's library is ON — the skill discipline below is "
-         "ACTIVE") if skills_auto else None,
-        ("- lib: the chat's Bot Library switch is OFF — you can still BROWSE "
-         "and RECOMMEND (hublib search + the skills index), but loads and "
-         "downloads refuse until the user flips ✦ tweaks → Bot Library back on"
-         ) if not skills_auto else None,
-        "- hublib: browse + recommend the PUBLIC HUB's community templates, "
-        "skills, scripts and docs — search/popular, tappable one-press "
-        "download cards for the user (downloads need the chat's Bot Library "
-        "switch ON), payload in hand to follow",
-        "- persona: switch this chat's personas — list, import a DOWNLOADED "
-        "hub persona (set from, activate) or write a fresh character sheet; "
-        "the active persona shapes every later turn",
-        "- artifact: create AND surgically EDIT (find/replace, line splices, "
-        "inserts, dry_run) the REAL chat artifacts — including files made in "
-        "earlier turns; write deliverables HERE, not just as chat text",
-        "- workspace: act on this chat's CONNECTED cloud repos (GitHub/"
-        "Gitea/GitLab/any forge) — tree, ls, read (head/tail/line ranges), "
-        "grep, write files as API commits (full access), fork, clone, "
-        "create repos, issues/pulls/releases/actions/discussions views",
-        "- explore: the UNBOUNDED repo explorer — give it ANY repo URL (no "
-        "connect needed): full tree walks, batch file reads, grep, history, "
-        "releases, CI runs, issues; paginated, no artificial caps",
-        "- hf: publish results/datasets to the HuggingFace community library",
-        "- stocks: keyless market data — quotes, history, MA/RSI/volatility "
-        "analysis, compare (Stooq)",
-    ]
-    _discipline_lines = [ln for ln in _discipline_lines if ln]
-    parts.append(
-        "TOOL-FIRST DISCIPLINE — you have purpose-built tools; USE THEM:\n"
-        + "\n".join(_discipline_lines)
-        + "\nRules: fresh info → rtsearch (never answer from memory what it can "
-        "verify); tasks/time → timemgr; journaling → djournal; non-trivial "
-        "goal → socreate (parallelize with swarm); market questions → "
-        "stocks; files the user should keep → artifact; repo questions "
-        "(structure, issues, releases, CI, code search) → workspace or "
-        "explore — they reach ANY repo URL, not just connected ones. "
-        "Unsure what a tool offers? Call it with action='help' first."
-    )
+    parts.append(_tool_discipline_block(skills_auto=skills_auto))
 
     # v0.60 pt C.12: THE BOOTSTRAP — porting guide Part 3: "at the start of
     # every session, the full skills/using-superpowers/SKILL.md is injected

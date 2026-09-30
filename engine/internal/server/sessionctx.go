@@ -171,6 +171,12 @@ func (s *Server) sessionContextPreamble(sess *store.Session) string {
                 b.WriteString("- Repos bound to this chat: none yet.\n")
         }
         b.WriteString("- You have " + strconv.Itoa(totalWS) + " workspace(s) connected in total. You CAN be connected to workspaces — GitHub, Gitea, GitLab, Sourcehut and Hugging Face repos (models, datasets and Spaces) — many repo structures are available; the user connects them from the library/hub connect flow, and when bound the repo tools can list, grep, read and edit them at the access level shown above (read / partial / full).\n")
+        // v0.81.6: NAME the tools. The old line said "the repo tools can…"
+        // without ever naming them — the user's live repro watched the model
+        // reason "I don't see repo tools in my tool list" and guess names
+        // ("repo_list" → unknown tool). Every chat path now tells the model
+        // exactly what the repo hand is called on THAT path.
+        b.WriteString("- THE REPO TOOLS on this chat: the `workspace` tool (ACTION: workspace {\"action\":\"…\",\"ws\":\"owner/repo\"} on the ACTION paths; the `workspace` function/tool on function-calling paths; the unbounded `explore` tool for ANY public repo without connecting). Verbs: ls, tree, read, grep, view (issues|pulls|releases|workflows|runs|commits|branches|discussions), put (push = API commit), branch, pr, pr_diff + pr_review + pr_comment + pr_merge (CODE REVIEW), issue_create + issue_comment + issue_close, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover — ACTION: workspace {\"action\":\"help\"} lists them all. Ask what a repo contains BEFORE answering from memory; never claim you lack repo access while a workspace is bound.\n")
         if sess.Sandbox == "hf" {
                 b.WriteString("- This chat's sandbox runs on your Hugging Face Space — repo tools there can't reach the device's engine bridge; run repo work in a quick (on-device) chat when the user needs it.\n")
         }

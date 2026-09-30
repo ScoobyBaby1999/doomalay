@@ -2265,3 +2265,34 @@ func (s *Server) handleWorkspaceBranches(w http.ResponseWriter, r *http.Request)
         }
         s.wsJSON(w, 200, ws, map[string]any{"branches": clean, "primary": primary})
 }
+
+// handleWorkspaceDo — v0.81.6 THE FULL REPO HAND's REST twin: the brain
+// path's dt_workspace.py tool POSTs here to run ANY verb of the shared
+// switch (runWorkspaceVerb — the same source of truth the direct-path
+// ACTION runner and the PM tool server use). Body: {"action":"…", …verb
+// args…}; the path's {id} pins the workspace (the verb's "ws" is forced
+// to it — a tool call can never address a different row through this
+// endpoint). Returns {"result": "OBSERVATION:\n…"} — the same
+// observation text every other path feeds the model.
+func (s *Server) handleWorkspaceDo(w http.ResponseWriter, r *http.Request) {
+	ws := s.loadWS(w, r)
+	if ws == nil {
+		return
+	}
+	var args map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+		writeError(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	// pin the verb's target to THIS row — the brain tool passes the ws
+	// ref too, but the endpoint's own id is the authority
+	args["ws"] = ws.ID
+	out := s.runWorkspaceVerb(r.Context(), []*store.Workspace{ws}, args)
+	writeJSON(w, 200, map[string]any{
+		"workspace": s.wsShape(ws),
+		"result":    strings.TrimPrefix(out, "OBSERVATION:\n"),
+	})
+}
