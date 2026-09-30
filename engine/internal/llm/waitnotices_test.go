@@ -16,6 +16,16 @@ import (
 // sits on a dead "thinking…". (v0.35: the notice names the PROVIDER now —
 // user spec #9 "have it change from thinking... to waiting on Nvidia....")
 func TestWaitNotices(t *testing.T) {
+        // v0.83.2: the suite runs LIVE provider tests before this one in the
+        // same process — their PaceProvider calls arm pacingNext["nvidia"], and
+        // the paced send emits "pacing Nvidia — sending in Ns" as the FIRST
+        // notice, breaking this test's clean-stream premise (isolated runs
+        // always passed; full-suite ORDER was the flake). Reset the pacing
+        // slots so this test starts unpaced.
+        pacingMu.Lock()
+        pacingNext = map[string]time.Time{}
+        pacingMu.Unlock()
+
         srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 w.Header().Set("Content-Type", "text/event-stream")
                 w.WriteHeader(200)

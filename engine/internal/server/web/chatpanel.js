@@ -2781,11 +2781,17 @@
     if (!bar) return;
     H.ensureCatalog().then(function (catalog) {
       if (!bar.isConnected) return;
-      var levels = effortLevelsFor(catalog, state.provider, state.model);
-      renderToolbar(bar, state, levels, icon, bodyEl);
+      var lv = effortLevelsFor(catalog, state.provider, state.model);
+      // v0.83.2: the model's OWN default rides along (the docs ladder —
+      // e.g. PM glm-5.3 defaults to max, not the generic 'high')
+      state._effortDefault = (lv && lv.def) || null;
+      renderToolbar(bar, state, lv ? lv.levels : null, icon, bodyEl);
     }).catch(function () {});
   }
 
+  // v0.83.2: returns { levels, def } — the ladder AND the model's own
+  // default (the catalog's effortDefault — the provider's documented
+  // pick, e.g. PM glm's max). Callers that only want the array read .levels.
   function effortLevelsFor(catalog, provider, modelId) {
     if (!catalog) return null;
     var detail = H.modelDetail(modelId);
@@ -2801,7 +2807,11 @@
       for (var m = 0; m < models.length; m++) {
         var idLast = String(models[m].id || '').split('/').pop();
         if (models[m].id === slot || idLast === detail) {
-          return models[m].effortLevels || null;
+          var mm = models[m];
+          if (mm.effortLevels && mm.effortLevels.length) {
+            return { levels: mm.effortLevels, def: mm.effortDefault || null };
+          }
+          return null;
         }
       }
     }
@@ -2811,7 +2821,11 @@
       for (var h = 0; h < hosts.length; h++) {
         if (hosts[h].provider === provider && hosts[h].modelId === detail) {
           var attr = logical[l].attributes || {};
-          return attr.effortLevels || attr.effort_levels || null;
+          var lv = attr.effortLevels || attr.effort_levels;
+          if (lv && lv.length) {
+            return { levels: lv, def: attr.effortDefault || attr.effort_default || null };
+          }
+          return null;
         }
       }
     }
@@ -2828,9 +2842,14 @@
       // old code kept a stale level from a previous model (e.g. 'med' from
       // the default, or 'on' from a toggle model), so the bubble showed
       // nothing and tapping it "wasn't working as intended".
+      // v0.83.2: the model's OWN default wins when the persisted level
+      // isn't on the ladder (the docs pick — PM glm lands on max, not the
+      // generic 'high' the old preference list chose).
       var curIdx = levels.indexOf(state.effort);
       if (curIdx < 0) {
-        state.effort = defaultLevelFor(levels);
+        var ownDef = state._effortDefault;
+        state.effort = (ownDef && levels.indexOf(ownDef) >= 0)
+          ? ownDef : defaultLevelFor(levels);
         curIdx = levels.indexOf(state.effort);
         persistCaps(state, icon);
       }
@@ -2839,7 +2858,15 @@
       eb.style.cssText = effortBtnStyle(curIdx >= 0);
       eb.addEventListener('click', function () {
         var idx = levels.indexOf(state.effort);
-        state.effort = idx < 0 ? levels[0] : (idx + 1 < levels.length ? levels[idx + 1] : '');
+        // v0.83.2: past-the-end WRAPS to the first level (low→high→max→low…).
+        // The old '' (send-nothing) landing was a dead end on enum ladders —
+        // from the model's DEFAULT (e.g. glm's max) the cycle bounced ''→snap
+        // back to the default, so a user could never dial DOWN (the
+        // "toggle effort modes like they can with Nvidia reliably anytime"
+        // promise). The provider-default state is the ladder's own default
+        // level now (effortDefault), not the param-less ''.
+        state.effort = idx < 0 ? levels[0]
+          : (idx + 1 < levels.length ? levels[idx + 1] : levels[0]);
         persistCaps(state, icon);
         renderToolbar(bar, state, levels, icon, bodyEl);
       });
@@ -2884,7 +2911,12 @@
       clear.addEventListener('click', function () {
         // v0.26: reset to the model's OWN default (first level), not a
         // hardcoded 'med' that isn't in most ladders.
-        state.effort = (levels && levels.length) ? levels[0] : 'med';
+        // v0.83.2: prefer the model's documented default (state._effortDefault)
+        // when it sits on the ladder — e.g. PM glm's max.
+        var ownDef2 = state._effortDefault;
+        state.effort = (levels && levels.length)
+          ? ((ownDef2 && levels.indexOf(ownDef2) >= 0) ? ownDef2 : levels[0])
+          : 'med';
         state.webSearch = false;
         state.deepResearch = false;
         state.template = null; // v0.44: the active template clears with the rest

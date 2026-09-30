@@ -363,6 +363,18 @@ func ResolveEffortWithLive(provider, rawModel string, live *LiveEffortInfo) *Eff
                 return spec.withDefault()
         }
 
+        // 1.5 v0.83.2: PrivateMode's OWN documented surface — the provider
+        // speaking about its models beats OR's family view (the user's
+        // "toggle effort modes like they can with Nvidia reliably anytime"
+        // spec; the docs-verified ladders land the button on every known PM
+        // chat model, max included).
+        if provider == "privatemodeai" {
+                if pm := pmFamilyEffort(rawModel); pm != nil {
+                        pm.Levels = canonicalLevels(pm.Levels)
+                        return pm.withDefault()
+                }
+        }
+
         // 2. OpenRouter reasoning registry (family match). A MATCHED entry is
         // authoritative even when its reasoning object is nil — "OpenRouter
         // knows this family and it has no reasoning knob" beats any blanket.
@@ -475,6 +487,61 @@ func (s *EffortSpec) withDefault() *EffortSpec {
 // carries everything now.
 func DetectEffortLevels(provider, rawModel string) []string {
         return ResolveEffort(provider, rawModel).Levels
+}
+
+// ── v0.83.2 THE PRIVATEMODE OWN-SURFACE TABLE (SOURCE 1.5) ─────────────────
+//
+// User spec: "For privatemodeai, let's make sure we enable effort modes for
+// their models. We want users to be able to toggle effort modes like they
+// can with Nvidia reliably anytime."
+//
+// The OFFICIAL docs (docs.privatemode.ai/models/overview, v1.57, fetched
+// live 2026-10-01) define PM's CURRENT reasoning surface — and it DISAGREES
+// with both the OpenRouter family inheritance (which handed glm-5.3 a
+// max-less ladder and kimi-latest a fake enum) and the v0.69 live probe
+// (whose deployed validator rejected 'max'; the surface has since evolved —
+// 'max' is now glm's DOCUMENTED DEFAULT):
+//
+//      GLM-5.3, GLM-5.3-Flash (+ -latest aliases) → reasoning_effort:
+//        low, high, max — default max, reasoning can't be switched off
+//        (any other value, incl. none, maps to max).
+//      gpt-oss-120b → reasoning_effort: low, medium, high — default medium.
+//      Kimi K2.6 (+ kimi-latest) → chat_template_kwargs:{"thinking":bool}
+//        — default on (deprecated Sep 28 2026).
+//      All chat models reason by default; reasoning returns in the `reasoning`
+//      field (deprecated copy in reasoning_content).
+//
+// Precedence: provider-live (SOURCE 1) still wins; then THIS table (the
+// provider's own documented surface — it knows its models better than OR's
+// family view); then the OR registry; then blankets. Only the ids the docs
+// enumerate are pinned here — anything else keeps the dynamic chain.
+
+// pmFamilyEffort returns the documented PM effort surface for a model, or
+// nil when the family isn't in the docs table (fall through to OR).
+func pmFamilyEffort(rawModel string) *EffortSpec {
+        s := strings.ToLower(rawModel)
+        s = strings.TrimPrefix(s, "privatemodeai/")
+        s = strings.TrimPrefix(s, "openai/") // PM hosts the aliased twin too
+        switch {
+        case strings.Contains(s, "kimi"):
+                // The verified PM toggle — even when the OR family carries an
+                // enum, PM's own API for kimi is the boolean (effortParamFor
+                // agrees).
+                return &EffortSpec{Levels: []string{"on", "off"}, Default: "on",
+                        CanDisable: true, Param: "chat_template_kwargs", Source: "pm-docs"}
+        case strings.Contains(s, "glm"):
+                // glm-5.2/5.3/flash + the -latest aliases all route to GLM-5.3;
+                // reasoning is MANDATORY (maps-to-max, never off).
+                return &EffortSpec{Levels: []string{"low", "high", "max"}, Default: "max",
+                        Mandatory: true, CanDisable: false, Param: "reasoning_effort", Source: "pm-docs"}
+        case strings.Contains(s, "gpt-oss"):
+                return &EffortSpec{Levels: []string{"low", "medium", "high"}, Default: "medium",
+                        CanDisable: true, Param: "reasoning_effort", Source: "pm-docs"}
+        case strings.Contains(s, "deepseek-ocr"):
+                // OCR model with special prompt formatting — no reasoning dial.
+                return &EffortSpec{Levels: []string{}, CanDisable: false, Param: "", Source: "pm-docs"}
+        }
+        return nil
 }
 
 // providerDefaultLevels — SOURCE 3: the never-blank blanket, v0.42 semantics
@@ -647,7 +714,12 @@ var effortCoerceMap = map[string]string{
 var providerNativeLevels = map[string]map[string]bool{
         "deepseek":      {"none": true, "low": true, "high": true, "max": true},
         "anthropic":     {"low": true, "medium": true, "high": true, "xhigh": true, "max": true},
-        "privatemodeai": {"none": true, "minimal": true, "low": true, "medium": true, "high": true},
+        // v0.83.2: 'max' JOINS the PM vocabulary — the current docs make it
+        // glm's default (low/high/max; none maps to max), superseding the
+        // v0.69 live 400 on 'max' (the deployed surface evolved). The
+        // pm-docs table bypasses this filter anyway; it stays as the OR-
+        // inheritance guard for UNLISTED PM ids, and max now survives it.
+        "privatemodeai": {"none": true, "minimal": true, "low": true, "medium": true, "high": true, "max": true},
 }
 
 // filterNativeLevels intersects a spec's enum levels with the provider's

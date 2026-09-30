@@ -209,15 +209,16 @@ func TestResolveEffortV42(t *testing.T) {
                 source    string
         }{
                 // PrivateMode — the disappearing-toggle bug's models.
-                {"pm kimi-k2.6 toggle", "privatemodeai", "kimi-k2.6", "on,off", "on", false, "chat_template_kwargs", "openrouter"},
-                // v0.69: the PM native ladder filter applies before the shape map —
-                // kimi keeps the CTK toggle shape but its UI ladder loses "max" too
-                // (the CTK boolean is level-agnostic; nothing semantic changes).
-                {"pm kimi-latest enum-but-kimi-shape (native ladder, v0.69)", "privatemodeai", "kimi-latest", "low,high", "high", false, "chat_template_kwargs", "openrouter"},
-                // v0.69: PM's DEPLOYED enum is the standard ladder — "max" never survives
-                // the native filter and the default snaps to "high" (the live 400 fix).
-                {"pm glm-5.3 mandatory enum (native ladder, v0.69)", "privatemodeai", "glm-5.3", "low,high", "high", true, "reasoning_effort", "openrouter"},
-                {"pm gpt-oss-120b enum", "privatemodeai", "gpt-oss-120b", "low,medium,high", "medium", true, "reasoning_effort", "openrouter"},
+                // v0.83.2: the PM DOCS TABLE (source "pm-docs") now sits between
+                // live + OR in the chain — kimi-latest is the verified on/off
+                // TOGGLE (not the OR-inherited fake enum), glm-5.x carries its
+                // documented low/high/max with DEFAULT max (mandatory — the
+                // current docs supersede the v0.69 deployed-enum filter), and
+                // gpt-oss keeps low/medium/high default medium.
+                {"pm kimi-k2.6 toggle", "privatemodeai", "kimi-k2.6", "on,off", "on", false, "chat_template_kwargs", "pm-docs"},
+                {"pm kimi-latest toggle (docs table, v0.83.2)", "privatemodeai", "kimi-latest", "on,off", "on", false, "chat_template_kwargs", "pm-docs"},
+                {"pm glm-5.3 mandatory enum (docs: low/high/max, default max)", "privatemodeai", "glm-5.3", "low,high,max", "max", true, "reasoning_effort", "pm-docs"},
+                {"pm gpt-oss-120b enum", "privatemodeai", "gpt-oss-120b", "low,medium,high", "medium", false, "reasoning_effort", "pm-docs"},
                 // NVIDIA — the blanket-on/off complaint.
                 {"nvidia lightning toggle (OR toggle-only)", "nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", "on,off", "on", false, "chat_template_kwargs", "openrouter"},
                 {"nvidia super enum", "nvidia", "nvidia/nemotron-3-super-120b-a12b", "low,medium", "medium", false, "reasoning_effort", "openrouter"},
@@ -311,7 +312,7 @@ func TestBuildEffortBodyForV42(t *testing.T) {
                 // PrivateMode shapes (research 3-c: kimi thinking, glm/gpt-oss reasoning_effort).
                 {"pm kimi on", "privatemodeai", "kimi-k2.6", "on", `{"chat_template_kwargs":{"thinking":true}}`},
                 {"pm kimi off", "privatemodeai", "kimi-k2.6", "off", `{"chat_template_kwargs":{"thinking":false}}`},
-                {"pm glm max — coerced onto the native ladder (v0.69)", "privatemodeai", "glm-5.3", "max", `{"reasoning_effort":"high"}`},
+                {"pm glm max — native per the v0.83.2 docs ladder (default max)", "privatemodeai", "glm-5.3", "max", `{"reasoning_effort":"max"}`},
                 {"pm glm low", "privatemodeai", "glm-5.3", "low", `{"reasoning_effort":"low"}`},
                 {"pm glm off — mandatory, never disable", "privatemodeai", "glm-5.3", "off", "null"},
                 {"pm gpt-oss high", "privatemodeai", "gpt-oss-120b", "high", `{"reasoning_effort":"high"}`},

@@ -1287,6 +1287,17 @@ async function roundTripOnce(c, opts, messages, force) {
       body.chat_template_kwargs = { thinking: true };
     }
   }
+  // v0.83.2 THE BROWSER-SIDE 400-RESILIENCE NET: the PM chat path is
+  // browser-only (the engine's retry-without-param net in chat.go can't
+  // cover it). A 400 whose body names the effort/thinking request fields
+  // (the same trigger words the engine's mentionsEffortParam uses, incl.
+  // the Pydantic literal_error family) retries ONCE with the effort params
+  // stripped — the turn still completes, only the dial is dropped. The
+  // recursion guard is force.noEffort (the second attempt never retries).
+  if (force && force.noEffort) {
+    delete body.reasoning_effort;
+    delete body.chat_template_kwargs;
+  }
   // v0.82.3 THE ANSWER-FORCE SHAPE: the final-answer nudge retry runs with
   // thinking DISABLED — the model that just finished inside reasoning_content
   // must not be handed the thinking toggle again. Kimi gets Moonshot's
@@ -1373,13 +1384,49 @@ async function roundTripOnce(c, opts, messages, force) {
     return out;
   } catch (e) {
     thinkClose(); // aborted/failed mid-thinking — freeze the timer anyway
+    if (e && e.name === 'AbortError') {
+      opts.onStatus && opts.onStatus('error');
+      pumpQueue = ''; // aborted round — stop the visual stream where it is
+      out.text = full; out.usage = usage; out.emitted = emitted; out.aborted = true; return out;
+    }
+    // v0.83.2: the effort-400 retry — see the force.noEffort note above.
+    if (!(force && force.noEffort) &&
+        (body.reasoning_effort || body.chat_template_kwargs) &&
+        mentionsEffort400(e)) {
+      opts.onProgress && opts.onProgress({ text: 'effort param rejected — retrying without it…' });
+      try {
+        return await roundTripOnce(c, opts, messages, { noEffort: true });
+      } catch (e2) { e = e2; /* fall through to the terminal path */ }
+    }
     opts.onStatus && opts.onStatus('error');
     pumpQueue = ''; // failed round — stop the visual stream where it is
-    if (e && e.name === 'AbortError') { out.text = full; out.usage = usage; out.emitted = emitted; out.aborted = true; return out; }
     out.err = e;
     out.emitted = emitted;
     return out;
   }
+}
+
+// v0.83.2: the PM twin of the engine's mentionsEffortParam trigger — a 400
+// that complains about the reasoning/effort/thinking REQUEST fields (not
+// auth, quota, the model id, the payload…). Mirrors chat.go's word list
+// (incl. the v0.69 Pydantic literal_error family PM deploys for enums).
+function mentionsEffort400(e) {
+  var s = String((e && (e.message || e.msg || e.detail)) || e || '').toLowerCase();
+  var status = (e && (e.status || e.statusCode || e.code)) || '';
+  if (status !== 400 && status !== '400' && s.indexOf('400') < 0 && s.indexOf('literal_error') < 0 &&
+      s.indexOf('validation error') < 0 && s.indexOf('input should be') < 0) {
+    return false; // not a request-validation 400
+  }
+  if (s.indexOf('reason') < 0 && s.indexOf('effort') < 0 && s.indexOf('thinking') < 0 &&
+      s.indexOf('chat_template') < 0) {
+    return false; // a 400 about something else (auth/quota/model/payload)
+  }
+  return s.indexOf('unexpected') >= 0 || s.indexOf('unknown') >= 0 ||
+    s.indexOf('unrecognized') >= 0 || s.indexOf('not supported') >= 0 ||
+    s.indexOf('unsupported') >= 0 || s.indexOf('invalid') >= 0 ||
+    s.indexOf('additional') >= 0 || s.indexOf('not allowed') >= 0 ||
+    s.indexOf('prohibited') >= 0 || s.indexOf('literal_error') >= 0 ||
+    s.indexOf('validation error') >= 0 || s.indexOf('input should be') >= 0;
 }
 
 window.PMBridge = {
