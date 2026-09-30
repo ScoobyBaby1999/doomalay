@@ -205,37 +205,48 @@
     // v0.75 (user spec item 2): the variation limit is DOUBLED — 100 now
     // means ±170%, so some dots nearly vanish and some grow huge, lines
     // get hair-thin and extra long. The paint floors keep them visible.
-    var sizeFracL = sizeVarL / 100 * 1.7;  // 100 → ±170% of base
-    var sizeFracD = sizeVarD / 100 * 1.7;
-    // v0.81.1 THE BIAS ODDITY (user spec: "with size at 0 or max and bias
-    // opposite, big/small outliers should still appear; bias should make
-    // opposite-size dots/lines a common occurrence, not rare"). Two halves:
-    //   · BIAS INJECTS ITS OWN SPREAD — the SIZE the frame paints with is
-    //     the EFFECTIVE variation effFrac = max(sizeFrac, |bias|/100 · 0.5).
-    //     Before, size 0 meant sizeFrac 0 → jr = base EXACTLY and the warp
-    //     multiplied into nothing: bias was a dead slider at size 0 (no
-    //     outlier could ever appear, the depth lattice forced the mid band).
-    //     Now full bias alone paints ±50% sizes — outliers exist, and the
-    //     lattice/depth machinery (depthT/bandOf, task 4's over-icons
+    // v0.83.1 THE WEIGHT (user spec: "make the largest and smallest sizes
+    // double or 1.5x what they are now"): ±170% → ±340% — the biggest
+    // dots reach 4.4× base (was 2.7×, +63%, inside the user's 1.5–2×
+    // window) and the smallest ride the paint floors as before. The paint
+    // floors keep them visible.
+    var sizeFracL = sizeVarL / 100 * 3.4;  // 100 → ±340% of base
+    var sizeFracD = sizeVarD / 100 * 3.4;
+    // v0.81.1 THE BIAS ODDITY + v0.83.1 THE WEIGHT (user spec: "make the
+    // size bias effect more… setting size bias to min makes big stars
+    // very rare, same with lines, and vise versa"). Three halves:
+    //   · BIAS INJECTS ITS OWN SPREAD — effFrac = max(sizeFrac,
+    //     |bias|/100 · 1.7): full bias alone now paints the OLD full
+    //     variation spread (was ±50%), so outliers always exist and the
+    //     lattice/depth machinery (depthT/bandOf, the over-icons
     //     threshold) rides the SAME effFrac so depth follows what's painted.
+    //   · the warp EXPONENT doubles (2^(-b) → 2^(-2b)): at ±100 the size
+    //     hash warps as h⁴ / ∜h — at MIN the big hashes are pushed hard
+    //     down (big stars genuinely RARE), at MAX the small hashes are
+    //     pushed to ~1 (smalls RARE — the vise versa). Mid-bias stays a
+    //     smooth tilt.
     //   · bias 0 → effFrac = sizeFrac and the warp is the identity → the
     //     pre-v0.81 frame, byte-identical (the no-bias path never shifts).
-    var effFracL = Math.max(sizeFracL, Math.abs(biasL) / 100 * 0.5);
-    var effFracD = Math.max(sizeFracD, Math.abs(biasD) / 100 * 0.5);
+    var effFracL = Math.max(sizeFracL, Math.abs(biasL) / 100 * 1.7);
+    var effFracD = Math.max(sizeFracD, Math.abs(biasD) / 100 * 1.7);
     var rotDegL = rotVarL * 0.6;           // 100 → 60deg max
     var rotDegD = rotVarD * 0.6;
     // v0.75 SIZE BIAS: a power warp on the per-element size hash — a
     // positive bias pushes the draw toward LARGER sizes, negative toward
-    // smaller. v0.81.1: the warp SOFTENS (2^(−2·b) → 2^(−b)) so the
-    // OPPOSITE tail is a common occurrence, not a rare one: at ±100 the
-    // old exponent (0.25/4) left only ~6-16% on the wrong side and piled
-    // the favored side against the ceiling; the softened one (0.5/2)
-    // splits ~75/25 — a clear tilt whose minority is a COMMON sight (the
-    // user's words), while the extreme h→0/h→1 outliers still reach the
-    // full ±effFrac range. 0 is the identity (no warp, the pre-v0.75
-    // distribution — and with effFrac = sizeFrac there, byte-identical).
-    var bExpL = Math.pow(2, -1 * (biasL / 100));
-    var bExpD = Math.pow(2, -1 * (biasD / 100));
+    // smaller. v0.81.1 softened the warp (2^(-b), a ~75/25 split — the
+    // then-spec wanted the opposite tail COMMON). v0.83.1 THE WEIGHT
+    // (user spec: "setting size bias to min makes big stars very rare,
+    // same with lines, and vise versa"): the warp SHARPENS to
+    // 2^(-2.5·b) — at ±100 the exponent is 5 / 0.2, so at MIN the big
+    // hashes are pushed hard down (P(h⁵ > 0.55) ≈ 11% barely-big,
+    // ≈ 8% clearly-big ≥1.6× — RARE vs ~41% unbiased) and at MAX the
+    // small hashes are pushed to ~1 (P(h^0.2 < 0.47) ≈ 2% — smalls
+    // VERY rare, the vise versa). The effFrac floor rides the same
+    // extremes (1.7 at full bias), so the favored side spans the full
+    // doubled range. 0 stays the identity (no warp, and with
+    // effFrac = sizeFrac there, byte-identical).
+    var bExpL = Math.pow(2, -2.5 * (biasL / 100));
+    var bExpD = Math.pow(2, -2.5 * (biasD / 100));
     function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
     function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
     // v0.75 ANIMATE: the ambient clock (stable per-element phases come
@@ -250,6 +261,10 @@
     // base width 1 so n matches what the counters saw.
     var dbgDotSmall = 0, dbgDotBig = 0, dbgLineSmall = 0, dbgLineBig = 0;
     var dbgFullLines = 0;
+    // v0.83.1: the weight twin — per-frame size EXTREMES (the red-team
+    // proves the doubled range + the bias tilt: min/max jr ratio and
+    // min/max segment width, in units of their base).
+    var dbgJrMin = Infinity, dbgJrMax = 0, dbgWMin = Infinity, dbgWMax = 0;
 
     const scaledGrid = gridSpacing() * scale;
     // v0.75: ONE frame — the lattice never lags (the v0.67 per-plane
@@ -347,11 +362,24 @@
     // direction, phase — all from the stable cell hashes, no state). The
     // normalized speed rides back for the brightness ramp — the meteor
     // brightens as it rushes.
+    // v0.77 THE SHOOTING-STAR SHUTTLE … v0.83.1 THE PENDULUM (user spec:
+    // "Lines should also not snap back to their starting position when
+    // animate is on, instead, they should swing back like they do forth,
+    // and go for larger distances"). The v0.77 return leg INVERTED the
+    // travel (0.5 − eased with s = 2−u), so at the leg boundary u=1 the
+    // segment TELEPORTED from +0.5·dist to −0.5·dist — every return began
+    // with the snap-back the user saw. THE FIX: both legs share
+    // travel = eased − 0.5; on the return s = 2−u runs eased 1→0, so
+    // travel runs +0.5→−0.5 CONTINUOUSLY — a true swing back along the
+    // same axis, easing out of the far point and decelerating into the
+    // near one (the mirror of the forth's slow-start/hard-arrival), with
+    // the per-segment kB variation intact. The distance DOUBLES the
+    // reach: 0.45–1.2× spacing → 0.8–2.0× (the "larger distances").
     function shuttle(hx, hy) {
       var dur  = 1.6 + hashCell(hx + 17, hy + 17) * 2.4;    // s per leg
       var kF   = 2.6 + hashCell(hx + 19, hy + 19) * 1.6;    // forward exponent
       var kB   = 2.2 + hashCell(hx + 21, hy + 21) * 1.6;     // back exponent (the variation)
-      var dist = 0.45 + hashCell(hx + 23, hy + 23) * 0.75;   // × spacing
+      var dist = 0.8 + hashCell(hx + 23, hy + 23) * 1.2;     // × spacing (v0.83.1: larger)
       var dir  = hashCell(hx + 25, hy + 25) < 0.5 ? -1 : 1; // along its axis
       var ph   = hashCell(hx + 27, hy + 27) * dur;           // phase stagger
       var u = ((animT + ph) / dur) % 2;
@@ -360,7 +388,7 @@
       var k = legFwd ? kF : kB;
       var ek = Math.exp(k);
       var eased = (Math.exp(k * s) - 1) / (ek - 1);          // exponential ease-in
-      var travel = legFwd ? (eased - 0.5) : (0.5 - eased);   // −0.5…+0.5 of dist
+      var travel = eased - 0.5;                               // −0.5…+0.5, CONTINUOUS at both leg boundaries
       return { off: dir * dist * travel, spd: Math.exp(k * (s - 1)) };
     }
 
@@ -449,6 +477,8 @@
               (animLines ? (0.9 + hashCell(ix + 35, iyS + 37) * 0.9) : 1) *
               (1 + effFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
             if (segW < 0.9) dbgLineSmall++; else if (segW > 1.1) dbgLineBig++;
+            if (segW < dbgWMin) dbgWMin = segW;
+            if (segW > dbgWMax) dbgWMax = segW;
             // v0.77 ANIMATE LINES — THE SHOOTING STAR: the segment
             // shuttles ALONG the line's own (rotated) axis — inside this
             // rotated frame the local Y IS the facing direction — with
@@ -525,6 +555,8 @@
               (animLines ? (0.9 + hashCell(ixS + 37, iy + 35) * 0.9) : 1) *
               (1 + effFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
             if (segW2 < 0.9) dbgLineSmall++; else if (segW2 > 1.1) dbgLineBig++;
+            if (segW2 < dbgWMin) dbgWMin = segW2;
+            if (segW2 > dbgWMax) dbgWMax = segW2;
             var drift2 = 0, tal2 = 1;
             if (animLines) {
               var sh2 = shuttle(ixS + 47, iy + 49);   // decorrelated salts from the vertical axis
@@ -586,6 +618,11 @@
           var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
           var jr = dotR * (1 + effFracD * (hd2 - 0.5) * 2);
           if (jr < dotRBase * 0.9) dbgDotSmall++; else if (jr > dotRBase * 1.1) dbgDotBig++;
+          // v0.83.1: the weight twin — ratio extremes (pre-pulse, pre-floor
+          // floors would mask the true spread)
+          var jrRaw = jr / dotRBase;
+          if (jrRaw < dbgJrMin) dbgJrMin = jrRaw;
+          if (jrRaw > dbgJrMax) dbgJrMax = jrRaw;
           // v0.81.2 THE OVER-ICONS LAYER: this dot renders ABOVE the
           // chatbot icons when the amplifier is ≥ 50% and its (stable,
           // pre-pulse) size exceeds 70% of the max allowed random size —
@@ -669,6 +706,10 @@
       // v0.81.1: the size-distribution twin (bias-oddity contract)
       dotStats: { small: dbgDotSmall, big: dbgDotBig, n: dbgDots },
       lineStats: { small: dbgLineSmall, big: dbgLineBig, n: dbgSegs + dbgFullLines },
+      // v0.83.1: the weight twin — the frame's size EXTREMES (ratios vs
+      // base; Infinity/0 when that side painted nothing this frame)
+      weight: { jrMin: dbgJrMin, jrMax: dbgJrMax, wMin: dbgWMin, wMax: dbgWMax,
+        effFracD: effFracD, effFracL: effFracL },
       // v0.81.2: the over-icons twin — what routed ABOVE #chatbots this
       // frame (dots + lines: full lines AND segments), plus the gate
       overIcons: { on: !!(overDotsOn || overLinesOn),

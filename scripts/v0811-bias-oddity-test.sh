@@ -7,13 +7,17 @@
 #      no big outliers) — the no-bias path never shifts.
 #  (2) SIZE 0 + BIAS ±100 → OUTLIERS APPEAR (dotStats small+big > 0);
 #      before v0.81.1 bias was a dead slider at size 0 (spread 0).
-#  (3) THE OPPOSITE TAIL IS COMMON — at full bias the non-favored side
-#      holds ≥ 12% of dots (the user's "common occurrence, not rare";
-#      the old exponent left ~6-16% with the pile-up just-off-mid).
-#  (4) THE TILT STILL TILTS — the favored side outnumbers the opposite.
-#  (5) SIZE MAX + BIAS OPPOSITE → outliers on BOTH sides, opposite ≥ 12%.
+#  (3) THE TILT TILTS — the favored side dominates the opposite.
+#      v0.83.1 SUPERSEDED the "opposite tail common (≥12%)" contract:
+#      the user's new spec ("size bias to min makes big stars very
+#      rare… vise versa") sharpened the warp exponent (2^(-b) →
+#      2^(-2.5b)) — the opposite tail is now RARE (≤15%) by design.
+#      The rare-tail assertions live in v0831-weight-test.sh.
+#  (4) SIZE 0 + BIAS: the favored side outnumbers the opposite.
+#  (5) SIZE MAX + BIAS OPPOSITE → outliers on BOTH sides, tilt intact.
 #  (6) LINES RIDE THE SAME CONTRACT (lineStats via segment widths).
-#  (7) BIAS 0 + SIZE 100 (regression): the classic ±170% spread intact.
+#  (7) BIAS 0 + SIZE 100 (regression): the classic spread intact —
+#      v0.83.1 doubled ±170% → ±340%, so both tails ≥25% still holds.
 set -u
 cd "$(dirname "$0")/.."
 ENG=/tmp/doomalay-engine
@@ -80,8 +84,8 @@ S1=$(pd "$(snap)")
 read -r N1 SM1 BG1 LSM1 LBG1 <<< "$S1"
 Z2=$(python3 -c "print('yes' if $N1 > 0 and ($SM1 + $BG1) > 0 else 'no')")
 ck "size 0 + bias 100: outliers APPEAR at all (dot small+big > 0%)" "$Z2" "$S1"
-Z3=$(python3 -c "print('yes' if $SM1 >= 12 and $BG1 >= 12 else 'no')")
-ck "size 0 + bias 100: BOTH tails common (≥12% small AND ≥12% big)" "$Z3" "small ${SM1}% big ${BG1}%"
+Z3=$(python3 -c "print('yes' if $BG1 > 40 else 'no')")
+ck "size 0 + bias +100: favored side dominates (big > 40%)" "$Z3" "small ${SM1}% big ${BG1}%"
 Z4=$(python3 -c "print('yes' if $BG1 > $SM1 else 'no')")
 ck "size 0 + bias +100: the tilt still tilts (big > small)" "$Z4" "small ${SM1}% big ${BG1}%"
 
@@ -89,8 +93,8 @@ ck "size 0 + bias +100: the tilt still tilts (big > small)" "$Z4" "small ${SM1}%
 setstate "{ dotSizeVariation: 100, lineSizeVariation: 100, dotSizeBias: -100, lineSizeBias: -100 }"
 S2=$(pd "$(snap)")
 read -r N2 SM2 BG2 LSM2 LBG2 <<< "$S2"
-Z5=$(python3 -c "print('yes' if $SM2 >= 12 and $BG2 >= 12 else 'no')")
-ck "size 100 + bias −100: opposite tail (big) common too (≥12% both)" "$Z5" "small ${SM2}% big ${BG2}%"
+Z5=$(python3 -c "print('yes' if ($SM2 + $BG2) > 0 and $BG2 <= 15 else 'no')")
+ck "size 100 + bias −100: opposite tail (big) now RARE (≤15%, v0.83.1)" "$Z5" "small ${SM2}% big ${BG2}%"
 Z6=$(python3 -c "print('yes' if $SM2 > $BG2 else 'no')")
 ck "size 100 + bias −100: tilt points small (small > big)" "$Z6" "small ${SM2}% big ${BG2}%"
 
@@ -98,8 +102,8 @@ ck "size 100 + bias −100: tilt points small (small > big)" "$Z6" "small ${SM2}
 setstate "{ dotSizeBias: 100, lineSizeBias: 100, dotSizeVariation: 0, lineSizeVariation: 0 }"
 S3=$(pd "$(snap)")
 read -r N3 SM3 BG3 LSM3 LBG3 <<< "$S3"
-Z7=$(python3 -c "print('yes' if ($LSM3 + $LBG3) > 0 and $LSM3 >= 10 and $LBG3 >= 10 else 'no')")
-ck "lines: size 0 + bias 100 spreads widths too (both tails ≥10%)" "$Z7" "line small ${LSM3}% big ${LBG3}%"
+Z7=$(python3 -c "print('yes' if ($LSM3 + $LBG3) > 0 and $LBG3 > $LSM3 else 'no')")
+ck "lines: size 0 + bias 100 spreads widths too (tilt: big > small)" "$Z7" "line small ${LSM3}% big ${LBG3}%"
 
 # (7) regression: bias 0 + size 100 keeps the classic spread
 setstate "{ dotSizeBias: 0, lineSizeBias: 0, dotSizeVariation: 100, lineSizeVariation: 100 }"
