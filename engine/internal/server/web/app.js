@@ -55,6 +55,11 @@
   // ── Canvas / grid state ────────────────────────────────────────
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
+  // v0.81.2 THE OVER-ICONS LAYER: the twin canvas ABOVE #chatbots —
+  // same camera, same DPR, pure paint (pointer-events:none). renderGrid
+  // routes the biggest dots/lines here when the amplifier is ≥ 50%.
+  const canvas2 = document.getElementById('c2');
+  const ctx2 = canvas2 ? canvas2.getContext('2d') : null;
   const dpr = window.devicePixelRatio || 1;
 
   let W = 0, H = 0;
@@ -90,6 +95,14 @@
     canvas.style.width = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // v0.81.2: the over-icons twin rides the EXACT same geometry
+    if (canvas2 && ctx2) {
+      canvas2.width = Math.floor(W * dpr);
+      canvas2.height = Math.floor(H * dpr);
+      canvas2.style.width = W + 'px';
+      canvas2.style.height = H + 'px';
+      ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
     update();
   }
 
@@ -299,6 +312,31 @@
     // paint before the dots block runs)
     var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
 
+    // ── v0.81.2 THE OVER-ICONS LAYER ────────────────────────────
+    // User spec: "with grid parallax at max AND amplify parallax ≥50%,
+    // dots/lines exceeding 70% of max allowed random size must render
+    // ABOVE canvas icons instead of beneath them." The app has ONE
+    // parallax dial — Amplify parallax (the v0.75 rename of Space
+    // parallax; grid + amplify are the same slider) — so "grid parallax
+    // at max AND amplify ≥50%" resolves to the amplifier ≥ 50% (its own
+    // hint already promised "YOUR biggest dots + lines sweep closest
+    // (past the icons)" — the MOTION kept that promise via pf > 1; this
+    // wave makes the PAINT ORDER honor it too: the qualifying elements
+    // draw on #c2, a twin canvas ABOVE #chatbots, below dragged bots).
+    // Thresholds: 70% of the MAX ALLOWED RANDOM SIZE — dots: 0.7 ×
+    // dotRBase·(1+effFracD); lines: 0.7 × 1·(1+effFracL) (base width 1).
+    // Uniform sides exempt themselves exactly like the depth lattice
+    // (depthT's own > 0.02 rule — no spread → no "biggest" to bring
+    // forward): with effFrac ≤ 0.02 nothing routes over the icons.
+    // The c2 frame is cleared every paint (below); amp < 0.5 leaves it
+    // empty — byte-identical default at any size settings.
+    var overDotsOn = !!(ctx2 && amp >= 0.5 && effFracD > 0.02);
+    var overLinesOn = !!(ctx2 && amp >= 0.5 && effFracL > 0.02);
+    var overThreshD = 0.7 * dotRBase * (1 + effFracD);
+    var overThreshL = 0.7 * (1 + effFracL);
+    var dbgOverDots = 0, dbgOverLines = 0;
+    if (ctx2) ctx2.clearRect(0, 0, W, H);
+
     // v0.77 THE SHOOTING-STAR SHUTTLE (user spec: "make them shoot like
     // shooting stars back and forth, moving slowly at first, then at an
     // exponential curve they move fast to the new location then back at
@@ -371,17 +409,25 @@
         var rot = rotDegL * (hashCell(ix, 1) - 0.5) * 2;  // radians
         var lwBase = 1 * (1 + effFracL * (warpL(hashCell(ix, 2)) - 0.5) * 2);
         if (lwBase < 0.9) dbgLineSmall++; else if (lwBase > 1.1) dbgLineBig++;
-        if (lineSampler) ctx.strokeStyle = lineSampler(x, H / 2);
-        ctx.save();
-        ctx.translate(x + dx, 0);
-        ctx.rotate(rot * Math.PI / 180);
+        // v0.81.2: the whole line's plane — over-icons when its width
+        // hash exceeds 70% of the max allowed random width (full-line
+        // mode rides the line's own width; segment mode re-decides per
+        // segment below — segments are the per-element form)
+        var lc = (overLinesOn && !segMode && lwBase > overThreshL) ? ctx2 : ctx;
+        if (lc === ctx2) dbgOverLines++;
+        if (lineSampler) lc.strokeStyle = lineSampler(x, H / 2);
+        else if (lc === ctx2) lc.strokeStyle = ctx.strokeStyle;
+        if (overLinesOn && segMode) { ctx2.save(); ctx2.translate(x + dx, 0); ctx2.rotate(rot * Math.PI / 180); }
+        lc.save();
+        lc.translate(x + dx, 0);
+        lc.rotate(rot * Math.PI / 180);
         if (!segMode) {
           dbgFullLines++;
-          ctx.lineWidth = Math.max(0.3, lwBase);
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(0, H);
-          ctx.stroke();
+          lc.lineWidth = Math.max(0.3, lwBase);
+          lc.beginPath();
+          lc.moveTo(0, 0);
+          lc.lineTo(0, H);
+          lc.stroke();
         } else {
           for (let y = lStartY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
             var iyS = Math.round((y + offsetY * scale * lPF) / scaledGrid);
@@ -416,17 +462,26 @@
               tal = 0.42 + 0.58 * sh.spd;
             }
             if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
-            ctx.lineWidth = segW;
-            if (tal < 1) ctx.globalAlpha = tal;
-            ctx.beginPath();
-            ctx.moveTo(0, y - segLen / 2 + drift);
-            ctx.lineTo(0, y + segLen / 2 + drift);
-            ctx.stroke();
-            if (tal < 1) ctx.globalAlpha = 1;
+            // v0.81.2: each segment qualifies by its OWN width — the
+            // per-element form of a line ("lines get the dots' behavior"
+            // extended to layering: the fat dashes pass in front of the
+            // icons, the thin ones stay behind)
+            var sc = (overLinesOn && segW > overThreshL) ? ctx2 : ctx;
+            if (sc === ctx2) dbgOverLines++;
+            if (lineSampler) sc.strokeStyle = ctx.strokeStyle;
+            else if (sc === ctx2) sc.strokeStyle = ctx.strokeStyle;
+            sc.lineWidth = segW;
+            if (tal < 1) sc.globalAlpha = tal;
+            sc.beginPath();
+            sc.moveTo(0, y - segLen / 2 + drift);
+            sc.lineTo(0, y + segLen / 2 + drift);
+            sc.stroke();
+            if (tal < 1) sc.globalAlpha = 1;
             dbgSegs++;
           }
         }
-        ctx.restore();
+        lc.restore();
+        if (overLinesOn && segMode) ctx2.restore();
         lineIdx++;
       }
       for (let y = lStartY; y < H; y += scaledGrid) {
@@ -439,17 +494,22 @@
         var rot2 = rotDegL * (hashCell(1, iy) - 0.5) * 2;
         var lw2Base = 1 * (1 + effFracL * (warpL(hashCell(2, iy)) - 0.5) * 2);
         if (lw2Base < 0.9) dbgLineSmall++; else if (lw2Base > 1.1) dbgLineBig++;
-        if (lineSampler) ctx.strokeStyle = lineSampler(W / 2, y);
-        ctx.save();
-        ctx.translate(0, y + dy);
-        ctx.rotate(rot2 * Math.PI / 180);
+        // v0.81.2: the horizontal twin of the vertical block's routing
+        var lc2 = (overLinesOn && !segMode && lw2Base > overThreshL) ? ctx2 : ctx;
+        if (lc2 === ctx2) dbgOverLines++;
+        if (lineSampler) lc2.strokeStyle = lineSampler(W / 2, y);
+        else if (lc2 === ctx2) lc2.strokeStyle = ctx.strokeStyle;
+        if (overLinesOn && segMode) { ctx2.save(); ctx2.translate(0, y + dy); ctx2.rotate(rot2 * Math.PI / 180); }
+        lc2.save();
+        lc2.translate(0, y + dy);
+        lc2.rotate(rot2 * Math.PI / 180);
         if (!segMode) {
           dbgFullLines++;
-          ctx.lineWidth = Math.max(0.3, lw2Base);
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(W, 0);
-          ctx.stroke();
+          lc2.lineWidth = Math.max(0.3, lw2Base);
+          lc2.beginPath();
+          lc2.moveTo(0, 0);
+          lc2.lineTo(W, 0);
+          lc2.stroke();
         } else {
           for (let x2 = lStartX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
             var ixS = Math.round((x2 + offsetX * scale * lPF) / scaledGrid);
@@ -472,17 +532,23 @@
               tal2 = 0.42 + 0.58 * sh2.spd;
             }
             if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
-            ctx.lineWidth = segW2;
-            if (tal2 < 1) ctx.globalAlpha = tal2;
-            ctx.beginPath();
-            ctx.moveTo(x2 - segLen2 / 2 + drift2, 0);
-            ctx.lineTo(x2 + segLen2 / 2 + drift2, 0);
-            ctx.stroke();
-            if (tal2 < 1) ctx.globalAlpha = 1;
+            // v0.81.2: per-segment routing — the horizontal twin
+            var sc2 = (overLinesOn && segW2 > overThreshL) ? ctx2 : ctx;
+            if (sc2 === ctx2) dbgOverLines++;
+            if (lineSampler) sc2.strokeStyle = ctx.strokeStyle;
+            else if (sc2 === ctx2) sc2.strokeStyle = ctx.strokeStyle;
+            sc2.lineWidth = segW2;
+            if (tal2 < 1) sc2.globalAlpha = tal2;
+            sc2.beginPath();
+            sc2.moveTo(x2 - segLen2 / 2 + drift2, 0);
+            sc2.lineTo(x2 + segLen2 / 2 + drift2, 0);
+            sc2.stroke();
+            if (tal2 < 1) sc2.globalAlpha = 1;
             dbgSegs++;
           }
         }
-        ctx.restore();
+        lc2.restore();
+        if (overLinesOn && segMode) ctx2.restore();
       }
       dbgLineBands.push(lBandN);
      }
@@ -520,6 +586,14 @@
           var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
           var jr = dotR * (1 + effFracD * (hd2 - 0.5) * 2);
           if (jr < dotRBase * 0.9) dbgDotSmall++; else if (jr > dotRBase * 1.1) dbgDotBig++;
+          // v0.81.2 THE OVER-ICONS LAYER: this dot renders ABOVE the
+          // chatbot icons when the amplifier is ≥ 50% and its (stable,
+          // pre-pulse) size exceeds 70% of the max allowed random size —
+          // the paint-order half of the "past the icons" promise. The
+          // animate pulse scales whichever layer the dot rides (no
+          // threshold flicker — qualification uses the hash size).
+          var dc = (overDotsOn && jr > overThreshD) ? ctx2 : ctx;
+          if (dc === ctx2) dbgOverDots++;
           var jrot = rotDegD * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
           // v0.75 ANIMATE DOTS — the twinkle (user spec: "rotate and
           // grow/shrink at varying speeds"): a scale PULSE (grow/shrink,
@@ -540,37 +614,38 @@
             var orA = animT * osp + tph;
             tox = Math.cos(orA) * orR; toy = Math.sin(orA) * orR;
           }
-          if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
+          if (dotSampler) dc.fillStyle = dotSampler(x + jx, y + jy);
+          else if (dc === ctx2) dc.fillStyle = ctx.fillStyle;
           // v0.77.9: the near band's BIGGEST dots catch the light — the
           // v0.77 glow look on the user's own elements (a halo under the
           // core + the light-lifted tone), never spawned circles
           var nearGlow = dotBands > 1 && db === AMP_BANDS - 1 &&
             jr >= dotRBase * 1.6 && glowFill;
-          if (nearGlow) ctx.fillStyle = glowFill;
-          ctx.save();
-          if (tal < 1) ctx.globalAlpha = tal;
+          if (nearGlow) dc.fillStyle = glowFill;
+          dc.save();
+          if (tal < 1) dc.globalAlpha = tal;
           if (nearGlow && jr >= 1.6) {
             try {
-              var hg2 = ctx.createRadialGradient(x + jx + tox, y + jy + toy, jr * 0.35, x + jx + tox, y + jy + toy, jr * 2.6);
-              hg2.addColorStop(0, ctx.fillStyle);
+              var hg2 = dc.createRadialGradient(x + jx + tox, y + jy + toy, jr * 0.35, x + jx + tox, y + jy + toy, jr * 2.6);
+              hg2.addColorStop(0, dc.fillStyle);
               hg2.addColorStop(1, 'rgba(0,0,0,0)');
-              var ga = ctx.globalAlpha;
-              ctx.globalAlpha = ga * 0.55;
-              ctx.beginPath();
-              ctx.arc(x + jx + tox, y + jy + toy, jr * 2.6, 0, Math.PI * 2);
-              ctx.fillStyle = hg2;
-              ctx.fill();
-              ctx.globalAlpha = ga;
-              if (dotSampler) ctx.fillStyle = dotSampler(x + jx, y + jy);
-              if (glowFill) ctx.fillStyle = glowFill;
+              var ga = dc.globalAlpha;
+              dc.globalAlpha = ga * 0.55;
+              dc.beginPath();
+              dc.arc(x + jx + tox, y + jy + toy, jr * 2.6, 0, Math.PI * 2);
+              dc.fillStyle = hg2;
+              dc.fill();
+              dc.globalAlpha = ga;
+              if (dotSampler) dc.fillStyle = dotSampler(x + jx, y + jy);
+              if (glowFill) dc.fillStyle = glowFill;
             } catch (e) {}
           }
-          ctx.translate(x + jx + tox, y + jy + toy);
-          if (jrot) ctx.rotate(jrot * Math.PI / 180);
-          ctx.beginPath();
-          ctx.arc(0, 0, Math.max(0.15, jr), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+          dc.translate(x + jx + tox, y + jy + toy);
+          if (jrot) dc.rotate(jrot * Math.PI / 180);
+          dc.beginPath();
+          dc.arc(0, 0, Math.max(0.15, jr), 0, Math.PI * 2);
+          dc.fill();
+          dc.restore();
           dbgDots++;
         }
       }
@@ -593,7 +668,15 @@
       dotBands: dbgDotBands, lineBands: dbgLineBands,
       // v0.81.1: the size-distribution twin (bias-oddity contract)
       dotStats: { small: dbgDotSmall, big: dbgDotBig, n: dbgDots },
-      lineStats: { small: dbgLineSmall, big: dbgLineBig, n: dbgSegs + dbgFullLines } };
+      lineStats: { small: dbgLineSmall, big: dbgLineBig, n: dbgSegs + dbgFullLines },
+      // v0.81.2: the over-icons twin — what routed ABOVE #chatbots this
+      // frame (dots + lines: full lines AND segments), plus the gate
+      overIcons: { on: !!(overDotsOn || overLinesOn),
+        dots: dbgOverDots, lines: dbgOverLines,
+        threshD: overDotsOn ? overThreshD : null,
+        threshL: overLinesOn ? overThreshL : null },
+      // v0.81.2: the camera twin — rigs prove pans actually moved it
+      camera: { x: offsetX, y: offsetY, scale: scale } };
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────

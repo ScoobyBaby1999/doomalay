@@ -4725,6 +4725,12 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<!-- v0.81.2 THE OVER-ICONS LAYER: a second canvas ABOVE the chatbot
+     icons (z 150 > #chatbots' 100; below a dragged bot 200, the dock
+     500 and every panel) — the biggest dots/lines paint HERE when the
+     amplifier is engaged (see app.js renderGrid). pointer-events:none:
+     it is pure paint, never interaction. -->
+<canvas id="c2" style="position:fixed;top:0;left:0;touch-action:none;pointer-events:none;z-index:150"></canvas>
 <div id="chatbots"></div>
 <div id="menu" class="hidden">
   <button data-action="new-chat">＋ New Chat</button>

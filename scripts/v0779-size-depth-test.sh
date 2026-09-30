@@ -112,10 +112,29 @@ ck "uniform sizes: all dots in one mid band (no fake spread)" "$Z4" "$D2"
 # (5) the pixel proof: near-band dots displace more than far-band on pan
 #     (direct canvas reads; a 20px sub-cell pan so no lattice-fold aliasing)
 ev "(function(){ Settings.setState({ spaceParallax: 100, dotSizeVariation: 80 }); return 'on'; })()" >/dev/null; sleep 1.2
-SCANJS="var c=document.getElementById('c'); var ctx=c.getContext('2d'); try { var W=c.width,H=c.height; var img=ctx.getImageData(0,0,W,H).data; var bright=[],dim=[]; for(var y=2;y<H-2;y+=2){ var runB=null,runD=null; for(var x=1;x<W-1;x++){ var i=(y*W+x)*4; var s=img[i]+img[i+1]+img[i+2]; if(s>250){ if(runB===null)runB=[x,x]; else runB[1]=x; } else { if(runB&&runB[1]-runB[0]>=4)bright.push([(runB[0]+runB[1])/2|0,y]); runB=null; } if(s>130&&s<=250){ if(runD===null)runD=[x,x]; else runD[1]=x; } else { if(runD&&runD[1]-runD[0]>=1)dim.push([(runD[0]+runD[1])/2|0,y]); runD=null; } } } return {bright:bright,dim:dim}; } catch(e){ return null; }"
-Z5=$(ev "(function(){ var r = (function(){ $SCANJS })(); window.__v0779before = r; return r ? ('b=' + r.bright.length + ' d=' + r.dim.length) : 'scan-failed'; })()")
-ev "(function(){ var c=document.getElementById('c'); function fire(t,x,y){c.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));} fire('mousedown',300,420); fire('mousemove',280,420); fire('mouseup',280,420); return 'panned'; })()" >/dev/null; sleep 2
-Z5B=$(ev "(function(){ var before = window.__v0779before; var r = (function(){ $SCANJS })(); if (!before || !r) return 'no:scan-failed'; function avg(A,B){ var sh=[],used={}; for(var i=0;i<A.length;i++){ var best=-1,bd=42; for(var j=0;j<B.length;j++){ if(used[j])continue; if(Math.abs(B[j][1]-A[i][1])>8)continue; var d=Math.abs(B[j][0]-A[i][0]); if(d<bd){best=j;bd=d;} } if(best>=0){used[best]=1;sh.push(B[best][0]-A[i][0]);} } if(sh.length<2)return null; return sh.reduce(function(a,b){return a+b;},0)/sh.length; } var bs=avg(before.bright,r.bright), ds=avg(before.dim,r.dim); if(bs===null||ds===null) return 'no:no-match'; return (Math.abs(bs)>Math.abs(ds)+1)?('yes:'+bs.toFixed(1)+'-vs-'+ds.toFixed(1)):('no:'+bs.toFixed(1)+'-vs-'+ds.toFixed(1)); })()")
+# v0.81.2 re-pin: the pixel proof scans BOTH canvases SEPARATELY and
+# matches within each — the biggest (glow) dots now paint on #c2, the
+# over-icons layer above #chatbots; pooling the two scans into one
+# nearest-match doubled the density and degenerated the pairing.
+SCANJS="function scanOne(id){ var c=document.getElementById(id); var ctx=c.getContext('2d'); var bright=[],dim=[]; try { var W=c.width,H=c.height; var img=ctx.getImageData(0,0,W,H).data; for(var y=2;y<H-2;y+=2){ var runB=null,runD=null; for(var x=1;x<W-1;x++){ var i=(y*W+x)*4; if(img[i+3]===0){ if(runB&&runB[1]-runB[0]>=4)bright.push([(runB[0]+runB[1])/2|0,y]); runB=null; if(runD&&runD[1]-runD[0]>=1)dim.push([(runD[0]+runD[1])/2|0,y]); runD=null; continue; } var s=img[i]+img[i+1]+img[i+2]; if(s>250){ if(runB===null)runB=[x,x]; else runB[1]=x; } else { if(runB&&runB[1]-runB[0]>=4)bright.push([(runB[0]+runB[1])/2|0,y]); runB=null; } if(s>130&&s<=250){ if(runD===null)runD=[x,x]; else runD[1]=x; } else { if(runD&&runD[1]-runD[0]>=1)dim.push([(runD[0]+runD[1])/2|0,y]); runD=null; } } } } catch(e){} return {bright:bright,dim:dim}; }"
+Z5=$(ev "(function(){ $SCANJS window.__v0779before = { c: scanOne('c'), c2: scanOne('c2') }; return ('b=' + (window.__v0779before.c.bright.length + window.__v0779before.c2.bright.length) + ' d=' + window.__v0779before.c.dim.length); })()")
+# v0.81.2: the pan is now DETERMINISTIC — a settle move at the same
+# coords zeroes the flick velocity BEFORE mouseup (the old one-move
+# fling carried ~150px of momentum past the far bands' spacing, so the
+# sub-cell measurement aliased and only passed by luck).
+ev "(function(){ var c=document.getElementById('c'); function fire(t,x,y){c.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));} fire('mousedown',300,420); fire('mousemove',280,420); return 'dragged'; })()" >/dev/null; sleep 0.4
+ev "(function(){ var c=document.getElementById('c'); function fire(t,x,y){c.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,view:window}));} fire('mousemove',280,420); fire('mouseup',280,420); return 'settled'; })()" >/dev/null; sleep 2
+Z5B=$(ev "(function(){ $SCANJS var before = window.__v0779before; var after = { c: scanOne('c'), c2: scanOne('c2') }; if (!before || !after) return 'no:scan-failed'; function avg(A,B){ var sh=[],used={}; for(var i=0;i<A.length;i++){ var best=-1,bd=42; for(var j=0;j<B.length;j++){ if(used[j])continue; if(Math.abs(B[j][1]-A[i][1])>8)continue; var d=Math.abs(B[j][0]-A[i][0]); if(d<bd){best=j;bd=d;} } if(best>=0){used[best]=1;sh.push(B[best][0]-A[i][0]);} } if(sh.length<2)return null; return sh.reduce(function(a,b){return a+b;},0)/sh.length; } // near population: the glow dots — on #c2 (routed over the icons,
+// v0.81.2) plus the sub-threshold sliver still on #c; far: #c's dim.
+  var bsh = [];
+  var a1 = avg(before.c.bright, after.c.bright);
+  var a2 = avg(before.c2.bright, after.c2.bright);
+  if (a1 !== null) bsh.push(a1);
+  if (a2 !== null) bsh.push(a2);
+  var ds = avg(before.c.dim, after.c.dim);
+  if (!bsh.length || ds === null) return 'no:no-match';
+  var bs = bsh.reduce(function(a,b){return a+b;},0) / bsh.length;
+  return (Math.abs(bs)>Math.abs(ds)+1)?('yes:'+bs.toFixed(1)+'-vs-'+ds.toFixed(1)):('no:'+bs.toFixed(1)+'-vs-'+ds.toFixed(1)); })()")
 ck "the pixel proof: near (glow) dots pan further than far dots ($(echo "$Z5" | head -c 40))" "$(echo "$Z5B" | cut -d: -f1)" "$Z5B"
 
 # console errors
