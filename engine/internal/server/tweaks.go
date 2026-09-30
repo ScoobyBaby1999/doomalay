@@ -57,6 +57,121 @@ func chatTweaksKey(sid string) string { return "chat.tweaks." + sid }
 func chatBgKey(sid string) string     { return "chat.bg." + sid }
 func chatIconKey(sid string) string   { return "chat.icon." + sid }
 
+// chatPersonaBadgeKey (v0.84.2) — the persona badge image's kv row:
+// chat.pbadge.<sid>.<pid> (the bgRecord shape, exactly the icon contract).
+func chatPersonaBadgeKey(sid, pid string) string {
+        return "chat.pbadge." + sid + "." + pid
+}
+
+// ── v0.84.2: THE PERSONA BADGE IMAGE ─────────────────────────────────
+// PUT/GET/DELETE /api/sessions/{id}/personabadge/{pid} — the uploaded
+// badge art for ONE persona (a ring-cropped or freely-designed square,
+// CropUI ≤256 on the client). The persona spec itself (kind/token/…) rides
+// the personas JSON; only the BYTES live here, rev'd + immutable-cached,
+// mirroring handleSessionIconPut's exact contract.
+
+func (s *Server) handlePersonaBadgePut(w http.ResponseWriter, r *http.Request) {
+        id := r.PathValue("id")
+        pid := r.PathValue("pid")
+        if pid == "" {
+                writeError(w, 400, "persona id is required")
+                return
+        }
+        if sess, err := s.db.GetSession(id); err != nil {
+                writeError(w, 500, "get: "+err.Error())
+                return
+        } else if sess == nil {
+                writeError(w, 404, "not found")
+                return
+        }
+        body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, iconMaxBytes))
+        if err != nil {
+                writeError(w, 413, "badge too large (2MB cap — the app square-crops and downscales before upload)")
+                return
+        }
+        if len(body) == 0 {
+                writeError(w, 400, "empty body")
+                return
+        }
+        mime := sniffImageMime(body)
+        if mime == "" {
+                writeError(w, 415, "not a recognized image (jpeg, png, gif, webp)")
+                return
+        }
+        key := chatPersonaBadgeKey(id, pid)
+        rec := bgRecord{Rev: 1, Mime: mime}
+        if raw, err := s.db.GetSetting(key); err == nil && strings.TrimSpace(raw) != "" {
+                var prev bgRecord
+                if json.Unmarshal([]byte(raw), &prev) == nil && prev.Rev > 0 {
+                        rec.Rev = prev.Rev + 1
+                }
+        }
+        rec.B64 = base64.StdEncoding.EncodeToString(body)
+        raw, err := json.Marshal(rec)
+        if err != nil {
+                writeError(w, 500, "encode: "+err.Error())
+                return
+        }
+        if err := s.db.SetSetting(key, string(raw)); err != nil {
+                writeError(w, 500, "save: "+err.Error())
+                return
+        }
+        writeJSON(w, 200, map[string]any{"ok": true, "rev": rec.Rev, "mime": mime})
+}
+
+func (s *Server) handlePersonaBadgeGet(w http.ResponseWriter, r *http.Request) {
+        id := r.PathValue("id")
+        pid := r.PathValue("pid")
+        if sess, err := s.db.GetSession(id); err != nil {
+                writeError(w, 500, "get: "+err.Error())
+                return
+        } else if sess == nil {
+                writeError(w, 404, "not found")
+                return
+        }
+        raw, err := s.db.GetSetting(chatPersonaBadgeKey(id, pid))
+        if err != nil {
+                writeError(w, 500, "badge: "+err.Error())
+                return
+        }
+        if strings.TrimSpace(raw) == "" {
+                writeError(w, 404, "no badge image set")
+                return
+        }
+        var rec bgRecord
+        if err := json.Unmarshal([]byte(raw), &rec); err != nil || rec.B64 == "" {
+                writeError(w, 404, "no badge image set")
+                return
+        }
+        img, err := base64.StdEncoding.DecodeString(rec.B64)
+        if err != nil || sniffImageMime(img) == "" {
+                writeError(w, 500, "stored badge is corrupt")
+                return
+        }
+        w.Header().Set("Content-Type", rec.Mime)
+        w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+        w.Header().Set("Content-Length", strconv.Itoa(len(img)))
+        w.WriteHeader(http.StatusOK)
+        _, _ = w.Write(img)
+}
+
+func (s *Server) handlePersonaBadgeDelete(w http.ResponseWriter, r *http.Request) {
+        id := r.PathValue("id")
+        pid := r.PathValue("pid")
+        if sess, err := s.db.GetSession(id); err != nil {
+                writeError(w, 500, "get: "+err.Error())
+                return
+        } else if sess == nil {
+                writeError(w, 404, "not found")
+                return
+        }
+        if err := s.db.DeleteSetting(chatPersonaBadgeKey(id, pid)); err != nil {
+                writeError(w, 500, "delete: "+err.Error())
+                return
+        }
+        writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
 // handleSessionTweaksGet is GET /api/sessions/{id}/tweaks — the chat's
 // tweak overrides (empty object when the chat never customized anything:
 // it inherits the global settings).

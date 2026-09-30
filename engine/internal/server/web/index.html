@@ -367,6 +367,26 @@
     pointer-events: none;
     z-index: 2;
   }
+  /* v0.84.2 — THE PERSONA BADGE RING: the active persona's badge wraps
+     the icon disc. A radial-gradient MASK carves the center out, so the
+     element paints as a BAND around the disc for every kind — solid and
+     gradient fill with theme vars (re-tinting live with every theme),
+     an uploaded image wraps its own pixels around the ring (a custom
+     look, never just a border color). Anchored on the icon disc's center
+     (the flex column centers the 56px icon; 28px = its half-height). */
+  .chatbot .persona-ring {
+    position: absolute;
+    left: 50%;
+    top: 28px;
+    width: 70px;
+    height: 70px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 7px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 7px));
+  }
 
   /* ── Long-press dropdown menu ──────────────────────────────── */
   #menu {

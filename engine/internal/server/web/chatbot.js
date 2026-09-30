@@ -180,6 +180,33 @@
       this.el.appendChild(badge);
     }
 
+    // ── v0.84.2: THE PERSONA BADGE RING ───────────────────────────
+    // setPersonaBadge(persona) — persona = {id, badge} of the ACTIVE
+    // persona (or null). The ring renders around the icon disc (the
+    // .persona-ring CSS: a masked band — solid/gradient paint theme
+    // vars, an image badge wraps its own art around the ring). Absent
+    // badge or an unusable spec removes the ring ("by default a persona
+    // has no badge").
+    setPersonaBadge(persona) {
+      const old = this._personaRingEl;
+      const badge = persona && persona.badge;
+      const css = (window.Persona && window.Persona.badgeCSS)
+        ? window.Persona.badgeCSS(badge, this.sessionId, persona ? persona.id : '')
+        : '';
+      if (!css) {
+        this._personaRingEl = null;
+        if (old) old.remove();
+        return;
+      }
+      if (!old) {
+        const ring = document.createElement('div');
+        ring.className = 'persona-ring';
+        this.el.appendChild(ring);
+        this._personaRingEl = ring;
+      }
+      this._personaRingEl.style.background = css;
+    }
+
     setSandbox(sandbox) {
       this.sandbox = sandbox;
       this._renderSandboxBadge();

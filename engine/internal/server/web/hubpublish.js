@@ -175,6 +175,12 @@
       iconPNG: '',
       iconSVG: '',
       collection: prefill.collection || '',
+      // v0.84.2: THE PERSONA BADGE — the spec (solid/gradient) or the
+      // engine-side image (fetched at publish time from badgeImage's
+      // {sid, pid, rev}) rides the publish. The persona editor passes
+      // the persona's badge; re-publish edits pass the item's stored one.
+      badge: prefill.badge || null,
+      badgeImage: prefill.badgeImage || null,   // {sid, pid, rev} for image badges
       // v0.77.6: the upstream credit ("ported from") — prefilled on edit.
       upstream: prefill.upstream || '',
       // v0.44: a full gradient spec — "none" still sends the picked
@@ -195,6 +201,37 @@
     panel.pushView(buildView());
   }
 
+  // v0.84.2: the badge's publish-time payload — the spec as-is, plus the
+  // image badge's engine-stored bytes base64'd for the SAME commit (a
+  // missing fetch publishes the spec without bytes — the engine then
+  // drops the unusable image kind to no badge, never a broken ring).
+  function badgeOut() {
+    var out = { badge: (cur && cur.badge) || null, badge_png_base64: '' };
+    if (!out.badge) return out;
+    if (out.badge.kind !== 'image' || !cur.badgeImage) return out;
+    var bi = cur.badgeImage;
+    out.badge_png_promise = fetch('/api/sessions/' + encodeURIComponent(bi.sid) +
+        '/personabadge/' + encodeURIComponent(bi.pid) + '?v=' + (bi.rev || 1))
+      .then(function (r) {
+        if (!r.ok) throw new Error('badge art fetch failed (' + r.status + ')');
+        return r.blob();
+      })
+      .then(function (blob) {
+        return new Promise(function (resolve, reject) {
+          var fr = new FileReader();
+          fr.onload = function () {
+            var m = /^data:([^;,]+);base64,(.*)$/.exec(String(fr.result || ''));
+            if (!m || !m[2]) { reject(new Error('badge art read failed')); return; }
+            resolve(m[2]);
+          };
+          fr.onerror = function () { reject(new Error('badge art read failed')); };
+          fr.readAsDataURL(blob);
+        });
+      })
+      .catch(function () { return ''; });
+    return out;
+  }
+
   // v0.58 (pt 12): the re-publish dirty guard — what the form started as.
   function snapshot() {
     var c = cur;
@@ -203,6 +240,8 @@
       iconPNG: c.iconPNG || '', iconSVG: c.iconSVG || '',
       collection: c.collection, design: designOut(), pngBase64: c.pngBase64,
       upstream: c.upstream || '',
+      // v0.84.2: the badge rides the dirty guard (a changed badge is an edit)
+      badge: c.badge || null,
       payload: c.payload, stageCount: c.stageCount || 0,
       files: (c.files || []).map(function (f) { return { path: f.path, content: f.content }; })
     });
@@ -802,7 +841,15 @@
       }
       files.push({ path: p, content: body });
     });
-    api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', {
+    // v0.84.2: the PERSONA BADGE rides the publish — the spec now, the
+    // image badge's bytes base64'd from its engine row (a failed fetch
+    // publishes spec-only; the engine drops an unusable image badge).
+    var bd = badgeOut();
+    var bP = (bd.badge_png_promise || Promise.resolve(''))
+      .then(function (b64) { bd.badge_png_base64 = b64 || ''; return bd; })
+      .catch(function () { bd.badge_png_base64 = ''; return bd; });
+    bP.then(function (bd) {
+    return api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', {
       name: cur.name,
       description: cur.desc,
       tags: cur.tags,
@@ -814,6 +861,10 @@
       // SVG text. Either rides the commit as items/<id>/icon.<ext>.
       icon_png_base64: cur.iconPNG || '',
       icon_svg: cur.iconSVG || '',
+      // v0.84.2: the persona badge (spec + optional image bytes committed
+      // at items/<id>/badge.png).
+      badge: bd.badge || null,
+      badge_png_base64: bd.badge_png_base64 || '',
       collection: cur.collection || '',
       // v0.77.6: THE UPSTREAM CREDIT — "ported from" rides the publish;
       // the bylines + every bot-facing tool surface it so a port never
@@ -821,6 +872,7 @@
       upstream: cur.upstream || '',
       stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
       files: files
+    });
     }).then(function (d) {
       var item = d.item, repo = d.repo;
       toast(cur.editOf ? ('updated — ' + item.name) : ('published to ' + repo));

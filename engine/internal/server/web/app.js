@@ -1631,6 +1631,30 @@
     if (st && (st.dotAnimate || st.lineAnimate)) return true;
     return !!(window.Atoms && window.Atoms.active(world.entities));
   }
+  // v0.84.2: refreshPersonaRings — resolve each chat's ACTIVE persona and
+  // paint its badge ring on the canvas icon (Persona.activePersonaOf is
+  // the canvas-side twin: always > shuffle-pick > none; triggers need
+  // live metrics only the engine resolves per turn). Optional sid limits
+  // the refresh to one chat (the persona-saved event's target).
+  function refreshPersonaRings(sid) {
+    for (const icon of world.entities) {
+      if (icon.type !== 'chat' || !icon.sessionId) continue;
+      if (typeof icon.setPersonaBadge !== 'function') continue;
+      if (sid && icon.sessionId !== sid) continue;
+      (function (target) {
+        fetch('/api/sessions/' + encodeURIComponent(target.sessionId))
+          .then(function (r) { return r.json(); })
+          .then(function (sess) {
+            var list = [];
+            try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
+            var active = (window.Persona && window.Persona.activePersonaOf)
+              ? window.Persona.activePersonaOf(list) : null;
+            target.setPersonaBadge(active);
+          })
+          .catch(function () {});
+      })(icon);
+    }
+  }
   // v0.84.1: the GRID's own animate toggles (the atom-orbit branch of
   // ambientActive above must NOT force the full lattice repaint — that's
   // what the atom-only frame avoids).
@@ -2622,6 +2646,15 @@
     // best-effort), then the rAF loop starts itself through the
     // atoms-changed event below.
     if (window.Atoms) window.Atoms.refreshAll(world.entities);
+
+    // v0.84.2 THE PERSONA BADGE — the ACTIVE persona's ring paints around
+    // each chat's icon (boot + every persona save; persona.js's persist()
+    // dispatches doomalay:persona-saved after every PATCH).
+    refreshPersonaRings();
+    window.addEventListener('doomalay:persona-saved', function (e) {
+      var sid = e && e.detail && e.detail.sessionId;
+      if (sid) refreshPersonaRings(sid); else refreshPersonaRings();
+    });
 
     // v0.84.1: binding changes (workspace.js bind/unbind, the pill's live
     // count, chatpanel's session swap) re-fetch exactly the touched chat;

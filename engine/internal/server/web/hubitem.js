@@ -736,33 +736,75 @@
   // GET the session → parse its personas JSON column → append (inactive,
   // the persona_set convention) → PATCH back. The PATCH only carries
   // the personas key, so nothing else on the row is touched.
+  // v0.84.2: the persona's BADGE rides the import — solid/gradient specs
+  // copy straight through; an IMAGE badge fetches the repo's art bytes
+  // and re-uploads them engine-side (the chat's own rev'd row), so a
+  // downloaded persona keeps its custom badge even offline ("even if it
+  // was an uploaded image not our default basic color system").
   function importPersona(item, payload) {
     var c = window.ChatPanel && window.ChatPanel.current();
     if (!c || !c.state) return;
     var state = c.state;
     var go = function () {
       if (!state.sessionId) return;
-      fetch('/api/sessions/' + state.sessionId)
-        .then(function (r) { return r.json(); })
-        .then(function (sess) {
-          var list = [];
-          try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
-          // a fresh chat's stored list is EMPTY — the Default persona is
-          // synthesized client-side (persona.js loadSession). Mirror that
-          // here so importing into a fresh chat doesn't drop the Default.
-          if (!list.length) {
-            list = [{ id: 'p_default', name: 'Default', text: (sess && sess.Persona) || '', mode: 'always' }];
-          }
-          for (var i = 0; i < list.length; i++) {
-            if (list[i].id === item.id) return; // already imported
-          }
-          list.push({ id: item.id, name: item.name, text: payload || '', mode: 'inactive' });
-          return fetch('/api/sessions/' + state.sessionId, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ personas: JSON.stringify(list) })
+      // the badge promise: a resolved spec (or null) by the time the
+      // personas list is built. Image badges fetch their bytes first.
+      var badgeP = Promise.resolve(null);
+      var b = item && item.badge;
+      if (b && b.kind === 'solid' || b && b.kind === 'gradient') {
+        badgeP = Promise.resolve({
+          kind: b.kind, token: b.token, from: b.from, to: b.to,
+          angle: (typeof b.angle === 'number') ? b.angle : 90
+        });
+      } else if (b && b.kind === 'image' && b.file) {
+        badgeP = fetch('/api/hub/repo/' + encodeURIComponent(item.repo) +
+            '/file?path=' + encodeURIComponent(b.file))
+          .then(function (r) {
+            if (!r.ok) throw new Error('badge art fetch failed (' + r.status + ')');
+            return r.blob();
+          })
+          .then(function (blob) {
+            return fetch('/api/sessions/' + encodeURIComponent(state.sessionId) +
+              '/personabadge/' + encodeURIComponent(item.id), {
+              method: 'PUT',
+              headers: { 'Content-Type': blob.type || 'image/png' },
+              body: blob
+            });
+          })
+          .then(function (r) {
+            if (!r.ok) throw new Error('badge upload failed (' + r.status + ')');
+            return r.json();
+          })
+          .then(function (d) {
+            return { kind: 'image', rev: (d && d.rev) || 1 };
+          })
+          .catch(function () { return null; });  // a failed art fetch never blocks the persona
+      }
+      badgeP.then(function (badge) {
+        return fetch('/api/sessions/' + state.sessionId)
+          .then(function (r) { return r.json(); })
+          .then(function (sess) {
+            var list = [];
+            try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
+            // a fresh chat's stored list is EMPTY — the Default persona is
+            // synthesized client-side (persona.js loadSession). Mirror that
+            // here so importing into a fresh chat doesn't drop the Default.
+            if (!list.length) {
+              list = [{ id: 'p_default', name: 'Default', text: (sess && sess.Persona) || '', mode: 'always' }];
+            }
+            for (var i = 0; i < list.length; i++) {
+              if (list[i].id === item.id) return null; // already imported
+            }
+            var entry = { id: item.id, name: item.name, text: payload || '', mode: 'inactive' };
+            if (badge) entry.badge = badge;
+            list.push(entry);
+            return fetch('/api/sessions/' + state.sessionId, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ personas: JSON.stringify(list) })
+            });
           });
-        })
+      })
         .then(function (r) {
           if (r && r.ok) toast('added to this chat\'s personas — switch it on from its editor');
         })

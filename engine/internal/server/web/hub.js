@@ -1045,26 +1045,56 @@
 
   // the persona side effect of a bundle download — the hubitem.js
   // importPersona pattern (GET the session → append inactive → PATCH).
+  // v0.84.2: the persona's BADGE rides the bundle import too — solid/
+  // gradient copy through; an image badge's repo art re-uploads
+  // engine-side (a failed fetch never blocks the persona itself).
   function importPersonaInto(sessionId, item, payload) {
     if (!sessionId || !window.ChatPanel || !window.ChatPanel.current()) return;
-    fetch('/api/sessions/' + encodeURIComponent(sessionId))
-      .then(function (r) { return r.json(); })
-      .then(function (sess) {
-        var list = [];
-        try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
-        if (!list.length) {
-          list = [{ id: 'p_default', name: 'Default', text: (sess && sess.Persona) || '', mode: 'always' }];
-        }
-        for (var i = 0; i < list.length; i++) {
-          if (list[i].id === item.id) return; // already imported
-        }
-        list.push({ id: item.id, name: item.name, text: payload || '', mode: 'inactive' });
-        return fetch('/api/sessions/' + encodeURIComponent(sessionId), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ personas: JSON.stringify(list) })
+    var b = item && item.badge;
+    var badgeP = Promise.resolve(null);
+    if (b && (b.kind === 'solid' || b.kind === 'gradient')) {
+      badgeP = Promise.resolve({
+        kind: b.kind, token: b.token, from: b.from, to: b.to,
+        angle: (typeof b.angle === 'number') ? b.angle : 90
+      });
+    } else if (b && b.kind === 'image' && b.file && item.repo) {
+      badgeP = fetch('/api/hub/repo/' + encodeURIComponent(item.repo) +
+          '/file?path=' + encodeURIComponent(b.file))
+        .then(function (r) { if (!r.ok) throw new Error('badge art fetch failed'); return r.blob(); })
+        .then(function (blob) {
+          return fetch('/api/sessions/' + encodeURIComponent(sessionId) +
+            '/personabadge/' + encodeURIComponent(item.id), {
+            method: 'PUT',
+            headers: { 'Content-Type': blob.type || 'image/png' },
+            body: blob
+          });
+        })
+        .then(function (r) { if (!r.ok) throw new Error('badge upload failed'); return r.json(); })
+        .then(function (d) { return { kind: 'image', rev: (d && d.rev) || 1 }; })
+        .catch(function () { return null; });
+    }
+    badgeP.then(function (badge) {
+      return fetch('/api/sessions/' + encodeURIComponent(sessionId))
+        .then(function (r) { return r.json(); })
+        .then(function (sess) {
+          var list = [];
+          try { list = JSON.parse((sess && sess.Personas) || '[]') || []; } catch (e) { list = []; }
+          if (!list.length) {
+            list = [{ id: 'p_default', name: 'Default', text: (sess && sess.Persona) || '', mode: 'always' }];
+          }
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === item.id) return null; // already imported
+          }
+          var entry = { id: item.id, name: item.name, text: payload || '', mode: 'inactive' };
+          if (badge) entry.badge = badge;
+          list.push(entry);
+          return fetch('/api/sessions/' + encodeURIComponent(sessionId), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ personas: JSON.stringify(list) })
+          });
         });
-      })
+    })
       .catch(function () {}); // the local row already saved — the import is a bonus
   }
 

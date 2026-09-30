@@ -1008,6 +1008,12 @@ type PublishRequest struct {
         // at it through Icon="file:<path>".
         IconPNGBase64 string `json:"icon_png_base64"`
         IconSVG       string `json:"icon_svg"`
+        // v0.84.2: THE PERSONA BADGE — the badge spec (solid/gradient ride
+        // the item meta; image bytes ride the SAME commit at
+        // items/<id>/badge.png and the meta points at it through
+        // Badge.File). Meaningful for personas; ignored for other types.
+        Badge          *BadgeSpec `json:"badge"`
+        BadgePNGBase64 string     `json:"badge_png_base64"`
         Collection  string         `json:"collection"` // v0.52: optional bunch id — items sharing it group into ONE listing
         // v0.77.6: THE UPSTREAM CREDIT — "ported from" (optional). The
         // publisher stays the author; this credits the ORIGINAL work so
@@ -1144,6 +1150,32 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 item.Icon = "file:" + iconFile
                 item.Files = append(item.Files, iconFile)
         }
+        // v0.84.2: THE PERSONA BADGE — sanitize the spec; an image badge's
+        // bytes ride the same commit at items/<id>/badge.png and the meta
+        // points at it through Badge.File (the download side re-uploads the
+        // bytes engine-side so the persona keeps its custom look offline).
+        badgeFile, badgeContent := "", []byte(nil)
+        if req.Badge != nil && spec.Type == "persona" {
+                if png := decodeB64(req.BadgePNGBase64); len(png) > 0 {
+                        if !isPNG(png) {
+                                return Item{}, errors.New("badge: not a valid PNG")
+                        }
+                        if len(png) > iconMaxBytes {
+                                return Item{}, fmt.Errorf("badge png too large (%dKB cap)", iconMaxBytes>>10)
+                        }
+                        badgeFile, badgeContent = "items/"+id+"/badge.png", png
+                        req.Badge = &BadgeSpec{Kind: "image", File: badgeFile}
+                }
+                for _, seen := range item.Files {
+                        if badgeFile != "" && seen == badgeFile {
+                                return Item{}, fmt.Errorf("file path %q collides with the badge", badgeFile)
+                        }
+                }
+                item.Badge = SanitizeBadge(req.Badge)
+                if item.Badge != nil && item.Badge.Kind == "image" && item.Badge.File == badgeFile {
+                        item.Files = append(item.Files, badgeFile)
+                }
+        }
         // v0.60 pt C.6: EVERYTHING IS A BUNDLE — a published item with no
         // explicit collection becomes its own singular-item bundle (the
         // collection id = the item id), so the whole hub is bundle-shaped:
@@ -1223,6 +1255,10 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         // v0.61 pt C.10 (icons): the uploaded icon rides the same commit.
         if iconFile != "" {
                 files = append(files, CommitFile{Path: iconFile, Content: iconContent})
+        }
+        // v0.84.2: the badge image rides the same commit.
+        if badgeFile != "" {
+                files = append(files, CommitFile{Path: badgeFile, Content: badgeContent})
         }
         index, err := s.regenIndex(repo, item)
         if err == nil {

@@ -203,6 +203,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/sessions/{id}/icon", s.handleSessionIconGet)
         s.mux.HandleFunc("PUT /api/sessions/{id}/icon", s.handleSessionIconPut)
         s.mux.HandleFunc("DELETE /api/sessions/{id}/icon", s.handleSessionIconDelete)
+        // v0.84.2: the PERSONA BADGE image (the badge spec rides the
+        // personas JSON; these rev'd rows carry the uploaded bytes)
+        s.mux.HandleFunc("GET /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeGet)
+        s.mux.HandleFunc("PUT /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgePut)
+        s.mux.HandleFunc("DELETE /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeDelete)
         // v0.15: frontend-driven turns (the PrivateMode SDK bridge chats
         // directly from the WebView — the engine can't speak PM's encrypted
         // protocol) append their events here so history + replay stay exact.

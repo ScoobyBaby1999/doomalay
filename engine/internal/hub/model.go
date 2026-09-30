@@ -31,6 +31,74 @@ type Design struct {
         Tex    string   `json:"tex,omitempty"`   // v0.44: texture dataURL (≤200KB string, "data:image/…")
 }
 
+// BadgeSpec (v0.84.2) — a PERSONA item's badge: the ring the persona
+// paints around its chat's icon. The JSON shape is the client/server
+// PersonaBadge twin: {kind: solid|gradient|image, token|from|to|angle,
+// file (image: the in-repo art path), rev (ignored on transport)}. Solid
+// and gradient reference THEME TOKENS (the app's coloring system, never
+// literal colors); an image badge's bytes ride the repo at
+// items/<id>/badge.png and the client re-uploads them engine-side on
+// download ("downloaded personas should include the custom badge, even
+// if it was an uploaded image not our default basic color system").
+type BadgeSpec struct {
+        Kind  string `json:"kind"`            // "solid" | "gradient" | "image"
+        Token string `json:"token,omitempty"` // solid: theme token
+        From  string `json:"from,omitempty"`  // gradient: starting token
+        To    string `json:"to,omitempty"`    // gradient: ending token
+        Angle int    `json:"angle,omitempty"` // gradient: 0–359
+        File  string `json:"file,omitempty"`  // image: in-repo art path
+        Rev   int    `json:"rev,omitempty"`   // transport-ignored (engine rows are local)
+}
+
+// badgeTokens is the theme-token whitelist (the client resolves each as a
+// CSS var — --accent, --ok, …). Anything else fails sanitization.
+var badgeTokens = map[string]bool{
+        "accent": true, "accent-2": true, "accent-3": true, "accent-4": true,
+        "ok": true, "warn": true, "err": true, "notice": true,
+        "text-1": true, "text-2": true, "text-3": true,
+        "surface-3": true, "border-strong": true,
+}
+
+// SanitizeBadge normalizes a badge spec for storage in the item meta:
+// kind + theme-token whitelists, angle clamp, image path shape. Unusable
+// specs drop to nil (no badge).
+func SanitizeBadge(b *BadgeSpec) *BadgeSpec {
+        if b == nil {
+                return nil
+        }
+        out := &BadgeSpec{Kind: strings.ToLower(strings.TrimSpace(b.Kind))}
+        switch out.Kind {
+        case "solid":
+                t := strings.TrimSpace(b.Token)
+                if !badgeTokens[t] {
+                        return nil
+                }
+                out.Token = t
+        case "gradient":
+                f, t := strings.TrimSpace(b.From), strings.TrimSpace(b.To)
+                if !badgeTokens[f] || !badgeTokens[t] {
+                        return nil
+                }
+                out.From, out.To = f, t
+                out.Angle = ((b.Angle % 360) + 360) % 360
+        case "image":
+                p := strings.Trim(strings.TrimSpace(b.File), "/")
+                if p == "" || len(p) > 200 || strings.Contains(p, "..") ||
+                        strings.ContainsAny(p, "\\?#") || strings.Contains(p, "//") {
+                        return nil
+                }
+                switch strings.ToLower(path.Ext(p)) {
+                case ".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif":
+                default:
+                        return nil
+                }
+                out.File = p
+        default:
+                return nil
+        }
+        return out
+}
+
 // Item is one library item (metadata only — the payload lives in its own
 // file inside the repo: items/<id><ext>).
 type Item struct {
@@ -52,6 +120,9 @@ type Item struct {
         // collection render as ONE grouped listing that opens the members.
         Icon       string   `json:"icon"`
         Collection string   `json:"collection"`
+        // v0.84.2: the PERSONA BADGE — the ring this persona paints around
+        // its chat's icon (nil for every other type / badge-less personas).
+        Badge *BadgeSpec `json:"badge,omitempty"`
         // v0.77.6: THE UPSTREAM CREDIT — the ORIGINAL work this item is a
         // port/derivative of ("obra/superpowers by Jesse Vincent"). The
         // publisher (Author) stays who PUBLISHED it; the bylines, the hub

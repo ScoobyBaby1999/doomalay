@@ -163,6 +163,70 @@
     inactive: { label: 'off',               color: 'var(--text-3)',   rgb: 'var(--text-3-rgb)' }
   };
 
+  // ── v0.84.2: THE BADGE ───────────────────────────────────────────
+  // User spec: "each persona be a badge around the chat… a basic solid
+  // color outline around the edge of the circle for the chatbot icon, or
+  // a gradient, or an image, basically our coloring system." Solid and
+  // gradient reference THEME TOKENS (the same CSS vars the whole app
+  // re-tints from); an image badge's bytes live engine-side behind
+  // /api/sessions/{sid}/personabadge/{pid}?v=rev.
+  var BADGE_TOKENS = ['accent', 'accent-2', 'accent-3', 'accent-4', 'ok', 'warn',
+    'err', 'notice', 'text-1', 'text-2', 'text-3', 'surface-3', 'border-strong'];
+
+  // badgeCSS — the ring's background paint for a badge spec (the mask in
+  // the .persona-ring CSS carves the center out; this is the band's fill).
+  function badgeCSS(badge, sid, pid) {
+    if (!badge || !badge.kind) return '';
+    if (badge.kind === 'solid') {
+      return (BADGE_TOKENS.indexOf(badge.token) >= 0)
+        ? ('var(--' + badge.token + ')') : '';
+    }
+    if (badge.kind === 'gradient') {
+      var f = BADGE_TOKENS.indexOf(badge.from) >= 0 ? badge.from : '';
+      var t = BADGE_TOKENS.indexOf(badge.to) >= 0 ? badge.to : '';
+      if (!f || !t) return '';
+      var a = (typeof badge.angle === 'number') ? ((badge.angle % 360) + 360) % 360 : 90;
+      return 'linear-gradient(' + a + 'deg, var(--' + f + '), var(--' + t + '))';
+    }
+    if (badge.kind === 'image') {
+      if (!sid || !pid) return '';
+      var rev = (typeof badge.rev === 'number' && badge.rev > 0) ? badge.rev : 1;
+      return 'url("/api/sessions/' + encodeURIComponent(sid) +
+        '/personabadge/' + encodeURIComponent(pid) + '?v=' + rev + '") center/cover no-repeat';
+    }
+    return '';
+  }
+
+  // badgeSwatchHTML — the little ring preview (editor pill, list rows,
+  // the picker's live preview). Size in px (default 16).
+  function badgeSwatchHTML(badge, sid, pid, size) {
+    var d = size || 16;
+    var css = badgeCSS(badge, sid, pid);
+    var style = 'display:inline-block;width:' + d + 'px;height:' + d + 'px;border-radius:50%;flex:none;' +
+      '-webkit-mask:radial-gradient(farthest-side transparent calc(100% - 3px), #000 calc(100% - 3px));' +
+      'mask:radial-gradient(farthest-side transparent calc(100% - 3px), #000 calc(100% - 3px));';
+    if (css) return '<span style="' + style + 'background:' + css + '"></span>';
+    // no badge — the dashed placeholder ring (theme border)
+    return '<span style="' + style + 'border:1.5px dashed var(--border-strong)"></span>';
+  }
+
+  // activePersonaOf — the CANVAS-side resolution (v0.84.2): always > a
+  // shuffle pick > none. Trigger personas need live turn metrics the
+  // canvas doesn't carry — they're skipped here (the engine resolves
+  // them per turn; the ring shows the deterministic baseline).
+  function activePersonaOf(list) {
+    list = Array.isArray(list) ? list : [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].mode === 'always') return list[i];
+    }
+    var pool = [];
+    for (var j = 0; j < list.length; j++) {
+      if (list[j] && list[j].mode === 'shuffle') pool.push(list[j]);
+    }
+    if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
+    return null;
+  }
+
   function esc(s) {
     var d = document.createElement('div');
     d.textContent = s == null ? '' : String(s);
@@ -322,6 +386,9 @@
         rows +=
           '<button class="pv-row" style="position:relative" data-persona="' + escAttr(p.id) + '">' +
             '<span class="pv-row-ico">🎭</span>' +
+            // v0.84.2: the badge swatch rides the row (a glance at who
+            // wears a ring — the dash placeholder marks badge-less rows)
+            '<span style="flex:none;margin-right:-2px">' + badgeSwatchHTML(p.badge, cur && cur.sessionId, p.id, 15) + '</span>' +
             '<span class="pv-row-meta">' +
               '<span class="pv-row-title">' + esc(p.name) + '</span>' +
               '<span class="pv-row-sub">' + esc(sub) + '</span>' +
@@ -415,6 +482,18 @@
   // row matching the mode pills' size — and the MD editor fills the
   // rest of the panel (pe-root column, flex-fill body). No more
   // "pills, text block, more pills" sandwich.
+  // v0.84.2 (user spec): the DELETE pill is just a TRASH glyph in the
+  // theme's destructive tone ("change the delete pill to just be a trash
+  // icon colored to a theme color"), and a BADGE pill joins the name row
+  // between the name box and the placeholders ("another face card or
+  // something pill that opens an overlay screen" — the badge picker view
+  // on the master panel's stack).
+  var TRASH_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>' +
+    '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+    '<path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
   function editorView(p) {
     return view('persona · ' + p.name, function () {
       function modePill(mode, ico, label) {
@@ -445,10 +524,18 @@
           actionPill('pe-default', '↺ default') +
           actionPill('pe-dl', '⇩ .md') +
           actionPill('pe-publish', '⇧ publish') +
-          actionPill('pe-del', 'delete', 'style="color:var(--err);border-color:rgba(var(--err-rgb),0.4)"') +
+          // v0.84.2: the TRASH pill — just the glyph, the theme's err tone
+          '<button id="pe-del" class="pe-mode-pill" title="delete this persona" aria-label="delete this persona"' +
+            ' style="background:rgba(var(--err-rgb),0.08);border:1px solid rgba(var(--err-rgb),0.4);color:var(--err);' +
+            'display:flex;align-items:center;justify-content:center;padding:6px 10px">' + TRASH_SVG + '</button>' +
         '</div>' +
         '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center;flex:none">' +
           '<input id="pe-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="persona name" aria-label="Persona name">' +
+          // v0.84.2: THE BADGE PILL — between the name box and the
+          // placeholders (user spec): a live ring swatch + "badge".
+          '<button id="pe-badge" class="pv-btn" title="the badge ring this persona paints around the chat\'s icon when it is the active one"' +
+            ' style="display:flex;align-items:center;gap:6px;min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">' +
+            badgeSwatchHTML(p.badge, cur && cur.sessionId, p.id, 15) + 'badge</button>' +
           '<button id="pe-rename" class="pv-btn" style="display:none;min-height:40px;padding:8px 12px">save</button>' +
           '<button id="pe-ph" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">{ } placeholders</button>' +
         '</div>' +
@@ -538,6 +625,13 @@
       PV().pushView(placeholdersView());
     });
 
+    // v0.84.2: THE BADGE PILL — opens the badge picker (an overlay view
+    // on this same panel stack, exactly the trigger builder's pattern).
+    var badgeBtn = el.querySelector('#pe-badge');
+    if (badgeBtn) badgeBtn.addEventListener('click', function () {
+      PV().pushView(badgeView(p));
+    });
+
     if (saveBtn) saveBtn.addEventListener('click', function () {
       if (!cm) return;
       p.text = cm.getValue().trim() ? cm.getValue() : '';
@@ -563,26 +657,265 @@
       setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
     });
 
-    // v0.31: THE PUBLISH PILL — hands the persona (name + current text)
-    // to the hub publisher; the unsaved editor text is what gets shared.
+    // v0.31: THE PUBLISH PILL — hands the persona (name + current text +
+    // its v0.84.2 BADGE) to the hub publisher; the unsaved editor text is
+    // what gets shared, and the badge rides the same share (an image
+    // badge's bytes fetch from its engine row at publish time).
     var pubBtn = el.querySelector('#pe-publish');
     if (pubBtn) pubBtn.addEventListener('click', function () {
       if (!window.HubPublish) { toast('the hub is not available'); return; }
       var text = cm ? cm.getValue() : (p.text || '');
-      window.HubPublish.open('persona', { name: p.name, payload: text });
+      var badgeImage = (p.badge && p.badge.kind === 'image' && p.badge.rev > 0 && cur && cur.sessionId)
+        ? { sid: cur.sessionId, pid: p.id, rev: p.badge.rev } : null;
+      window.HubPublish.open('persona', { name: p.name, payload: text, badge: p.badge || null, badgeImage: badgeImage });
     });
 
+    // v0.84.2: the TRASH pill — armed shows "sure?", disarm restores the
+    // glyph; deleting also drops the persona's engine-side badge image.
     var delBtn = el.querySelector('#pe-del');
     if (delBtn) delBtn.addEventListener('click', function () {
       if (personas.length <= 1) { toast('every chat keeps at least one persona'); return; }
       if (delBtn.dataset.armed) {
         personas = personas.filter(function (x) { return x.id !== p.id; });
+        // best-effort: the badge image row dies with the persona
+        if (cur && cur.sessionId) {
+          fetch('/api/sessions/' + encodeURIComponent(cur.sessionId) +
+            '/personabadge/' + encodeURIComponent(p.id), { method: 'DELETE' })
+            .catch(function () {});
+        }
         persist().then(function () { toast('persona deleted'); PV().popView(); });
       } else {
         delBtn.dataset.armed = '1';
         delBtn.textContent = 'sure?';
-        setTimeout(function () { delete delBtn.dataset.armed; delBtn.textContent = 'delete'; }, 2600);
+        setTimeout(function () {
+          delete delBtn.dataset.armed;
+          delBtn.innerHTML = TRASH_SVG;
+        }, 2600);
       }
+    });
+  }
+
+  // ── v0.84.2: THE BADGE PICKER VIEW ─────────────────────────────────
+  // User spec: "next to the name, between the name box and the
+  // placeholders we can add another face card or something pill that
+  // opens an overlay screen that allows the user to select the badge that
+  // will render around the icon when this persona is selected." This is
+  // that screen — a view on the master panel's stack (the app's overlay
+  // system). Draft-then-commit like the trigger builder: every control
+  // edits the DRAFT; "set badge" persists it (the canvas ring refresh
+  // rides the doomalay:persona-saved event).
+  function badgeView(p) {
+    // the draft: p.__badgeDraft while the picker is open (every redraw
+    // re-seeds from it), else the persona's current badge as the start
+    var draft = (p.__badgeDraft !== undefined)
+      ? p.__badgeDraft
+      : ((p.badge && p.badge.kind) ? JSON.parse(JSON.stringify(p.badge)) : null);
+    var savedRev = (draft && draft.kind === 'image' && draft.rev > 0) ? draft.rev : 0;
+
+    function ringPreview(d, size) {
+      var s = size || 84;
+      var css = badgeCSS(d, cur && cur.sessionId, p.id);
+      var ring = '<span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);' +
+        'width:' + s + 'px;height:' + s + 'px;border-radius:50%;' +
+        '-webkit-mask:radial-gradient(farthest-side transparent calc(100% - 9px), #000 calc(100% - 9px));' +
+        'mask:radial-gradient(farthest-side transparent calc(100% - 9px), #000 calc(100% - 9px));' +
+        (css ? ('background:' + css + ';') : 'border:2px dashed var(--border-strong);') +
+        '"></span>';
+      var disc = s - 22;
+      return '<span style="position:relative;display:inline-block;width:' + s + 'px;height:' + s + 'px;flex:none">' +
+        '<span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:' + disc + 'px;height:' + disc + 'px;' +
+        'border-radius:50%;background:var(--surface-2);border:2px solid var(--text-3-dim);' +
+        'display:flex;align-items:center;justify-content:center;color:var(--text-1);font-weight:700;' +
+        'font-size:' + Math.round(disc / 2.6) + 'px">' + esc((p.name || '?').charAt(0).toUpperCase()) + '</span>' +
+        ring + '</span>';
+    }
+
+    function tokenGrid(field, sel) {
+      var out = '';
+      BADGE_TOKENS.forEach(function (tk) {
+        var on = sel === tk;
+        out += '<button type="button" data-badge-token="' + field + ':' + tk + '"' +
+          (on ? ' data-on="1"' : '') + ' title="var(--' + tk + ')" aria-label="theme token ' + tk + '"' +
+          ' style="width:34px;height:34px;border-radius:9px;flex:none;' +
+          'background:var(--' + tk + ');border:2px solid ' + (on ? 'var(--accent)' : 'rgba(var(--border-rgb,60,60,60),0.6)') + ';' +
+          'cursor:pointer"></button>';
+      });
+      return '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px">' + out + '</div>';
+    }
+
+    function angleRow(sel) {
+      var presets = [0, 45, 90, 135, 180, 270];
+      var out = '';
+      presets.forEach(function (a) {
+        var on = sel === a;
+        out += '<button type="button" data-badge-angle="' + a + '"' + (on ? ' data-on="1"' : '') +
+          ' class="pv-btn" style="min-width:44px;min-height:34px;padding:4px 8px;font-size:var(--ui-micro-fs);' +
+          (on ? 'border-color:var(--accent);color:var(--accent)' : '') + '">' + a + '°</button>';
+      });
+      return '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">' + out + '</div>';
+    }
+
+    function section(label, kind, body) {
+      var on = draft ? (draft.kind === kind) : (kind === 'none');
+      return '<div style="margin-top:14px">' +
+        '<button type="button" data-badge-kind="' + kind + '" class="pv-btn" style="width:100%;text-align:left;' +
+          'min-height:40px;padding:8px 12px;' + (on ? 'border-color:var(--accent);color:var(--accent)' : '') + '">' +
+          (on ? '◉ ' : '○ ') + label +
+        '</button>' +
+        (on ? body : '') +
+        '</div>';
+    }
+
+    return view('badge · ' + p.name, function () {
+      var imgNote = '';
+      if (draft && draft.kind === 'image') {
+        imgNote = savedRev
+          ? '<p class="pv-hint" style="margin:6px 2px 0">rev ' + savedRev + ' stored — uploading again replaces it.</p>'
+          : '';
+      }
+      return (
+        '<p class="pv-hint">The badge renders around this chat\'s icon while THIS persona is the active one. Default is no badge. Solid + gradient ride the app\'s theme tokens (they re-tint with every theme); an image wraps your own art around the ring.</p>' +
+        '<div style="display:flex;align-items:center;gap:14px;margin:12px 2px">' +
+          ringPreview(draft) +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-size:var(--ui-small-fs);font-weight:600;color:var(--text-1)">' + esc(p.name) + '</div>' +
+            '<div style="font-size:var(--ui-micro-fs);color:var(--text-3)">' +
+              (draft ? (draft.kind === 'solid' ? ('solid · var(--' + draft.token + ')') :
+                draft.kind === 'gradient' ? ('gradient · ' + draft.from + ' → ' + draft.to + ' @ ' + ((draft.angle || 0)) + '°') :
+                'image badge') : 'no badge — the plain icon') +
+            '</div>' +
+            '<div style="margin-top:6px">' + badgeSwatchHTML(draft, cur && cur.sessionId, p.id, 22) + '</div>' +
+          '</div>' +
+        '</div>' +
+        section('none — no badge', 'none', '') +
+        section('solid — one theme color', 'solid', tokenGrid('token', draft && draft.kind === 'solid' ? draft.token : '')) +
+        section('gradient — two theme colors', 'gradient',
+          '<div class="pv-section-label" style="margin-top:10px">from</div>' + tokenGrid('from', draft && draft.kind === 'gradient' ? draft.from : '') +
+          '<div class="pv-section-label" style="margin-top:10px">to</div>' + tokenGrid('to', draft && draft.kind === 'gradient' ? draft.to : '') +
+          '<div class="pv-section-label" style="margin-top:10px">angle</div>' + angleRow(draft && draft.kind === 'gradient' ? (draft.angle || 0) : -1)) +
+        section('image — your own art', 'image',
+          '<div style="display:flex;gap:8px;margin-top:10px">' +
+            '<button id="pb-upload" class="pv-btn pv-btn-primary" style="flex:1;min-height:40px">⤴ choose image</button>' +
+            (draft && draft.kind === 'image'
+              ? '<button id="pb-clearimg" class="pv-btn" style="min-height:40px">✕</button>' : '') +
+          '</div>' +
+          '<p class="pv-hint" style="margin:6px 2px 0">Square-cropped ≤256px. The image\'s pixels wrap the ring — a custom-designed look, never just a border color.</p>' + imgNote +
+          '<input type="file" id="pb-file" accept="image/*" style="display:none" aria-label="badge image">') +
+        '<div style="display:flex;gap:8px;margin-top:18px">' +
+          '<button id="pb-save" class="pv-btn pv-btn-primary" style="flex:2">set badge</button>' +
+          '<button id="pb-cancel" class="pv-btn" style="flex:1">cancel</button>' +
+        '</div>'
+      );
+    }, function (el) { wireBadge(el, p); });
+  }
+
+  function wireBadge(el, p) {
+    var redraw = function () { PV().replaceView(badgeView(p)); };
+
+    el.querySelectorAll('[data-badge-kind]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var kind = b.getAttribute('data-badge-kind');
+        if (kind === 'none') { p.__badgeDraft = null; redraw(); return; }
+        var base = (p.badge && p.badge.kind === kind) ? p.badge : null;
+        p.__badgeDraft = { kind: kind };
+        if (kind === 'solid') p.__badgeDraft.token = (base && base.token) || 'accent';
+        if (kind === 'gradient') {
+          p.__badgeDraft.from = (base && base.from) || 'accent';
+          p.__badgeDraft.to = (base && base.to) || 'accent-2';
+          p.__badgeDraft.angle = (base && base.angle) || 90;
+        }
+        if (kind === 'image' && base && base.rev) p.__badgeDraft.rev = base.rev;
+        redraw();
+      });
+    });
+
+    el.querySelectorAll('[data-badge-token]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var parts = b.getAttribute('data-badge-token').split(':');
+        var field = parts[0], tk = parts.slice(1).join(':');
+        p.__badgeDraft = p.__badgeDraft || { kind: field === 'token' ? 'solid' : 'gradient' };
+        p.__badgeDraft[field] = tk;
+        if (field === 'token') p.__badgeDraft.kind = 'solid';
+        else p.__badgeDraft.kind = 'gradient';
+        redraw();
+      });
+    });
+
+    el.querySelectorAll('[data-badge-angle]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var a = parseInt(b.getAttribute('data-badge-angle'), 10) || 0;
+        p.__badgeDraft = p.__badgeDraft || { kind: 'gradient' };
+        p.__badgeDraft.kind = 'gradient';
+        p.__badgeDraft.angle = a;
+        redraw();
+      });
+    });
+
+    var upload = el.querySelector('#pb-upload');
+    var file = el.querySelector('#pb-file');
+    if (upload && file) {
+      upload.addEventListener('click', function () { file.click(); });
+      file.addEventListener('change', function () {
+        var f = file.files && file.files[0];
+        file.value = '';
+        if (!f) return;
+        if (!window.CropUI) { toast('the cropper is not available'); return; }
+        var sid = cur && cur.sessionId;
+        if (!sid) { toast('connect a model first'); return; }
+        window.CropUI.open({
+          file: f,
+          aspect: 1,              // square — the ring wraps it
+          maxBytes: 1.9 * 1024 * 1024,
+          onDone: function (b64, dims) {
+            var bin = atob(String(b64 || ''));
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            var blob = new Blob([bytes], { type: (dims && dims.mime) || 'image/png' });
+            fetch('/api/sessions/' + encodeURIComponent(sid) + '/personabadge/' + encodeURIComponent(p.id), {
+              method: 'PUT',
+              headers: { 'Content-Type': blob.type || 'image/png' },
+              body: blob
+            }).then(function (r) {
+              if (!r.ok) throw new Error('upload failed (' + r.status + ')');
+              return r.json();
+            }).then(function (d) {
+              p.__badgeDraft = { kind: 'image', rev: (d && d.rev) || 1 };
+              toast('badge image stored — set badge to wear it');
+              redraw();
+            }).catch(function (err) { toast((err && err.message) || 'the upload failed'); });
+          },
+          onCancel: function () {},
+          onErr: function (msg) { toast(msg || 'could not read that image'); }
+        });
+      });
+    }
+    var clearImg = el.querySelector('#pb-clearimg');
+    if (clearImg) clearImg.addEventListener('click', function () {
+      p.__badgeDraft = { kind: 'image' };   // chosen, no bytes yet
+      redraw();
+    });
+
+    var cancel = el.querySelector('#pb-cancel');
+    if (cancel) cancel.addEventListener('click', function () {
+      delete p.__badgeDraft;
+      PV().popView();
+    });
+    var save = el.querySelector('#pb-save');
+    if (save) save.addEventListener('click', function () {
+      // the draft (p.__badgeDraft) wins; fall back to the persona's
+      // current badge when the user only flipped section headers
+      var d = (p.__badgeDraft !== undefined) ? p.__badgeDraft : p.badge;
+      if (d && d.kind === 'image' && !(d.rev > 0)) {
+        toast('choose an image first — the badge needs its art');
+        return;
+      }
+      p.badge = (d && d.kind && d.kind !== 'none') ? d : null;
+      delete p.__badgeDraft;
+      persist().then(function () {
+        toast(p.badge ? 'badge set — it renders around the icon when this persona is active' : 'badge cleared');
+        PV().popView();
+        PV().replaceView(editorView(p));   // refresh the editor's swatch pill
+      });
     });
   }
 
@@ -931,6 +1264,13 @@
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,
     substituteAll: substituteAll,
+    // v0.84.2: the badge twins — app.js paints the canvas ring through
+    // activePersonaOf + badgeCSS; the hub import path builds specs with
+    // the same whitelist.
+    activePersonaOf: activePersonaOf,
+    badgeCSS: badgeCSS,
+    badgeSwatchHTML: badgeSwatchHTML,
+    BADGE_TOKENS: BADGE_TOKENS,
     setData: function (list, legacyText, ph, globals) {
       personas = list || [];
       legacyPersona = legacyText || '';
