@@ -716,13 +716,17 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             val t = b.getChildAt(1) as TextView
             return Pair(b, t)
         }
-        val text = TextView(activity).apply {
+        // NOTE: the local is named msgText — a local `val text` would
+        // SHADOW TextView.text inside the sibling apply blocks below
+        // (Kotlin locals win over implicit receivers — the CI compile
+        // caught exactly that: "Val cannot be reassigned")
+        val msgText = TextView(activity).apply {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             textSize = 12f
         }
         val accept = TextView(activity).apply {
-            text = "go ⇱"
+            this.text = "go ⇱"
             textSize = 12f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setPadding(dip(10), dip(4), dip(10), dip(4))
@@ -736,7 +740,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
         }
         val glyph = TextView(activity).apply {
-            text = "⇱"
+            this.text = "⇱"
             textSize = 13f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
@@ -756,7 +760,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             }
             addView(glyph, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(text, LinearLayout.LayoutParams(0,
+            addView(msgText, LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dip(8); rightMargin = dip(8) })
             addView(accept, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -766,7 +770,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         (webView?.parent as? ViewGroup)?.addView(row, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        return Pair(row, text)
+        return Pair(row, msgText)
     }
 
     // ─────────────────────────────────────────────────────────── view building
@@ -1858,6 +1862,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             (b.getChildAt(1) as? TextView)?.setTextColor(text1)
             (b.getChildAt(2) as? TextView)?.setTextColor(accent)
         }
+
 
         // v0.68.0: the dash: THE PANEL'S OWN — index.html's .handle-bar
         // verbatim: the theme BORDER at full strength (var(--border)
