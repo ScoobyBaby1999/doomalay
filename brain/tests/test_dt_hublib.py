@@ -211,8 +211,9 @@ def test_event_carries_cards_and_replay_text():
 
 def test_card_shape_is_renderer_minimal():
     c = dt_hublib.card_for_item(TDD, downloaded=True)
+    # v0.77.6 added "upstream" (the port-credit field) — kept in the contract.
     assert set(c) == {"type", "repo", "id", "name", "description", "author",
-                      "tags", "hearts", "downloads", "downloaded"}
+                      "tags", "hearts", "downloads", "downloaded", "upstream"}
     assert c["downloaded"] is True
     assert c["tags"] == ["superpowers-obra", "tdd"]
     assert "payload" not in c                 # bodies never ride the event

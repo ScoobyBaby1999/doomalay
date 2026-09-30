@@ -1022,6 +1022,21 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         if llm.IsSlowReasoningModel(sess.Model) {
                 turnBudget = 20 * time.Minute
         }
+        // v0.76.6 BRAIN-MEDIATED BUDGET (live-found on BOTH paths): a turn
+        // that runs through a brain (the local desktop brain OR a remote
+        // HF-space sandbox) pays the agent-loop wall clock — one model
+        // round-trip PER TOOL CALL with the composed system prompt
+        // (observed locally: ~54s/round → a 32-step chain died at exactly
+        // the 600s cap mid-chain with no final answer; observed on the
+        // shared community space: 2-6 min PER MODEL CALL). The brain's own
+        // watchdog (960s idle / 55-min hard cap) is the real deadline
+        // authority — brain-mediated turns get a 45-min floor here. The
+        // direct pipeline keeps the 10/20-min shape.
+        brainMediated := (sess.Sandbox == "hf" && s.remoteBrainFor(sess) != nil) ||
+                (sess.Sandbox != "hf" && s.brain != nil && s.brain.Healthy())
+        if brainMediated && turnBudget < 45*time.Minute {
+                turnBudget = 45 * time.Minute
+        }
         // v0.39: Background (NOT the WS request ctx) — the turn survives its
         // socket. Stop (abortTurn) + this budget are the only cancellers.
         turnCtx, turnCancel := context.WithTimeout(context.Background(), turnBudget)

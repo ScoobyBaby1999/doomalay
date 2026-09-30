@@ -816,13 +816,28 @@ async def chat(request: Request):
         # "every error sink" (a key-shaped model id must not reflect back).
         raise HTTPException(status_code=400, detail=redact.redact(f"could not resolve model {model} (provider {provider})"))
 
+    # v0.76.6 THE LIST ENV_VAR FIX (live-found: github-models 500s on EVERY
+    # /chat): the catalog allows env_var as a LIST of alternates
+    # (github-models: ["GITHUB_TOKEN", "GH_TOKEN"]) — req_env.get(<list>)
+    # is a TypeError: unhashable type, and the 500 ate the whole turn.
+    # Normalize ONCE here; every consumer below (key lookup, attribution,
+    # error events) speaks the same names.
+    _env_names = [str(v) for v in env_var] if isinstance(env_var, list) else [str(env_var)]
+    _env_names = [n for n in _env_names if n]
+    env_var = _env_names[0] if _env_names else str(env_var)
+
     # v0.72 BYOK: the user's own key (X-Env header) first; the space's own
     # secret (os.environ — the community public keys) as the fallback.
-    api_key = req_env.get(env_var) or os.environ.get(env_var, "")
+    api_key = ""
+    for _n in _env_names:
+        api_key = req_env.get(_n) or os.environ.get(_n, "")
+        if api_key:
+            env_var = _n  # the name that actually resolved (attribution truth)
+            break
     if not api_key:
         raise HTTPException(
             status_code=401,
-            detail=redact.redact(f"no API key set for {env_var} (provider {provider})"),
+            detail=redact.redact(f"no API key set for {' / '.join(_env_names)} (provider {provider})"),
         )
 
     # v0.75 ERROR ATTRIBUTION: whose key is this turn riding? Every error

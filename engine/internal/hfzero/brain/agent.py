@@ -353,13 +353,25 @@ async def _run_strands_agent(
         _HARD_CAP_S = 55 * 60  # absolute per-turn ceiling
         _turn_t0 = time.monotonic()
         _last_ev = time.monotonic()
+        # v0.76.6 THE HEARTBEAT (live-found on the HF-space rig): a model
+        # call can sit SILENT for minutes (observed 2-6 min per call on the
+        # shared community space) — the SSE stream carries no bytes, proxies
+        # with idle timeouts kill the connection, and the user sees a frozen
+        # chat. While the agent is busy and the queue is empty, emit a
+        # lightweight progress heartbeat every 25s: keeps every hop (brain
+        # SSE → engine WS → PWA) alive and updates the activity line.
+        # progress events are EPHEMERAL on the engine (never persisted —
+        # the v0.23 NO-SILENCE contract), so replays stay clean.
+        _HB_S = 25
+        _next_hb = time.monotonic() + _HB_S
 
         async def _pump():
-            nonlocal _last_ev
+            nonlocal _last_ev, _next_hb
             while True:
                 try:
                     ev = callback.q.get_nowait()
                     _last_ev = time.monotonic()
+                    _next_hb = _last_ev + _HB_S  # real activity resets the beat
                     yield ev
                 except _queue.Empty:
                     if fut.done():
@@ -382,6 +394,10 @@ async def _run_strands_agent(
                                    "message": f"turn hard cap reached ({_HARD_CAP_S // 60} min)"}
                             yield {"type": "status", "state": "error", "usage": None}
                             return
+                        if _now >= _next_hb:
+                            _next_hb = _now + _HB_S
+                            yield {"type": "progress",
+                                   "message": f"still working — {int(_now - _turn_t0)}s elapsed"}
                         await asyncio.sleep(0.05)
 
         try:
@@ -745,6 +761,20 @@ def _build_tools(workspace: str, web_search: bool,
     callback queue as thinking/tool events so the chat streams them.
     """
     tools = []
+
+    # v0.76.6 THE CONSENT-GATE FIX (live-found on the 30-tool-chain rig):
+    # a brain chat with no bound repo used to fall through to the strands
+    # BUILT-IN shell, which prompts for interactive consent on stdin — a
+    # headless server has none, so EVERY shell call returned "Command
+    # execution cancelled by user" (the model retried 6× then gave up;
+    # the same class of thrash the user's "without letting the model have
+    # to reason so much" mandate names). The docstring above already
+    # documents the contract — quick chat gets the stable per-chat
+    # .chat-ws/<session_id>/ workspace — but only dt_registry honored it.
+    # Default the workspace the same way so the workspace-scoped custom
+    # shell/python_repl (no consent gate, 300s cap, safe env) ALWAYS arm.
+    if not workspace:
+        workspace = str(Path(__file__).parent / ".chat-ws" / (session_id or "default"))
 
     # v0.75 SHARED-DISK ISOLATION (brain/sandboxing.py — the Phase 3
     # hardening): every subprocess tool (shell / python_repl / install /
