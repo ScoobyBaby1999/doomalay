@@ -1730,43 +1730,6 @@
     var base = '/api/sessions/' + sid;
     var latest = exportLatestFor(state);
     var dl = function (url) { window.open(url, '_blank'); };
-    var clientFile = function (name, mime, text) {
-      var blob = new Blob([text], { type: mime });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url; a.download = name;
-      document.body.appendChild(a); a.click();
-      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
-    };
-    // the visible tail of the conversation (client-side formats render
-    // from the messages on screen — same slice the engine applies)
-    var visibleMessages = function () {
-      var msgs = state.messages || [];
-      if (latest > 0 && msgs.length > latest) msgs = msgs.slice(-latest);
-      return msgs;
-    };
-    var txtTranscript = function () {
-      var out = ['# ' + icon.name + ' — transcript\n'];
-      visibleMessages().forEach(function (m) {
-        if (m.role === 'user') out.push('You:\n' + m.text + '\n');
-        else if (m.role === 'assistant') out.push((icon.name || 'Bot') + ':\n' + m.text + '\n');
-        else if (m.role === 'tool') out.push('⚙ ' + m.text + '\n');
-      });
-      return out.join('\n');
-    };
-    var htmlTranscript = function () {
-      var rows = visibleMessages().map(function (m) {
-        if (m.role === 'user') return '<p class="u"><b>You:</b><br>' + esc(m.text) + '</p>';
-        if (m.role === 'assistant') return '<p class="a"><b>' + esc(icon.name) + ':</b><br>' + esc(m.text) + '</p>';
-        if (m.role === 'tool') return '<p class="t">⚙ ' + esc(m.text) + '</p>';
-        return '';
-      }).join('\n');
-      return '<!doctype html><meta charset="utf-8"><title>' + esc(icon.name) + ' — transcript</title>' +
-        '<style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 14px;line-height:1.5}' +
-        'p{border:1px solid #ddd;border-radius:8px;padding:10px 14px;margin:8px 0;white-space:pre-wrap}' +
-        '.u{background:#f4f6ff}.a{background:#f6fff8}.t{background:#faf6ff;font-size:0.9em}</style>' +
-        '<h1>' + esc(icon.name) + ' — transcript</h1>\n' + rows;
-    };
     var noSession = !sid;
 
     function build() {
@@ -1785,13 +1748,13 @@
           }
           var qs = latest > 0 ? '?latest=' + latest : '';
           return (
-            '<p class="pv-hint">the transcript as a file — md / csv / json from the engine\'s event log, txt / html from the screen</p>' +
+            '<p class="pv-hint">the transcript as a file — md / csv / json / txt / html, straight from the engine\'s event log</p>' +
             (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
             fmtRow('📝', 'Markdown', 'data-x="md" data-url="' + base + '/export.md' + qs + '"') +
             fmtRow('▦', 'CSV', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"', ' style="color:var(--text-1)"') +
             fmtRow('🧾', 'JSON', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
-            fmtRow('📄', 'Plain text', 'data-x="txt"') +
-            fmtRow('🌐', 'HTML', 'data-x="html"')) +
+            fmtRow('📄', 'Plain text', 'data-x="txt" data-url="' + base + '/export.txt' + qs + '"') +
+            fmtRow('🌐', 'HTML', 'data-x="html" data-url="' + base + '/export.html' + qs + '"')) +
             '<div class="pv-sub-row">' +
               '<span class="pv-sub-label">exported latest</span>' +
               '<span class="pv-sub-value" id="ex-latest-val">' + (latest > 0 ? 'last ' + latest : 'full log') + '</span>' +
@@ -1807,10 +1770,15 @@
           el.querySelectorAll('[data-x]').forEach(function (b) {
             b.addEventListener('click', function () {
               if (noSession) return;
+              // v0.82.5 THE EXPORT TRUTH: every format rides the ENGINE
+              // (Content-Disposition → the WebView's DownloadListener).
+              // The old client-side txt/html used a Blob-URL <a download>,
+              // which the Android WebView cannot download — "Export chat
+              // plain text does not work", the user's report. The engine
+              // formats also carry the FULL log (thinking, tools, sources,
+              // metadata header) instead of just the on-screen messages.
               var x = b.getAttribute('data-x');
-              if (x === 'md' || x === 'csv' || x === 'json') dl(b.getAttribute('data-url'));
-              else if (x === 'txt') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.txt', 'text/plain', txtTranscript());
-              else if (x === 'html') clientFile((icon.name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.html', 'text/html', htmlTranscript());
+              dl(b.getAttribute('data-url'));
             });
           });
           // v0.28→v0.30: the scope slider — -1 (the left edge, the

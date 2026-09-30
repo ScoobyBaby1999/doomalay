@@ -123,3 +123,101 @@ func TestExportLatestJSONTrimsEvents(t *testing.T) {
 		t.Fatalf("latest=1 lost the session block")
 	}
 }
+
+// TestV825_ExportTXT — v0.82.5 THE EXPORT TRUTH: the plain-text export
+// rides the ENGINE (Content-Disposition — the client-side Blob-URL
+// download never worked in the Android WebView, the user's "Export chat
+// plain text does not work"), and carries the FULL log: metadata header
+// + user/assistant/thinking/tool/sources rows.
+func TestV825_ExportTXT(t *testing.T) {
+	s, sid := seedExportSession(t)
+	out := getExport(t, s, sid, "txt", "")
+	if !strings.Contains(out, "Lippy — transcript") {
+		t.Fatalf("missing the title:\n%s", out)
+	}
+	// the full metadata header
+	for _, want := range []string{
+		"Chat type: quick", "Provider: nvidia", "Model: nvidia/nvidia/nemotron-3-super-120b-a12b",
+		"Memory window: 40 messages", "Usage: 1 turns", "Started:", "Counts: 2 user · 3 assistant",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("txt header missing %q:\n%s", want, out)
+		}
+	}
+	// the conversation rows
+	if !strings.Contains(out, "You:\nhello one") || !strings.Contains(out, "Assistant:\nreply one") {
+		t.Fatalf("txt rows missing:\n%s", out)
+	}
+}
+
+// TestV825_ExportHTML — the engine-side HTML twin: full metadata + escaped
+// rows, a self-contained page.
+func TestV825_ExportHTML(t *testing.T) {
+	s, sid := seedExportSession(t)
+	out := getExport(t, s, sid, "html", "")
+	if !strings.Contains(out, "<!doctype html>") || !strings.Contains(out, "Lippy — transcript") {
+		t.Fatalf("html shape:\n%.200s", out)
+	}
+	if !strings.Contains(out, "Chat type: quick") || !strings.Contains(out, "Usage: 1 turns") {
+		t.Fatalf("html metadata missing:\n%.400s", out)
+	}
+	if !strings.Contains(out, "hello one") || !strings.Contains(out, "reply one") {
+		t.Fatalf("html rows missing:\n%s", out)
+	}
+}
+
+// TestV825_ExportMDHeaderEnriched — "make sure all export chat options
+// include as much info as possible": the md header now carries the full
+// metadata (web search, usage totals, counts, updated…), shared with
+// txt/html through exportMetaLines.
+func TestV825_ExportMDHeaderEnriched(t *testing.T) {
+	s, sid := seedExportSession(t)
+	out := getExport(t, s, sid, "md", "")
+	for _, want := range []string{
+		"**Chat type:** quick", "**Web search:** off", "**Deep research:** off",
+		"**Usage:** 1 turns", "**Counts:** 2 user · 3 assistant",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("md header missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestV825_TXTThinkingToolSources — the txt format carries the rows the
+// client-side render never could (thinking, tool calls, sources).
+func TestV825_TXTThinkingToolSources(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	sess := &store.Session{ID: "s2", Title: "Full", Provider: "privatemodeai", Model: "privatemodeai/kimi-k2.6", Sandbox: "quick"}
+	if err := db.CreateSession(sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	db.AppendEvent("s2", "user", "go", "")
+	db.AppendEvent("s2", "thinking", "pondering deeply", "")
+	db.AppendEvent("s2", "tool_use", `{"name":"workspace","summary":"list","text":""}`, "")
+	db.AppendEvent("s2", "tool_result", `{"name":"workspace","text":"1 workspace(s)"}`, "")
+	db.AppendEvent("s2", "assistant", "done <script>alert(1)</script>", "")
+	db.AppendEvent("s2", "sources", `[{"title":"Docs","url":"https://e.test/x","snippet":"the snippet"}]`, "")
+	s := New(&config.Config{DataDir: dir}, db, nil)
+
+	out := getExport(t, s, "s2", "txt", "")
+	for _, want := range []string{"[thinking]\npondering deeply", "[tool] {\"name\":\"workspace\"", "Sources:\n1. Docs — https://e.test/x", "the snippet"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("txt missing %q:\n%s", want, out)
+		}
+	}
+	html := getExport(t, s, "s2", "html", "")
+	if !strings.Contains(html, "pondering deeply") || !strings.Contains(html, "https://e.test/x") {
+		t.Fatalf("html missing the full rows:\n%.400s", html)
+	}
+	// escaping: a <script> in content must never ride raw
+	if strings.Contains(html, "<script>alert(1)</script>") {
+		t.Fatalf("html escaping failed")
+	}
+}

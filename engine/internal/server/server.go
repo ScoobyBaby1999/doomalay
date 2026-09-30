@@ -212,9 +212,16 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleSessionCompact)
 
         // v0.16: chat-log export (the user-reviewable transcript — csv/md/json).
+        // v0.82.5: + txt + html — the plain-text export used to render
+        // client-side via a Blob-URL <a download>, which the Android WebView
+        // cannot download (only engine URLs with Content-Disposition reach the
+        // DownloadListener — that's why md/csv/json worked and txt "did not
+        // work"). Both formats now ride the engine like the rest.
         s.mux.HandleFunc("GET /api/sessions/{id}/export.csv", s.handleSessionExport)
         s.mux.HandleFunc("GET /api/sessions/{id}/export.md", s.handleSessionExport)
         s.mux.HandleFunc("GET /api/sessions/{id}/export.json", s.handleSessionExport)
+        s.mux.HandleFunc("GET /api/sessions/{id}/export.txt", s.handleSessionExport)
+        s.mux.HandleFunc("GET /api/sessions/{id}/export.html", s.handleSessionExport)
 
         // v0.17: per-chat ARTIFACTS (files the model / user produce —
         // create, list, open, edit, rename, delete, download).
