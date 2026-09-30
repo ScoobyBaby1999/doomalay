@@ -1275,7 +1275,40 @@
     world.add(icon);
     iconLayer.appendChild(icon.el);
     icon.render(offsetX, offsetY, scale);
+    hideCanvasEmpty();  // v0.82.2: any creation ends the first-run state
     scheduleSave();
+    return icon;
+  }
+
+  // v0.82: THE VISIBLE CREATE-AND-OPEN PATH — shared by the dock's ＋
+  // (0.82.1) and the first-run empty-state's CTA (0.82.2). Creates the
+  // chat at the viewport CENTER (always visible, never under the dock
+  // cluster), gives it the same little nudge + physics as the long-press
+  // menu, then opens it via the EXACT tap-to-open sequence the canvas
+  // icon itself uses (flash → 150ms → panel). Pressing "New chat" IS
+  // the intent to chat.
+  function createChatAtCenterAndOpen() {
+    const center = screenToWorld(W / 2, H / 2);
+    const icon = createIconAt(center.x, center.y);
+    icon.vx = (Math.random() - 0.5) * 6;
+    icon.vy = (Math.random() - 0.5) * 6;
+    startAnimation();
+    icon.flash();
+    setTimeout(function () {
+      var modelBtn = document.getElementById('panel-model-btn');
+      if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+      panel.bodyEl.style.padding = '0';
+      panel.open({
+        title: icon.getPanelTitle(),
+        subtitle: icon.getPanelSubtitle(),
+        avatarHTML: icon.getAvatarHTML(),
+        bodyHTML: icon.getPanelBodyHTML(),
+        context: icon
+      });
+      if (icon.type === 'chat' && window.ChatPanel) {
+        window.ChatPanel.render(panel.bodyEl, icon, panel);
+      }
+    }, 150);
     return icon;
   }
 
@@ -1497,6 +1530,33 @@
 
   // ── Long-press dropdown menu ───────────────────────────────────
   const menuEl = document.getElementById('menu');
+
+  // ── v0.82.2: THE FIRST-RUN EMPTY-STATE ─────────────────────────
+  // A fresh install booted to an empty grid whose only creation path
+  // was the hidden long-press menu — the single worst first-run funnel
+  // step (live red-team finding). Shown ONCE per fresh install (boot:
+  // no saved layout AND zero restored icons); every creation path
+  // (long-press / dock ＋ / the card's own CTA / materialize-from-
+  // search) lands in createIconAt → hideCanvasEmpty, so it never
+  // shadows an icon. Returning users who deleted all their chats have
+  // a saved layout → never see it.
+  const canvasEmptyEl = document.getElementById('canvas-empty');
+  let canvasEmptyDismissed = false;
+
+  function hideCanvasEmpty() {
+    if (canvasEmptyDismissed) return;
+    canvasEmptyDismissed = true;
+    if (canvasEmptyEl) canvasEmptyEl.classList.add('hidden');
+  }
+
+  function maybeShowCanvasEmpty(isFreshInstall) {
+    if (!canvasEmptyEl || canvasEmptyDismissed) return;
+    if (!isFreshInstall) return;               // returning user — they know
+    if (world.entities.length > 0) { hideCanvasEmpty(); return; }
+    canvasEmptyEl.classList.remove('hidden');  // the card itself is
+    // pointer-events:none — pan/zoom stay fully alive; only .ce-btn
+    // is interactive (exempted from the canvas gesture swallow below).
+  }
 
   function showMenu(x, y) {
     menuEl.classList.remove('hidden');
@@ -1756,6 +1816,12 @@
     // checks the strip's buttons die the same death on Android.
     if (dockStripEl && dockStripEl.contains(target)) return true;
     if (dockToggleEl && dockToggleEl.contains(target)) return true;
+    // v0.82.2: the first-run empty-state card — the card body is
+    // pointer-events:none (touches pass through to the canvas), but its
+    // CTA button is interactive and must not be swallowed by the canvas
+    // pan handlers (the same preventDefault death the dock buttons
+    // needed exempting from).
+    if (canvasEmptyEl && canvasEmptyEl.contains(target)) return true;
     return menuEl.contains(target) ||
            settingsBtnEl.contains(target) ||
            panel.panelEl.contains(target) ||
@@ -2019,6 +2085,25 @@
       } catch (e) {}
     });
 
+    // v0.82.1: THE DOCK NEW-CHAT BUTTON — the visible primary action.
+    // Before this the ONLY creation path was the hidden 500ms-long-press
+    // context menu (live red-team: a fresh user on an empty canvas had no
+    // discoverable way to start). The long-press menu stays create-only
+    // (placing precisely where the finger pressed); this button is the
+    // INTENT to chat → create at center + open (the shared
+    // createChatAtCenterAndOpen path, v0.82).
+    const dockNewBtn = dockStripEl.querySelector('#dock-new');
+    if (dockNewBtn) dockNewBtn.addEventListener('click', function () {
+      createChatAtCenterAndOpen();
+    });
+
+    // v0.82.2: the empty-state CTA rides the SAME create-and-open path —
+    // one primary action, one behavior, from both surfaces.
+    const emptyBtn = canvasEmptyEl ? canvasEmptyEl.querySelector('#canvas-empty-btn') : null;
+    if (emptyBtn) emptyBtn.addEventListener('click', function () {
+      createChatAtCenterAndOpen();
+    });
+
     // v0.78.4: the WEB globe → the browser-in-browser panel. Resumes the
     // current tab when one is open; otherwise opens the omnibox's own
     // search engine (DuckDuckGo) as the start page.
@@ -2262,6 +2347,12 @@
         }
       }
     }
+
+    // v0.82.2: the first-run empty-state — only a FRESH install (no
+    // saved layout at all) with ZERO restored icons sees the card.
+    // `saved` null = this device has never placed an icon (returning
+    // users who deleted everything still have a saved layout → skip).
+    maybeShowCanvasEmpty(!saved);
 
     resize();
 

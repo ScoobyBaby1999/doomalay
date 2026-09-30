@@ -563,6 +563,104 @@
     fill: var(--text-3);
     transition: fill 0.15s ease;
   }
+  .dock-btn:active svg { fill: var(--accent); }
+
+  /* ── v0.82.2: THE FIRST-RUN EMPTY-STATE ─────────────────────────
+     Live red-team finding: a FRESH device booted to an empty grid with
+     no visible creation affordance (new-chat lived only in the hidden
+     long-press menu). This card is the education + ONE primary CTA
+     (empty-state guidance: shortest path to value). Shown ONLY when the
+     saved-layout key is absent (a truly fresh install) AND the world
+     has zero icons — returning users who deleted everything never see
+     it again. The card is pointer-events:none (pan/zoom stay fully
+     alive — the canvas IS the feature); only the button is interactive
+     (and isInsideUI exempts it from the canvas gesture swallow).
+     Matte-glass card, theme vars only, motion-grade entrance
+     (transform+opacity, never layout). */
+  #canvas-empty {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 90; /* above the grid, below the dock (500) + panel + overlays */
+    padding: 24px;
+  }
+  #canvas-empty.hidden { display: none; }
+  #canvas-empty .ce-card {
+    max-width: 320px;
+    width: 100%;
+    text-align: center;
+    padding: 26px 22px 20px;
+    background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+    border: 1px solid var(--surface-3);
+    border-radius: 20px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+    animation: ce-in 0.42s cubic-bezier(0.32, 0.72, 0, 1) 0.35s forwards;
+  }
+  #canvas-empty.hidden .ce-card { animation: none; }
+  @keyframes ce-in {
+    to { opacity: 1; transform: none; }
+  }
+  #canvas-empty .ce-glyph {
+    width: 44px; height: 44px;
+    margin: 0 auto 12px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb), 0.14);
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+  }
+  #canvas-empty .ce-glyph svg {
+    width: 22px; height: 22px;
+    fill: var(--accent);
+  }
+  #canvas-empty .ce-title {
+    font-size: calc(var(--ui-fs) + 3px);
+    font-weight: 700;
+    color: var(--text-1);
+    margin-bottom: 6px;
+  }
+  #canvas-empty .ce-sub {
+    font-size: var(--ui-micro-fs);
+    line-height: 1.5;
+    color: var(--text-2);
+    margin-bottom: 16px;
+  }
+  #canvas-empty .ce-btn {
+    pointer-events: auto; /* the ONE interactive element on the card */
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: inherit;
+    font-size: var(--ui-fs);
+    font-weight: 700;
+    color: var(--on-accent, #fff);
+    background: var(--accent);
+    background-image: var(--accent-gradient, none);
+    background-attachment: fixed;
+    border: none;
+    border-radius: 999px;
+    padding: 11px 20px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: transform 0.15s;
+  }
+  #canvas-empty .ce-btn:active { transform: scale(0.95); }
+  #canvas-empty .ce-btn svg {
+    width: 15px; height: 15px;
+    fill: var(--on-accent, #fff);
+  }
+  #canvas-empty .ce-tip {
+    margin-top: 14px;
+    font-size: var(--ui-micro-fs);
+    color: var(--text-3);
+    line-height: 1.5;
+  }
+  #canvas-empty .ce-tip b { color: var(--text-2); font-weight: 600; }
 
   /* ── Slide-up chat panel ───────────────────────────────────────
      v0.42 ALWAYS-TALL SHEET: #chat-panel is PERMANENTLY 100dvh and
@@ -4759,6 +4857,17 @@
      localStorage (doomalay.dock.v1). Wired in app.js. -->
 <button id="dock-toggle" aria-label="Expand dock" aria-expanded="false"><span class="dg">›</span></button>
 <div id="dock-strip" class="hidden">
+  <!-- v0.82.1: THE DOCK NEW-CHAT BUTTON — first dock pill. Before this,
+       the ONLY "New Chat" affordance was the hidden 500ms-long-press
+       context menu; a fresh user staring at an empty canvas had no
+       visible path to the app's core action (live red-team finding).
+       Creates the chat at the viewport CENTER and opens it (the button
+       IS the intent to chat — the long-press path stays create-only).
+       Same .dock-btn chrome (32px capsule + ::after hit-slop + theme
+       vars), wired in app.js. -->
+  <button class="dock-btn" id="dock-new" title="New chat" aria-label="New chat">
+    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+  </button>
   <button class="dock-btn" id="dock-web" title="Web browser" aria-label="Web browser">
     <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c.96-1.66 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg>
   </button>
@@ -4774,6 +4883,26 @@
   <button class="dock-btn" id="dock-chats" title="All chats — browse & search" aria-label="All chats — browse and search">
     <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
   </button>
+</div>
+
+<!-- v0.82.2: THE FIRST-RUN EMPTY-STATE — app.js shows this ONLY on a
+     fresh install (no saved layout) with zero canvas icons; the card
+     itself never blocks pan/zoom (pointer-events:none — only .ce-btn
+     is interactive). The button rides the exact create+open path the
+     dock's ＋ uses. -->
+<div id="canvas-empty" class="hidden" aria-live="polite">
+  <div class="ce-card">
+    <div class="ce-glyph" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
+    </div>
+    <div class="ce-title">Your canvas is empty</div>
+    <div class="ce-sub">Chats live here as bubbles — drag, fling, and arrange them however you like.</div>
+    <button class="ce-btn" id="canvas-empty-btn">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+      Create your first chat
+    </button>
+    <div class="ce-tip">Tip: <b>long-press</b> anywhere on the canvas to place a chat right there.</div>
+  </div>
 </div>
 
 <!-- Slide-up chat panel (hidden by default, opened by tapping a chatbot) -->
