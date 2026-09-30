@@ -381,7 +381,19 @@
 
   // ── accounts (edit A7/A8): paste/sign in ONCE, vault-encrypted ────────
   var accounts = { github: { signed_in: false, login: '', oauth_configured: false},
-                   gitea:  { signed_in: false, login: '', oauth_configured: false} };
+                   gitea:  { signed_in: false, login: '', oauth_configured: false},
+                   hf:     { signed_in: false, login: '', oauth_configured: false} };
+
+  // v0.78.2: HF sign-in state rides the HUB auth (the same connected
+  // account the Space flows use) — folded into refreshAccounts so every
+  // provider section (connect page, create form) sees it like github/gitea.
+  function refreshHFAccount() {
+    return api('/api/hub/auth/status').then(function (d) {
+      accounts.hf.signed_in = !!(d && d.connected);
+      accounts.hf.login = (d && d.username) || '';
+      return accounts;
+    }).catch(function () { return accounts; });
+  }
 
   function refreshAccounts() {
     return api('/api/workspaces/accounts').then(function (d) {
@@ -392,8 +404,8 @@
           accounts[a.kind].oauth_configured = !!a.oauth_configured;
         }
       });
-      return accounts;
-    }).catch(function () { return accounts; });
+      return refreshHFAccount();
+    }).catch(function () { return refreshHFAccount(); });
   }
 
   // The sign-in-first block (edit A8): BIG "Sign in" row + manual token row.
@@ -443,7 +455,7 @@
   }
 
   function kindLabel(kind) {
-    return { github: 'GitHub', gitea: 'Gitea', gitlab: 'GitLab' }[kind] || kind;
+    return { github: 'GitHub', gitea: 'Gitea', gitlab: 'GitLab', hf: 'Hugging Face' }[kind] || kind;
   }
 
   // Wire a signin block. actions: { onSignedIn: fn } — re-render via caller.
@@ -570,6 +582,7 @@
     { k: 'gitea',     icon: '🍵', name: 'Gitea',     rgb: 'var(--accent-2-rgb)', c: 'var(--accent-2)', host: 'gitea.com' },
     { k: 'gitlab',    icon: '🦊', name: 'GitLab',    rgb: 'var(--accent-3-rgb)', c: 'var(--accent-3)', host: 'gitlab.com' },
     { k: 'sourcehut', icon: '🪶', name: 'Sourcehut',  rgb: 'var(--accent-4-rgb)', c: 'var(--accent-4)', host: 'sr.ht' },
+    { k: 'hf',        icon: '🤗', name: 'Hugging Face', rgb: 'var(--accent-rgb)', c: 'var(--accent)',   host: 'huggingface.co' },
     { k: 'selfhost',  icon: '📱', name: 'Self-Host', rgb: 'var(--accent-rgb)',   c: 'var(--accent)',   host: '' }
   ];
   var curProv = 'github';   // "by default the GitHub pill is selected"
@@ -633,7 +646,7 @@
     var root = document.querySelector('.wsp');
     if (root) root.setAttribute('data-prov', curProv);
     var p = provByKind(curProv);
-    var hasAccount = curProv === 'github' || curProv === 'gitea';
+    var hasAccount = curProv === 'github' || curProv === 'gitea' || curProv === 'hf';
 
     if (curProv === 'selfhost') {
       sec.innerHTML =
@@ -689,6 +702,14 @@
     if (sign) sign.addEventListener('click', function () {
       if (curProv === 'github' && window.GHConnect) {
         window.GHConnect.openConnectPanel({
+          onDone: function () {
+            refreshAccounts().then(reopenConnect);
+          }
+        });
+      } else if (curProv === 'hf' && window.HFConnect) {
+        // v0.78.2: the SAME connected HF account the hub/Space flows use —
+        // one panel, one token, everywhere.
+        window.HFConnect.openConnectPanel({
           onDone: function () {
             refreshAccounts().then(reopenConnect);
           }
@@ -1131,6 +1152,7 @@
     if (/(^|\.)gitlab\.com$/.test(host)) return 'gitlab';
     if (/gitea|codeberg/.test(host)) return 'gitea';
     if (/sr\.ht$/.test(host)) return 'sourcehut';
+    if (/huggingface\.co$|(^|\.)hf\.co$/.test(host)) return 'hf';
     return 'generic';
   }
 

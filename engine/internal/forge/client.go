@@ -65,6 +65,9 @@ type Client struct {
         // and gitlab.com use hardcoded API bases → plain client.
         guarded bool
         hc      *http.Client
+        // hf: the token's whoami login, cached per Client (hfWhoami).
+        hfUser     string
+        hfUserDone bool
 }
 
 // NewClient builds the client for a resolved HostInfo.
@@ -155,6 +158,8 @@ func (c *Client) RepoInfo(ctx context.Context, token string) (*RepoMeta, error) 
                 return c.glRepoInfo(ctx, token)
         case "sourcehut":
                 return c.shRepoInfo(ctx, token)
+        case "hf":
+                return c.hfRepoInfo(ctx, token)
         }
         return nil, ErrUnsupported
 }
@@ -175,6 +180,8 @@ func (c *Client) Tree(ctx context.Context, path, ref, token string) ([]TreeEntry
                 return c.shTree(ctx, path, ref, token)
         case "generic":
                 return c.genTree(ctx, path, ref, token)
+        case "hf":
+                return c.hfTree(ctx, path, ref, token)
         }
         return nil, false, ErrUnsupported
 }
@@ -194,6 +201,8 @@ func (c *Client) File(ctx context.Context, path, ref, rangeSpec, token string) (
                 return c.shFile(ctx, path, ref, rangeSpec, token)
         case "generic":
                 return c.genFile(ctx, path, ref, rangeSpec, token)
+        case "hf":
+                return c.hfFile(ctx, path, ref, rangeSpec, token)
         }
         return nil, ErrUnsupported
 }
@@ -232,6 +241,8 @@ func (c *Client) Branches(ctx context.Context, token string) ([]string, error) {
                 return c.shBranches(ctx, token)
         case "generic":
                 return c.genBranches(ctx, token)
+        case "hf":
+                return c.hfBranches(ctx, token)
         }
         return nil, ErrUnsupported
 }
@@ -248,6 +259,8 @@ func (c *Client) Commits(ctx context.Context, path, ref, token string, limit int
                 return c.shCommits(ctx, path, ref, token, limit)
         case "generic":
                 return c.genCommits(ctx, path, ref, token, limit)
+        case "hf":
+                return c.hfCommits(ctx, path, ref, token, limit)
         }
         return nil, ErrUnsupported
 }
@@ -262,6 +275,8 @@ func (c *Client) Issues(ctx context.Context, state, token string, limit int) ([]
                 return c.gtIssues(ctx, state, token, limit)
         case "gitlab":
                 return c.glIssues(ctx, state, token, limit)
+        case "hf":
+                return c.hfIssues(ctx, state, token, limit)
         }
         return nil, ErrUnsupported
 }
@@ -274,6 +289,8 @@ func (c *Client) Pulls(ctx context.Context, state, token string, limit int) ([]P
                 return c.gtPulls(ctx, state, token, limit)
         case "gitlab":
                 return c.glPulls(ctx, state, token, limit)
+        case "hf":
+                return c.hfPulls(ctx, state, token, limit)
         }
         return nil, ErrUnsupported
 }
@@ -310,11 +327,13 @@ func (c *Client) WorkflowRuns(ctx context.Context, token string, limit int) ([]W
         return nil, ErrUnsupported
 }
 
-// Discussions: GitHub GraphQL only (REST has no endpoint — verified
-// against the docs 2026-09). Token required.
+// Discussions: GitHub GraphQL + HF (type "discussion" rows).
 func (c *Client) Discussions(ctx context.Context, token string, limit int) ([]Discussion, error) {
         if c.host.Kind == "github" {
                 return c.ghDiscussions(ctx, token, limit)
+        }
+        if c.host.Kind == "hf" {
+                return c.hfDiscussionList(ctx, token, limit)
         }
         return nil, ErrUnsupported
 }
@@ -341,6 +360,8 @@ func (c *Client) PutFile(ctx context.Context, path, branch, message, content, sh
                 return c.gtPutFile(ctx, path, branch, message, content, sha, token)
         case "gitlab":
                 return c.glPutFile(ctx, path, branch, message, content, sha, token)
+        case "hf":
+                return c.hfPutFile(ctx, path, branch, message, content, sha, token)
         }
         return "", ErrUnsupported
 }
@@ -369,6 +390,8 @@ func (c *Client) CreateRepo(ctx context.Context, name, desc, license, gitignore 
                 return c.gtCreateRepo(ctx, name, desc, license, gitignore, private, token)
         case "gitlab":
                 return c.glCreateRepo(ctx, name, desc, license, gitignore, private, token)
+        case "hf":
+                return c.hfCreateRepo(ctx, name, desc, license, gitignore, private, token)
         }
         return nil, ErrUnsupported
 }
@@ -383,6 +406,8 @@ func (c *Client) ListUserRepos(ctx context.Context, token string, limit int) ([]
                 return c.gtListUserRepos(ctx, token, limit)
         case "gitlab":
                 return c.glListUserRepos(ctx, token, limit)
+        case "hf":
+                return c.hfListUserRepos(ctx, token, limit)
         }
         return nil, ErrUnsupported
 }

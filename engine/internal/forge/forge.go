@@ -77,7 +77,7 @@ const (
 
 // HostInfo is what Recognize() extracts from a user URL.
 type HostInfo struct {
-        Kind    string `json:"kind"`     // github|gitea|gitlab|sourcehut|generic
+        Kind    string `json:"kind"`     // github|gitea|gitlab|sourcehut|generic|hf
         Host    string `json:"host"`     // the web hostname (github.com)
         APIBase string `json:"api_base"` // https://api.github.com | …/api/v1 | ""
         WebBase string `json:"web_base"` // https://github.com
@@ -87,6 +87,9 @@ type HostInfo struct {
         // gitlab's API ids are urlencoded full paths; the other forges only
         // ever use owner/repo.
         ProjectPath string `json:"project_path"`
+        // HFType (kind "hf" only): models|datasets|spaces — the Hub's repo
+        // type, parsed from the URL prefix (bare /owner/repo = model).
+        HFType string `json:"hf_type,omitempty"`
 }
 
 // RepoMeta is the forge-agnostic repo card.
@@ -223,13 +226,17 @@ type SearchHit struct {
 
 // knownHosts maps hostnames to kinds. Everything else probes.
 var knownHosts = map[string]string{
-        "github.com":       "github",
-        "www.github.com":   "github",
-        "gitlab.com":       "gitlab",
-        "www.gitlab.com":   "gitlab",
-        "gitea.com":        "gitea",
-        "codeberg.org":     "gitea", // Forgejo speaks the Gitea API
-        "git.sr.ht":        "sourcehut",
+        "github.com":            "github",
+        "www.github.com":        "github",
+        "gitlab.com":            "gitlab",
+        "www.gitlab.com":        "gitlab",
+        "gitea.com":             "gitea",
+        "codeberg.org":          "gitea", // Forgejo speaks the Gitea API
+        "git.sr.ht":             "sourcehut",
+        "huggingface.co":     "hf",
+        "www.huggingface.co": "hf",
+        "hf.co":              "hf",
+        "www.hf.co":          "hf",
 }
 
 // Recognize parses a user URL into a HostInfo WITHOUT any network call.
@@ -261,6 +268,25 @@ func Recognize(rawURL string) (HostInfo, error) {
         seg := nonEmpty(strings.Split(strings.Trim(u.Path, "/"), "/"))
 
         switch kind {
+        case "hf":
+                // huggingface.co/{owner}/{repo} (a MODEL) | /datasets/{o}/{r}
+                // | /spaces/{o}/{r}. Trailing URL junk (tree/…, commit/…,
+                // resolve/…, blob/…, discussions…) is ignored past repo.
+                typ := "models"
+                if len(seg) >= 1 && (seg[0] == "datasets" || seg[0] == "spaces" || seg[0] == "models") {
+                        if len(seg) < 3 {
+                                return HostInfo{}, fmt.Errorf("expected https://huggingface.co/%s/<owner>/<repo>", seg[0])
+                        }
+                        typ = seg[0]
+                        seg = seg[1:]
+                }
+                if len(seg) < 2 {
+                        return HostInfo{}, fmt.Errorf("expected https://huggingface.co/[datasets/|spaces/]<owner>/<repo>")
+                }
+                owner, repo := seg[0], strings.TrimSuffix(seg[1], ".git")
+                return HostInfo{Kind: "hf", Host: host, WebBase: webBase(u),
+                        APIBase: "https://huggingface.co", Owner: owner, Repo: repo,
+                        ProjectPath: owner + "/" + repo, HFType: typ}, nil
         case "github", "gitea", "gitlab":
                 if len(seg) < 2 {
                         return HostInfo{}, fmt.Errorf("expected https://%s/<owner>/<repo>", host)

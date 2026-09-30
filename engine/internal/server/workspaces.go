@@ -96,6 +96,10 @@ func (s *Server) wsToken(w *store.Workspace) string {
                         return firstNonEmpty(s.githubToken(), k["GITHUB_TOKEN"])
                 case "gitea":
                         return k["GITEA_TOKEN"]
+                case "hf":
+                        // v0.78.2: HF workspaces without a per-workspace token
+                        // ride the connected hub account (same as connect).
+                        return s.hfToken()
                 }
         }
         return ""
@@ -112,11 +116,32 @@ func firstNonEmpty(ss ...string) string {
 
 // wsClient builds the forge client for a stored workspace.
 func (s *Server) wsClient(w *store.Workspace) *forge.Client {
-        return forge.NewClient(forge.HostInfo{
+        hi := forge.HostInfo{
                 Kind: w.Kind, Host: w.Host, WebBase: "https://" + w.Host,
                 APIBase: apiBaseFor(w.Kind, w.Host), Owner: w.Owner, Repo: w.Repo,
                 ProjectPath: w.Owner + "/" + w.Repo,
-        })
+        }
+        if w.Kind == "hf" {
+                hi.HFType = s.hfWorkspaceType(w)
+        }
+        return forge.NewClient(hi)
+}
+
+// hfWorkspaceType re-derives the Hub repo type (models|datasets|spaces)
+// for a stored HF workspace — first from the RepoURL (the source of
+// truth), then the meta copy, defaulting to models.
+func (s *Server) hfWorkspaceType(w *store.Workspace) string {
+        if w.RepoURL != "" {
+                if hi, err := forge.Recognize(w.RepoURL); err == nil && hi.Kind == "hf" && hi.HFType != "" {
+                        return hi.HFType
+                }
+        }
+        if m := w.MetaJSON(); m != nil {
+                if t, _ := m["hf_type"].(string); t == "datasets" || t == "spaces" || t == "models" {
+                        return t
+                }
+        }
+        return "models"
 }
 
 func apiBaseFor(kind, host string) string {
@@ -129,6 +154,8 @@ func apiBaseFor(kind, host string) string {
                 return "https://" + host + "/api/v4"
         case "sourcehut":
                 return "https://git.sr.ht"
+        case "hf":
+                return "https://huggingface.co"
         }
         return "https://" + host
 }
@@ -347,6 +374,17 @@ func (s *Server) connectRepo(w http.ResponseWriter, r *http.Request, hi forge.Ho
         ws.Access = meta.Access(token != "" || s.hasGlobalToken(hi.Kind))
         metaJSON, _ := json.Marshal(meta)
         ws.Meta = string(metaJSON)
+        if hi.Kind == "hf" && hi.HFType != "" {
+                // v0.78.2: persist the Hub repo type alongside the repo meta
+                // (badge + the wsClient fallback when RepoURL ever goes stale).
+                var m map[string]any
+                if json.Unmarshal(metaJSON, &m) == nil {
+                        m["hf_type"] = hi.HFType
+                        if b, err := json.Marshal(m); err == nil {
+                                ws.Meta = string(b)
+                        }
+                }
+        }
 
         if existing != nil {
                 if err := s.db.UpdateWorkspace(ws); err != nil {
@@ -388,6 +426,10 @@ func (s *Server) globalToken(kind string) string {
                 return firstNonEmpty(s.githubToken(), s.vault.AsEnv()["GITHUB_TOKEN"])
         case "gitea":
                 return s.vault.AsEnv()["GITEA_TOKEN"]
+        case "hf":
+                // v0.78.2: the connected HF account rides the hub vault key —
+                // HF repos browse/edit with the same token as the Space flows.
+                return s.hfToken()
         }
         return ""
 }
@@ -957,13 +999,29 @@ func (s *Server) handleWorkspaceClone(w http.ResponseWriter, r *http.Request) {
         if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
                 // token stays OUT of the clone URL argv (ps-visible): env instead
                 cloneURL := "https://" + ws.Host + "/" + ws.Owner + "/" + ws.Repo + ".git"
-                cmd := exec.Command("git", "clone", "--filter=blob:none", "--depth=50", cloneURL, dir)
+                if ws.Kind == "hf" {
+                        // v0.78.2: HF git URLs carry the repo-type prefix for
+                        // datasets/spaces (models are bare owner/repo.git).
+                        if t := s.hfWorkspaceType(ws); t == "datasets" || t == "spaces" {
+                                cloneURL = "https://huggingface.co/" + t + "/" + ws.Owner + "/" + ws.Repo + ".git"
+                        }
+                }
+                cmd := exec.Command("git", "clone", "--depth=50", cloneURL, dir)
+                if ws.Kind != "hf" {
+                        // the blobless filter keeps big forges cheap — but HF's
+                        // git endpoint doesn't honor promisor fetches (v0.78.2
+                        // live finding: "expected 'packfile'… from promisor
+                        // remote"), so HF clones go full-shallow instead.
+                        cmd = exec.Command("git", "clone", "--filter=blob:none", "--depth=50", cloneURL, dir)
+                }
                 cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
                 if tok := s.wsToken(ws); tok != "" {
                         // in-URL auth is the only https credential channel without a
-                        // helper; keep it in the CHILD env via a temporary askpass
+                        // helper; keep it in the CHILD env via a temporary askpass.
+                        // v0.78.2: prompt-aware — HF wants the token as the PASSWORD
+                        // (any username); GitHub accepts it either way.
                         askpass := filepath.Join(root, ".askpass-"+ws.ID)
-                        if err := os.WriteFile(askpass, []byte("#!/bin/sh\necho "+shellQuote(tok)), 0o700); err == nil {
+                        if err := os.WriteFile(askpass, []byte("#!/bin/sh\ncase \"$1\" in *sername*) echo user;; *) echo "+shellQuote(tok)+";; esac"), 0o700); err == nil {
                                 defer os.Remove(askpass)
                                 cmd.Env = append(cmd.Env, "GIT_ASKPASS="+askpass)
                         }
