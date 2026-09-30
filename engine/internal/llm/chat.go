@@ -1145,7 +1145,7 @@ ASSISTANT: It is 09:41 in Tokyo (UTC+9), and 37*14 = 518.
 
 RULES:
 - One tool call per reply. The ACTION line must be the last line, plain text (no bold, no backticks, no code fence), and contain nothing but the call.
-- After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool's output) as a user message — you never wait for the user for this. Read it and IMMEDIATELY issue your next ACTION (up to 24 chained calls per turn).
+- After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool's output) as a user message — you never wait for the user for this. Read it and IMMEDIATELY issue your next ACTION. There is NO fixed cap on chained calls — keep going as long as the task needs (a hundred is fine); only stop when you genuinely have everything for your final answer.
 - NEVER say you cannot do something (search the web, make a file, calculate, check the time) — you CAN, with these tools. Try the tool first; only report failure after its OBSERVATION says so.
 - ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.
 - Your FINAL answer must SAY the tool's results to the user — the number, the quote, the facts (v0.81.7, live red-team: a small model ended a turn with "The calculator returned to the user." and the user never saw 1081). Never just announce that a tool ran.`
@@ -1279,7 +1279,10 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         // going as long as they like; a 30+ tool chain (live-proven on the
         // brain path) must also fit on the direct ReAct path. The cap stays
         // as a runaway-loop guard (token burn), not a wall clock.
-        for round := 0; round < 64; round++ {
+        // v0.82.2: 200 rounds — the user directive: "REMOVE THE 24 MAX
+        // TURNS CAP… it can run 100 chained tools without max turns." The
+        // prompt no longer names ANY number; 200 is the runaway guard.
+        for round := 0; round < 200; round++ {
                 roundReq.Messages = history
                 // v0.19: STREAMED rounds — thinking deltas stream live during
                 // every round ("tool use streams like thinking does"), and the
@@ -1398,10 +1401,12 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 history = append(history, Message{Role: "assistant", Content: answer})
                 history = append(history, Message{Role: "user", Content: observation})
 
-                if round == 23 {
-                        // Budget reached — force the final answer (old backend's rule).
-                        history = append(history, Message{Role: "user", Content: "Tool budget reached. Write your FINAL answer now."})
-                }
+                // v0.82.2: the round==23 forced-final injection is REMOVED —
+                // that WAS the enforced "24 max turns" the user hit live (19
+                // tool calls + reasoning, then "Tool budget reached. Write
+                // your FINAL answer now." pushed mid-chain and the turn died
+                // inside reasoning). The loop now runs to 200 with a single
+                // exhaustion path at the end (below).
         }
 
         // One extra round to produce the forced final answer (streams live,
