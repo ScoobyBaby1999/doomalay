@@ -98,12 +98,18 @@ except Exception: print('no')")" "$A"
 
 echo "── (3) motion + the atom-only frame (animate toggles OFF)"
 STG=$(ev "var s=window.Settings.getState()||{}; s.dotAnimate=false; s.lineAnimate=false; 'off'")
-C2A=$(ev "document.getElementById('c2').toDataURL().length")
+# headless Chromium can throttle rAF for a moment (visibility flickers) —
+# the motion proof retries over ~1.6s: any differing pair counts.
 CA=$(ev "document.getElementById('c').toDataURL().length")
-sleep 0.45
-C2B=$(ev "document.getElementById('c2').toDataURL().length")
+MOVED=no; C2A=""
+for k in 1 2 3 4; do
+  sleep 0.4
+  C2B=$(ev "document.getElementById('c2').toDataURL().length")
+  if [ -n "$C2A" ] && [ "$C2A" != "$C2B" ]; then MOVED=yes; break; fi
+  C2A=$C2B
+done
 CB=$(ev "document.getElementById('c').toDataURL().length")
-ck "the stars MOVE (#c2 changed)" "$([ "$C2A" != "$C2B" ] && echo yes || echo no)" "len $C2A → $C2B"
+ck "the stars MOVE (#c2 changed)" "$MOVED" "len $C2A → $C2B"
 ck "the resting grid does NOT repaint (#c identical)" "$([ "$CA" = "$CB" ] && echo yes || echo no)" "len $CA → $CB"
 RAF=$(ev "(function(){var a=window.DoomalayDebug.atoms||{}; return a.stars>0?'yes':'no'})()")
 ck "atoms paint with no motion + no animate toggles" "$RAF" "$RAF"
