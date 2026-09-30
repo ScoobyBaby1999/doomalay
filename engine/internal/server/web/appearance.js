@@ -1120,7 +1120,7 @@
         toggleRow(animKey, 'Animate', animOn) +
         gridSlider(scKey, 'Scatter', scVal, '', 0, 100) +
         gridSlider(svKey, 'Size variation', svVal, '', 0, 100) +
-        gridSlider(biKey, 'Size bias', biVal, '− favors smaller · + favors larger', -100, 100) +
+        gridSlider(biKey, 'Size bias', biVal, '− favors smaller · + favors larger · bias alone spreads sizes too (v0.81)', -100, 100) +
         gridSlider(roKey, 'Rotation', roVal, '', 0, 100) +
         '</div>';
     }

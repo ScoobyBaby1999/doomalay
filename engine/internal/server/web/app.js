@@ -194,21 +194,49 @@
     // get hair-thin and extra long. The paint floors keep them visible.
     var sizeFracL = sizeVarL / 100 * 1.7;  // 100 → ±170% of base
     var sizeFracD = sizeVarD / 100 * 1.7;
+    // v0.81.1 THE BIAS ODDITY (user spec: "with size at 0 or max and bias
+    // opposite, big/small outliers should still appear; bias should make
+    // opposite-size dots/lines a common occurrence, not rare"). Two halves:
+    //   · BIAS INJECTS ITS OWN SPREAD — the SIZE the frame paints with is
+    //     the EFFECTIVE variation effFrac = max(sizeFrac, |bias|/100 · 0.5).
+    //     Before, size 0 meant sizeFrac 0 → jr = base EXACTLY and the warp
+    //     multiplied into nothing: bias was a dead slider at size 0 (no
+    //     outlier could ever appear, the depth lattice forced the mid band).
+    //     Now full bias alone paints ±50% sizes — outliers exist, and the
+    //     lattice/depth machinery (depthT/bandOf, task 4's over-icons
+    //     threshold) rides the SAME effFrac so depth follows what's painted.
+    //   · bias 0 → effFrac = sizeFrac and the warp is the identity → the
+    //     pre-v0.81 frame, byte-identical (the no-bias path never shifts).
+    var effFracL = Math.max(sizeFracL, Math.abs(biasL) / 100 * 0.5);
+    var effFracD = Math.max(sizeFracD, Math.abs(biasD) / 100 * 0.5);
     var rotDegL = rotVarL * 0.6;           // 100 → 60deg max
     var rotDegD = rotVarD * 0.6;
     // v0.75 SIZE BIAS: a power warp on the per-element size hash — a
     // positive bias pushes the draw toward LARGER sizes, negative toward
-    // smaller. Even at the max bias MOST elements go the biased way and
-    // a FEW stay the opposite (+100 → ~94% above mid, −100 → ~84% below
-    // mid); 0 is the identity (no warp, the pre-v0.75 distribution).
-    var bExpL = Math.pow(2, -2 * (biasL / 100));
-    var bExpD = Math.pow(2, -2 * (biasD / 100));
+    // smaller. v0.81.1: the warp SOFTENS (2^(−2·b) → 2^(−b)) so the
+    // OPPOSITE tail is a common occurrence, not a rare one: at ±100 the
+    // old exponent (0.25/4) left only ~6-16% on the wrong side and piled
+    // the favored side against the ceiling; the softened one (0.5/2)
+    // splits ~75/25 — a clear tilt whose minority is a COMMON sight (the
+    // user's words), while the extreme h→0/h→1 outliers still reach the
+    // full ±effFrac range. 0 is the identity (no warp, the pre-v0.75
+    // distribution — and with effFrac = sizeFrac there, byte-identical).
+    var bExpL = Math.pow(2, -1 * (biasL / 100));
+    var bExpD = Math.pow(2, -1 * (biasD / 100));
     function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
     function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
     // v0.75 ANIMATE: the ambient clock (stable per-element phases come
     // from the hashes — no per-dot state, no drift).
     var animT = performance.now() / 1000;
     var dbgDots = 0, dbgSegs = 0;
+    // v0.81.1: the bias-oddity instrument — per-frame size distribution
+    // counters (the rigs prove "outliers appear at size 0 + bias" and
+    // "the opposite tail is common, not rare"). Thresholds are ±10% off
+    // the element's own base (dotRBase for dots, 1 for line widths).
+    // Lines count EVERY painted element (full lines + segments) against
+    // base width 1 so n matches what the counters saw.
+    var dbgDotSmall = 0, dbgDotBig = 0, dbgLineSmall = 0, dbgLineBig = 0;
+    var dbgFullLines = 0;
 
     const scaledGrid = gridSpacing() * scale;
     // v0.75: ONE frame — the lattice never lags (the v0.67 per-plane
@@ -329,24 +357,26 @@
       // translated along its own axis is invisible, so the drift needs
       // the finite form (the base length 1.35× spacing overlaps the
       // neighbors and still reads continuous).
-      var segMode = sizeFracL > 0 || animLines;
+      var segMode = effFracL > 0 || animLines;
       var baseSegLen = scaledGrid * 1.35;
       for (let x = lStartX; x < W; x += scaledGrid) {
         // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
         var ix = Math.round((x + offsetX * scale * lPF) / scaledGrid);
         // v0.77.9: the line's depth band rides its WIDTH hash — the
         // whole line (all its segments) stays one coherent plane
-        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(ix, 2)), sizeFracL)) !== lb) continue;
+        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(ix, 2)), effFracL)) !== lb) continue;
         lBandN++;
         var h1 = hashCell(ix, 0);
         var dx = scatterPxL * (h1 - 0.5) * 2;
         var rot = rotDegL * (hashCell(ix, 1) - 0.5) * 2;  // radians
-        var lwBase = 1 * (1 + sizeFracL * (warpL(hashCell(ix, 2)) - 0.5) * 2);
+        var lwBase = 1 * (1 + effFracL * (warpL(hashCell(ix, 2)) - 0.5) * 2);
+        if (lwBase < 0.9) dbgLineSmall++; else if (lwBase > 1.1) dbgLineBig++;
         if (lineSampler) ctx.strokeStyle = lineSampler(x, H / 2);
         ctx.save();
         ctx.translate(x + dx, 0);
         ctx.rotate(rot * Math.PI / 180);
         if (!segMode) {
+          dbgFullLines++;
           ctx.lineWidth = Math.max(0.3, lwBase);
           ctx.beginPath();
           ctx.moveTo(0, 0);
@@ -365,13 +395,14 @@
             // (the v0.73 wave's ±170% floor rides the size-variation
             // path: the small end would draw a NEGATIVE length — an
             // inverted segment; the floor keeps it a visible speck-streak.)
-            var segLen = (animLines && sizeFracL === 0)
+            var segLen = (animLines && effFracL === 0)
               ? scaledGrid * (0.30 + hashCell(ix + 31, iyS + 33) * 0.55)
               : Math.max(scaledGrid * 0.06,
-                  (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
+                  (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
             var segW = Math.max(0.12,
               (animLines ? (0.9 + hashCell(ix + 35, iyS + 37) * 0.9) : 1) *
-              (1 + sizeFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
+              (1 + effFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
+            if (segW < 0.9) dbgLineSmall++; else if (segW > 1.1) dbgLineBig++;
             // v0.77 ANIMATE LINES — THE SHOOTING STAR: the segment
             // shuttles ALONG the line's own (rotated) axis — inside this
             // rotated frame the local Y IS the facing direction — with
@@ -401,17 +432,19 @@
       for (let y = lStartY; y < H; y += scaledGrid) {
         var iy = Math.round((y + offsetY * scale * lPF) / scaledGrid);
         // v0.77.9: the horizontal line's band rides its width hash
-        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(2, iy)), sizeFracL)) !== lb) continue;
+        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(2, iy)), effFracL)) !== lb) continue;
         lBandN++;
         var h2 = hashCell(0, iy);
         var dy = scatterPxL * (h2 - 0.5) * 2;
         var rot2 = rotDegL * (hashCell(1, iy) - 0.5) * 2;
-        var lw2Base = 1 * (1 + sizeFracL * (warpL(hashCell(2, iy)) - 0.5) * 2);
+        var lw2Base = 1 * (1 + effFracL * (warpL(hashCell(2, iy)) - 0.5) * 2);
+        if (lw2Base < 0.9) dbgLineSmall++; else if (lw2Base > 1.1) dbgLineBig++;
         if (lineSampler) ctx.strokeStyle = lineSampler(W / 2, y);
         ctx.save();
         ctx.translate(0, y + dy);
         ctx.rotate(rot2 * Math.PI / 180);
         if (!segMode) {
+          dbgFullLines++;
           ctx.lineWidth = Math.max(0.3, lw2Base);
           ctx.beginPath();
           ctx.moveTo(0, 0);
@@ -424,13 +457,14 @@
             // separated random dash lengths + widths in animate mode
             // (with the v0.73 ±170% floor riding the size-variation path,
             // exactly as the vertical block).
-            var segLen2 = (animLines && sizeFracL === 0)
+            var segLen2 = (animLines && effFracL === 0)
               ? scaledGrid * (0.30 + hashCell(ixS + 33, iy + 31) * 0.55)
               : Math.max(scaledGrid * 0.06,
-                  (sizeFracL > 0 ? scaledGrid : baseSegLen) * (1 + sizeFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
+                  (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
             var segW2 = Math.max(0.12,
               (animLines ? (0.9 + hashCell(ixS + 37, iy + 35) * 0.9) : 1) *
-              (1 + sizeFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
+              (1 + effFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
+            if (segW2 < 0.9) dbgLineSmall++; else if (segW2 > 1.1) dbgLineBig++;
             var drift2 = 0, tal2 = 1;
             if (animLines) {
               var sh2 = shuttle(ixS + 47, iy + 49);   // decorrelated salts from the vertical axis
@@ -480,11 +514,12 @@
           // v0.75: the size hash is BIAS-WARPED (favor larger/smaller).
           var hd2 = warpD(hashCell(dix + 7, diy + 7));
           // v0.77.9: the SIZE picks the DEPTH — biggest = closest
-          if (dotBands > 1 && bandOf(depthT(hd2, sizeFracD)) !== db) continue;
+          if (dotBands > 1 && bandOf(depthT(hd2, effFracD)) !== db) continue;
           dBandN++;
           var jx = scatterPxD * (hd - 0.5) * 2;
           var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
-          var jr = dotR * (1 + sizeFracD * (hd2 - 0.5) * 2);
+          var jr = dotR * (1 + effFracD * (hd2 - 0.5) * 2);
+          if (jr < dotRBase * 0.9) dbgDotSmall++; else if (jr > dotRBase * 1.1) dbgDotBig++;
           var jrot = rotDegD * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
           // v0.75 ANIMATE DOTS — the twinkle (user spec: "rotate and
           // grow/shrink at varying speeds"): a scale PULSE (grow/shrink,
@@ -555,7 +590,10 @@
     // always 0 (the spawned starfield is retired); the per-band counts +
     // pan factors carry the size-depth contract.
     window.DoomalayDebug = { stars: 0, dots: dbgDots, segs: dbgSegs, amp: amp,
-      dotBands: dbgDotBands, lineBands: dbgLineBands };
+      dotBands: dbgDotBands, lineBands: dbgLineBands,
+      // v0.81.1: the size-distribution twin (bias-oddity contract)
+      dotStats: { small: dbgDotSmall, big: dbgDotBig, n: dbgDots },
+      lineStats: { small: dbgLineSmall, big: dbgLineBig, n: dbgSegs + dbgFullLines } };
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────

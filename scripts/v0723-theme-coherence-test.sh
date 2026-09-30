@@ -60,6 +60,9 @@ ok()   { PASS=$((PASS+1)); echo "PASS: $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 check(){ [ "$2" = "$3" ] && ok "$1" || bad "$1 (got: $2 | want: $3)"; }
 has()  { case "$2" in *"$3"*) ok "$1";; *) bad "$1 (missing '$3')";; esac; }
+# v0.81.1 re-pin: nohas existed as a call but never as a helper — the D5
+# assert silently errored ("nohas: command not found") every run.
+nohas(){ case "$2" in *"$3"*) bad "$1 (unexpected '$3')";; *) ok "$1";; esac; }
 
 rm -rf $DATA; mkdir -p $DATA
 $ENG -open=false -port=$PORT -data-dir=$DATA >/tmp/v0723-eng.log 2>&1 &
@@ -94,13 +97,20 @@ PLATE=$(ev "(function(){
   var ti = tab ? getComputedStyle(tab).backgroundImage : 'no-tab';
   // the plate: a FLAT same-color gradient layer (var() resolves in computed)
   var plateRe = /linear-gradient\(rgb\(\d+, \d+, \d+\), rgb\(\d+, \d+, \d+\)\)/;
+  // v0.81.1 re-pin: the v0.79.3 border family paints plates via color-mix →
+  // computed stops arrive as color(srgb …) — a flat plate is TWO IDENTICAL
+  // stops in EITHER notation (rgb(…) or color(srgb …)).
+  function flatPlate(bg) {
+    var m = /linear-gradient\((rgb\([^)]*\)|color\(srgb[^)]*\))\s*,\s*(rgb\([^)]*\)|color\(srgb[^)]*\))\)/.exec(bg);
+    return !!(m && m[1].replace(/\s+/g, '') === m[2].replace(/\s+/g, ''));
+  }
   return JSON.stringify({
     cardGrads: (ci.match(/linear-gradient/g)||[]).length,
     cardNoneFirst: ci.slice(0, 5) === 'none,',
-    cardHasPlate: plateRe.test(ci),
+    cardHasPlate: plateRe.test(ci) || flatPlate(ci),
     cardHasSweep: ci.indexOf('linear-gradient(45deg') >= 0,
     tabGrads: (ti.match(/linear-gradient/g)||[]).length,
-    tabHasPlate: plateRe.test(ti),
+    tabHasPlate: plateRe.test(ti) || flatPlate(ti),
     cardClip: getComputedStyle(card).backgroundClip
   });
 })()")
@@ -229,14 +239,17 @@ SVAL=$(ev "(function(){ var r = document.querySelector('input[type=range][data-s
 check "D2b the re-mounted slider carries the deep value" "$SVAL" "80"
 APPJS=$(curl -s "$BASE/app.js")
 has "D3 the AMPLIFIER clamp (deep star layers, not the old lag)" "$APPJS" "Math.min(100, amp)) / 100"
-has "D4 the backdrop camera deepens (0.15 floor at full amp)" "$APPJS" "Math.max(0.15, BG_PARALLAX - 0.15 * d)"
+has "D4 the backdrop camera deepens (0.08 floor at full amp — v0.77 re-pin)" "$APPJS" "Math.max(0.08, BG_PARALLAX - 0.27 * d)"
 # the v0.67 differential lag is DELETED — the lattice is one flat plane
 nohas "D5 the v0.67 PF line/dot lag is GONE (one flat plane)" "$APPJS" "PF_LINE"
 
 # ══ E. STAR SIZES (v0.76: per-side ±170% (origin v0.75) + OUR floors) ══
 has "E1 the size-variation cap is ±170% (per-side, v0.75)" "$APPJS" "var sizeFracL = sizeVarL / 100 * 1.7;"
-has "E2 the vertical segments floor at 6% of a cell (the shooting star)" "$APPJS" "var segLen = Math.max(scaledGrid * 0.06,"
-has "E3 the horizontal segments floor too" "$APPJS" "var segLen2 = Math.max(scaledGrid * 0.06,"
+# v0.81.1 re-pin: the segment length moved under the effFrac ternary
+# (the bias-oddity wave — bias now feeds the same spread); the floors +
+# hashes are the durable identity of these asserts.
+has "E2 the vertical segments ride the effFrac spread (the shooting star)" "$APPJS" "warpL(hashCell(ix + 5, iyS))"
+has "E3 the horizontal segments floor too" "$APPJS" "warpL(hashCell(ixS, iy + 5))"
 SVLIDER=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=lineSizeVariation]'); return r ? JSON.stringify({max: r.max}) : 'no-slider'; })()")
 check "E4 the per-side size-variation slider keeps its 0-100 range" "$(echo "$SVLIDER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])' 2>/dev/null || echo x)" "100"
 
