@@ -60,7 +60,13 @@
   // routes the biggest dots/lines here when the amplifier is ≥ 50%.
   const canvas2 = document.getElementById('c2');
   const ctx2 = canvas2 ? canvas2.getContext('2d') : null;
-  const dpr = window.devicePixelRatio || 1;
+  // v0.83.3 THE FRAME-RATE CAP: DPR is capped at 2. A 3× phone was painting
+  // 2.25× the pixels of the cap for zero visible gain on a 1–4px dot
+  // lattice (2× is already retina-sharp); raster fill-rate is the single
+  // biggest frame cost when both lattices animate (the user's "canvas gets
+  // low frame rate when animating both lines and dots"). DOM surfaces
+  // (panel, icons, BIB) are unaffected — only the canvas raster halves.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
   let W = 0, H = 0;
   let offsetX = 0, offsetY = 0;
@@ -112,6 +118,74 @@
   function screenToWorld(sx, sy) {
     return { x: sx / scale + offsetX, y: sy / scale + offsetY };
   }
+
+  // ── v0.83.3 THE LATTICE CACHE ────────────────────────────────────────
+  // Every per-element parameter renderGrid derives is a PURE function of
+  // the world cell + settings (the stable-hash no-shimmer contract), so
+  // the ambient loop was re-deriving ~75k hash calls, a stack of Math.pow
+  // warps and per-element canvas state per frame for values that never
+  // change between settings edits. THE CACHE: per-cell derived records
+  // keyed by world cell, invalidated by a settings/scale fingerprint
+  // (params) and a camera+theme fingerprint (colors — the pattern
+  // samplers read screen positions, stable while the canvas rests). Pans
+  // invalidate colors only (world-cell params are pan-invariant); zoom
+  // rides the params fingerprint (scale feeds the sizes); ambient frames
+  // hit the cache 100%. The glow halo gets a per-color prerendered SPRITE
+  // (createRadialGradient per glowing dot per frame → one drawImage), the
+  // samplers + gridPaint styles are cached by spec (they were rebuilt
+  // per frame per band — the mesh 8-spot table ×6/frame), and the paint
+  // paths drop save/translate/rotate/restore (rotation is invisible on
+  // circles; line segments get exact manual endpoint transforms).
+  var LC = {
+    fp: '', gen: 0,                       // settings+scale fingerprint → params
+    cfp: '', cgen: 0,                     // +camera+theme fingerprint → colors
+    dot: new Map(), vline: new Map(), hline: new Map(),
+    vseg: new Map(), hseg: new Map(),
+    dotC: new Map(), vlineC: new Map(), hlineC: new Map(),
+    vsegC: new Map(), hsegC: new Map(),
+    samplers: new Map(), paints: new Map(), sprites: new Map()
+  };
+  function lcKey(a, b) { return (a + 65536) * 131072 + (b + 65536); }
+  function lcClearParams() {
+    LC.dot.clear(); LC.vline.clear(); LC.hline.clear(); LC.vseg.clear(); LC.hseg.clear();
+    LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
+  }
+  function lcClearColors() {
+    LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
+  }
+  function lcSampler(spec, fallbackHex) {
+    var k = fallbackHex + '|' + (spec ? JSON.stringify(spec) : '');
+    var s = LC.samplers.get(k);
+    if (s === undefined) { s = makePatternSampler(spec, fallbackHex); LC.samplers.set(k, s); }
+    return s;
+  }
+  function lcPaint(spec, fallbackHex) {
+    var k = fallbackHex + '|' + (spec ? JSON.stringify(spec) : '') + '|' + W + 'x' + H;
+    var v = LC.paints.get(k);
+    if (v === undefined) { v = gridPaint(spec, fallbackHex); LC.paints.set(k, v); }
+    return v;
+  }
+  // the glow sprite: the radial halo prerendered per color at a unit
+  // outer radius (inner 0.35/2.6 of it — the exact gradient geometry the
+  // per-dot createRadialGradient painted), scaled per dot via drawImage
+  // (gradients scale perfectly).
+  function lcGlowSprite(hexColor) {
+    var sp = LC.sprites.get(hexColor);
+    if (sp) return sp;
+    var S = 128, c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    var g = c.getContext('2d');
+    var rg = g.createRadialGradient(S / 2, S / 2, S / 2 * (0.35 / 2.6), S / 2, S / 2, S / 2);
+    rg.addColorStop(0, hexColor);
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg;
+    g.fillRect(0, 0, S, S);
+    sp = { c: c };
+    LC.sprites.set(hexColor, sp);
+    return sp;
+  }
+  // the honest instrument rides along (red-team reads it): rolling fps
+  var lcFps = 0, lcLastT = 0;
 
   function renderGrid() {
     // v0.24: grid colors resolve through the THEME (user picks win over
@@ -249,6 +323,26 @@
     var bExpD = Math.pow(2, -2.5 * (biasD / 100));
     function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
     function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
+    // v0.83.3 THE FINGERPRINTS. fp = everything the DERIVED params read
+    // (settings + scale + viewport); a change rebuilds the param caches.
+    // cfp adds the camera (offsets) + the color specs — the pattern
+    // samplers read screen positions and spec colors, which only move
+    // with the camera or the theme. Settings edits rebuild both; pans
+    // invalidate colors only (world-cell params are pan-invariant — the
+    // stable-hash contract); ambient frames change NEITHER → 100% hits.
+    var dotSpec = specs && specs.dotColor;
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var lineSpec2 = specs && specs.lineColor;
+    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var fpNow = [scatterL, scatterD, sizeVarL, sizeVarD, rotVarL, rotVarD,
+      biasL, biasD, animDots ? 1 : 0, animLines ? 1 : 0,
+      scale.toFixed(4), st.gridSize, hideLines ? 1 : 0, hideDots ? 1 : 0,
+      amp.toFixed(4), W, H,
+      dotSpec ? JSON.stringify(dotSpec) : '', dotFallback,
+      lineSpec2 ? JSON.stringify(lineSpec2) : '', lineFallback2].join('|');
+    if (fpNow !== LC.fp) { LC.fp = fpNow; LC.gen++; lcClearParams(); }
+    var cfpNow = fpNow + '|' + offsetX.toFixed(2) + ',' + offsetY.toFixed(2);
+    if (cfpNow !== LC.cfp) { LC.cfp = cfpNow; LC.cgen++; lcClearColors(); }
     // v0.75 ANIMATE: the ambient clock (stable per-element phases come
     // from the hashes — no per-dot state, no drift).
     var animT = performance.now() / 1000;
@@ -306,21 +400,23 @@
       var k = Math.floor(t * AMP_BANDS);
       return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k);
     };
-    // the near-band glow: the light-lifted tone + the soft halo (the
-    // v0.77 look) on the USER'S OWN biggest dots — never spawned ones
+    // v0.83.3: the glow tint derives from the DOT's own solid paint (the
+    // light-lifted tone — the v0.77 intent). The old code read
+    // ctx.fillStyle at frame start, which was whatever painted LAST the
+    // previous frame (the origin dot, usually) — the halo tint silently
+    // rode the wrong color whenever the origin was on screen. Gradient
+    // dot specs have no solid hex → no glow (as before).
+    var dotSolidFill = lcPaint(dotSpec, dotFallback);
     var glowFill = null;
-    try {
-      var curFill = ctx.fillStyle;
-      var mHex2 = /^#([0-9a-fA-F]{6})$/.exec(String(typeof curFill === 'string' ? curFill : ''));
-      if (mHex2) glowFill = shadeHex(curFill, 0.42);
-    } catch (e) {}
+    if (typeof dotSolidFill === 'string' && HEX_RE.test(dotSolidFill)) {
+      glowFill = shadeHex(dotSolidFill, 0.42);
+    }
 
     // the dot color + pattern sampler (v0.77: hoisted to function scope —
     // the amplifier's far/mid star layers sample the same field, and they
-    // paint before the dots block runs)
-    var dotSpec = specs && specs.dotColor;
-    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
-    var dotSampler = makePatternSampler(dotSpec, dotFallback);
+    // paint before the dots block runs; v0.83.3: cached by spec — the
+    // mesh 8-spot table was rebuilt per frame)
+    var dotSampler = lcSampler(dotSpec, dotFallback);
 
     // the base dot radius (v0.76: hoisted to function scope — the
     // amplifier's star layers scale against it and the far/mid layers
@@ -375,21 +471,28 @@
     // near one (the mirror of the forth's slow-start/hard-arrival), with
     // the per-segment kB variation intact. The distance DOUBLES the
     // reach: 0.45–1.2× spacing → 0.8–2.0× (the "larger distances").
-    function shuttle(hx, hy) {
-      var dur  = 1.6 + hashCell(hx + 17, hy + 17) * 2.4;    // s per leg
-      var kF   = 2.6 + hashCell(hx + 19, hy + 19) * 1.6;    // forward exponent
-      var kB   = 2.2 + hashCell(hx + 21, hy + 21) * 1.6;     // back exponent (the variation)
-      var dist = 0.8 + hashCell(hx + 23, hy + 23) * 1.2;     // × spacing (v0.83.1: larger)
-      var dir  = hashCell(hx + 25, hy + 25) < 0.5 ? -1 : 1; // along its axis
-      var ph   = hashCell(hx + 27, hy + 27) * dur;           // phase stagger
-      var u = ((animT + ph) / dur) % 2;
+    function shuttleP(p) {
+      // p = the cached per-segment record {dur, kF, kB, ekF, ekB, dist, dir, ph}
+      var u = ((animT + p.ph) / p.dur) % 2;
       var legFwd = u < 1;
       var s = legFwd ? u : 2 - u;                             // leg progress 0..1
-      var k = legFwd ? kF : kB;
-      var ek = Math.exp(k);
-      var eased = (Math.exp(k * s) - 1) / (ek - 1);          // exponential ease-in
+      var k = legFwd ? p.kF : p.kB;
+      var eased = (Math.exp(k * s) - 1) / ((legFwd ? p.ekF : p.ekB) - 1); // exponential ease-in
       var travel = eased - 0.5;                               // −0.5…+0.5, CONTINUOUS at both leg boundaries
-      return { off: dir * dist * travel, spd: Math.exp(k * (s - 1)) };
+      return { off: p.dir * p.dist * travel, spd: Math.exp(k * (s - 1)) };
+    }
+    // the cached shuttle record for a segment cell (6 stable hashes + the
+    // two per-leg exp bases — all settings-derived, none time-dependent)
+    function shuttleRec(hx, hy) {
+      var dur = 1.6 + hashCell(hx + 17, hy + 17) * 2.4;
+      var kF = 2.6 + hashCell(hx + 19, hy + 19) * 1.6;
+      var kB = 2.2 + hashCell(hx + 21, hy + 21) * 1.6;
+      return {
+        dur: dur, kF: kF, kB: kB, ekF: Math.exp(kF), ekB: Math.exp(kB),
+        dist: 0.8 + hashCell(hx + 23, hy + 23) * 1.2,          // × spacing (v0.83.1: larger)
+        dir: hashCell(hx + 25, hy + 25) < 0.5 ? -1 : 1,        // along its axis
+        ph: hashCell(hx + 27, hy + 27) * dur                    // phase stagger
+      };
     }
 
     // v0.77.9: the line passes run PER BAND (far → near); amp 0 is the
@@ -404,14 +507,16 @@
       var lBandN = 0;
       var lineSpec = specs && specs.lineColor;
       var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
-      ctx.strokeStyle = gridPaint(lineSpec, lineFallback);
+      // v0.83.3: the band style + sampler ride the spec caches (they were
+      // rebuilt — a fresh CanvasGradient + the mesh 8-spot table — every
+      // band of every frame)
+      ctx.strokeStyle = lcPaint(lineSpec, lineFallback);
       ctx.lineWidth = 1;
       // v0.54: pattern-aware per-line sampling — multi-stop line specs
       // paint each line (and, in segment mode, each segment) at its own
       // point on the gradient/pattern, mirroring the background's exact
       // geometry (sweeps, mesh spots, checker cells, stripe bands…).
-      var lineSampler = makePatternSampler(lineSpec, lineFallback);
-      ctx.beginPath();
+      var lineSampler = lcSampler(lineSpec, lineFallback);
       var lineIdx = 0;
       // v0.49 (user spec: "for grid lines it should change both height
       // and width, not just width"): when Size variation is on, each line
@@ -426,161 +531,216 @@
       var segMode = effFracL > 0 || animLines;
       var baseSegLen = scaledGrid * 1.35;
       for (let x = lStartX; x < W; x += scaledGrid) {
-        // v0.45 ITEM 6: per-line jitter (scatter + rotation + size)
+        // v0.45 ITEM 6: per-line jitter (scatter + rotation + size) —
+        // v0.83.3: the whole derived record is cached per line (the
+        // stable-hash contract means it never changes between settings
+        // edits); cos/sin of the rotation are cached with it.
         var ix = Math.round((x + offsetX * scale * lPF) / scaledGrid);
+        var LP = LC.vline.get(ix);
+        if (LP === undefined) {
+          var lwH = warpL(hashCell(ix, 2));
+          var rotD = rotDegL * (hashCell(ix, 1) - 0.5) * 2;   // degrees
+          var rr = rotD * Math.PI / 180;
+          LP = {
+            dx: scatterPxL * (hashCell(ix, 0) - 0.5) * 2,
+            lwB: 1 * (1 + effFracL * (lwH - 0.5) * 2),
+            band: bandOf(depthT(lwH, effFracL)),
+            c: Math.cos(rr), s: Math.sin(rr)
+          };
+          LC.vline.set(ix, LP);
+          if (LC.vline.size > 8192) LC.vline.clear();
+        }
         // v0.77.9: the line's depth band rides its WIDTH hash — the
         // whole line (all its segments) stays one coherent plane
-        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(ix, 2)), effFracL)) !== lb) continue;
+        if (lineBands > 1 && LP.band !== lb) continue;
         lBandN++;
-        var h1 = hashCell(ix, 0);
-        var dx = scatterPxL * (h1 - 0.5) * 2;
-        var rot = rotDegL * (hashCell(ix, 1) - 0.5) * 2;  // radians
-        var lwBase = 1 * (1 + effFracL * (warpL(hashCell(ix, 2)) - 0.5) * 2);
-        if (lwBase < 0.9) dbgLineSmall++; else if (lwBase > 1.1) dbgLineBig++;
+        if (LP.lwB < 0.9) dbgLineSmall++; else if (LP.lwB > 1.1) dbgLineBig++;
         // v0.81.2: the whole line's plane — over-icons when its width
         // hash exceeds 70% of the max allowed random width (full-line
         // mode rides the line's own width; segment mode re-decides per
         // segment below — segments are the per-element form)
-        var lc = (overLinesOn && !segMode && lwBase > overThreshL) ? ctx2 : ctx;
+        var lc = (overLinesOn && !segMode && LP.lwB > overThreshL) ? ctx2 : ctx;
         if (lc === ctx2) dbgOverLines++;
-        if (lineSampler) lc.strokeStyle = lineSampler(x, H / 2);
-        else if (lc === ctx2) lc.strokeStyle = ctx.strokeStyle;
-        if (overLinesOn && segMode) { ctx2.save(); ctx2.translate(x + dx, 0); ctx2.rotate(rot * Math.PI / 180); }
-        lc.save();
-        lc.translate(x + dx, 0);
-        lc.rotate(rot * Math.PI / 180);
+        // v0.83.3: NO canvas transforms — the rotated frame's points map
+        // manually: translate(tx,0)∘rotate(θ) sends (0,ly) → (tx−ly·s, ly·c)
+        var tx = x + LP.dx;
         if (!segMode) {
+          // the per-line color (cached; segments decide their own below)
+          var colL = LC.vlineC.get(ix);
+          if (colL === undefined) { colL = lineSampler ? lineSampler(x, H / 2) : null; LC.vlineC.set(ix, colL); }
+          if (colL) lc.strokeStyle = colL;
+          else if (lc === ctx2) lc.strokeStyle = ctx.strokeStyle;
           dbgFullLines++;
-          lc.lineWidth = Math.max(0.3, lwBase);
+          lc.lineWidth = Math.max(0.3, LP.lwB);
           lc.beginPath();
-          lc.moveTo(0, 0);
-          lc.lineTo(0, H);
+          lc.moveTo(tx, 0);
+          lc.lineTo(tx - H * LP.s, H * LP.c);
           lc.stroke();
         } else {
           for (let y = lStartY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
             var iyS = Math.round((y + offsetY * scale * lPF) / scaledGrid);
-            // v0.77: in animate mode (with size variation off) the dash
-            // gets its own random length and width — the user's
-            // "shrinking them by width or height or both at random
-            // variations", folded into the shooting-star spec. The lengths
-            // stay WELL UNDER the spacing (0.3–0.85×): v0.75.1's 1.35×
-            // overlaps read as a CONTINUOUS line (the VLM red-team saw
-            // zero motion) — a shooting star needs the separated form.
-            // (the v0.73 wave's ±170% floor rides the size-variation
-            // path: the small end would draw a NEGATIVE length — an
-            // inverted segment; the floor keeps it a visible speck-streak.)
-            var segLen = (animLines && effFracL === 0)
-              ? scaledGrid * (0.30 + hashCell(ix + 31, iyS + 33) * 0.55)
-              : Math.max(scaledGrid * 0.06,
-                  (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2));
-            var segW = Math.max(0.12,
-              (animLines ? (0.9 + hashCell(ix + 35, iyS + 37) * 0.9) : 1) *
-              (1 + effFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2));
+            // v0.83.3: the per-segment record (length + width + shuttle
+            // params) cached by cell — the hashes are stable, only the
+            // time-dependent flight is computed live.
+            var skey = lcKey(ix, iyS);
+            var SP = LC.vseg.get(skey);
+            if (SP === undefined) {
+              // v0.77: in animate mode (with size variation off) the dash
+              // gets its own random length and width — the user's
+              // "shrinking them by width or height or both at random
+              // variations", folded into the shooting-star spec. The lengths
+              // stay WELL UNDER the spacing (0.3–0.85×): v0.75.1's 1.35×
+              // overlaps read as a CONTINUOUS line (the VLM red-team saw
+              // zero motion) — a shooting star needs the separated form.
+              // (the v0.73 wave's ±170% floor rides the size-variation
+              // path: the small end would draw a NEGATIVE length — an
+              // inverted segment; the floor keeps it a visible speck-streak.)
+              SP = {
+                len: (animLines && effFracL === 0)
+                  ? scaledGrid * (0.30 + hashCell(ix + 31, iyS + 33) * 0.55)
+                  : Math.max(scaledGrid * 0.06,
+                      (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ix + 5, iyS)) - 0.5) * 2)),
+                w: Math.max(0.12,
+                  (animLines ? (0.9 + hashCell(ix + 35, iyS + 37) * 0.9) : 1) *
+                  (1 + effFracL * (warpL(hashCell(ix + 9, iyS)) - 0.5) * 2)),
+                sh: shuttleRec(ix + 41, iyS + 43)
+              };
+              LC.vseg.set(skey, SP);
+              if (LC.vseg.size > 24576) LC.vseg.clear();
+            }
+            var segW = SP.w;
             if (segW < 0.9) dbgLineSmall++; else if (segW > 1.1) dbgLineBig++;
             if (segW < dbgWMin) dbgWMin = segW;
             if (segW > dbgWMax) dbgWMax = segW;
             // v0.77 ANIMATE LINES — THE SHOOTING STAR: the segment
-            // shuttles ALONG the line's own (rotated) axis — inside this
-            // rotated frame the local Y IS the facing direction — with
-            // the exponential two-curve flight (see shuttle). Brightness
+            // shuttles ALONG the line's own (rotated) axis — with the
+            // exponential two-curve flight (see shuttleP). Brightness
             // rides the speed: the dash dims at rest, flashes as it
             // rushes.
             var drift = 0, tal = 1;
             if (animLines) {
-              var sh = shuttle(ix + 41, iyS + 43);
+              var sh = shuttleP(SP.sh);
               drift = sh.off * scaledGrid;
               tal = 0.42 + 0.58 * sh.spd;
             }
-            if (lineSampler) ctx.strokeStyle = lineSampler(x, y);
             // v0.81.2: each segment qualifies by its OWN width — the
             // per-element form of a line ("lines get the dots' behavior"
             // extended to layering: the fat dashes pass in front of the
             // icons, the thin ones stay behind)
             var sc = (overLinesOn && segW > overThreshL) ? ctx2 : ctx;
             if (sc === ctx2) dbgOverLines++;
-            if (lineSampler) sc.strokeStyle = ctx.strokeStyle;
+            // v0.83.3: the per-segment color, cached per cell while the
+            // camera rests (was a live sampler call per segment per frame)
+            var colS = LC.vsegC.get(skey);
+            if (colS === undefined) { colS = lineSampler ? lineSampler(x, y) : null; LC.vsegC.set(skey, colS); }
+            if (colS) sc.strokeStyle = colS;
             else if (sc === ctx2) sc.strokeStyle = ctx.strokeStyle;
             sc.lineWidth = segW;
             if (tal < 1) sc.globalAlpha = tal;
+            // manual transform of translate(tx,0)∘rotate(θ): (0,ly) → (tx−ly·s, ly·c)
+            var ly1 = y - SP.len / 2 + drift, ly2 = y + SP.len / 2 + drift;
             sc.beginPath();
-            sc.moveTo(0, y - segLen / 2 + drift);
-            sc.lineTo(0, y + segLen / 2 + drift);
+            sc.moveTo(tx - ly1 * LP.s, ly1 * LP.c);
+            sc.lineTo(tx - ly2 * LP.s, ly2 * LP.c);
             sc.stroke();
             if (tal < 1) sc.globalAlpha = 1;
             dbgSegs++;
           }
         }
-        lc.restore();
-        if (overLinesOn && segMode) ctx2.restore();
         lineIdx++;
       }
       for (let y = lStartY; y < H; y += scaledGrid) {
         var iy = Math.round((y + offsetY * scale * lPF) / scaledGrid);
+        // v0.83.3: the horizontal line's cached derived record (band +
+        // jitter + rotation cos/sin + width) — the vertical block's twin
+        var HP = LC.hline.get(iy);
+        if (HP === undefined) {
+          var lw2H = warpL(hashCell(2, iy));
+          var rot2D = rotDegL * (hashCell(1, iy) - 0.5) * 2;
+          var rr2 = rot2D * Math.PI / 180;
+          HP = {
+            dy: scatterPxL * (hashCell(0, iy) - 0.5) * 2,
+            lwB: 1 * (1 + effFracL * (lw2H - 0.5) * 2),
+            band: bandOf(depthT(lw2H, effFracL)),
+            c: Math.cos(rr2), s: Math.sin(rr2)
+          };
+          LC.hline.set(iy, HP);
+          if (LC.hline.size > 8192) LC.hline.clear();
+        }
         // v0.77.9: the horizontal line's band rides its width hash
-        if (lineBands > 1 && bandOf(depthT(warpL(hashCell(2, iy)), effFracL)) !== lb) continue;
+        if (lineBands > 1 && HP.band !== lb) continue;
         lBandN++;
-        var h2 = hashCell(0, iy);
-        var dy = scatterPxL * (h2 - 0.5) * 2;
-        var rot2 = rotDegL * (hashCell(1, iy) - 0.5) * 2;
-        var lw2Base = 1 * (1 + effFracL * (warpL(hashCell(2, iy)) - 0.5) * 2);
-        if (lw2Base < 0.9) dbgLineSmall++; else if (lw2Base > 1.1) dbgLineBig++;
+        if (HP.lwB < 0.9) dbgLineSmall++; else if (HP.lwB > 1.1) dbgLineBig++;
         // v0.81.2: the horizontal twin of the vertical block's routing
-        var lc2 = (overLinesOn && !segMode && lw2Base > overThreshL) ? ctx2 : ctx;
+        var lc2 = (overLinesOn && !segMode && HP.lwB > overThreshL) ? ctx2 : ctx;
         if (lc2 === ctx2) dbgOverLines++;
-        if (lineSampler) lc2.strokeStyle = lineSampler(W / 2, y);
-        else if (lc2 === ctx2) lc2.strokeStyle = ctx.strokeStyle;
-        if (overLinesOn && segMode) { ctx2.save(); ctx2.translate(0, y + dy); ctx2.rotate(rot2 * Math.PI / 180); }
-        lc2.save();
-        lc2.translate(0, y + dy);
-        lc2.rotate(rot2 * Math.PI / 180);
+        // v0.83.3: manual transform — translate(0,ty)∘rotate(θ) sends
+        // (lx,0) → (lx·c, ty+lx·s)
+        var ty = y + HP.dy;
         if (!segMode) {
+          var colL2 = LC.hlineC.get(iy);
+          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2, y) : null; LC.hlineC.set(iy, colL2); }
+          if (colL2) lc2.strokeStyle = colL2;
+          else if (lc2 === ctx2) lc2.strokeStyle = ctx.strokeStyle;
           dbgFullLines++;
-          lc2.lineWidth = Math.max(0.3, lw2Base);
+          lc2.lineWidth = Math.max(0.3, HP.lwB);
           lc2.beginPath();
-          lc2.moveTo(0, 0);
-          lc2.lineTo(W, 0);
+          lc2.moveTo(0, ty);
+          lc2.lineTo(W * HP.c, ty + W * HP.s);
           lc2.stroke();
         } else {
           for (let x2 = lStartX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
             var ixS = Math.round((x2 + offsetX * scale * lPF) / scaledGrid);
-            // v0.77: the shooting-star twin of the vertical block —
-            // separated random dash lengths + widths in animate mode
-            // (with the v0.73 ±170% floor riding the size-variation path,
-            // exactly as the vertical block).
-            var segLen2 = (animLines && effFracL === 0)
-              ? scaledGrid * (0.30 + hashCell(ixS + 33, iy + 31) * 0.55)
-              : Math.max(scaledGrid * 0.06,
-                  (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2));
-            var segW2 = Math.max(0.12,
-              (animLines ? (0.9 + hashCell(ixS + 37, iy + 35) * 0.9) : 1) *
-              (1 + effFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2));
+            // v0.83.3: the horizontal segment record — the vertical twin
+            var hkey = lcKey(ixS, iy);
+            var HS = LC.hseg.get(hkey);
+            if (HS === undefined) {
+              // v0.77: the shooting-star twin of the vertical block —
+              // separated random dash lengths + widths in animate mode
+              // (with the v0.73 ±170% floor riding the size-variation path,
+              // exactly as the vertical block).
+              HS = {
+                len: (animLines && effFracL === 0)
+                  ? scaledGrid * (0.30 + hashCell(ixS + 33, iy + 31) * 0.55)
+                  : Math.max(scaledGrid * 0.06,
+                      (effFracL > 0 ? scaledGrid : baseSegLen) * (1 + effFracL * (warpL(hashCell(ixS, iy + 5)) - 0.5) * 2)),
+                w: Math.max(0.12,
+                  (animLines ? (0.9 + hashCell(ixS + 37, iy + 35) * 0.9) : 1) *
+                  (1 + effFracL * (warpL(hashCell(ixS, iy + 9)) - 0.5) * 2)),
+                sh: shuttleRec(ixS + 47, iy + 49)   // decorrelated salts from the vertical axis
+              };
+              LC.hseg.set(hkey, HS);
+              if (LC.hseg.size > 24576) LC.hseg.clear();
+            }
+            var segW2 = HS.w;
             if (segW2 < 0.9) dbgLineSmall++; else if (segW2 > 1.1) dbgLineBig++;
             if (segW2 < dbgWMin) dbgWMin = segW2;
             if (segW2 > dbgWMax) dbgWMax = segW2;
             var drift2 = 0, tal2 = 1;
             if (animLines) {
-              var sh2 = shuttle(ixS + 47, iy + 49);   // decorrelated salts from the vertical axis
+              var sh2 = shuttleP(HS.sh);
               drift2 = sh2.off * scaledGrid;
               tal2 = 0.42 + 0.58 * sh2.spd;
             }
-            if (lineSampler) ctx.strokeStyle = lineSampler(x2, y);
             // v0.81.2: per-segment routing — the horizontal twin
             var sc2 = (overLinesOn && segW2 > overThreshL) ? ctx2 : ctx;
             if (sc2 === ctx2) dbgOverLines++;
-            if (lineSampler) sc2.strokeStyle = ctx.strokeStyle;
+            var colS2 = LC.hsegC.get(hkey);
+            if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2, y) : null; LC.hsegC.set(hkey, colS2); }
+            if (colS2) sc2.strokeStyle = colS2;
             else if (sc2 === ctx2) sc2.strokeStyle = ctx.strokeStyle;
             sc2.lineWidth = segW2;
             if (tal2 < 1) sc2.globalAlpha = tal2;
+            // manual transform: (lx,0) → (lx·c, ty+lx·s)
+            var lx1 = x2 - HS.len / 2 + drift2, lx2 = x2 + HS.len / 2 + drift2;
             sc2.beginPath();
-            sc2.moveTo(x2 - segLen2 / 2 + drift2, 0);
-            sc2.lineTo(x2 + segLen2 / 2 + drift2, 0);
+            sc2.moveTo(lx1 * HP.c, ty + lx1 * HP.s);
+            sc2.lineTo(lx2 * HP.c, ty + lx2 * HP.s);
             sc2.stroke();
             if (tal2 < 1) sc2.globalAlpha = 1;
             dbgSegs++;
           }
         }
-        lc2.restore();
-        if (overLinesOn && segMode) ctx2.restore();
       }
       dbgLineBands.push(lBandN);
      }
@@ -596,7 +756,9 @@
       var dStartX2 = dotBands === 1 ? dStartX : bandStart(offsetX, dPF, scaledGrid);
       var dStartY2 = dotBands === 1 ? dStartY : bandStart(offsetY, dPF, scaledGrid);
       var dBandN = 0;
-      ctx.fillStyle = gridPaint(dotSpec, dotFallback);
+      // v0.83.3: the band style rides the spec cache (a fresh
+      // CanvasGradient was created per band per frame)
+      ctx.fillStyle = dotSolidFill;
       // v0.54: pattern-aware per-dot sampling — each dot picks its color
       // from the SAME gradient/pattern field the background paints
       // (sweeps, mesh spots, checker cells, stripe bands, ray sectors…),
@@ -605,18 +767,39 @@
       const dotR = dotRBase;
       for (let x = dStartX2; x < W; x += scaledGrid) {
         for (let y = dStartY2; y < H; y += scaledGrid) {
-          // v0.45 ITEM 6: per-dot jitter (scatter + size + rotation)
+          // v0.45 ITEM 6: per-dot jitter (scatter + size) — v0.83.3: the
+          // whole derived record is cached per world cell (stable hashes;
+          // the pre-pulse size, the jitter, the band, and — when the
+          // twinkle is on — the pulse/orbit parameters; only the
+          // time-dependent sin/cos run live).
           var dix = Math.round((x + offsetX * scale * dPF) / scaledGrid);
           var diy = Math.round((y + offsetY * scale * dPF) / scaledGrid);
-          var hd = hashCell(dix, diy);
-          // v0.75: the size hash is BIAS-WARPED (favor larger/smaller).
-          var hd2 = warpD(hashCell(dix + 7, diy + 7));
+          var dkey = lcKey(dix, diy);
+          var DP = LC.dot.get(dkey);
+          if (DP === undefined) {
+            var hd = hashCell(dix, diy);
+            // v0.75: the size hash is BIAS-WARPED (favor larger/smaller).
+            var hd2 = warpD(hashCell(dix + 7, diy + 7));
+            DP = {
+              jx: scatterPxD * (hd - 0.5) * 2,
+              jy: scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2,
+              jrB: dotR * (1 + effFracD * (hd2 - 0.5) * 2),
+              band: bandOf(depthT(hd2, effFracD))
+            };
+            if (animDots) {
+              DP.tsp = 0.5 + hashCell(dix + 21, diy + 21) * 1.8;   // pulse rad/s
+              DP.tph = hashCell(dix + 23, diy + 23) * 6.283;
+              DP.ospd = (0.25 + hashCell(dix + 27, diy + 27) * 0.9)  // orbit rad/s
+                        * (hashCell(dix + 29, diy + 29) < 0.5 ? -1 : 1);
+              DP.orR = scaledGrid * (0.06 + 0.08 * hashCell(dix + 31, diy + 31));
+            }
+            LC.dot.set(dkey, DP);
+            if (LC.dot.size > 24576) LC.dot.clear();
+          }
           // v0.77.9: the SIZE picks the DEPTH — biggest = closest
-          if (dotBands > 1 && bandOf(depthT(hd2, effFracD)) !== db) continue;
+          if (dotBands > 1 && DP.band !== db) continue;
           dBandN++;
-          var jx = scatterPxD * (hd - 0.5) * 2;
-          var jy = scatterPxD * (hashCell(dix + 3, diy + 5) - 0.5) * 2;
-          var jr = dotR * (1 + effFracD * (hd2 - 0.5) * 2);
+          var jr = DP.jrB;
           if (jr < dotRBase * 0.9) dbgDotSmall++; else if (jr > dotRBase * 1.1) dbgDotBig++;
           // v0.83.1: the weight twin — ratio extremes (pre-pulse, pre-floor
           // floors would mask the true spread)
@@ -631,7 +814,6 @@
           // threshold flicker — qualification uses the hash size).
           var dc = (overDotsOn && jr > overThreshD) ? ctx2 : ctx;
           if (dc === ctx2) dbgOverDots++;
-          var jrot = rotDegD * (hashCell(dix + 11, diy + 13) - 0.5) * 2;
           // v0.75 ANIMATE DOTS — the twinkle (user spec: "rotate and
           // grow/shrink at varying speeds"): a scale PULSE (grow/shrink,
           // ±40%) + a small ORBIT around the lattice anchor (the visible
@@ -640,49 +822,43 @@
           // pulse so it reads as a twinkle. Stable hashes = no state.
           var tox = 0, toy = 0, tal = 1;
           if (animDots) {
-            var tsp = 0.5 + hashCell(dix + 21, diy + 21) * 1.8;   // pulse rad/s
-            var tph = hashCell(dix + 23, diy + 23) * 6.283;
-            var pulse = Math.sin(animT * tsp + tph);
+            var pulse = Math.sin(animT * DP.tsp + DP.tph);
             jr *= 1 + 0.4 * pulse;
             tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
-            var osp = (0.25 + hashCell(dix + 27, diy + 27) * 0.9)   // orbit rad/s
-                      * (hashCell(dix + 29, diy + 29) < 0.5 ? -1 : 1);
-            var orR = scaledGrid * (0.06 + 0.08 * hashCell(dix + 31, diy + 31));
-            var orA = animT * osp + tph;
-            tox = Math.cos(orA) * orR; toy = Math.sin(orA) * orR;
+            var orA = animT * DP.ospd + DP.tph;
+            tox = Math.cos(orA) * DP.orR; toy = Math.sin(orA) * DP.orR;
           }
-          if (dotSampler) dc.fillStyle = dotSampler(x + jx, y + jy);
+          // v0.83.3: the per-dot color, cached per cell while the camera
+          // rests (was a live sampler call per dot per frame — the mesh
+          // spot loop + sqrt ×1508/frame)
+          var colD = LC.dotC.get(dkey);
+          if (colD === undefined) { colD = dotSampler ? dotSampler(x + DP.jx, y + DP.jy) : null; LC.dotC.set(dkey, colD); }
+          if (colD) dc.fillStyle = colD;
           else if (dc === ctx2) dc.fillStyle = ctx.fillStyle;
           // v0.77.9: the near band's BIGGEST dots catch the light — the
           // v0.77 glow look on the user's own elements (a halo under the
-          // core + the light-lifted tone), never spawned circles
+          // core + the light-lifted tone), never spawned circles.
+          // v0.83.3: the halo is a prerendered SPRITE per color (the
+          // per-dot createRadialGradient is gone); the core paints
+          // WITHOUT save/translate/rotate/restore — rotation is invisible
+          // on circles, so the arc lands directly at screen coords.
           var nearGlow = dotBands > 1 && db === AMP_BANDS - 1 &&
             jr >= dotRBase * 1.6 && glowFill;
           if (nearGlow) dc.fillStyle = glowFill;
-          dc.save();
+          var cx = x + DP.jx + tox, cy = y + DP.jy + toy;
           if (tal < 1) dc.globalAlpha = tal;
           if (nearGlow && jr >= 1.6) {
-            try {
-              var hg2 = dc.createRadialGradient(x + jx + tox, y + jy + toy, jr * 0.35, x + jx + tox, y + jy + toy, jr * 2.6);
-              hg2.addColorStop(0, dc.fillStyle);
-              hg2.addColorStop(1, 'rgba(0,0,0,0)');
-              var ga = dc.globalAlpha;
-              dc.globalAlpha = ga * 0.55;
-              dc.beginPath();
-              dc.arc(x + jx + tox, y + jy + toy, jr * 2.6, 0, Math.PI * 2);
-              dc.fillStyle = hg2;
-              dc.fill();
-              dc.globalAlpha = ga;
-              if (dotSampler) dc.fillStyle = dotSampler(x + jx, y + jy);
-              if (glowFill) dc.fillStyle = glowFill;
-            } catch (e) {}
+            var spG = lcGlowSprite(glowFill);
+            var R = jr * 2.6;
+            var ga2 = dc.globalAlpha;
+            dc.globalAlpha = ga2 * 0.55;
+            dc.drawImage(spG.c, cx - R, cy - R, R * 2, R * 2);
+            dc.globalAlpha = ga2;
           }
-          dc.translate(x + jx + tox, y + jy + toy);
-          if (jrot) dc.rotate(jrot * Math.PI / 180);
           dc.beginPath();
-          dc.arc(0, 0, Math.max(0.15, jr), 0, Math.PI * 2);
+          dc.arc(cx, cy, Math.max(0.15, jr), 0, Math.PI * 2);
           dc.fill();
-          dc.restore();
+          if (tal < 1) dc.globalAlpha = 1;
           dbgDots++;
         }
       }
@@ -692,15 +868,17 @@
 
     const o = worldToScreen(0, 0);
     if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
-      ctx.fillStyle = gridPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e');
+      ctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e');
       ctx.beginPath();
       ctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       ctx.fill();
     }
-    // v0.75: the honest instrument — the suite's parallax proof and any
-    // future red-team read the last frame's counters. v0.77.9: stars is
-    // always 0 (the spawned starfield is retired); the per-band counts +
-    // pan factors carry the size-depth contract.
+    // v0.83.3: the rolling fps instrument + the cache telemetry (red-team
+    // reads both: fps proves the wave, the cache sizes prove the hits —
+    // stable sizes during ambient = everything served from the Maps)
+    var lcNow = performance.now();
+    if (lcLastT) lcFps = lcFps * 0.9 + (1000 / (lcNow - lcLastT)) * 0.1;
+    lcLastT = lcNow;
     window.DoomalayDebug = { stars: 0, dots: dbgDots, segs: dbgSegs, amp: amp,
       dotBands: dbgDotBands, lineBands: dbgLineBands,
       // v0.81.1: the size-distribution twin (bias-oddity contract)
@@ -717,7 +895,12 @@
         threshD: overDotsOn ? overThreshD : null,
         threshL: overLinesOn ? overThreshL : null },
       // v0.81.2: the camera twin — rigs prove pans actually moved it
-      camera: { x: offsetX, y: offsetY, scale: scale } };
+      camera: { x: offsetX, y: offsetY, scale: scale },
+      // v0.83.3: the fps + cache twins
+      fps: Math.round(lcFps),
+      cache: { gen: LC.gen, colorGen: LC.cgen,
+        dot: LC.dot.size, vline: LC.vline.size, hline: LC.hline.size,
+        vseg: LC.vseg.size, hseg: LC.hseg.size } };
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────

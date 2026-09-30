@@ -84,8 +84,11 @@ setstate "{ spaceParallax: 50, dotSizeVariation: 80, lineSizeVariation: 80 }"
 D1=$(ev "(function(){
   var d = window.DoomalayDebug;
   // expected thresholds, recomputed exactly as the renderer does
+  // v0.83.1 THE WEIGHT supersession: the size spread doubled (±170% →
+  // ±340%), so effFrac at variation 80 is 0.8·3.4 — the old 1.7 constant
+  // here went stale when the weight wave landed (renderer verified right).
   var dotRBase = Math.max(0.6, 1.4 * Math.min(1, 1.3));
-  var effFracD = 80 / 100 * 1.7, effFracL = 80 / 100 * 1.7;
+  var effFracD = 80 / 100 * 3.4, effFracL = 80 / 100 * 3.4;
   return JSON.stringify({ over: d.overIcons,
     tDok: Math.abs(d.overIcons.threshD - 0.7 * dotRBase * (1 + effFracD)) < 1e-9,
     tLok: Math.abs(d.overIcons.threshL - 0.7 * (1 + effFracL)) < 1e-9 });
