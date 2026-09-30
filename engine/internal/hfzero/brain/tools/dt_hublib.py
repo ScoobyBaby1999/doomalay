@@ -74,6 +74,13 @@ MAX_TEXT_ITEMS = 12
 MAX_OUT = 6000  # dt_spec rule 9 — return text stays a few screens max
 DEFAULT_TIMEOUT = 8.0
 SLOW_TIMEOUT = 30.0  # browse/detail/download fan out over HF repos
+# v0.76.6 THE COLLECTION TIMEOUT: the engine's bundle download is
+# SYNCHRONOUS — 64 items from GitHub take ~3 min engine-side (live-observed:
+# the obra bundle landed fully while the brain's 30s slow-timeout had already
+# given up → "unexpected engine response" and the model believed the download
+# failed). One call class, one budget: the collection download gets 6 min —
+# the heartbeat keeps the stream alive while it waits.
+COLLECTION_TIMEOUT = 360.0
 
 BOX_LABEL_SWITCH = "✦ tweaks → Bot Library"
 DL_BOX_LABEL_SWITCH = "✦ tweaks → Bot Library → Can download bundles"
@@ -313,11 +320,13 @@ class HubLibClient:
         return self._client
 
     def _request(self, method: str, path: str, *, params=None,
-                 json_body=None, slow: bool = False) -> dict:
+                 json_body=None, slow: bool = False,
+                 timeout: float | None = None) -> dict:
         try:
             r = self._http().request(
                 method, self.base_url + path, params=params, json=json_body,
-                timeout=self._slow_timeout if slow else self._timeout)
+                timeout=(timeout if timeout is not None
+                         else self._slow_timeout if slow else self._timeout))
         except Exception as exc:  # refused / timeout / dns — one message shape
             return {"error": f"engine unreachable at {self.base_url}: {exc}"}
         body: Any = None
@@ -366,8 +375,64 @@ class HubLibClient:
                              slow=True)
 
     def download_collection(self, cid: str) -> dict:
-        return self._request("POST", f"/api/hub/collections/{_quote_seg(cid)}/download",
-                             json_body={}, slow=True)
+        """v0.76.6 SSE TRUTH: the engine's collection download STREAMS
+        progress (data: {"phase": ...} events — the UI's download registry
+        rides the same stream). A plain JSON read got "unexpected engine
+        response" (the body is text/event-stream, not JSON) while the
+        download itself landed fine minutes later — the model was told it
+        failed and apologized for a success. Consume the stream: progress
+        events update the observation's tail, the FINAL complete/failed
+        event is the result. Budget: COLLECTION_TIMEOUT (6 min — 64 items
+        from GitHub take ~3 min engine-side)."""
+        import httpx  # lazy (dt_spec rule 1)
+        path = f"/api/hub/collections/{_quote_seg(cid)}/download"
+        last: dict = {}
+        progress_line = ""
+        try:
+            with self._http().stream(
+                "POST", self.base_url + path, json={},
+                timeout=COLLECTION_TIMEOUT,
+            ) as r:
+                if r.status_code >= 400:
+                    body: Any = None
+                    try:
+                        body = r.json()
+                    except Exception:
+                        body = None
+                    msg = ""
+                    if isinstance(body, dict):
+                        msg = str(body.get("error") or body.get("message") or "")
+                    return {"error": _clip(msg or f"HTTP {r.status_code} from {path}", 240),
+                            "status": r.status_code}
+                import json as _json
+                for line in r.iter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    try:
+                        ev = _json.loads(line[6:])
+                    except Exception:
+                        continue
+                    if not isinstance(ev, dict):
+                        continue
+                    phase = str(ev.get("phase", ""))
+                    if phase == "complete":
+                        ev["progress"] = progress_line or None
+                        return ev
+                    if phase == "failed":
+                        return {"error": _clip(str(ev.get("error") or "download failed"), 240),
+                                "progress": progress_line or None}
+                    # progress event (enqueued / downloading N/M / verifying)
+                    for k in ("note", "message", "text", "detail"):
+                        if ev.get(k):
+                            progress_line = str(ev[k])
+                            break
+                    if ev.get("done") is not None and ev.get("total") is not None:
+                        progress_line = f"{ev.get('done')}/{ev.get('total')}"
+            # stream ended without a terminal event — degrade honestly
+            return {"error": "download stream ended before completion",
+                    "progress": progress_line or None}
+        except Exception as exc:  # refused / timeout / dns — one message shape
+            return {"error": f"engine unreachable at {self.base_url}: {exc}"}
 
     def tweaks(self) -> dict:
         """The chat's tweak blob — THE BOXES. 404 (no session bound, e.g. a

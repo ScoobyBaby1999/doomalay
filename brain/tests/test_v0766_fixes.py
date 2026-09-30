@@ -170,3 +170,46 @@ def test_heartbeat_constant_in_source():
     assert "_HB_S = 25" in src
     assert "_next_hb = _last_ev + _HB_S" in src          # activity resets
     assert '"type": "progress"' in src or '"type":"progress"' in src
+
+
+def test_download_collection_consumes_sse():
+    """v0.76.6: the engine's bundle download is SSE — the brain client must
+    stream it and return the terminal complete event, not 'unexpected
+    engine response' on a text/event-stream body."""
+    import httpx
+    import dt_hublib as H
+    import json as _json
+
+    sse = (
+        'data: {"phase":"enqueued","note":"starting"}\n\n'
+        'data: {"phase":"downloading","done":3,"total":64}\n\n'
+        'data: {"phase":"downloading","done":64,"total":64}\n\n'
+        'data: {"phase":"verifying"}\n\n'
+        'data: {"phase":"complete","groups":[{"type":"skill","items":[{"id":"a"},{"id":"b"}]}]}\n\n'
+    )
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/download")
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=sse.encode())
+
+    c = H.HubLibClient("http://engine.test", "sess",
+                       transport=httpx.MockTransport(handler))
+    out = c.download_collection("superpowers-obra")
+    assert out.get("phase") == "complete"
+    assert isinstance(out.get("groups"), list) and out["groups"][0]["items"]
+    assert out.get("progress") == "64/64"
+    assert "error" not in out
+
+
+def test_download_collection_failed_phase():
+    import httpx
+    import dt_hublib as H
+
+    sse = 'data: {"phase":"failed","error":"repo vanished"}\n\n'
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=sse.encode())
+    c = H.HubLibClient("http://engine.test", "sess",
+                       transport=httpx.MockTransport(handler))
+    out = c.download_collection("gone")
+    assert out.get("error") == "repo vanished"
