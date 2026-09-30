@@ -457,7 +457,13 @@
     var BRIGHT_VARS = [
       { v: '--surface-1', ink: '--on-surface-1', gate: 'data-bright-s1' },
       { v: '--surface-2', ink: '--on-surface-2', gate: 'data-bright-s2' },
-      { v: '--bg-app',    ink: '--on-bg-app',    gate: 'data-bright-bg' }
+      { v: '--bg-app',    ink: '--on-bg-app',    gate: 'data-bright-bg' },
+      // v0.79.3: the BORDER family — the outline-pill group (settings
+      // tabs, search bars, reset pills, kbd, util buttons) now rides the
+      // border variable (the user's "assign less variables to surface
+      // raised and assign them to border"); a bright border twin gets
+      // the same readable-ink derivation the surfaces have.
+      { v: '--border',    ink: '--on-border',    gate: 'data-bright-border' }
     ];
     BRIGHT_VARS.forEach(function (B) {
       var resolved = String(getComputedStyle(docEl).getPropertyValue(B.v) || '').trim();
@@ -733,7 +739,8 @@
       // memos live for one epoch (no cross-theme staleness).
       var memoEpoch = 0;
       var writeEpoch = 0;                       // v0.78.3: painter self-write guard
-      var stats = { paints: 0, motions: 0 };   // v0.78.3: the rig reads these
+      var stats = { paints: 0, motions: 0,   // v0.78.3: the rig reads these
+        rebakes: 0, baked: 0 };              // v0.79.3: the scroll-path counters
       var STYLE_RE = /var\(--[a-z0-9-]*gradient/;
 
       // ── the root registry: keys + one CSSOM rule per root ──────
@@ -962,7 +969,25 @@
               el.__projPainted = true;
             }
             var r = el.getBoundingClientRect();
-            if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
+            if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) {
+              // v0.79.3: OFFSCREEN elements stay PAINTED (carry, no
+              // re-bake). The v0.78.3 cleanup dropped them + stripped
+              // their baked styles — so every pill scrolling back into
+              // view fell back to the raw CSS fixed-attachment gradient
+              // (element-local inside the transformed root) until the
+              // 150ms post-scroll settle paint: the "for an instant
+              // paints the full gradient into a single pill" flash
+              // (the user's report). Carried elements keep their baked
+              // position/size; scrollRebake keeps their Y constant true
+              // while they scroll (they're in `painted`); the settle
+              // paint re-validates on real changes. Zero-size/hidden
+              // elements carry too — their styles are inert while
+              // unrendered, and the attribute-mutation observer re-paints
+              // when they reappear.
+              el.__projR = R;   // v0.79.3: the newcomer bake needs the root
+              reads.push({ el: el, R: R, carry: true });
+              continue;
+            }
             // v0.78.3c: bake FLAT (the current viewport position) — the
             // scroll path re-bakes constants incrementally (scrollRebake)
             // on scroll events AND on silent scroll-anchoring drift
@@ -1050,6 +1075,7 @@
               bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
               by: yB,
               pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' + yCalc });
+            el.__projR = R;   // v0.79.3: the newcomer bake needs the root
           }
         }
         // ── WRITE PHASE (only what changed — a no-op bake writes
@@ -1062,6 +1088,9 @@
         var keep = [];
         for (var w = 0; w < reads.length; w++) {
           var it = reads[w];
+          // v0.79.3: the carry entries (offscreen/hidden) — no style
+          // writes, no bake constants; they only STAY painted.
+          if (it.carry) { keep.push(it.el); continue; }
           if (it.el.__projPos !== it.pos) {
             it.el.style.backgroundPosition = it.pos;
             it.el.__projPos = it.pos;
@@ -1074,9 +1103,10 @@
           keep.push(it.el);
         }
         // clear every previously-painted element that lost its anchor this
-        // pass — it left the transformed scopes, went offscreen, or its
-        // gradient twin reverted to solid. The CSS state owns it again
-        // (byte-identical to the no-gradient look; re-painted on return).
+        // pass — it left the transformed scopes or was removed from the
+        // DOM (v0.79.3: offscreen elements are CARRIED, never stripped —
+        // see the carry note in the read phase). The CSS state owns the
+        // dropped ones again (byte-identical to the no-gradient look).
         for (var p = 0; p < painted.length; p++) {
           var el2 = painted[p];
           if (!el2.isConnected || keep.indexOf(el2) !== -1) continue;
@@ -1232,10 +1262,17 @@
       function scrollRebake(sc, dS) {
         if (!painted.length || !dS) return;
         var wep = ++writeEpoch;
+        // v0.79.3: NEWCOMERS — carried elements that were never baked
+        // on-screen (they entered the DOM — or first met the painter —
+        // while offscreen). Scrolling them into view raw was the
+        // full-gradient-in-a-pill flash; they get a targeted on-the-spot
+        // bake here (bounded: a handful of reads per fling frame, never
+        // the full SEL walk).
+        var fresh = [];
         for (var i = 0; i < painted.length; i++) {
           var el = painted[i];
           if (!el.isConnected || !sc.contains(el)) continue;
-          if (el.__projBy === undefined) continue;
+          if (el.__projBy === undefined) { fresh.push(el); continue; }
           // v0.78.3c: sticky/fixed descendants DON'T move with the scroll
           // content — the sticky chat input inside #chat-scroll was being
           // adjusted by the clamp delta and drifted (the A5b regression).
@@ -1254,6 +1291,48 @@
             el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
           }
         }
+        if (fresh.length) {
+          stats.rebakes += fresh.length;
+          bakeNewcomers(fresh, wep);
+        }
+      }
+      // v0.79.3: the targeted newcomer bake — the same math paint() uses,
+      // for the elements that just scrolled into view unbaked. The root
+      // matrices are read once per root per call; gBCR is post-scroll
+      // so the bake lands true for THIS scroll position. IN-VIEW
+      // newcomers bake unconditionally (a big jump can surface a hundred
+      // at once — the reads are layout-clean after a scroll, one batch);
+      // OFFSCREEN newcomers are skipped (their event comes later).
+      function bakeNewcomers(list, wep) {
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var size = vw + 'px ' + vh + 'px';
+        var matrixCache = {};
+        var n = 0;
+        for (var i = 0; i < list.length && n < 400; i++) {
+          var el = list[i];
+          if (!el.isConnected) continue;
+          var r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
+          var R = el.__projR;
+          if (!R || !rootReg || rootReg.indexOf(R) === -1) continue;   // root gone — settle paint handles it
+          var M = matrixCache[R.key];
+          if (!M) { M = matrixCache[R.key] = readMatrix(R.el); }
+          var bx = M.translateOnly ? (-r.left + M.tx) : -r.left;
+          var by = M.translateOnly ? (-r.top + M.ty) : -r.top;
+          var pos = fmtCalc('--proj-tx', bx) + ' ' + fmtCalcY(by);
+          if (el.__projPos !== pos) {
+            el.style.backgroundPosition = pos;
+            el.__projPos = pos;
+            el.__projBx = bx;
+            el.__projBy = by;
+            el.__projWriteEpoch = wep;
+          }
+          if (el.style.backgroundSize !== size) el.style.backgroundSize = size;
+          if (el.style.backgroundAttachment !== 'scroll') el.style.backgroundAttachment = 'scroll';
+          el.__projWriteEpoch = wep;
+          n++;
+        }
+        stats.baked += n;
       }
       var settleTimer = 0;
       function scrollSettle() {

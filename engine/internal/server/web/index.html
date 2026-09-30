@@ -4010,7 +4010,14 @@
   .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
-  .cv-section, .mb-more, .wsx-opt {
+  .cv-section, .mb-more, .wsx-opt,
+  /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
+     joins the SURFACE family (user spec: "surface raised should not
+     re-paint this box, that box should remain the surface color
+     variable"). The editor surfaces read as cuts of the card they sit
+     on; their inner controls (.gr-color/.gr-mini/.gr-dir) stay raised
+     chrome on top. */
+  .gr-editor, .gr-swatches, .gr-tools {
     background-image: var(--surface-1-gradient, none),
                       linear-gradient(var(--surface-1), var(--surface-1)),
                       var(--border-gradient, none);
@@ -4047,22 +4054,30 @@
      still don't render the gradients or theme very nicely or at all").
      v0.77.8: THE PLATE + RING — the group upgrades from a bare window
      to the full stack (window + opaque s2 plate + the border ring):
-     the bordered pills among them (the gr-* editors, .color-row-reset,
-     the pickers…) were the "some borders render the FIRST COLOR"
-     population — their window never carried a ring. Border-less
-     members are unaffected (a zero-width border strip hides the ring;
-     the plate is byte-identical to the old solid look). */
+     the bordered pills among them (the pickers…) were the "some
+     borders render the FIRST COLOR" population — their window never
+     carried a ring. Border-less members are unaffected (a zero-width
+     border strip hides the ring; the plate is byte-identical to the
+     old solid look).
+     v0.79.3: THE REBALANCE (user spec: "assign less variables to
+     surface raised and assign them to border") — the gr-editor boxes
+     moved to the SURFACE family above; the outline-pill family
+     (settings tabs, search bars, reset pills, kbd, util buttons)
+     moved to the BORDER family below. What remains here: the TRUE
+     raised chrome — inputs, textareas, selects, switch tracks, chips,
+     hover states, the chatbot disc — the 'inputs · hover · raised
+     cards' contract of the Surface-raised variable. */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
-  .color-row-reset, .ts-row:hover, .ts-row:active, .pv-btn:hover,
+  .ts-row:hover, .ts-row:active, .pv-btn:hover,
   .err-switch, .chat-jump, .ts-chip, .art-rename-input, .art-sheet-input,
   .art-toast, .hub-searchico, .hub-libpill, .hub-bunch-sec-n,
   .hub-bunch-chip, .hub-nav, .hp-icocell, .hi-fab, .hp-color, .hp-mini,
   .hp-pick, .dx-pill, .gr-color, .gr-mini, .crop-btn, .hp-focus-btn,
   .tw-iconcell, .chat-find-chip, .sm-ghost, #chat-send-more, .gr-dir,
   .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
-  .wsc-brsel, .kbd, .pv-btn, .gr-editor, .gr-swatches, .gr-tools,
-  #pe-name, #ph-key, #ph-val, #menu, .settings-nav .tab, .util-btn,
+  .wsc-brsel, .pv-btn,
+  #pe-name, #ph-key, #ph-val, #menu,
   .tool-pill-progress, .chatbot .icon, .chatbot .name {
     background-image: var(--surface-2-gradient, none),
                       linear-gradient(var(--surface-2), var(--surface-2)),
@@ -4086,7 +4101,7 @@
   [data-bright-s2] input[type=password], [data-bright-s2] input[type=email],
   [data-bright-s2] input[type=number], [data-bright-s2] textarea,
   [data-bright-s2] select, [data-bright-s2] .app-switch-track,
-  [data-bright-s2] .color-row-reset, [data-bright-s2] .err-switch,
+  [data-bright-s2] .err-switch,
   [data-bright-s2] .chat-jump, [data-bright-s2] .ts-chip,
   [data-bright-s2] .art-rename-input, [data-bright-s2] .art-sheet-input,
   [data-bright-s2] .art-toast, [data-bright-s2] .hub-searchico,
@@ -4100,10 +4115,9 @@
   [data-bright-s2] #chat-send-more, [data-bright-s2] .gr-dir,
   [data-bright-s2] .cv-input, [data-bright-s2] .cv-chip, [data-bright-s2] .cv-badge,
   [data-bright-s2] .cv-count-chip, [data-bright-s2] .wsx-input, [data-bright-s2] .wsx-act,
-  [data-bright-s2] .wsc-brsel, [data-bright-s2] .kbd, [data-bright-s2] .pv-btn,
-  [data-bright-s2] .gr-editor, [data-bright-s2] .gr-swatches, [data-bright-s2] .gr-tools,
+  [data-bright-s2] .wsc-brsel, [data-bright-s2] .pv-btn,
   [data-bright-s2] #pe-name, [data-bright-s2] #ph-key, [data-bright-s2] #ph-val,
-  [data-bright-s2] #menu, [data-bright-s2] .settings-nav .tab, [data-bright-s2] .util-btn {
+  [data-bright-s2] #menu {
     color: var(--on-surface-2, var(--text-1));
     text-shadow: none;
   }
@@ -4119,7 +4133,9 @@
   [data-bright-s1] .art-panel, [data-bright-s1] .art-row, [data-bright-s1] .art-ed-body,
   [data-bright-s1] .art-sheet, [data-bright-s1] .cm-s-doomalay.CodeMirror,
   [data-bright-s1] .hp-sec, [data-bright-s1] #send-menu, [data-bright-s1] .kb-card,
-  [data-bright-s1] .cv-section, [data-bright-s1] .mb-more, [data-bright-s1] .wsx-opt {
+  [data-bright-s1] .cv-section, [data-bright-s1] .mb-more, [data-bright-s1] .wsx-opt,
+  /* v0.79.3: the gradient-editor boxes ride the surface ink too */
+  [data-bright-s1] .gr-editor, [data-bright-s1] .gr-swatches, [data-bright-s1] .gr-tools {
     color: var(--on-surface-1, var(--text-1));
     text-shadow: none;
   }
@@ -4229,24 +4245,36 @@
     background-clip: padding-box, padding-box, border-box !important;
     background-attachment: fixed, fixed, fixed !important;
   }
-  /* RADIUS-SAFE gradient borders for the Layer-3 chrome: the surface-2
-     projection, then the border ring. Corners stay round; 'none' twins
-     degrade to the plain solid look. .color-row-banner is OUT (its
-     inline preview stays local — editor previews are the documented
-     exception to the projection model). */
+  /* ══ v0.79.3 THE BORDER FAMILY (the outline-pill rework) ══════════
+     User spec: "assign less variables to surface raised and assign
+     them to border." The documented outline-pill family (the v0.72
+     group) now rides the BORDER VARIABLE, not surface-raised: the
+     border-gradient window over a quiet border-derived plate (14% of
+     the border solid mixed into the surface), the ring on the border
+     strip. Customizing Borders moves these pills; customizing Surface
+     raised no longer touches them. 'none' twins (base themes, solid
+     borders) degrade to the quiet tint — ≈ the old solid look, one
+     variable over. .color-row-banner stays OUT (its inline preview is
+     the documented exception to the projection model). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
-  .color-row-reset, .settings-nav .tab {
-    /* v0.72: THE PLATE SYSTEM (the Layer-2 note above) — the flat
-       surface-2 plate always covers the padding-box, so the border
-       sweep can only read in its ring, never as the pill's fill. The
-       settings-nav tabs join the group (outline pills — their ring
-       follows the border variable like every other outline). */
-    background-image: var(--surface-2-gradient, none),
-                      linear-gradient(var(--surface-2), var(--surface-2)),
+  .color-row-reset, .settings-nav .tab, .util-btn, .kbd {
+    background-image: var(--border-gradient, none),
+                      linear-gradient(color-mix(in srgb, var(--border) 14%, var(--surface-1)),
+                                      color-mix(in srgb, var(--border) 14%, var(--surface-1))),
                       var(--border-gradient, none);
     background-origin: padding-box, padding-box, border-box;
     background-clip: padding-box, padding-box, border-box;
     background-attachment: fixed, fixed, fixed;
+  }
+  /* v0.79.3: a bright border twin (or a bright border gradient washing
+     the window) gets the readable ink — the --on-surface pattern,
+     applied to the border family. Base themes never trip the gate. */
+  [data-bright-border] .hub-search, [data-bright-border] .chat-find,
+  [data-bright-border] .chat-find-input, [data-bright-border] .chat-find-btn,
+  [data-bright-border] .color-row-reset, [data-bright-border] .settings-nav .tab,
+  [data-bright-border] .util-btn, [data-bright-border] .kbd {
+    color: var(--on-border, var(--text-1));
+    text-shadow: none;
   }
   /* v0.57→v0.66 HEADERS — the bg-app projection window (the v0.49
      "overlay background = overlay screens · collapsible headers · scrims"
