@@ -148,3 +148,80 @@ func TestSessionContextPreambleRidesSystemPrompt(t *testing.T) {
                 t.Fatalf("identity line missing")
         }
 }
+
+// TestMetadataPreamblePillLedger — v0.82.1 THE PILL LEDGER (user spec:
+// "let's have the chat know it has a metadata with tweak-able settings
+// and all the pills"). The metadata block names EVERY pill the chat UI
+// renders — the workspaces +workspace badge (live bound list), the
+// bundle pill right of the lib pill (live armed name), the mind pill —
+// plus the answer-from-this-block rule, so the bot can never again
+// answer "I don't have any information about a workspaces pill".
+func TestMetadataPreamblePillLedger(t *testing.T) {
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        sess := &store.Session{ID: "pl", Title: "t", Model: "privatemodeai/kimi-k2.6", Provider: "privatemodeai",
+                Effort: "med", SlidingWindow: 40}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        // one connected workspace, bound to this chat
+        ws := &store.Workspace{Kind: "github", Owner: "ScoobyBaby1999", Repo: "doomalay-ws-write-test",
+                Name: "ScoobyBaby1999/doomalay-ws-write-test", Access: "full", Branch: "main"}
+        if err := db.CreateWorkspace(ws); err != nil {
+                t.Fatalf("workspace: %v", err)
+        }
+        if err := db.BindWorkspace("pl", ws.ID); err != nil {
+                t.Fatalf("bind: %v", err)
+        }
+
+        s := &Server{db: db}
+        out := s.chatMetadataPreamble(sess, "")
+
+        if !strings.Contains(out, "workspaces (the +workspace badge on the toolbar, right of the lib pill)") {
+                t.Fatalf("missing the workspaces pill line:\n%s", out)
+        }
+        if !strings.Contains(out, "currently 1 (github ScoobyBaby1999/doomalay-ws-write-test (full))") {
+                t.Fatalf("missing the live bound list:\n%s", out)
+        }
+        if !strings.Contains(out, "bundle (the small pill immediately right of the lib pill)") {
+                t.Fatalf("missing the bundle pill line:\n%s", out)
+        }
+        if !strings.Contains(out, "context (the mind pill + ✦ tweaks → mind): the last 40 messages") {
+                t.Fatalf("missing the mind pill line:\n%s", out)
+        }
+        if !strings.Contains(out, "answer from THIS block") {
+                t.Fatalf("missing the answer-from-this-block rule:\n%s", out)
+        }
+
+        // the armed bundle name rides the turn (not the session)
+        armed := s.chatMetadataPreamble(sess, "superpowers-core")
+        if !strings.Contains(armed, `currently armed: "superpowers-core"`) {
+                t.Fatalf("missing the live armed bundle:\n%s", armed)
+        }
+        // unbound chat: the honest none-yet shape
+        if !strings.Contains(s.chatMetadataPreamble(&store.Session{ID: "none", Effort: "med"}, ""), "NO repo is bound to this chat yet") {
+                t.Fatalf("missing the unbound shape")
+        }
+}
+
+// TestBundleNameOf — the manifest-text label extraction for the pill
+// ledger's live bundle state.
+func TestBundleNameOf(t *testing.T) {
+        cases := []struct{ in, want string }{
+                {"", ""},
+                {"some other preamble", ""},
+                {"THE ATTACHED BUNDLE — superpowers-core (#tag) — 4 members\nThe user attached…", "superpowers-core"},
+                {"THE ATTACHED BUNDLE — my-bundle — 2 members\n", "my-bundle"},
+        }
+        for _, c := range cases {
+                if got := bundleNameOf(c.in); got != c.want {
+                        t.Fatalf("bundleNameOf(%q) = %q, want %q", c.in, got, c.want)
+                }
+        }
+}

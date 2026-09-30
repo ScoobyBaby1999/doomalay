@@ -329,7 +329,9 @@ func libraryPreamble(sess *store.Session) string {
 // name the exact pill + where to flip it when the user asks. The PM
 // client composes the same block client-side (pmMetadataBlock — PM turns
 // bypass the engine); keep the two texts in sync.
-func (s *Server) chatMetadataPreamble(sess *store.Session) string {
+// v0.82.1: bundleName carries the turn's attached bundle ("" when none)
+// — the session doesn't persist the armed bundle, the turn does.
+func (s *Server) chatMetadataPreamble(sess *store.Session, bundleName string) string {
         if sess == nil {
                 return ""
         }
@@ -374,12 +376,73 @@ func (s *Server) chatMetadataPreamble(sess *store.Session) string {
                 b.WriteString("- active template: none armed (the user can apply one from the library's USE button).\n")
         }
         if w := sess.SlidingWindow; w > 0 {
-                b.WriteString("- context: the last " + strconv.Itoa(w) + " messages ride each turn (the sliding window; ✦ tweaks → mind).\n")
+                b.WriteString("- context (the mind pill + ✦ tweaks → mind): the last " + strconv.Itoa(w) + " messages ride each turn (the sliding window).\n")
         } else {
-                b.WriteString("- context: the whole chat rides each turn (no sliding window).\n")
+                b.WriteString("- context (the mind pill + ✦ tweaks → mind): the whole chat rides each turn (no sliding window).\n")
         }
+        // v0.82.1 THE PILL LEDGER: the model had live truth about every
+        // SETTING but zero knowledge of the UI pills that carry them — the
+        // user's live repro asked "What does the workspaces pill do?" and
+        // the bot answered "I don't have any information about a
+        // workspaces pill — it isn't described in my instructions." Every
+        // pill the chat's toolbar/header actually renders is now named
+        // here with its live state, so pill questions are answered from
+        // THIS block, never from guesswork.
+        if n := len(s.boundWorkspaceLines(sess)); n > 0 {
+                b.WriteString("- workspaces (the +workspace badge on the toolbar, right of the lib pill): repos bound to THIS chat — currently " + strconv.Itoa(n) + " (" + strings.Join(s.boundWorkspaceLines(sess), ", ") + "). Binding/unbinding is the user's move on that badge; the workspace tool works exactly on these repos at the access level shown.\n")
+        } else {
+                b.WriteString("- workspaces (the +workspace badge on the toolbar, right of the lib pill): NO repo is bound to this chat yet. The user binds one of their connected workspaces there; until then the workspace tool has nothing bound (the unbounded explore tool still reaches ANY public repo).\n")
+        }
+        b.WriteString("- bundle (the small pill immediately right of the lib pill): the bundle armed for the CURRENT turn — the user picks it in the library (USE button) or you load members via hublib; its members ride the turn when armed" + armedBundleNote(bundleName) + ".\n")
         b.WriteString("- ✦ tweaks (the header pill): this chat's OWN look — icon, colors, text sizes, background — purely cosmetic, plus the library switches above.\n")
+        b.WriteString("- When the user asks what a pill or a setting does, answer from THIS block: these are your own controls and their live state. Name the pill, say what it does, and tell the user where to flip it. Never claim a pill wasn't described to you.\n")
         return b.String()
+}
+
+// boundWorkspaceLines renders this chat's bound workspaces compactly for
+// the pill ledger (kind name (access)) — same source of truth as the
+// session-context block (db-less Servers degrade to empty).
+func (s *Server) boundWorkspaceLines(sess *store.Session) []string {
+        if s.db == nil || sess == nil {
+                return nil
+        }
+        wss, err := s.db.ListSessionWorkspaces(sess.ID)
+        if err != nil {
+                return nil
+        }
+        var out []string
+        for _, w := range wss {
+                out = append(out, describeWorkspace(w))
+        }
+        return out
+}
+
+// armedBundleNote names the turn's attached bundle when one rides the
+// request (the engine sees it as the turn's bundle manifest; the session
+// itself never persists it).
+func armedBundleNote(bundleName string) string {
+        if v := strings.TrimSpace(bundleName); v != "" {
+                return " — currently armed: \"" + v + "\""
+        }
+        return ""
+}
+
+// bundleNameOf extracts the bundle's label from the composed manifest
+// text ("THE ATTACHED BUNDLE — <label> (#tag) — N members…") for the
+// pill ledger's live state. "" when no manifest rides the turn.
+func bundleNameOf(manifest string) string {
+        const mark = "THE ATTACHED BUNDLE — "
+        i := strings.Index(manifest, mark)
+        if i < 0 {
+                return ""
+        }
+        rest := manifest[i+len(mark):]
+        for _, cut := range []string{" (#", " — ", "\n"} {
+                if j := strings.Index(rest, cut); j >= 0 {
+                        rest = rest[:j]
+                }
+        }
+        return strings.TrimSpace(rest)
 }
 
 // effLabel normalizes an effort value for the persona text.
@@ -558,10 +621,10 @@ func providerLabel(provider string) string {
 // {name} {model} {provider} {skills} + the chat's custom {key} placeholders
 // inside the persona are substituted with the live values every turn.
 func (s *Server) systemPromptFor(sess *store.Session) string {
-        return s.systemPromptForMetrics(sess, personaMetrics{})
+        return s.systemPromptForMetrics(sess, personaMetrics{}, "")
 }
 
-func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) string {
+func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics, bundleName string) string {
         var b strings.Builder
         b.WriteString("You are ")
         if m := prettyModelName(sess.Model); m != "" {
@@ -587,7 +650,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics) s
         // + the current state, so it can name the exact flip path on ask.
         // v0.78.1: + the live session block (usage, pricing, context,
         // connections, bound repos) — the bot knows its own dashboard.
-        meta := s.chatMetadataPreamble(sess) + s.sessionContextPreamble(sess)
+        meta := s.chatMetadataPreamble(sess, bundleName) + s.sessionContextPreamble(sess)
         if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
                 persona := strings.TrimSpace(spec.Text)
                 if persona == "" {
@@ -1402,7 +1465,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // v0.26: live metrics feed the trigger personas (messages/turns).
         pm := personaMetrics{Messages: len(history), Turns: countUserTurns(history) + 1}
         full := make([]llm.Message, 0, len(history)+1)
-        full = append(full, llm.Message{Role: "system", Content: s.systemPromptForMetrics(sess, pm)})
+        full = append(full, llm.Message{Role: "system", Content: s.systemPromptForMetrics(sess, pm, bundleNameOf(bundleManifest))})
         full = append(full, history...)
 
         req := llm.ChatRequest{

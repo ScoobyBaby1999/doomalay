@@ -2262,11 +2262,44 @@
         ? '- active template (the \u29c9 chip above the composer): "' + state.template.name + '" \u2014 its methodology is armed for every turn of this chat.'
         : '- active template: none armed (the user can apply one from the library\u2019s USE button).',
       (state.slidingWindow && state.slidingWindow > 0)
-        ? '- context: the last ' + state.slidingWindow + ' messages ride each turn (the sliding window; \u2726 tweaks \u2192 mind).'
-        : '- context: the whole chat rides each turn (no sliding window).',
-      '- \u2726 tweaks (the header pill): this chat\u2019s OWN look \u2014 icon, colors, text sizes, background \u2014 purely cosmetic, plus the library switches above.'
+        ? '- context (the mind pill + \u2726 tweaks \u2192 mind): the last ' + state.slidingWindow + ' messages ride each turn (the sliding window).'
+        : '- context (the mind pill + \u2726 tweaks \u2192 mind): the whole chat rides each turn (no sliding window).',
+      wsPillLine(state),
+      bundlePillLine(state),
+      '- \u2726 tweaks (the header pill): this chat\u2019s OWN look \u2014 icon, colors, text sizes, background \u2014 purely cosmetic, plus the library switches above.',
+      '- When the user asks what a pill or a setting does, answer from THIS block: these are your own controls and their live state. Name the pill, say what it does, and tell the user where to flip it. Never claim a pill wasn\u2019t described to you.'
     ];
     return '\n\n' + lines.join('\n');
+  }
+
+  // v0.82.1 THE PILL LEDGER (the PM twin of the engine's boundWorkspaceLines):
+  // the +workspace badge line, live-valued from the same connections snapshot
+  // pmSessionContext renders (state._pmConn.bound — primed per turn by
+  // pmPrimeSessionContext; absent = unknown, degrade honestly).
+  function wsPillLine(state) {
+    var conn = (state && state._pmConn) || {};
+    var bound = conn.bound || [];
+    if (bound.length) {
+      var names = bound.map(function (w) {
+        return (w.kind || 'repo') + ' ' + (w.name || ((w.owner || '') + '/' + (w.repo || ''))) + ' (' + (w.access || 'read') + ')';
+      }).join(', ');
+      return '- workspaces (the +workspace badge on the toolbar, right of the lib pill): repos bound to THIS chat \u2014 currently ' + bound.length + ' (' + names + '). Binding/unbinding is the user\u2019s move on that badge; the workspace tool works exactly on these repos at the access level shown.';
+    }
+    return '- workspaces (the +workspace badge on the toolbar, right of the lib pill): NO repo is bound to this chat yet' +
+      (conn.totalWorkspaces ? ' (the user has ' + conn.totalWorkspaces + ' workspace(s) connected \u2014 they can bind one there).' : '.') +
+      ' Until one is bound the workspace tool has nothing bound (the unbounded explore tool still reaches ANY public repo).';
+  }
+
+  // v0.82.1: the bundle pill line \u2014 the current-turn bundle rides client
+  // state (state.bundle, the same payload the PM send composes into the
+  // attached-bundle manifest).
+  function bundlePillLine(state) {
+    var b = (state && state.bundle) || {};
+    var n = (b.members && b.members.length) || 0;
+    if (b.name && n) {
+      return '- bundle (the small pill immediately right of the lib pill): the bundle armed for the CURRENT turn \u2014 currently armed: "' + b.name + '" (' + n + ' member(s)). Its members ride the turn; you pick and load the fitting member, never the whole bundle at once.';
+    }
+    return '- bundle (the small pill immediately right of the lib pill): the bundle armed for the CURRENT turn \u2014 the user picks it in the library (USE button) or you load members via hublib; its members ride the turn when armed.';
   }
 
   // pmLibraryPreamble (v0.68) — the PM twin of the engine's

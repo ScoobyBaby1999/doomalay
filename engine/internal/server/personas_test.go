@@ -87,7 +87,7 @@ func TestSubstituteAllVars(t *testing.T) {
 func TestSystemPromptForUsesActivePersona(t *testing.T) {
         specs := `[{"id":"p1","name":"Pirate","text":"You are {name}, a pirate.","mode":"always"}]`
         srv := &Server{}
-        sys := srv.systemPromptForMetrics(personaSession(specs, ""), personaMetrics{Turns: 1})
+        sys := srv.systemPromptForMetrics(personaSession(specs, ""), personaMetrics{Turns: 1}, "")
         if !strings.Contains(sys, "You are Lippy, a pirate.") {
                 t.Fatalf("persona with {name} not composed: %q", sys[:120])
         }
@@ -114,7 +114,7 @@ func TestSystemPromptForUsesActivePersona(t *testing.T) {
         // The lib-ON variant: the pill flags promote + the switches read ON.
         sOn := personaSession(specs, "")
         sOn.LibAuto = true
-        sysOn := srv.systemPromptForMetrics(sOn, personaMetrics{Turns: 1})
+        sysOn := srv.systemPromptForMetrics(sOn, personaMetrics{Turns: 1}, "")
         for _, want := range []string{
                 "currently ON — you may browse, download and use the app's library on the fly",
                 "currently ON — you may download new bundles and use them right away",
