@@ -1362,11 +1362,18 @@
       //     "surface raised still doesn't work" coverage gaps — the
       //     hand-listed Layer-3 rules missed fills the list never knew).
       //   · BORDER — a rule with a var(--border) border becomes a
-      //     projected RING: outline rules (no fill) ride the MASK ring
-      //     (radius-safe, see-through interior, no plate needed);
-      //     filled rules ride the PLATE stack (window + plate + ring,
-      //     the v0.72 system derived instead of hand-listed). The
-      //     "some borders render the first color" population joins.
+      //     projected RING **only when it carries a FILL** (the PLATE
+      //     stack: window + plate + ring — radius-safe, content-safe,
+      //     painter-anchored). v0.79.2: the OUTLINE mask ring is RETIRED
+      //     — a mask hides everything inside the padding-box (children
+      //     AND text), so the v0.77.8 auto-ring rendered every
+      //     text-bearing outline pill as its border alone (the
+      //     chat-scheme chips' dots+labels went invisible; #chat-send's
+      //     glyph vanished once a border gradient went live; the
+      //     .color-row-banner's inline preview was clobbered). Outline
+      //     rules keep their solid border-color — the border variable's
+      //     solid twin, still theme-following — and their content
+      //     always paints.
       var SURF = [
         { gate: 'data-s1-grad', varName: '--surface-1', img: '--surface-1-gradient', inkGate: 'data-bright-s1', ink: '--on-surface-1' },
         { gate: 'data-s2-grad', varName: '--surface-2', img: '--surface-2-gradient', inkGate: 'data-bright-s2', ink: '--on-surface-2' },
@@ -1410,7 +1417,7 @@
         var wins = {}, glyphs = {};
         for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; glyphs[ACC[i].gate] = []; }
         var surfWins = {};   // SURF[i].gate → [selectors]
-        var borderRing = [], borderPlate = { };  // outline mask rings; plate rings keyed by fill var
+        var borderPlate = { };  // plate rings keyed by fill var
         for (var si = 0; si < SURF.length; si++) {
           surfWins[SURF[si].gate] = [];
           borderPlate[SURF[si].varName] = [];
@@ -1465,6 +1472,17 @@
                 if (sel.indexOf('.hub-libpill') !== -1 || sel.indexOf('.wsp') !== -1 ||
                     sel.indexOf('.wsx-') !== -1 || sel.indexOf('hub-tone') !== -1 ||
                     sel.indexOf('--wsp') !== -1) continue;
+                // v0.79.2: THE EDITOR-PREVIEW EXCEPTION — the GradientUI
+                // preview surfaces (the collapsed-row banner + the live
+                // preview bar) paint the USER'S OWN inline gradient;
+                // deriving any gate treatment for them would clobber the
+                // very thing they exist to show (the v0.77.8 walker ring
+                // painted every banner with the border field + a mask —
+                // "banners … always black", the user's report). The
+                // index.html plate comment already documented the
+                // exception; the walker now honors it too.
+                if (sel.indexOf('.color-row-banner') !== -1 ||
+                    sel.indexOf('.gr-preview-bar') !== -1) continue;
                 // …and any rule whose VALUES ride the --wsp indirection
                 // vars (the provider theme sync) — same reason.
                 var st = r.style;
@@ -1526,10 +1544,14 @@
                       if (borderPlate[fillVar].length < MAX_SEL) {
                         parts.forEach(function (p) { borderPlate[fillVar].push(p); });
                       }
-                    } else if (bgVoid && borderRing.length < MAX_SEL) {
-                      // a pure outline (no background of any kind)
-                      parts.forEach(function (p) { borderRing.push(p); });
                     }
+                    // v0.79.2: outline (bgVoid) rules derive NOTHING — the
+                    // mask ring is retired (it hid children AND text
+                    // inside the padding-box: the chat-scheme chips, the
+                    // send-mode glyph, every text-bearing outline pill).
+                    // They keep their solid border-color — the border
+                    // variable's solid twin, still theme-following.
+                    void bgVoid;
                   }
                 }
               }
@@ -1578,23 +1600,10 @@
             css += inkSel + '{color:var(' + SP.ink + ',var(--text-1));text-shadow:none;}';
           }
         }
-        // ── v0.77.8: the BORDER rings ─────────────────────────────────
-        // (a) the OUTLINE mask ring — the border field clipped to the
-        //     border strip (radius-safe, see-through interior, no plate);
-        //     the solid border-color steps aside so the ring reads.
-        if (borderRing.length) {
-          var ringSel = borderRing.map(function (s) {
-            return '[' + BORDER_GATE + '] ' + s;
-          }).join(',');
-          css += ringSel + '{' +
-            'background-image:var(--border-gradient,none)!important;' +
-            'background-attachment:fixed!important;' +
-            'border-color:transparent!important;' +
-            '-webkit-mask:linear-gradient(#fff 0 0) padding-box,linear-gradient(#fff 0 0);' +
-            '-webkit-mask-composite:xor;' +
-            'mask:linear-gradient(#fff 0 0) padding-box,linear-gradient(#fff 0 0);' +
-            'mask-composite:exclude;}';
-        }
+        // ── v0.77.8→v0.79.2: the BORDER rings ────────────────────────
+        // (a) the OUTLINE mask ring is RETIRED (it hid children AND
+        //     text inside the padding-box — see the derivation note);
+        //     outline rules keep their solid border-color.
         // (b) the PLATE rings — a filled bordered rule gets the v0.72
         //     stack DERIVED for it: its own fill's window + the opaque
         //     plate + the border ring (clips + fixed attachment). The

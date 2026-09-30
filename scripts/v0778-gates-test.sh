@@ -4,12 +4,14 @@
 #  (2) every visible border consumer with the gradient live renders a
 #      PROJECTED ring: the border-gradient layer with fixed attachment
 #      (or the plate stack), never a bare solid border-color
-#  (3) the outline mask ring: transparent-bg bordered elements carry the
-#      mask + transparent border-color
-#  (4) the surface fill coverage: a surface-2 fill rule NOT in the
-#      hand-listed Layer-3 groups still windows the s2 field (the
-#      "surface raised still doesn't work" gap)
-#  (5) zero floods (the plate system holds — the v0766 contract)
+#  (2) every visible FILLED border consumer renders a projected ring;
+#      v0.79.2: the EDITOR-PREVIEW family (.color-row-banner,
+#      .gr-preview-bar) is the DOCUMENTED EXCEPTION — they paint the
+#      user's own inline preview and must never ring
+#  (3) v0.79.2: the outline mask ring is RETIRED (a mask hides children
+#      AND text — the chat-scheme chips / send glyph regression);
+#      outline pills keep their solid border + CONTENT PAINTS. New
+#      assertions: chips' dots visible + banners show their own colors.
 set -u
 cd "$(dirname "$0")/.."
 ENG=/tmp/doomalay-engine
@@ -75,6 +77,9 @@ RINGS=$(ev "(function(){
   var all = document.querySelectorAll('*');
   for (var i = 0; i < all.length; i++) {
     var el = all[i];
+    // v0.79.2: the editor-preview family never rings (inline preview wins)
+    var cl = String(el.className || '');
+    if (cl.indexOf('color-row-banner') !== -1 || cl.indexOf('gr-preview-bar') !== -1) continue;
     var cs = getComputedStyle(el);
     var bw = parseFloat(cs.borderTopWidth) || 0;
     if (bw < 0.75) continue;
@@ -82,6 +87,10 @@ RINGS=$(ev "(function(){
     // only our border-var consumers (the sentinel red #ff0055 or transparent ring)
     var isOurs = /rgb\\(255, 0, 85\\)|rgba\\(0, 0, 0, 0\\)/.test(bc);
     if (!isOurs) continue;
+    // v0.79.2: OUTLINE pills (transparent background) keep their SOLID
+    // border by contract — only FILLED consumers ride the plate rings
+    if (cs.backgroundColor === 'rgba(0, 0, 0, 0)' &&
+        (cs.backgroundImage || '') === 'none') continue;
     var r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) continue;
     total++;
@@ -107,7 +116,9 @@ ok = d['total'] > 0 and d['ringed'] == d['total']
 print('yes' if ok else 'no')")
 ck "every visible border consumer renders a projected ring (${RG})" "$RG" "$RINGS"
 
-# (3) the outline mask ring exists (transparent bg + border → mask)
+# (3) v0.79.2 THE CONTENT-SAFE CONTRACT: no outline mask rings anywhere
+#     (they hid children AND text); outline pills keep their solid
+#     border-color; the editor previews paint their own inline values.
 MASK=$(ev "(function(){
   var all = document.querySelectorAll('*');
   for (var i = 0; i < all.length; i++) {
@@ -117,14 +128,30 @@ MASK=$(ev "(function(){
     if (bw < 0.75) continue;
     var mk = (cs.webkitMaskImage || cs.maskImage || '');
     var mc = (cs.webkitMaskComposite || '') + ' ' + (cs.maskComposite || '');
-    if (mk && mk !== 'none' && /xor|exclude/i.test(mc)) {
-      var bc = cs.borderTopColor;
-      if (/rgba\\(0, 0, 0, 0\\)/.test(bc)) return 'yes';
-    }
+    if (mk && mk !== 'none' && /xor|exclude/i.test(mc)) return 'leak:' + (el.className || el.tagName);
   }
-  return 'no';
+  return 'none';
 })()")
-ck "an outline mask ring renders (transparent border-color + the mask)" "$MASK" "$MASK"
+ck "zero outline mask rings (content-safe borders — v0.79.2)" "$([ "$MASK" = "none" ] && echo yes || echo no)" "$MASK"
+# the banners keep their OWN inline previews (never the border field + mask)
+# (v0.79.2: navigate to the appearance page + expand Customize — the
+#  collapsed sections hold no live banners)
+ev "(function(){ var t = document.querySelector('.settings-nav .tab[data-page=\"appearance\"]'); if (t) t.click(); return 'appearance'; })()" >/dev/null; sleep 1.2
+ev "(function(){ var h3s = Array.from(document.querySelectorAll('.settings-section h3')); var c = h3s.find(function(h){ return /customize/i.test(h.textContent); }); if (c) c.click(); return c ? 'open' : 'none'; })()" >/dev/null; sleep 0.9
+BN=$(ev "(function(){
+  var bns = document.querySelectorAll('.color-row-banner');
+  var ok = 0, bad = 0;
+  for (var i = 0; i < bns.length; i++) {
+    var cs = getComputedStyle(bns[i]);
+    var mk = (cs.webkitMaskImage || cs.maskImage || '');
+    var inline = bns[i].style.backgroundImage || bns[i].style.backgroundColor || '';
+    if (mk !== 'none') { bad++; continue; }
+    if (inline.indexOf('gradient') === 0 && cs.backgroundImage.indexOf('gradient') === -1) { bad++; continue; }
+    ok++;
+  }
+  return ok + '/' + (ok + bad);
+})()")
+ck "the color-row banners paint their own previews (no mask, no clobber)" "$(python3 -c "import sys; a,b='$BN'.split('/'); print('yes' if int(a)>0 and int(a)==int(b) else 'no')")" "$BN"
 
 # (4) the surface fill coverage: inject a probe rule with a plain s2 fill
 #     (NOT in any hand-listed group) — it must window the s2 field

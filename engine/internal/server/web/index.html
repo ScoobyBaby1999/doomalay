@@ -4159,41 +4159,26 @@
   /* THE USER'S OWN BUBBLES follow Accent 1 (user spec: "the users own
      texts … should follow theme colors") — the rule lives with the other
      message bubbles above (accent fill + gradient twin + --on-accent). */
-  /* ══ v0.77.8 THE INLINE BORDER RINGS — border-image is RETIRED ════
-     User report: "some items render the first color while other borders
-     render the full gradient, not fit to screen like the rest of the
-     variables." border-image painted an ELEMENT-LOCAL sweep (each border
-     squeezed the whole gradient into its own little box, square corners,
-     never the projected field — architecturally outside the projection:
-     it can't take background-attachment, so the PROJ painter can't
-     anchor it). The [style*] catch now rides the SAME derived-gate
-     recipes as the stylesheet rules (theme.js). The selectors match
-     WIDTH-AGNOSTICALLY ('solid var(--border)' covers 1px / 1.5px / 2px)
-     and per fill variable; border-strong borders ride the
-     --border-strong-gradient twin (v0.57's ride-along). Solid borders
-     (no gradient) are untouched — the natural border-color stands. */
-  [style*="solid var(--border)"][style*="background:transparent"],
-  [style*="solid var(--border)"][style*="background-color: transparent"],
-  [style*="solid var(--border)"]:not([style*="background"]) {
-    background-image: var(--border-gradient, none) !important;
-    background-attachment: fixed !important;
-    border-color: transparent !important;
-    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-  }
-  [style*="solid var(--border-strong)"][style*="background:transparent"],
-  [style*="solid var(--border-strong)"][style*="background-color: transparent"],
-  [style*="solid var(--border-strong)"]:not([style*="background"]) {
-    background-image: var(--border-strong-gradient, none) !important;
-    background-attachment: fixed !important;
-    border-color: transparent !important;
-    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-  }
+  /* ══ v0.79.2 THE CONTENT-SAFE BORDER (the mask ring is RETIRED) ══
+     The v0.77.8 outline mask ring (mask: padding-box XOR border-box,
+     border-color transparent, the border field as the fill) applied to
+     any element whose INLINE style carried `solid var(--border)` + a
+     transparent background — and a mask hides EVERYTHING inside the
+     padding-box: children AND text. Rig-proven with the exact chip
+     markup: the chat-scheme chips (teal/sunset/…) rendered as their
+     border ring alone — dots + labels INVISIBLE (the user's report:
+     "chats color themes … are all invisible except for the selected
+     color and the borders of the other options"); text-bearing outline
+     pills (the send-mode button family) lost their glyphs the same way
+     once a border GRADIENT went live. A pseudo-element ring can't take
+     background-attachment, so the PROJ painter can't anchor it — the
+     projected ring on content-bearing outlines is architecturally
+     unsound, not a bug to patch. THE CONTRACT now: outline pills keep
+     their SOLID border (var(--border) — the override's solid twin,
+     still theme-following) and their CONTENT always paints; the
+     gradient ring lives on via the PLATE stacks (filled elements —
+     radius-safe, content-safe, painter-anchored). The FILLED inline
+     catchers below are untouched. */
   /* the FILLED inline borders — the plate ring, per fill variable
      (surface-3 has no customizable twin: the plate is the solid look,
      the ring rides alone) */
