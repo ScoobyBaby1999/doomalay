@@ -974,11 +974,11 @@
       if (!sid2) { toast('connect a model first'); return; }
       if (inChat) {
         api('/api/sessions/' + encodeURIComponent(sid2) + '/workspaces/' + encodeURIComponent(ws.id), 'DELETE')
-          .then(function () { loadGlobals(); refreshPills(); toast('removed from this chat (still saved globally)'); })
+          .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sid2); toast('removed from this chat (still saved globally)'); })
           .catch(function (e) { toast(e.message); });
       } else {
         api('/api/sessions/' + encodeURIComponent(sid2) + '/workspaces', 'POST', { workspace_id: ws.id })
-          .then(function () { loadGlobals(); refreshPills(); toast(ws.name + ' added to this chat'); })
+          .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sid2); toast(ws.name + ' added to this chat'); })
           .catch(function (e) { toast(e.message); });
       }
     });
@@ -1006,9 +1006,20 @@
     });
     acts.querySelector('[data-a="unbind"]').addEventListener('click', function () {
       api('/api/workspaces/' + encodeURIComponent(ws.id), 'DELETE')
-        .then(function () { loadGlobals(); refreshPills(); toast('forgot ' + ws.name); })
+        .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sidNow()); toast('forgot ' + ws.name); })
         .catch(function (e) { toast(e.message); });
     });
+  }
+
+  // v0.84.1: the binding-changed signal — app.js hears it and re-fetches
+  // that chat's workspace count (the atom orbits' star count follows the
+  // truth, never a stale cache).
+  function fireWSChanged(sid) {
+    try {
+      window.dispatchEvent(new CustomEvent('doomalay:workspaces-changed', {
+        detail: { sessionId: sid || '' }
+      }));
+    } catch (e) {}
   }
 
   // push a page onto the overlay nav stack (edit A4: back pops one level)
@@ -2042,6 +2053,10 @@
         var c = b.querySelector('#pill-workspace-count');
         if (c) c.textContent = String(n);
         b.style.opacity = n ? '1' : '0.75';
+        // v0.84.1: the atom orbits ride the same truth this pill reads —
+        // a session landing late (or a count that changed under us) feeds
+        // the stars through the workspaces-changed signal.
+        fireWSChanged(sid);
       }).catch(function () {});
     };
     b.addEventListener('click', function (e) {

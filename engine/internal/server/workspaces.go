@@ -507,6 +507,12 @@ func (s *Server) handleWorkspaceBind(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 400, "session_id is required")
                 return
         }
+        // v0.84.1: THE ATOM CAP — a chat's bound workspaces are its orbiting
+        // stars; past the cap the shells blur into noise. Fail-closed only
+        // on a real count (a store hiccup fails open, as everywhere).
+        if !s.sessionWorkspaceCap(w, req.SessionID) {
+                return
+        }
         if err := s.db.BindWorkspace(req.SessionID, ws.ID); err != nil {
                 writeError(w, 500, "store: "+err.Error())
                 return
@@ -550,6 +556,31 @@ func (s *Server) handleSessionWorkspacesList(w http.ResponseWriter, r *http.Requ
         writeJSON(w, 200, map[string]any{"workspaces": shapes})
 }
 
+// maxSessionWorkspaces is the v0.84.1 atom cap: how many workspaces may
+// bind to ONE chat. The electron-shell layout on the canvas (web/atoms.js)
+// fills [4, 6, 8, 8, 8] slots — 32 fills four shells + a partial fifth,
+// enough to read as a proper big atom, few enough to stay cheap to paint.
+const maxSessionWorkspaces = 32
+
+// sessionWorkspaceCap enforces the atom cap for a bind. Returns true when
+// the bind may proceed (or the count is unavailable — fail-open); writes
+// the 409 itself otherwise.
+func (s *Server) sessionWorkspaceCap(w http.ResponseWriter, sid string) bool {
+        if strings.TrimSpace(sid) == "" {
+                return true
+        }
+        cur, err := s.db.ListSessionWorkspaces(sid)
+        if err != nil {
+                return true // fail-open on a store hiccup
+        }
+        if len(cur) >= maxSessionWorkspaces {
+                writeError(w, http.StatusConflict, fmt.Sprintf(
+                        "this chat already orbits %d workspaces — unbind one first", maxSessionWorkspaces))
+                return false
+        }
+        return true
+}
+
 func (s *Server) handleSessionWorkspaceBind(w http.ResponseWriter, r *http.Request) {
         sid := r.PathValue("id")
         var req struct {
@@ -563,6 +594,11 @@ func (s *Server) handleSessionWorkspaceBind(w http.ResponseWriter, r *http.Reque
         }
         if req.WorkspaceID == "" && req.URL == "" {
                 writeError(w, 400, "workspace_id or url is required")
+                return
+        }
+        // v0.84.1: THE ATOM CAP — checked BEFORE the inline connect too, so
+        // a capped bind never connects an orphan workspace it then refuses.
+        if !s.sessionWorkspaceCap(w, sid) {
                 return
         }
         wid := req.WorkspaceID
@@ -2183,6 +2219,11 @@ func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 400, "name is required")
                 return
         }
+        // v0.84.1: the atom cap gates BEFORE the row is created — a capped
+        // device bind must not leave an orphan workspace behind.
+        if req.SessionID != "" && !s.sessionWorkspaceCap(w, req.SessionID) {
+                return
+        }
         slug := deviceNameRe.ReplaceAllString(strings.ToLower(req.Name), "-")
         slug = strings.Trim(slug, "-")
         if slug == "" {
@@ -2275,24 +2316,24 @@ func (s *Server) handleWorkspaceBranches(w http.ResponseWriter, r *http.Request)
 // endpoint). Returns {"result": "OBSERVATION:\n…"} — the same
 // observation text every other path feeds the model.
 func (s *Server) handleWorkspaceDo(w http.ResponseWriter, r *http.Request) {
-	ws := s.loadWS(w, r)
-	if ws == nil {
-		return
-	}
-	var args map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
-		writeError(w, 400, "invalid JSON: "+err.Error())
-		return
-	}
-	if args == nil {
-		args = map[string]any{}
-	}
-	// pin the verb's target to THIS row — the brain tool passes the ws
-	// ref too, but the endpoint's own id is the authority
-	args["ws"] = ws.ID
-	out := s.runWorkspaceVerb(r.Context(), []*store.Workspace{ws}, args)
-	writeJSON(w, 200, map[string]any{
-		"workspace": s.wsShape(ws),
-		"result":    strings.TrimPrefix(out, "OBSERVATION:\n"),
-	})
+        ws := s.loadWS(w, r)
+        if ws == nil {
+                return
+        }
+        var args map[string]any
+        if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        if args == nil {
+                args = map[string]any{}
+        }
+        // pin the verb's target to THIS row — the brain tool passes the ws
+        // ref too, but the endpoint's own id is the authority
+        args["ws"] = ws.ID
+        out := s.runWorkspaceVerb(r.Context(), []*store.Workspace{ws}, args)
+        writeJSON(w, 200, map[string]any{
+                "workspace": s.wsShape(ws),
+                "result":    strings.TrimPrefix(out, "OBSERVATION:\n"),
+        })
 }

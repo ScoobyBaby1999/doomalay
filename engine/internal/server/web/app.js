@@ -1441,19 +1441,43 @@
   // v0.75 AMBIENT: the grid animate toggles (dot twinkle / line drift)
   // keep the rAF loop alive on their own — no motion, no save spam
   // (the offsets don't change, so scheduleSave is never touched).
+  // v0.84.1: the atom orbits keep it alive too — every chat with bound
+  // workspaces carries orbiting stars, and those stars move every frame.
   function ambientActive() {
+    var st = window.Settings.getState();
+    if (st && (st.dotAnimate || st.lineAnimate)) return true;
+    return !!(window.Atoms && window.Atoms.active(world.entities));
+  }
+  // v0.84.1: the GRID's own animate toggles (the atom-orbit branch of
+  // ambientActive above must NOT force the full lattice repaint — that's
+  // what the atom-only frame avoids).
+  function ambientGridActive() {
     var st = window.Settings.getState();
     return !!(st && (st.dotAnimate || st.lineAnimate));
   }
+  // v0.84.1: paintAtoms — the atom pass, AFTER renderGrid (it cleared #c2
+  // this frame). The stats join the honest instrument (DoomalayDebug.atoms).
+  function paintAtoms() {
+    if (!window.Atoms || !ctx2) return;
+    var stats = window.Atoms.paint(ctx2, W, H, offsetX, offsetY, scale, world.entities);
+    atomStats = stats;
+    try {
+      if (!window.DoomalayDebug) window.DoomalayDebug = {};
+      window.DoomalayDebug.atoms = stats;
+    } catch (e) {}
+  }
+  var atomStats = null;
   function update() {
     world.step();
     renderGrid();
     for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
     renderOffScreenArrows();
+    paintAtoms();
     // v0.67: the icons ride transforms — the projection painter
     // re-anchors their gradient windows to the viewport each frame.
     if (window.DoomProjection) window.DoomProjection.poke();
     // v0.75: an animate toggle ON means the canvas never rests.
+    // v0.84.1: so do the atom orbits.
     if (ambientActive()) startAnimation();
   }
 
@@ -1485,12 +1509,25 @@
       covered = pr.top <= 1 && pr.bottom >= window.innerHeight - 1;
     }
     if (!covered) {
-      renderGrid();
-      for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
-      renderOffScreenArrows();
+      var atomsOnly = !moving && !ambientGridActive() &&
+                      window.Atoms && window.Atoms.active(world.entities);
+      if (atomsOnly) {
+        // v0.84.1: THE ATOM-ONLY FRAME — nothing else is moving (no pan
+        // momentum, no physics drift, no grid animate), so the grid and
+        // the icons are pixel-stable: repaint ONLY the star layer (clear
+        // #c2 + the atom pass). A resting canvas with orbiting atoms stays
+        // near-free instead of re-running the full lattice paint per frame.
+        if (ctx2) ctx2.clearRect(0, 0, W, H);
+        paintAtoms();
+      } else {
+        renderGrid();
+        for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+        renderOffScreenArrows();
+        paintAtoms();
+      }
     }
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
-    else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save
+    else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save; v0.84.1: atoms too
     else { animating = false; scheduleSave(); }
   }
 
@@ -2396,6 +2433,31 @@
     maybeShowCanvasEmpty(!saved);
 
     resize();
+
+    // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces
+    // gets its orbiting stars: one count fetch per session (parallel,
+    // best-effort), then the rAF loop starts itself through the
+    // atoms-changed event below.
+    if (window.Atoms) window.Atoms.refreshAll(world.entities);
+
+    // v0.84.1: binding changes (workspace.js bind/unbind, the pill's live
+    // count, chatpanel's session swap) re-fetch exactly the touched chat;
+    // the atoms-changed event (Atoms' own, on a count change) starts the
+    // animation loop so the stars begin moving.
+    window.addEventListener('doomalay:workspaces-changed', function (e) {
+      if (!window.Atoms) return;
+      var sid = e && e.detail && e.detail.sessionId;
+      if (sid) {
+        for (const icon of world.entities) {
+          if (icon.sessionId === sid) { window.Atoms.refresh(icon); break; }
+        }
+      } else {
+        window.Atoms.refreshAll(world.entities);
+      }
+    });
+    window.addEventListener('doomalay:atoms-changed', function () {
+      startAnimation();
+    });
 
     // v0.15: recovery.js's boot watchdog — flip the flag once the canvas +
     // icons are live. (A stalled boot shows the recovery screen instead of
