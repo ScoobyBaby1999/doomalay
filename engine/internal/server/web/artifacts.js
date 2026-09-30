@@ -129,6 +129,15 @@
 
   function openOverlay(innerHTML) {
     var el = ensureOverlay();
+    // v0.81.5 RAISE-ON-OPEN: #artifacts-overlay and #connect-overlay
+    // are both z-index:3000 body-level singletons — at equal z the
+    // LATER node paints on top. Move this one to the end of <body> on
+    // every open so the most-recently-opened overlay wins (the twin of
+    // connectoverlay.js's raise; the cloud file editor opens THROUGH
+    // ConnectOverlay, so the drawer's raise keeps the interleave honest
+    // in both directions). Appending an existing node is a MOVE — the
+    // element's state (tree contents, listeners) is preserved.
+    document.body.appendChild(el);
     el.innerHTML = innerHTML;
     el.style.display = 'block';
     el._openedAt = performance.now(); // ghost-click guard (see isGhostTap)

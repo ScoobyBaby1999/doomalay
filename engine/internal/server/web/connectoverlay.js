@@ -235,6 +235,20 @@
   function open(html, opts) {
     opts = opts || {};
     ensureElements();
+    // v0.81.5 RAISE-ON-OPEN: this overlay and #artifacts-overlay are
+    // BOTH z-index:3000 body-level singletons — at equal z the LATER
+    // node in the DOM paints on top. Both were appended once at first
+    // use and never moved, so whichever overlay happened to be created
+    // first stayed UNDER the other for the whole session (the user's
+    // report: the cloud file editor + commit screen rendered BELOW the
+    // workspaces drawer — connecting a workspace uses this picker
+    // first, so #connect-overlay was always the older node and every
+    // file view opened beneath the drawer, forcing a back-out to reach
+    // it). Re-appending an existing node MOVES it to the end of <body>:
+    // the most-recently-opened overlay always wins, order-independent.
+    // No z-index changes — the 3400+ chrome (keys sheet, action sheets,
+    // toasts, crop/media-zoom) must stay above.
+    document.body.appendChild(overlayEl);
     gen++; // invalidate any in-flight close/replace timers
     closing = false;
     navStack = [{ html: html, opts: opts }];
