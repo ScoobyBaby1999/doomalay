@@ -43,8 +43,15 @@
 //
 // Exposes: window.Atoms = { refresh, refreshAll, setCount, countFor,
 //                            active, paint, MAX_WS, SHELL_CAP, shellLayout }
+// v0.85.2: the file is DUAL-ENVIRONMENT — the pure paint core (stateless
+// star math + the shell painter, parameterized by counts/colors/time)
+// attaches as globalThis.AtomCore so the grid WORKER can importScripts
+// this exact file (zero drift: one file, two hosts). The DOM/fetch feed
+// (refresh/colors via getComputedStyle) registers only on the main
+// thread, where window exists.
 (function () {
   'use strict';
+  var ROOT = (typeof window !== 'undefined') ? window : (typeof self !== 'undefined' ? self : globalThis);
 
   var SHELL_CAP = [4, 6, 8, 8, 8];            // stars per orbit level
   var SHELL_R   = [46, 60, 74, 88, 102];      // shell radius, screen px @ scale 1
@@ -190,15 +197,18 @@
     return false;
   }
 
-  // ── THE PAINT ─────────────────────────────────────────────────────
-  // ctx: the over-icons canvas 2d context (already cleared this frame).
-  function paint(ctx, W, H, offsetX, offsetY, scale, entities) {
+  // ── THE PAINT — the pure core, parameterized (v0.85.2) ────────────
+  // ctx: a 2d context (main #c2 or the worker's transferred offscreen).
+  // icons: [{id, type, sessionId, x, y, radius}] — live icon objects OR
+  // the worker's cloned plain entities (the core reads those fields only).
+  // counts: {sessionId → n}; colors: {accent, accent2, ring} triplets;
+  // t: seconds (the host clock — worker frames arrive with their own).
+  function paintCore(ctx, W, H, offsetX, offsetY, scale, icons, counts, colors, t) {
     if (!ctx) return { chats: 0, stars: 0, shells: 0 };
-    var list = Array.isArray(entities) ? entities : [];
+    var list = Array.isArray(icons) ? icons : [];
     if (!list.length) return { chats: 0, stars: 0, shells: 0 };
-    var t = performance.now() / 1000 - t0;
     var s = scale || 1;
-    var c = colors();
+    var c = colors || { accent: 'a,b,c', accent2: 'd,e,f', ring: 'rgba(120,130,140,0.35)' };
     var stats = { chats: 0, stars: 0, shells: 0, backHidden: 0, frontInside: 0 };
     var pad = (SHELL_R[SHELL_R.length - 1] + 24) * s + 30;
 
@@ -290,11 +300,37 @@
     return stats;
   }
 
+  ROOT.AtomCore = {
+    paintCore: paintCore,
+    shellLayout: shellLayout,
+    starPos: starPos,
+    SHELL_CAP: SHELL_CAP,
+    SHELL_R: SHELL_R,
+    SHELL_TILT: SHELL_TILT,
+    MAX_WS: MAX_WS
+  };
+
+  // ── the main-thread twin (the feed + the themed wrapper) ──────────
+  if (typeof document === 'undefined') return;   // worker: core only
+
+  // ctx: the over-icons canvas 2d context (already cleared this frame).
+  function paint(ctx, W, H, offsetX, offsetY, scale, entities) {
+    var t = performance.now() / 1000 - t0;
+    return paintCore(ctx, W, H, offsetX, offsetY, scale, entities, counts, colors(), t);
+  }
+
+  // countsOf — v0.85.2: the raw counts map (the worker frame payload
+  // clones it; postMessage handles the copy). colorsFor — the cached
+  // theme triplets for the worker's atom pass ("r,g,b" strings).
+  function countsOf() { return counts; }
+
   window.Atoms = {
     refresh: refresh,
     refreshAll: refreshAll,
     setCount: setCount,
     countFor: countFor,
+    countsOf: countsOf,
+    colorsFor: function () { return colors(); },
     active: active,
     paint: paint,
     shellLayout: shellLayout,

@@ -5406,8 +5406,14 @@
 <script src="templatesheet.js"></script>
 <!-- v0.84.1: THE ATOM ORBITS — every bound workspace is a star orbiting
      its chat icon on tilted electron shells (behind + above the disc);
-     paints on the over-icons canvas #c2, stateless per frame. -->
+     paints on the over-icons canvas #c2, stateless per frame. v0.85.2:
+     the file is DUAL-ENVIRONMENT (the paint core also importScripts into
+     the grid worker — zero drift). -->
 <script src="atoms.js"></script>
+<!-- v0.85.2: THE EXTRACTED LATTICE PAINTER — the whole grid paint (bg
+     tile + samplers + the lattice cache + the batcher) in ONE file the
+     main thread AND gridworker.js both execute. Must load before app.js. -->
+<script src="lattice.js"></script>
 <!-- v0.85.3: THE MULTI-TAB BROWSER — a browser TAB is a canvas entity
      (webtab.js: WebIcon 'web' — the draggable, persisted icon that acts
      like its own chatbot) and its panel view (webpanel.js: the

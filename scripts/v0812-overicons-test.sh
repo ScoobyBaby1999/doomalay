@@ -51,6 +51,14 @@ curl -s $BASE/api/health >/dev/null 2>&1 && echo "engine up" || { echo "BOOT FAI
 
 agent-browser set viewport 420 800 >/dev/null
 agent-browser open "$BASE" >/dev/null; sleep 2.5
+# v0.85.2: the pixel proofs (#c2 getImageData) read the DOM canvas — a
+# worker-transferred canvas answers getContext(null) main-side, so this rig
+# rides the MAIN-thread fallback. The toggle rides the LIVE settings state
+# (a raw localStorage seed gets clobbered by the old page's pagehide
+# flushSave); the same lattice.js — v0852 proves the worker path.
+ev "Settings.setState({workerPaint:false}); 'ok'" >/dev/null
+sleep 0.6
+agent-browser open "$BASE" >/dev/null; sleep 2.5
 agent-browser errors --clear >/dev/null
 setstate() { ev "(function(){ Settings.setState($1); return 'ok'; })()" >/dev/null; sleep 1.1; }
 

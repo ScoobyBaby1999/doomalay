@@ -59,6 +59,16 @@ curl -s $BASE/api/health >/dev/null 2>&1 && echo "engine up" || { echo "BOOT FAI
 agent-browser open "$BASE" >/dev/null 2>&1
 sleep 1.4
 
+# v0.85.2: this rig's (6) reads #c.toDataURL — a worker-transferred canvas
+# can't be read main-side, so the lattice proofs ride the MAIN-thread
+# fallback (workerPaint:false; the same lattice.js — v0852 proves the worker).
+# v0.85.2 (cont.): the toggle rides the LIVE settings state (a raw
+# localStorage seed gets clobbered by the old page's pagehide flushSave)
+ev "Settings.setState({workerPaint:false}); 'ok'" >/dev/null
+sleep 0.6
+agent-browser open "$BASE" >/dev/null 2>&1
+sleep 1.4
+
 setstate() { ev "(function(){ Settings.setState($1); return 'ok'; })()" >/dev/null; sleep 1.1; }
 
 echo "── (1) the instrument"

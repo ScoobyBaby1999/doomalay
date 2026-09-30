@@ -68,6 +68,17 @@ echo "session: $SID"
 agent-browser open "$BASE" >/dev/null 2>&1
 sleep 1
 # seed the icon (localStorage) + reload — the app restores it on boot
+# v0.85.2: the toDataURL motion proofs read the DOM canvas bitmaps — a
+# worker-transferred canvas can't be read main-side, so this rig rides
+# the MAIN-thread fallback (workerPaint:false; the same lattice.js —
+# the v0852 rig proves the worker path via its own stats).
+# v0.85.2: the toDataURL motion proofs read the DOM canvas bitmaps — a
+# worker-transferred canvas can't be read main-side, so this rig rides
+# the MAIN-thread fallback. The toggle rides the LIVE settings state (a
+# raw localStorage seed would be clobbered by the old page's pagehide
+# flushSave); the same lattice.js — v0852 proves the worker path.
+ev "Settings.setState({workerPaint:false}); 'ok'" >/dev/null
+sleep 0.6
 ev "localStorage.setItem('doomalay.state.v2', JSON.stringify({offset:{x:0,y:0}, scale:1, icons:[{type:'chat', id:'chat_v0841', name:'Atom', family:'default', iconIndex:-1, x:300, y:250, sessionId:'$SID'}]})); 'ok'" >/dev/null
 agent-browser open "$BASE" >/dev/null 2>&1
 sleep 1.2
