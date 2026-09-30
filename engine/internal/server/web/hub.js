@@ -885,10 +885,34 @@
     // manifest (type/name/desc/repo/id per member, from the loaded
     // groups); ChatPanel.applyBundle arms the lib gate + the PM turn's
     // decision protocol. v0.72: it's the ▶ FAB (shown once downloaded).
+    // v0.81.3 THE USE HANDSHAKE (user spec: "pressing Use on a bundle
+    // closes the library completely; from flow canvas → library →
+    // select user chat → bundle → Use: close lib, open that chat,
+    // update lib pill to reflect the bundle; if lib toggle is off for
+    // that chat (pill or tweaks toggle), enable both and update the box
+    // above the lib pill showing the bundle used for that turn").
+    // Before this wave the handler only GUARDED on the picked chat —
+    // applyBundle then landed on currentCtx, which for a canvas-hosted
+    // library is the SYNTHETIC host chat, not the chat the user picked
+    // in the pill. The handshake now targets the picked chat:
+    //   · SAME chat already mounted → applyBundle + closeViews() (the
+    //     library view stack drops, the chat root returns with the
+    //     bundle's chip + armed pill);
+    //   · DIFFERENT chat (or the canvas host) → window.doomalay.
+    //     openChatBySession(picked) — panel.open() tears the library
+    //     views down (the hub's onClosed fires; fromCanvas is
+    //     neutralized FIRST so the canvas-host auto-close doesn't kill
+    //     the panel mid-open) and renders the TARGET chat, then
+    //     applyBundle lands on the NEW currentCtx (viewDepth 0 → the
+    //     toolbar + the ▣ chip above the lib pill rebuild immediately).
+    //   · applyBundle itself (v0.81.3) flips libAuto AND the tweaks
+    //     blob's botLib ON — both toggles agree, the pill reflects the
+    //     bundle.
     var use = el.querySelector('#hub-bundle-use');
     if (use) use.addEventListener('click', function () {
       if (!bcur) return;
-      var chat = window.Hub && window.Hub.chat ? window.Hub.chat() : null;
+      var chat = (cur && cur.chat) ||
+        (window.Hub && window.Hub.chat ? window.Hub.chat() : null);
       if (!chat || !chat.sessionId) {
         toast('connect a chat first — tap the chat pill', { ms: 2400 });
         return;
@@ -912,11 +936,37 @@
         return;
       }
       var meta = bunchMeta(bcur.id);
-      window.ChatPanel.applyBundle({
+      var bundle = {
         id: bcur.id,
         name: bcur.id,
         tag: (meta && meta.tag) || '',
         members: members
+      };
+      var mounted = window.ChatPanel.current ? window.ChatPanel.current() : null;
+      var mountedSid = mounted && mounted.state ? (mounted.state.sessionId || null) : null;
+      var hostPanel = (cur && cur.panel) || (mounted ? mounted.panel : null);
+      var deliver = function () {
+        window.ChatPanel.applyBundle(bundle);
+        // the library is a VIEW STACK on the chat's panel — drop every
+        // view so the chat root (with the fresh ▣ chip + pill) returns.
+        if (hostPanel && hostPanel.viewDepth && hostPanel.viewDepth() > 0) {
+          try { hostPanel.closeViews(); } catch (e) {}
+        }
+      };
+      if (mountedSid && mountedSid === chat.sessionId) {
+        // the picked chat is the one already mounted under the library
+        deliver();
+        return;
+      }
+      // a different chat (or the canvas-host synthetic one): open the
+      // TARGET chat — this tears the library down (it closes completely)
+      if (cur && cur.fromCanvas) cur.fromCanvas = false;
+      var opened = (window.doomalay && window.doomalay.openChatBySession)
+        ? window.doomalay.openChatBySession(chat.sessionId)
+        : Promise.resolve(false);
+      Promise.resolve(opened).then(function (ok) {
+        if (ok) deliver();
+        else toast('could not open that chat — the bundle was not attached', { ms: 2400 });
       });
     });
     // v0.63 (user spec pt 4): the section headers toggle their sections

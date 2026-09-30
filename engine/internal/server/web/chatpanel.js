@@ -3612,6 +3612,17 @@
       state.templateAuto = true; state.skillsAuto = true;  // legacy lockstep
       state.template = null;                // the bundle decides now
       state.deepResearch = false;
+      // v0.81.3 THE USE HANDSHAKE (user spec: "if lib toggle is off for
+      // that chat (pill or tweaks toggle), enable both"): the ONE-SETTING
+      // contract says libAuto and the tweaks blob's botLib are the same
+      // switch — flip the tweaks twin ON too. Without this, a chat whose
+      // lib was explicitly OFF (botLib:false in the blob) would keep
+      // libAuto=true vs botLib=false, and the tweaks load-reconcile
+      // (explicit blob OFF wins) would flip the pill back OFF on the
+      // next open — the bundle silently losing its gate.
+      if (window.ChatTweaks && window.ChatTweaks.syncLibPill) {
+        try { window.ChatTweaks.syncLibPill(state, true); } catch (e) {}
+      }
       saveBundle(state);
       // v0.71 + v0.69.0: the ACTIVE-BUNDLE SEGMENT shows the attached
       // bundle the moment it's applied (the same instant-show applyTemplate
