@@ -68,6 +68,15 @@ type ChatRequest struct {
         // search/load a downloaded skill's methodology (the PM bridge's
         // /api/tools/skills twin, riding the quick chats).
         SkillsToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+        // v0.76.5: THE WORKSPACE HAND on the direct path — the chat's
+        // connected cloud repos (tree/read/grep/view/put/fork/pr/create/
+        // discover). Set by the server (it owns the workspace rows + the
+        // vault tokens); nil = the tool is not offered. WorkspaceManifest
+        // carries the CONNECTED CLOUD WORKSPACES block (repo rows) when
+        // any are bound — composeTurnSystem prepends it above the
+        // protocols, mirroring the brain's _build_system_prompt.
+        WorkspaceToolFn    func(ctx context.Context, argJSON string) string `json:"-"`
+        WorkspaceManifest  string                                   `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1161,6 +1170,16 @@ func composeTurnSystem(req ChatRequest) string {
                 }
                 system += req.BundleManifest + "\n"
         }
+        // v0.76.5: the connected-cloud-workspaces block (repo rows: id,
+        // name, kind, access, branch) rides ABOVE the protocols — the
+        // brain twin's _build_system_prompt shape (the model must know
+        // which repos exist and their access tiers, or it will guess).
+        if req.WorkspaceManifest != "" {
+                if system != "" {
+                        system += "\n"
+                }
+                system += req.WorkspaceManifest + "\n"
+        }
         if req.TemplateBrief != "" {
                 if system != "" {
                         system += "\n"
@@ -1191,6 +1210,12 @@ func composeTurnSystem(req ChatRequest) string {
         // methodologies (the exact capability the PM path already had).
         if req.SkillsToolFn != nil {
                 system += "\n\n" + skillsToolsProtocol
+        }
+        // v0.76.5: the workspace hand rides the direct path whenever the
+        // server armed the runner — the quick chats can act on the chat's
+        // CONNECTED cloud repos (push/PR/history/issues/discussions/fork).
+        if req.WorkspaceToolFn != nil {
+                system += "\n\n" + workspaceToolsProtocol
         }
         return system
 }
@@ -1502,6 +1527,26 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary}
                 observation = req.SkillsToolFn(ctx, argJSON)
                 ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "skills"}
+                return observation
+        }
+        if action == "workspace" && req.WorkspaceToolFn != nil {
+                // v0.76.5: THE WORKSPACE HAND on the direct path — the
+                // chat's connected cloud repos through the server's
+                // runner (it owns the rows + vault tokens). Marker heads
+                // (COMMITTED / PR OPENED / FORKED — …) are deterministic.
+                var args map[string]any
+                summary := ""
+                if json.Unmarshal([]byte(argJSON), &args) == nil {
+                        for _, k := range []string{"ws", "path", "query", "what", "action"} {
+                                if v, ok := args[k].(string); ok && v != "" {
+                                        summary = v
+                                        break
+                                }
+                        }
+                }
+                ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary}
+                observation = req.WorkspaceToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "workspace"}
                 return observation
         }
         if action == "delegate" && req.DelegateFn != nil {

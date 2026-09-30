@@ -1442,6 +1442,15 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 SkillsToolFn: func(ctx context.Context, argJSON string) string {
                         return s.runSkillsAction(sessionID, argJSON)
                 },
+                // v0.76.5: THE WORKSPACE HAND on the direct path — the
+                // quick chats act on the chat's CONNECTED cloud repos
+                // (tree/read/grep/view/put/fork/pr/create/discover).
+                // Always armed (a bare "workspace" ACTION answers with
+                // the map); the manifest below lists the actual repos.
+                WorkspaceToolFn: func(ctx context.Context, argJSON string) string {
+                        return s.runWorkspaceAction(ctx, sessionID, argJSON)
+                },
+                WorkspaceManifest: s.workspaceManifestFor(sessionID),
                 // v0.44: the active method template (the template pill) —
                 // the turn pipelines prepend the brief as a METHOD TEMPLATE
                 // system block. v0.72: the attached whole bundle's manifest

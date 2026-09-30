@@ -43,6 +43,28 @@ _TIMEOUT = 30.0    # forge calls proxy provider APIs (GitHub ~1-3s typical)
 _READ_CAP = 6000   # dt_spec rule 9: model-facing text ≤ ~6000 chars
 _LIST_CAP = 60     # rows shown for list/views before the "+N more" fold
 
+def _engine_down(base: str, exc: Exception) -> str:
+    """v0.76.5: honest degradation — the engine (the user's device) is
+    unreachable from here. On the device's own sandbox that's a crash to
+    report; on a REMOTE sandbox (an HF space) it's the architecture:
+    connected workspaces live engine-side and a remote space cannot see
+    the user's device. Teach the working alternative instead of a raw
+    Connection refused."""
+    import os
+    remote = bool(os.environ.get("HF_SPACE_ID") or os.environ.get("SPACE_ID"))
+    if remote:
+        return (
+            "the workspace bridge needs the user's engine (their device) and "
+            f"this remote sandbox cannot reach it ({base}: "
+            f"{type(exc).__name__}). Connected cloud workspaces act from the "
+            "device's quick chat (or the local-brain chat) — there the "
+            "workspace tool reads/writes/PRs them. From HERE the honest "
+            "options: public repos via git clone + the forge's REST API in "
+            "the shell (curl https://api.github.com/repos/<owner>/<repo>), "
+            "or ask the user to run it on their device.")
+    return f"engine unreachable at {base}: {exc}"
+
+
 NO_WS = ("no cloud workspace bound to this chat — the user connects one "
          "from the chat header's +workspace pill (or pass url= to act on "
          "any repo by URL where noted)")
@@ -62,6 +84,8 @@ HELP = """workspace — act on this chat's CONNECTED cloud repos (any forge).
                             commits|branches|discussions
   write ws path content [message] [branch]  API-commit a file (needs
                             full access; the CURRENT sha is fetched for you)
+  pr ws head [base] [title] [body]  open a pull request (head
+                            "owner:branch" for a fork; partial access OK)
   create ws-ish → create_repo kind name [description] [license] [gitignore]
                             [private] — fresh repo from scratch
   fork ws                   fork into the user's account (partial/read upgrade)
@@ -170,7 +194,7 @@ class WorkspaceClient:
             r = self._http().request(method, self.base_url + path,
                                      params=params, json=json_body)
         except Exception as exc:
-            return {"error": f"engine unreachable at {self.base_url}: {exc}"}
+            return {"error": _engine_down(self.base_url, exc)}
         try:
             body = r.json()
         except Exception:
@@ -241,6 +265,13 @@ class WorkspaceClient:
     def fork(self, wid: str):
         return self._req("POST", f"/api/workspaces/{wid}/fork")
 
+    def pr(self, wid: str, title: str, body: str, head: str, base: str):
+        # v0.76.5: open a pull request (POST /api/workspaces/{id}/pr —
+        # the engine's forge CreatePullRequest). head "owner:branch" for
+        # fork PRs; base defaults engine-side to the tracked branch.
+        return self._req("POST", f"/api/workspaces/{wid}/pr", json_body={
+            "title": title, "body": body, "head": head, "base": base})
+
     def clone(self, wid: str):
         return self._req("POST", f"/api/workspaces/{wid}/clone")
 
@@ -273,7 +304,8 @@ def run_action(ctx, client: WorkspaceClient, action: str, ws: str = "",
                limit: int = 0, kind: str = "github", name: str = "",
                description: str = "", license_: str = "",
                gitignore: str = "", private: bool = False,
-               token: str = "", log=None) -> str:
+               token: str = "", head: str = "", base: str = "",
+               title: str = "", body: str = "", log=None) -> str:
     """All workspace actions as a plain function (tests + self-test run
     without strands). Returns a string, never raises."""
     try:
@@ -283,6 +315,7 @@ def run_action(ctx, client: WorkspaceClient, action: str, ws: str = "",
                          state=state, limit=limit, kind=kind, name=name,
                          description=description, license_=license_,
                          gitignore=gitignore, private=private, token=token,
+                         head=head, base=base, title=title, body=body,
                          log=log)
     except Exception as exc:  # noqa: BLE001
         return f"workspace tool error ({action}): {type(exc).__name__}: {exc}"
@@ -519,6 +552,26 @@ def _dispatch(ctx, client: WorkspaceClient, action: str, **kw) -> str:
         return (f"forked → {fr.get('full_name')}. Connect the fork (the "
                 "+workspace pill) to get a full-access workspace.")
 
+    if action in ("pr", "create_pr", "pull_request"):
+        # v0.76.5: THE PR VERB — "the bot can actually push, PR". Partial-
+        # access friendly (a PR from the user's fork is the partial tier's
+        # write path); the engine gate refuses read-only with the fork path.
+        if not kw.get("ws") or not kw.get("head"):
+            return ("pr needs ws=, head= (the branch with the changes; "
+                    "owner:branch for a fork) [base=main] [title=] [body=] "
+                    "— opens a pull request")
+        row = _resolve_ws(ctx, kw["ws"])
+        base = kw.get("base", "") or str(row.get("branch") or "") or "main"
+        rr = client.pr(row.get("id") or kw["ws"],
+                       kw.get("title", "") or f"doomalay PR: {kw['head']} → {base}",
+                       kw.get("body", ""), kw["head"], base)
+        if "error" in rr:
+            return rr["error"]
+        _emit(kw.get("log"), "workspace_pr_opened", ws=row.get("id") or kw["ws"],
+              head=kw["head"], base=base, url=rr.get("url"))
+        return (f"PR OPENED — #{rr.get('number')} {rr.get('title')} "
+                f"({kw['head']} → {base})\n{rr.get('url')}")
+
     if action == "clone":
         if not kw.get("ws"):
             return "clone needs ws= (local blobless clone; needs git on the host)"
@@ -613,9 +666,10 @@ def build(ctx) -> list:
             "inspect everything (issues, PRs, releases, Actions runs, "
             "workflows, commits, branches, discussions), and WRITE when "
             "access allows (file writes are API commits — full access), "
-            "fork, clone locally, create a fresh repo from scratch, or "
-            "discover the account's repos. Actions: list, info, tree, ls, "
-            "read, readme, grep, view, write, create_repo, fork, clone, "
+            "fork, clone locally, create a fresh repo from scratch, "
+            "discover the account's repos, and open pull requests. "
+            "Actions: list, info, tree, ls, "
+            "read, readme, grep, view, write, pr, create_repo, fork, clone, "
             "discover, attach_token, help. `ws` = id or owner/repo."
             + (f" This chat has {n_ws} bound workspace(s)."
                if n_ws else
@@ -628,10 +682,11 @@ def build(ctx) -> list:
                       limit: int = 0, kind: str = "github", name: str = "",
                       description: str = "", license: str = "",
                       gitignore: str = "", private: bool = False,
-                      token: str = "") -> str:
+                      token: str = "", head: str = "", base: str = "",
+                      title: str = "", body: str = "") -> str:
             """Work with this chat's connected cloud repos.
 
-            action: list|info|tree|ls|read|readme|grep|view|write|
+            action: list|info|tree|ls|read|readme|grep|view|write|pr|
                 create_repo|fork|clone|discover|attach_token|help
             ws: workspace id (12 hex) OR owner/repo OR bare repo name
             path: file/subdirectory path (tree, ls, read, write)
@@ -659,7 +714,8 @@ def build(ctx) -> list:
                               state=state, limit=limit, kind=kind, name=name,
                               description=description, license_=license,
                               gitignore=gitignore, private=private,
-                              token=token, log=log)
+                              token=token, head=head, base=base,
+                              title=title, body=body, log=log)
 
         return [workspace]
     except Exception:

@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import json
 import urllib.parse as _u
 
 _HERE = Path(__file__).resolve().parent
@@ -124,6 +125,13 @@ def fake_engine(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"view": what, "items": []})
         if path.endswith("/fork"):
             return httpx.Response(200, json={"forked": True, "full_name": "me/fork"})
+        if path.endswith("/pr"):
+            b = json.loads(request.content or b"{}")
+            return httpx.Response(200, json={"pr": True, "number": 9,
+                                             "url": "https://e.test/pr/9",
+                                             "title": b.get("title") or "",
+                                             "head": b.get("head") or "",
+                                             "base": b.get("base") or ""})
         if path.endswith("/clone"):
             return httpx.Response(200, json={"cloned": True,
                                              "sandbox_path": "/data/ws/x"})
@@ -243,6 +251,12 @@ def test_ws_create_fork_clone_discover_token():
     assert "created me/fresh" in out, out
     out = da_ws.run_action(ctx, c, "fork", ws="doomalay")
     assert "me/fork" in out, out
+    # v0.76.5: the PR verb — partial-access flow (head branch + default base)
+    out = da_ws.run_action(ctx, c, "pr", ws="doomalay", head="feat/x",
+                           title="Add x")
+    assert "PR OPENED" in out and "#9" in out and "feat/x" in out, out
+    out = da_ws.run_action(ctx, c, "pr", ws="doomalay")
+    assert "head=" in out, out  # the anti-thrash teach
     out = da_ws.run_action(ctx, c, "clone", ws="doomalay")
     assert "/data/ws/x" in out, out
     out = da_ws.run_action(ctx, c, "discover")

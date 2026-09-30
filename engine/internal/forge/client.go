@@ -380,6 +380,38 @@ func (c *Client) Fork(ctx context.Context, token string) (string, error) {
         return "", ErrUnsupported
 }
 
+// CreateBranch makes a new branch (v0.76.5: the put-to-a-feature-branch
+// prerequisite — the contents API only commits to existing refs, so the
+// bot's "commit to a branch, then PR it" flow creates the ref first).
+// from="" = the repo's HEAD/default.
+func (c *Client) CreateBranch(ctx context.Context, name, from, token string) (string, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghCreateBranch(ctx, name, from, token)
+        case "gitea":
+                return c.gtCreateBranch(ctx, name, from, token)
+        case "gitlab":
+                return c.glCreateBranch(ctx, name, from, token)
+        }
+        return "", ErrUnsupported
+}
+
+// CreatePullRequest opens a PR/MR (v0.76.5: the missing write verb —
+// "the bot can actually push, PR"). head/base are branch names; on
+// GitHub a fork PR's head is "owner:branch". Partial-access friendly:
+// creating a PR from a fork is the partial tier's write path.
+func (c *Client) CreatePullRequest(ctx context.Context, title, body, head, base, token string) (PullRequest, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghCreatePull(ctx, title, body, head, base, token)
+        case "gitea":
+                return c.gtCreatePull(ctx, title, body, head, base, token)
+        case "gitlab":
+                return c.glCreatePull(ctx, title, body, head, base, token)
+        }
+        return PullRequest{}, ErrUnsupported
+}
+
 // CreateRepo makes a fresh repo (name/license/gitignore/private — the
 // create-from-scratch flow ported from the HF space workspaces).
 func (c *Client) CreateRepo(ctx context.Context, name, desc, license, gitignore string, private bool, token string) (*RepoMeta, error) {

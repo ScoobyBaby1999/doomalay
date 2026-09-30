@@ -305,6 +305,7 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/workspaces/{id}/view/{what}", s.handleWorkspaceView)
         s.mux.HandleFunc("PUT /api/workspaces/{id}/file", s.handleWorkspacePutFile)
         s.mux.HandleFunc("POST /api/workspaces/{id}/fork", s.handleWorkspaceFork)
+        s.mux.HandleFunc("POST /api/workspaces/{id}/pr", s.handleWorkspacePR)
         s.mux.HandleFunc("POST /api/workspaces/{id}/clone", s.handleWorkspaceClone)
         s.mux.HandleFunc("POST /api/workspaces/create-repo", s.handleWorkspaceCreateRepo)
         s.mux.HandleFunc("GET /api/workspaces/licenses", s.handleWorkspaceLicenses)

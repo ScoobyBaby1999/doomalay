@@ -949,6 +949,29 @@ func (s *Server) handleWorkspacePutFile(w http.ResponseWriter, r *http.Request) 
         if req.Branch == "" {
                 req.Branch = ws.Branch
         }
+        // v0.76.5 FEATURE-BRANCH FLOW (the ACTION tool's put twin): the
+        // contents API only commits to an EXISTING ref — a PUT aimed at a
+        // branch that doesn't exist yet creates it from HEAD first (the
+        // "commit to a branch, then PR it" flow; the brain-path write and
+        // the ACTION put behave identically).
+        if req.Branch != "" {
+                c := s.wsClient(ws)
+                if names, err := c.Branches(r.Context(), s.wsToken(ws)); err == nil {
+                        found := false
+                        for _, b := range names {
+                                if b == req.Branch {
+                                        found = true
+                                        break
+                                }
+                        }
+                        if !found {
+                                if _, err := c.CreateBranch(r.Context(), req.Branch, "", s.wsToken(ws)); err != nil {
+                                        writeError(w, 502, "branch "+req.Branch+" does not exist and could not be created: "+err.Error())
+                                        return
+                                }
+                        }
+                }
+        }
         // UPDATE-CREATE trap: GitHub 422s an update whose CURRENT blob sha is
         // missing. Callers that skip the sha (raw REST, the drawer's first
         // save) get it fetched here — a 404 means it's a create (sha stays "").
@@ -979,6 +1002,54 @@ func (s *Server) handleWorkspaceFork(w http.ResponseWriter, r *http.Request) {
         }
         writeJSON(w, 200, map[string]any{"forked": true, "full_name": full,
                 "hint": "connect the fork to work with write access"})
+}
+
+// handleWorkspacePR is POST /api/workspaces/{id}/pr — open a pull
+// request (v0.76.5: the missing write verb for "the bot can actually
+// push, PR"). Partial-access friendly: a PR from the user's fork branch
+// is the partial tier's write path, so the gate is read-only refusal.
+// head/base are branch names; on GitHub a fork PR's head is "owner:branch".
+func (s *Server) handleWorkspacePR(w http.ResponseWriter, r *http.Request) {
+        ws := s.loadWS(w, r)
+        if ws == nil {
+                return
+        }
+        if ws.Access == forge.AccessRead {
+                writeError(w, 403, "this workspace is read-only — fork it first (POST /api/workspaces/{id}/fork), then open the PR from your fork branch")
+                return
+        }
+        var req struct {
+                Title string `json:"title"`
+                Body  string `json:"body"`
+                Head  string `json:"head"`
+                Base  string `json:"base"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, 400, "invalid JSON: "+err.Error())
+                return
+        }
+        if req.Head == "" {
+                writeError(w, 400, "head branch is required (where the changes are; owner:branch for a fork)")
+                return
+        }
+        if req.Base == "" {
+                // default base = the workspace's tracked branch
+                req.Base = ws.Branch
+        }
+        if req.Base == "" {
+                writeError(w, 400, "base branch is required (where the changes go)")
+                return
+        }
+        if req.Title == "" {
+                req.Title = "doomalay PR: " + req.Head + " → " + req.Base
+        }
+        pr, err := s.wsClient(ws).CreatePullRequest(r.Context(), req.Title, req.Body, req.Head, req.Base, s.wsToken(ws))
+        if err != nil {
+                s.wsErr(w, err)
+                return
+        }
+        writeJSON(w, 200, map[string]any{"pr": true, "number": pr.Number,
+                "url": pr.URL, "head": req.Head, "base": req.Base, "title": pr.Title})
 }
 
 func (s *Server) handleWorkspaceClone(w http.ResponseWriter, r *http.Request) {

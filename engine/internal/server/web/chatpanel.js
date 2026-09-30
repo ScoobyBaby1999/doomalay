@@ -3793,6 +3793,11 @@
         state.sessionId = data.ID;
         icon._sessionData = data;
         bindSessionToIcon(icon, data.ID);
+        // v0.76.5 (live red-team finding): the session landed — repaint
+        // the +workspace pill NOW (its badge fetch keyed on the sid; the
+        // pill painted once at construction with the sid still null and
+        // the count froze at 0 for chats with bound repos).
+        if (window.Workspace && window.Workspace.refreshPills) { try { window.Workspace.refreshPills(); } catch (e) {} }
         q.forEach(function (c) { try { c(); } catch (e) { console.error(e); } });
       }
     }).catch(function (e) {
@@ -3842,6 +3847,10 @@
       if (data && data.ID) {
         state.sessionId = data.ID;
         icon._sessionData = data;
+        // v0.76.5: same repaint-on-adoption as ensureSession (the badge
+        // froze at 0 when the icon carried the sid but the pill had
+        // already painted).
+        if (window.Workspace && window.Workspace.refreshPills) { try { window.Workspace.refreshPills(); } catch (e) {} }
         if (!state.sandbox && data.Sandbox) state.sandbox = data.Sandbox;
         // v0.46: restore the HF routing detail.
         if (data.SandboxMode && data.Sandbox === 'hf') state.sandboxMode = data.SandboxMode;

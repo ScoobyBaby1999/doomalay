@@ -34,6 +34,12 @@ import (
         "strings"
 )
 
+// GitHubAPIBase is the GitHub REST root (v0.76.5: an exported seam so
+// tests can point the whole github forge at a local httptest server,
+// the same override pattern the server package uses for its OAuth
+// endpoints. Production: https://api.github.com.
+var GitHubAPIBase = "https://api.github.com"
+
 func (c *Client) ghRepoInfo(ctx context.Context, token string) (*RepoMeta, error) {
         var m struct {
                 FullName      string `json:"full_name"`
@@ -202,6 +208,48 @@ func (c *Client) ghBranches(ctx context.Context, token string) ([]string, error)
                 out = append(out, b.Name)
         }
         return out, nil
+}
+
+// ghCreateBranch — POST /git/refs (v0.76.5: the put-to-a-new-branch
+// prerequisite; the contents API can only commit to an EXISTING ref, so
+// the bot's "commit to a feature branch, then PR it" flow needs this).
+// from="" = the repo's default branch (resolved via the repo card).
+func (c *Client) ghCreateBranch(ctx context.Context, name, from, token string) (string, error) {
+        if token == "" {
+                return "", fmt.Errorf("creating a branch needs a GitHub token")
+        }
+        if from == "" {
+                meta, err := c.ghRepoInfo(ctx, token)
+                if err != nil {
+                        return "", err
+                }
+                from = meta.DefaultBranch
+        }
+        var ref struct {
+                Object struct {
+                        SHA string `json:"sha"`
+                } `json:"object"`
+        }
+        // "Get a reference": /git/ref/heads/<branch> (NOT /git/HEAD — that
+        // endpoint 404s; observed live in the v0.76.5 red team).
+        if err := c.ghGetJSON(ctx, "/repos/"+c.host.Owner+"/"+c.host.Repo+"/git/ref/heads/"+url.PathEscape(from), token, &ref, maxListBody); err != nil {
+                return "", fmt.Errorf("resolving branch %s: %w", from, err)
+        }
+        b, _ := json.Marshal(map[string]any{
+                "ref": "refs/heads/" + name, "sha": ref.Object.SHA,
+        })
+        var out struct {
+                Ref string `json:"ref"`
+        }
+        data, err := c.do(ctx, "POST", GitHubAPIBase+"/repos/"+c.host.Owner+"/"+c.host.Repo+"/git/refs",
+                token, b, "application/json", maxListBody)
+        if err != nil {
+                return "", err
+        }
+        if err := json.Unmarshal(data, &out); err != nil {
+                return "", err
+        }
+        return out.Ref, nil
 }
 
 func (c *Client) ghCommits(ctx context.Context, path, ref, token string, limit int) ([]Commit, error) {
@@ -377,7 +425,7 @@ func (c *Client) ghDiscussions(ctx context.Context, token string, limit int) ([]
                 `nodes{number title updatedAt url category{name} author{login}}}}}`)
         vars := map[string]any{"owner": c.host.Owner, "repo": c.host.Repo, "n": limit}
         body, _ := json.Marshal(map[string]any{"query": q, "variables": vars})
-        data, err := c.do(ctx, "POST", "https://api.github.com/graphql", token, body, "application/json", maxListBody)
+        data, err := c.do(ctx, "POST", GitHubAPIBase+"/graphql", token, body, "application/json", maxListBody)
         if err != nil {
                 return nil, err
         }
@@ -477,7 +525,7 @@ func (c *Client) ghPutFile(ctx context.Context, path, branch, message, content, 
                 } `json:"commit"`
         }
         p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/contents/" + strings.TrimPrefix(path, "/")
-        data, err := c.do(ctx, "PUT", "https://api.github.com"+p, token, b, "application/json", maxListBody)
+        data, err := c.do(ctx, "PUT", GitHubAPIBase+p, token, b, "application/json", maxListBody)
         if err != nil {
                 return "", err
         }
@@ -494,7 +542,7 @@ func (c *Client) ghFork(ctx context.Context, token string) (string, error) {
         var out struct {
                 FullName string `json:"full_name"`
         }
-        data, err := c.do(ctx, "POST", "https://api.github.com/repos/"+c.host.Owner+"/"+c.host.Repo+"/forks",
+        data, err := c.do(ctx, "POST", GitHubAPIBase+"/repos/"+c.host.Owner+"/"+c.host.Repo+"/forks",
                 token, nil, "application/json", maxListBody)
         if err != nil {
                 return "", err
@@ -503,6 +551,48 @@ func (c *Client) ghFork(ctx context.Context, token string) (string, error) {
                 return "", err
         }
         return out.FullName, nil
+}
+
+// ghCreatePull — open a pull request (v0.76.5: the missing write verb —
+// "the bot can actually push, PR" — same-repo branch PRs or fork→upstream
+// PRs via head "user:branch"). Returns the PR number + html url.
+func (c *Client) ghCreatePull(ctx context.Context, title, body, head, base, token string) (PullRequest, error) {
+        if token == "" {
+                return PullRequest{}, fmt.Errorf("opening a GitHub PR needs a token")
+        }
+        if strings.TrimSpace(head) == "" {
+                return PullRequest{}, fmt.Errorf("pr needs a head branch (where the changes are)")
+        }
+        if strings.TrimSpace(base) == "" {
+                return PullRequest{}, fmt.Errorf("pr needs a base branch (where the changes go)")
+        }
+        b, _ := json.Marshal(map[string]any{
+                "title": title,
+                "body":  body,
+                "head":  head, // "branch" (same repo) or "owner:branch" (fork)
+                "base":  base,
+        })
+        var m struct {
+                Number  int    `json:"number"`
+                HTMLURL string `json:"html_url"`
+                State   string `json:"state"`
+                User    struct {
+                        Login string `json:"login"`
+                } `json:"user"`
+                Head struct {
+                        Ref string `json:"ref"`
+                } `json:"head"`
+        }
+        data, err := c.do(ctx, "POST", GitHubAPIBase+"/repos/"+c.host.Owner+"/"+c.host.Repo+"/pulls",
+                token, b, "application/json", maxListBody)
+        if err != nil {
+                return PullRequest{}, err
+        }
+        if err := json.Unmarshal(data, &m); err != nil {
+                return PullRequest{}, err
+        }
+        return PullRequest{Number: m.Number, Title: title, State: m.State,
+                Author: m.User.Login, Branch: m.Head.Ref, URL: m.HTMLURL}, nil
 }
 
 func (c *Client) ghCreateRepo(ctx context.Context, name, desc, license, gitignore string, private bool, token string) (*RepoMeta, error) {
@@ -526,7 +616,7 @@ func (c *Client) ghCreateRepo(ctx context.Context, name, desc, license, gitignor
                 CloneURL      string `json:"clone_url"`
                 HTMLURL       string `json:"html_url"`
         }
-        data, err := c.do(ctx, "POST", "https://api.github.com/user/repos", token, b, "application/json", maxListBody)
+        data, err := c.do(ctx, "POST", GitHubAPIBase+"/user/repos", token, b, "application/json", maxListBody)
         if err != nil {
                 // v0.59: the GitHub App ships with REPO-ONLY permissions by design
                 // (the user asked for the smallest possible grant) — repo creation
@@ -614,7 +704,7 @@ func (c *Client) ghGitignores(ctx context.Context, token string) ([]string, erro
 
 // ghGetJSON — GET + decode into out.
 func (c *Client) ghGetJSON(ctx context.Context, path, token string, out any, limit int64) error {
-        data, err := c.do(ctx, "GET", "https://api.github.com"+path, token, nil, "", limit)
+        data, err := c.do(ctx, "GET", GitHubAPIBase+path, token, nil, "", limit)
         if err != nil {
                 return err
         }

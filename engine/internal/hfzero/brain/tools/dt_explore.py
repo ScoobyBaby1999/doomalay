@@ -31,6 +31,24 @@ from __future__ import annotations
 
 TOOL_NAMES = ["explore"]
 
+
+def _engine_down(base: str, exc: Exception) -> str:
+    """v0.76.5: honest degradation — the engine (the user's device) is
+    unreachable from here. On a REMOTE sandbox (an HF space) that is the
+    architecture; teach the shell route (git clone / the forge REST API)
+    instead of a raw Connection refused."""
+    import os
+    remote = bool(os.environ.get("HF_SPACE_ID") or os.environ.get("SPACE_ID"))
+    if remote:
+        return (
+            "the explore bridge needs the user's engine and this remote "
+            f"sandbox cannot reach it ({base}: {type(exc).__name__}). From "
+            "HERE explore public repos with the shell instead: "
+            "git clone --depth 1 <url> && ls/grep/cat, or "
+            "curl https://api.github.com/repos/<owner>/<repo> — same facts, "
+            "no engine needed.")
+    return f"engine unreachable at {base}: {exc}"
+
 _TIMEOUT = 45.0   # batch reads fan out server-side; give the engine room
 _BODY_CAP = 5500   # per-file trim inside batch reads (dt_spec rule 9)
 _LIST_CAP = 80     # rows shown before the "+N more" fold
@@ -182,7 +200,7 @@ class ExploreClient:
         try:
             r = self._http().get(self.base_url + path, params=params)
         except Exception as exc:
-            return {"error": f"engine unreachable at {self.base_url}: {exc}"}
+            return {"error": _engine_down(self.base_url, exc)}
         try:
             body = r.json()
         except Exception:

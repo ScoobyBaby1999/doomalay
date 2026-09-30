@@ -171,6 +171,32 @@ func (c *Client) gtFile(ctx context.Context, path, ref, rangeSpec, token string)
         return buildFileContent(path, sha, data, rangeSpec), nil
 }
 
+// gtCreateBranch — POST /branches (v0.76.5, the put-to-new-branch
+// prerequisite; base defaults to the repo's default branch).
+func (c *Client) gtCreateBranch(ctx context.Context, name, from, token string) (string, error) {
+        if token == "" {
+                return "", fmt.Errorf("creating a branch needs a token")
+        }
+        if from == "" {
+                from = "HEAD"
+        }
+        b, _ := json.Marshal(map[string]any{
+                "new_branch_name": name, "base": from,
+        })
+        var out struct {
+                Name string `json:"name"`
+        }
+        data, err := c.do(ctx, "POST", c.gtAPI()+"/repos/"+c.host.Owner+"/"+c.host.Repo+"/branches",
+                token, b, "application/json", maxListBody)
+        if err != nil {
+                return "", err
+        }
+        if err := json.Unmarshal(data, &out); err != nil {
+                return "", err
+        }
+        return out.Name, nil
+}
+
 func (c *Client) gtBranches(ctx context.Context, token string) ([]string, error) {
         var list []struct {
                 Name string `json:"name"`
@@ -394,6 +420,45 @@ func (c *Client) gtFork(ctx context.Context, token string) (string, error) {
                 return "", err
         }
         return out.FullName, nil
+}
+
+// gtCreatePull — open a pull request on a Gitea forge (v0.76.5, the PR
+// twin of gtPutFile). head/base are branch names; fork PRs need the head
+// repo id form Gitea documents — branch strings cover the common path.
+func (c *Client) gtCreatePull(ctx context.Context, title, body, head, base, token string) (PullRequest, error) {
+        if token == "" {
+                return PullRequest{}, fmt.Errorf("opening a PR on this Gitea forge needs a token")
+        }
+        if strings.TrimSpace(head) == "" || strings.TrimSpace(base) == "" {
+                return PullRequest{}, fmt.Errorf("pr needs head and base branches")
+        }
+        b, _ := json.Marshal(map[string]any{
+                "title": title,
+                "body":  body,
+                "head":  head,
+                "base":  base,
+        })
+        var m struct {
+                Number  int    `json:"number"`
+                HTMLURL string `json:"html_url"`
+                State   string `json:"state"`
+                User    struct {
+                        Login string `json:"login"`
+                } `json:"user"`
+                Head struct {
+                        Ref string `json:"ref"`
+                } `json:"head"`
+        }
+        data, err := c.do(ctx, "POST", c.gtAPI()+"/repos/"+c.host.Owner+"/"+c.host.Repo+"/pulls",
+                token, b, "application/json", maxListBody)
+        if err != nil {
+                return PullRequest{}, err
+        }
+        if err := json.Unmarshal(data, &m); err != nil {
+                return PullRequest{}, err
+        }
+        return PullRequest{Number: m.Number, Title: title, State: m.State,
+                Author: m.User.Login, Branch: m.Head.Ref, URL: m.HTMLURL}, nil
 }
 
 func (c *Client) gtCreateRepo(ctx context.Context, name, desc, license, gitignore string, private bool, token string) (*RepoMeta, error) {

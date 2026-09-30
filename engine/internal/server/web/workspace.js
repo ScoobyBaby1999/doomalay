@@ -2029,8 +2029,13 @@
       ? sessionIdOrFn
       : function () { return sessionIdOrFn || null; };
     b._wsGetSid = getSid;
+    // v0.76.5 (live browser red-team finding): paint resolves the sid via
+    // b._wsGetSid FIRST — setPillSession swaps that field when the engine
+    // session lands late, but the construction-time closure stayed null
+    // and the badge froze at 0 (the picker's bind rows read the same stale
+    // getter). The stored repaint hook lets setPillSession fire a refresh.
     var paint = function () {
-      var sid = getSid();
+      var sid = (b._wsGetSid || getSid)();
       if (!sid) return;
       api('/api/sessions/' + encodeURIComponent(sid) + '/workspaces').then(function (d) {
         var n = (d.workspaces || []).length;
@@ -2041,8 +2046,9 @@
     };
     b.addEventListener('click', function (e) {
       e.stopPropagation();
-      openPicker(getSid, null);
+      openPicker(function () { return (b._wsGetSid || getSid)(); }, null);
     });
+    b._wsPaint = paint; // setPillSession fires this when the sid swaps
     paint();
     onPillRefresh(paint);
     return b;
@@ -2054,6 +2060,9 @@
   function setPillSession(btn, sessionId) {
     if (!btn) return btn;
     btn._wsGetSid = function () { return sessionId || null; };
+    // v0.76.5: swap → REPAINT (the badge read the frozen construction
+    // getter before; the count stayed 0 after the session landed).
+    if (btn._wsPaint) { try { btn._wsPaint(); } catch (e) {} }
     return btn;
   }
 
