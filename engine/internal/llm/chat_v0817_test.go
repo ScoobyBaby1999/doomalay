@@ -51,30 +51,23 @@ func TestV817_ReasoningOnlyStreamFlushesAnswer(t *testing.T) {
 		BaseURL:  srv.URL,
 		Messages: []Message{{Role: "user", Content: "how many files"}},
 	}
-	answer, _, emitted, err := runReActRoundStream(context.Background(), req, ch)
+	// v0.82.3: the net now RETURNS the note (netNote) instead of emitting —
+	// runReActRoundWithRetry runs the answer-force nudge first and only the
+	// give-up path emits. This round-level test pins the returned contract.
+	answer, _, _, netNote, err := runReActRoundStream(context.Background(), req, ch)
 	close(ch)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	// THE NET: the reasoning tail became the answer under the honest prefix
-	if !strings.Contains(answer, "the model finished its reasoning without sending a visible reply") {
-		t.Fatalf("answer missing the honest prefix: %q", answer)
+	// THE NET: the reasoning tail rides home as netNote under the honest prefix
+	if !strings.Contains(netNote, "the model finished its reasoning without sending a visible reply") {
+		t.Fatalf("netNote missing the honest prefix: %q", netNote)
 	}
-	if !strings.Contains(answer, "The answer is 42 files total.") {
-		t.Fatalf("answer missing the reasoning tail: %q", answer)
+	if !strings.Contains(netNote, "The answer is 42 files total.") {
+		t.Fatalf("netNote missing the reasoning tail: %q", netNote)
 	}
-	if !emitted {
-		t.Fatalf("the flushed reasoning must count as emitted (retry safety)")
-	}
-	// the reply STREAMED (assistant_delta on the channel)
-	sawDelta := false
-	for ev := range ch {
-		if ev.Type == "assistant_delta" && strings.Contains(ev.Text, "42 files") {
-			sawDelta = true
-		}
-	}
-	if !sawDelta {
-		t.Fatalf("no assistant_delta carried the flushed reply")
+	if answer != "" {
+		t.Fatalf("the netted round carries no answer content: %q", answer)
 	}
 }
 
@@ -103,7 +96,7 @@ func TestV817_NormalStreamUnchanged(t *testing.T) {
 		Model: "nvidia/x", Provider: "nvidia", BaseURL: srv.URL,
 		Messages: []Message{{Role: "user", Content: "q"}},
 	}
-	answer, _, _, err := runReActRoundStream(context.Background(), req, ch)
+	answer, _, _, _, err := runReActRoundStream(context.Background(), req, ch)
 	close(ch)
 	if err != nil {
 		t.Fatalf("err: %v", err)

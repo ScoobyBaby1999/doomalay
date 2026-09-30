@@ -1803,7 +1803,7 @@ func countCompleteNonBlankLines(s string) int {
         }
 }
 
-func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, bool, error) {
+func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, bool, string, error) {
         var answer strings.Builder
         var buf strings.Builder // undecided content (final-answer candidate)
         mode := 0               // 0 undecided · 1 streaming final · 2 suppressed ACTION
@@ -1814,7 +1814,12 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         // inside reasoning_content with zero content gets its reasoning
         // flushed as the answer — completeSync's reasoning-only fallback
         // (line ~1078), finally twinned on the streaming path.
+        // v0.82.3: the net no longer EMITS — it returns the note as the
+        // 4th value so runReActRoundWithRetry can run the answer-force
+        // nudge FIRST (a real reply beats a synthesized tail); only the
+        // give-up path emits the note.
         think := ""
+        netNote := ""
 
         flush := func() { // decided: final answer — stream what we hold
                 mode = 1
@@ -1894,7 +1899,7 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
                 }
         })
         if err != nil {
-                return answer.String() + buf.String(), usage, emitted, err
+                return answer.String() + buf.String(), usage, emitted, "", err
         }
         if mode == 0 && buf.Len() > 0 {
                 // stream ended while still holding — decide on the tail:
@@ -1957,12 +1962,9 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
                 if len(clip) > 900 {
                         clip = "…" + clip[len(clip)-900:]
                 }
-                note := "(the model finished its reasoning without sending a visible reply — its last thought:)\n" + clip
-                ch <- ChatChunk{Type: "assistant_delta", Text: note}
-                answer.WriteString(note)
-                emitted = true
+                netNote = "(the model finished its reasoning without sending a visible reply — its last thought:)\n" + clip
         }
-        return answer.String(), usage, emitted, nil
+        return answer.String(), usage, emitted, netNote, nil
 }
 
 func isActionLine(line string) bool {
@@ -2233,34 +2235,75 @@ func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, f
 // the transient flavor, and a persistently-empty model gets a visible
 // error instead of silence.
 // v0.39: the transient loop is now the netPauseLadder (pause-not-fail).
+//
+// v0.82.3 THE ANSWER-FORCE NET: the empty round and the REASONING-ONLY
+// round (the v0.81.7 net — the model finished inside reasoning_content
+// and never sent content) both route here now. Instead of ending the turn
+// with the synthesized reasoning tail (visible, but not a real reply — the
+// user's report: "it said it will give a summary, then didn't"), ONE nudge
+// round runs with thinking DISABLED (Effort "off" → BuildEffortBodyFor
+// emits the documented disable — kimi chat_template_kwargs.thinking:false)
+// so the model MUST spend its output on visible content. Only when the
+// nudged round also fails does the reasoning tail become the reply (under
+// the honest prefix) — and the genuinely-empty-twice case still surfaces
+// the diagnosable error.
 func runReActRoundWithRetry(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, error) {
         var answer string
         var usage *Usage
+        var netNote string
         err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
                 var emitted bool
                 var e error
-                answer, usage, emitted, e = runReActRoundStream(ctx, req, ch)
+                answer, usage, emitted, netNote, e = runReActRoundStream(ctx, req, ch)
                 return emitted, e
         })
         if err != nil {
                 return answer, usage, err
         }
-        if strings.TrimSpace(answer) != "" {
+        if strings.TrimSpace(answer) != "" && netNote == "" {
                 return answer, usage, nil
         }
-        // empty round → one visible retry, then a diagnosable error.
-        ch <- ChatChunk{Type: "status", State: "running", Message: "empty response — retrying"}
-        var emitted2 bool
-        answer, usage, emitted2, err = runReActRoundStream(ctx, req, ch)
-        _ = emitted2
+        // empty OR reasoning-only → THE ANSWER-FORCE NUDGE: one retry with
+        // the final-answer instruction APPENDED and thinking disabled.
+        ch <- ChatChunk{Type: "progress", Text: "reasoning ended without a reply — asking again with thinking off…"}
+        nudged := req
+        nudged.Effort = "off" // the documented disable per family (kimi thinking:false); mandatory reasoners send nothing
+        nudged.Messages = append(append([]Message{}, req.Messages...),
+                Message{Role: "assistant", Content: "(the previous reply contained reasoning but no visible answer)"},
+                Message{Role: "user", Content: "(system: your last reply ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no ACTION line, no more reasoning.)"})
+        answer2, usage2, netNote2, err := runReActRoundNudge(ctx, nudged, ch)
+        usage = mergeUsage(usage, usage2)
         if err != nil {
+                // the nudged round failed as a network error — fall back to
+                // whatever the first round produced (the net note if any)
+                if netNote != "" {
+                        ch <- ChatChunk{Type: "assistant_delta", Text: netNote}
+                        return netNote, usage, nil
+                }
                 return answer, usage, err
         }
-        if strings.TrimSpace(answer) == "" {
-                ch <- ChatChunk{Type: "error", Error: "empty_response", Message: "the model returned an empty response twice — try again or pick a different model"}
-                return answer, usage, errEmptyRound
+        if strings.TrimSpace(answer2) != "" {
+                return answer2, usage, nil // a REAL reply — the rescue worked
         }
-        return answer, usage, nil
+        // still nothing → the net note (the first round's reasoning tail;
+        // the nudged round's tail only when the first had none)
+        if netNote == "" {
+                netNote = netNote2
+        }
+        if netNote != "" {
+                ch <- ChatChunk{Type: "assistant_delta", Text: netNote}
+                return netNote, usage, nil
+        }
+        ch <- ChatChunk{Type: "error", Error: "empty_response", Message: "the model returned an empty response twice — try again or pick a different model"}
+        return answer2, usage, errEmptyRound
+}
+
+// runReActRoundNudge runs the answer-force round: same stream shape as
+// runReActRoundStream but WITHOUT the transient ladder (the nudge already
+// IS the retry) — a plain single pass.
+func runReActRoundNudge(ctx context.Context, req ChatRequest, ch chan<- ChatChunk) (string, *Usage, string, error) {
+        a, u, _, note, err := runReActRoundStream(ctx, req, ch)
+        return a, u, note, err
 }
 
 // isTransientNetErr reports whether the error looks like a recoverable

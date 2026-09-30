@@ -363,9 +363,30 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         // parallel calls). The cap is a runaway-loop guard, not a clock.
         const maxRounds = 200 // v0.82.2: the no-cap chain (user directive: "REMOVE THE 24 MAX TURNS CAP… 100 chained tools"); was 64
 
+        // v0.82.3 THE ANSWER-FORCE NET (the nativetools twin — this path
+        // had NO net at all): a round that streams ONLY reasoning and no
+        // tool calls used to end the turn silently ("len(calls) == 0 →
+        // final answer — already streamed" assumed content existed). The
+        // user's report: "it said it will give a summary, then didn't… I
+        // think Nvidia does this too." Now: contentSeen tracks whether ANY
+        // visible text streamed this TURN; a calls==0 round with none gets
+        // ONE nudge round with thinking disabled (Effort "off" — the
+        // documented per-family disable), and a still-silent turn ends with
+        // the reasoning tail as the reply under the honest prefix.
+        contentSeen := false
+        think := ""
+        nudged := false
+
         for round := 0; round < maxRounds; round++ {
                 roundReq := req
                 roundReq.Messages = history
+                if nudged {
+                        // v0.82.3: the answer-force rounds run with thinking
+                        // DISABLED (Effort "off" → BuildEffortBodyFor emits the
+                        // documented per-family disable; mandatory reasoners
+                        // send nothing — their default).
+                        roundReq.Effort = "off"
+                }
                 extra := map[string]any{
                         "tools":       specs,
                         "tool_choice": "auto",
@@ -383,8 +404,13 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 emitted = true
                                 if reasoning != "" {
                                         ch <- ChatChunk{Type: "thinking", Text: reasoning}
+                                        think = think + reasoning
+                                        if len(think) > 4800 {
+                                                think = think[len(think)-2400:]
+                                        }
                                 }
                                 if content != "" {
+                                        contentSeen = true
                                         ch <- ChatChunk{Type: "assistant_delta", Text: content}
                                 }
                         })
@@ -403,12 +429,30 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 }
                 totalUsage = mergeUsage(totalUsage, usage)
                 if len(calls) == 0 {
-                        // final answer — already streamed. Emit accumulated sources.
-                        if len(allSources) > 0 {
-                                ch <- ChatChunk{Type: "sources", Sources: allSources}
+                        // v0.82.3 THE ANSWER-FORCE NET: a silent round (no calls,
+                        // no visible content this whole turn) is NOT a final
+                        // answer — it's the reasoning-without-reply shape.
+                        // Nudge ONCE with thinking disabled; the next round
+                        // either produces the real reply or falls through.
+                        if !contentSeen && !nudged {
+                                nudged = true
+                                ch <- ChatChunk{Type: "progress", Text: "reasoning ended without a reply — asking again with thinking off…"}
+                                history = append(history,
+                                        Message{Role: "assistant", Content: "(the previous reply contained reasoning but no visible answer)"},
+                                        Message{Role: "user", Content: "(system: your last reply ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no tool calls, no more reasoning.)"})
+                                continue
                         }
-                        ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
-                        return
+                        // final answer — already streamed (or the nudge round
+                        // produced it). Emit accumulated sources. A still-silent
+                        // turn falls to the turn-end net below.
+                        if contentSeen {
+                                if len(allSources) > 0 {
+                                        ch <- ChatChunk{Type: "sources", Sources: allSources}
+                                }
+                                ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
+                                return
+                        }
+                        break // the give-up shape — the turn-end net answers
                 }
 
                 // normalize + validate the calls, then execute in order
@@ -455,6 +499,30 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 Content:    clamp(obs, 24000),
                         })
                 }
+        }
+
+        // v0.82.3 THE TURN-END NET — the give-up shape reached here (the
+        // loop `break`s when the nudged round still produced no content,
+        // or the budget ran out on a silent turn). The reasoning tail —
+        // which usually CONTAINS the answer the model never sent — becomes
+        // the reply under the honest prefix; a no-reasoning silent turn
+        // gets the honest empty note. Never a silent screen.
+        if !contentSeen {
+                tail := strings.TrimSpace(think)
+                note := "(the model returned an empty response — try again or pick a different model)"
+                if tail != "" {
+                        clip := tail
+                        if len(clip) > 900 {
+                                clip = "…" + clip[len(clip)-900:]
+                        }
+                        note = "(the model finished its reasoning without sending a visible reply — its last thought:)\n" + clip
+                }
+                ch <- ChatChunk{Type: "assistant_delta", Text: note}
+                if len(allSources) > 0 {
+                        ch <- ChatChunk{Type: "sources", Sources: allSources}
+                }
+                ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
+                return
         }
 
         // Budget exhausted — force a final answer without tools.

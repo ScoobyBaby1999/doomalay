@@ -1133,7 +1133,16 @@ async function roundTrip(c, opts, messages) {
       if (!res.aborted && (res.text || '').trim() === '') {
         messages.push({ role: 'assistant', content: '(the previous reply contained reasoning but no visible answer)' });
         messages.push({ role: 'user', content: '(system: your last reply ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no ACTION line, no more reasoning.)' });
-        var retryRound = await roundTripOnce(c, opts, messages);
+        // v0.82.3 THE ANSWER-FORCE RETRY: the v0.81.7 nudge round re-sent
+        // the SAME effort shape (chat_template_kwargs.thinking = true for
+        // kimi) — the model was literally CONFIGURED to think again on the
+        // retry, so it reproduced the reasoning-only shape and the turn
+        // still died (the user's live log: 19 tool calls, "it said it will
+        // give a summary, then didn't"). The retry now DISABLES thinking —
+        // Moonshot's own documented instant mode (Kimi K2.5/K2.6: "to use
+        // instant mode, pass {'chat_template_kwargs': {"thinking": False}}")
+        // — so the model MUST spend its output budget on visible content.
+        var retryRound = await roundTripOnce(c, opts, messages, { noThink: true });
         if ((retryRound.text || '').trim() !== '' || retryRound.aborted || retryRound.err) {
           retryRound.usage = mergeUsage(res.usage, retryRound.usage) || retryRound.usage;
           if (!retryRound.think) retryRound.think = res.think || '';
@@ -1162,7 +1171,7 @@ async function roundTrip(c, opts, messages) {
   throw pmError('PrivateMode: ' + friendlyPMError(lastErr && lastErr.message));
 }
 
-async function roundTripOnce(c, opts, messages) {
+async function roundTripOnce(c, opts, messages, force) {
   var full = '';
   var usage = null;
   var emitted = false;     // any onDelta fired (retry safety)
@@ -1278,6 +1287,25 @@ async function roundTripOnce(c, opts, messages) {
       body.chat_template_kwargs = { thinking: true };
     }
   }
+  // v0.82.3 THE ANSWER-FORCE SHAPE: the final-answer nudge retry runs with
+  // thinking DISABLED — the model that just finished inside reasoning_content
+  // must not be handed the thinking toggle again. Kimi gets Moonshot's
+  // documented boolean off-switch (chat_template_kwargs.thinking:false — the
+  // K2.5/K2.6 "instant mode"); the gemma/glm-5.1 enable_thinking family gets
+  // its documented false; every other model just DROPS the effort param
+  // (their provider default runs non-thinking or light — no unverified
+  // shapes on the rescue path).
+  if (force && force.noThink) {
+    var mNo = String(opts.model || '').toLowerCase();
+    delete body.reasoning_effort;
+    if (mNo.indexOf('kimi') >= 0) {
+      body.chat_template_kwargs = { thinking: false };
+    } else if (mNo.indexOf('gemma') >= 0 || mNo.indexOf('glm-5.1') >= 0) {
+      body.chat_template_kwargs = { enable_thinking: false };
+    } else {
+      delete body.chat_template_kwargs;
+    }
+  }
   try {
     var stream = await c.streamChatCompletions(body, { signal: opts.signal || undefined });
     // v0.27.1: stamp the thinking phase's END so the UI timer freezes at
@@ -1298,6 +1326,11 @@ async function roundTripOnce(c, opts, messages) {
       var ch = chunk || {};
       if (ch.choices && ch.choices.length) {
         var d = ch.choices[0].delta || {};
+        // v0.82.3: capture the round's finish_reason — 'length' means the
+        // output budget truncated the stream (a reasoning tail can burn
+        // it all); the empty-retry's fresh round resets the budget.
+        var fr = ch.choices[0].finish_reason;
+        if (fr) out.finish = fr;
         if (d.reasoning_content) {
           thinkOpen = true;
           thinkText = (thinkText + d.reasoning_content).slice(-2400);
