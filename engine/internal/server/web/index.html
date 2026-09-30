@@ -874,9 +874,22 @@
     min-height: 0;
     overflow: hidden;
     padding: 0 16px;
+    /* v0.81.7: collapsed accordion content leaves the tree entirely.
+       RED-TEAM FINDING (live, agent-browser): a collapsed section's
+       clipped buttons stayed in the ACCESSIBILITY tree — an a11y-ref
+       click on "manage" landed on the section div (visually hidden
+       target, zero feedback). visibility:hidden removes the clipped
+       content from the a11y tree AND from hit-testing while keeping
+       the grid-rows height animation: hidden→visible flips at transition
+       START (content shows through the whole expand), visible→hidden
+       flips at transition END (content stays painted through the whole
+       collapse). Theme-owned: no colors touched. */
+    visibility: hidden;
+    transition: visibility 0.28s cubic-bezier(0.2, 0.7, 0.3, 1);
   }
   .settings-section.expanded .section-inner {
     padding: 2px 16px 14px;
+    visibility: visible;
   }
   /* v0.25: rows STACK — label (+hint) on its own line, control BELOW it
      full-width. Nothing gets pushed off-screen; every control is

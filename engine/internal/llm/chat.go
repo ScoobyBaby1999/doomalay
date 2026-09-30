@@ -1147,7 +1147,8 @@ RULES:
 - One tool call per reply. The ACTION line must be the last line, plain text (no bold, no backticks, no code fence), and contain nothing but the call.
 - After every ACTION the system AUTOMATICALLY sends you an OBSERVATION (the tool's output) as a user message — you never wait for the user for this. Read it and IMMEDIATELY issue your next ACTION (up to 24 chained calls per turn).
 - NEVER say you cannot do something (search the web, make a file, calculate, check the time) — you CAN, with these tools. Try the tool first; only report failure after its OBSERVATION says so.
-- ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.`
+- ONLY when you have everything you need do you write your FINAL answer as a normal reply (no ACTION line). Never fabricate tool results.
+- Your FINAL answer must SAY the tool's results to the user — the number, the quote, the facts (v0.81.7, live red-team: a small model ended a turn with "The calculator returned to the user." and the user never saw 1081). Never just announce that a tool ran.`
 
 // webToolsProtocol describes the network tools. v0.44: ALWAYS part of the
 // protocol (the self-enable spec) — not just web-search turns; the model
