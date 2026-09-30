@@ -12,6 +12,7 @@ sync-hfzero:
 	@rsync -a --delete --copy-links \
 	        --exclude 'tests/' --exclude '__pycache__/' --exclude '.venv/' \
 	        --exclude '.chat-ws/' --exclude '*.pyc' --exclude '.pytest_cache/' \
+	        --exclude 'journal/' \
 	        brain/ engine/internal/hfzero/brain/
 	@echo "  $(shell find engine/internal/hfzero/brain -type f | wc -l) files"
 

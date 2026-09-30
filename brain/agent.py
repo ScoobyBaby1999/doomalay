@@ -281,23 +281,21 @@ async def _run_strands_agent(
             if litellm_base.endswith("/chat/completions"):
                 litellm_base = litellm_base[: -len("/chat/completions")]
             litellm_id = "openai/" + model
-        # v0.46 MODEL-AWARE TIMEOUT: the flat 60s killed reasoning-model
-        # turns from cloud egress (live redteam on the HF shared sandbox:
-        # glm-5.3-flash tool turns answered in ~40s from a fast network
-        # but exceeded 60s from HF Spaces' shared IPs — litellm then burned
-        # 2 retries × 60s and the turn LOOKED hung). Mirrors the engine's
-        # chat.go turn budget: slow reasoning models get a long leash
-        # (they think in minute-long gaps between tool rounds), everything
-        # else gets a comfortable 120s.
-        _SLOW_REASONING_MARKERS = (
-            "o1", "o3", "o4", "glm-5", "glm-4", "kimi-k2", "kimi-k3",
-            "deepseek-r", "deepseek-v", "qwq", "qwen3", "thinking", "reason",
-        )
-        _m = model.lower()
-        _is_slow = any(_m.find(s) >= 0 for s in _SLOW_REASONING_MARKERS)
+        # v0.80.1 NO-CAP MODEL CALLS (user directive: "remove any timer that
+        # canceles an output or reply — models should be able to keep going
+        # as long as they like"). History: v0.46 raised the flat 60s to
+        # 120s/900s (slow-reasoning split) after live HF-space redteams — but
+        # the shared space's egress still pays 2-6 min PER MODEL CALL, and any
+        # per-call cap eventually cancels a healthy completion. 86400s (one
+        # calendar day) on a SINGLE call = effectively no cap while keeping
+        # the numeric type litellm/httpx expect (None would also disable the
+        # CONNECT timeout — a black-holed host would hang forever with no
+        # signal; this way a dead host still fails fast at TCP level). The
+        # TURN itself has no watchdog any more — the engine's Stop button
+        # (abortTurn) is the only canceller.
         client_args = {
             "api_key": api_key,
-            "timeout": 900 if _is_slow else 120,
+            "timeout": 86400,
             "max_retries": 2,
         }
         if litellm_base:
@@ -367,16 +365,18 @@ async def _run_strands_agent(
         loop = asyncio.get_event_loop()
         fut = loop.run_in_executor(None, agent, messages[-1]["content"])
 
-        # v0.48 task 7 — the NO-STALL watchdog: every callback event
-        # (thinking delta, text delta, tool call/result) is ACTIVITY. A turn
-        # dies only when NOTHING happened for _IDLE_S (a truly dead agent — litellm
-        # dead-loop deadlock etc.) or at the _HARD_CAP_S ceiling. Long tool
-        # chains (sequential + parallel, hundreds of calls) keep resetting the
-        # idle clock and NEVER get killed.
-        _IDLE_S = 960          # > the 900s max LLM-call timeout (v0.46)
-        _HARD_CAP_S = 55 * 60  # absolute per-turn ceiling
+        # v0.80.1 — NO KILL WATCHDOG (user directive: "remove any timer that
+        # canceles an output or reply — models should be able to keep going
+        # as long as they like"). The old no-stall watchdog (960s idle /
+        # 55-min hard cap, v0.48) killed turns that were merely SLOW (the
+        # shared space pays 2-6 min PER MODEL CALL; a 30+ tool chain runs
+        # 10+ min legitimately). It is REMOVED: the pump runs until the
+        # agent's executor thread finishes — however long that takes. The
+        # Stop button (engine abortTurn → SSE disconnect) is the only
+        # canceller. The 25s heartbeat below stays: it keeps every hop
+        # (brain SSE → engine WS → PWA) alive during silent model calls and
+        # tells the user the turn is still moving.
         _turn_t0 = time.monotonic()
-        _last_ev = time.monotonic()
         # v0.76.6 THE HEARTBEAT (live-found on the HF-space rig): a model
         # call can sit SILENT for minutes (observed 2-6 min per call on the
         # shared community space) — the SSE stream carries no bytes, proxies
@@ -390,12 +390,11 @@ async def _run_strands_agent(
         _next_hb = time.monotonic() + _HB_S
 
         async def _pump():
-            nonlocal _last_ev, _next_hb
+            nonlocal _next_hb
             while True:
                 try:
                     ev = callback.q.get_nowait()
-                    _last_ev = time.monotonic()
-                    _next_hb = _last_ev + _HB_S  # real activity resets the beat
+                    _next_hb = time.monotonic() + _HB_S  # real activity resets the beat
                     yield ev
                 except _queue.Empty:
                     if fut.done():
@@ -408,16 +407,6 @@ async def _run_strands_agent(
                                 return
                     else:
                         _now = time.monotonic()
-                        if _now - _last_ev > _IDLE_S:
-                            yield {"type": "error", "error": "agent",
-                                   "message": f"turn stalled — no activity for {int(_now - _last_ev)}s"}
-                            yield {"type": "status", "state": "error", "usage": None}
-                            return
-                        if _now - _turn_t0 > _HARD_CAP_S:
-                            yield {"type": "error", "error": "agent",
-                                   "message": f"turn hard cap reached ({_HARD_CAP_S // 60} min)"}
-                            yield {"type": "status", "state": "error", "usage": None}
-                            return
                         if _now >= _next_hb:
                             _next_hb = _now + _HB_S
                             yield {"type": "progress",
@@ -684,7 +673,7 @@ def _run_subagent_inner(task: str, model: str, workspace: str,
         if litellm_base and litellm_base.endswith("/chat/completions"):
             litellm_base = litellm_base[: -len("/chat/completions")]
 
-        client_args = {"api_key": api_key, "timeout": 300, "max_retries": 1}  # v0.46: sub-agents get 5 min (was 60s — killed swarm fan-outs on slow egress)
+        client_args = {"api_key": api_key, "timeout": 86400, "max_retries": 1}  # v0.80.1: no-cap model calls (was 300s — sub-agents are model turns too; slow egress must not cancel them)
         if litellm_base:
             client_args["base_url"] = litellm_base
         # v0.43 cross-loop fix (see _run_strands_agent): the cached async
@@ -858,9 +847,12 @@ def _build_tools(workspace: str, web_search: bool,
         def shell(command: str) -> str:
             import subprocess
             try:
+                # v0.80.1: 30 min (was 5) — long builds/installs/data processing
+                # are legitimate model work; the old 300s cap cancelled real
+                # outputs. The guard stays only as a runaway-command brake.
                 result = subprocess.run(
                     command, shell=True, cwd=str(ws),
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=1800,
                     env=sandboxing.safe_subprocess_env(ws, _safe_env()),
                     preexec_fn=_preexec,
                 )
@@ -870,7 +862,7 @@ def _build_tools(workspace: str, web_search: bool,
                 output += f"\n[exit: {result.returncode}]"
                 return output
             except subprocess.TimeoutExpired:
-                return "[error: command timed out after 300s]"
+                return "[error: command timed out after 1800s]"
             except Exception as e:
                 return f"[error: {e}]"
 
@@ -881,7 +873,7 @@ def _build_tools(workspace: str, web_search: bool,
         # Same workspace + stripped env discipline as shell itself.
         @strands_tool(name="python_repl", description=(
             "Execute Python 3 code and return stdout + stderr. Runs in the "
-            "chat's workspace with a 300s cap. Prefer this over `python3 -c` "
+            "chat's workspace with a 30-min cap. Prefer this over `python3 -c` "
             "in the shell tool for anything non-trivial — write the code, "
             "get the output."))
         def python_repl(code: str) -> str:
@@ -904,9 +896,10 @@ def _build_tools(workspace: str, web_search: bool,
                 except Exception:
                     pass
                 try:
+                    # v0.80.1: 30 min (was 5) — long computations are legit work.
                     result = subprocess.run(
                         [sys.executable, p], cwd=str(ws), capture_output=True,
-                        text=True, timeout=300,
+                        text=True, timeout=1800,
                         env=sandboxing.safe_subprocess_env(ws, _safe_env()),
                         preexec_fn=_preexec)
                     output = result.stdout
@@ -950,8 +943,10 @@ def _build_tools(workspace: str, web_search: bool,
             else:
                 return f"unknown manager '{manager}' (pip | npm | apt)"
             try:
+                # v0.80.1: 60 min (was 10) — big installs (apt update + install,
+                # torch-class wheels) legitimately run long.
                 result = subprocess.run(cmd, cwd=str(ws), capture_output=True,
-                                        text=True, timeout=600,
+                                        text=True, timeout=3600,
                                         env=sandboxing.safe_subprocess_env(ws, _safe_env()),
                                         preexec_fn=_preexec)
                 output = result.stdout
@@ -963,7 +958,7 @@ def _build_tools(workspace: str, web_search: bool,
                     output = f"Exit code: {result.returncode}\n{output}"
                 return output[:50000]
             except subprocess.TimeoutExpired:
-                return f"[error: install timed out after 600s: {pkg}]"
+                return f"[error: install timed out after 3600s: {pkg}]"
             except FileNotFoundError:
                 return f"[error: manager not available in this sandbox ({m})]"
             except Exception as e:
@@ -973,7 +968,7 @@ def _build_tools(workspace: str, web_search: bool,
         @strands_tool(name="parallel", description=(
             "Run several bash commands CONCURRENTLY and return every result. "
             "Give ONLY independent commands (they run at the same time, up "
-            "to 8 concurrently, 300s each) — use this to fan out builds, "
+            "to 8 concurrently, 30 min each) — use this to fan out builds, "
             "tests, or fetches instead of chaining them one by one. "
             "Input: {commands: [string, ...]}."))
         def parallel(commands: list) -> str:
@@ -990,7 +985,7 @@ def _build_tools(workspace: str, web_search: bool,
                 try:
                     r = subprocess.run(cmd, shell=True, cwd=str(ws),
                                        capture_output=True, text=True,
-                                       timeout=300, env=env, preexec_fn=_preexec)
+                                       timeout=1800, env=env, preexec_fn=_preexec)
                     out = r.stdout
                     if r.stderr:
                         out = (out + "\n[stderr]\n" if out else "") + r.stderr
@@ -998,7 +993,7 @@ def _build_tools(workspace: str, web_search: bool,
                         out = "(no output)"
                     return (f"exit {r.returncode}" if r.returncode else "ok"), out[:12000]
                 except subprocess.TimeoutExpired:
-                    return "timeout", "[error: timed out after 300s]"
+                    return "timeout", "[error: timed out after 1800s]"
                 except Exception as e:
                     return "error", f"[error: {e}]"
 

@@ -98,8 +98,9 @@ var (
         // v0.76.6: "deepseek" (not just deepseek-r) — the v4.x line emits
         // reasoning_content on EVERY call (observed live: the raw API returns
         // "reasoning_content" even for "Say OK"), so deepseek-v4.1-flash is a
-        // reasoning model for budget/idle purposes; the 10-min direct-path
-        // budget was killing its tool chains mid-flight.
+        // reasoning model for wait-notice purposes; the old 10-min direct-path
+        // budget killed its tool chains mid-flight (v0.80.1: that budget —
+        // and every turn timer — is now gone).
         reasonKws = []string{"r1", "o1", "o3", "o4", "qwq", "nemotron", "reasoning", "thinking", "deepseek", "reasoner"}
 )
 

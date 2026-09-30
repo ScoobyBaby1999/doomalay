@@ -54,7 +54,8 @@ var probeSlowHTTP = &http.Client{
 // reasoning models regularly exceed 15s WALL-CLOCK (nemotron/kimi think for
 // a minute before the first token) — an overall Client.Timeout would abort
 // mid-stream. Here: no wall-clock cap; the per-turn context (Stop button,
-// WS disconnect, 10-min engine turn guard) is the ONLY deadline.
+// WS disconnect) is the ONLY deadline (v0.80.1: the turn budget is gone —
+// nothing else cancels a stream).
 var providerStreamHTTP = &http.Client{
         Timeout:   0,
         Transport: netx.Transport(),

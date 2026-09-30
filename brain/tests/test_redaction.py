@@ -102,7 +102,7 @@ check("key-shaped model id not reflected",
 check("/chat 400 model echo redacts",
       'detail=redact.redact(f"could not resolve model {model}' in src)
 check("/chat 401 key echo redacts",
-      'detail=redact.redact(f"no API key set for {env_var}' in src)
+      "detail=redact.redact(f\"no API key set for {' / '.join(_env_names)}" in src)
 check("/panel 500 exception redacts",
       'detail=redact.redact(str(e))' in src)
 check("/templates 404 echo redacts",

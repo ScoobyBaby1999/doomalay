@@ -162,7 +162,10 @@ func (s *Server) maybeCompact(ctx context.Context, pipe *chatPipe, sess *store.S
                 BaseURL:   baseURL,
                 AuthStyle: authStyle,
         }
-        sumCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+        // v0.80.1: 10 min (was 90s) — summarization is best-effort, but a
+        // queued provider (NVIDIA free tier: minutes before the first
+        // token) must not have its output cancelled by a timer.
+        sumCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
         defer cancel()
         summary, err := llm.CompleteSync(sumCtx, sumReq, nil)
         if err != nil || strings.TrimSpace(summary) == "" {
@@ -395,7 +398,10 @@ func (s *Server) RunDelegate(ctx context.Context, prompt string, modelSlots []st
                                 res.Err = err.Error()
                                 return
                         }
-                        dCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+                        // v0.80.1: 10 min (was 90s) — the delegate's answer
+                        // feeds the user-visible reply; a queued provider must
+                        // not be cut off by a timer.
+                        dCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
                         defer cancel()
                         req := llm.ChatRequest{
                                 Model:    llmModel,

@@ -1199,9 +1199,12 @@ class StrandsAdapter(BaseAdapter):
                     pass
         except Exception:
             extra_body = {}
-        # Add a timeout so LiteLLM doesn't hang forever on an unresponsive
-        # provider. 60s is generous for reasoning models but bounded.
-        client_args["timeout"] = 60
+        # v0.80.1 NO-CAP MODEL CALLS (user directive: "remove any timer that
+        # canceles an output or reply"): the old 60s flat timeout cancelled
+        # healthy completions on slow egress (2-6 min per call from HF shared
+        # IPs). 86400s on a SINGLE call = effectively no cap (litellm/httpx
+        # want a number; None would also kill the CONNECT timeout).
+        client_args["timeout"] = 86400
         # Retry on 429 (rate limit) and 5xx errors — LitellM handles this
         # natively via num_retries with exponential backoff.
         client_args["num_retries"] = 3
@@ -1854,21 +1857,19 @@ class StrandsAdapter(BaseAdapter):
             self.agent.callback_handler = _stream_callback
         except Exception:
             pass
-        # Run the agent call with a thread + the v0.48 NO-STALL WATCHDOG.
-        # The GIL means we can't hard-kill a blocking C extension call, but
-        # we CAN watch for ACTIVITY and only give up on a turn that is truly
-        # idle. The old flat 240s cap (v0.43) is dead: a legitimate chain of
-        # MANY tools — sequential + parallel, hundreds of calls, long
-        # installs — stays alive as long as it keeps producing streaming
-        # deltas, thinking chunks, or tool hook events (each touch resets
-        # self._activity). Only two things end a turn early:
-        #   * idle past _IDLE_TIMEOUT_S (nothing at all happened — dead),
-        #   * the _HARD_CAP_S absolute ceiling (runaway loop protection).
+        # Run the agent call with a thread + the v0.48 pump. v0.80.1: the
+        # NO-STALL WATCHDOG KILLS ARE REMOVED (user directive: "remove any
+        # timer that canceles an output or reply — models should be able to
+        # keep going as long as they like"). The old 300s idle / 55-min
+        # hard cap ended turns that were merely SLOW (a legit chain of MANY
+        # tools — sequential + parallel, hundreds of calls, long installs —
+        # keeps producing streaming deltas, thinking chunks, and tool hook
+        # events for as long as it takes). Now the ONLY things that end the
+        # wait are: the agent thread finishing, an exception, or the user's
+        # Stop button (the engine's abortTurn tears the SSE down).
         import threading as _threading
         _agent_error: list = []
         _agent_done = {"done": False}
-        _IDLE_TIMEOUT_S = 300     # 5 min with ZERO activity -> stalled
-        _HARD_CAP_S = 55 * 60     # absolute per-turn ceiling
 
         def _run_agent():
             _sess = getattr(self, "_session", None)
@@ -1890,29 +1891,16 @@ class StrandsAdapter(BaseAdapter):
         _sid = getattr(_sess, "id", "?") if _sess else "?"
         _t = _threading.Thread(target=_run_agent, daemon=True)
         _t.start()
-        _turn_started = time.time()
-        while True:
+        # v0.80.1: plain join — NO idle kill, NO hard cap. The 2s polling
+        # cadence is kept only so a future activity read (notices) has a
+        # place to live; nothing here ends the turn early.
+        while _t.is_alive():
             _t.join(timeout=2.0)
-            if not _t.is_alive():
-                break
-            _now = time.time()
-            _idle = _now - float(self._activity.get("t", _turn_started))
-            if _idle > _IDLE_TIMEOUT_S:
-                log_event("agent_call_idle_timeout", session_id=_sid,
-                          idle_s=int(_idle), hard=False)
-                emit({"type": "error",
-                      "error": f"turn stalled — no activity for {int(_idle)}s"})
-                break
-            if _now - _turn_started > _HARD_CAP_S:
-                log_event("agent_call_hard_cap", session_id=_sid,
-                          cap_s=_HARD_CAP_S, idle_s=int(_idle))
-                emit({"type": "error",
-                      "error": f"turn hard cap reached ({_HARD_CAP_S // 60} min) — continuing with what we have"})
-                break
         if not _agent_done["done"]:
-            # The watchdog (or an exception) ended the turn early — the
-            # messages produced so far are processed below (best-effort);
-            # the daemon thread keeps running but never blocks the user.
+            # Only reachable via an exception in _run_agent (the watchdog
+            # kills are gone) — the daemon thread keeps running but never
+            # blocks the user; the messages produced so far are processed
+            # below (best-effort).
             log_event("agent_call_ended_early", session_id=_sid,
                       done=_agent_done["done"], has_error=bool(_agent_error))
         if _agent_error:

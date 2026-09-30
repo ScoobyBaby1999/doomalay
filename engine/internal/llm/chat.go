@@ -284,14 +284,17 @@ func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk,
 // NOTHING for 10 minutes: the turn lock held, the UI sat on "Stop", no
 // error, no terminal status. Reasoning models can think long before the
 // FIRST token, but once bytes flow the stream is alive — this watchdog
-// only kills true silence.
+// only killed true silence.
 //
-// v0.24: the timeout is now MODEL-AWARE (idleWaitFor): reasoning models
-// (kimi-k3 observed live: 5+ minutes of server-side thinking with ZERO
-// bytes) get 240s before the kill; everyone else keeps 90s. While the
-// stream is still silent, waitNotices() keeps the UI informed instead of
-// the old dead "thinking…" — the user sees "waiting for kimi-k3 · 60s…"
-// and knows it's the provider, not the app.
+// v0.80.1 THE KILL IS DISABLED (user directive: "remove any timer that
+// canceles an output or reply"): idleWaitFor now returns 0 and a zero
+// timeout never arms the timer — a silent-but-thinking stream (observed:
+// kimi-k3, 5+ min of server-side thinking with zero bytes; NVIDIA's free
+// queue, minutes before the first token) lives as long as it needs to.
+// The reader itself stays: waitNotices() still uses silentFor()/gotData
+// to keep the user informed ("waiting for kimi-k3 · 60s…"), and any
+// caller that passes a positive timeout still gets the old kill. The
+// user's Stop button is the escape hatch for a truly dead connection.
 type idleTimeoutReader struct {
         rc        io.ReadCloser
         timeout   time.Duration
@@ -304,20 +307,22 @@ type idleTimeoutReader struct {
 
 func newIdleTimeoutReader(rc io.ReadCloser, d time.Duration) *idleTimeoutReader {
         r := &idleTimeoutReader{rc: rc, timeout: d, stopped: make(chan struct{})}
-        r.timer = time.AfterFunc(d, func() {
-                select {
-                case <-r.stopped:
-                default:
-                        r.timedOut.Store(true)
-                        rc.Close()
-                }
-        })
+        if d > 0 { // v0.80.1: d <= 0 means the watchdog is DISABLED (no kill timer)
+                r.timer = time.AfterFunc(d, func() {
+                        select {
+                        case <-r.stopped:
+                        default:
+                                r.timedOut.Store(true)
+                                rc.Close()
+                        }
+                })
+        }
         return r
 }
 
 func (r *idleTimeoutReader) Read(p []byte) (int, error) {
         n, err := r.rc.Read(p)
-        if n > 0 {
+        if n > 0 && r.timer != nil {
                 // v0.24 NOTE: raw bytes reset the KILL timer (the connection is
                 // alive — SSE keepalive comments count), but NOT gotData: that flag
                 // means "a real reasoning/content delta reached the user" and is set
@@ -331,7 +336,9 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 
 func (r *idleTimeoutReader) Close() error {
         close(r.stopped)
-        r.timer.Stop()
+        if r.timer != nil {
+                r.timer.Stop()
+        }
         return r.rc.Close()
 }
 
@@ -349,23 +356,22 @@ func (r *idleTimeoutReader) silentFor() time.Duration {
         return time.Since(time.UnixMilli(last))
 }
 
-// idleWaitFor returns the no-data watchdog for a model. v0.24: reasoning
-// models think server-side for MINUTES before the first byte (observed
-// live: nvidia kimi-k3, 5+ min) — the old flat 90s killed those turns
-// mid-action ("its response interrupted mid action", user report). They
-// now get 240s; regular models keep 90s.
+// idleWaitFor returns the no-data watchdog for a model. v0.24 made it
+// MODEL-AWARE (reasoning models think server-side for MINUTES before the
+// first byte — observed live: nvidia kimi-k3, 5+ min) after the old flat
+// 90s killed turns mid-action. v0.80.1: it returns 0 — the kill is
+// DISABLED per the user directive ("remove any timer that canceles an
+// output or reply"): a silent stream is a LIVE stream as far as anyone
+// knows, waitNotices keeps the user informed, and Stop is the canceller.
+// The model-aware shape stays for documentation + any future opt-in.
 func idleWaitFor(model string) time.Duration {
-        m := strings.ToLower(model)
-        if matchesAny(m, reasonKws) || strings.Contains(m, "kimi") ||
-                strings.Contains(m, "gpt-oss") || strings.Contains(m, "glm") {
-                return 240 * time.Second
-        }
-        return 90 * time.Second
+        return 0
 }
 
 // IsSlowReasoningModel reports whether a model is known to take multi-minute
-// turns (server-side thinking between tool rounds) and deserves a longer
-// turn budget + idle watchdog. Exported for the server's turn timeout.
+// turns (server-side thinking between tool rounds). v0.80.1: no longer drives
+// any timeout — the turn budget is gone and the idle kill is disabled; kept
+// as the shared classification helper (UI hints, analytics).
 func IsSlowReasoningModel(model string) bool {
         m := strings.ToLower(model)
         return matchesAny(m, reasonKws) || strings.Contains(m, "kimi") ||
@@ -844,12 +850,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // request survives).
         RecordProviderSuccess(req.Provider)
 
-        // v0.19: no-data watchdog — v0.24: MODEL-AWARE (idleWaitFor: reasoning
-        // models get 240s — observed live: kimi-k3 thinks 5+ min server-side
-        // with zero bytes; the flat 90s killed those turns mid-action). While
-        // the stream stays silent, waitNotices keeps the UI informed
-        // ("waiting for kimi-k3 · 60s…") instead of a dead "thinking…".
-        // The 10-min turn timeout stays as the hard backstop.
+        // v0.19: no-data watchdog — v0.80.1: DISARMED. idleWaitFor returns 0
+        // (no kill timer is armed — the user directive: no timer may cancel
+        // an output). The reader still tracks silentFor()/lastDelta so
+        // waitNotices keeps the UI informed ("waiting for kimi-k3 · 60s…")
+        // for as long as the provider needs; Stop is the canceller.
         wd := newIdleTimeoutReader(resp.Body, idleWaitFor(req.Model))
         wd.startMS.Store(time.Now().UnixMilli())
         wd.lastDelta.Store(0)
@@ -1267,9 +1272,11 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         var totalUsage *Usage // v0.21: accumulate across rounds for cost tracking
         nudged := false       // v0.24: the auto-proceed push fired (max once/turn)
         toolsRun := 0         // v0.24: tools executed so far this turn
-        // v0.20: 16 rounds — the local tool chain can legitimately run
-        // 10+ tools deep (each round is one tool use).
-        for round := 0; round < 16; round++ {
+        // v0.80.1: 64 rounds (was 16) — the user directive says models keep
+        // going as long as they like; a 30+ tool chain (live-proven on the
+        // brain path) must also fit on the direct ReAct path. The cap stays
+        // as a runaway-loop guard (token burn), not a wall clock.
+        for round := 0; round < 64; round++ {
                 roundReq.Messages = history
                 // v0.19: STREAMED rounds — thinking deltas stream live during
                 // every round ("tool use streams like thinking does"), and the

@@ -478,12 +478,14 @@ def test_run_swarm_per_task_model_and_clamps():
         models = {c["task"]: c["model"] for c in calls}
         assert models["special"] == "m-over"    # per-task model wins
         assert models["plain"] == ""            # empty → spawn default
-        # knobs clamped: 99→8 workers, 999s→240s (spec caps)
-        assert all(c["timeout"] == TIME_CAP for c in calls)
+        # knobs: 99→MAX_PAR workers; 999s per-agent stays UNCLAMPED now
+        # (v0.80.1 raised the cap 900→3600 — no timer may cancel an output;
+        # only values past the 3600 runaway guard clamp)
+        assert all(c["timeout"] == 999 for c in calls)
         st = dt_swarm.load_state(
             next(Path(ctx.tool_state("swarm")).glob("sw-*.json")))
         assert st["max_parallel"] == MAX_PAR
-        assert st["timeout_per_agent"] == TIME_CAP
+        assert st["timeout_per_agent"] == 999
     finally:
         d.cleanup()
 

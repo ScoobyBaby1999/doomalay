@@ -358,7 +358,10 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 
         var allSources []SearchResult
         var totalUsage *Usage
-        const maxRounds = 16
+        // v0.80.1: 64 rounds (was 16) — models keep going as long as they
+        // like (30+ tool chains must fit; each round may also carry SEVERAL
+        // parallel calls). The cap is a runaway-loop guard, not a clock.
+        const maxRounds = 64
 
         for round := 0; round < maxRounds; round++ {
                 roundReq := req

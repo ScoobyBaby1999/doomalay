@@ -80,7 +80,11 @@ SLOW_TIMEOUT = 30.0  # browse/detail/download fan out over HF repos
 # given up → "unexpected engine response" and the model believed the download
 # failed). One call class, one budget: the collection download gets 6 min —
 # the heartbeat keeps the stream alive while it waits.
-COLLECTION_TIMEOUT = 360.0
+# v0.80.1: 15 min per-gap (was 6) — the SSE read budget applies BETWEEN
+# progress events, and the engine streams a progress event per item; a
+# slow-egress GitHub fetch must not cancel a download mid-flight (the
+# user directive: no timer may cancel an output).
+COLLECTION_TIMEOUT = 900.0
 
 BOX_LABEL_SWITCH = "✦ tweaks → Bot Library"
 DL_BOX_LABEL_SWITCH = "✦ tweaks → Bot Library → Can download bundles"

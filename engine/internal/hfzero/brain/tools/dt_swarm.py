@@ -57,10 +57,13 @@ TOOL_NAMES = ["swarm"]
 DEFAULT_MAX_PARALLEL = 12
 MAX_PARALLEL_CAP = _env_int("DOOMALAY_SWARM_MAX_PARALLEL", 64)  # 0 = unbounded
 # Per-agent wall budget: spawn_subagent's own default was 150s; deep tasks
-# (repo exploration, multi-file builds) legitimately run minutes. The 10s
-# floor mirrors spawn_subagent's own clamp.
-DEFAULT_TIMEOUT_SECS = 300
-TIMEOUT_CAP_SECS = _env_int("DOOMALAY_SWARM_TIMEOUT_CAP", 900)
+# (repo exploration, multi-file builds) legitimately run minutes. v0.80.1
+# (user directive: no timer may cancel an output — sub-agents are model
+# turns): default 900s, env-tunable cap 3600s. Sub-agent model calls
+# themselves are now no-cap (agent.py client timeout 86400), so these are
+# generous runaway guards, not throughput caps.
+DEFAULT_TIMEOUT_SECS = 900
+TIMEOUT_CAP_SECS = _env_int("DOOMALAY_SWARM_TIMEOUT_CAP", 3600)
 TIMEOUT_FLOOR_SECS = 10
 
 PREVIEW_CHARS = 120      # ctx.log preview per completion (spec)
@@ -446,7 +449,7 @@ HELP_TEXT = (
     "  run     tasks=JSON array of strings or {\"task\", \"model\"} objects "
     "(plain multi-line text also works: one task per non-empty line);\n"
     "          max_parallel=12 (env DOOMALAY_SWARM_MAX_PARALLEL, default 64, "
-    "0 = unbounded — one worker per task), timeout_per_agent=300 (cap 900), "
+    "0 = unbounded — one worker per task), timeout_per_agent=900 (cap 3600), "
     "model=\"\" = default model for agents without their own.\n"
     "          Blocks until every agent finishes; returns a merged report "
     "(per-agent text trimmed, full text in state).\n"

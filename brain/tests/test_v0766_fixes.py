@@ -116,12 +116,11 @@ def test_pump_heartbeat_fires_on_silence():
 
     cb = types.SimpleNamespace(q=_q.Queue())
     # Simulate: silence for ~1.3s with _HB_S patched to 25ms
+    # (v0.80.1: the idle/hard-cap kills are REMOVED — the pump only
+    # heartbeats now; these constants mirror the new contract.)
     src = (
         "import time\n"
-        "_IDLE_S = 960\n"
-        "_HARD_CAP_S = 55*60\n"
         "_turn_t0 = time.monotonic()\n"
-        "_last_ev = time.monotonic()\n"
         "_HB_S = 0.025\n"
         "_next_hb = time.monotonic() + _HB_S\n"
         "fut = _FUT()\n"
@@ -168,7 +167,7 @@ def test_heartbeat_constant_in_source():
     """The heartbeat cadence + reset live in the shipped pump source."""
     src = open(HERE / "agent.py").read()
     assert "_HB_S = 25" in src
-    assert "_next_hb = _last_ev + _HB_S" in src          # activity resets
+    assert "_next_hb = time.monotonic() + _HB_S" in src  # activity resets (v0.80.1: _last_ev tracker retired with the idle kill)
     assert '"type": "progress"' in src or '"type":"progress"' in src
 
 

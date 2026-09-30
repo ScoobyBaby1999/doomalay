@@ -775,9 +775,10 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
 
 // handleTurn runs one chat turn: acquire lock → call brain → persist + forward events → release lock.
 // v0.39: the turn is NOT tied to the sending socket's lifetime — it derives
-// from context.Background() + the turn budget. The Stop button (abortTurn)
-// and the budget remain the only cancellation paths; a WS drop just clears
-// the pipe while the turn keeps persisting (a resumed client picks it up).
+// from context.Background(). v0.80.1: NO turn budget — the Stop button
+// (abortTurn) and the stream's own end are the only cancellation paths; a
+// WS drop just clears the pipe while the turn keeps persisting (a resumed
+// client picks it up).
 func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
         // v0.15 (crash fix): this runs in its own goroutine — a panic here
         // would take the whole engine down (dead app, white screen). The
@@ -1009,37 +1010,21 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         }
 
         // Stream from the brain, OR the direct LLM proxy if brain is down.
-        // v0.16: the streaming client has no wall-clock cap (reasoning models
-        // think for minutes) — this per-turn timeout is the backstop that
-        // guarantees the turn lock is always released.
-        // v0.24: MODEL-AWARE — observed live, nvidia kimi-k3 needs >10 min for a
-        // tool-demonstration turn (2.5-min thinking gaps per round × many
-        // rounds): the flat 10-min cap killed those turns mid-chain ("its
-        // response interrupted mid action", user report). Reasoning models get
-        // 20 min; the Stop button cancels instantly (a WS drop does NOT —
-        // v0.39: the turn survives its socket and a resume picks it up).
-        turnBudget := 10 * time.Minute
-        if llm.IsSlowReasoningModel(sess.Model) {
-                turnBudget = 20 * time.Minute
-        }
-        // v0.76.6 BRAIN-MEDIATED BUDGET (live-found on BOTH paths): a turn
-        // that runs through a brain (the local desktop brain OR a remote
-        // HF-space sandbox) pays the agent-loop wall clock — one model
-        // round-trip PER TOOL CALL with the composed system prompt
-        // (observed locally: ~54s/round → a 32-step chain died at exactly
-        // the 600s cap mid-chain with no final answer; observed on the
-        // shared community space: 2-6 min PER MODEL CALL). The brain's own
-        // watchdog (960s idle / 55-min hard cap) is the real deadline
-        // authority — brain-mediated turns get a 45-min floor here. The
-        // direct pipeline keeps the 10/20-min shape.
-        brainMediated := (sess.Sandbox == "hf" && s.remoteBrainFor(sess) != nil) ||
-                (sess.Sandbox != "hf" && s.brain != nil && s.brain.Healthy())
-        if brainMediated && turnBudget < 45*time.Minute {
-                turnBudget = 45 * time.Minute
-        }
-        // v0.39: Background (NOT the WS request ctx) — the turn survives its
-        // socket. Stop (abortTurn) + this budget are the only cancellers.
-        turnCtx, turnCancel := context.WithTimeout(context.Background(), turnBudget)
+        // v0.80.1 NO TURN BUDGET (user directive: "remove any timer that
+        // canceles an output or reply — models should be able to keep going
+        // as long as they like"). History: v0.16 added a 10-min backstop to
+        // guarantee the turn lock always releases; v0.24 made it 20-min for
+        // reasoning models; v0.76.6 raised brain-mediated turns to a 45-min
+        // floor — and every one of those caps still killed HEALTHY turns
+        // live (a 32-step tool chain died at exactly 600s mid-chain; the
+        // shared-space path pays 2-6 min PER MODEL CALL). The deadline is
+        // now GONE. Exactly two things cancel a turn: the Stop button
+        // (abortTurn) and the stream's own natural end. A hung provider
+        // connection is VISIBLE (the wait-notices keep counting "waiting
+        // for kimi-k3 · Ns…") and Stop kills it instantly; the turn lock
+        // is released when the stream goroutine returns and the deferred
+        // terminal-status emit below guarantees the UI always unblocks.
+        turnCtx, turnCancel := context.WithCancel(context.Background())
         tcHandle := registerTurnCancel(sessionID, turnCancel)
         terminal := false // did the stream end with a status idle/error?
         defer func() {
@@ -1698,7 +1683,8 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 // surfaces the aborted request as error chunks ("context canceled",
                 // plus the empty-response retry noise that follows) — skip those so
                 // stopping/switching doesn't spray error bubbles into the chat. A
-                // DEADLINE (turn budget) keeps its honest errors.
+                // v0.80.1: with the turn budget gone, Canceled can only mean the
+                // Stop button — keep the honest errors for real stream errors.
                 if evType == "error" && ctx.Err() == context.Canceled {
                         continue
                 }
