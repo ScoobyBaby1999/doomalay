@@ -1774,6 +1774,9 @@
     currentFamily = family;
     delete iconPickers[family];
     for (const bot of world.entities) {
+      // v0.85.3: only chat icons carry a family (web tabs + future types
+      // keep their own icon systems — setFamily is the chat picker's).
+      if (bot.type !== 'chat' || typeof bot.setFamily !== 'function') continue;
       const iconIndex = getIconPicker(family).pick(usedIconIndices(family));
       bot.setFamily(family, iconIndex);
     }
@@ -1785,6 +1788,30 @@
     getFamily: () => currentFamily,
     getConfig: () => config,
     scheduleSave,
+    world: world,
+    // v0.85.3: the web-tab entity paths (webtab.js's WebTabs controller
+    // calls back into these — the app owns world/iconLayer/save).
+    addEntity: function (icon) {
+      if (!icon) return;
+      world.add(icon);
+      iconLayer.appendChild(icon.el);
+      icon.render(offsetX, offsetY, scale);
+      hideCanvasEmpty();
+      scheduleSave();
+    },
+    createWebTabAtCenterAndOpen: function (opts) {
+      opts = opts || {};
+      const center = screenToWorld(W / 2, H / 2);
+      const icon = WebTabs.createAt(center.x, center.y, opts);
+      if (!icon) return null;
+      icon.vx = (Math.random() - 0.5) * 6;
+      icon.vy = (Math.random() - 0.5) * 6;
+      startAnimation();
+      // the exact tap-to-open sequence the canvas icon itself uses
+      icon.flash();
+      setTimeout(function () { openWebPanelFor(icon); }, 150);
+      return icon;
+    },
     // v0.41: global-search jump — open a chat by engine session id
     // (materializing an icon if the grid has none) + optional jump to a
     // specific engine event (scrollIntoView + find-hit pulse).
@@ -2098,6 +2125,21 @@
       icon.vx = (Math.random() - 0.5) * 6;
       icon.vy = (Math.random() - 0.5) * 6;
       startAnimation();
+    } else if (btn.dataset.action === 'new-tab') {
+      // v0.85.3: NEW TAB (user spec: "new tab creates a browser in
+      // browser panel, that saves the current website address it holds
+      // and scroll position within that website, ext..") — creates the
+      // web entity at the press point (create-only, the New Bot
+      // convention) + opens its panel so the address is one tap away.
+      const r = menuEl.getBoundingClientRect();
+      const wp = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+      const icon = window.WebTabs.createAt(wp.x, wp.y);
+      if (icon) {
+        icon.vx = (Math.random() - 0.5) * 6;
+        icon.vy = (Math.random() - 0.5) * 6;
+        startAnimation();
+        setTimeout(function () { openWebPanelFor(icon); }, 150);
+      }
     }
     hideMenu();
   });
@@ -2226,8 +2268,9 @@
           if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
           // v0.34: the ★ quick-switch reset is gone with the button itself.
           // v0.14: the chat UI is full-bleed (its own padding); other panel
-          // types keep the default 20px from the stylesheet.
-          panel.bodyEl.style.padding = icon.type === 'chat' ? '0' : '';
+          // types keep the default 20px from the stylesheet. v0.85.3: the
+          // browser tab view is full-bleed too (its own chrome).
+          panel.bodyEl.style.padding = (icon.type === 'chat' || icon.type === 'web') ? '0' : '';
           panel.open({
             title: icon.getPanelTitle(),
             subtitle: icon.getPanelSubtitle(),
@@ -2237,8 +2280,13 @@
           });
           // If the icon is a ChatIcon, render the interactive chat panel
           // into the panel body (replaces the static placeholder HTML).
+          // v0.85.3: a WebIcon renders the browser-in-browser panel
+          // (webpanel.js) — "each tab has its own icon and acts kind of
+          // like its own chatbot".
           if (icon.type === 'chat' && window.ChatPanel) {
             window.ChatPanel.render(panel.bodyEl, icon, panel);
+          } else if (icon.type === 'web' && window.WebPanel) {
+            window.WebPanel.render(panel.bodyEl, icon, panel);
           }
         }, 150);
       }
@@ -2452,6 +2500,26 @@
   // hub) and window.doomalay.openChatBySession (global search jumps).
   // Opens a chat panel exactly the way a chatbot tap does — so a
   // canvas-side view has the master panel to ride on.
+  // v0.85.3: openWebPanelFor — the web-tab twin of openChatPanelFor:
+  // opens the master panel with the tab's header (host + url + the
+  // favicon/gradient avatar) and hands the body to WebPanel (the
+  // browser-in-browser view — webpanel.js).
+  function openWebPanelFor(icon) {
+    var modelBtn = document.getElementById('panel-model-btn');
+    if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+    panel.bodyEl.style.padding = '0';   // the browser view is full-bleed
+    panel.open({
+      title: icon.getPanelTitle(),
+      subtitle: icon.getPanelSubtitle(),
+      avatarHTML: icon.getAvatarHTML(),
+      bodyHTML: icon.getPanelBodyHTML(),
+      context: icon
+    });
+    if (window.WebPanel) {
+      window.WebPanel.render(panel.bodyEl, icon, panel);
+    }
+  }
+
   function openChatPanelFor(icon) {
     // v0.14: reset per-open header state — the far-left model button
     // is hidden until ChatPanel shows it (chat icons with a model).

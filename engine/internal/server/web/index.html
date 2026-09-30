@@ -971,6 +971,244 @@
     pointer-events: auto;
   }
 
+  /* ── v0.85.3: THE WEB-TAB PANEL (webpanel.js) — theme vars only ──
+     The browser-in-browser view: an omnibox bar, the frame (iframe by
+     the engine's frameable verdict / the honest card), and the side
+     panel (favicon toggle + the GradientUI disc editor). Full-bleed in
+     the master panel's body (padding 0 — the same contract the chat
+     view rides). */
+  .wt-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--bg-panel);
+  }
+  .wt-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--surface-3);
+    background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+  }
+  .wt-omni {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 17px;
+    border: 1px solid var(--surface-3);
+    background: var(--surface-2);
+    color: var(--text-1);
+    font-size: calc(var(--ui-small-fs) + 1px);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .wt-omni:focus { border-color: rgba(var(--accent-rgb), 0.55); }
+  .wt-go, .wt-ext {
+    flex-shrink: 0;
+    width: 34px; height: 34px;
+    border-radius: 17px;
+    border: 1px solid var(--surface-3);
+    background: var(--surface-2);
+    color: var(--text-3);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .wt-go svg, .wt-ext svg { width: 16px; height: 16px; }
+  .wt-go:active, .wt-ext:active { transform: scale(0.94); }
+  @media (hover: hover) {
+    .wt-go:hover, .wt-ext:hover {
+      background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+      color: var(--accent);
+      border-color: rgba(var(--accent-rgb), 0.4);
+    }
+  }
+  .wt-frame {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    background: var(--bg-app);
+  }
+  .wt-iframe {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #fff;
+  }
+  .wt-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    background: var(--bg-app);
+  }
+  .wt-loading span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    animation: wt-pulse 0.9s ease-in-out infinite;
+  }
+  .wt-loading span:nth-child(2) { animation-delay: 0.12s; }
+  .wt-loading span:nth-child(3) { animation-delay: 0.24s; }
+  @keyframes wt-pulse {
+    0%, 100% { opacity: 0.18; transform: scale(0.82); }
+    45%      { opacity: 1;   transform: scale(1.12); }
+  }
+  /* the honest card (frame-refusers) — same family as the link card */
+  .wt-card {
+    margin: auto;
+    max-width: 340px;
+    width: calc(100% - 40px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 20px;
+    border-radius: 16px;
+    background: var(--surface-1);
+    border: 1px solid var(--surface-3);
+    text-align: center;
+  }
+  .wt-card-fav { width: 40px; height: 40px; border-radius: 10px; }
+  .wt-card-title {
+    font-size: calc(var(--ui-fs) + 2px);
+    font-weight: 700;
+    color: var(--text-1);
+    word-break: break-word;
+  }
+  .wt-card-url { font-size: var(--ui-small-fs); color: var(--text-3); }
+  .wt-card-desc {
+    font-size: var(--ui-small-fs);
+    color: var(--text-2);
+    line-height: 1.5;
+    max-height: 90px;
+    overflow: hidden;
+  }
+  .wt-card-img {
+    width: 100%;
+    max-height: 140px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid var(--surface-3);
+  }
+  .wt-card-why {
+    font-size: calc(var(--ui-small-fs) - 2px);
+    color: var(--text-3);
+    line-height: 1.4;
+  }
+  .wt-card-row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; justify-content: center; }
+  .wt-card-btn {
+    padding: 8px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--accent);
+    font-size: var(--ui-small-fs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .wt-card-btn:active { transform: scale(0.96); }
+  /* the APK "docked" state (the native sheet owns the browse) */
+  .wt-docked {
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 24px;
+    max-width: 300px;
+    text-align: center;
+  }
+  .wt-dock-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 18px;
+    background: var(--surface-2);
+    border: 1px solid var(--surface-3);
+    color: var(--text-2);
+    font-size: var(--ui-small-fs);
+    font-weight: 600;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wt-dock-pill svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .wt-dock-note {
+    font-size: var(--ui-small-fs);
+    color: var(--text-3);
+    line-height: 1.55;
+  }
+  /* the side panel: icon mode + the gradient editor */
+  .wt-side {
+    border-top: 1px solid var(--surface-3);
+    padding: 10px 12px 14px;
+    background: color-mix(in srgb, var(--surface-1) 92%, transparent);
+    max-height: 44%;
+    overflow-y: auto;
+  }
+  .wt-side-h {
+    font-size: var(--ui-small-fs);
+    font-weight: 700;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .wt-side-row { display: flex; gap: 6px; margin-bottom: 10px; }
+  .wt-chip {
+    padding: 6px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--surface-3);
+    background: transparent;
+    color: var(--text-3);
+    font-size: calc(var(--ui-small-fs) - 1px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .wt-chip.on {
+    border-color: rgba(var(--accent-rgb), 0.5);
+    background: rgba(var(--accent-rgb), 0.1);
+    color: var(--accent);
+  }
+  .wt-side-note {
+    font-size: calc(var(--ui-small-fs) - 2px);
+    color: var(--text-3);
+    line-height: 1.45;
+    margin-top: 8px;
+  }
+  /* the canvas disc's globe glyph (the gradient placeholder) */
+  .chatbot .icon .wt-glyph {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%; height: 100%;
+  }
+  .chatbot .icon .wt-glyph svg {
+    width: 26px; height: 26px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));
+  }
+  /* the panel-header avatar twin (the gradient disc) */
+  .wt-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    color: var(--text-1);
+  }
+  .wt-avatar svg { width: 22px; height: 22px; }
+  .wt-loading-text { color: var(--text-3); }
+
   /* Chatbot tap-flash animation — quick scale pulse when tapped. */
   .chatbot.tapped .icon {
     animation: tap-pulse 0.2s ease-out;
@@ -4972,8 +5210,15 @@
      it is pure paint, never interaction. -->
 <canvas id="c2" style="position:fixed;top:0;left:0;touch-action:none;pointer-events:none;z-index:150"></canvas>
 <div id="chatbots"></div>
+<!-- v0.85.3: the long-press canvas menu (user spec: "holding down the
+     canvas should yield two options, new chat (rename it to new bot) and
+     new tab. New bot creates a chat panel, new tab creates a browser in
+     browser panel") — NEW BOT (the renamed create-chat action, still
+     create-only at the exact press point) + NEW TAB (creates the web
+     entity + opens its browser-in-browser panel). -->
 <div id="menu" class="hidden">
-  <button data-action="new-chat">＋ New Chat</button>
+  <button data-action="new-chat">＋ New Bot</button>
+  <button data-action="new-tab">⧉ New Tab</button>
 </div>
 <button id="settings-btn" aria-label="Settings">
   <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
@@ -5163,6 +5408,14 @@
      its chat icon on tilted electron shells (behind + above the disc);
      paints on the over-icons canvas #c2, stateless per frame. -->
 <script src="atoms.js"></script>
+<!-- v0.85.3: THE MULTI-TAB BROWSER — a browser TAB is a canvas entity
+     (webtab.js: WebIcon 'web' — the draggable, persisted icon that acts
+     like its own chatbot) and its panel view (webpanel.js: the
+     browser-in-browser — omnibox + the frameable-verdict iframe / honest
+     card + the gradient icon editor; the native sheet owns the browse
+     on BIB-capable APKs). -->
+<script src="webtab.js"></script>
+<script src="webpanel.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
 </body>
