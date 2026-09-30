@@ -301,11 +301,21 @@
     touch-action: none;      /* icon drags are hand-tracked via the
                                 document touch handlers (not in
                                 isInsideUI → preventDefault applies) */
+    /* v0.85.1 THE ICON-LAYER BUDGET: containment keeps each icon's
+       layout/style fallout inside its own box (NO paint containment —
+       children may intentionally cross the border, e.g. the persona
+       ring's 70px band on a 56px disc). */
+    contain: layout style;
   }
   .chatbot.dragging {
     cursor: grabbing;
     z-index: 200;  /* dragged bot always on top */
   }
+  /* v0.85.1: past 40 icons the standing will-change layer per icon
+     costs more than the rare re-promotion on drag — OFF for the crowd,
+     back for the ONE dragged icon. */
+  #chatbots.many-icons .chatbot { will-change: auto; }
+  #chatbots.many-icons .chatbot.dragging { will-change: transform; }
   .chatbot .icon {
     width: 56px; height: 56px;
     border-radius: 50%;
@@ -387,6 +397,30 @@
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 7px));
     mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 7px));
   }
+
+  /* ── v0.85.1 THE PERF HUD CHIP ─────────────────────────────────
+     The honest instrument's always-visible twin (Settings → Performance
+     toggles it): display fps + frame ms + paints per second, theme
+     tokens only, pointer-transparent, 2 updates/s. */
+  #perf-hud-chip {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    left: 8px;
+    z-index: 2000;
+    display: none;
+    pointer-events: none;
+    font-size: var(--ui-micro-fs);
+    font-family: inherit;
+    line-height: 1.5;
+    color: var(--text-1);
+    background: rgba(var(--surface-2-rgb, 26,26,34), 0.92);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  #perf-hud-chip.on { display: block; }
 
   /* ── Long-press dropdown menu ──────────────────────────────── */
   #menu {
@@ -4968,6 +5002,10 @@
 <script src="chatbot.js"></script>
 <script src="panel.js"></script>
 <script src="settings.js"></script>
+<!-- v0.85.1: THE PERF HUD — the honest instrument (renderer-path Phase 1):
+     the DoomalayPerf meters, the Settings Performance page, and the opt-in
+     canvas chip (fps · frame ms · paints/s + the cache hit-rate ledger). -->
+<script src="perfhud.js"></script>
 <!-- v0.33→v0.44: THE SHARED UI KIT — the modular pill system (UIPills),
      GradientUI v2 (the 1–15 color gradient engine + the compact editor)
      and the drag-to-crop overlay (CropUI). One kit, reused by the hub /

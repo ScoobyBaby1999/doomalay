@@ -56,6 +56,19 @@
     // pre-v0.67 flat lattice ("the older one was much better"); the
     // Tweaks slider still dials it up on request.
     spaceParallax: 0,
+    // ── v0.85 THE RENDERER PATH (RESEARCH-V084, the fps wave) ────
+    // Phase 1: the perf HUD — the honest instrument (DoomalayPerf) +
+    // the Settings Performance page + this opt-in canvas chip.
+    perfHud: false,
+    // Phase 2 (v0.85.2): the OffscreenCanvas paint worker owns #c/#c2
+    // (the main thread only composites). Boot reads it; the fallback
+    // (main-thread paint, identical output) serves anything the worker
+    // can't.
+    workerPaint: true,
+    // Phase 3 (v0.85.3): the PixiJS world layer (icons as GPU sprites
+    // + atom stars + halos). 'auto' = at ≥ 60 chats (the measured DOM
+    // icon ceiling), 'on'/'off' force it.
+    worldLayer: 'auto',
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────

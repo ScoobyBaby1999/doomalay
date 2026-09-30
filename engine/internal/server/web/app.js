@@ -143,7 +143,8 @@
     vseg: new Map(), hseg: new Map(),
     dotC: new Map(), vlineC: new Map(), hlineC: new Map(),
     vsegC: new Map(), hsegC: new Map(),
-    samplers: new Map(), paints: new Map(), sprites: new Map()
+    samplers: new Map(), paints: new Map(), sprites: new Map(),
+    hits: 0, misses: 0                    // v0.85.1: the cache hit-rate ledger (DoomalayPerf)
   };
   function lcKey(a, b) { return (a + 65536) * 131072 + (b + 65536); }
   function lcClearParams() {
@@ -186,8 +187,33 @@
   }
   // the honest instrument rides along (red-team reads it): rolling fps
   var lcFps = 0, lcLastT = 0;
+  // v0.85.1: the frame timer — renderGrid's own wall cost (the HUD's
+  // paintMs meter; measured around the WHOLE paint incl. background)
+  var frameT0 = 0;
+
+  // v0.85.1: the batcher's color quantizer — 16 levels/channel, cached
+  // per exact hex (the mesh field's continuous colors collapse into tens
+  // of local buckets; ±8/255 is invisible on 1–4px lattice elements).
+  // Non-hex styles (CanvasGradient objects — one per band per frame) pass
+  // through verbatim: within a frame they're a single object, so the
+  // bucket key still can't collide across distinct gradients.
+  var QUANT_COLORS = new Map();
+  function quantColor(c) {
+    if (typeof c !== 'string' || c.charAt(0) !== '#') return c;
+    var q = QUANT_COLORS.get(c);
+    if (q !== undefined) return q;
+    var m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(c);
+    if (!m) { QUANT_COLORS.set(c, c); return c; }
+    function lv(hh) { return Math.min(255, Math.round(parseInt(hh, 16) / 17) * 17); }
+    function h2(v) { return (v < 16 ? '0' : '') + v.toString(16); }
+    q = '#' + h2(lv(m[1])) + h2(lv(m[2])) + h2(lv(m[3]));
+    if (QUANT_COLORS.size > 4096) QUANT_COLORS.clear();
+    QUANT_COLORS.set(c, q);
+    return q;
+  }
 
   function renderGrid() {
+    frameT0 = performance.now();
     // v0.24: grid colors resolve through the THEME (user picks win over
     // the theme's grid palette; pre-v0.24 default values = never
     // customized → follow the theme).
@@ -497,6 +523,27 @@
 
     // v0.77.9: the line passes run PER BAND (far → near); amp 0 is the
     // single unfiltered plane (pf exactly 1 — byte-identical default).
+    // v0.85.1 THE BATCHER: every dot/segment/full-line paint op collects
+    // into BUCKETS keyed (target layer, QUANTIZED style, quantized alpha)
+    // — same-style elements share ONE path and ONE fill/stroke. Two
+    // structural choices make the mesh worst case (continuous per-cell
+    // colors, the 44fps case) actually collapse:
+    //   · COLOR QUANTIZATION — the bucket key AND the painted color round
+    //     to 16 levels/channel (steps of 17). A smooth mesh field yields
+    //     tens of local colors instead of one-per-element; on 1–4px
+    //     lattice elements a ±8/255 banding step is invisible.
+    //   · SEGMENTS AS FILLED QUADS — a butt-capped stroke of width w is
+    //     EXACTLY the rectangle with the segment as centerline (the
+    //     corners ride the cached rotation cos/sin — no per-segment
+    //     hypot). Filling quads removes lineWidth from the canvas state,
+    //     so segments bucket by (color × alpha) alone — the per-element
+    //     width stays per-element as GEOMETRY.
+    // Alpha quantizes at 1/8 (dots) / 1/10 (segments); the shuttle
+    // brightness ramp stays visually smooth. >640 buckets → the
+    // per-element fallback (the pre-batcher path; never worse).
+    var segBuckets = new Map();
+    var dotBuckets = new Map();
+    var dbgBatches = 0;
     var lineBands = amp > 0 ? AMP_BANDS : 1;
     var dbgLineBands = [];
     if (!hideLines) {
@@ -509,8 +556,11 @@
       var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
       // v0.83.3: the band style + sampler ride the spec caches (they were
       // rebuilt — a fresh CanvasGradient + the mesh 8-spot table — every
-      // band of every frame)
-      ctx.strokeStyle = lcPaint(lineSpec, lineFallback);
+      // band of every frame). v0.85.1: hoisted to a var — the batcher's
+      // style resolution (colS || lineBandStyle) must never read the live
+      // ctx.strokeStyle (whose value the mesh path repainted last).
+      var lineBandStyle = lcPaint(lineSpec, lineFallback);
+      ctx.strokeStyle = lineBandStyle;
       ctx.lineWidth = 1;
       // v0.54: pattern-aware per-line sampling — multi-stop line specs
       // paint each line (and, in segment mode, each segment) at its own
@@ -567,15 +617,19 @@
         if (!segMode) {
           // the per-line color (cached; segments decide their own below)
           var colL = LC.vlineC.get(ix);
-          if (colL === undefined) { colL = lineSampler ? lineSampler(x, H / 2) : null; LC.vlineC.set(ix, colL); }
-          if (colL) lc.strokeStyle = colL;
-          else if (lc === ctx2) lc.strokeStyle = ctx.strokeStyle;
+          if (colL === undefined) { colL = lineSampler ? lineSampler(x, H / 2) : null; LC.vlineC.set(ix, colL); LC.misses++; } else LC.hits++;
           dbgFullLines++;
-          lc.lineWidth = Math.max(0.3, LP.lwB);
-          lc.beginPath();
-          lc.moveTo(tx, 0);
-          lc.lineTo(tx - H * LP.s, H * LP.c);
-          lc.stroke();
+          // v0.85.1: batched — the full line is a FILLED QUAD (the
+          // butt-stroke rectangle; width rides the geometry) → the bucket
+          // key is (layer × quantized color), width never enters state
+          var styleL = quantColor(colL || lineBandStyle);
+          var lwFull = Math.max(0.3, LP.lwB);
+          var pxv = LP.c * lwFull / 2, pyv = LP.s * lwFull / 2;  // perp offset
+          var fbk = (lc === ctx2 ? '2|' : '1|') + styleL;
+          var fb = segBuckets.get(fbk);
+          if (!fb) { fb = { sc: lc, s: styleL, a: 1, ops: [] }; segBuckets.set(fbk, fb); }
+          fb.ops.push(tx - pxv, 0 - pyv, tx + pxv, 0 + pyv,
+                      (tx - H * LP.s) + pxv, H * LP.c + pyv, (tx - H * LP.s) - pxv, H * LP.c - pyv);
         } else {
           for (let y = lStartY - scaledGrid; y < H + scaledGrid; y += scaledGrid) {
             var iyS = Math.round((y + offsetY * scale * lPF) / scaledGrid);
@@ -632,18 +686,23 @@
             // v0.83.3: the per-segment color, cached per cell while the
             // camera rests (was a live sampler call per segment per frame)
             var colS = LC.vsegC.get(skey);
-            if (colS === undefined) { colS = lineSampler ? lineSampler(x, y) : null; LC.vsegC.set(skey, colS); }
-            if (colS) sc.strokeStyle = colS;
-            else if (sc === ctx2) sc.strokeStyle = ctx.strokeStyle;
-            sc.lineWidth = segW;
-            if (tal < 1) sc.globalAlpha = tal;
+            if (colS === undefined) { colS = lineSampler ? lineSampler(x, y) : null; LC.vsegC.set(skey, colS); LC.misses++; } else LC.hits++;
+            // v0.85.1: batched — the segment is a FILLED QUAD (the exact
+            // butt-stroke rectangle: centerline ± perp×w/2, corners from
+            // the cached rotation cos/sin) → buckets key on (layer ×
+            // quantized color × 1/10 alpha) only; the width rides geometry
+            var styleS = quantColor(colS || lineBandStyle);
+            var aQ = tal < 1 ? Math.round(tal * 10) / 10 : 1;
+            var sbk = (sc === ctx2 ? '2|' : '1|') + styleS + '|' + aQ;
+            var sb = segBuckets.get(sbk);
+            if (!sb) { sb = { sc: sc, s: styleS, a: aQ, ops: [] }; segBuckets.set(sbk, sb); }
             // manual transform of translate(tx,0)∘rotate(θ): (0,ly) → (tx−ly·s, ly·c)
             var ly1 = y - SP.len / 2 + drift, ly2 = y + SP.len / 2 + drift;
-            sc.beginPath();
-            sc.moveTo(tx - ly1 * LP.s, ly1 * LP.c);
-            sc.lineTo(tx - ly2 * LP.s, ly2 * LP.c);
-            sc.stroke();
-            if (tal < 1) sc.globalAlpha = 1;
+            var ax1 = tx - ly1 * LP.s, ay1 = ly1 * LP.c;
+            var ax2 = tx - ly2 * LP.s, ay2 = ly2 * LP.c;
+            var pxs = LP.c * segW / 2, pys = LP.s * segW / 2;   // perp offset × w/2
+            sb.ops.push(ax1 - pxs, ay1 - pys, ax1 + pxs, ay1 + pys,
+                        ax2 + pxs, ay2 + pys, ax2 - pxs, ay2 - pys);
             dbgSegs++;
           }
         }
@@ -679,15 +738,17 @@
         var ty = y + HP.dy;
         if (!segMode) {
           var colL2 = LC.hlineC.get(iy);
-          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2, y) : null; LC.hlineC.set(iy, colL2); }
-          if (colL2) lc2.strokeStyle = colL2;
-          else if (lc2 === ctx2) lc2.strokeStyle = ctx.strokeStyle;
+          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2, y) : null; LC.hlineC.set(iy, colL2); LC.misses++; } else LC.hits++;
           dbgFullLines++;
-          lc2.lineWidth = Math.max(0.3, HP.lwB);
-          lc2.beginPath();
-          lc2.moveTo(0, ty);
-          lc2.lineTo(W * HP.c, ty + W * HP.s);
-          lc2.stroke();
+          // v0.85.1: batched — the horizontal full-line quad twin
+          var styleL2 = quantColor(colL2 || lineBandStyle);
+          var lwFull2 = Math.max(0.3, HP.lwB);
+          var pxh = -HP.s * lwFull2 / 2, pyh = HP.c * lwFull2 / 2;  // perp of (c,s)
+          var fbk2 = (lc2 === ctx2 ? '2|' : '1|') + styleL2;
+          var fb2 = segBuckets.get(fbk2);
+          if (!fb2) { fb2 = { sc: lc2, s: styleL2, a: 1, ops: [] }; segBuckets.set(fbk2, fb2); }
+          fb2.ops.push(0 - pxh, ty - pyh, 0 + pxh, ty + pyh,
+                       W * HP.c + pxh, ty + W * HP.s + pyh, W * HP.c - pxh, ty + W * HP.s - pyh);
         } else {
           for (let x2 = lStartX - scaledGrid; x2 < W + scaledGrid; x2 += scaledGrid) {
             var ixS = Math.round((x2 + offsetX * scale * lPF) / scaledGrid);
@@ -726,24 +787,67 @@
             var sc2 = (overLinesOn && segW2 > overThreshL) ? ctx2 : ctx;
             if (sc2 === ctx2) dbgOverLines++;
             var colS2 = LC.hsegC.get(hkey);
-            if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2, y) : null; LC.hsegC.set(hkey, colS2); }
-            if (colS2) sc2.strokeStyle = colS2;
-            else if (sc2 === ctx2) sc2.strokeStyle = ctx.strokeStyle;
-            sc2.lineWidth = segW2;
-            if (tal2 < 1) sc2.globalAlpha = tal2;
+            if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2, y) : null; LC.hsegC.set(hkey, colS2); LC.misses++; } else LC.hits++;
+            // v0.85.1: batched — the horizontal segment quad twin
+            var styleS2 = quantColor(colS2 || lineBandStyle);
+            var aQ2 = tal2 < 1 ? Math.round(tal2 * 10) / 10 : 1;
+            var sbk2 = (sc2 === ctx2 ? '2|' : '1|') + styleS2 + '|' + aQ2;
+            var sb2 = segBuckets.get(sbk2);
+            if (!sb2) { sb2 = { sc: sc2, s: styleS2, a: aQ2, ops: [] }; segBuckets.set(sbk2, sb2); }
             // manual transform: (lx,0) → (lx·c, ty+lx·s)
             var lx1 = x2 - HS.len / 2 + drift2, lx2 = x2 + HS.len / 2 + drift2;
-            sc2.beginPath();
-            sc2.moveTo(lx1 * HP.c, ty + lx1 * HP.s);
-            sc2.lineTo(lx2 * HP.c, ty + lx2 * HP.s);
-            sc2.stroke();
-            if (tal2 < 1) sc2.globalAlpha = 1;
+            var bx1 = lx1 * HP.c, by1 = ty + lx1 * HP.s;
+            var bx2 = lx2 * HP.c, by2 = ty + lx2 * HP.s;
+            var pxs2 = -HP.s * segW2 / 2, pys2 = HP.c * segW2 / 2;  // perp × w/2
+            sb2.ops.push(bx1 - pxs2, by1 - pys2, bx1 + pxs2, by1 + pys2,
+                         bx2 + pxs2, by2 + pys2, bx2 - pxs2, by2 - pys2);
             dbgSegs++;
           }
         }
       }
       dbgLineBands.push(lBandN);
      }
+    }
+    // v0.85.1: FLUSH THE SEGMENT BUCKETS — every segment is a filled
+    // quad; one beginPath + one fill per bucket (moveTo per quad +
+    // closePath = no connectors). >640 buckets → the per-element
+    // fallback (the pre-batcher path — never worse than before).
+    if (segBuckets.size && segBuckets.size <= 640) {
+      segBuckets.forEach(function (bk) {
+        var sc = bk.sc;
+        sc.fillStyle = bk.s;
+        if (bk.a < 1) sc.globalAlpha = bk.a;
+        sc.beginPath();
+        var ops = bk.ops;
+        for (var oi = 0; oi < ops.length; oi += 8) {
+          sc.moveTo(ops[oi], ops[oi + 1]);
+          sc.lineTo(ops[oi + 2], ops[oi + 3]);
+          sc.lineTo(ops[oi + 4], ops[oi + 5]);
+          sc.lineTo(ops[oi + 6], ops[oi + 7]);
+          sc.closePath();
+        }
+        sc.fill();
+        if (bk.a < 1) sc.globalAlpha = 1;
+        dbgBatches++;
+      });
+    } else if (segBuckets.size) {
+      segBuckets.forEach(function (bk) {
+        var sc = bk.sc;
+        sc.fillStyle = bk.s;
+        if (bk.a < 1) sc.globalAlpha = bk.a;
+        var ops = bk.ops;
+        for (var oi = 0; oi < ops.length; oi += 8) {
+          sc.beginPath();
+          sc.moveTo(ops[oi], ops[oi + 1]);
+          sc.lineTo(ops[oi + 2], ops[oi + 3]);
+          sc.lineTo(ops[oi + 4], ops[oi + 5]);
+          sc.lineTo(ops[oi + 6], ops[oi + 7]);
+          sc.closePath();
+          sc.fill();
+        }
+        if (bk.a < 1) sc.globalAlpha = 1;
+        dbgBatches++;
+      });
     }
 
     // v0.77.9: the dot passes run PER BAND (far → near); amp 0 is the
@@ -832,9 +936,8 @@
           // rests (was a live sampler call per dot per frame — the mesh
           // spot loop + sqrt ×1508/frame)
           var colD = LC.dotC.get(dkey);
-          if (colD === undefined) { colD = dotSampler ? dotSampler(x + DP.jx, y + DP.jy) : null; LC.dotC.set(dkey, colD); }
-          if (colD) dc.fillStyle = colD;
-          else if (dc === ctx2) dc.fillStyle = ctx.fillStyle;
+          if (colD === undefined) { colD = dotSampler ? dotSampler(x + DP.jx, y + DP.jy) : null; LC.dotC.set(dkey, colD); LC.misses++; } else LC.hits++;
+          var styleD = quantColor(colD || dotSolidFill);
           // v0.77.9: the near band's BIGGEST dots catch the light — the
           // v0.77 glow look on the user's own elements (a halo under the
           // core + the light-lifted tone), never spawned circles.
@@ -842,28 +945,78 @@
           // per-dot createRadialGradient is gone); the core paints
           // WITHOUT save/translate/rotate/restore — rotation is invisible
           // on circles, so the arc lands directly at screen coords.
+          // v0.85.1: the glow twin stays INDIVIDUAL (rare — near band,
+          // jr ≥ 1.6× base, solid specs only); every other dot collects
+          // into a bucket — same (style × alpha) dots share ONE path +
+          // ONE fill (moveTo to the arc's own start kills the connector).
           var nearGlow = dotBands > 1 && db === AMP_BANDS - 1 &&
             jr >= dotRBase * 1.6 && glowFill;
-          if (nearGlow) dc.fillStyle = glowFill;
           var cx = x + DP.jx + tox, cy = y + DP.jy + toy;
-          if (tal < 1) dc.globalAlpha = tal;
-          if (nearGlow && jr >= 1.6) {
-            var spG = lcGlowSprite(glowFill);
-            var R = jr * 2.6;
-            var ga2 = dc.globalAlpha;
-            dc.globalAlpha = ga2 * 0.55;
-            dc.drawImage(spG.c, cx - R, cy - R, R * 2, R * 2);
-            dc.globalAlpha = ga2;
+          var rrD = Math.max(0.15, jr);
+          if (nearGlow) {
+            dc.fillStyle = glowFill;
+            if (tal < 1) dc.globalAlpha = tal;
+            if (jr >= 1.6) {
+              var spG = lcGlowSprite(glowFill);
+              var R = jr * 2.6;
+              var ga2 = dc.globalAlpha;
+              dc.globalAlpha = ga2 * 0.55;
+              dc.drawImage(spG.c, cx - R, cy - R, R * 2, R * 2);
+              dc.globalAlpha = ga2;
+            }
+            dc.beginPath();
+            dc.arc(cx, cy, rrD, 0, Math.PI * 2);
+            dc.fill();
+            if (tal < 1) dc.globalAlpha = 1;
+          } else {
+            var aQ = tal < 1 ? Math.round(tal * 8) / 8 : 1;
+            var dbk = (dc === ctx2 ? '2|' : '1|') + styleD + '|' + aQ;
+            var dob = dotBuckets.get(dbk);
+            if (!dob) { dob = { dc: dc, s: styleD, a: aQ, ops: [] }; dotBuckets.set(dbk, dob); }
+            dob.ops.push(cx, cy, rrD);
           }
-          dc.beginPath();
-          dc.arc(cx, cy, Math.max(0.15, jr), 0, Math.PI * 2);
-          dc.fill();
-          if (tal < 1) dc.globalAlpha = 1;
           dbgDots++;
         }
       }
       dbgDotBands.push(dBandN);
      }
+    }
+    // v0.85.1: FLUSH THE DOT BUCKETS — one beginPath + ONE fill per
+    // (style × alpha × layer) bucket. Solid specs collapse the whole
+    // lattice to a single fill (was ~1500 fills); mesh fields paint in
+    // tens. The >640-bucket guard falls back to per-dot fills.
+    if (dotBuckets.size && dotBuckets.size <= 640) {
+      dotBuckets.forEach(function (bk) {
+        var dc = bk.dc;
+        dc.fillStyle = bk.s;
+        if (bk.a < 1) dc.globalAlpha = bk.a;
+        dc.beginPath();
+        var ops = bk.ops;
+        for (var oi = 0; oi < ops.length; oi += 3) {
+          var ocx = ops[oi], ocy = ops[oi + 1], orr = ops[oi + 2];
+          dc.moveTo(ocx + orr, ocy);
+          dc.arc(ocx, ocy, orr, 0, Math.PI * 2);
+        }
+        dc.fill();
+        if (bk.a < 1) dc.globalAlpha = 1;
+        dbgBatches++;
+      });
+    } else if (dotBuckets.size) {
+      dotBuckets.forEach(function (bk) {
+        var dc = bk.dc;
+        dc.fillStyle = bk.s;
+        var ops = bk.ops;
+        for (var oi = 0; oi < ops.length; oi += 3) {
+          var ocx = ops[oi], ocy = ops[oi + 1], orr = ops[oi + 2];
+          if (bk.a < 1) dc.globalAlpha = bk.a;
+          dc.beginPath();
+          dc.moveTo(ocx + orr, ocy);
+          dc.arc(ocx, ocy, orr, 0, Math.PI * 2);
+          dc.fill();
+        }
+        if (bk.a < 1) dc.globalAlpha = 1;
+        dbgBatches++;
+      });
     }
 
     const o = worldToScreen(0, 0);
@@ -898,9 +1051,23 @@
       camera: { x: offsetX, y: offsetY, scale: scale },
       // v0.83.3: the fps + cache twins
       fps: Math.round(lcFps),
+      // v0.85.1: the batcher twin — buckets collected + fills issued (the
+      // perf HUD + the rigs prove the collapse: solid ≈ 1–2 fills)
+      batches: dbgBatches, buckets: dotBuckets.size + segBuckets.size,
       cache: { gen: LC.gen, colorGen: LC.cgen,
         dot: LC.dot.size, vline: LC.vline.size, hline: LC.hline.size,
         vseg: LC.vseg.size, hseg: LC.hseg.size } };
+    // v0.85.1: the perf HUD feed (DoomalayPerf — the honest instrument)
+    try {
+      if (window.DoomalayPerf) {
+        var DP = window.DoomalayPerf;
+        DP.paints++;
+        DP.batches = dbgBatches;
+        DP.buckets = dotBuckets.size + segBuckets.size;
+        DP.cacheHits = LC.hits; DP.cacheMisses = LC.misses;
+        DP.paintMs = Math.round((lcNow - frameT0) * 10) / 10;
+      }
+    } catch (e) {}
   }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────
@@ -1460,6 +1627,20 @@
   // ── World + icons ──────────────────────────────────────────────
   const world = new Physics.World();
   const iconLayer = document.getElementById('chatbots');
+  // v0.85.1 THE ICON-LAYER BUDGET: past 40 icons every .chatbot's
+  // will-change:transform costs more in standing compositor layers +
+  // texture memory than the rare re-promotion on drag — the .many-icons
+  // class swaps it OFF (the CSS twin), .dragging puts it back for the
+  // ONE icon that needs it. Below the threshold the hint returns (the
+  // tens-of-icons default rides full GPU compositing as before).
+  function updateIconBudget() {
+    if (!iconLayer) return;
+    var many = world.entities.length > 40;
+    if (many !== updateIconBudget.many) {
+      updateIconBudget.many = many;
+      iconLayer.classList.toggle('many-icons', many);
+    }
+  }
   const namePicker = new ChatIcon.NamePicker(config.names);
   const iconPickers = {};
 
@@ -1499,6 +1680,7 @@
     world.add(icon);
     iconLayer.appendChild(icon.el);
     icon.render(offsetX, offsetY, scale);
+    updateIconBudget();   // v0.85.1: the icon-layer budget follows the count
     hideCanvasEmpty();  // v0.82.2: any creation ends the first-run state
     scheduleSave();
     return icon;
@@ -1671,6 +1853,7 @@
     try {
       if (!window.DoomalayDebug) window.DoomalayDebug = {};
       window.DoomalayDebug.atoms = stats;
+      if (window.DoomalayPerf) window.DoomalayPerf.atomFrames++;   // v0.85.1: the HUD's atom meter
     } catch (e) {}
   }
   var atomStats = null;
@@ -2639,6 +2822,7 @@
     // users who deleted everything still have a saved layout → skip).
     maybeShowCanvasEmpty(!saved);
 
+    updateIconBudget();   // v0.85.1: the restored world sets the icon budget
     resize();
 
     // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces
