@@ -1032,8 +1032,22 @@
               // elements carry too — their styles are inert while
               // unrendered, and the attribute-mutation observer re-paints
               // when they reappear.
+              // v0.79.4: the carry still reads the rect HERE — keep the
+              // NUMERIC constants true for carried elements (content-
+              // visibility un-rendering shifts far-offscreen rows
+              // SILENTLY: the placeholder/real height delta lands on
+              // their geometry with no scroll event, so arithmetic-only
+              // maintenance rots the constants — the v0783 rig measured
+              // −51/−74px on far-offscreen rows after a long scroll,
+              // and scrolling back up rode the rotted math = the
+              // misplaced-gradient flash reborn). The STYLE stays as-is
+              // (offscreen, inert); the constants land fresh so the
+              // arithmetic back in stays true.
               el.__projR = R;   // v0.79.3: the newcomer bake needs the root
-              reads.push({ el: el, R: R, carry: true });
+              el.__projCarry = true;
+              reads.push({ el: el, R: R, carry: true,
+                bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
+                by: M.translateOnly ? (-r.top + M.ty) : -r.top });
               continue;
             }
             // v0.78.3c: bake FLAT (the current viewport position) — the
@@ -1137,14 +1151,36 @@
         for (var w = 0; w < reads.length; w++) {
           var it = reads[w];
           // v0.79.3: the carry entries (offscreen/hidden) — no style
-          // writes, no bake constants; they only STAY painted.
-          if (it.carry) { keep.push(it.el); continue; }
+          // writes; they only STAY painted. v0.79.4: their numeric
+          // constants still TRUE-UP (the rect was read anyway — a pure
+          // JS field write, no style touch, no observer trigger), so the
+          // silent content-visibility shifts can't rot the arithmetic;
+          // and the STYLE lands from the trued constants too (writeEpoch-
+          // stamped — the observer never sees the painter's own write) —
+          // the v0783 rig's at-rest anchor check reads the STYLES of
+          // offscreen carried elements, and arithmetic-from-rot was the
+          // 130-588px drift.
+          if (it.carry) {
+            if (it.bx !== undefined) {
+              it.el.__projBx = it.bx;
+              it.el.__projBy = it.by;
+              var cpos = fmtCalc('--proj-tx', it.bx) + ' ' + fmtCalcY(it.by);
+              if (it.el.__projPos !== cpos) {
+                it.el.style.backgroundPosition = cpos;
+                it.el.__projPos = cpos;
+                it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
+              }
+            }
+            keep.push(it.el);
+            continue;
+          }
           if (it.el.__projPos !== it.pos) {
             it.el.style.backgroundPosition = it.pos;
             it.el.__projPos = it.pos;
             it.el.__projBx = it.bx;   // numeric constants for scrollRebake
             it.el.__projBy = it.by;
           }
+          it.el.__projCarry = false;   // v0.79.4: in-view bake clears the carry
           if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
           if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
           it.el.__projWriteEpoch = wep;
@@ -1387,7 +1423,12 @@
         for (var i = 0; i < painted.length; i++) {
           var el = painted[i];
           if (!el.isConnected || !sc.contains(el)) continue;
-          if (el.__projBy === undefined) { fresh.push(el); continue; }
+          // v0.79.4: a CARRIED element scrolling back into view bakes
+          // FRESH — its constants may have silently drifted while it was
+          // offscreen (content-visibility un-rendering; see the carry
+          // note in paint's read phase), and the arithmetic-from-rot was
+          // the misplaced-gradient flash on re-entry.
+          if (el.__projBy === undefined || el.__projCarry === true) { fresh.push(el); continue; }
           // v0.78.3c: sticky/fixed descendants DON'T move with the scroll
           // content — the sticky chat input inside #chat-scroll was being
           // adjusted by the clamp delta and drifted (the A5b regression).
@@ -1426,6 +1467,7 @@
         for (var i = 0; i < list.length && n < 400; i++) {
           var el = list[i];
           if (!el.isConnected) continue;
+          el.__projCarry = false;   // v0.79.4: baking fresh — the carry is over
           var r = el.getBoundingClientRect();
           if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
           var R = el.__projR;
