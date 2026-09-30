@@ -409,20 +409,21 @@
   }
 
   /* ── Settings icon (the only persistent UI element) ───────────
-     v0.78.4: 34px capsule tile (was 44), 17px glyph — the cluster went
-     ~1.35× smaller per the user's polish ask; the ::after hit-slop keeps
-     the 44px Android touch floor. */
+     v0.79.1: 44px capsule tile (1.29× the v0.78.4 34px — the user's
+     1.2–1.5× larger ask), 22px glyph, fully-rounded 22px radius. The
+     ::after hit-slop stays for the smaller cluster tiles (the gear
+     itself now carries the 44px floor natively). */
   #settings-btn {
     position: fixed;
     top: max(14px, env(safe-area-inset-top));
     right: max(14px, env(safe-area-inset-right));
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     /* v0.74: the backdrop blur is gone (the overlay-effects wave) —
        the fill carries the legibility on its own now. */
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
     border: 1px solid var(--surface-3);
-    border-radius: 16px;
+    border-radius: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -445,8 +446,8 @@
     transform: scale(0.92);
   }
   #settings-btn svg {
-    width: 17px;
-    height: 17px;
+    width: 22px;
+    height: 22px;
     fill: var(--text-3);
     transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -456,19 +457,19 @@
   }
 
   /* ── v0.31.2: THE CANVAS DOCK ─────────────────────────────────
-     A › arrow sits 8px left of the settings gear; tapping it flips
-     to ‹ and expands a vertical strip with the two relocated entries:
-     the cloud provider screen (was Settings → Cloud) and the hub
-     library (was the chat util row's ◈ hub pill — same master-panel
-     open path). Collapsed/expanded persists in localStorage
-     (doomalay.dock.v1, applied by app.js on boot). Same chrome
-     language as the gear: 44px hit targets, 22px glyphs, matte glass
-     tile, safe-area aware. The arrow is a text glyph so it rides the
+     v0.79.1: the › arrow sits BELOW the settings gear (was: 8px left
+     of it) — the cluster reads as one right-aligned column (gear →
+     arrow → strip). Tapping it rotates the glyph 180° and expands the
+     vertical strip (web / cloud / library / chats). Collapsed/expanded
+     persists in localStorage (doomalay.dock.v1, applied by app.js on
+     boot). Same chrome language as the gear: matte glass tile,
+     safe-area aware. The arrow is a text glyph so it rides the
      settings text-size system (--ui-fs). */
   #dock-toggle {
     position: fixed;
-    top: max(14px, env(safe-area-inset-top));
-    right: calc(max(14px, env(safe-area-inset-right)) + 40px); /* gear 34px + 6px gap */
+    /* v0.79.1: UNDER the gear — gear 44px + 6px gap */
+    top: calc(max(14px, env(safe-area-inset-top)) + 50px);
+    right: max(14px, env(safe-area-inset-right));
     width: 34px;
     height: 34px;
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
@@ -501,8 +502,9 @@
   }
   #dock-strip {
     position: fixed;
-    /* v0.78.4: UNDER the settings gear (was: left of the cluster) */
-    top: calc(max(14px, env(safe-area-inset-top)) + 40px);
+    /* v0.79.1: UNDER the arrow (gear 44 + gap 6 + arrow 34 + gap 6
+     = +90px from the cluster top) — the column: gear → arrow → strip */
+    top: calc(max(14px, env(safe-area-inset-top)) + 90px);
     right: max(14px, env(safe-area-inset-right));
     display: flex;
     flex-direction: column;

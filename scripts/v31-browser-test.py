@@ -443,22 +443,24 @@ with sync_playwright() as p:
     pg.evaluate("s => localStorage.setItem('doomalay.state.v2', JSON.stringify(s))", state)
     pg.reload(); pg.wait_for_timeout(700)
 
-    # ── 0. the v0.78.4 CANVAS DOCK (panel still closed — the dock lives
-    #       on the canvas chrome, the arrow left of the settings gear) ─
-    print("canvas dock (v0.78.4)")
-    ok(pg.locator("#dock-toggle").count() == 1, "the › dock toggle exists next to the settings gear")
+    # ── 0. the v0.79.1 CANVAS DOCK (panel still closed — the dock lives
+    #       on the canvas chrome, the arrow BELOW the settings gear) ─
+    print("canvas dock (v0.79.1)")
+    ok(pg.locator("#dock-toggle").count() == 1, "the › dock toggle exists below the settings gear")
     ok(pg.locator("#dock-toggle .dg").inner_text().strip() == "›", "the collapsed arrow reads ›")
     ok(pg.locator("#dock-strip").is_hidden(), "the strip starts collapsed (hidden)")
     gear_box = pg.locator("#settings-btn").bounding_box()
     tog_box = pg.locator("#dock-toggle").bounding_box()
-    ok(tog_box and gear_box and tog_box["x"] + tog_box["width"] <= gear_box["x"] + 2,
-       "the toggle sits LEFT of the settings gear")
-    ok(gear_box and abs(gear_box["width"] - 34) < 1, "the gear is the 34px polished tile")
+    ok(tog_box and gear_box and tog_box["x"] + tog_box["width"] <= gear_box["x"] + gear_box["width"] + 2 and
+       tog_box["x"] >= gear_box["x"] - 2 and
+       tog_box["y"] >= gear_box["y"] + gear_box["height"] - 2,
+       "the toggle sits BELOW the settings gear (right-aligned column)")
+    ok(gear_box and abs(gear_box["width"] - 44) < 1, "the gear is the 44px tile (1.29× the v0.78.4 34px)")
     ok(pg.evaluate("""() => {
       const g = document.getElementById('settings-btn').getBoundingClientRect();
       const el = document.elementFromPoint(g.left + 3, g.top + 3);
       return !!(el && (el.id === 'settings-btn' || (el.closest && el.closest('#settings-btn'))));
-    }"""), "the ::after hit-slop keeps corner taps on the 34px gear (≥44px zone)")
+    }"""), "corner taps land on the 44px gear")
     # the settings panel lost its Cloud page (relocated into the dock)
     pages = pg.evaluate("() => window.Settings.listPages().map(p => p.id)")
     ok("cloud" not in pages, f"the settings registry no longer carries the Cloud provider page ({pages})")
@@ -469,7 +471,7 @@ with sync_playwright() as p:
     ok("cloud" not in tabs, f"the settings panel UI shows no Cloud tab ({tabs})")
     pg.evaluate("() => document.getElementById('chat-scrim').click()")
     pg.wait_for_timeout(500)   # back to the bare canvas
-    # expand: the glyph rotates, the strip shows 4 pills UNDER the gear
+    # expand: the glyph rotates, the strip shows 4 pills UNDER the arrow
     pg.locator("#dock-toggle").click(); pg.wait_for_timeout(400)
     ok(pg.evaluate("() => document.getElementById('dock-toggle').classList.contains('open')"),
        "tapping rotates the arrow glyph (the .open class)")
@@ -477,8 +479,8 @@ with sync_playwright() as p:
     ok(pg.locator("#dock-strip").is_visible(), "the strip is visible")
     st_box = pg.locator("#dock-strip").bounding_box()
     ok(st_box and st_box["x"] + st_box["width"] <= gear_box["x"] + gear_box["width"] + 2 and
-       st_box["y"] >= gear_box["y"] + gear_box["height"] - 2,
-       "the strip expands UNDER the settings gear")
+       st_box["y"] >= tog_box["y"] + tog_box["height"] - 2,
+       "the strip expands UNDER the arrow (gear → arrow → strip column)")
     ok(pg.evaluate("() => document.getElementById('dock-strip').classList.contains('open')"),
        "the strip carries the animation-open class")
     dock_btns = pg.locator("#dock-strip .dock-btn")
