@@ -110,3 +110,24 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// NormalizeTreePath (v0.82.4 THE DOT PATH) — canonicalizes a caller-supplied
+// tree/read path: GitHub's tree API treats "." as a literal prefix and the
+// recursive-tree filter then matches NOTHING ("ScoobyBaby1999/doomalaysocreate
+// at . @c — 0 entries", the user's live repro — the repo had files; grep and
+// read worked fine). Models pass ".", "./", ".//" and "/./" interchangeably;
+// every forge's Tree/File path now runs through this first.
+func NormalizeTreePath(path string) string {
+	p := strings.Trim(path, " \t")
+	for p == "." || p == "/" || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "/.") {
+		p = strings.TrimPrefix(strings.TrimPrefix(p, "."), "/")
+		p = strings.Trim(p, "/")
+		if p == "" || p == "." {
+			return ""
+		}
+	}
+	// trailing "/." and interior normalization
+	p = strings.TrimSuffix(p, "/.")
+	p = strings.Trim(p, "/")
+	return p
+}

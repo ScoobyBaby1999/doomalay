@@ -132,7 +132,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if ws == nil {
                         return wsNotFound(bound, get("ws"))
                 }
-                path := strings.Trim(get("path"), "/")
+                path := forge.NormalizeTreePath(get("path")) // v0.82.4: "." → "" (the dead-prefix bug)
                 ref := refOrWS(get("ref"), ws)
                 c := s.wsClient(ws)
                 var entries []forge.TreeEntry
@@ -153,7 +153,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if ws == nil {
                         return wsNotFound(bound, get("ws"))
                 }
-                path := strings.Trim(get("path"), "/")
+                path := forge.NormalizeTreePath(get("path")) // v0.82.4: "./f.go" → "f.go"
                 if path == "" {
                         return "OBSERVATION:\nerror: read needs {\"ws\":…, \"path\":\"the/file\"} — range: head:80 | tail:40 | lines:10-60"
                 }
@@ -204,7 +204,13 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                                 fmt.Fprintf(&sb, "… +%d more (narrow the query or raise limit)\n", len(hits)-i)
                                 break
                         }
-                        line := fmt.Sprintf("- %s:%d", h.Path, h.Line)
+                        // v0.82.4: an unresolved line (Line 0 — the file
+                        // couldn't be fetched for line resolution) renders as
+                        // the bare path, never the bogus "path:0".
+                        line := "- " + h.Path
+                        if h.Line > 0 {
+                                line = fmt.Sprintf("- %s:%d", h.Path, h.Line)
+                        }
                         if h.Snippet != "" {
                                 line += "  " + strings.TrimSpace(h.Snippet)
                         }
