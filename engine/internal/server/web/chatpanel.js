@@ -3265,11 +3265,18 @@
   // without re-rendering the toolbar (the turn is streaming; a full
   // re-render would drop it). Detached/stale bodyEls are fine — the
   // querySelector just misses and the state survives for the reopen.
-  function paintSegBundle(bodyEl, state) {
+  function paintSegBundle(bodyEl, state, segHint) {
     var host = bodyEl && bodyEl.querySelector ? bodyEl : null;
     if (!host && currentCtx && currentCtx.bodyEl) host = currentCtx.bodyEl;
-    if (!host) return;
-    var seg = host.querySelector('#seg-lib-bundle');
+    if (!host && !segHint) return;
+    // v0.81.4 FIX: segHint — libPill passes its LOCAL seg because the
+    // wrap isn't appended to the toolbar until AFTER libPill returns;
+    // the old bodyEl-only query found NOTHING at that point, so every
+    // fresh toolbar render left the bundle segment hidden even with
+    // _turnBundle armed (applyBundle paints the OLD seg, then the
+    // buildToolbar rebuild created this fresh one — the v0.71
+    // "instant-show" died to the rebuild; the Use flow always rebuilds).
+    var seg = segHint || host.querySelector('#seg-lib-bundle');
     if (!seg) return;
     var b = state && state._turnBundle;
     if (!b || !b.name) {
@@ -3281,10 +3288,10 @@
       }
       return;
     }
-    var label = bundleGlyph(b.kind) + ' ' + String(b.name);
+    var label = bundleGlyph(b.kind) + ' ' + shortCap(b.name);
     if (seg.textContent !== label) seg.textContent = label;
     seg.setAttribute('aria-label', 'in use this turn — ' + b.kind + ': ' + b.name);
-    seg.title = b.kind + ' in use this turn — tap to open the library';
+    seg.title = b.name + ' (' + b.kind + ') in use this turn — tap to open the library';
     if (seg.style.display !== '') seg.style.display = '';
   }
 
@@ -3380,13 +3387,21 @@
     // activity indicator even when the wrap itself is the quiet rail.
     var seg = document.createElement('button');
     seg.id = 'seg-lib-bundle';
+    // v0.81.4 THE COMPACT BUNDLE PILL (user spec: "the current-turn
+    // bundle pill should be much smaller, fitting in the same row as
+    // the lib pill, positioned immediately to its right"): it already
+    // sits immediately right of the + in the #seg-lib row — this wave
+    // SHRINKS it (font 11→9.5px, padding 4/12→3/7, max-width 150→88px)
+    // so the row reads as ONE compact control group instead of the
+    // bundle segment visually dominating the toolbar. shortCap caps the
+    // label at 11 chars (full name stays in the tooltip + aria).
     seg.style.cssText = 'display:none;border:none;' +
       'border-left:1px solid rgba(var(--accent-rgb),0.45);' +
       'background-color:rgba(var(--accent-rgb),0.12);' +
       'background-image:var(--accent-gradient, none);' +
       'background-attachment:fixed;' +
-      'color:var(--on-accent);padding:4px 12px 4px 9px;font-size:11px;font-weight:600;' +
-      'font-family:inherit;cursor:pointer;white-space:nowrap;max-width:150px;overflow:hidden;' +
+      'color:var(--on-accent);padding:3px 7px 3px 6px;font-size:9.5px;font-weight:600;' +
+      'font-family:inherit;cursor:pointer;white-space:nowrap;max-width:88px;overflow:hidden;' +
       'text-overflow:ellipsis;flex-shrink:1;-webkit-tap-highlight-color:transparent';
     seg.addEventListener('click', openLib);
 
@@ -3394,8 +3409,11 @@
     wrap.appendChild(plus);
     wrap.appendChild(seg);
     // paint the current state (a mid-turn toolbar re-render keeps the
-    // segment; a fresh open derives it from the replay)
-    paintSegBundle(bodyEl, state);
+    // segment; a fresh open derives it from the replay). v0.81.4: pass
+    // the LOCAL seg — the wrap isn't in bodyEl's tree until renderToolbar
+    // appends it, so the bodyEl query inside paintSegBundle would miss
+    // and leave this fresh segment hidden (the v0.71 instant-show bug).
+    paintSegBundle(bodyEl, state, seg);
     return wrap;
   }
 

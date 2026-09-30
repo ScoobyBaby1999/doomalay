@@ -177,7 +177,11 @@ HS=$(ev "(function(){
     pillPressed: lab ? lab.getAttribute('aria-pressed') : 'gone',
     chip: chip ? chip.textContent : 'no-chip',
     bravoStored: !!stored['$SID_B'],
-    alphaStored: !!stored['$SID_A']
+    alphaStored: !!stored['$SID_A'],
+    segShown: (function () {
+      var seg = document.getElementById('seg-lib-bundle');
+      return !!(seg && seg.style.display !== 'none' && seg.textContent.indexOf('superpowers') >= 0);
+    })()
   });
 })()")
 Z3=$(echo "$HS" | python3 -c "
@@ -185,7 +189,8 @@ import json,sys
 d = json.load(sys.stdin)
 ok = (d['onBravo'] and d['libGone'] and d['panelOpen'] and d['bundle'] and
       d['libAuto'] and d['botLib'] and d['pillPressed'] == 'true' and
-      'superpowers-mock' in d['chip'] and d['bravoStored'] and not d['alphaStored'])
+      'superpowers-mock' in d['chip'] and d['bravoStored'] and not d['alphaStored'] and
+      d['segShown'])
 print('yes' if ok else 'no')")
 ck "HANDSHAKE: lib closed completely, Bravo opened + bundle armed, BOTH toggles ON, pill reflects it, ▣ box shows the bundle, Alpha untouched" "$Z3" "$HS"
 
