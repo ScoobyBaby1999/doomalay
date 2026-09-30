@@ -729,6 +729,11 @@
       var rootSet = null;         // Set of root elements (rebuilt with rootReg)
       var nextKey = 0;
       var dirty = false, movingRoot = 0, movingLayout = 0, rafId = 0;
+      // v0.78.3: memoEpoch — bumped by repaint()/theme swaps; solid-twin
+      // memos live for one epoch (no cross-theme staleness).
+      var memoEpoch = 0;
+      var writeEpoch = 0;                       // v0.78.3: painter self-write guard
+      var stats = { paints: 0, motions: 0 };   // v0.78.3: the rig reads these
       var STYLE_RE = /var\(--[a-z0-9-]*gradient/;
 
       // ── the root registry: keys + one CSSOM rule per root ──────
@@ -821,12 +826,27 @@
       // motionTick — the CHEAP path: one CSSOM var write per root.
       // A non-translation matrix (scale/rotate) can't ride the
       // decomposition → flag a full paint (correct, just dearer).
+      // v0.78.3c: ALSO true-up tracked scrollers — Chromium's scroll
+      // ANCHORING adjusts scrollTop silently while containers resize
+      // (the panel stretch), with NO scroll event; without this the
+      // baked constants drift by the anchoring delta mid-glide (the
+      // A5b 33-66px regressions).
       function motionTick() {
         for (var i = 0; i < rootReg.length; i++) {
           var R = rootReg[i];
           var M = readMatrix(R.el);
           if (M.translateOnly) setVars(R, -M.tx, -M.ty);
           else { setVars(R, 0, 0); dirty = true; }
+        }
+        for (var si = 0; si < trackedScrollers.length; si++) {
+          var tsc = trackedScrollers[si];
+          if (!tsc || !tsc.isConnected) continue;
+          var nowS2 = tsc.scrollTop || 0;
+          var lastS2 = tsc.__projSy || 0;
+          if (nowS2 !== lastS2) {
+            tsc.__projSy = nowS2;
+            scrollRebake(tsc, nowS2 - lastS2);
+          }
         }
       }
 
@@ -864,6 +884,55 @@
         return 'calc(var(' + varName + ', 0px) ' + (b < 0 ? '- ' : '+ ') +
           Math.abs(num(b)) + 'px)';
       }
+      // v0.78.3c: the Y anchor is PLAIN again — the scroll path adjusts
+      // baked constants incrementally (scrollRebake), not via a var: a
+      // var on the nearest scroller is unsound (flex footers and sticky
+      // zones read a scroller they never scroll with — the mid-glide
+      // drifts). Arithmetic re-bake, zero layout reads.
+      function fmtCalcY(b) {
+        return 'calc(var(--proj-ty, 0px) ' + (b < 0 ? '- ' : '+ ') +
+          Math.abs(num(b)) + 'px)';
+      }
+      // v0.78.3d: BOTTOM-ANCHORED elements (the input zone below the
+      // flex:1 scroller) track the panel WINDOW, not the sheet: their
+      // viewport position moves by translate − Δ(visible height). Their
+      // bake compensates with the live --panel-vis-h (identical to the
+      // flat bake at rest — the var cancels; during the stretch it tracks).
+      function fmtCalcYVis(b) {
+        return 'calc(var(--proj-ty, 0px) ' + (b < 0 ? '- ' : '+ ') +
+          Math.abs(num(b)) + 'px - var(--panel-vis-h, 0px))';
+      }
+
+      // v0.78.3: scroll containers. The nearest scrollable ancestor's
+      // scrollTop is subtracted at bake time (B is scroll-origin
+      // relative); the live offset rides --proj-sy on a per-scroller CSS
+      // rule (rule writes never trip the MutationObserver — same trick as
+      // the root vars). Cached per element (parents don't move).
+      function findScroller(el, stopAt) {
+        var p = el.parentElement;
+        while (p && p !== stopAt) {
+          if (p.nodeType === 1 && p.scrollHeight > p.clientHeight + 1) return p;
+          p = p.parentElement;
+        }
+        return null;
+      }
+      var scrollRules = [];
+      function scrollerRule(el) {
+        for (var i = 0; i < scrollRules.length; i++) {
+          if (scrollRules[i].el === el) return scrollRules[i];
+        }
+        ensureVarSheet();   // v0.78.3: the same sheet the root rules ride
+        var rec = { el: el, rule: null };
+        try {
+          var idx = varSheet.sheet.insertRule(
+            '[data-proj-sy="' + scrollRules.length + '"] { --proj-sy: 0px; }',
+            varSheet.sheet.cssRules.length);
+          rec.rule = varSheet.sheet.cssRules[idx];
+          el.setAttribute('data-proj-sy', String(scrollRules.length));
+        } catch (e) {}
+        scrollRules.push(rec);
+        return rec;
+      }
 
       function paint() {
         if (!SEL) collect();
@@ -871,6 +940,9 @@
         syncRoots();
         var vw = window.innerWidth, vh = window.innerHeight;
         var size = vw + 'px ' + vh + 'px';
+        var epoch = memoEpoch;
+        stats.paints++;   // v0.78.3: rig counter
+        for (var rr = 0; rr < rootReg.length; rr++) rootReg[rr].bRect = undefined;
         // ── READ PHASE (batched — no writes between reads) ────────
         var reads = [];
         for (var ri = 0; ri < rootReg.length; ri++) {
@@ -881,32 +953,124 @@
           for (var i = 0; i < els.length; i++) {
             var el = els[i];
             if (!el.__projPainted) {
+              // v0.78.3: memoized-solid skip — no getComputedStyle for the
+              // (majority) solid twins on every paint; the epoch clears
+              // the memo on repaint/theme swaps.
+              if (el.__projNoneEpoch === epoch) continue;
               var img = getComputedStyle(el).backgroundImage;
-              if (!img || img === 'none') continue;   // a solid twin — nothing to anchor
+              if (!img || img === 'none') { el.__projNoneEpoch = epoch; continue; }
               el.__projPainted = true;
             }
             var r = el.getBoundingClientRect();
             if (r.width < 1 || r.height < 1 || r.bottom < -60 || r.top > vh + 60) continue;
+            // v0.78.3c: bake FLAT (the current viewport position) — the
+            // scroll path re-bakes constants incrementally (scrollRebake)
+            // on scroll events AND on silent scroll-anchoring drift
+            // (motionTick's true-up). Paint-time: discover + track this
+            // element's owner scroller so the true-up covers scrollers
+            // that never fired a scroll event yet (fresh panels).
+            var sco = el.__projScOwner;
+            if (sco === undefined) {
+              sco = findScroller(el, R.el.parentElement);
+              el.__projScOwner = sco;
+            }
+            if (sco && trackedScrollers.length < 12) {
+              var knownSc = false;
+              for (var k = 0; k < trackedScrollers.length; k++) {
+                if (trackedScrollers[k] === sco) { knownSc = true; break; }
+              }
+              if (!knownSc) trackedScrollers.push(sco);
+            }
+            var sTop = 0;
+            // v0.78.3d: bottom-anchored detection — not inside a scroller,
+            // but hugging the panel window's bottom edge (the input zone
+            // + activity row under the flex:1 scroller).
+            var visForm = false;
+            // v0.78.3e — the unified window-anchored rule. The stretch
+            // sizes .panel-body; its flex:1 scroller child follows it.
+            // (a) outside any scroller + hugging the body bottom (the
+            //     chat input zone below the scroller), or
+            // (b) inside a NON-body scroller with slack (empty chat: the
+            //     end elements ride the box bottom), or
+            // (c) absolute + non-auto bottom whose offset parent's bottom
+            //     edge IS the body bottom (#chat-jump).
+            // Elements scrolling in .panel-body ITSELF (settings views)
+            // are content-anchored — always flat.
+            if (R.bodyEl === undefined) {
+              R.bodyEl = R.el.querySelector('.panel-body') || null;
+            }
+            var inChildScroller = !!(sco && R.bodyEl && sco !== R.bodyEl);
+            if (!sco || (inChildScroller && sco.scrollHeight <= sco.clientHeight + 1)) {
+              if (R.bodyEl) {
+                var br = R.bodyEl.getBoundingClientRect();
+                if (br.bottom > -1e9 && br.bottom - r.bottom < 48) visForm = true;
+              }
+            }
+            if (!visForm) {
+              // v0.78.3d: absolute + non-auto bottom, anchored to a
+              // container whose BOTTOM EDGE IS the stretch window's bottom
+              // (the flex:1 scroller / the body itself — #chat-jump rides
+              // bottom: inputbar+14). Absolute elements anchored to
+              // CONTENT rows (settings color rows) are flat — their
+              // anchor doesn't move with the window.
+              var absBot = el.__projAbsBot;
+              if (absBot === undefined) {
+                try {
+                  var pcs = getComputedStyle(el);
+                  absBot = (pcs.position === 'absolute' && pcs.bottom !== 'auto') ? 1 : 0;
+                } catch (perr) { absBot = 0; }
+                el.__projAbsBot = absBot;
+              }
+              if (absBot && R.bodyEl && (!sco || inChildScroller)) {
+                var opr = null;
+                try { opr = el.offsetParent ? el.offsetParent.getBoundingClientRect() : null; } catch (oerr) {}
+                if (opr && R.bRect === undefined) {
+                  R.bRect = R.bodyEl.getBoundingClientRect();
+                }
+                if (opr && R.bRect && Math.abs(opr.bottom - R.bRect.bottom) < 2) visForm = true;
+              }
+            }
             // the translation-invariant base: strip the root's CURRENT
             // translation so the per-frame vars can re-add it
+            var flatBy = M.translateOnly ? (-r.top + M.ty - sTop) : (-r.top - sTop);
+            var yB = flatBy, yCalc = fmtCalcY(flatBy);
+            if (visForm) {
+              // compensate: runtime = var(--proj-ty) + (flatB + V0) - var(--panel-vis-h)
+              var v0 = R.visH0;
+              if (v0 === undefined) {
+                var hv = '';
+                try { hv = getComputedStyle(R.el).getPropertyValue('--panel-vis-h'); } catch (herr) {}
+                v0 = parseFloat(hv) || 0;
+                R.visH0 = v0;
+              }
+              yB = flatBy + v0;
+              yCalc = fmtCalcYVis(yB);
+            }
             reads.push({ el: el, R: R,
               bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
-              by: M.translateOnly ? (-r.top + M.ty) : -r.top,
-              pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' +
-                   fmtCalc('--proj-ty', M.translateOnly ? (-r.top + M.ty) : -r.top) });
+              by: yB,
+              pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' + yCalc });
           }
         }
         // ── WRITE PHASE (only what changed — a no-op bake writes
         //    nothing, fires no MutationObserver, settles at once) ──
+        // v0.78.3: writeEpoch — elements this paint touched carry it; the
+        // observer skips THEIR style mutations (the painter's own writes
+        // re-triggering the observer was a self-sustaining paint loop:
+        // bake → observer → mark → paint → bake…).
+        var wep = ++writeEpoch;
         var keep = [];
         for (var w = 0; w < reads.length; w++) {
           var it = reads[w];
           if (it.el.__projPos !== it.pos) {
             it.el.style.backgroundPosition = it.pos;
             it.el.__projPos = it.pos;
+            it.el.__projBx = it.bx;   // numeric constants for scrollRebake
+            it.el.__projBy = it.by;
           }
           if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
           if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
+          it.el.__projWriteEpoch = wep;
           keep.push(it.el);
         }
         // clear every previously-painted element that lost its anchor this
@@ -921,6 +1085,8 @@
           el2.style.removeProperty('background-attachment');
           el2.__projPainted = false;
           el2.__projPos = null;
+          el2.__projScOwner = undefined;   // re-discover on re-entry
+          el2.__projAbsBot = undefined;
         }
         painted = keep;
         motionTick();   // the vars land current right after the bake
@@ -943,11 +1109,33 @@
         // settle: when a motion window closes, one final full paint
         // re-validates every anchor at rest (cheap insurance — most
         // bakes are no-ops and write nothing).
-        if (hadRoot && movingRoot === 0 && !dirty && movingLayout === 0) paint();
+        // v0.78.3: NOT during a live gesture — a drag's smoothing loop
+        // pauses (catches the finger) between pointer moves, and every
+        // such micro-pause fired a full settle paint (the mid-drag paint
+        // storm). One deferred retry lands the settle after the gesture
+        // truly ends.
+        if (hadRoot && movingRoot === 0 && !dirty && movingLayout === 0) {
+          if (window.__doomalayGestureAt &&
+              performance.now() - window.__doomalayGestureAt < 200) {
+            if (!gestRetry) gestRetry = setTimeout(gestRetryFn, 240);
+          } else {
+            paint();
+          }
+        }
         if (dirty || movingRoot > 0 || movingLayout > 0) schedule();
       }
+      var gestRetry = 0;
+      function gestRetryFn() {
+        gestRetry = 0;
+        if (window.__doomalayGestureAt &&
+            performance.now() - window.__doomalayGestureAt < 200) {
+          gestRetry = setTimeout(gestRetryFn, 240);   // still gesturing — wait
+        } else {
+          mark();   // the gesture truly ended — the ONE settle paint
+        }
+      }
       function mark() { dirty = true; schedule(); }
-      function motion() { movingRoot = 3; schedule(); }
+      function motion() { movingRoot = 3; schedule(); stats.motions++; }
       // movingLayout — the LAYOUT window: any transition on a property
       // that can move element boxes (grid-template-rows un-collapses,
       // height, width…) repaints per frame while it animates; cosmetic
@@ -973,16 +1161,34 @@
           // a root's OWN style write where only transform/translate
           // changed is the glide driver (writeY) — the motion path
           // covers it; anything else is a real change → full paint.
+          // v0.78.3: during a panel GESTURE (drag/spring/rise), the
+          // dependent inline-style cascade (the --panel-vis-h stretch
+          // reflows #chat-input's autogrow, #chat-jump's bottom…) is
+          // drag noise on UNTRACKED elements — motion-grade, with the
+          // settle paint at gesture end re-validating every anchor.
+          var gest = window.__doomalayGestureAt &&
+            (performance.now() - window.__doomalayGestureAt < 200);
           if (muts.length && rootReg.length) {
             full = false;
             for (var i = 0; i < muts.length; i++) {
               var m = muts[i];
+              if (gest && m.type === 'attributes' && m.attributeName === 'style') {
+                continue;   // gesture cascade — rides motion()
+              }
+              if (m.type === 'attributes' && m.attributeName === 'style' &&
+                  m.target && m.target.__projWriteEpoch === writeEpoch) {
+                continue;   // the painter's OWN write — never self-trigger
+              }
               if (m.type !== 'attributes' || m.attributeName !== 'style' ||
                   !m.target || m.target.__projTracked !== true) { full = true; break; }
               var now = m.target.getAttribute('style') || '';
               var old = m.oldValue || '';
               var strip = function (s) {
-                return s.replace(/(^|;)\s*(transform|translate)\s*:[^;]*/g, ';');
+                // v0.78.3: --panel-vis-h joins the motion set — the drag/
+                // spring/duck stretch writes it per frame on the panel
+                // root; it rides motion() (writeY already calls it) and the
+                // settle paint at gesture end re-validates.
+                return s.replace(/(^|;)\s*(transform|translate|--panel-vis-h)\s*:[^;]*/g, ';');
               };
               if (strip(now) !== strip(old)) { full = true; break; }
             }
@@ -1000,7 +1206,60 @@
         var origSync = syncRoots;
         syncRoots = function () { origSync(); flagSync(); };
       }
-      document.addEventListener('scroll', mark, true);
+      var trackedScrollers = [];
+      document.addEventListener('scroll', function (e) {
+        // v0.78.3c: THE SCROLL PATH — an INCREMENTAL re-bake: elements
+        // painted inside the scrolling element get their baked Y constant
+        // shifted by the scroll delta (pure arithmetic + style writes, no
+        // layout reads, no SEL walk, no getComputedStyle). Elements NOT
+        // inside the scroller never move and never adjust. A debounced
+        // settle paint anchors newcomers once scrolling stops.
+        var t = e.target;
+        if (t && t.nodeType === 1) {
+          var known = false;
+          for (var ti = 0; ti < trackedScrollers.length; ti++) {
+            if (trackedScrollers[ti] === t) { known = true; break; }
+          }
+          if (!known && trackedScrollers.length < 12) trackedScrollers.push(t);
+        }
+        if (!t || t.nodeType !== 1) { mark(); scrollSettle(); return; }
+        var nowS = t.scrollTop || 0;
+        var lastS = t.__projSy || 0;
+        t.__projSy = nowS;
+        if (nowS !== lastS) scrollRebake(t, nowS - lastS);
+        scrollSettle();
+      }, true);
+      function scrollRebake(sc, dS) {
+        if (!painted.length || !dS) return;
+        var wep = ++writeEpoch;
+        for (var i = 0; i < painted.length; i++) {
+          var el = painted[i];
+          if (!el.isConnected || !sc.contains(el)) continue;
+          if (el.__projBy === undefined) continue;
+          // v0.78.3c: sticky/fixed descendants DON'T move with the scroll
+          // content — the sticky chat input inside #chat-scroll was being
+          // adjusted by the clamp delta and drifted (the A5b regression).
+          // (getComputedStyle(el).position is style-only — no layout.)
+          var pos_ = el.__projPosType;
+          if (pos_ === undefined) {
+            try { pos_ = getComputedStyle(el).position; } catch (pe) { pos_ = 'static'; }
+            el.__projPosType = pos_;
+          }
+          if (pos_ === 'sticky' || pos_ === 'fixed') continue;
+          el.__projBy += dS;
+          var pos = fmtCalc('--proj-tx', el.__projBx) + ' ' + fmtCalcY(el.__projBy);
+          if (el.__projPos !== pos) {
+            el.style.backgroundPosition = pos;
+            el.__projPos = pos;
+            el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
+          }
+        }
+      }
+      var settleTimer = 0;
+      function scrollSettle() {
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(function () { settleTimer = 0; mark(); }, 150);
+      }
       window.addEventListener('resize', function () { SEL = null; mark(); });
       // CSS transitions don't fire attribute mutations (computed values
       // interpolate) — the transform rides need explicit tracking.
@@ -1016,20 +1275,37 @@
             } else {
               movingLayout = 5; mark();   // a layout animation — full repaints per frame
             }
-          } else {
-            mark();                 // cosmetic — one repaint at the end settles it
           }
+          // v0.78.3: COSMETIC transitions (background, color, opacity,
+          // border-radius, box-shadow…) no longer paint MID-FLIGHT —
+          // they can't move a box, so the anchors can't go stale;
+          // transitionend still settles anything discrete (a gradient
+          // swap flips at midpoint and lands there).
         }, true);
       });
       ['transitionend', 'transitioncancel'].forEach(function (ev) {
-        document.addEventListener(ev, mark, true);
+        document.addEventListener(ev, function (e) {
+          // v0.78.3: background-position is the PAINTER'S OWN property —
+          // elements with a decorative background-position transition
+          // (#chat-jump's gradient slide) re-bake per panel-drag frame, and
+          // every restart's transitionend used to mark() a full paint (29
+          // paints per drag on the rig — the "8fps" panel). Painter-owned
+          // noise never re-anchors.
+          if (/^background-position/.test(e.propertyName || '')) return;
+          // during a live gesture the whole transition set is drag
+          // cascade — the post-gesture retry settles everything once.
+          if (window.__doomalayGestureAt &&
+              performance.now() - window.__doomalayGestureAt < 200) return;
+          mark();
+        }, true);
       });
 
       return {
         poke: mark,             // app.js's physics tick calls this per frame
         motion: motion,         // v0.74: the CHEAP per-frame path (writeY rides it)
-        repaint: function () { SEL = null; paint(); },
-        paint: paint
+        repaint: function () { SEL = null; memoEpoch++; paint(); },
+        paint: paint,
+        stats: stats            // v0.78.3: {paints, motions} — the perf rig
       };
     })();
     window.DoomProjection = PROJ || { poke: function(){}, motion: function(){}, repaint: function(){}, paint: function(){} };

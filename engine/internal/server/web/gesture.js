@@ -126,6 +126,13 @@
   // lands on the screen bottom the instant the sheet moves.
   function writeY(y) {
     curY = y;
+    // v0.78.3: the gesture flag — the projection observer reads this to
+    // classify the per-frame inline-style CASCADE (--panel-vis-h stretches
+    // #chat-input's autogrow + #chat-jump's bottom + siblings) as drag
+    // noise → motion, not full paints. That cascade was the REAL drag
+    // jank (a full projection paint per drag frame, invisible to the
+    // v0.76.5 test which only counted the panel's own writes).
+    window.__doomalayGestureAt = performance.now();
     panelEl.style.transform = 'translate3d(0,' + y + 'px,0)';
     // v0.72: every position write re-anchors the projection windows —
     // the painter (theme.js PROJ) converts fixed-attachment gradients

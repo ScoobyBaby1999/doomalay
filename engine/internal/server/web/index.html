@@ -1051,6 +1051,11 @@
      the flex-column parent's gap; the chip folds into the row's own
      3px top margin so vertical rhythm is unchanged. */
   .msg-row { display: flex; flex-direction: column; max-width: 100%; }
+  /* v0.78.3: transcript virtualization — offscreen bubbles skip layout +
+     paint entirely (Chromium's native containment; the remembered size
+     keeps scrollbar geometry stable). Long transcripts stop paying for
+     rows the user can't see. */
+  .msg-row { content-visibility: auto; contain-intrinsic-size: auto 220px; }
   .msg-row-user { align-items: flex-end; }
   .msg-row-assistant { align-items: flex-start; }
   .msg-time {

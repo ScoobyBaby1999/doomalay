@@ -1277,10 +1277,23 @@
         moving = true; break;
       }
     }
-    renderGrid();
-    for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
-    renderOffScreenArrows();
-    if (window.DoomProjection) window.DoomProjection.poke();
+    // v0.78.3: the per-frame POKED PAINT is GONE. Canvas motion moves no
+    // DOM inside the transformed roots (arrows are plain fixed elements —
+    // native fixed works there), so the tick's full projection paint per
+    // frame was pure jank (the panel glide already rides writeY→motion,
+    // DOM changes ride the observer, scrolls ride --proj-sy). The ambient
+    // animate loop used to burn one full paint per frame, forever.
+    let covered = false;
+    const pEl = document.getElementById('chat-panel');
+    if (pEl && pEl.classList.contains('open')) {
+      const pr = pEl.getBoundingClientRect();
+      covered = pr.top <= 1 && pr.bottom >= window.innerHeight - 1;
+    }
+    if (!covered) {
+      renderGrid();
+      for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+      renderOffScreenArrows();
+    }
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
     else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save
     else { animating = false; scheduleSave(); }

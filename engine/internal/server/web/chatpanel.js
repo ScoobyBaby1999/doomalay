@@ -1103,14 +1103,43 @@
         if (!jumpBtn || !jumpBtn.isConnected) return;
         var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
         var far = d > Math.max(240, scrollEl.clientHeight * 1.5);
-        var ib = bodyEl.querySelector('#chat-inputbar');
-        if (far) {
-          jumpBtn.style.bottom = ((ib ? ib.offsetHeight : 90) + 14) + 'px';
-          jumpBtn.classList.add('show');
-          if (state.isStreaming) jumpBtn.classList.add('live'); else jumpBtn.classList.remove('live');
-        } else {
-          jumpBtn.classList.remove('show', 'live');
+        // v0.78.3: flap guard — classes/styles flip ONLY on real change.
+        // The smooth scroll used to re-write bottom + re-toggle classes
+        // every frame; each class flip is a projection anchor paint (the
+        // pill MOVES when it shows), and the flapping was a paint storm.
+        if (far !== jumpBtn._far) {
+          jumpBtn._far = far;
+          if (far) jumpBtn.classList.add('show');
+          else jumpBtn.classList.remove('show', 'live');
         }
+        if (far) {
+          var b = ((bodyEl.querySelector('#chat-inputbar') || {}).offsetHeight || 90) + 14;
+          if (jumpBtn._bottom !== b) {
+            jumpBtn._bottom = b;
+            jumpBtn.style.bottom = b + 'px';
+          }
+          var live = !!state.isStreaming;
+          if (jumpBtn._live !== live) {
+            jumpBtn._live = live;
+            if (live) jumpBtn.classList.add('live'); else jumpBtn.classList.remove('live');
+          }
+        }
+      };
+      // v0.78.3: the scroll listener's layout reads (scrollHeight × 2 +
+      // offsetHeight) batched to ONE read pass per frame — the old handler
+      // forced layout per scroll EVENT (thrash at 120Hz touch scrolling).
+      var jumpRaf = 0;
+      var jumpRead = function () {
+        if (jumpRaf) return;
+        jumpRaf = requestAnimationFrame(function () {
+          jumpRaf = 0;
+          updateJump();
+          if (state.isStreaming) {
+            var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+            if (d < 80) state._scrollFrozen = false; // back at the bottom — follow again
+            else if (d > 160) state._scrollFrozen = true; // reading above — freeze
+          }
+        });
       };
       if (jumpBtn) {
         jumpBtn.addEventListener('click', function () {
@@ -1124,11 +1153,7 @@
       }
       scrollEl.addEventListener('scroll', function () {
         rememberScroll(state, scrollEl.scrollTop); // v0.34: where the user is
-        updateJump(); // v0.40: pill visibility
-        if (!state.isStreaming) { state._scrollFrozen = false; return; }
-        var d = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-        if (d < 80) state._scrollFrozen = false; // back at the bottom — follow again
-        else if (d > 160) state._scrollFrozen = true; // reading above — freeze
+        jumpRead(); // v0.40 pill visibility + the freeze check (v0.78.3: rAF-batched)
       }, { passive: true });
     }
 
@@ -5117,16 +5142,91 @@
     mountAllFormatting(container, state);
   }
 
+
+  // ── v0.78.3 THE TWO-TIER STREAMING RENDER ──────────────────────────
+  // The old path re-parsed the WHOLE accumulated text every 180ms tick
+  // (marked + DOMPurify + innerHTML of everything so far ⇒ O(n²) per
+  // stream) and each swap was a childList mutation the projection painter
+  // full-painted. Now: completed markdown BLOCKS render once into a
+  // stable tier (append-only — the painter never sees them move again),
+  // each tick re-renders only the active TAIL, and the final render on
+  // completion re-runs the full formatter once for correctness
+  // (postProcess, Prism, code cards, artifact collection).
+  function streamReset(el) {
+    el.__tier = null;
+    el.innerHTML = '';
+  }
+
+  // the last blank-line boundary at least 96 chars back that isn't inside
+  // an open code fence and isn't followed by a list/quote/table/block
+  // continuation — the safe place to freeze the stable tier.
+  function streamSplitPoint(text) {
+    if (text.length < 160) return -1;
+    var fence = /```/g, opens = [], m;
+    while ((m = fence.exec(text))) opens.push(m.index);
+    var fenceOpenAt = function (idx) {
+      var o = false;
+      for (var i = 0; i < opens.length; i++) { if (opens[i] >= idx) break; o = !o; }
+      return o;
+    };
+    var min = text.length - 96;
+    var idx = text.lastIndexOf('\n\n');
+    while (idx >= min) {
+      if (!fenceOpenAt(idx)) {
+        var after = text.slice(idx + 2, idx + 4);
+        if (!/^([-*+]\s|\d+[.)]\s|>\s|\||\s{2,})/.test(after)) return idx;
+      }
+      idx = text.lastIndexOf('\n\n', idx - 1);
+    }
+    return -1;
+  }
+
+  function streamRender(el, msg) {
+    var text = msg.text || '';
+    if (el.__tier && el.__tier.sp > text.length) streamReset(el);   // regenerated/shrunk
+    var sp = streamSplitPoint(text);
+    if (sp < 0) {
+      if (el.__tier) streamReset(el);
+      window.Formatter.renderInto(el, text, { mode: 'full', streaming: true });
+      return;
+    }
+    if (!el.__tier) {
+      el.innerHTML = '';
+      var stable = document.createElement('div');
+      stable.className = 'fmt-tier fmt-tier-stable';
+      var tail = document.createElement('div');
+      tail.className = 'fmt-tier fmt-tier-tail';
+      el.appendChild(stable);
+      el.appendChild(tail);
+      el.__tier = { stable: stable, tail: tail, sp: 0 };
+    }
+    var t = el.__tier;
+    if (sp + 2 > t.sp) {
+      // the stable region grew — render ONLY the new chunk once, append
+      var chunk = text.slice(t.sp, sp + 2);
+      var tmp = document.createElement('div');
+      window.Formatter.renderInto(tmp, chunk, { mode: 'full', streaming: false });
+      while (tmp.firstChild) t.stable.appendChild(tmp.firstChild);
+      t.sp = sp + 2;
+    }
+    window.Formatter.renderInto(t.tail, text.slice(t.sp), { mode: 'full', streaming: true });
+  }
+
   // run Formatter into a mounted bubble (user/assistant/thinking)
   function mountFormatting(el, msg, final) {
     if (!el) return;
     if (msg.role === 'user') {
       window.Formatter.renderInto(el, msg.text, { mode: 'user' });
     } else if (msg.role === 'assistant') {
-      window.Formatter.renderInto(el, msg.text, {
-        mode: 'full',
-        streaming: !!msg.streaming && !final
-      });
+      if (!final && msg.streaming && (msg.text || '').length >= 160) {
+        streamRender(el, msg);   // v0.78.3: the two-tier streaming path
+      } else {
+        if (el.__tier) streamReset(el);
+        window.Formatter.renderInto(el, msg.text, {
+          mode: 'full',
+          streaming: !!msg.streaming && !final
+        });
+      }
     } else if (msg.role === 'thinking' && el.classList.contains('msg-think-body')) {
       var elapsed = msg.startedAt ? Math.max(0, Math.round(((msg.endedAt || Date.now()) - msg.startedAt) / 1000)) : 0;
       window.Formatter.renderInto(el, msg.text, {
