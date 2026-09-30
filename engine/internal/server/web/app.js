@@ -143,16 +143,19 @@
     vseg: new Map(), hseg: new Map(),
     dotC: new Map(), vlineC: new Map(), hlineC: new Map(),
     vsegC: new Map(), hsegC: new Map(),
+    dotG: new Map(),                      // v0.85.1 (glow wave): per-dot LIFTED glow hexes
     samplers: new Map(), paints: new Map(), sprites: new Map(),
-    hits: 0, misses: 0                    // v0.85.1: the cache hit-rate ledger (DoomalayPerf)
+    hits: 0, misses: 0                    // v0.85.1 (perf wave): the cache hit-rate ledger (DoomalayPerf)
   };
   function lcKey(a, b) { return (a + 65536) * 131072 + (b + 65536); }
   function lcClearParams() {
     LC.dot.clear(); LC.vline.clear(); LC.hline.clear(); LC.vseg.clear(); LC.hseg.clear();
     LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
+    LC.dotG.clear();
   }
   function lcClearColors() {
     LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
+    LC.dotG.clear();
   }
   function lcSampler(spec, fallbackHex) {
     var k = fallbackHex + '|' + (spec ? JSON.stringify(spec) : '');
@@ -173,6 +176,11 @@
   function lcGlowSprite(hexColor) {
     var sp = LC.sprites.get(hexColor);
     if (sp) return sp;
+    // v0.85.1: the cap — per-dot glows (gradient/pattern dot specs) mint
+    // MANY distinct colors; the sprite map would grow unbounded across a
+    // long session. 256 live sprites is ~4MB worst-case; a clear drops
+    // them all and the next frame re-mints only what's on screen.
+    if (LC.sprites.size > 256) LC.sprites.clear();
     var S = 128, c = document.createElement('canvas');
     c.width = S; c.height = S;
     var g = c.getContext('2d');
@@ -373,6 +381,10 @@
     // from the hashes — no per-dot state, no drift).
     var animT = performance.now() / 1000;
     var dbgDots = 0, dbgSegs = 0;
+    // v0.85.1: the glow twin (the rig proves the per-dot derivation: how
+    // many dots glowed this frame + the DISTINCT colors they used — a
+    // gradient dot spec must mint >1 color; a solid theme exactly 1).
+    var dbgGlow = 0, dbgGlowCols = [];
     // v0.81.1: the bias-oddity instrument — per-frame size distribution
     // counters (the rigs prove "outliers appear at size 0 + bias" and
     // "the opposite tail is common, not rare"). Thresholds are ±10% off
@@ -426,16 +438,31 @@
       var k = Math.floor(t * AMP_BANDS);
       return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k);
     };
-    // v0.83.3: the glow tint derives from the DOT's own solid paint (the
+    // v0.83.3: the glow tint derives from the DOT'S OWN solid paint (the
     // light-lifted tone — the v0.77 intent). The old code read
     // ctx.fillStyle at frame start, which was whatever painted LAST the
     // previous frame (the origin dot, usually) — the halo tint silently
-    // rode the wrong color whenever the origin was on screen. Gradient
-    // dot specs have no solid hex → no glow (as before).
+    // rode the wrong color whenever the origin was on screen.
+    // v0.85.1 THE GLOW THEME WAVE (user spec: "Larger animated dots that
+    // glow in the canvas panel don't follow theme colors nor does their
+    // glow"): the spec-scope derivation had a real hole — for a 2+-stop
+    // gradient dot color gridPaint returns a CanvasGradient OBJECT, so
+    // the string test failed and the glow was NULL: the glow + the
+    // lifted tone VANISHED entirely on gradient dot colors (the
+    // appearance page's GradientUI makes those the default customization
+    // UX!); for mesh/pat specs it collapsed to stops[0] — every glow dot
+    // painted the FIRST stop while the regular dots sampled the pattern
+    // per-dot. THE FIX: the glow derives from each DOT'S OWN COLOR at
+    // paint time — the per-cell sampled color (colD, the exact color the
+    // dot already paints, cached in LC.dotC) when a sampler is live,
+    // else the spec's solid. Per-dot lifted hexes cache in LC.dotG
+    // (cleared with the color caches); halo sprites stay per-color
+    // (lcGlowSprite, capped). Now the cores AND the halos follow EVERY
+    // dot-color source: theme solids, user gradients, mesh, patterns.
     var dotSolidFill = lcPaint(dotSpec, dotFallback);
-    var glowFill = null;
+    var specGlowFill = null;
     if (typeof dotSolidFill === 'string' && HEX_RE.test(dotSolidFill)) {
-      glowFill = shadeHex(dotSolidFill, 0.42);
+      specGlowFill = shadeHex(dotSolidFill, 0.42);
     }
 
     // the dot color + pattern sampler (v0.77: hoisted to function scope —
@@ -945,13 +972,32 @@
           // per-dot createRadialGradient is gone); the core paints
           // WITHOUT save/translate/rotate/restore — rotation is invisible
           // on circles, so the arc lands directly at screen coords.
-          // v0.85.1: the glow twin stays INDIVIDUAL (rare — near band,
-          // jr ≥ 1.6× base, solid specs only); every other dot collects
-          // into a bucket — same (style × alpha) dots share ONE path +
-          // ONE fill (moveTo to the arc's own start kills the connector).
-          var nearGlow = dotBands > 1 && db === AMP_BANDS - 1 &&
-            jr >= dotRBase * 1.6 && glowFill;
-          var cx = x + DP.jx + tox, cy = y + DP.jy + toy;
+          // v0.85.1 (perf wave): the glow dots stay INDIVIDUAL (rare — near
+          // band, jr >= 1.6x base, big-dot only); every other dot collects
+          // into a bucket — same (style x alpha) dots share ONE path + ONE
+          // fill (moveTo to the arc's own start kills the connector).
+          // v0.85.1 (glow wave): the glow tint is PER-DOT — this dot's
+          // lifted color, derived from its OWN paint color (colD when a
+          // sampler is live, else the spec solid), cached in LC.dotG with
+          // the same invalidation as colD. Gradient/mesh/pattern dot
+          // colors now glow in their own per-dot colors (the v0.83.3
+          // spec-scope glowFill silently killed the glow on gradient specs
+          // and flattened it to stops[0] on patterns).
+          var isGlowCand = dotBands > 1 && db === AMP_BANDS - 1 && jr >= dotRBase * 1.6;
+          var glowFill = undefined;
+          if (isGlowCand) {
+            glowFill = LC.dotG.get(dkey);          // undefined | hex | false
+            if (glowFill === undefined) {
+              var base = (typeof colD === 'string' && HEX_RE.test(colD)) ? colD : null;
+              if (base !== null) glowFill = shadeHex(base, 0.42);
+              else if (specGlowFill) glowFill = specGlowFill;
+              else glowFill = false;               // no derivable color — glow-less
+              LC.dotG.set(dkey, glowFill);
+            }
+            if (!glowFill) glowFill = null;
+          }
+          var nearGlow = isGlowCand && !!glowFill;
+          if (nearGlow) dc.fillStyle = glowFill;          var cx = x + DP.jx + tox, cy = y + DP.jy + toy;
           var rrD = Math.max(0.15, jr);
           if (nearGlow) {
             dc.fillStyle = glowFill;
@@ -976,6 +1022,10 @@
             dob.ops.push(cx, cy, rrD);
           }
           dbgDots++;
+          if (nearGlow) {
+            dbgGlow++;
+            if (dbgGlowCols.indexOf(glowFill) < 0) dbgGlowCols.push(glowFill);
+          }
         }
       }
       dbgDotBands.push(dBandN);
@@ -1056,8 +1106,10 @@
       batches: dbgBatches, buckets: dotBuckets.size + segBuckets.size,
       cache: { gen: LC.gen, colorGen: LC.cgen,
         dot: LC.dot.size, vline: LC.vline.size, hline: LC.hline.size,
-        vseg: LC.vseg.size, hseg: LC.hseg.size } };
-    // v0.85.1: the perf HUD feed (DoomalayPerf — the honest instrument)
+        vseg: LC.vseg.size, hseg: LC.hseg.size },
+      // v0.85.1 (glow wave): the glow twin — the per-dot derivation contract
+      glow: { n: dbgGlow, colors: dbgGlowCols, sprites: LC.sprites.size } };
+    // v0.85.1 (perf wave): the perf HUD feed (DoomalayPerf — the honest instrument)
     try {
       if (window.DoomalayPerf) {
         var DP = window.DoomalayPerf;
@@ -1067,8 +1119,7 @@
         DP.cacheHits = LC.hits; DP.cacheMisses = LC.misses;
         DP.paintMs = Math.round((lcNow - frameT0) * 10) / 10;
       }
-    } catch (e) {}
-  }
+    } catch (e) {}  }
 
   // ── v0.49 THE CANVAS BACKGROUND PAINTER ─────────────────────────────
   // Full-fidelity spec → COLOR-SPACE tile paint (the reported bug: "the

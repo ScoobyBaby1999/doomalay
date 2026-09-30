@@ -903,9 +903,12 @@
   .chatbot.tapped .icon {
     animation: tap-pulse 0.2s ease-out;
   }
+  /* v0.85.1: the flash ring rides the theme's --border-strong (was the
+     hardcoded 74,74,94 — the old default-family canvas hex, a stray from
+     the pre-theme era that glowed wrong on every non-midnight theme). */
   @keyframes tap-pulse {
     0%   { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-    40%  { transform: scale(0.82); box-shadow: 0 8px 24px rgba(74,74,94,0.6); }
+    40%  { transform: scale(0.82); box-shadow: 0 8px 24px color-mix(in srgb, var(--border-strong) 60%, transparent); }
     100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
   }
 
