@@ -48,6 +48,10 @@ PASS=0; FAIL=0
 ck() { if [ "$2" = "yes" ]; then PASS=$((PASS+1)); echo "  ✓ $1"; else FAIL=$((FAIL+1)); echo "  ✗ $1  → got: ${3:-?}"; fi; }
 
 rm -rf $DATA; mkdir -p $DATA
+# a FRESH browser for the run: the session profile persists TABS across
+# runs — stale tabs (old page instances mid-navigation) answer evals with
+# SyntaxError/empty and make every seed land on the wrong document.
+agent-browser close >/dev/null 2>&1
 $ENG -open=false -port=$PORT -data-dir=$DATA >/tmp/v0854-eng.log 2>&1 &
 ENGPID=$!
 cleanup(){ kill $ENGPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
@@ -77,10 +81,13 @@ PYEOF
 
 echo "── (1) the gate: 65 entities + auto"
 agent-browser open "$BASE" >/dev/null 2>&1; sleep 1.2
+# the browser profile persists localStorage across runs of this rig —
+# wipe it so every run boots from the same deterministic ground
+ev "localStorage.clear(); 'cleared'" >/dev/null
 ev "$(seed_icons 65 yes | python3 -c "
 import sys, json
 print(\"localStorage.setItem('doomalay.state.v2', JSON.stringify(%s)); 'ok'\" % json.dumps(json.load(sys.stdin)))")" >/dev/null
-agent-browser open "$BASE" >/dev/null 2>&1
+agent-browser reload >/dev/null 2>&1
 sleep 2.6   # boot + the lazy pixi.min.js injection + Application.init
 D1=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false, missing:true})")
 ck "World3D active + webgl renderer" \
@@ -126,7 +133,9 @@ DRAG=$(ev "(function(){
   function md(x,y){document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
   function mm(x,y){window.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
   function mu(x,y){document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
-  md(240,90); mm(200,120); mm(160,160); mm(150,168); mu(150,168);
+  var sx = icon.x, sy = icon.y;   // camera rests at origin, scale 1
+  md(sx,sy); mm(sx-45,sy+30); mm(sx-85,sy+70); mm(sx-92,sy+76); mu(sx-92,sy+76);
+  icon.vx = 0; icon.vy = 0;   // no fling — the cascade pegs the thread
   return 'dragged'})()")
 ck "the drag found + moved the entity" "$([ "$DRAG" = "dragged" ] && echo yes || echo no)" "$DRAG"
 sleep 1.0
@@ -198,11 +207,29 @@ try:
 except Exception: print('no')")" "$OWNED"
 
 echo "── (4) the hand-back (below the threshold)"
-ev "$(seed_icons 10 yes | python3 -c "
+# the drag's collision cascade can keep entities moving (and the 200ms
+# debounced save RE-ARMING) for many seconds — the trailing saveNow would
+# land AFTER the seed and clobber it. Quiet the world, let the last save
+# land, THEN seed.
+ev "window.doomalay.world.entities.forEach(function(e){e.vx=0;e.vy=0;}); 'quiet'" >/dev/null
+sleep 1.0
+JS10=$(seed_icons 10 yes | python3 -c "
 import sys, json
-print(\"localStorage.setItem('doomalay.state.v2', JSON.stringify(%s)); 'ok'\" % json.dumps(json.load(sys.stdin)))")" >/dev/null
-agent-browser open "$BASE" >/dev/null 2>&1
+print(\"localStorage.setItem('doomalay.state.v2', JSON.stringify(%s)); 'ok'\" % json.dumps(json.load(sys.stdin)))")
+agent-browser eval "$JS10" >/dev/null 2>&1
+agent-browser reload >/dev/null 2>&1
 sleep 2.2
+# a pending 200ms layout save from the pre-reload page can race the seed —
+# verify the restore took, re-seed once if it lost
+N10=$(ev "(window.doomalay && window.doomalay.world) ? window.doomalay.world.entities.length : -1")
+if [ "$N10" != "10" ]; then
+  sleep 0.8
+  agent-browser eval "window.doomalay.world.entities.forEach(function(e){e.vx=0;e.vy=0;}); 'quiet'" >/dev/null 2>&1
+  sleep 0.9
+  agent-browser eval "$JS10" 2>&1 | tr -d '\n' | head -c 60; echo ""
+  agent-browser reload >/dev/null 2>&1
+  sleep 2.2
+fi
 D2=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false})")
 CHROME2=$(ev "(function(){var l=document.getElementById('chatbots'); var any=document.querySelector('.chatbot'); return JSON.stringify({cls: l?l.className:'nolayer', op: any?getComputedStyle(any).opacity:'noicon', c3: !!document.getElementById('c3')})})()")
 ck "10 icons → the layer deactivates (auto gate)" \
