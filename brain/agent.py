@@ -432,6 +432,72 @@ async def _run_strands_agent(
         except Exception as e:
             raise
 
+        # ── v0.81.7 THE FINAL-ANSWER NET — reasoning-without-reply is dead ──
+        # (user report: "Privatemodeai and possibly Nvidia still has an issue
+        # where they finish the reasoning but don't follow up with a reply…
+        # the bot finished its reasoning but then just stopped. No reply after
+        # the reasoning."). strands' block-stop assembly only appends a
+        # reasoningContent block when the message has NO text and NO tool_use,
+        # so a model that finishes its turn inside reasoning_content (NVIDIA's
+        # deepseek-style reasoning models stream the whole turn that way)
+        # ends "successfully" with thinking events only: the reasoning pill
+        # renders, then NOTHING — no reply, no error. The Go direct path has
+        # its errEmptyRound retry, the PM loop now has its armed nudge + synth;
+        # this is the brain-path twin (mirroring agent_core.py's no-response
+        # note): ONE armed retry that TELLS the model to answer as plain text,
+        # and if that also comes back empty, the reasoning tail becomes the
+        # reply under an honest prefix — a visible answer, never a silent idle.
+        if not getattr(callback, "_assistant_emitted", False):
+            nudged_reply = ""
+            try:
+                import litellm as _litellm_nudge
+                # plain-text view of the strands history (reasoning-only
+                # blocks carry no visible text — they're skipped, not sent)
+                base_msgs = []
+                for m in (getattr(agent, "messages", None) or list(messages)):
+                    c = m.get("content")
+                    if isinstance(c, list):
+                        txt = " ".join(str(b.get("text") or "") for b in c
+                                       if isinstance(b, dict) and b.get("text"))
+                        if txt.strip():
+                            base_msgs.append({"role": m.get("role") or "user", "content": txt})
+                    elif isinstance(c, str) and c.strip():
+                        base_msgs.append({"role": m.get("role") or "user", "content": c})
+                nudge_msgs = base_msgs + [
+                    {"role": "assistant", "content": "(the previous turn contained reasoning but no visible answer)"},
+                    {"role": "user", "content": "(system: your last turn ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no tools, no more reasoning.)"},
+                ]
+                if system_prompt:
+                    nudge_msgs = [{"role": "system", "content": system_prompt}] + nudge_msgs
+                _nudge_kwargs = {"model": litellm_id, "messages": nudge_msgs,
+                                 "api_key": api_key, "timeout": 86400,
+                                 "max_retries": 1, "stream": True,
+                                 "extra_body": _build_effort_body(model, effort)}
+                if litellm_base:
+                    _nudge_kwargs["base_url"] = litellm_base
+                _nudge_stream = await _litellm_nudge.acompletion(**_nudge_kwargs)
+                async for _nc in _nudge_stream:
+                    _d = None
+                    if getattr(_nc, "choices", None):
+                        _d = getattr(_nc.choices[0], "delta", None)
+                    _txt = getattr(_d, "content", None) if _d is not None else None
+                    if _txt:
+                        nudged_reply += _txt
+                        yield {"type": "assistant_delta", "text": _txt}
+            except Exception:
+                nudged_reply = ""  # the synth below still gives the user a reply
+            if not nudged_reply.strip():
+                tail = ""
+                for _ev in callback.events:
+                    if _ev.get("type") == "thinking":
+                        tail = (tail + str(_ev.get("text") or ""))[-2400:]
+                if tail.strip():
+                    note = ("(the model finished its reasoning without sending a visible reply — its last thought:)\n"
+                            + (tail if len(tail) <= 900 else "…" + tail[-900:]))
+                else:
+                    note = "(no response from the model — try again or pick a different model)"
+                yield {"type": "assistant_delta", "text": note}
+
         # V0: tool_use_id pairing is handled by the callback (it extracts
         # tool_use_id from the Strands tool_use content block).
 

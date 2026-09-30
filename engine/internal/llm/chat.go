@@ -1803,6 +1803,12 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         mode := 0               // 0 undecided · 1 streaming final · 2 suppressed ACTION
         emitted := false        // any assistant_delta sent (v0.22: retry safety)
         var usage *Usage        // v0.21: the round's token usage (set after the stream)
+        // v0.81.7: the reasoning accumulator (bounded — the last ~2400
+        // chars) for the FINAL-ANSWER NET below: a round that finishes
+        // inside reasoning_content with zero content gets its reasoning
+        // flushed as the answer — completeSync's reasoning-only fallback
+        // (line ~1078), finally twinned on the streaming path.
+        think := ""
 
         flush := func() { // decided: final answer — stream what we hold
                 mode = 1
@@ -1825,6 +1831,10 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         usage, err = scanSSE(ctx, req, nil, ch, func(reasoning, content string) {
                 if reasoning != "" {
                         ch <- ChatChunk{Type: "thinking", Text: reasoning}
+                        think = think + reasoning
+                        if len(think) > 4800 {
+                                think = think[len(think)-2400:]
+                        }
                         // v0.20 FIX: DO NOT return — a chunk can carry BOTH
                         // reasoning and content (NIM batches the thinking→
                         // answer transition into one delta). The old early
@@ -1920,6 +1930,31 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
                         ch <- ChatChunk{Type: "assistant_delta", Text: answer.String()}
                         emitted = true
                 }
+        }
+        // ── v0.81.7 THE FINAL-ANSWER NET (the direct-path twin) —
+        // reasoning-without-reply is dead (user report: "Privatemodeai and
+        // possibly Nvidia… finish the reasoning but don't follow up with a
+        // reply… the bot finished its reasoning but then just stopped. No
+        // reply after the reasoning."). A round that streamed THINKING and
+        // finished with zero content (never decided, nothing held) used to
+        // return an empty answer → the caller's empty-round retry → the
+        // visible "empty response" ERROR — a complaint, not a reply, and
+        // the reasoning (which usually CONTAINS the answer the model never
+        // sent) was thrown away. completeSync already returns
+        // Message.Reasoning for the non-streaming shape; this is the
+        // streaming twin: the reasoning tail becomes the answer under an
+        // honest prefix. The genuinely-empty-no-reasoning round still rides
+        // the retry + error path unchanged.
+        if mode == 0 && answer.Len() == 0 && buf.Len() == 0 && strings.TrimSpace(think) != "" {
+                tail := strings.TrimSpace(think)
+                clip := tail
+                if len(clip) > 900 {
+                        clip = "…" + clip[len(clip)-900:]
+                }
+                note := "(the model finished its reasoning without sending a visible reply — its last thought:)\n" + clip
+                ch <- ChatChunk{Type: "assistant_delta", Text: note}
+                answer.WriteString(note)
+                emitted = true
         }
         return answer.String(), usage, emitted, nil
 }

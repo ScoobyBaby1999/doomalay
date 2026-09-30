@@ -615,6 +615,7 @@ async function runToolLoop(c, opts) {
   var MAX_ROUNDS = 40; // v0.71: 40 — 20+-tool chains with reasoning between calls fit (24 clipped deep bundle flows; the exhaustion path still forces a final answer)
   var anyToolRun = false; // v0.24: has a tool executed yet this turn
   var nudged = false;     // v0.24: the auto-proceed push fired (max once)
+  var lastThink = '';    // v0.81.7: the newest reasoning tail (the turn-end net's raw material)
 
   for (var round = 0; round < MAX_ROUNDS; round++) {
     if (opts.signal && opts.signal.aborted) {
@@ -625,6 +626,7 @@ async function runToolLoop(c, opts) {
     // old `res.usage || usage` kept only the LAST round's tokens, so a
     // 12-round tool turn reported one round's cost as the whole turn's.
     usage = mergeUsage(usage, res.usage);
+    if (res.think) lastThink = String(res.think); // v0.81.7: the net's raw material
     var reply = (res.text || '').trim();
 
     // v0.77.5 NEVER-LOSE-CONTENT — the twin of the Go loop's flush
@@ -715,8 +717,35 @@ async function runToolLoop(c, opts) {
     // Budget exhausted without a final answer — force one last plain round.
     messages.push({ role: 'user', content: 'Tool budget exhausted. Give your FINAL answer now from what you have (no ACTION line), citing sources as [n] if any.' });
     var last = await roundTrip(c, opts, messages);
+    if (last.think) lastThink = String(last.think);
     finalText = (last.text || '').trim();
     flushFinal(last, finalText);   // the forced final can itself end suppressed
+  }
+
+  // ── v0.81.7 THE FINAL-ANSWER NET — reasoning-without-reply is dead ──
+  // (user report: "Privatemodeai and possibly Nvidia still has an issue
+  // where they finish the reasoning but don't follow up with a reply…
+  // the bot finished its reasoning but then just stopped. No reply after
+  // the reasoning."). roundTrip already ARMED its empty-round retry with the
+  // final-answer nudge; if the turn STILL ends with no visible text
+  // (the nudged round reproduced the reasoning-only shape, or the
+  // forced-final came back empty), the user gets a REPLY, never a
+  // silent screen and never a bare error: the model's last reasoning —
+  // which usually CONTAINS the answer it never sent — becomes the
+  // reply under an honest prefix. (The v0.77.5 shape turned this case
+  // into "the model returned an empty response" — visible, but not a
+  // reply, and the reasoning was thrown away.)
+  if (!finalText || !finalText.trim()) {
+    var tail = (lastThink || '').trim();
+    if (tail) {
+      // the reasoning tail usually ends mid-thought — clip to the last
+      // complete sentences the model actually wrote
+      var clip = tail.length > 900 ? '…' + tail.slice(-900) : tail;
+      finalText = '(the model finished its reasoning without sending a visible reply — its last thought:)\n' + clip;
+    } else {
+      finalText = '(the model returned an empty response — try again or pick a different model)';
+    }
+    flushFinal({ emitted: false }, finalText); // render it through the live seam
   }
 
   opts.onStatus && opts.onStatus('idle');
@@ -1087,23 +1116,36 @@ async function roundTrip(c, opts, messages) {
   for (var attempt = 0; attempt < 3; attempt++) {
     var res = await roundTripOnce(c, opts, messages);
     if (res.aborted || !res.err) {
-      // v0.20 EMPTY-ROUND GUARD — PM sometimes returns a 200 stream with
-      // zero tokens. One retry, then a visible error (not a silent no-op).
-      // v0.77.5: keyed on TEXT — the old `&& !res.usage` was DEAD CODE
-      // (every request sends stream_options.include_usage, so a usage-
-      // only chunk kept every empty round resolving as SUCCESS: a
-      // thinking-model round that finished in reasoning_content, or a
-      // proxy-truncated stream ending cleanly after the usage chunk,
-      // returned text='' → the tool loop broke with finalText='' → the
-      // turn "succeeded" with no output at all — the user's chained-
-      // tools-then-nothing report, silent live AND on replay). Exactly
-      // the twin the Go loop fixed (llm/chat.go errEmptyRound).
+      // v0.20 EMPTY-ROUND GUARD → v0.81.7 THE REASONING-ONLY NET: a
+      // 200 stream that ends with ZERO text (thinking models that
+      // finish inside reasoning_content — Privatemodeai's kimi class —
+      // or a proxy truncation ending cleanly after the usage chunk).
+      // v0.77.5's fix blindly retried the SAME messages: a reasoning-only
+      // model reproduces the same reasoning-only round and the turn died
+      // on "the model returned an empty response" (the user's report:
+      // the reasoning bubble closes, then NOTHING — no reply, ever).
+      // The retry is now ARMED: the final-answer nudge is appended FIRST
+      // (the model is TOLD to answer as plain text), and if the nudged
+      // round is STILL empty the result carries the reasoning (think)
+      // back with NO error — runToolLoop's turn-end net synthesizes the
+      // reply from it instead of surfacing an error.
       if (!res.aborted && (res.text || '').trim() === '') {
+        messages.push({ role: 'assistant', content: '(the previous reply contained reasoning but no visible answer)' });
+        messages.push({ role: 'user', content: '(system: your last reply ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no ACTION line, no more reasoning.)' });
         var retryRound = await roundTripOnce(c, opts, messages);
-        if ((retryRound.text || '').trim() === '' && !retryRound.aborted && !retryRound.err) {
-          retryRound.err = new Error('the model returned an empty response — try again or pick a different model');
+        if ((retryRound.text || '').trim() !== '' || retryRound.aborted || retryRound.err) {
+          retryRound.usage = mergeUsage(res.usage, retryRound.usage) || retryRound.usage;
+          if (!retryRound.think) retryRound.think = res.think || '';
+          res = retryRound;
+        } else {
+          // still empty after the nudge: BOTH rounds' reasoning (the
+          // first usually carries the analysis — the observation-driven
+          // chain case — the retry the final intention) + usage ride
+          // home; the turn-end net decides what the user sees
+          res = { text: '', usage: mergeUsage(res.usage, retryRound.usage) || null,
+                  emitted: false, aborted: false, err: null,
+                  think: (((res.think || '') + ' ' + (retryRound.think || '')).slice(-2400)) };
         }
-        res = retryRound;
       }
       if (res.err) throw pmError('PrivateMode: ' + friendlyPMError(res.err.message));
       return res;
@@ -1243,6 +1285,11 @@ async function roundTripOnce(c, opts, messages) {
     // "reasoning · 181s" on a round that thought ~30s and spent the rest
     // waiting on rate-limited search retries).
     var thinkOpen = false;
+    // v0.81.7: the reasoning ACCUMULATES (bounded — the last 2400 chars
+    // ride home as res.think) so the turn-end net can synthesize a reply
+    // when a thinking model finishes inside reasoning_content and never
+    // sends content.
+    var thinkText = '';
     var thinkClose = function () {
       if (thinkOpen) { thinkOpen = false; opts.onThinkingEnd && opts.onThinkingEnd(); }
     };
@@ -1250,7 +1297,11 @@ async function roundTripOnce(c, opts, messages) {
       var ch = chunk || {};
       if (ch.choices && ch.choices.length) {
         var d = ch.choices[0].delta || {};
-        if (d.reasoning_content) { thinkOpen = true; opts.onThinking && opts.onThinking(d.reasoning_content); }
+        if (d.reasoning_content) {
+          thinkOpen = true;
+          thinkText = (thinkText + d.reasoning_content).slice(-2400);
+          opts.onThinking && opts.onThinking(d.reasoning_content);
+        }
         if (d.content) {
           thinkClose(); // content follows thinking → the thinking phase is over
           full += d.content;
@@ -1284,6 +1335,7 @@ async function roundTripOnce(c, opts, messages) {
     await drainPump(); // visual stream finishes BEFORE the round resolves
     opts.onStatus && opts.onStatus('idle');
     out.text = full; out.usage = usage; out.emitted = emitted;
+    out.think = thinkText; // v0.81.7: the reasoning tail rides home
     return out;
   } catch (e) {
     thinkClose(); // aborted/failed mid-thinking — freeze the timer anyway

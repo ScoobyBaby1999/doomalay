@@ -118,9 +118,13 @@ R2=$(ev "(async function(){
 EG=$(echo "$R2" | python3 -c "
 import json,sys
 d = json.load(sys.stdin)
-ok = (not d.get('silent')) and ('empty response' in (d.get('err','') + d.get('text','')))
+# v0.81.7 re-pin: the empty turn now surfaces a REPLY, never a bare
+# error — the reasoning-tail reply when the round thought, the honest
+# empty-response note when it didn't. Either way: visible, never silent.
+combined = d.get('err','') + d.get('text','')
+ok = (not d.get('silent')) and (('empty response' in combined) or ('without sending a visible' in combined))
 print('yes' if ok else 'no')")
-ck "usage-only round → visible error (not a silent idle)" "$EG" "$R2"
+ck "usage-only round → a VISIBLE outcome (the v0.81.7 net: reasoning-tail reply or the empty-response note — never silent)" "$EG" "$R2"
 
 # (3) THE NO-DOUBLE FLUSH: a clean streamed final (decided='final' live)
 # flushes nothing extra — live text == final text exactly once
