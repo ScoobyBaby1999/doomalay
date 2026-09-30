@@ -244,7 +244,9 @@ has "D4 the backdrop camera deepens (0.08 floor at full amp — v0.77 re-pin)" "
 nohas "D5 the v0.67 PF line/dot lag is GONE (one flat plane)" "$APPJS" "PF_LINE"
 
 # ══ E. STAR SIZES (v0.76: per-side ±170% (origin v0.75) + OUR floors) ══
-has "E1 the size-variation cap is ±170% (per-side, v0.75)" "$APPJS" "var sizeFracL = sizeVarL / 100 * 1.7;"
+# v0.83.1 THE WEIGHT supersession: the spread doubled (±170% → ±340%) —
+# the old 1.7 constant here went stale when the weight wave landed.
+has "E1 the size-variation cap is ±340% (per-side; v0.83.1 THE WEIGHT)" "$APPJS" "var sizeFracL = sizeVarL / 100 * 3.4;"
 # v0.81.1 re-pin: the segment length moved under the effFrac ternary
 # (the bias-oddity wave — bias now feeds the same spread); the floors +
 # hashes are the durable identity of these asserts.

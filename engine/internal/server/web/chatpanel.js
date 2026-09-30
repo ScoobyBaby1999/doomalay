@@ -957,6 +957,9 @@
 
   function renderHost(bodyEl, icon, state, panel) {
     var type = window.ChatTypes.get(state.sandbox || 'quick');
+    // v0.83.4: capture the OUTGOING ctx before the overwrite — bodyEl
+    // still holds its formatted DOM until the innerHTML wipe below
+    var prevCtx = currentCtx;
     currentCtx = { bodyEl: bodyEl, icon: icon, state: state, panel: panel, type: type };
 
     // Labels may land async (catalog fetch): exactly ONE post-labels re-render.
@@ -993,6 +996,17 @@
 
     var ctx = buildCtx(bodyEl, icon, state, panel, type);
     currentCtx.ctx = ctx;
+
+    // v0.83.4: SALVAGE THE OUTGOING DOM — bodyEl still holds the PREVIOUS
+    // chat's live formatted nodes until the innerHTML wipe below. A chat
+    // SWITCH (prevCtx.state !== state on the same bodyEl) salvages into
+    // the OUTGOING state, so both chats' histories ride the cache on
+    // their next open; a same-chat re-render salvages into this one.
+    if (prevCtx && prevCtx.state && prevCtx.bodyEl === bodyEl &&
+        prevCtx.state !== state) {
+      salvageFormatted(bodyEl, prevCtx.state);
+    }
+    salvageFormatted(bodyEl, state);
 
   // ── PINNED header: arrow + summary; dropdown hidden by default ──
     var headerHTML = renderHeader(type, state, ctx, complete);
@@ -5191,14 +5205,72 @@
   }
 
   // mount formatting for ALL messages in a fresh container (no scroll)
+  // ── v0.83.4 THE SALVAGE CACHE ──────────────────────────────
+  // renderHost/rebuildTranscript rebuild the transcript's shells and
+  // re-run the FULL formatter pipeline (markdown → DOMPurify → Prism →
+  // code/artifact cards) for EVERY message on EVERY re-render — a
+  // panel reopen with history paid it all again (19-40ms on a fast
+  // desktop per re-render, multiples of that on a phone; "the panel
+  // starts to get very slow when a chat is loaded with even a little
+  // history"). THE SALVAGE: before the innerHTML wipe, each finalized
+  // bubble's formatted children move into a per-message fragment on
+  // the chat's own state; mountAllFormatting re-attaches the fragment
+  // when the message is byte-identical — Prism-highlighted code, copy
+  // buttons and artifact cards survive the move (re-parenting keeps
+  // listeners), and only genuinely-new text pays the formatter. The
+  // signature rides the MESSAGE text (escAttr at salvage time), not
+  // the shell's data-msg-raw attr (streaming appends leave it stale).
+  function salvageFormatted(rootEl, state) {
+    if (!rootEl || !state || !state.messages || !state.messages.length) return;
+    var salv = state._fmtSalvage;
+    if (!salv) salv = state._fmtSalvage = {};
+    var bubbles = rootEl.querySelectorAll('.msg-bubble[data-msg-role]');
+    for (var b = 0; b < bubbles.length; b++) {
+      var el = bubbles[b];
+      var role = el.getAttribute('data-msg-role') || '';
+      if (role !== 'user' && role !== 'assistant' && role !== 'thinking') continue;
+      var miAttr = el.getAttribute('data-mi');
+      if (miAttr === null || miAttr === '') {
+        var wrap = el.closest('[data-mi]');
+        if (!wrap) continue;
+        miAttr = wrap.getAttribute('data-mi');
+        if (miAttr === null || miAttr === '') continue;
+      }
+      var mi = parseInt(miAttr, 10);
+      var msg = state.messages[mi];
+      if (!msg || msg.role !== role || msg.streaming) continue;  // live streams re-render
+      // the signature = the STAMP of the render the DOM holds (what the
+      // formatter actually formatted from — NOT the message's current
+      // text, which an edit may have moved past the DOM)
+      if (!msg._fmtSig) continue;
+      var frag = document.createDocumentFragment();
+      while (el.firstChild) frag.appendChild(el.firstChild);
+      salv[mi] = { frag: frag, role: role, raw: msg._fmtSig };
+    }
+    // bound: a long session with many chats holds at most this many
+    var cnt = 0;
+    for (var sk in salv) { if (++cnt > 240) { state._fmtSalvage = {}; return; } }
+  }
+
   function mountAllFormatting(container, state) {
     if (!container || !state) return;
+    var salv = state._fmtSalvage;
     for (var i = 0; i < state.messages.length; i++) {
       var msg = state.messages[i];
       if (msg.role !== 'user' && msg.role !== 'assistant' && msg.role !== 'thinking') continue;
       var wrapper = container.querySelector('[data-mi="' + i + '"]');
       if (!wrapper) continue;
       var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
+      // v0.83.4: the salvage hit — a byte-identical message re-attaches
+      // its previous formatted DOM (Prism + listeners ride the move);
+      // a stale entry (the text changed) drops and pays the formatter.
+      if (salv && salv[i] && !msg.streaming &&
+          salv[i].role === msg.role && salv[i].raw === escAttr(msg.text || '')) {
+        el.appendChild(salv[i].frag);
+        delete salv[i];
+        continue;
+      }
+      if (salv && salv[i]) delete salv[i];
       mountFormatting(el, msg, true);
     }
   }
@@ -5209,6 +5281,7 @@
   // the new hide/edit/delete/restore paths) rendered blank bubbles.
   function rebuildTranscript(container, state) {
     if (!container) return;
+    salvageFormatted(container, state);   // v0.83.4: the formatter's work survives the rebuild
     container.innerHTML = renderMessages(state.messages);
     mountAllFormatting(container, state);
   }
@@ -5288,15 +5361,17 @@
     if (!el) return;
     if (msg.role === 'user') {
       window.Formatter.renderInto(el, msg.text, { mode: 'user' });
+      msg._fmtSig = escAttr(msg.text || '');   // v0.83.4: the render stamp (the salvage signature)
     } else if (msg.role === 'assistant') {
       if (!final && msg.streaming && (msg.text || '').length >= 160) {
-        streamRender(el, msg);   // v0.78.3: the two-tier streaming path
+        streamRender(el, msg);   // v0.78.3: the two-tier streaming path (partial — NO stamp)
       } else {
         if (el.__tier) streamReset(el);
         window.Formatter.renderInto(el, msg.text, {
           mode: 'full',
           streaming: !!msg.streaming && !final
         });
+        msg._fmtSig = escAttr(msg.text || '');   // v0.83.4: the render stamp
       }
     } else if (msg.role === 'thinking' && el.classList.contains('msg-think-body')) {
       var elapsed = msg.startedAt ? Math.max(0, Math.round(((msg.endedAt || Date.now()) - msg.startedAt) / 1000)) : 0;
@@ -5305,6 +5380,7 @@
         streaming: !!msg.streaming && !final,
         thinkingMeta: { elapsed: elapsed, chars: (msg.text || '').length }
       });
+      if (!(msg.streaming && !final)) msg._fmtSig = escAttr(msg.text || '');   // v0.83.4: final thinking renders stamp
     }
   }
   function esc(text) {

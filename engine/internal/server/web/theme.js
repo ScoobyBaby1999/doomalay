@@ -286,15 +286,71 @@
     appliedAttrs[name] = v;
     return true;
   }
-  // buildBlockCache — ONE batched computed-style read of the [data-theme]
-  // block values. Runs ONLY when the theme id changed (the caller clears
-  // the previous theme's inline overrides first, so the read sees the
-  // block itself, never stale override values).
+  // buildBlockCache — v0.83.4 THE STATIC-RULES READ: the [data-theme]
+  // blocks are STATIC CSS in index.html, so the read set resolves from
+  // document.styleSheets' cssRules — a plain DOM read with ZERO style
+  // system involvement. The old getComputedStyle ran right after the
+  // data-theme attr flip invalidated the ENTIRE document — one read,
+  // but a forced FULL synchronous recalc per theme switch (~100ms at
+  // the settings page's DOM size; the bulk of the "themes tab is barely
+  // functional" report). Precedence mirrors the cascade for custom
+  // properties on <html>: the [data-theme="x"] declaration wins over
+  // :root's; a var missing from both is absent (resolvedVar's ''
+  // fallback — same result the computed read produced). Falls back to
+  // the computed read only when the rules aren't readable.
+  var staticThemeRules = null;
+  function readStaticThemeVars(id) {
+    if (!staticThemeRules) {
+      staticThemeRules = { root: {}, themes: {} };
+      try {
+        var collect = function (rule, into) {
+          for (var i = 0; i < BLOCK_READ_SET.length; i++) {
+            var k = BLOCK_READ_SET[i];
+            var v = rule.style.getPropertyValue(k);
+            if (v) into[k] = v.trim();
+          }
+        };
+        for (var si = 0; si < document.styleSheets.length; si++) {
+          var rules;
+          try { rules = document.styleSheets[si].cssRules; } catch (e) { continue; }
+          if (!rules) continue;
+          for (var ri = 0; ri < rules.length; ri++) {
+            var r = rules[ri];
+            if (!r || !r.style) continue;
+            var sel = String(r.selectorText || '');
+            if (sel === ':root' || sel === 'html') {
+              collect(r, staticThemeRules.root);
+            } else {
+              var m = sel.match(/^\[data-theme=["']?([\w-]+)["']?\]$/);
+              if (m) {
+                if (!staticThemeRules.themes[m[1]]) staticThemeRules.themes[m[1]] = {};
+                collect(r, staticThemeRules.themes[m[1]]);
+              }
+            }
+          }
+        }
+      } catch (e) { staticThemeRules = null; }
+    }
+    var t = staticThemeRules || null;
+    if (!t) return null;   // rules unreadable → the computed fallback
+    var out = {};
+    for (var rk in t.root) out[rk] = t.root[rk];
+    var th = t.themes[id];
+    if (th) for (var tk in th) out[tk] = th[tk];
+    return out;
+  }
   function buildBlockCache(docEl, id) {
+    var fromRules = readStaticThemeVars(id);
+    if (fromRules) {
+      blockCache = fromRules;
+      blockCacheId = id;
+      return;
+    }
+    // fallback: the ONE batched computed-style read (rules unreadable)
     blockCache = {};
     blockCacheId = id;
     try {
-      var cs = getComputedStyle(docEl);       // the ONE forced recalc
+      var cs = getComputedStyle(docEl);
       for (var i = 0; i < BLOCK_READ_SET.length; i++) {
         blockCache[BLOCK_READ_SET[i]] = String(cs.getPropertyValue(BLOCK_READ_SET[i]) || '').trim();
       }
@@ -555,11 +611,20 @@
     // an angle tweak inside the same gradient-ness, a stop recolor)
     // moves no box and rewrites no selector, so the full re-anchor the
     // old code paid per input event buys nothing. The fingerprint
-    // covers: the theme id, the override KEY SET with each var's
-    // solid↔gradient state, and the fmt-grad slots. A real topology
-    // change (a stop added to a solid, a gradient flattened to one
-    // color, a theme switch) re-anchors exactly once.
-    var topo = [id];
+    // covers: the override KEY SET with each var's solid↔gradient
+    // state, and the fmt-grad slots. A real topology change (a stop
+    // added to a solid, a gradient flattened to one color, a theme
+    // switch that changes gradient-ness) re-anchors exactly once.
+    // v0.83.4: the bare theme ID is GONE from the key — a base→base
+    // flip changes no gradient-ness (both all-solid), yet the id
+    // mismatch fired DoomProjection.repaint + DoomGates.refresh on
+    // EVERY theme tap, and repaint's layout reads ran right after the
+    // var writes invalidated the whole document → a forced synchronous
+    // FULL recalc inside the click handler (~60ms at the settings
+    // page's DOM — the heart of the "themes tab is barely functional"
+    // report). Value changes cascade naturally at the next paint; the
+    // painter only needs re-anchoring when the WINDOW SET changes.
+    var topo = [];
     Object.keys(gradByKey).sort().forEach(function (gk) {
       topo.push(gk + ':' + (gradByKey[gk] ? 'g' : 's'));
     });
@@ -1591,6 +1656,17 @@
     var GATES = (function () {
       if (!HAS_DOM) return null;
       var styleEl = null, lastCSS = '', observer = null;
+      // v0.83.4 THE SCAN MEMO — the two stylesheet walks below build
+      // tables that depend ONLY on the stylesheets' CONTENTS, never on
+      // the theme's values (the gate selectors are identical for every
+      // base theme; only the vars' VALUES differ, and those cascade at
+      // paint time, not in the stylesheet). The walk was re-run per
+      // theme flip — ~40ms of rule scanning at the app's sheet count,
+      // a third of the "themes tab is barely functional" cost — while
+      // the MutationObserver below already fires on exactly the event
+      // that changes the facts (an injected <style>/<link>). Cleared
+      // there; rebuilt here on the next refresh.
+      var scanMemo = null;
       var ACC = [
         { gate: 'data-a1-grad', varName: '--accent',        rgb: '--accent-rgb',        img: '--accent-gradient',        ink: '--on-accent' },
         { gate: 'data-a2-grad', varName: '--accent-2',      rgb: '--accent-2-rgb',      img: '--accent-2-gradient',      ink: '--on-accent-2' },
@@ -1660,7 +1736,13 @@
       }
 
       function derive() {
-        var wins = {}, glyphs = {};
+        var wins, glyphs, surfWins, borderPlate, protectedSels;
+        if (scanMemo) {
+          wins = scanMemo.wins; glyphs = scanMemo.glyphs;
+          surfWins = scanMemo.surfWins; borderPlate = scanMemo.borderPlate;
+          protectedSels = scanMemo.protectedSels;
+        } else {
+        wins = {}; glyphs = {};
         for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; glyphs[ACC[i].gate] = []; }
         var surfWins = {};   // SURF[i].gate → [selectors]
         var borderPlate = { };  // plate rings keyed by fill var
@@ -1804,6 +1886,9 @@
             })(rules);
           }
         } catch (e) { /* a locked sheet is simply skipped */ }
+        scanMemo = { wins: wins, glyphs: glyphs, surfWins: surfWins,
+          borderPlate: borderPlate, protectedSels: protectedSels };
+        }
 
         var css = '';
         for (var a = 0; a < ACC.length; a++) {
@@ -1894,7 +1979,7 @@
             for (var j = 0; j < m.addedNodes.length; j++) {
               var n = m.addedNodes[j];
               if (n.nodeType === 1 && (n.tagName === 'STYLE' || n.tagName === 'LINK') &&
-                  n.id !== 'doom-derived-gates') { derive(); return; }
+                  n.id !== 'doom-derived-gates') { scanMemo = null; derive(); return; }
             }
           }
         });
