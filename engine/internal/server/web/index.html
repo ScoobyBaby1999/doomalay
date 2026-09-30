@@ -511,24 +511,60 @@
   }
 
   /* ── v0.31.2: THE CANVAS DOCK ─────────────────────────────────
-     v0.79.1: the › arrow sits BELOW the settings gear (was: 8px left
-     of it) — the cluster reads as one right-aligned column (gear →
-     arrow → strip). Tapping it rotates the glyph 180° and expands the
-     vertical strip (web / cloud / library / chats). Collapsed/expanded
-     persists in localStorage (doomalay.dock.v1, applied by app.js on
-     boot). Same chrome language as the gear: matte glass tile,
-     safe-area aware. The arrow is a text glyph so it rides the
-     settings text-size system (--ui-fs). */
-  #dock-toggle {
+     v0.85.2 THE DOCK PILL REWORK (user spec: "The arrow icon under the
+     settings icon should now instead of spawning 5 vertical icons with
+     their own circle background bubble pill. Should expand its own
+     background bubble pill into a circular edged rectangle background
+     bubble pill that encapsulates all 5 other pills." + 3.2: "when
+     pressing the + icon that creates a new chat (when the arrow icon is
+     expanded) we should have it, and the background pill bubble, expand
+     to fit 2 more pills, one to create a new chat panel, and one to
+     create a new browser panel. Each with their own icons. Remove the
+     browser panel icon aswell as now it is moved under the + (when
+     expanded)."): ONE capsule now. The arrow's own small pill IS the
+     collapsed state; opening it EXPANDS that pill downward into a
+     rounded-rect capsule (border-radius 20px — the "circular edged
+     rectangle") that encapsulates the pills — the pills themselves go
+     BARE (no own bubbles, transparent icons inside the one container).
+     v0.79.1 lineage: under the gear (gear 44px + 6px gap = +50px),
+     persists in doomalay.dock.v1, safe-area aware, matte glass, the
+     arrow glyph rides --ui-fs. The ＋ row is a TOGGLE for the
+     sub-expansion (new chat panel / new browser panel — the browser
+     creation moved here per 3.2; the standalone globe pill is GONE).
+     The all-chats glyph becomes layers so it never collides with the
+     new chat-panel glyph. */
+  #dock-expando {
     position: fixed;
-    /* v0.79.1: UNDER the gear — gear 44px + 6px gap */
+    /* under the gear — gear 44px + 6px gap */
     top: calc(max(14px, env(safe-area-inset-top)) + 50px);
     right: max(14px, env(safe-area-inset-right));
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* the CAPSULE — the expanded pill. Fades in as the arrow's own pill
+       simultaneously goes transparent: the small bubble visibly GROWS
+       into the container. Color/border transitions only (motion-grade
+       — never a layout paint; the height change itself is instant,
+       ridden by the strip's opacity/transform entrance below). */
+    border-radius: 20px;                 /* the circular-edged rectangle */
+    transition: background 0.16s ease-out, border-color 0.16s ease-out,
+                padding 0.16s ease-out, box-shadow 0.16s ease-out;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 0;
+  }
+  #dock-expando.open {
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+    border-color: var(--surface-3);
+    padding: 4px 4px 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
+  }
+  #dock-toggle {
+    /* static INSIDE the expando now (the expando owns the fixed slot) */
+    position: relative;
     width: 34px;
     height: 34px;
-    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-    border: 1px solid var(--surface-3);
-    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -537,11 +573,20 @@
     font-weight: 700;
     line-height: 1;
     cursor: pointer;
-    z-index: 500;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    transition: background 0.15s, border-color 0.16s ease-out, transform 0.1s;
     font-family: inherit;
     touch-action: manipulation;
+  }
+  /* the arrow's OWN bubble = the COLLAPSED look. When the expando opens,
+     the toggle's own pill dissolves INTO the capsule (transparent) — the
+     bubble expanded rather than a second one spawning beside it. */
+  #dock-expando:not(.open) #dock-toggle {
+    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+    border-color: var(--surface-3);
   }
   /* v0.78.4: the glyph ROTATES instead of swapping ›/‹ — a transform
      transition (motion-grade, never a layout paint). */
@@ -550,20 +595,18 @@
     transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
   #dock-toggle.open .dg { transform: rotate(180deg); }
-  #dock-toggle:active {
+  #dock-expando:not(.open) #dock-toggle:active {
     background: color-mix(in srgb, var(--surface-2) 80%, transparent);
     transform: scale(0.92);
   }
+  #dock-expando.open #dock-toggle:active { transform: scale(0.92); }
   #dock-strip {
-    position: fixed;
-    /* v0.79.1: UNDER the arrow (gear 44 + gap 6 + arrow 34 + gap 6
-     = +90px from the cluster top) — the column: gear → arrow → strip */
-    top: calc(max(14px, env(safe-area-inset-top)) + 90px);
-    right: max(14px, env(safe-area-inset-right));
+    position: relative;                /* inside the expando capsule */
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    z-index: 500;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
     /* v0.78.4: transform+opacity animation ONLY — motion-grade (the
        v0.78.3 classifier keeps it paint-free; layout transitions are
        what the old display:none swap could never animate). */
@@ -579,31 +622,60 @@
     pointer-events: auto;
   }
   #dock-strip.hidden { display: none; }
+  /* v0.85.2: THE ＋ SUB-EXPANSION (user spec 3.2) — pressing ＋ reveals
+     two more pills (new chat panel / new browser panel) inside the SAME
+     capsule; the capsule grows to fit them. Motion-grade entrance, the
+     same recipe the strip itself uses. */
+  #dock-sub {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
+    margin: 1px 0 2px;
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    transform-origin: top right;
+    transition: opacity 0.14s ease-out, transform 0.14s ease-out;
+    pointer-events: none;
+  }
+  #dock-sub.open {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+  #dock-sub.hidden { display: none; }
+  #dock-sub .dock-btn svg { fill: var(--text-2); }
   .dock-btn {
     position: relative;
     width: 32px;
     height: 32px;
-    background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-    border: 1px solid var(--surface-3);
+    /* v0.85.2: BARE — the pills ride INSIDE the one capsule (user spec:
+       "instead of … 5 vertical icons with their own circle background
+       bubble pill"). No own bubble; a soft surface only while hovered
+       (pointer) — the pill affordance lives on the CONTAINER now. */
+    background: transparent;
+    border: none;
     border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s;
+    transition: background 0.15s, transform 0.1s;
     touch-action: manipulation;
   }
   .dock-btn:active {
-    background: color-mix(in srgb, var(--surface-2) 80%, transparent);
     transform: scale(0.92);
   }
   /* v0.41 polish: hover lift + accent tint for pointer users (touch
      keeps the :active scale — this is desktop-only delight). */
   @media (hover: hover) {
-    .dock-btn:hover, #dock-toggle:hover {
+    .dock-btn:hover {
       background: color-mix(in srgb, var(--surface-2) 82%, transparent);
-      border-color: rgba(var(--accent-rgb), 0.45);
+    }
+    #dock-toggle:hover {
+      background: color-mix(in srgb, var(--surface-2) 60%, transparent);
     }
     .dock-btn:hover svg { fill: var(--accent); }
   }
@@ -4906,40 +4978,47 @@
 <button id="settings-btn" aria-label="Settings">
   <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
 </button>
-<!-- v0.78.4: THE DOCK REWORK — the arrow expands a pill strip UNDER
-     the settings gear: the web globe opens the browser-in-browser, then
-     cloud / library / chats. 32px capsule pills (~1.35× smaller) with
-     ::after hit-slop keeping ≥44px touch zones, transform/opacity open
-     animation (motion-grade — never a layout transition). Persists in
-     localStorage (doomalay.dock.v1). Wired in app.js. -->
-<button id="dock-toggle" aria-label="Expand dock" aria-expanded="false"><span class="dg">›</span></button>
-<div id="dock-strip" class="hidden">
-  <!-- v0.82.1: THE DOCK NEW-CHAT BUTTON — first dock pill. Before this,
-       the ONLY "New Chat" affordance was the hidden 500ms-long-press
-       context menu; a fresh user staring at an empty canvas had no
-       visible path to the app's core action (live red-team finding).
-       Creates the chat at the viewport CENTER and opens it (the button
-       IS the intent to chat — the long-press path stays create-only).
-       Same .dock-btn chrome (32px capsule + ::after hit-slop + theme
-       vars), wired in app.js. -->
-  <button class="dock-btn" id="dock-new" title="New chat" aria-label="New chat">
-    <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-  </button>
-  <button class="dock-btn" id="dock-web" title="Web browser" aria-label="Web browser">
-    <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c.96-1.66 2.49-2.93 4.33-3.56C8.81 5.55 8.35 6.75 8.03 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg>
-  </button>
-  <button class="dock-btn" id="dock-cloud" title="Cloud providers" aria-label="Cloud providers">
-    <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
-  </button>
-  <button class="dock-btn" id="dock-library" title="Hub library" aria-label="Hub library">
-    <svg viewBox="0 0 24 24"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg>
-  </button>
-  <!-- v0.52: the all-chats index + global search MERGED — one 💬 glyph
-       (empty query → every conversation; typing → live search across
-       every transcript). The separate ⌕ glyph is gone. -->
-  <button class="dock-btn" id="dock-chats" title="All chats — browse & search" aria-label="All chats — browse and search">
-    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
-  </button>
+<!-- v0.85.2: THE DOCK PILL REWORK — ONE capsule (user spec 3 + 3.2): the
+     arrow's own small pill EXPANDS into a circular-edged-rectangle
+     capsule that encapsulates all the pills (they ride BARE inside — no
+     own bubbles). The ＋ is now the sub-expansion toggle: it grows the
+     capsule to fit two more pills — new CHAT panel + new BROWSER panel
+     (the standalone web globe pill is REMOVED; browser creation lives
+     under ＋ now). The all-chats glyph is layers (never collides with
+     the chat-panel glyph). Persists doomalay.dock.v1; wired in app.js. -->
+<div id="dock-expando">
+  <button id="dock-toggle" aria-label="Expand dock" aria-expanded="false"><span class="dg">›</span></button>
+  <div id="dock-strip" class="hidden">
+    <!-- v0.85.2: ＋ toggles the sub-expansion below (was: direct
+         create — that intent now lives on the revealed "new chat
+         panel" pill). -->
+    <button class="dock-btn" id="dock-new" title="New panel" aria-label="New panel options" aria-expanded="false">
+      <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+    </button>
+    <!-- v0.85.2 THE SUB-EXPANSION (user spec 3.2): two pills the capsule
+         grows to fit — a new chat panel (message-square-plus) and a new
+         browser panel (window-plus; the v0.85.3 web tab machinery). -->
+    <div id="dock-sub" class="hidden">
+      <button class="dock-btn" id="dock-new-chat" title="New chat panel" aria-label="Create a new chat panel">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9 10h6"/><path d="M12 7v6"/></svg>
+      </button>
+      <button class="dock-btn" id="dock-new-web" title="New browser panel" aria-label="Create a new browser panel">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M12 11.5v5"/><path d="M9.5 14h5"/></svg>
+      </button>
+    </div>
+    <button class="dock-btn" id="dock-cloud" title="Cloud providers" aria-label="Cloud providers">
+      <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+    </button>
+    <button class="dock-btn" id="dock-library" title="Hub library" aria-label="Hub library">
+      <svg viewBox="0 0 24 24"><path d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.19 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 8c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3z"/></svg>
+    </button>
+    <!-- v0.52: the all-chats index + global search MERGED — one glyph.
+         v0.85.2: the glyph is LAYERS (the stack) so it never reads as
+         "one chat" against the new chat-panel pill. -->
+    <button class="dock-btn" id="dock-chats" title="All chats — browse & search" aria-label="All chats — browse and search">
+      <svg viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+    </button>
+  </div>
 </div>
 
 <!-- v0.82.2: THE FIRST-RUN EMPTY-STATE — app.js shows this ONLY on a

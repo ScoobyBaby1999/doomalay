@@ -2333,6 +2333,9 @@
     // the connect overlay are the only two panel types left.)
     // v0.31.2: the canvas dock joins its gear sibling — without these
     // checks the strip's buttons die the same death on Android.
+    // v0.85.2: the expando capsule wraps the toggle + strip now — one
+    // contains() covers the whole cluster (toggle/strip/sub).
+    if (dockExpandoEl && dockExpandoEl.contains(target)) return true;
     if (dockStripEl && dockStripEl.contains(target)) return true;
     if (dockToggleEl && dockToggleEl.contains(target)) return true;
     // v0.82.2: the first-run empty-state card — the card body is
@@ -2559,12 +2562,18 @@
   // persists (doomalay.dock.v1) and is re-applied on every boot.
   const DOCK_KEY = 'doomalay.dock.v1';
 
+  // v0.85.2: THE DOCK CAPSULE — one expando element owns the fixed slot;
+  // the strip + sub live inside it. dockApply also drives the expando's
+  // .open (the capsule bubble + the toggle's own pill dissolving into it).
+  var dockExpandoEl = document.getElementById('dock-expando');
+  var dockSubEl = document.getElementById('dock-sub');
   function dockApply(expanded, instant) {
     if (dockToggleEl) {
       dockToggleEl.classList.toggle('open', !!expanded);
       dockToggleEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       dockToggleEl.setAttribute('aria-label', expanded ? 'Collapse dock' : 'Expand dock');
     }
+    if (dockExpandoEl) dockExpandoEl.classList.toggle('open', !!expanded);
     if (dockStripEl) {
       // v0.78.4: transform/opacity animation (motion-grade) — expand
       // unhides first then opens next frame; collapse reverses and
@@ -2577,12 +2586,37 @@
         });
       } else {
         dockStripEl.classList.remove('open');
+        // v0.85.2: collapsing the dock also collapses the ＋ sub-expansion
+        // (the sub pills only exist while the capsule is up).
+        dockSubApply(false, instant);
         if (instant) dockStripEl.classList.add('hidden');
         else setTimeout(function () {
           if (!dockStripEl.classList.contains('open')) dockStripEl.classList.add('hidden');
         }, 180);
       }
     }
+  }
+  // v0.85.2: THE ＋ SUB-EXPANSION (user spec 3.2) — pressing ＋ grows the
+  // capsule to fit the two creator pills (new chat panel / new browser
+  // panel). Motion-grade entrance, the strip's own recipe.
+  function dockSubApply(open, instant) {
+    if (!dockSubEl) return;
+    if (open) {
+      dockSubEl.classList.remove('hidden');
+      if (instant) dockSubEl.classList.add('open');
+      else requestAnimationFrame(function () {
+        requestAnimationFrame(function () { dockSubEl.classList.add('open'); });
+      });
+    } else {
+      dockSubEl.classList.remove('open');
+      if (instant) dockSubEl.classList.add('hidden');
+      else setTimeout(function () {
+        if (!dockSubEl.classList.contains('open')) dockSubEl.classList.add('hidden');
+      }, 160);
+    }
+  }
+  function dockSubIsOpen() {
+    return !!(dockSubEl && !dockSubEl.classList.contains('hidden'));
   }
   function dockIsExpanded() {
     return !!(dockStripEl && !dockStripEl.classList.contains('hidden'));
@@ -2604,16 +2638,35 @@
       } catch (e) {}
     });
 
-    // v0.82.1: THE DOCK NEW-CHAT BUTTON — the visible primary action.
-    // Before this the ONLY creation path was the hidden 500ms-long-press
-    // context menu (live red-team: a fresh user on an empty canvas had no
-    // discoverable way to start). The long-press menu stays create-only
-    // (placing precisely where the finger pressed); this button is the
-    // INTENT to chat → create at center + open (the shared
-    // createChatAtCenterAndOpen path, v0.82).
+    // v0.85.2: ＋ IS THE SUB-EXPANSION TOGGLE now (user spec 3.2: "when
+    // pressing the + icon that creates a new chat (when the arrow icon
+    // is expanded) we should have it, and the background pill bubble,
+    // expand to fit 2 more pills") — the create intent moved onto the
+    // revealed "new chat panel" pill (createChatAtCenterAndOpen, the
+    // shared v0.82 path).
     const dockNewBtn = dockStripEl.querySelector('#dock-new');
     if (dockNewBtn) dockNewBtn.addEventListener('click', function () {
+      var now = !dockSubIsOpen();
+      dockSubApply(now);
+      dockNewBtn.setAttribute('aria-expanded', now ? 'true' : 'false');
+    });
+
+    // v0.85.2: THE SUB PILLS (spec 3.2) — new chat panel + new browser
+    // panel, each its own icon. The chat pill rides the shared
+    // create-and-open path (the v0.82.1 intent, preserved); the browser
+    // pill creates a web TAB entity + opens its browser-in-browser
+    // panel (the v0.85.3 machinery — guarded while that loads).
+    const dockNewChatBtn = dockStripEl.querySelector('#dock-new-chat');
+    if (dockNewChatBtn) dockNewChatBtn.addEventListener('click', function () {
       createChatAtCenterAndOpen();
+    });
+    const dockNewWebBtn = dockStripEl.querySelector('#dock-new-web');
+    if (dockNewWebBtn) dockNewWebBtn.addEventListener('click', function () {
+      if (window.WebTabs && window.WebTabs.createAtCenterAndOpen) {
+        window.WebTabs.createAtCenterAndOpen();
+        return;
+      }
+      if (window.Hub && window.Hub.toast) window.Hub.toast('browser panels arrive in the next phase of this build');
     });
 
     // v0.82.2: the empty-state CTA rides the SAME create-and-open path —
@@ -2623,16 +2676,11 @@
       createChatAtCenterAndOpen();
     });
 
-    // v0.78.4: the WEB globe → the browser-in-browser panel. Resumes the
-    // current tab when one is open; otherwise opens the omnibox's own
-    // search engine (DuckDuckGo) as the start page.
-    const dockWebBtn = dockStripEl.querySelector('#dock-web');
-    if (dockWebBtn) dockWebBtn.addEventListener('click', function () {
-      if (!window.InAppBrowser) return;
-      var url = '';
-      try { url = window.InAppBrowser.currentURL() || ''; } catch (e) {}
-      window.InAppBrowser.open(url || 'https://duckduckgo.com', { purpose: 'web' });
-    });
+    // v0.85.2: the web globe pill is RETIRED from the main list (user
+    // spec 3.2: "Remove the browser panel icon aswell as now it is moved
+    // under the +") — browser creation lives on the ＋ sub-expansion's
+    // "new browser panel" pill now. The legacy dock-web handler is gone
+    // with the button.
 
     // Cloud glyph → the provider screen, relocated from Settings → Cloud.
     // Same panel, same wiring (the overlay works from anywhere).
