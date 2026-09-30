@@ -10,6 +10,8 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.RectF
@@ -40,6 +42,7 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -252,6 +255,27 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var backBtn: ImageButton? = null
     private var extBtn: ImageButton? = null
     private var closeBtn: ImageButton? = null
+    // v0.87.1: THE CIRCULAR TAB ICON — "a circular icon right of the
+    // middle dash in the panel and left of the back arrow pill. That
+    // circle icon should update with and be the same as the icon of
+    // the tab itself on the canvas" — rides cellR's head (before the
+    // ‹ back pill), mirrors the canvas tab's icon (favicon / the
+    // user's pinned image / the gradient placeholder glyph) and opens
+    // the browser tweaks (the SPA's WebTweaks view — the sheet hands
+    // off, the master panel takes over, back returns to the canvas).
+    private var tabIconBtn: ImageButton? = null
+    private var tabIconTab: JSONObject? = null
+    @Volatile private var tabIconSrc: String? = null
+    // v0.87.3: THE REDIRECT GUARD — a cross-REGISTRABLE-domain
+    // navigation the page itself initiated (link click / JS location)
+    // is blocked here and ASKED about: the banner over the WebView's
+    // top; the ⇱ accept pill follows, a tap anywhere else ignores the
+    // move completely (the WebView never navigated — page + scroll
+    // untouched, exactly the spec).
+    private var guardBanner: LinearLayout? = null
+    private var guardTarget: String = ""
+    private var guardAllow: String = ""
+    private var guardTimer: Runnable? = null
     private var loading: FrameLayout? = null
     private var loadRing: LoadRing? = null
     private var loadStack: LinearLayout? = null
@@ -349,6 +373,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     fun open(url: String, optsJson: String) {
         if (editMode) exitEdit(restoreDock = false)   // v0.68.0: a fresh link — the typed draft is stale
         try { themeJson = JSONObject(optsJson) } catch (e: Exception) { themeJson = JSONObject() }
+        // v0.87.1: the web-tab identity (opts.tab {id, icon, gradient}) —
+        // the circle paints from it; a non-tab open (getkey links, plain
+        // links) keeps the circle hidden.
+        setTabFromOpts(themeJson)
         ensureViews()
         applyTheme()
         val w = webView ?: return
@@ -516,15 +544,229 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // suspends the SPA's scrim taps while the sheet is up and lifts its
     // dim while ducked (the canvas focus). Guarded so a dead web layer
     // (engine restarting, SPA not loaded) is a silent no-op.
+    // v0.87.2: the url rides along + onPageFinished fires it too — the
+    // entity-level sync in webtab.js reads it and fast-refreshes the
+    // tab's icons (the canvas disc + this sheet's circle) the moment a
+    // page lands.
     private fun notifyState() {
         try {
             val st = JSONObject()
             st.put("open", showing)
             st.put("ducked", ducked)
+            st.put("url", currentUrl())
             activity.spaEval("window.__doomalayPanelState && window.__doomalayPanelState(" + st.toString() + ")")
         } catch (e: Exception) {
             AppLog.error("panel state notify failed", e)
         }
+    }
+
+    // ── v0.87.1: THE CIRCULAR TAB ICON ────────────────────────────
+    // setTabIcon(iconJson) — the openPanel opts / the live panelIcon
+    // bridge push: {"id","icon","gradient"}. The icon decodes on a
+    // background thread (an http favicon fetch or a base64 data URL),
+    // then lands on the circle on the UI thread. The placeholder (no
+    // icon / gradient mode) is the globe glyph — the webtab.js twin.
+    fun setTabIcon(iconJson: String) {
+        val src = try {
+            val o = JSONObject(iconJson)
+            val id = o.optString("id", "")
+            if (id.isNotEmpty() && tabIconTab == null) {
+                tabIconTab = o
+            }
+            o.optString("icon", "")
+        } catch (e: Exception) { "" }
+        if (src == tabIconSrc && tabIconBtn?.visibility == View.VISIBLE) return
+        tabIconSrc = src
+        if (src.isEmpty()) {
+            activity.runOnUiThread {
+                tabIconBtn?.setImageResource(R.drawable.ic_globe)
+                tabIconBtn?.visibility = View.VISIBLE
+            }
+            return
+        }
+        Thread {
+            val bmp = loadIconBitmap(src)
+            activity.runOnUiThread {
+                if (bmp != null && tabIconSrc == src) {
+                    tabIconBtn?.setImageBitmap(bmp)
+                    tabIconBtn?.visibility = View.VISIBLE
+                }
+            }
+        }.start()
+    }
+
+    private fun setTabFromOpts(opts: JSONObject) {
+        tabIconTab = opts.optJSONObject("tab")
+        tabIconSrc = null
+        val icon = tabIconTab?.optString("icon", "") ?: ""
+        if (icon.isNotEmpty()) setTabIcon(tabIconTab.toString())
+        else activity.runOnUiThread {
+            tabIconBtn?.visibility = if (tabIconTab != null) View.VISIBLE else View.GONE
+            if (tabIconTab != null) tabIconBtn?.setImageResource(R.drawable.ic_globe)
+        }
+    }
+
+    // loadIconBitmap — an http(s) favicon or a data: URL, ≤64KB, 3s
+    // budget, tiny LRU (the tab's icon flips rarely; the map keeps the
+    // decode off the critical path when it flips back).
+    private val iconCache = java.util.concurrent.ConcurrentHashMap<String, Bitmap>()
+    private fun loadIconBitmap(src: String): Bitmap? {
+        iconCache[src]?.let { return it }
+        val bytes = try {
+            if (src.startsWith("data:", ignoreCase = true)) {
+                val b64 = src.substringAfter("base64,", src)
+                if (b64 == src) null
+                else android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            } else {
+                val conn = java.net.URL(src).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile")
+                if (conn.responseCode !in 200..299) { conn.disconnect(); null }
+                else conn.inputStream.use { s ->
+                    val buf = java.io.ByteArrayOutputStream()
+                    val chunk = ByteArray(8192)
+                    var n = s.read(chunk)
+                    while (n > 0 && buf.size() < (64 shl 10)) {
+                        buf.write(chunk, 0, n); n = s.read(chunk)
+                    }
+                    conn.disconnect(); buf.toByteArray()
+                }
+            }
+        } catch (e: Exception) { null }
+        val bmp = if (bytes != null) BitmapFactory.decodeByteArray(bytes, 0, bytes.size) else null
+        if (bmp != null) {
+            if (iconCache.size > 32) iconCache.clear()
+            iconCache[src] = bmp
+        }
+        return bmp
+    }
+
+    // ── v0.87.3: THE REDIRECT GUARD ───────────────────────────────
+    // registrableDomain — "the same relative domain - not exact": the
+    // approximated eTLD+1 (a small second-level-TLD list covers the
+    // common co.uk-style suffixes — webpanel.js's twin, kept in sync).
+    private val sld2 = hashSetOf(
+        "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk",
+        "com.au", "net.au", "org.au", "co.nz", "net.nz",
+        "co.jp", "ne.jp", "or.jp", "ac.jp", "co.za",
+        "com.br", "com.mx", "com.ar", "co.in", "net.in",
+        "com.sg", "com.hk", "com.tw", "com.cn", "com.tr")
+    private fun registrableDomain(host: String): String {
+        if (host.isEmpty()) return ""
+        val parts = host.lowercase().split('.').filter { it.isNotEmpty() }
+        if (parts.size <= 2) return parts.joinToString(".")
+        val last2 = parts.takeLast(2).joinToString(".")
+        if (sld2.contains(last2) && parts.size >= 3) return parts.takeLast(3).joinToString(".")
+        return last2
+    }
+
+    // the search engines — "unless it's the search engine website like
+    // duckduckgo or Google": a search engine's result links ARE its
+    // product; a guard on every result tap would be noise, not safety.
+    private val searchHosts = hashSetOf(
+        "duckduckgo.com", "google.com", "bing.com", "brave.com",
+        "startpage.com", "ecosia.org", "qwant.com", "search.marcia.com")
+    private fun hostOfUrl(u: String): String = try {
+        java.net.URI(u).host?.lowercase()?.removePrefix("www.") ?: ""
+    } catch (e: Exception) { "" }
+
+    // guardShouldAsk — TRUE when the move deserves the banner: a
+    // different REGISTRABLE domain, not from a search engine, not the
+    // one-shot accepted target, and not the sheet's own first load.
+    private fun guardShouldAsk(target: String): Boolean {
+        if (guardAllow == target) return false
+        val fromHost = hostOfUrl(liveUrl)
+        val toHost = hostOfUrl(target)
+        if (fromHost.isEmpty() || toHost.isEmpty()) return false
+        if (registrableDomain(fromHost) == registrableDomain(toHost)) return false
+        if (searchHosts.contains(registrableDomain(fromHost))) return false
+        activity.runOnUiThread { showGuard(target, fromHost, toHost) }
+        return true
+    }
+
+    private fun showGuard(target: String, fromHost: String, toHost: String) {
+        hideGuard()
+        val b = ensureGuardBanner()
+        guardTarget = target
+        guardAllow = ""
+        b.second.text = "$fromHost wants to redirect you to $toHost"
+        b.first.visibility = View.VISIBLE
+        b.first.bringToFront()
+        val dismiss = Runnable { hideGuard() }
+        guardTimer = dismiss
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(dismiss, 12000)
+    }
+
+    private fun hideGuard() {
+        guardTimer?.let { android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(it) }
+        guardTimer = null
+        guardTarget = ""
+        guardBanner?.visibility = View.GONE
+    }
+
+    // ensureGuardBanner — built lazily, re-themed by applyTheme. A
+    // compact strip pinned over the WebView's top (the DragBodyLayout
+    // hosts it): [⇱ glyph] the message [go ⇱] — pressing the pill
+    // follows; ANY other tap on the banner itself dismisses (the page
+    // below never navigated).
+    private fun ensureGuardBanner(): Pair<LinearLayout, TextView> {
+        guardBanner?.let { b ->
+            val t = b.getChildAt(1) as TextView
+            return Pair(b, t)
+        }
+        val text = TextView(activity).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            textSize = 12f
+        }
+        val accept = TextView(activity).apply {
+            text = "go ⇱"
+            textSize = 12f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(dip(10), dip(4), dip(10), dip(4))
+            setOnClickListener {
+                val u = guardTarget
+                hideGuard()
+                if (u.isNotEmpty()) {
+                    guardAllow = u   // the accepted move passes its own gate
+                    webView?.loadUrl(u)
+                }
+            }
+        }
+        val glyph = TextView(activity).apply {
+            text = "⇱"
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dip(10), dip(6), dip(10), dip(6))
+            visibility = View.GONE
+            // a tap anywhere on the banner (outside the accept pill)
+            // ignores the redirect — "they press anywhere else"
+            setOnTouchListener { v, ev ->
+                if (ev.actionMasked == MotionEvent.ACTION_UP) {
+                    v.performClick()
+                    hideGuard()
+                }
+                false
+            }
+            addView(glyph, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(text, LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dip(8); rightMargin = dip(8) })
+            addView(accept, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        guardBanner = row
+        // the body hosts it (built lazily — the sheet's content stack)
+        (webView?.parent as? ViewGroup)?.addView(row, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        return Pair(row, text)
     }
 
     // ─────────────────────────────────────────────────────────── view building
@@ -612,9 +854,37 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         backBtn = actBtn(R.drawable.ic_chevron_left, "Back")
         extBtn = actBtn(R.drawable.ic_external_link, "Open outside the app")
         closeBtn = actBtn(R.drawable.ic_close, "Close browser")
+        // v0.87.1: THE CIRCULAR TAB ICON — first in cellR: right of the
+        // dash, LEFT of the ‹ back pill (the user's exact spot). A 34dp
+        // chip-family circle like its siblings; GONE until a web tab
+        // opens the sheet (opts.tab).
+        tabIconBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_globe)
+            contentDescription = "Tab icon and browser tweaks"
+            setPadding(dip(7), dip(7), dip(7), dip(7))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            visibility = View.GONE
+            setOnClickListener {
+                // v0.87.4: hand off to the SPA's WebTweaks view — the
+                // sheet steps away (its WebView history survives), the
+                // master panel opens on the tweaks; ‹ back returns to
+                // the canvas and re-tapping the tab resumes the sheet.
+                val tab = tabIconTab
+                val id = tab?.optString("id") ?: ""
+                if (id.isNotEmpty()) {
+                    dismiss()
+                    try {
+                        activity.spaEval("window.WebTweaks && window.WebTweaks.openFor('" + id + "')")
+                    } catch (e: Exception) {
+                        AppLog.error("tweaks handoff failed", e)
+                    }
+                }
+            }
+        }
         val acts = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            addView(tabIconBtn, LinearLayout.LayoutParams(dip(34), dip(34)))
             addView(backBtn, LinearLayout.LayoutParams(dip(34), dip(34)))
             addView(extBtn, LinearLayout.LayoutParams(dip(34), dip(34)))
             addView(closeBtn, LinearLayout.LayoutParams(dip(34), dip(34)))
@@ -682,6 +952,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                         // the chain's grab-origin (THE DOCKED RULES — the
                         // same field the strip's DOWN captures; one driver)
                         dragFromDuck = ducked
+                        // v0.87.3: "they press anywhere else" — a press on
+                        // the PAGE under a pending guard banner settles it
+                        // as STAY (the redirect is ignored completely; the
+                        // page never navigated)
+                        if (guardBanner?.visibility == View.VISIBLE) hideGuard()
                         if (ducked) resetDuckTimer()
                         fingerOnSheet.set(true)   // v0.72: the expiry guard — the finger is on the page
                         pageTapY = ev.rawY        // the tap origin
@@ -725,7 +1000,30 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     return url?.let { handleNav(it) } ?: false
                 }
                 private fun handleNav(u: String): Boolean {
-                    if (u.startsWith("http://") || u.startsWith("https://")) return false
+                    if (u.startsWith("http://") || u.startsWith("https://")) {
+                        // v0.87.3: THE REDIRECT GUARD — "If a website tries
+                        // to redirect the user to another website that
+                        // isn't the same relative domain - not exact, we
+                        // should put a sort of pop notification at the top
+                        // of the panel that asks the user if they want to
+                        // be redirected to xyz website… If the user
+                        // presses the redirect icon they are redirected,
+                        // if not (they press anywhere else) they stay in
+                        // the same page without refreshing the page or
+                        // resetting the users scroll position, and the
+                        // redirect is completely ignored."
+                        // Returning TRUE here means the WebView NEVER
+                        // navigates — the page + its scroll are untouched;
+                        // the accept pill is the only path onward. Search
+                        // engines are exempt (result links are their whole
+                        // job); subdomain shuffles pass (registrable
+                        // domain, "not exact"). Honest scope: link clicks
+                        // + JS location changes land here; server-side
+                        // 3xx hops are resolved inside the resource load
+                        // and never pass through shouldOverrideUrlLoading.
+                        if (guardShouldAsk(u)) return true
+                        return false
+                    }
                     if (u.startsWith("doomalay://")) {
                         // an OAuth return page landed in the sheet — the
                         // SPA never lost visibility, so wake its
@@ -769,6 +1067,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                     val canBack = view != null && view.canGoBack()
                     backBtn?.isEnabled = canBack
                     backBtn?.alpha = if (canBack) 1f else 0.38f
+                    // v0.87.2: every finished page reports in — the entity
+                    // sync in webtab.js reads the URL + fast-refreshes the
+                    // tab's icons (the canvas disc + this sheet's circle)
+                    notifyState()
                 }
             }
 
@@ -1533,6 +1835,29 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             b?.imageTintList = ColorStateList.valueOf(text1)
         }
         backBtn?.alpha = if (backBtn?.isEnabled == true) 1f else 0.38f
+
+        // v0.87.1: the tab circle rides the SAME chip family (a 34dp
+        // circle, surface + border); the icon bitmap keeps its own
+        // colors (favicons + uploaded images are content, not chrome —
+        // the placeholder globe tints with text1 like its siblings).
+        tabIconBtn?.background = chip(surface, 17f, border)
+        if (tabIconSrc.isNullOrEmpty()) {
+            tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
+        }
+
+        // v0.87.3: the redirect guard banner — the theme surface + a
+        // soft accent edge (a question, not an error — the accent is
+        // the ask, the border is its frame)
+        guardBanner?.background = GradientDrawable().apply {
+            setColor(surface)
+            cornerRadius = dip(12).toFloat()
+            setStroke(dip(1), (accent and 0x00FFFFFF) or 0x52000000)
+        }
+        guardBanner?.let { b ->
+            (b.getChildAt(0) as? TextView)?.setTextColor(accent)
+            (b.getChildAt(1) as? TextView)?.setTextColor(text1)
+            (b.getChildAt(2) as? TextView)?.setTextColor(accent)
+        }
 
         // v0.68.0: the dash: THE PANEL'S OWN — index.html's .handle-bar
         // verbatim: the theme BORDER at full strength (var(--border)

@@ -198,7 +198,11 @@
         bridge.openPanel(url, JSON.stringify({
           theme: themeSnapshot(),
           purpose: opts.purpose || 'link',
-          hostile: !!opts.hostile
+          hostile: !!opts.hostile,
+          // v0.87.1: the web-tab identity rides along — the native
+          // sheet's circular tab icon (right of the dash, left of the
+          // ‹ back pill) paints from it (webtab.js openNative).
+          tab: opts.tab || null
         }));
         return 'native-panel';
       } catch (e) { /* bridge hiccup — the redirect below catches it */ }

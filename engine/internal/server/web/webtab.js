@@ -39,7 +39,8 @@
 //
 // Exposes: window.WebIcon = { WebIcon }
 // Registers: GridIcon.register('web', factory)
-//            window.WebTabs = { createAt, createAtCenterAndOpen, all, count }
+//            window.WebTabs = { createAt, createAtCenterAndOpen, all, count,
+//                                openNative, sheetTabOf }
 (function () {
   'use strict';
 
@@ -85,15 +86,23 @@
 
   class WebIcon extends GridIcon {
     constructor({ id, url = '', title = '', favicon = '', scrollY = 0,
-                   iconMode = 'auto', gradient = null, x, y,
+                   iconMode = 'auto', gradient = null, imageData = '',
+                   tweaks = null, x, y,
                    vx = 0, vy = 0, radius = 28 }) {
       super({ id: id || newWebId(), type: 'web', x, y, radius });
       this.url = url;
       this.title = title || '';
       this.favicon = favicon || '';
       this.scrollY = Number(scrollY) || 0;
-      this.iconMode = (iconMode === 'gradient') ? 'gradient' : 'auto';
+      this.iconMode = ['auto', 'gradient', 'image'].indexOf(iconMode) >= 0 ? iconMode : 'auto';
       this.gradient = gradient || null;   // null → the live theme pair
+      // v0.87.4: the uploaded icon (a small square dataURL, ≤128px) —
+      // PINNED: while set (iconMode 'image'), the dynamic favicon
+      // refresh never re-derives the icon (the user's addendum).
+      this.imageData = imageData || '';
+      // v0.87.4: the per-tab browser tweaks blob (text sizes, colors,
+      // filters — webtweaks.js owns the shape; absent = defaults).
+      this.tweaks = tweaks || null;
       this.vx = vx; this.vy = vy;
 
       const icon = document.createElement('div');
@@ -118,15 +127,51 @@
         this.url = st.url;
       }
       if (typeof st.title === 'string' && st.title) this.title = st.title;
-      if (typeof st.favicon === 'string' && st.favicon) this.favicon = st.favicon;
+      if (typeof st.favicon === 'string' && st.favicon) {
+        this.favicon = st.favicon;
+        // v0.87.2: which host this favicon speaks for (the fast-refresh
+        // race guard — a late fallback never clobbers a better icon)
+        this._favHost = hostOf(this.url);
+      }
       if (typeof st.scrollY === 'number' && st.scrollY >= 0) this.scrollY = st.scrollY;
       this._renderIcon();
+      this._notifyIcon();
       this.save();
     }
 
+    // v0.87.1: iconSrc — the single resolution every mirror of the tab
+    // icon consults (the canvas disc, the panel-header circle, the native
+    // sheet's circle): the site favicon in 'auto' mode, the uploaded image
+    // in 'image' mode, null in 'gradient' mode (the caller paints the
+    // gradient). The DYNAMIC favicon refresh (refreshIcon, v0.87.2) only
+    // ever touches 'auto' — a user-changed icon (image / custom gradient)
+    // is PINNED and never re-derived from the site (the user's addendum:
+    // "if the user changes the icon of the tab it shouldn't keep
+    // dynamically reflecting the new website logo").
+    iconSrc() {
+      if (this.iconMode === 'image' && this.imageData) return this.imageData;
+      if (this.iconMode === 'auto' && this.favicon) return this.favicon;
+      return null;
+    }
+
+    // v0.87.1: _notifyIcon — every icon mutation (setTabState / setIconMode
+    // / setImageIcon / setGradient / refreshIcon) ends here: one event,
+    // every live mirror (the panel circle, future surfaces) repaints from
+    // it. The canvas disc repaints inside _renderIcon itself.
+    _notifyIcon() {
+      try {
+        document.dispatchEvent(new CustomEvent('doomalay:tab-icon', {
+          detail: { id: this.id, icon: this }
+        }));
+      } catch (e) {}
+    }
+
     setIconMode(mode) {
-      this.iconMode = (mode === 'gradient') ? 'gradient' : 'auto';
+      // v0.87.4: 'image' joins the modes (the uploaded icon); anything
+      // unknown falls back to 'auto' (the dynamic site icon).
+      this.iconMode = (mode === 'gradient' || mode === 'image') ? mode : 'auto';
       this._renderIcon();
+      this._notifyIcon();
       this.save();
     }
 
@@ -134,6 +179,7 @@
       this.gradient = spec || null;
       if (this.gradient) this.iconMode = 'gradient';
       this._renderIcon();
+      this._notifyIcon();
       this.save();
     }
 
@@ -152,7 +198,14 @@
       this._iconEl.title = this.title || this.url || '';
 
       var showFavicon = this.iconMode === 'auto' && this.favicon;
-      if (showFavicon) {
+      var showImage = this.iconMode === 'image' && this.imageData;
+      if (showImage) {
+        const img = document.createElement('img');
+        img.src = this.imageData;
+        img.alt = this.title || this.host() || 'tab';
+        img.draggable = false;
+        this._iconEl.appendChild(img);
+      } else if (showFavicon) {
         const img = document.createElement('img');
         img.src = this.favicon;
         img.alt = this.title || this.host() || 'tab';
@@ -172,6 +225,83 @@
       this._nameEl.textContent = this.host() || (this.title || 'New Tab');
     }
 
+    // v0.87.1: themeGradientCSS — exposed so app.js's panel circle (and
+    // any future mirror) paints the same gradient the canvas disc does.
+    themeGradientCSS() { return themeGradientCSS(this.gradient); }
+
+    // ── v0.87.2: THE FAST ICON REFRESH ─────────────────────────────
+    // "I love how the canvas tab icon updates to show the website being
+    // used… But it does so very slowly, let's have it quickly refresh
+    // both icons to reflect the website that is being browsed."
+    // refreshIcon(url) — the entity's address follows immediately; the
+    // ICON re-derives through the engine's FAST favicon verdict (a
+    // short-timeout <link rel=icon> parse with a favicon.ico probe and
+    // the DuckDuckGo icon service as the fallback — linkpreview.go's
+    // ?fast=1 lane, ~10× quicker than the full page verdict).
+    //   · PINNED icons never re-derive: "if the user changes the icon
+    //     of the tab it shouldn't keep dynamically reflecting the new
+    //     website logo" — iconMode 'image'/'gradient' refresh the
+    //     ADDRESS but keep the user's icon.
+    //   · same-host moves never re-fetch (the favicon cannot have
+    //     changed — DuckDuckGo result pages flip URLs constantly and
+    //     would spam the endpoint).
+    //   · a late fast answer never clobbers a better one that already
+    //     landed (_favHost tracks which host the live favicon speaks
+    //     for; the full verdict's favicon outranks the fallback).
+    refreshIcon(url) {
+      var u = url || this.url;
+      if (!u || !/^https?:\/\//i.test(u)) return;
+      // the favicon's OWN host ledger decides (_favHost — set when the
+      // current icon landed): robust to EVERY call order, because the
+      // guard's accept path (and the sheet sync) setTabState({url})
+      // BEFORE calling here — a prevHost compare would collapse to
+      // "unchanged" after the caller already moved the address (the
+      // red-team caught both orderings).
+      if (u !== this.url) this.setTabState({ url: u });
+      var hostChanged = !this.favicon || (this._favHost || '') !== hostOf(u);
+      if (this.iconMode !== 'auto') { this._pushNativeIcon(); return; }
+      if (!hostChanged) return;   // same site — the icon holds
+      var self = this;
+      fetch('/api/preview?fast=1&url=' + encodeURIComponent(u))
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (v) {
+          if (!v || self.url !== u) return;       // the tab moved on
+          var st = {};
+          if (v.favicon) st.favicon = v.favicon;
+          if (v.title) st.title = v.title;
+          if (st.favicon || st.title) self.setTabState(st);
+          self._pushNativeIcon();
+        })
+        .catch(function () { /* offline / unknown host — the icon stays */ });
+    }
+
+    // v0.87.1: push the tab's icon to the NATIVE sheet's circle (the
+    // BIB builds' twin of the panel circle). No-op everywhere else.
+    _pushNativeIcon() {
+      try {
+        var b = window.__doomalayKotlin;
+        if (b && typeof b.panelIcon === 'function' &&
+            window.WebTabs && window.WebTabs.sheetTabOf() === this) {
+          b.panelIcon(JSON.stringify({
+            id: this.id,
+            icon: this.iconSrc() || '',
+            gradient: (this.iconMode === 'gradient')
+          }));
+        }
+      } catch (e) { /* bridge hiccup — the next refresh retries */ }
+    }
+
+    // v0.87.4: setImageIcon — the uploaded icon (a square dataURL from
+    // the CropUI path in webtweaks.js). PINNED by design: the dynamic
+    // favicon refresh checks iconMode and never overwrites it.
+    setImageIcon(dataURL) {
+      this.imageData = dataURL || '';
+      this.iconMode = this.imageData ? 'image' : 'auto';
+      this._renderIcon();
+      this._notifyIcon();
+      this.save();
+    }
+
     _paintGradient() {
       this._iconEl.style.backgroundImage = themeGradientCSS(this.gradient);
       this._iconEl.style.color = 'var(--text-1)';
@@ -182,8 +312,11 @@
     getPanelTitle() { return this.host() || this.title || 'New Tab'; }
     getPanelSubtitle() { return this.url ? 'browser tab · ' + this.url : 'browser tab'; }
     getAvatarHTML() {
-      if (this.iconMode === 'auto' && this.favicon) {
-        return '<img src="' + this.favicon + '" alt="' + (this.title || this.host()) + '">';
+      // v0.87.1: iconSrc() is the single resolution — the avatar, the
+      // canvas disc, the panel circle and the native circle all agree.
+      var src = this.iconSrc();
+      if (src) {
+        return '<img src="' + src + '" alt="' + (this.title || this.host()) + '">';
       }
       return '<span class="wt-avatar" style="background-image:' + themeGradientCSS(this.gradient) + '">' + GLOBE_SVG + '</span>';
     }
@@ -199,6 +332,8 @@
       base.scrollY = this.scrollY;
       base.iconMode = this.iconMode;
       base.gradient = this.gradient;
+      base.imageData = this.imageData || '';
+      base.tweaks = this.tweaks || null;
       return base;
     }
 
@@ -211,6 +346,8 @@
         scrollY: data.scrollY || 0,
         iconMode: data.iconMode || 'auto',
         gradient: data.gradient || null,
+        imageData: data.imageData || '',
+        tweaks: data.tweaks || null,
         x: data.x, y: data.y,
         vx: data.vx || 0, vy: data.vy || 0,
         radius: data.radius || 28
@@ -250,9 +387,55 @@
         return window.doomalay.createWebTabAtCenterAndOpen(opts);
       }
       return null;
-    }
+    },
+    // v0.87.1: openNative — THE ONE PANEL on BIB-capable builds. The
+    // doomalay master panel NEVER opens for a web tab there (the user
+    // spec: "We only want one panel. Remove the one with the gradient
+    // selector that doesn't work and the mini browser in panel view") —
+    // the native sheet (a real top-level WebView) is the browser panel,
+    // and the tab's state syncs back to the entity through the global
+    // panel-state listener below (entity-level, not panel-level —
+    // nothing needs the master panel to be open).
+    openNative: function (icon) {
+      if (!icon || !window.InAppBrowser) return false;
+      sheetTab = icon;
+      var u = icon.url || '';
+      if (!u) { icon.url = u = 'https://duckduckgo.com'; }
+      var tier = window.InAppBrowser.open(u, {
+        purpose: 'web',
+        // the tab identity rides the opts — the native sheet's circle
+        // (right of the dash, left of the ‹ back pill) paints from it
+        tab: { id: icon.id, icon: icon.iconSrc() || '', gradient: icon.iconMode === 'gradient' }
+      });
+      return tier === 'native-panel';
+    },
+    // v0.87.1: the sheet's tab (for the state sync + the tweaks handoff)
+    sheetTabOf: function () { return sheetTab; }
   };
   window.WebTabs = WebTabs;
+
+  // ── v0.87.1: THE ENTITY-LEVEL SHEET SYNC ──────────────────────────
+  // The native sheet broadcasts {open, ducked} on every state change
+  // (PanelBrowserSheet.notifyState — fires on dock moves, ducks, closes
+  // and every finished page from v0.87.2). The entity — not any panel —
+  // owns the tab state: whenever the sheet reports in, the current URL
+  // syncs back (the tab "saves the current website address it holds")
+  // and a host change triggers the FAST favicon refresh (v0.87.2 —
+  // only in 'auto' icon mode; a user-chosen image/gradient icon is
+  // PINNED and never re-derived).
+  var sheetTab = null;
+  document.addEventListener('doomalay:panel-state', function (e) {
+    var icon = sheetTab;
+    if (!icon) return;
+    try {
+      var u = window.InAppBrowser && window.InAppBrowser.currentURL();
+      if (u && /^https?:\/\//i.test(u) && u !== icon.url) {
+        // the address follows + the fast favicon refresh runs (PINNED
+        // icons keep the user's choice — only 'auto' re-derives)
+        icon.refreshIcon(u);
+      }
+    } catch (err) { /* bridge hiccup — the next event retries */ }
+  });
 
   window.WebIcon = { WebIcon: WebIcon };
 })();

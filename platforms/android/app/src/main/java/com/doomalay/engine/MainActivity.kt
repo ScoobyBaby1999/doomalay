@@ -452,6 +452,16 @@ class MainActivity : Activity() {
 
         @android.webkit.JavascriptInterface
         fun panelUrl(): String = panelSheet?.currentUrl() ?: ""
+
+        // v0.87.1: THE CIRCULAR TAB ICON's live push — the web layer
+        // (webtab.js) calls this whenever the tab's icon re-derives (a
+        // fast favicon refresh, a mode switch, an upload): the sheet's
+        // circle (right of the dash, left of the ‹ back pill) repaints.
+        // Payload: {"id","icon","gradient"}.
+        @android.webkit.JavascriptInterface
+        fun panelIcon(iconJson: String) {
+            handler.post { panelSheet?.setTabIcon(iconJson) }
+        }
     }
 
     // openInViewer — THE IN-APP BROWSER (PLAN-V063 E2). hostile pages

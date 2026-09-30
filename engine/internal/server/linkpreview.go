@@ -25,7 +25,18 @@ package server
 //               so the UI shows the card + open-in-app, not a doomed
 //               iframe.
 //
-// Every verdict is cached 1h per URL (the janitor sweep runs inline —
+// v0.87.2 THE FAST FAVICON LANE — GET /api/preview?fast=1&url=… —
+// the tab-icon refresh verdict ("let's have it quickly refresh both
+// icons to reflect the website that is being browsed"): a 2.5s-timeout
+// 64KB fetch (≤2 redirect hops) that answers ONLY {favicon, title} —
+// a warm full verdict serves the request instantly (best data wins),
+// else the quick parse. Cached 5 minutes per URL ("fast:" key — the
+// icons want freshness, the full verdict keeps its 1h). The client
+// <img> self-corrects: a dead favicon URL errors → the gradient
+// placeholder (webtab.js), so the convention fallback (/favicon.ico)
+// never strands a broken disc.
+//
+// Every verdict is cached per URL (the janitor sweep runs inline —
 // same style as oauthStates). An SSRF guard refuses loopback/private/
 // link-local targets on EVERY hop: the engine is local-first and a
 // preview fetch must never come back home.
@@ -41,12 +52,15 @@ import (
         "strings"
         "sync"
         "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 // ── the cache ────────────────────────────────────────────────────────────
 
 type previewCacheEntry struct {
         at   time.Time
+        ttl  time.Duration
         body map[string]any
 }
 
@@ -57,12 +71,13 @@ var previewCache = struct {
 
 const previewCacheTTL = time.Hour
 const previewCacheMax = 256
+const fastCacheTTL = 5 * time.Minute   // v0.87.2: the fast favicon lane
 
 func previewCacheGet(key string) (map[string]any, bool) {
         previewCache.Lock()
         defer previewCache.Unlock()
         e, ok := previewCache.m[key]
-        if !ok || time.Since(e.at) > previewCacheTTL {
+        if !ok || time.Since(e.at) > e.ttl {
                 return nil, false
         }
         out := make(map[string]any, len(e.body))
@@ -74,12 +89,18 @@ func previewCacheGet(key string) (map[string]any, bool) {
 }
 
 func previewCachePut(key string, body map[string]any) {
+        previewCachePutTTL(key, previewCacheTTL, body)
+}
+
+// previewCachePutTTL — v0.87.2: the fast lane wants freshness (5min),
+// the full verdict keeps its 1h.
+func previewCachePutTTL(key string, ttl time.Duration, body map[string]any) {
         previewCache.Lock()
         defer previewCache.Unlock()
-        // janitor sweep (inline — the map stays tiny)
+        // janitor sweep (inline — the map stays tiny; per-entry TTL)
         now := time.Now()
         for k, v := range previewCache.m {
-                if now.Sub(v.at) > previewCacheTTL {
+                if now.Sub(v.at) > v.ttl {
                         delete(previewCache.m, k)
                 }
         }
@@ -94,7 +115,7 @@ func previewCachePut(key string, body map[string]any) {
                 }
                 delete(previewCache.m, oldestKey)
         }
-        previewCache.m[key] = previewCacheEntry{at: now, body: body}
+        previewCache.m[key] = previewCacheEntry{at: now, ttl: ttl, body: body}
 }
 
 // previewHostAllowed — the SSRF guard, as a var so tests can aim the
@@ -123,6 +144,21 @@ func (s *Server) handleLinkPreview(w http.ResponseWriter, r *http.Request) {
 
         if hit, ok := previewCacheGet(raw); ok {
                 writeJSON(w, 200, hit)
+                return
+        }
+
+        // v0.87.2: THE FAST FAVICON LANE (?fast=1) — the tab-icon
+        // refresh verdict: a warm full verdict serves instantly (the
+        // best data wins), else the quick parse, cached 5 minutes.
+        if r.URL.Query().Get("fast") == "1" {
+                fastKey := "fast:" + raw
+                if hit, ok := previewCacheGet(fastKey); ok {
+                        writeJSON(w, 200, hit)
+                        return
+                }
+                out := fastFavicon(target)
+                previewCachePutTTL(fastKey, fastCacheTTL, out)
+                writeJSON(w, 200, out)
                 return
         }
 
@@ -289,7 +325,81 @@ func mediaTypeByExt(raw string) string {
         return ""
 }
 
-// ── the HTML probe ───────────────────────────────────────────────────────
+// ── the HTML probes ─────────────────────────────────────────────────────
+
+// ── v0.87.2: THE FAST FAVICON LANE ───────────────────────────────────────
+
+// fastClient — 2.5s budget, manual hops (the icon lane trades the full
+// verdict's 12s/1MB/5-hop walk for a quick 64KB/2-hop answer; the
+// tab circles want "quickly refresh", not completeness).
+var fastClient = &http.Client{
+        CheckRedirect: func(req *http.Request, via []*http.Request) error {
+                return http.ErrUseLastResponse
+        },
+        Timeout: 2500 * time.Millisecond,
+        Transport: netx.Transport(),
+}
+
+const previewUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+
+// fastFavicon — {favicon, title} ONLY, as fast as the engine can:
+//   1. a 64KB page fetch (≤2 redirect hops, 2.5s budget) parses the
+//      page's own <link rel=icon|apple-touch-icon> + <title>;
+//   2. else the /favicon.ico convention (an <img> URL — the client
+//      self-corrects to the gradient placeholder on 404, so a blind
+//      guess never strands a broken disc);
+//   3. a dead/slow site still answers (favicon = the convention guess)
+//      — the verdict NEVER blocks longer than the budget.
+func fastFavicon(target *url.URL) map[string]any {
+        raw := target.String()
+        out := map[string]any{"url": raw, "type": "html", "fast": true}
+        cur := raw
+        var body []byte
+        for hop := 0; hop <= 2 && body == nil; hop++ {
+                if !previewHostAllowed(hostOf(cur)) {
+                        return out // a redirect tried to come home — refuse
+                }
+                req, err := http.NewRequest("GET", cur, nil)
+                if err != nil {
+                        break
+                }
+                req.Header.Set("User-Agent", previewUA)
+                req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+                resp, err := fastClient.Do(req)
+                if err != nil {
+                        break // slow/dead — the convention fallback answers
+                }
+                if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+                        loc := resp.Header.Get("Location")
+                        resp.Body.Close()
+                        if loc == "" {
+                                break
+                        }
+                        next, err := absoluteURL(cur, loc)
+                        if err != nil {
+                                break
+                        }
+                        cur = next
+                        continue
+                }
+                body, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+                resp.Body.Close()
+        }
+        if len(body) > 0 {
+                meta := extractHeadMeta(body, cur)
+                if v, _ := meta["title"].(string); v != "" {
+                        out["title"] = v
+                }
+                if v, _ := meta["favicon"].(string); v != "" {
+                        out["favicon"] = v
+                        return out
+                }
+        }
+        if u, err := absoluteURL(cur, "/favicon.ico"); err == nil {
+                out["favicon"] = u
+        }
+        return out
+}
 
 // htmlPreview — fetches (manual redirect walk, the probeEmbed pattern),
 // extracts head metadata, and renders the frame verdict.

@@ -865,6 +865,43 @@
     column-gap: 8px;
   }
   #chat-panel .handle .handle-bar { grid-column: 2; }
+  /* v0.87.1: THE CIRCULAR TAB ICON — rides the handle strip's free
+     right cell (right of the middle dash — the native sheet's circle
+     twin, which sits between the dash and the ‹ back pill). A button,
+     so gesture.js's drag-anchor exempts it from panel drags; the
+     padding shrinks so the circle centers in the strip's height. */
+  #chat-panel .handle #panel-tab-icon {
+    grid-column: 3;
+    justify-self: end;
+    width: 34px; height: 34px;
+    padding: 0;
+    margin-right: 8px;
+    border-radius: 50%;
+    border: 1px solid var(--surface-3);
+    background: var(--surface-2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    font-family: inherit;
+  }
+  #chat-panel .handle #panel-tab-icon:active { transform: scale(0.94); }
+  #chat-panel .handle #panel-tab-icon img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+  }
+  /* the gradient twin (no favicon / gradient mode): a live-var disc */
+  #panel-tab-icon .wt-circle-grad {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    background-image: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: var(--text-1);
+  }
+  #panel-tab-icon .wt-circle-grad svg { width: 18px; height: 18px; }
   #chat-panel .panel-header {
     flex-shrink: 0;
     padding: 4px 20px 12px;
@@ -1010,7 +1047,7 @@
     border: 1px solid var(--surface-3);
     background: var(--surface-2);
     color: var(--text-1);
-    font-size: calc(var(--ui-small-fs) + 1px);
+    font-size: calc((var(--ui-small-fs) + 1px) * var(--wt-fs, 1));
     outline: none;
     transition: border-color 0.15s;
   }
@@ -1086,14 +1123,14 @@
   }
   .wt-card-fav { width: 40px; height: 40px; border-radius: 10px; }
   .wt-card-title {
-    font-size: calc(var(--ui-fs) + 2px);
+    font-size: calc((var(--ui-fs) + 2px) * var(--wt-fs, 1));
     font-weight: 700;
     color: var(--text-1);
     word-break: break-word;
   }
-  .wt-card-url { font-size: var(--ui-small-fs); color: var(--text-3); }
+  .wt-card-url { font-size: calc(var(--ui-small-fs) * var(--wt-fs, 1)); color: var(--text-3); }
   .wt-card-desc {
-    font-size: var(--ui-small-fs);
+    font-size: calc(var(--ui-small-fs) * var(--wt-fs, 1));
     color: var(--text-2);
     line-height: 1.5;
     max-height: 90px;
@@ -1107,7 +1144,7 @@
     border: 1px solid var(--surface-3);
   }
   .wt-card-why {
-    font-size: calc(var(--ui-small-fs) - 2px);
+    font-size: calc((var(--ui-small-fs) - 2px) * var(--wt-fs, 1));
     color: var(--text-3);
     line-height: 1.4;
   }
@@ -1118,62 +1155,103 @@
     border: 1px solid rgba(var(--accent-rgb), 0.35);
     background: rgba(var(--accent-rgb), 0.08);
     color: var(--accent);
-    font-size: var(--ui-small-fs);
+    font-size: calc(var(--ui-small-fs) * var(--wt-fs, 1));
     font-weight: 600;
     cursor: pointer;
   }
   .wt-card-btn:active { transform: scale(0.96); }
-  /* the APK "docked" state (the native sheet owns the browse) */
-  .wt-docked {
-    margin: auto;
+  /* v0.87.1: the APK "docked" card is RETIRED — on BIB builds the
+     master panel never opens for a web tab (the native sheet is the
+     ONE panel); its CSS went with it. */
+  /* v0.87.3: THE REDIRECT GUARD BANNER — "a pop notification at the
+     top of the panel that asks the user if they want to be redirected
+     to xyz website, with a redirect icon". Press the ⇱ pill to follow;
+     tap anywhere else and the move is ignored. Theme vars only. */
+  .wt-guard {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 5;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 24px;
-    max-width: 300px;
-    text-align: center;
-  }
-  .wt-dock-pill {
-    display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 16px;
-    border-radius: 18px;
-    background: var(--surface-2);
-    border: 1px solid var(--surface-3);
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.4);
     color: var(--text-2);
     font-size: var(--ui-small-fs);
-    font-weight: 600;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    animation: wt-guard-in 0.18s ease-out;
+  }
+  @keyframes wt-guard-in {
+    from { transform: translateY(-100%); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+  }
+  .wt-guard-ico {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    border-radius: 13px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--accent);
+  }
+  .wt-guard-ico svg { width: 15px; height: 15px; }
+  .wt-guard-txt {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: calc(var(--ui-small-fs) * var(--wt-fs, 1));
   }
-  .wt-dock-pill svg { width: 16px; height: 16px; flex-shrink: 0; }
-  .wt-dock-note {
-    font-size: var(--ui-small-fs);
-    color: var(--text-3);
-    line-height: 1.55;
-  }
-  /* the side panel: icon mode + the gradient editor */
-  .wt-side {
-    border-top: 1px solid var(--surface-3);
-    padding: 10px 12px 14px;
-    background: color-mix(in srgb, var(--surface-1) 92%, transparent);
-    max-height: 44%;
-    overflow-y: auto;
-  }
-  .wt-side-h {
-    font-size: var(--ui-small-fs);
+  .wt-guard-txt b { color: var(--text-1); }
+  .wt-guard-go {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(var(--accent-rgb), 0.5);
+    background: rgba(var(--accent-rgb), 0.14);
+    color: var(--accent);
+    font-size: calc((var(--ui-small-fs) - 1px) * var(--wt-fs, 1));
     font-weight: 700;
-    color: var(--text-2);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    font-family: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
-  .wt-side-row { display: flex; gap: 6px; margin-bottom: 10px; }
-  .wt-chip {
+  .wt-guard-go:active { transform: scale(0.95); }
+  /* v0.87.4: THE CHROME TINT — "change the colors of the browser": a
+     custom GradientUI spec layers its stops over the theme surfaces
+     through scoped vars (--wt-c1/--wt-c2, set by webtweaks.js apply());
+     the theme stays the DEFAULT (no .custom-tint class = the exact
+     pre-wave look). Zero hardcoded colors — the stops only ever
+     color-mix against the live theme vars. */
+  .wt-root.custom-tint .wt-bar {
+    background: color-mix(in srgb, var(--wt-c1, var(--accent)) 14%, var(--bg-panel));
+    border-bottom-color: color-mix(in srgb, var(--wt-c1, var(--accent)) 26%, var(--bg-panel));
+  }
+  .wt-root.custom-tint .wt-omni {
+    background: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 14%, var(--bg-panel));
+    border-color: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 32%, var(--bg-panel));
+  }
+  .wt-root.custom-tint .wt-omni:focus {
+    border-color: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 55%, transparent);
+  }
+  .wt-root.custom-tint .wt-go,
+  .wt-root.custom-tint .wt-ext {
+    background: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 22%, var(--bg-panel));
+    border-color: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 38%, var(--bg-panel));
+    color: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 70%, var(--text-1));
+  }
+  .wt-root.custom-tint .wt-card {
+    background: color-mix(in srgb, var(--wt-c1, var(--accent)) 8%, var(--surface-1));
+    border-color: color-mix(in srgb, var(--wt-c1, var(--accent)) 22%, var(--surface-3));
+  }
+  .wt-root.custom-tint .wt-guard {
+    background: color-mix(in srgb, var(--wt-c1, var(--accent)) 92%, transparent);
+    border-bottom-color: color-mix(in srgb, var(--wt-c2, var(--accent-2)) 40%, transparent);
+  }
+
+  /* v0.87.4: THE BROWSER TWEAKS VIEW (webtweaks.js — the chatbot
+     tweaks panel's twin). Chips + buttons + the editor host. */
+  .wtw-chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .wtw-chip {
     padding: 6px 12px;
     border-radius: 12px;
     border: 1px solid var(--surface-3);
@@ -1181,20 +1259,39 @@
     color: var(--text-3);
     font-size: calc(var(--ui-small-fs) - 1px);
     font-weight: 600;
+    font-family: inherit;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
-  .wt-chip.on {
+  .wtw-chip.on {
     border-color: rgba(var(--accent-rgb), 0.5);
     background: rgba(var(--accent-rgb), 0.1);
     color: var(--accent);
   }
-  .wt-side-note {
-    font-size: calc(var(--ui-small-fs) - 2px);
-    color: var(--text-3);
-    line-height: 1.45;
+  .wtw-btn {
+    display: block;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 12px 14px;
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: var(--ui-small-fs);
+    font-family: inherit;
+    cursor: pointer;
+    width: 100%;
     margin-top: 8px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
+  .wtw-btn-ghost {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text-3);
+  }
+  .wtw-editor { margin: 4px 0 8px; }
   /* the canvas disc's globe glyph (the gradient placeholder) */
   .chatbot .icon .wt-glyph {
     display: flex;
@@ -5300,6 +5397,13 @@
 <div id="chat-panel">
   <div class="handle" id="panel-handle">
     <div class="handle-bar"></div>
+    <!-- v0.87.1: THE CIRCULAR TAB ICON — "right of the middle dash in
+         the panel and left of the back arrow pill" (the native sheet's
+         circle twin; this one rides the handle strip's free right cell,
+         right of the dash). Mirrors the canvas tab icon LIVE and opens
+         the browser tweaks (webtweaks.js). A <button> so gesture.js's
+         drag-anchor keeps it exempt from panel drags. -->
+    <button id="panel-tab-icon" aria-label="Tab icon and browser tweaks" style="display:none"></button>
   </div>
   <div class="panel-header">
     <!-- v0.27 view-stack chrome: ‹ back takes the model button's slot while
@@ -5432,10 +5536,14 @@
      (webtab.js: WebIcon 'web' — the draggable, persisted icon that acts
      like its own chatbot) and its panel view (webpanel.js: the
      browser-in-browser — omnibox + the frameable-verdict iframe / honest
-     card + the gradient icon editor; the native sheet owns the browse
-     on BIB-capable APKs). -->
+     card; the native sheet owns the browse on BIB-capable APKs — v0.87.1
+     ONE PANEL: no master panel behind the sheet, no side panel).
+     v0.87.4: webtweaks.js — the browser tweaks view (the chatbot
+     tweaks panel's twin: the pinned icon + the text sizes + the
+     colors), opened from the circular tab icon in the panel header. -->
 <script src="webtab.js"></script>
 <script src="webpanel.js"></script>
+<script src="webtweaks.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
 </body>

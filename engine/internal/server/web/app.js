@@ -569,6 +569,25 @@
     // (the handover needs exactly one fresh frame: activation clears the
     // stale #c2 stars, deactivation restores them).
     repaint: function () { update(); },
+    // v0.87.4: openWebTweaksFor — the NATIVE handoff's landing (the
+    // sheet's circle dismisses the native sheet + spaEval's
+    // WebTweaks.openFor(tabId)): the master panel opens on the tab's
+    // browser view with the tweaks stacked over it. On BIB builds the
+    // native panel just stepped away; here the master panel takes the
+    // stage (ONE panel at a time, still).
+    openWebTweaksFor: function (tabId) {
+      var tabs = (window.WebTabs && window.WebTabs.all()) || [];
+      var icon = null;
+      for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].id === tabId) { icon = tabs[i]; break; }
+      }
+      if (!icon) return false;
+      openWebPanelFor(icon, { skipNative: true });
+      if (window.WebTweaks && typeof window.WebTweaks.open === 'function') {
+        window.WebTweaks.open(panel, icon);
+      }
+      return true;
+    },
     // Handle Android back press. Returns true if we closed something (overlay
     // or panel), false if nothing was open. Called by MainActivity.onBackPressed
     // so the back gesture closes overlays/panels instead of exiting the app.
@@ -761,6 +780,69 @@
     subEl:    document.getElementById('panel-sub'),
     bodyEl:   document.getElementById('panel-body')
   });
+
+  // ── v0.87.1: THE CIRCULAR TAB ICON ───────────────────────────
+  // User spec: "let's add a circular icon right of the middle dash in
+  // the panel and left of the back arrow pill. That circle icon should
+  // update with and be the same as the icon of the tab itself on the
+  // canvas." The web master panel's twin lives in the handle strip's
+  // free right cell (right of the dash — the exact spot the native
+  // sheet's circle takes between the dash and the ‹ back pill). It
+  // mirrors the tab's icon LIVE (the doomalay:tab-icon event every
+  // icon mutation fires) and pressing it opens the browser tweaks
+  // (v0.87.4 webtweaks.js — the chatbot tweaks panel's twin: icon,
+  // text sizes, colors). Non-web panels never show it.
+  const tabIconBtn = document.getElementById('panel-tab-icon');
+  function paintTabCircle(icon) {
+    if (!tabIconBtn) return;
+    // NOTE: no isOpen() gate here — panel.open() lands the .open class
+    // on the NEXT animation frame, so a synchronous paint right after
+    // open() would read isOpen()===false and hide itself (the red-team
+    // caught this: the circle never showed on the freshly opened panel).
+    // The panel-closed listener paints null — that is the hide path.
+    if (!icon || icon.type !== 'web') {
+      tabIconBtn.style.display = 'none';
+      tabIconBtn.innerHTML = '';
+      return;
+    }
+    tabIconBtn.style.display = '';
+    var src = (typeof icon.iconSrc === 'function') ? icon.iconSrc() : null;
+    if (src) {
+      tabIconBtn.innerHTML = '<img src="' + src + '" alt="' +
+        (icon.title || icon.host() || 'tab') + '">';
+    } else {
+      // gradient mode — the placeholder disc twin (theme accent pair
+      // or the entity's own spec; the globe glyph says "browser tab")
+      var g = (typeof icon.themeGradientCSS === 'function')
+        ? icon.themeGradientCSS(icon.gradient) : '';
+      tabIconBtn.innerHTML = '<span class="wt-circle-grad"' +
+        (g ? ' style="background-image:' + g + '"' : '') + '>' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2.5 12h19" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span>';
+    }
+  }
+  if (tabIconBtn) {
+    tabIconBtn.addEventListener('click', function () {
+      var icon = panel.currentContext;
+      if (!icon || icon.type !== 'web') return;
+      // v0.87.4: the tweaks view (the chatbot tweaks panel's twin)
+      if (window.WebTweaks && typeof window.WebTweaks.open === 'function') {
+        window.WebTweaks.open(panel, icon);
+      }
+    });
+    // LIVE: every icon mutation (navigation favicon refresh, mode
+    // switch, upload) repaints the circle while its tab's panel shows
+    document.addEventListener('doomalay:tab-icon', function (e) {
+      var d = (e && e.detail) || {};
+      if (panel.currentContext && d.id === panel.currentContext.id) {
+        paintTabCircle(panel.currentContext);
+      }
+    });
+    // the circle leaves with the panel (a closed panel shows nothing —
+    // v0.38 broadcasts the close for exactly this kind of listener)
+    document.addEventListener('doomalay:panel-closed', function () {
+      paintTabCircle(null);
+    });
+  }
 
   // ── v0.19: manual chat rename ─────────────────────────────────
   // The user's spec: "don't have the chat rename from the default random
@@ -1016,6 +1098,13 @@
           // types keep the default 20px from the stylesheet. v0.85.3: the
           // browser tab view is full-bleed too (its own chrome).
           panel.bodyEl.style.padding = (icon.type === 'chat' || icon.type === 'web') ? '0' : '';
+          // v0.87.1: web tabs route through openWebPanelFor — it owns the
+          // ONE-PANEL split (BIB builds: the native sheet only, no master
+          // panel; everywhere else: the master panel + WebPanel).
+          if (icon.type === 'web') {
+            openWebPanelFor(icon);
+            return;
+          }
           panel.open({
             title: icon.getPanelTitle(),
             subtitle: icon.getPanelSubtitle(),
@@ -1025,13 +1114,8 @@
           });
           // If the icon is a ChatIcon, render the interactive chat panel
           // into the panel body (replaces the static placeholder HTML).
-          // v0.85.3: a WebIcon renders the browser-in-browser panel
-          // (webpanel.js) — "each tab has its own icon and acts kind of
-          // like its own chatbot".
           if (icon.type === 'chat' && window.ChatPanel) {
             window.ChatPanel.render(panel.bodyEl, icon, panel);
-          } else if (icon.type === 'web' && window.WebPanel) {
-            window.WebPanel.render(panel.bodyEl, icon, panel);
           }
         }, 150);
       }
@@ -1249,7 +1333,23 @@
   // opens the master panel with the tab's header (host + url + the
   // favicon/gradient avatar) and hands the body to WebPanel (the
   // browser-in-browser view — webpanel.js).
-  function openWebPanelFor(icon) {
+  // v0.87.1: ONE PANEL — on BIB-capable builds the master panel NEVER
+  // opens for a web tab (the user spec: "We only want one panel. Remove
+  // the one with the gradient selector that doesn't work and the mini
+  // browser in panel view"): the native sheet is the browser panel and
+  // WebTabs.openNative fires it (the entity-level sheet sync in
+  // webtab.js keeps the tab's state current without any panel). Every
+  // other surface keeps the master-panel render below.
+  function openWebPanelFor(icon, opts) {
+    // v0.87.4: skipNative — the tweaks handoff lands HERE even on BIB
+    // builds (the native sheet just stepped away; the master panel
+    // takes the stage for the tweaks view, one panel at a time).
+    if (!(opts && opts.skipNative) &&
+        window.WebTabs && typeof window.WebTabs.openNative === 'function' &&
+        window.__doomalayKotlin && typeof window.__doomalayKotlin.openPanel === 'function') {
+      window.WebTabs.openNative(icon);
+      return;
+    }
     var modelBtn = document.getElementById('panel-model-btn');
     if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
     panel.bodyEl.style.padding = '0';   // the browser view is full-bleed
@@ -1263,6 +1363,8 @@
     if (window.WebPanel) {
       window.WebPanel.render(panel.bodyEl, icon, panel);
     }
+    // v0.87.1: the circular tab icon paints the moment its panel opens
+    paintTabCircle(icon);
   }
 
   function openChatPanelFor(icon) {

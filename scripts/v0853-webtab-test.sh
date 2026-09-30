@@ -17,7 +17,8 @@
 #  (1) THE ENTITY — WebTabs.createAt makes a 'web' GridIcon: draggable
 #      class, gradient placeholder disc (theme accent pair) + host label.
 #  (2) THE PANEL — the tap opens the master panel with the omnibox +
-#      side panel (the tab acts like its own chatbot).
+#      THE CIRCULAR TAB ICON (v0.87.1: the side panel is gone — ONE
+#      panel; the tab acts like its own chatbot).
 #  (3) NAVIGATION — example.com (frameable) → the iframe + the entity
 #      SAVES url/title/favicon; the canvas disc paints the site's icon
 #      (the dynamic website icon) and the label shows the host.
@@ -32,9 +33,9 @@
 #  (7) THE DOCK PATH — the ＋ sub-expansion's "new browser panel" pill
 #      creates a web entity + opens its panel (the v0.85.2 guard
 #      resolved by the real machinery).
-#  (8) THE GRADIENT THEME SYSTEM — the side panel's GradientUI edits
-#      the entity's spec LIVE (disc repaints); the mode chip resets a
-#      custom spec back to the theme-following default.
+#  (8) THE GRADIENT THEME SYSTEM — the tweaks view's GradientUI (the
+#      circle opens it) edits the entity's spec LIVE (disc repaints);
+#      the mode chip resets a custom spec back to the theme default.
 #  (9) zero console errors.
 set -u
 cd "$(dirname "$0")/.."
@@ -60,7 +61,7 @@ ck() { if [ "$2" = "yes" ]; then PASS=$((PASS+1)); echo "  ✓ $1"; else FAIL=$(
 rm -rf $DATA; mkdir -p $DATA
 $ENG -open=false -port=$PORT -data-dir=$DATA >/tmp/v0853-eng.log 2>&1 &
 ENGPID=$!
-cleanup(){ kill $ENGPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
+cleanup(){ kill $ENGPID 2>/dev/null; wait $ENGPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
 trap cleanup EXIT
 for i in $(seq 1 80); do curl -s $BASE/api/health >/dev/null 2>&1 && break; sleep 0.25; done
 curl -s $BASE/api/health >/dev/null 2>&1 && echo "engine up" || { echo "BOOT FAIL"; exit 1; }
@@ -83,8 +84,8 @@ ck "placeholder label 'New Tab'" \
 
 echo "── (2) the panel (the tap)"
 agent-browser click ".chatbot[data-type=web] .icon" >/dev/null 2>&1; sleep 1.2
-ck "tap opens the master panel with the omnibox + side panel" \
-  "$(ev "JSON.stringify({o: !!document.querySelector('.wt-omni') && document.getElementById('chat-panel').classList.contains('open'), s: !!document.querySelector('.wt-side'), e: !!document.querySelector('.wt-go')})" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['o'] and d['s'] and d['e'] else 'no')")"
+ck "tap opens the master panel with the omnibox + THE CIRCLE (v0.87: the side panel is gone — ONE panel)" \
+  "$(ev "JSON.stringify({o: !!document.querySelector('.wt-omni') && document.getElementById('chat-panel').classList.contains('open'), s: !document.querySelector('.wt-side'), c: document.getElementById('panel-tab-icon') && getComputedStyle(document.getElementById('panel-tab-icon')).display !== 'none', e: !!document.querySelector('.wt-go')})" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['o'] and d['s'] and d['c'] and d['e'] else 'no')")"
 
 echo "── (3) navigation (frameable + the dynamic site icon)"
 ev "window.WebPanel.navigate('example.com')" >/dev/null 2>&1; sleep 4
@@ -155,21 +156,29 @@ ev "document.getElementById('dock-new-web').click()" >/dev/null 2>&1; sleep 1.4
 ck "the browser pill creates web tab #3 + opens the panel" \
   "$(ev "JSON.stringify({w: window.WebTabs.count(), o: document.getElementById('chat-panel').classList.contains('open')})" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['w']==3 and d['o'] else 'no')")"
 
-echo "── (8) the gradient theme system (the icon method)"
-R=$(ev "JSON.stringify((function(){
+echo "── (8) the gradient theme system (the tweaks view — v0.87.4)"
+R=$(ev "(async function(){
   var t = window.WebTabs.all()[window.WebTabs.count()-1]; window.__t2 = t;
-  document.querySelector('.wt-chip[data-wt-mode=gradient]').click();
+  // the CIRCLE opens the tweaks view (the chatbot tweaks panel's twin)
+  document.getElementById('panel-tab-icon').click();
+  await new Promise(r => setTimeout(r, 600));
+  var chips = document.querySelectorAll('.wtw-chip');
+  var gradChip = null;
+  chips.forEach(function(c){ if (c.getAttribute('data-wtw') === 'mode-grad') gradChip = c; });
+  if (!gradChip) return JSON.stringify({mode: 'NO VIEW'});
+  gradChip.click();
+  await new Promise(r => setTimeout(r, 500));
   var themeBg = t.el.querySelector('.icon').style.backgroundImage;
-  var inp = document.querySelector('.wt-side-editor .gr-color');
+  var inp = document.querySelector('.wtw-editor .gr-color');
   if (inp) { inp.value = '#ff5500'; inp.dispatchEvent(new Event('input', {bubbles:true})); inp.dispatchEvent(new Event('change', {bubbles:true})); }
   var customBg = t.el.querySelector('.icon').style.backgroundImage;
-  return {mode: t.iconMode, themeFollow: themeBg.indexOf('var(--accent') >= 0,
+  return JSON.stringify({mode: t.iconMode, themeFollow: themeBg.indexOf('var(--accent') >= 0,
     custom: (t.gradient||{}).colors ? (t.gradient.colors.indexOf('#ff5500') >= 0) : false,
-    customBg: customBg.indexOf('rgb(255, 85, 0)') >= 0};
-})())")
+    customBg: customBg.indexOf('rgb(255, 85, 0)') >= 0});
+})()")
 ck "gradient mode default rides the THEME accent pair" \
   "$(echo "$R" | python3 -c "import sys,json;print('yes' if json.loads(sys.stdin.read())['themeFollow'] else 'no')")" "$R"
-ck "the GradientUI editor repaints the disc LIVE (custom spec)" \
+ck "the GradientUI editor (in the tweaks view) repaints the disc LIVE (custom spec)" \
   "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['custom'] and d['customBg'] and d['mode']=='gradient' else 'no')")" "$R"
 
 echo "── (9) console errors"
