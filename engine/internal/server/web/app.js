@@ -1853,13 +1853,30 @@
   // persists (doomalay.dock.v1) and is re-applied on every boot.
   const DOCK_KEY = 'doomalay.dock.v1';
 
-  function dockApply(expanded) {
+  function dockApply(expanded, instant) {
     if (dockToggleEl) {
-      dockToggleEl.textContent = expanded ? '‹' : '›';
+      dockToggleEl.classList.toggle('open', !!expanded);
       dockToggleEl.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       dockToggleEl.setAttribute('aria-label', expanded ? 'Collapse dock' : 'Expand dock');
     }
-    if (dockStripEl) dockStripEl.classList.toggle('hidden', !expanded);
+    if (dockStripEl) {
+      // v0.78.4: transform/opacity animation (motion-grade) — expand
+      // unhides first then opens next frame; collapse reverses and
+      // hides after the transition (boot restores skip the animation).
+      if (expanded) {
+        dockStripEl.classList.remove('hidden');
+        if (instant) dockStripEl.classList.add('open');
+        else requestAnimationFrame(function () {
+          requestAnimationFrame(function () { dockStripEl.classList.add('open'); });
+        });
+      } else {
+        dockStripEl.classList.remove('open');
+        if (instant) dockStripEl.classList.add('hidden');
+        else setTimeout(function () {
+          if (!dockStripEl.classList.contains('open')) dockStripEl.classList.add('hidden');
+        }, 180);
+      }
+    }
   }
   function dockIsExpanded() {
     return !!(dockStripEl && !dockStripEl.classList.contains('hidden'));
@@ -1868,13 +1885,28 @@
   if (dockToggleEl && dockStripEl) {
     let savedDock = null;
     try { savedDock = JSON.parse(localStorage.getItem(DOCK_KEY)); } catch (e) {}
-    dockApply(!!(savedDock && savedDock.expanded));   // default: collapsed
+    dockApply(!!(savedDock && savedDock.expanded), true);   // boot: instant, no animation
 
     dockToggleEl.addEventListener('click', function () {
-      dockApply(!dockIsExpanded());
+      // v0.78.4: save the LOGICAL state — dockIsExpanded() reads the
+      // .hidden class, which the collapse animation delays by 180ms
+      // (the old save caught the transitional True and undid itself).
+      var now = !dockIsExpanded();
+      dockApply(now);
       try {
-        localStorage.setItem(DOCK_KEY, JSON.stringify({ expanded: dockIsExpanded() }));
+        localStorage.setItem(DOCK_KEY, JSON.stringify({ expanded: now }));
       } catch (e) {}
+    });
+
+    // v0.78.4: the WEB globe → the browser-in-browser panel. Resumes the
+    // current tab when one is open; otherwise opens the omnibox's own
+    // search engine (DuckDuckGo) as the start page.
+    const dockWebBtn = dockStripEl.querySelector('#dock-web');
+    if (dockWebBtn) dockWebBtn.addEventListener('click', function () {
+      if (!window.InAppBrowser) return;
+      var url = '';
+      try { url = window.InAppBrowser.currentURL() || ''; } catch (e) {}
+      window.InAppBrowser.open(url || 'https://duckduckgo.com', { purpose: 'web' });
     });
 
     // Cloud glyph → the provider screen, relocated from Settings → Cloud.

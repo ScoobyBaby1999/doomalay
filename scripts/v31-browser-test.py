@@ -443,17 +443,22 @@ with sync_playwright() as p:
     pg.evaluate("s => localStorage.setItem('doomalay.state.v2', JSON.stringify(s))", state)
     pg.reload(); pg.wait_for_timeout(700)
 
-    # ── 0. the v0.31.2 CANVAS DOCK (panel still closed — the dock lives
-    #       on the canvas chrome, left of the settings gear) ─────────
-    print("canvas dock (v0.31.2)")
+    # ── 0. the v0.78.4 CANVAS DOCK (panel still closed — the dock lives
+    #       on the canvas chrome, the arrow left of the settings gear) ─
+    print("canvas dock (v0.78.4)")
     ok(pg.locator("#dock-toggle").count() == 1, "the › dock toggle exists next to the settings gear")
-    ok(pg.locator("#dock-toggle").inner_text().strip() == "›", "the collapsed arrow reads ›")
+    ok(pg.locator("#dock-toggle .dg").inner_text().strip() == "›", "the collapsed arrow reads ›")
     ok(pg.locator("#dock-strip").is_hidden(), "the strip starts collapsed (hidden)")
     gear_box = pg.locator("#settings-btn").bounding_box()
     tog_box = pg.locator("#dock-toggle").bounding_box()
     ok(tog_box and gear_box and tog_box["x"] + tog_box["width"] <= gear_box["x"] + 2,
        "the toggle sits LEFT of the settings gear")
-    ok(tog_box["width"] >= 40 and tog_box["height"] >= 40, "the toggle is a ≥40px touch target")
+    ok(gear_box and abs(gear_box["width"] - 34) < 1, "the gear is the 34px polished tile")
+    ok(pg.evaluate("""() => {
+      const g = document.getElementById('settings-btn').getBoundingClientRect();
+      const el = document.elementFromPoint(g.left + 3, g.top + 3);
+      return !!(el && (el.id === 'settings-btn' || (el.closest && el.closest('#settings-btn'))));
+    }"""), "the ::after hit-slop keeps corner taps on the 34px gear (≥44px zone)")
     # the settings panel lost its Cloud page (relocated into the dock)
     pages = pg.evaluate("() => window.Settings.listPages().map(p => p.id)")
     ok("cloud" not in pages, f"the settings registry no longer carries the Cloud provider page ({pages})")
@@ -464,20 +469,37 @@ with sync_playwright() as p:
     ok("cloud" not in tabs, f"the settings panel UI shows no Cloud tab ({tabs})")
     pg.evaluate("() => document.getElementById('chat-scrim').click()")
     pg.wait_for_timeout(500)   # back to the bare canvas
-    # expand: the arrow flips to ‹, the strip shows 2 icons
-    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
-    ok(pg.locator("#dock-toggle").inner_text().strip() == "‹", "tapping flips the arrow to ‹")
+    # expand: the glyph rotates, the strip shows 4 pills UNDER the gear
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(400)
+    ok(pg.evaluate("() => document.getElementById('dock-toggle').classList.contains('open')"),
+       "tapping rotates the arrow glyph (the .open class)")
     ok(pg.locator("#dock-toggle").get_attribute("aria-expanded") == "true", "aria-expanded flips true")
     ok(pg.locator("#dock-strip").is_visible(), "the strip is visible")
+    st_box = pg.locator("#dock-strip").bounding_box()
+    ok(st_box and st_box["x"] + st_box["width"] <= gear_box["x"] + gear_box["width"] + 2 and
+       st_box["y"] >= gear_box["y"] + gear_box["height"] - 2,
+       "the strip expands UNDER the settings gear")
+    ok(pg.evaluate("() => document.getElementById('dock-strip').classList.contains('open')"),
+       "the strip carries the animation-open class")
     dock_btns = pg.locator("#dock-strip .dock-btn")
-    ok(dock_btns.count() == 2, "the strip holds 2 icons (cloud + library)")
-    ok(pg.locator("#dock-cloud").get_attribute("aria-label") == "Cloud providers" and
+    ok(dock_btns.count() == 4, "the strip holds 4 pills (web + cloud + library + chats)")
+    ok(pg.locator("#dock-web").get_attribute("aria-label") == "Web browser" and
+       pg.locator("#dock-cloud").get_attribute("aria-label") == "Cloud providers" and
        pg.locator("#dock-library").get_attribute("aria-label") == "Hub library",
-       "the icons carry their aria-labels")
-    for i in range(2):
+       "the pills carry their aria-labels")
+    for i in range(4):
         b = dock_btns.nth(i).bounding_box()
-        ok(b and b["width"] >= 40 and b["height"] >= 40, f"dock icon {i + 1} is a ≥40px touch target")
-    ok(pg.locator("#dock-strip .dock-btn svg").count() == 2, "both dock icons are SVG glyphs (chrome style)")
+        ok(b and abs(b["width"] - 32) < 1, f"dock pill {i + 1} is a 32px capsule")
+    ok(pg.locator("#dock-strip .dock-btn svg").count() == 4, "all dock icons are SVG glyphs (chrome style)")
+    # the web pill opens the browser-in-browser (stubbed on desktop)
+    ok(pg.evaluate("""() => {
+      window.__opened = null;
+      window.InAppBrowser = { open: (u, o) => { window.__opened = {u, o}; return 'native-panel'; },
+        currentURL: () => '' };
+      document.getElementById('dock-web').click();
+      return window.__opened && window.__opened.u === 'https://duckduckgo.com' &&
+             window.__opened.o.purpose === 'web';
+    }"""), "the web pill opens the browser-in-browser at the start page")
     dock_pref = pg.evaluate("() => JSON.parse(localStorage.getItem('doomalay.dock.v1'))")
     ok(dock_pref == {"expanded": True}, f"the expanded state persists to localStorage ({dock_pref})")
     # the cloud glyph opens the RELOCATED provider screen
@@ -488,8 +510,8 @@ with sync_playwright() as p:
     pg.locator("#prov-close").click(); pg.wait_for_timeout(600)
     ok(not pg.evaluate("() => window.ConnectOverlay.isOpen()"), "✕ closes the provider screen")
     # collapse + expand again
-    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
-    ok(pg.locator("#dock-toggle").inner_text().strip() == "›", "tapping again flips the arrow back to ›")
+    pg.locator("#dock-toggle").click(); pg.wait_for_timeout(400)
+    ok(pg.locator("#dock-toggle .dg").inner_text().strip() == "›", "the arrow glyph stays › (rotation is CSS)")
     ok(pg.locator("#dock-strip").is_hidden(), "the strip collapses (hidden)")
     ok(pg.evaluate("() => JSON.parse(localStorage.getItem('doomalay.dock.v1'))") == {"expanded": False},
        "the collapsed state persists to localStorage")
@@ -497,7 +519,7 @@ with sync_playwright() as p:
     pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)
     pg.reload(); pg.wait_for_timeout(700)
     ok(pg.locator("#dock-strip").is_visible() and
-       pg.locator("#dock-toggle").inner_text().strip() == "‹",
+       pg.evaluate("() => document.getElementById('dock-toggle').classList.contains('open')"),
        "the expanded dock state survives a reload (localStorage)")
     pg.locator("#dock-toggle").click(); pg.wait_for_timeout(300)   # collapse for the flow below
 
