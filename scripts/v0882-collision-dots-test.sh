@@ -220,7 +220,7 @@ R=$(ev "(async function(){ try {
   var d0 = G.dots()[0];
   if (!d0) return JSON.stringify({fail: 'no dot'});
   var rBefore = tA._orbit ? tA._orbit.r : -1;
-  var xBefore = tA.x, yBefore = tA.y;
+  var xBefore = tA.x - d0.x, yBefore = tA.y - d0.y;
   // sample the depth cue THROUGHOUT the orbit window (a post-hoc window
   // can sit at a z-peak where the swing is momentarily flat)
   var seen = 0;
@@ -229,7 +229,7 @@ R=$(ev "(async function(){ try {
     if (tA._orbitScale && Math.abs(tA._orbitScale - 1) > 0.004) seen++;
   }
   var rAfter = tA._orbit ? tA._orbit.r : -2;
-  var moved = Math.hypot(tA.x - xBefore, tA.y - yBefore);
+  var moved = Math.hypot((tA.x - d0.x) - xBefore, (tA.y - d0.y) - yBefore);
   return JSON.stringify({
     movedPx: Math.round(moved * 100) / 100,
     distHeld: Math.abs(rAfter - rBefore) < 0.01,
@@ -256,6 +256,9 @@ R=$(ev "(async function(){ try {
   window.doomalay.addEntity(fake);
   await new Promise(r => setTimeout(r, 500));
   var chatJoined = fake._orbit ? true : false;
+  // remove the probe (a lingering chat at the dot's center owns the
+  // topmost hit — (5)'s drag would grab IT instead of the members)
+  try { window.doomalay.world.remove(fake.id); if (fake.el && fake.el.parentNode) fake.el.parentNode.removeChild(fake.el); } catch (e) {}
   var dsAll = G.dots();
   return JSON.stringify({joined: joined, grown: grown, stillOneDot: stillOneDot, chatJoined: chatJoined,
     dotsAfterChat: dsAll.length, dotsMid: dotsMid,
