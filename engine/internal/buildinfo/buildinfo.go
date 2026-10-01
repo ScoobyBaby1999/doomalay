@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.89.1"   // v0.89.1: the collision-dots wave rides after the Kronos 0.89.0
+var Version = "0.90.0"   // v0.90.0: the atom-sphere wave (the icon collision system rework)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
