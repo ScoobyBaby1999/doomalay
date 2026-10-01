@@ -130,38 +130,126 @@
       parseInt(h.slice(4, 6), 16);
   }
 
-  // v0.77.7 mixHex(a, b, t) → the linear blend a·(1−t)+b·t as a hex —
-  // the secondary-text derivation's only math (kept beside hexTriplet).
-  function mixHex(a, b, t) {
-    var ma = /^#([0-9a-fA-F]{6})$/.exec(String(a));
-    var mb = /^#([0-9a-fA-F]{6})$/.exec(String(b));
-    if (!ma || !mb) return null;
-    var out = '#';
-    for (var i = 0; i < 3; i++) {
-      var ca = parseInt(ma[1].slice(i * 2, i * 2 + 2), 16);
-      var cb = parseInt(mb[1].slice(i * 2, i * 2 + 2), 16);
-      var v = Math.round(ca + (cb - ca) * t);
-      out += (v < 16 ? '0' : '') + v.toString(16);
+  // v0.91.1 OKX — THE PERCEPTUAL CORE (the v0.89.8 research's Track 1
+  // foundation). OKLab/OKLCH (Björn Ottosson's public-domain color space,
+  // the same math culori ships) as ~90 dependency-free lines — the repo
+  // has no build step, so a vendored 40KB UMD would buy nothing over the
+  // formulas themselves. Every JS-side derivation (tints, shades, palette
+  // averages — the secondary-text chain, later the canvas shades) mixes
+  // in OKLab: perceptually even steps, no muddy rgb midpoints between
+  // distant hues. The DOM side's derivations go CSS-NATIVE (color-mix in
+  // oklch — v0.91.2) — this module is the JS twin of that engine for the
+  // places JS must KNOW a color (canvas paints, exports, tests).
+  var OKX = (function () {
+    function hexToRgb(h) {
+      if (h.charAt(0) === '#') h = h.slice(1);
+      return [parseInt(h.slice(0, 2), 16) / 255,
+              parseInt(h.slice(2, 4), 16) / 255,
+              parseInt(h.slice(4, 6), 16) / 255];
     }
-    return out;
+    // norm(any) → '#rrggbb' or null (6-digit only — same contract as the
+    // old mixHex/avgStops parsers)
+    function norm(v) {
+      var m = /^#?([0-9a-fA-F]{6})$/.exec(String(v == null ? '' : v));
+      return m ? ('#' + m[1].toLowerCase()) : null;
+    }
+    function rgbToHex(r, g, b) {
+      var f = function (v) {
+        v = Math.round(Math.min(1, Math.max(0, v)) * 255);
+        return (v < 16 ? '0' : '') + v.toString(16);
+      };
+      return '#' + f(r) + f(g) + f(b);
+    }
+    // sRGB transfer (the 0.04045/0.0031308 thresholds — IEC sRGB)
+    function s2l(c) { return (c <= 0.04045) ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+    function l2s(c) { return (c <= 0.0031308) ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; }
+    var CB = Math.cbrt || function (x) { return Math.pow(x, 1 / 3); };
+    // linear sRGB → OKLab (Ottosson's matrices)
+    function linToLab(r, g, b) {
+      var l = CB(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+      var m = CB(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+      var s = CB(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+      return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+              1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+              0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+    }
+    // OKLab → linear sRGB (clamped at the transfer — UI colors sit well
+    // inside sRGB; the clamp only bites out-of-gamut interpolations)
+    function labToLin(L, a, bb) {
+      var l_ = L + 0.3963377774 * a + 0.2158037573 * bb;
+      var m_ = L - 0.1055613458 * a - 0.0638541728 * bb;
+      var s_ = L - 0.0894841775 * a - 1.2914855480 * bb;
+      var l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+      return [ 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+              -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+              -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
+    }
+    function hexToLab(hex) {
+      var c = hexToRgb(hex);
+      if (isNaN(c[0]) || isNaN(c[1]) || isNaN(c[2])) return null;
+      return linToLab(s2l(c[0]), s2l(c[1]), s2l(c[2]));
+    }
+    function labToHex(L, a, b) {
+      var lin = labToLin(L, a, b);
+      return rgbToHex(l2s(lin[0]), l2s(lin[1]), l2s(lin[2]));
+    }
+    return {
+      // mix(a, b, t) in OKLab — the perceptual blend. EDGES ARE EXACT
+      // PASSTHROUGH (t<=0 → a, t>=1 → b, normalized '#rrggbb'): the twins'
+      // identity contracts hold byte-identical, and intermediate t
+      // carries the evenness.
+      mix: function (a, b, t) {
+        var A = norm(a), B = norm(b);
+        if (!A || !B) return null;
+        if (t <= 0) return A;
+        if (t >= 1) return B;
+        var la = hexToLab(A), lb = hexToLab(B);
+        return labToHex(la[0] + (lb[0] - la[0]) * t,
+                        la[1] + (lb[1] - la[1]) * t,
+                        la[2] + (lb[2] - la[2]) * t);
+      },
+      // avg(colors) — the OKLab mean (the representative tone of a
+      // palette; rgb means gray out between complementary hues). A single
+      // valid color returns ITSELF, byte-exact.
+      avg: function (colors) {
+        if (!colors || !colors.length) return null;
+        var L = 0, a = 0, b = 0, n = 0, last = null;
+        for (var i = 0; i < colors.length; i++) {
+          var hx = norm(colors[i]);
+          if (!hx) continue;
+          var lab = hexToLab(hx);
+          if (!lab) continue;
+          L += lab[0]; a += lab[1]; b += lab[2]; n++; last = hx;
+        }
+        if (!n) return null;
+        if (n === 1) return last;
+        return labToHex(L / n, a / n, b / n);
+      },
+      // luminance stays WCAG sRGB (contrast math is defined there)
+      luminance: function (hex) {
+        var hx = norm(hex);
+        if (!hx) return null;
+        var c = hexToRgb(hx);
+        var lin = function (v) { return (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      },
+      _hexToLab: hexToLab, _labToHex: labToHex   // the test oracles' door
+    };
+  })();
+
+  // v0.77.7 mixHex(a, b, t) — v0.91.1: routes through OKX (OKLab-space
+  // blend; edges byte-exact passthrough). The secondary-text derivation's
+  // only math (kept beside hexTriplet).
+  function mixHex(a, b, t) {
+    if (!/^#?[0-9a-fA-F]{6}$/.test(String(a)) || !/^#?[0-9a-fA-F]{6}$/.test(String(b))) return null;
+    return OKX.mix(a, b, t);
   }
 
-  // v0.77.7 avgStops(colors) → the mean of a palette (the representative
-  // tone of a gradient for derivations — the first stop can be an outlier).
+  // v0.77.7 avgStops(colors) — v0.91.1: the OKLab mean of a palette (the
+  // representative tone of a gradient for derivations — the first stop
+  // can be an outlier, and an rgb mean grays out between distant hues).
   function avgStops(colors) {
-    if (!colors || !colors.length) return null;
-    var r = 0, g = 0, b = 0, n = 0;
-    for (var i = 0; i < colors.length; i++) {
-      var m = /^#([0-9a-fA-F]{6})$/.exec(String(colors[i]));
-      if (!m) continue;
-      r += parseInt(m[1].slice(0, 2), 16);
-      g += parseInt(m[1].slice(2, 4), 16);
-      b += parseInt(m[1].slice(4, 6), 16);
-      n++;
-    }
-    if (!n) return null;
-    var hex = function (v) { v = Math.round(v / n); return (v < 16 ? '0' : '') + v.toString(16); };
-    return '#' + hex(r) + hex(g) + hex(b);
+    return OKX.avg(colors);
   }
 
   // v0.56 deriveBorderTwins(raw) — the BORDER-SAFE twin. Root cause (user
@@ -1851,7 +1939,14 @@
                 var parts = splitSelector(sel).filter(function (p) { return !protectedSels[p]; });
                 if (parts.length) {
                   var fillVar = null;
-                  for (var sf = 0; sf < SURF.length; sf++) {
+                  // v0.91.2: values carrying color-mix( are SELF-DERIVING
+                  // (the browser derives them natively from the vars —
+                  // color-mix(in oklch, var(--surface-2), …)). They are
+                  // not plain fills and must never become projected
+                  // windows — the whole point of the native Layer-3
+                  // chrome is leaving the projection fan-out.
+                  var selfDeriving = (bgCol + ' ' + bgShorthand).indexOf('color-mix(') !== -1;
+                  for (var sf = 0; sf < SURF.length && !selfDeriving; sf++) {
                     var vn = SURF[sf].varName;
                     var isFill = (bgCol === 'var(' + vn + ')') ||
                       (bgShorthand === 'var(' + vn + ')') ||
@@ -2018,6 +2113,7 @@
       deriveTwins: deriveTwins,
       deriveBorderTwins: deriveBorderTwins,
       hexTriplet: hexTriplet,
+      OKX: OKX,
       gridSpecFor: gridSpecFor,
       effectiveGridSpecs: effectiveGridSpecs,
       effectiveGrid: effectiveGrid,

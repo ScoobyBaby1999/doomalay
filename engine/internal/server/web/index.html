@@ -434,7 +434,7 @@
   /* ── Long-press dropdown menu ──────────────────────────────── */
   #menu {
     position: fixed;
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 6px;
@@ -878,7 +878,7 @@
     margin-right: 8px;
     border-radius: 50%;
     border: 1px solid var(--surface-3);
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
     overflow: hidden;
@@ -1055,7 +1055,7 @@
     padding: 0 12px;
     border-radius: 17px;
     border: 1px solid var(--surface-3);
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     color: var(--text-1);
     font-size: calc((var(--ui-small-fs) + 1px) * var(--wt-fs, 1));
     outline: none;
@@ -1067,7 +1067,7 @@
     width: 34px; height: 34px;
     border-radius: 17px;
     border: 1px solid var(--surface-3);
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     color: var(--text-3);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
@@ -1310,7 +1310,7 @@
   }
   .wtw-btn {
     display: block;
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     border: 1px solid var(--border);
     color: var(--text-1);
     padding: 12px 14px;
@@ -1546,7 +1546,7 @@
     width: 32px;
     height: 28px;
     border-radius: 14px;
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     border: 1px solid var(--border);
     color: var(--text-3);
     font-size: 14px;
@@ -1748,7 +1748,7 @@
   .chat-find {
     display: flex; align-items: center; gap: 6px;
     padding: 6px 8px; margin: 0 0 8px 0;
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     border: 1px solid var(--border);
     border-radius: 10px;
     max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0;
@@ -1767,7 +1767,7 @@
     .chat-find.open { max-height: none; }
   }
   .chat-find-input {
-    flex: 1; min-width: 0; background: var(--surface-2);
+    flex: 1; min-width: 0; background-color: var(--raised-chrome);
     border: 1px solid var(--border); color: var(--text-1);
     border-radius: 8px; padding: 7px 10px; font-size: 13px;
     font-family: inherit; outline: none;
@@ -1783,7 +1783,7 @@
     min-width: 34px; text-align: center;
   }
   .chat-find-btn {
-    background: var(--surface-2); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     color: var(--text-2); border-radius: 8px; width: 30px; height: 30px;
     font-size: 13px; line-height: 1; cursor: pointer; font-family: inherit;
     display: flex; align-items: center; justify-content: center;
@@ -1802,7 +1802,7 @@
   }
   .err-switch {
     display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface-2); border: 1px solid var(--border-strong);
+    background-color: var(--raised-chrome); border: 1px solid var(--border-strong);
     color: var(--text-1); border-radius: 999px;
     padding: 7px 12px; font-size: 12.5px; font-weight: 600;
     font-family: inherit; cursor: pointer; max-width: 100%;
@@ -1856,7 +1856,7 @@
   .chat-jump {
     position: absolute; right: 16px; z-index: 3;
     bottom: 110px; width: 38px; height: 38px; border-radius: 999px;
-    background: var(--surface-2); border: 1px solid var(--border-strong);
+    background-color: var(--raised-chrome); border: 1px solid var(--border-strong);
     color: var(--text-1); font-size: 16px; line-height: 1;
     cursor: pointer; font-family: inherit;
     display: flex; align-items: center; justify-content: center;
@@ -2053,7 +2053,7 @@
   .ts-row-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .ts-chip {
     display: inline-block; padding: 2px 8px; border-radius: 7px;
-    background: var(--surface-2); border: 1px solid var(--surface-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--surface-2);
     color: var(--text-3); font-size: var(--ui-micro-fs); font-weight: 700;
     letter-spacing: 0.2px; max-width: 110px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
@@ -2773,7 +2773,7 @@
   .art-row-btn:active { background: var(--border); }
   .art-row-btn-danger { color: var(--err); border-color: rgba(var(--err-rgb),0.3); }
   .art-rename-input {
-    flex: 1; background: var(--surface-2); border: 1px solid var(--fmt-a1);
+    flex: 1; background-color: var(--raised-chrome); border: 1px solid var(--fmt-a1);
     color: var(--text-1); border-radius: 6px; padding: 4px 8px;
     font-size: 13px; font-family: inherit; outline: none;
   }
@@ -2875,7 +2875,7 @@
   }
   .art-sheet-btn {
     display: flex; align-items: center; gap: 12px; width: 100%;
-    background: var(--surface-2); border: 1px solid var(--surface-2); border-radius: 10px;
+    background-color: var(--raised-chrome); border: 1px solid var(--surface-2); border-radius: 10px;
     color: var(--text-1); font-size: var(--ui-fs); font-weight: 600;
     padding: 13px 14px; margin-bottom: 7px; cursor: pointer; font-family: inherit;
     text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -2885,7 +2885,7 @@
   .art-sheet-cancel { justify-content: center; opacity: 0.75; margin-bottom: 0; }
   .art-sheet-ico { width: 22px; text-align: center; flex-shrink: 0; }
   .art-sheet-input {
-    width: 100%; background: var(--surface-2); border: 1px solid var(--fmt-a1);
+    width: 100%; background-color: var(--raised-chrome); border: 1px solid var(--fmt-a1);
     border-radius: 8px; color: var(--text-1); font-size: var(--ui-fs);
     padding: 12px 12px; font-family: inherit; outline: none; margin-bottom: 8px;
   }
@@ -2945,7 +2945,7 @@
   .art-binary-sub { font-size: var(--ui-small-fs); color: var(--text-3); }
   .art-toast {
     position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px);
-    background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); color: var(--text-1); border: 1px solid var(--border);
     padding: 9px 16px; border-radius: 10px; font-size: calc(var(--ui-small-fs) + 0.5px);
     opacity: 0; transition: opacity 0.25s, transform 0.25s; z-index: 4000;
     max-width: 86%; text-align: center;
@@ -3158,13 +3158,13 @@
     color: var(--text-3); margin: 14px 2px 7px;
   }
   .pv-input, .pv-select {
-    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    width: 100%; background-color: var(--raised-chrome); border: 1px solid var(--border);
     color: var(--text-1); padding: 11px 12px; border-radius: 10px;
     font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit; outline: none; min-height: 44px;
   }
   .pv-input:focus, .pv-select:focus { border-color: var(--accent); }
   .pv-btn {
-    background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-1);
+    background-color: var(--raised-chrome); border: 1px solid var(--border-strong); color: var(--text-1);
     border-radius: 10px; padding: 11px 14px; min-height: 44px; font-size: calc(var(--ui-fs) - 0.5px);
     font-weight: 600; font-family: inherit; cursor: pointer; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -3199,14 +3199,14 @@
   #chat-searchbar { display: flex; align-items: center; gap: 6px; padding: 6px 0 4px; }
   #chat-search-input {
     flex: 1 1 auto; min-width: 0;
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-1);
+    background-color: var(--raised-chrome); border: 1px solid var(--border); color: var(--text-1);
     padding: 7px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
     font-family: inherit; outline: none; touch-action: manipulation;
   }
   #chat-search-input::placeholder { color: var(--text-3); font-weight: 500; }
   #chat-search-input:focus { border-color: var(--accent); }
   .chat-search-nav {
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--border); color: var(--text-2);
     border-radius: 6px; width: 34px; height: 30px;
     display: flex; align-items: center; justify-content: center;
     font-size: 11px; line-height: 1; padding-top: 3px; /* ▲▼ draw high in the em box — recenter */
@@ -3229,7 +3229,7 @@
        (they ride the surface-2 field via the Layer-3 group above; the old
        --bg-app repaint tiled a same-var box inside a same-var box and
        stayed flat when the overlay background carried a gradient). */
-    background: var(--surface-2);
+    background-color: var(--raised-chrome);
     border: 1px solid var(--surface-3);
     color: var(--text-3); padding: 5px 8px;
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
@@ -3413,7 +3413,7 @@
   .hub-searchico {
     flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    background: var(--surface-2); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     border-radius: 999px; color: var(--text-2); cursor: pointer;
     font-family: inherit; line-height: 1;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -3422,7 +3422,7 @@
   .hub-searchico .icl { display: block; }
   .hub-searchico:hover { color: var(--hub-tone, var(--accent)); border-color: var(--hub-tone, var(--accent)); }
   .hub-search {
-    flex: 1 1 auto; min-width: 0; box-sizing: border-box; background: var(--surface-2);
+    flex: 1 1 auto; min-width: 0; box-sizing: border-box; background-color: var(--raised-chrome);
     border: 1px solid var(--border); color: var(--text-1);
     padding: 4px 11px; border-radius: 999px;
     outline: none; min-height: 28px;
@@ -3441,7 +3441,7 @@
     transition: color 0.15s, background 0.15s, border-color 0.15s;
   }
   .hub-sortico .icl { display: block; }
-  .hub-sortico:hover { color: var(--text-1); background: var(--surface-2); }
+  .hub-sortico:hover { color: var(--text-1); background-color: var(--raised-chrome); }
   .hub-sortico[data-on="1"] {
     color: var(--hub-tone, var(--accent-2));
     background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.12);
@@ -3495,7 +3495,7 @@
     flex: 1 1 0; min-width: 74px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 3px; min-height: 54px; padding: 7px 6px;
-    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
     border-radius: 14px;
     box-shadow: 0 2px 8px rgba(var(--bg-app-rgb), 0.22);
     font-size: calc(var(--ui-small-fs)); font-weight: 700; text-align: center;
@@ -3554,7 +3554,7 @@
   pops, not the + and −); tabular numbers keep the pill from jittering. */
   .hub-ctl {
     display: inline-flex; align-items: center; gap: 4px;
-    background: var(--surface-2); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     border-radius: 999px; padding: 2px 3px;
     font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3); font-weight: 700;
     letter-spacing: 0.05em;
@@ -3748,7 +3748,7 @@
   .hub-bunch-sec.folded .hub-grid { display: none; }
   .hub-bunch-sec.folded { margin-bottom: 6px; }
   .hub-bunch-sec-n {
-    background: var(--surface-2); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     border-radius: 999px; padding: 0 8px; color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
@@ -3764,7 +3764,7 @@
   .hub-memq-x {
     flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    background: var(--surface-2); border: 1px solid var(--border);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     border-radius: 999px; color: var(--text-2); cursor: pointer;
     font-size: 13px; line-height: 1; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -3809,7 +3809,7 @@
   }
   .hub-bunch-chip {
     display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface-2); border: 1px solid var(--hub-tone, var(--accent));
+    background-color: var(--raised-chrome); border: 1px solid var(--hub-tone, var(--accent));
     color: var(--text-1); border-radius: 999px; padding: 2px 10px;
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
   }
@@ -3967,7 +3967,7 @@
     font-variant-numeric: tabular-nums;
   }
   .hub-nav {
-    width: 34px; height: 28px; border-radius: 8px; background: var(--surface-2);
+    width: 34px; height: 28px; border-radius: 8px; background-color: var(--raised-chrome);
     border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
     font-family: inherit; cursor: pointer; line-height: 1;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -3981,7 +3981,7 @@
   }
   .hp-icocell {
     display: flex; align-items: center; justify-content: center;
-    height: 40px; border-radius: 9px; background: var(--surface-2);
+    height: 40px; border-radius: 9px; background-color: var(--raised-chrome);
     border: 1px solid transparent; color: var(--text-2); cursor: pointer;
     font-family: inherit; font-size: var(--ui-small-fs);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -4117,7 +4117,7 @@
      colored border on the active side, smooth transitions. */
   .hi-viewseg {
     display: inline-flex; padding: 3px; gap: 3px;
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+    background-color: var(--raised-chrome); border: 1px solid var(--border); border-radius: 999px;
   }
   .hi-viewseg button {
     border: none; background: transparent; color: var(--text-3);
@@ -4154,7 +4154,7 @@
      old 54px squares. Real IconLib glyphs; the heart fills + goes solid
      err when on (opaque like an endorsement). */
   .hi-fab {
-    width: 62px; height: 62px; border-radius: 50%; background: var(--surface-2);
+    width: 62px; height: 62px; border-radius: 50%; background-color: var(--raised-chrome);
     border: 1.5px solid var(--border-strong); color: var(--text-1);
     cursor: pointer; box-shadow: 0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
     display: flex; align-items: center; justify-content: center;
@@ -4184,7 +4184,7 @@
      solid err. Theme vars only. */
   .hi-delbar {
     flex: 1; display: flex; align-items: center; gap: 8px;
-    background: var(--surface-2); border: 1.5px solid rgba(var(--err-rgb), 0.55);
+    background-color: var(--raised-chrome); border: 1.5px solid rgba(var(--err-rgb), 0.55);
     border-radius: 18px; padding: 8px 12px;
     box-shadow: 0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
   }
@@ -4208,7 +4208,7 @@
   /* ── publish + the HF connect flow (hubpublish.js) ───────────────── */
   .hp-root { display: flex; flex-direction: column; gap: 8px; }
   .hp-textarea {
-    width: 100%; box-sizing: border-box; background: var(--surface-2);
+    width: 100%; box-sizing: border-box; background-color: var(--raised-chrome);
     border: 1px solid var(--border); color: var(--text-1); padding: 10px 12px;
     border-radius: 10px; font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit;
     outline: none; resize: vertical; min-height: 44px; line-height: 1.5;
@@ -4262,17 +4262,17 @@
   .hp-colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .hp-color {
     width: 46px; height: 36px; border: 1px solid var(--border); border-radius: 8px;
-    background: var(--surface-2); cursor: pointer; padding: 2px;
+    background-color: var(--raised-chrome); cursor: pointer; padding: 2px;
   }
   .hp-mini {
-    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
     border-radius: 8px; padding: 6px 10px; font-size: calc(var(--ui-small-fs) - 1px);
     font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hp-imgrow { display: flex; }
   .hp-pick {
-    flex: 1; background: var(--surface-2); border: 1px solid var(--border);
+    flex: 1; background-color: var(--raised-chrome); border: 1px solid var(--border);
     color: var(--text-1); padding: 11px 14px; min-height: 44px; border-radius: 10px;
     font-size: calc(var(--ui-fs) - 0.5px); font-family: inherit; cursor: pointer;
   }
@@ -4314,7 +4314,7 @@
   .dx-pill {
     position: relative; display: inline-flex; align-items: center; justify-content: center;
     gap: 6px; padding: 6px 12px; min-height: 32px;
-    background: var(--surface-2); color: var(--text-2);
+    background-color: var(--raised-chrome); color: var(--text-2);
     border: 1px solid var(--surface-3);
     font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 700; letter-spacing: 0.25px;
     font-family: inherit; cursor: pointer; white-space: nowrap;
@@ -4380,7 +4380,7 @@
   .gr-color {
     width: 46px; height: 36px; padding: 2px;
     border: 1px solid var(--border); border-radius: 10px;
-    background: var(--surface-2); cursor: pointer;
+    background-color: var(--raised-chrome); cursor: pointer;
     transition: border-color 0.15s, box-shadow 0.15s;
   }
   .gr-color:hover { border-color: var(--border-strong); }
@@ -4401,7 +4401,7 @@
   .gr-rm:hover { color: var(--text-1); border-color: var(--accent); }
   .gr-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .gr-mini {
-    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--raised-ring); color: var(--text-2);
     border-radius: 9px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.14);
     padding: 6px 11px; font-size: calc(var(--ui-small-fs) - 1px);
@@ -4436,7 +4436,7 @@
     font-size: var(--ui-fs); font-weight: 700; }
   .crop-btn {
     min-width: 44px; min-height: 40px; padding: 6px 12px;
-    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-1);
+    background-color: var(--raised-chrome); border: 1px solid var(--raised-ring); color: var(--text-1);
     border-radius: 10px 8px 11px 9px / 9px 11px 8px 10px;
     font-family: inherit; font-size: var(--ui-small-fs); font-weight: 700; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -4494,7 +4494,7 @@
   .hp-sec.folded .hp-sec-body { display: none; }
   .hp-star { color: var(--accent); }
   .hp-focus-btn {
-    background: var(--surface-2); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
     font-family: inherit; font-size: var(--ui-micro-fs); font-weight: 700;
     padding: 4px 9px; cursor: pointer; flex-shrink: 0;
@@ -4518,7 +4518,7 @@
   .tw-icongrid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; }
   .tw-iconcell {
     width: 52px; height: 52px; border-radius: 50%;
-    background: var(--surface-2); border: 2px solid var(--border);
+    background-color: var(--raised-chrome); border: 2px solid var(--border);
     color: var(--text-1);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; padding: 0; overflow: hidden; flex-shrink: 0;
@@ -4632,20 +4632,30 @@
   .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
-  .cv-section, .mb-more, .wsx-opt,
-  /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
-     joins the SURFACE family (user spec: "surface raised should not
-     re-paint this box, that box should remain the surface color
-     variable"). The editor surfaces read as cuts of the card they sit
-     on; their inner controls (.gr-color/.gr-mini/.gr-dir) stay raised
-     chrome on top. */
-  .gr-editor, .gr-swatches, .gr-tools {
+  .cv-section, .mb-more, .wsx-opt {
     background-image: var(--surface-1-gradient, none),
                       linear-gradient(var(--surface-1), var(--surface-1)),
                       var(--border-gradient, none);
     background-origin: padding-box, padding-box, border-box;
     background-clip: padding-box, padding-box, border-box;
     background-attachment: fixed, fixed, fixed;
+    text-shadow: var(--text-shadow);
+  }
+  /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
+     joins the SURFACE family (user spec: "surface raised should not
+     re-paint this box, that box should remain the surface color
+     variable"). The editor surfaces read as cuts of the card they sit
+     on; their inner controls (.gr-color/.gr-mini/.gr-dir) stay raised
+     chrome on top.
+     v0.91.2: NATIVE — the projected 3-layer window retires here (54 more
+     viewport-rasters on the colors tab); a perceptual color-mix raises
+     the box off the surface-1 card, the border mix carries the ring
+     tone. Flat fallbacks for no-color-mix browsers. */
+  .gr-editor, .gr-swatches, .gr-tools {
+    background-color: var(--surface-1);  /* the flat fallback */
+    border-color: var(--border);
+    background-color: color-mix(in oklch, var(--surface-1), var(--surface-2) 26%);
+    border-color: color-mix(in oklch, var(--border), var(--surface-1) 30%);
     text-shadow: var(--text-shadow);
   }
   /* v0.72: src-wrap / hub-wrap moved OUT of Layer 2 — they are the
@@ -4689,6 +4699,29 @@
      raised chrome — inputs, textareas, selects, switch tracks, chips,
      hover states, the chatbot disc — the 'inputs · hover · raised
      cards' contract of the Surface-raised variable. */
+  /* v0.91.2: THE NATIVE RAISED CHROME — one derivation point for every
+     small control's fill + ring. Falls back to the plain variables on
+     browsers without color-mix (the second block is dropped as invalid
+     there); on modern Chromium the browser derives both natively in
+     style recalc — theme flips re-resolve with zero JS. */
+  :root { --raised-chrome: var(--surface-2); --raised-ring: var(--border); }
+  :root {
+    --raised-chrome: color-mix(in oklch, var(--surface-2), var(--bg-app) 12%);
+    --raised-ring: color-mix(in oklch, var(--border), var(--surface-2) 30%);
+  }
+  /* v0.91.2: LAYER-3 GOES NATIVE (the color-rework Track 1). For four
+     versions every control here was a 3-layer projected WINDOW on the
+     surface-2/border fields (fixed-attachment → the PROJ painter poked
+     background-position/size per element → 534 viewport-sized rasters on
+     the colors tab alone, re-rastered on every --proj-tx/ty poke from the
+     canvas physics tick — THE device-side colors-tab lag). The browser's
+     own engine now derives the chrome: a perceptual color-mix of the
+     surface/border variables — zero JS, zero projection, raster cost =
+     the element's own box, theme flips re-derive natively in style
+     recalc. Browsers without color-mix keep the flat fallbacks (the
+     first declarations); the projected model survives on the BIG
+     surfaces (panels, sections, the chatbot disc) where the field is
+     actually visible. */
   .app-range, input[type=text], input[type=password], input[type=email],
   input[type=number], textarea, select, .app-switch-track,
   .ts-row:hover, .ts-row:active, .pv-btn:hover,
@@ -4700,7 +4733,14 @@
   .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
   .wsc-brsel, .pv-btn,
   #pe-name, #ph-key, #ph-val, #menu,
-  .tool-pill-progress, .chatbot .icon, .chatbot .name {
+  .tool-pill-progress {
+    background-color: var(--raised-chrome);   /* the flat fallback rides the var */
+    border-color: var(--raised-ring);
+  }
+  /* the chatbot disc + name KEEP the projected window — the app's face
+     on the canvas; the DOM set stays ≤59 icons below the Pixi world
+     gate (≥60 entities render as sprites) — not a scale surface */
+  .chatbot .icon, .chatbot .name {
     background-image: var(--surface-2-gradient, none),
                       linear-gradient(var(--surface-2), var(--surface-2)),
                       var(--border-gradient, none);
@@ -4867,26 +4907,21 @@
     background-clip: padding-box, padding-box, border-box !important;
     background-attachment: fixed, fixed, fixed !important;
   }
-  /* ══ v0.79.3 THE BORDER FAMILY (the outline-pill rework) ══════════
-     User spec: "assign less variables to surface raised and assign
-     them to border." The documented outline-pill family (the v0.72
-     group) now rides the BORDER VARIABLE, not surface-raised: the
-     border-gradient window over a quiet border-derived plate (14% of
-     the border solid mixed into the surface), the ring on the border
-     strip. Customizing Borders moves these pills; customizing Surface
-     raised no longer touches them. 'none' twins (base themes, solid
-     borders) degrade to the quiet tint — ≈ the old solid look, one
-     variable over. .color-row-banner stays OUT (its inline preview is
-     the documented exception to the projection model). */
+  /* ══ v0.79.3 THE BORDER FAMILY (the outline-pill rework) — v0.91.2:
+     NATIVE. The fixed-attachment border-gradient window + plate + ring
+     (3 projected viewport rasters per pill, fed by the PROJ painter on
+     every --proj-tx/ty poke) retires for the small outline-pill family;
+     the pills ride the native --raised-chrome/--raised-ring mixes —
+     border-following (the ring derives from var(--border)) and
+     surface-aware, derived by the browser in style recalc. The projected
+     model stays on the big surfaces. User spec kept: "assign less
+     variables to surface raised and assign them to border" — the ring
+     is border-driven. .color-row-banner stays OUT (its inline preview
+     is the documented exception to the projection model). */
   .hub-search, .chat-find, .chat-find-input, .chat-find-btn,
   .color-row-reset, .settings-nav .tab, .util-btn, .kbd {
-    background-image: var(--border-gradient, none),
-                      linear-gradient(color-mix(in srgb, var(--border) 14%, var(--surface-1)),
-                                      color-mix(in srgb, var(--border) 14%, var(--surface-1))),
-                      var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
+    background-color: var(--raised-chrome);
+    border-color: var(--raised-ring);
   }
   /* v0.79.3: a bright border twin (or a bright border gradient washing
      the window) gets the readable ink — the --on-surface pattern,

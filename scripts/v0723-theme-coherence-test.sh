@@ -94,7 +94,9 @@ PLATE=$(ev "(function(){
   var tab = document.querySelector('.settings-nav .tab:not(.active)');
   if (!card) return 'no-card';
   var ci = getComputedStyle(card).backgroundImage;
+  var tabEl = tab;
   var ti = tab ? getComputedStyle(tab).backgroundImage : 'no-tab';
+  var tc = tab ? getComputedStyle(tab).backgroundColor : '';
   // the plate: a FLAT same-color gradient layer (var() resolves in computed)
   var plateRe = /linear-gradient\(rgb\(\d+, \d+, \d+\), rgb\(\d+, \d+, \d+\)\)/;
   // v0.81.1 re-pin: the v0.79.3 border family paints plates via color-mix →
@@ -111,13 +113,21 @@ PLATE=$(ev "(function(){
     cardHasSweep: ci.indexOf('linear-gradient(45deg') >= 0,
     tabGrads: (ti.match(/linear-gradient/g)||[]).length,
     tabHasPlate: plateRe.test(ti) || flatPlate(ti),
+    // v0.91.2: the NATIVE contract — the pill's computed background is
+    // the color-mix (oklch/color serialization), NOT a gradient stack,
+    // and it carries no projected inline styles
+    tabNativeChrome: (tc.indexOf('oklch(') === 0 || tc.indexOf('color(') === 0 || tc.indexOf('rgb(') === 0) && !(tabEl && tabEl.getAttribute('style')),
     cardClip: getComputedStyle(card).backgroundClip
   });
 })()")
 has "A1 the Layer-2 card paints 3 declared layers (the idle twin is 'none')" "$PLATE" '"cardNoneFirst":true'
 has "A2 the flat surface-1 PLATE layer is present" "$PLATE" '"cardHasPlate":true'
 has "A3 the border SWEEP is there (the ring, clipped to the border-box)" "$PLATE" '"cardHasSweep":true'
-has "A4 the inactive tab pill carries the plate stack too" "$PLATE" '"tabHasPlate":true'
+# RE-PINNED v0.91.2: the tab pill LEFT the projected plate stack (the
+# outline-pill family went NATIVE — --raised-chrome/--raised-ring, zero
+# projection); the Layer-2 CARD keeps the plate (A2/A3/A6 unchanged).
+# The pill's contract: native color-mix chrome, no projected inline.
+has "A4 the tab pill rides the NATIVE raised chrome (v0.91.2 — no plate, no projection)" "$PLATE" '"tabNativeChrome":true'
 has "A6 the clip list is 3-deep (padding, padding, border-box)" "$PLATE" '"cardClip":"padding-box, padding-box, border-box"'
 
 # the pixel proof: the card's CENTER stays dark; its EDGE carries color
@@ -177,7 +187,12 @@ has "B3 the disc's family tint rides background-COLOR (never the image-resetting
 
 # the tool-progress pill rule + the src/hub windows exist in the sheet
 SHEET=$(curl -s "$BASE/")
-has "B4 the dashed tool-progress pill joined the Layer-3 family" "$SHEET" '.tool-pill-progress, .chatbot .icon, .chatbot .name {'
+# RE-PINNED v0.91.2: the Layer-3 rule SPLIT — the small chrome went
+# native (--raised-chrome, ending the selector list at .tool-pill-progress)
+# and the chatbot disc kept its own projected window rule
+has "B4 the tool-progress pill rides the NATIVE family (v0.91.2 split)" "$SHEET" '.tool-pill-progress {
+    background-color: var(--raised-chrome);'
+has "B4b the chatbot disc kept its own projected window (the split's other half)" "$SHEET" '.chatbot .icon, .chatbot .name {' 
 has "B5 src-wrap/hub-wrap window bg-app + the plate + the ring" "$SHEET" '.src-wrap, .hub-wrap {'
 has "B6 the src/hub base border follows --border" "$SHEET" 'background: var(--bg-app); border: 1px solid var(--border);'
 has "B7 the input bar paints SURFACE-1 (the floor, not the raised field)" "$(curl -s "$BASE/chatpanel.js")" 'id="chat-inputbar" style="position:sticky;bottom:0;flex-shrink:0;background:var(--surface-1)'
@@ -193,11 +208,14 @@ ev "new Promise(function(res){ var h = document.querySelector('#chat-panel .hand
 # painter's two-speed contract. The RESOLVED (computed) position is still
 # exactly -rect.left/-rect.top, so C4 reads computed (contract-equivalent,
 # and it verifies the REAL rendering anchor, not the baked string).
-ANCHOR_FULL=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); return t ? getComputedStyle(t).backgroundPosition + '@' + Math.round(t.getBoundingClientRect().top) : 'no-tabs'; })()")
+# RE-PINNED v0.91.2: the probe element is the .settings-section CARD (the
+# tab pill went native — no background-position to read; the CARD carries
+# the Layer-2 plate projection, the same painter-tracking contract)
+ANCHOR_FULL=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)') ? document.querySelector('.settings-section') : null; return t ? getComputedStyle(t).backgroundPosition + '@' + Math.round(t.getBoundingClientRect().top) : 'no-card'; })()")
 sleep 0.2
 # glide DOWN to the half dock (slow — a fling would close)
 ev "new Promise(function(res){ var h = document.querySelector('#chat-panel .handle'); window.__touch(h, 'touchstart', 200, 300); var i = 0; function step(){ i++; window.__touch(h, 'touchmove', 200, 300 + i*18); if (i < 9) setTimeout(step, 60); else { window.__touch(h, 'touchend', 200, 462); res('down'); } } setTimeout(step, 60); })" >/dev/null; sleep 1.8
-ANCHOR_HALF=$(ev "(function(){ var t = document.querySelector('.settings-nav .tab:not(.active)'); var m = getComputedStyle(document.getElementById('chat-panel')).transform; return JSON.stringify({pos: getComputedStyle(t).backgroundPosition, top: Math.round(t.getBoundingClientRect().top), y: m.slice(m.lastIndexOf(',')+1, -1)}); })()")
+ANCHOR_HALF=$(ev "(function(){ var t = document.querySelector('.settings-section'); var m = getComputedStyle(document.getElementById('chat-panel')).transform; return JSON.stringify({pos: getComputedStyle(t).backgroundPosition, top: Math.round(t.getBoundingClientRect().top), y: m.slice(m.lastIndexOf(',')+1, -1)}); })()")
 ok "C1 the tab anchor existed at the full dock ($ANCHOR_FULL)"
 has "C2 the glide landed at the half dock" "$ANCHOR_HALF" '"y":" 288.8"'
 AF_Y=$(echo "$ANCHOR_FULL" | sed 's/.*@//' | tr -d ' ')
@@ -238,20 +256,25 @@ ev "(function(){ var z = document.querySelector('.settings-nav .tab[data-page=si
 SVAL=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=spaceParallax]'); return r ? r.value : 'gone'; })()")
 check "D2b the re-mounted slider carries the deep value" "$SVAL" "80"
 APPJS=$(curl -s "$BASE/app.js")
+# RE-PINNED v0.91.2: the lattice paint moved to lattice.js at v0.85.2 —
+# the E-section source patterns live there now
+LATJS=$(curl -s "$BASE/lattice.js")
 has "D3 the AMPLIFIER clamp (deep star layers, not the old lag)" "$APPJS" "Math.min(100, amp)) / 100"
-has "D4 the backdrop camera deepens (0.08 floor at full amp — v0.77 re-pin)" "$APPJS" "Math.max(0.08, BG_PARALLAX - 0.27 * d)"
+# RE-PINNED v0.91.2: BG_PARALLAX was inlined (0.35) by a later wave —
+# the 0.08 floor contract is unchanged, the source form moved
+has "D4 the backdrop camera deepens (0.08 floor at full amp — v0.77 re-pin)" "$APPJS" "Math.max(0.08, 0.35 - 0.27 * amp)"
 # the v0.67 differential lag is DELETED — the lattice is one flat plane
 nohas "D5 the v0.67 PF line/dot lag is GONE (one flat plane)" "$APPJS" "PF_LINE"
 
 # ══ E. STAR SIZES (v0.76: per-side ±170% (origin v0.75) + OUR floors) ══
 # v0.83.1 THE WEIGHT supersession: the spread doubled (±170% → ±340%) —
 # the old 1.7 constant here went stale when the weight wave landed.
-has "E1 the size-variation cap is ±340% (per-side; v0.83.1 THE WEIGHT)" "$APPJS" "var sizeFracL = sizeVarL / 100 * 3.4;"
+has "E1 the size-variation cap is ±340% (per-side; v0.83.1 THE WEIGHT)" "$LATJS" "var sizeFracL = sizeVarL / 100 * 3.4;"
 # v0.81.1 re-pin: the segment length moved under the effFrac ternary
 # (the bias-oddity wave — bias now feeds the same spread); the floors +
 # hashes are the durable identity of these asserts.
-has "E2 the vertical segments ride the effFrac spread (the shooting star)" "$APPJS" "warpL(hashCell(ix + 5, iyS))"
-has "E3 the horizontal segments floor too" "$APPJS" "warpL(hashCell(ixS, iy + 5))"
+has "E2 the vertical segments ride the effFrac spread (the shooting star)" "$LATJS" "warpL(hashCell(ix + 5, iyS))"
+has "E3 the horizontal segments floor too" "$LATJS" "warpL(hashCell(ixS, iy + 5))"
 SVLIDER=$(ev "(function(){ var r = document.querySelector('input[type=range][data-setting-key=lineSizeVariation]'); return r ? JSON.stringify({max: r.max}) : 'no-slider'; })()")
 check "E4 the per-side size-variation slider keeps its 0-100 range" "$(echo "$SVLIDER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["max"])' 2>/dev/null || echo x)" "100"
 

@@ -81,7 +81,10 @@
       'margin-right:2px;user-select:none}',
       // dir + pattern pills — v0.54: the active state is the app's
       // accent tint (matching .dx-pill[data-on]) instead of flat surface
-      '.gr-dir{border:1px solid var(--border);background-color:var(--surface-2);',
+      // v0.91.2: NATIVE — the fill + ring ride the --raised-chrome vars
+      // (a plain var(--surface-2) fill here fed the GATES border-plate
+      // auto-window, re-projecting every dir pill under gradient twins)
+      '.gr-dir{border:1px solid var(--raised-ring);background-color:var(--raised-chrome);',
       'color:var(--text-3);border-radius:9px;padding:4px 10px;',
       'font-size:calc(var(--ui-small-fs) - 2px);min-height:30px;',
       'font-family:inherit;cursor:pointer;line-height:1.2;',

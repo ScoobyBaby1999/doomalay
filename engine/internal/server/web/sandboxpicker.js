@@ -548,8 +548,8 @@
         'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.10),rgba(var(--accent-2-rgb),0.06));' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.hf-create-pill:active{background:linear-gradient(135deg,rgba(var(--accent-rgb),0.20),rgba(var(--accent-2-rgb),0.12))}' +
-      '.hf-new-input{flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--border);' +
-        'background:var(--surface-2);color:var(--text-1);font-size:calc(var(--ui-small-fs));font-family:inherit;outline:none}' +
+      '.hf-new-input{flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--raised-ring);' +
+        'background-color:var(--raised-chrome);color:var(--text-1);font-size:calc(var(--ui-small-fs));font-family:inherit;outline:none}' +
       '.hf-new-input:focus{border-color:var(--accent)}' +
       '.hf-new-go{padding:9px 16px;border-radius:10px;background:var(--accent);color:var(--on-accent);' +
         'background-image:var(--accent-gradient,none);background-attachment:fixed;border:none;font-size:calc(var(--ui-small-fs));' +
