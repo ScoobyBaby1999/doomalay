@@ -1262,29 +1262,36 @@ async function roundTripOnce(c, opts, messages, force) {
     stream: true,
     stream_options: { include_usage: true }
   };
-  // v0.42 DYNAMIC EFFORT SHAPE (mirrors engine/internal/llm/effort.go —
-  // the OpenRouter-reasoning-registry merge): PM's live surface has two
-  // shapes per model family. 'off' (or empty) always sends NOTHING (the
-  // provider default). Otherwise:
-  //   · kimi family → chat_template_kwargs.thinking = true (the verified
-  //     PM toggle — even when the catalog carries an enum ladder, PM's
-  //     own API for kimi is the boolean).
-  //   · enum-level models (glm-5.3 / glm-flash / gpt-oss …) → top-level
-  //     reasoning_effort = the chosen level string.
-  //   · gemma/glm-5.1 style → chat_template_kwargs.enable_thinking.
+  // v0.42 DYNAMIC EFFORT SHAPE → v0.89.2 THE DOCS TRUTH (privatemode.ai
+  // verified 2026-10-01, same table as the engine's effort.go SOURCE 1.5
+  // and chatpanel's pmDocsLadder). PM's live surface per model family:
+  //   · kimi → chat_template_kwargs.thinking boolean; 'on' → true, and
+  //     **'off' → thinking: FALSE** (the docs: "chat_template_kwargs:
+  //     {"thinking": false} switches reasoning off"). The OLD code sent
+  //     NOTHING for 'off' — PM's default is thinking ON, so dialing kimi
+  //     down did nothing (the user's "can't use kimi on actual effort
+  //     modes").
+  //   · glm-5.x (5.2/5.3/flash/-latest) + gpt-oss → top-level
+  //     reasoning_effort with the enum level (low/high/max ·
+  //     low/medium/high; the docs map any other GLM value to max).
+  //   · gemma / glm-5.1 style → chat_template_kwargs.enable_thinking.
   // The 400-resilience net in the engine covers any mismatch (PM 400s
-  // are retried without the param).
-  if (opts.effort && opts.effort !== 'off' && opts.effort !== '') {
+  // are retried without the param); the browser net below mirrors it.
+  if (opts.effort && opts.effort !== '') {
     var mLower = String(opts.model || '').toLowerCase();
-    var enumEffort = !/^(on|off)$/.test(opts.effort);
+    var isBool = /^(on|off)$/.test(opts.effort);
     if (mLower.indexOf('kimi') >= 0) {
-      body.chat_template_kwargs = { thinking: true };
+      // v0.89.2: 'off' is a REAL wire param — thinking:false (was: send
+      // nothing, which left kimi thinking at PM's default ON).
+      body.chat_template_kwargs = { thinking: opts.effort !== 'off' };
     } else if (mLower.indexOf('gemma') >= 0 || mLower.indexOf('glm-5.1') >= 0) {
-      body.chat_template_kwargs = { enable_thinking: true };
-    } else if (enumEffort) {
-      body.reasoning_effort = opts.effort;
+      body.chat_template_kwargs = { enable_thinking: opts.effort !== 'off' };
+    } else if (isBool) {
+      // an on/off level on a family without an enum — the honest
+      // boolean toggle (on → true, off → false).
+      body.chat_template_kwargs = { thinking: opts.effort !== 'off' };
     } else {
-      body.chat_template_kwargs = { thinking: true };
+      body.reasoning_effort = opts.effort;
     }
   }
   // v0.83.2 THE BROWSER-SIDE 400-RESILIENCE NET: the PM chat path is

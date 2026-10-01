@@ -2170,6 +2170,10 @@
         stopTurnIfStreaming(state, bodyEl);
         state.model = canonicalModel(provider, modelId);
         state.provider = provider;
+        // v0.89.2: every model CHOICE gets one self-heal chance (same as
+        // applyModelChoice — a dial-less pick must not consume the chat's
+        // only catalog refresh for the NEXT model).
+        state._effortRefreshed = false;
         if (icon) {
           icon.model = state.model;
           icon.provider = provider;
@@ -2792,15 +2796,65 @@
   // ── The capability toolbar (effort ladder + web/deep toggles) ────
   function buildToolbar(bodyEl, state, icon, type) {
     var bar = bodyEl.querySelector('#chat-toolbar');
+    if (window.__btTrace) window.__btTrace.push({ phase: 'enter', bar: !!bar, connected: !!(bar && bar.isConnected), provider: state.provider, model: state.model, flag: !!state._effortRefreshed });
     if (!bar) return;
     H.ensureCatalog().then(function (catalog) {
+      if (window.__btTrace) window.__btTrace.push({ phase: 'cb', connected: bar.isConnected, provider: state.provider, model: state.model, flag: !!state._effortRefreshed });
       if (!bar.isConnected) return;
       var lv = effortLevelsFor(catalog, state.provider, state.model);
+      if (window.__btTrace) window.__btTrace.push({ phase: 'lv', lv: lv ? lv.levels.join('|') : null, provider: state.provider, model: state.model, flag: !!state._effortRefreshed });
+      // v0.89.2: THE SELF-HEAL — a null ladder means the catalog's group
+      // for THIS chat's provider is missing/empty (the cold-boot static
+      // window serves every group with models:null; a partial first live
+      // sync can lock one provider out for the whole session — the exact
+      // "the effort pill is gone, doesn't render" class). ONE forced
+      // refresh, then re-derive. Bounded by state._effortRefreshed —
+      // never loops. (For PM models the client docs ladder below already
+      // answers, so this heals the OTHER providers' groups.)
+      if (!lv && !state._effortRefreshed) {
+        state._effortRefreshed = true;
+        if (window.__btTrace) window.__btTrace.push({ phase: 'HEAL-FIRE', provider: state.provider, model: state.model });
+        fetch('/api/models?refresh=1').then(function (r) { return r.json(); }).catch(function () { return null; }).then(function (fresh) {
+          if (!bar.isConnected || !fresh) return;
+          var lv2 = effortLevelsFor(fresh, state.provider, state.model);
+          if (!lv2) return;
+          state._effortDefault = lv2.def || null;
+          renderToolbar(bar, state, lv2.levels, icon, bodyEl);
+        });
+      }
       // v0.83.2: the model's OWN default rides along (the docs ladder —
       // e.g. PM glm-5.3 defaults to max, not the generic 'high')
       state._effortDefault = (lv && lv.def) || null;
       renderToolbar(bar, state, lv ? lv.levels : null, icon, bodyEl);
     }).catch(function () {});
+  }
+
+  // v0.89.2: THE CLIENT PM LADDER — docs.privatemode.ai verified
+  // 2026-10-01 (the same table the engine's effort.go SOURCE 1.5
+  // serves, and the ladders the live /api/models carries):
+  //   · kimi* → on/off, default ON — and 'off' is a REAL param on the
+  //     wire (chat_template_kwargs.thinking:false switches reasoning
+  //     off per the docs; pmsdk builds it).
+  //   · glm-5.x (all current glm) → low/high/max, default max;
+  //     reasoning CANNOT be switched off (any other value maps to max).
+  //   · gpt-oss* → low/medium/high, default medium.
+  //   · deepseek-ocr* → dial-less (no knob).
+  // Used ONLY when the catalog returns nothing for the model: the
+  // cold-boot static catalog serves every group with models:null and a
+  // partial first live sync can lock the PM group empty for the whole
+  // session — with this, the PM pill renders on FIRST panel open, no
+  // catalog dependency. The engine's ladder wins whenever present.
+  function pmDocsLadder(modelId) {
+    var s = String(modelId || '').toLowerCase();
+    s = s.replace(/^privatemodeai\//, '').replace(/^openai\//, '');
+    if (s.indexOf('deepseek-ocr') >= 0) return null;
+    if (s.indexOf('kimi') >= 0)
+      return { levels: ['on', 'off'], def: 'on' };
+    if (s.indexOf('glm') >= 0)
+      return { levels: ['low', 'high', 'max'], def: 'max' };
+    if (s.indexOf('gpt-oss') >= 0)
+      return { levels: ['low', 'medium', 'high'], def: 'medium' };
+    return null;
   }
 
   // v0.83.2: returns { levels, def } — the ladder AND the model's own
@@ -2825,6 +2879,14 @@
           if (mm.effortLevels && mm.effortLevels.length) {
             return { levels: mm.effortLevels, def: mm.effortDefault || null };
           }
+          // v0.89.2: matched but ladder-less — for PM the docs ladder
+          // answers (a new PM model can land in the live list before
+          // the engine's table learns it); deepseek-ocr stays dial-less
+          // there. Everyone else: no knob.
+          if (provider === 'privatemodeai') {
+            var pm0 = pmDocsLadder(modelId);
+            if (pm0) return { levels: pm0.levels, def: pm0.def };
+          }
           return null;
         }
       }
@@ -2839,9 +2901,23 @@
           if (lv && lv.length) {
             return { levels: lv, def: attr.effortDefault || attr.effort_default || null };
           }
+          // v0.89.2: same as the group branch — ladder-less PM match
+          // falls to the docs ladder.
+          if (provider === 'privatemodeai') {
+            var pm1 = pmDocsLadder(modelId);
+            if (pm1) return { levels: pm1.levels, def: pm1.def };
+          }
           return null;
         }
       }
+    }
+    // v0.89.2: the catalog has nothing for this model — for PM, the
+    // docs-verified client ladder answers so the pill ALWAYS renders
+    // (the "gone, doesn't render" fix; the engine's ladder wins when
+    // the catalog later carries one).
+    if (provider === 'privatemodeai') {
+      var pm = pmDocsLadder(modelId);
+      if (pm) return { levels: pm.levels, def: pm.def };
     }
     return null;
   }
@@ -5448,6 +5524,12 @@
     stopTurnIfStreaming(state, bodyEl);
     state.model = canonicalModel(provider, modelId);
     state.provider = provider;
+    // v0.89.2: every model CHOICE gets one self-heal chance — the flag
+    // resets here so a dial-less pick (e.g. deepseek-ocr) doesn't consume
+    // the chat's only refresh for the NEXT model (cloudflare after ocr
+    // never healed). Still bounded: one refresh per application, never a
+    // loop (the flag flips on the first null-ladder render).
+    state._effortRefreshed = false;
     if (icon) {
       icon.model = state.model;
       icon.provider = provider;
