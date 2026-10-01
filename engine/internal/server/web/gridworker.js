@@ -33,6 +33,10 @@
 importScripts('lattice.js', 'atoms.js');
 
 var gctx = null, gctx2 = null;
+var gcan = null, gcan2 = null;   // v0.89.9: the transferred OffscreenCanvas
+                               // objects THEMSELVES — after the transfer the
+                               // bitmaps belong to THIS thread; only here can
+                               // they be sized (the stretch fix)
 var W = 0, H = 0, dpr = 1;
 var P = null;          // the cached params blob
 var Pf = '';           // its fingerprint (main-side computed, passed along)
@@ -51,16 +55,17 @@ self.onmessage = function (ev) {
         self.postMessage({ t: 'ready' });
         break;
       case 'init':
-        gctx = m.off1 ? m.off1.getContext('2d') : null;
-        gctx2 = m.off2 ? m.off2.getContext('2d') : null;
+        gcan = m.off1 || null; gcan2 = m.off2 || null;
+        gctx = gcan ? gcan.getContext('2d') : null;
+        gctx2 = gcan2 ? gcan2.getContext('2d') : null;
         W = m.W || 0; H = m.H || 0; dpr = m.dpr || 1;
-        applyDpr();
+        sizeBitmaps();
         if (m.P) { P = m.P; Pf = m.pf || ''; }
         self.postMessage({ t: 'booted', W: W, H: H });
         break;
       case 'resize':
         W = m.W || 0; H = m.H || 0; dpr = m.dpr || dpr;
-        applyDpr();
+        sizeBitmaps();
         break;
       case 'frame':
         paintFrame(m);
@@ -71,6 +76,27 @@ self.onmessage = function (ev) {
     try { self.postMessage({ t: 'paint-error', message: String(e && e.message || e) }); } catch (e2) {}
   }
 };
+
+// v0.89.9 THE STRETCH FIX. For four versions this worker only applied
+// the DPR TRANSFORM and never set the BITMAP DIMENSIONS — after
+// transferControlToOffscreen the bitmaps live HERE, so both #c and #c2
+// stayed at the canvas elements' 300×150 boot default while the main
+// thread CSS-stretched them to the window (a tall phone: ~×4 horizontal,
+// ~×18 vertical — the user's "stretched ridiculously, very nauseating,
+// the movement is very weird"). Size the bitmaps at init AND on every
+// resize, then re-apply the transform (setting width/height resets all
+// context state, transform included).
+function sizeBitmaps() {
+  var bw = Math.max(1, Math.floor(W * dpr));
+  var bh = Math.max(1, Math.floor(H * dpr));
+  if (gcan && (gcan.width !== bw || gcan.height !== bh)) {
+    gcan.width = bw; gcan.height = bh;
+  }
+  if (gcan2 && (gcan2.width !== bw || gcan2.height !== bh)) {
+    gcan2.width = bw; gcan2.height = bh;
+  }
+  applyDpr();
+}
 
 function applyDpr() {
   if (gctx) gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -150,6 +176,11 @@ function paintFrame(m) {
   blob.frames = frames;
   blob.atomFrames = atomFrames;
   blob.fullFrames = fullFrames;
+  // v0.89.9: the honest instrument — the worker's OWN bitmap dims, so
+  // rigs can prove the stretch is dead (bw/bh === viewport × dpr)
+  blob.bw = gcan ? gcan.width : 0;
+  blob.bh = gcan ? gcan.height : 0;
+  blob.vw = W; blob.vh = H; blob.dpr = dpr;
   blob.ents = E.length;        // v0.88: the honest instrument — the cached clone count
   blob.entsMsgs = entsMsgs;    // v0.88: how many frames actually carried clones
   blob.worker = true;

@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.90.0"   // v0.90.0: the atom-sphere wave (the icon collision system rework)
+var Version = "0.90.4"   // v0.90.4: THE STRETCH FIX — the worker painter never sized its bitmaps (300x150 boot default CSS-stretched to the window since v0.85.2); rides after the atom-sphere wave (0.90.0-3)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

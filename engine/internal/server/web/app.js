@@ -443,6 +443,18 @@
         var m = ev.data || {};
         if (m.t === 'ready') {
           try {
+            // v0.89.9 THE STRETCH FIX: the transferred OffscreenCanvas
+            // INHERITS the element's bitmap at transfer time — and the
+            // element default is 300×150. bootPainter runs BEFORE the
+            // first resize() (init line order), so nothing had sized the
+            // bitmaps yet. Size them HERE (the worker re-sizes on every
+            // later resize message — its bitmaps, its job, but the very
+            // first composited frame must already be true-geometry).
+            if (!W) { W = window.innerWidth; H = window.innerHeight; }
+            var bw = Math.max(1, Math.floor(W * dpr));
+            var bh = Math.max(1, Math.floor(H * dpr));
+            canvas.width = bw; canvas.height = bh;
+            if (canvas2) { canvas2.width = bw; canvas2.height = bh; }
             var off1 = canvas.transferControlToOffscreen();
             var offs = [off1];
             var off2 = null;
