@@ -45,7 +45,22 @@
 // (vendored, ~828KB / ~250KB gzipped) injects ONLY on first activation —
 // boot time is untouched when the layer is off.
 //
-// Exposes: window.World3D = { sync, evaluate, atomsOwned, pulse,
+// v0.88 THE ROOT-FPS WAVE (the measured 4-15fps world layer):
+//   · THE ON-DEMAND DRIVER — the old Application ticker rendered EVERY
+//     rAF forever (Pixi v8 autoStart; 18fps doing nothing at rest on
+//     software GL). autoStart:false + our own rAF driver now renders
+//     ONLY while something actually moves (stars, pulses, camera,
+//     physics, re-rasters); a resting world layer costs ZERO frames.
+//   · THE GL-SPEED GATE — a renderer-string probe (WEBGL_debug_renderer_info)
+//     detects SOFTWARE GL (SwiftShader/llvmpipe — headless rigs, broken
+//     drivers); 'auto' hands the icons back to the DOM path (sticky,
+//     localStorage), 'on' forces through, the verdict rides
+//     DoomalayPerf.world so the Performance page tells the truth.
+//   · HOISTED STAR PROPS — tint/width/height are per-STAR constants (they
+//     depend only on the level + mint-time radius); they set at mint
+//     (layoutAtoms) and on theme re-mint, not per star per frame.
+//
+// Exposes: window.World3D = { sync, evaluate, atomsOwned, pulse, poke,
 //                             active, debug }
 (function () {
   'use strict';
@@ -60,13 +75,36 @@
     stageRoot: null,       // the world container
     canvas: null,          // #c3
     chats: new Map(),      // entityId → { container, sprite, tex, fp, shells, stars }
-    icons: [],             // live entity refs (the ticker reads x/y)
+    icons: [],             // live entity refs (the driver reads x/y/vx/vy)
     glowTex: null,         // the additive star texture
-    tickerFn: null,
     watcher: 0,            // the 1s appearance watcher interval
     lastError: '',
-    renderer: ''
+    renderer: '',
+    gate: null             // v0.88: the GL-speed verdict ({software, renderer})
   };
+
+  // ── v0.88 THE ON-DEMAND DRIVER ────────────────────────────────────
+  // driveFrame renders ONLY when updateWorld reports the world dirty,
+  // and keeps re-scheduling only while it reports motion pending (stars
+  // orbiting, pulses mid-flight, icons under physics/drag, camera just
+  // moved). Pokes re-light it (app.js's full-frame funnel, sync(), theme
+  // changes, atoms-changed, pulses, the 1s watcher re-check).
+  var driverRAF = 0;
+  function driveFrame() {
+    driverRAF = 0;
+    if (!S.app) return;
+    var dirty = updateWorld();
+    if (dirty) { try { S.app.render(); } catch (e) {} }
+    if (driverWants) driverRAF = requestAnimationFrame(driveFrame);
+  }
+  var driverWants = false;
+  function poke() {
+    if (S.app && !driverRAF) driverRAF = requestAnimationFrame(driveFrame);
+  }
+  function stopDriver() {
+    if (driverRAF) { cancelAnimationFrame(driverRAF); driverRAF = 0; }
+    driverWants = false;
+  }
 
   function entitiesCount() {
     return (window.doomalay && window.doomalay.world) ? window.doomalay.world.entities.length : 0;
@@ -75,6 +113,44 @@
     var st = window.Settings && window.Settings.getState();
     var m = st && st.worldLayer;
     return (m === 'on' || m === 'off') ? m : 'auto';
+  }
+
+  // ── v0.88 THE GL-SPEED GATE ─────────────────────────────────────────
+  // A software GL (SwiftShader / llvmpipe — headless Chromium, weak VMs,
+  // broken-driver fallbacks) rasterizes the sprite layer SLOWER than the
+  // DOM path ever was (the measured 4-15fps). The probe reads the
+  // renderer string through WEBGL_debug_renderer_info (MDN-documented);
+  // the verdict is sticky in localStorage (the GPU doesn't change under
+  // us — one ~1ms probe per install, clearable by hand).
+  var GLGATE_KEY = 'doomalay.glgate.v1';
+  var GLGATE_RE = /swiftshader|llvmpipe|software|basic render|softgpu/i;
+  function probeGL() {
+    var verdict = { software: false, renderer: '' };
+    try {
+      var cv = document.createElement('canvas');
+      var gl = cv.getContext('webgl2') || cv.getContext('webgl');
+      if (!gl) { verdict.software = true; verdict.renderer = 'no webgl context'; return verdict; }
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var r = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '')
+                  : String(gl.getParameter(gl.RENDERER) || '');
+      verdict.renderer = r;
+      verdict.software = GLGATE_RE.test(r);
+      var lose = gl.getExtension('WEBGL_lose_context');
+      if (lose) lose.loseContext();   // the probe canvas dies with the closure
+    } catch (e) { verdict.renderer = 'probe failed: ' + String(e && e.message || e); }
+    return verdict;
+  }
+  function glGateVerdict() {
+    if (S.gate) return S.gate;
+    var cached = null;
+    try { cached = JSON.parse(localStorage.getItem(GLGATE_KEY) || 'null'); } catch (e) {}
+    if (cached && typeof cached.software === 'boolean' && cached.renderer) {
+      S.gate = cached;
+      return S.gate;
+    }
+    S.gate = probeGL();
+    try { localStorage.setItem(GLGATE_KEY, JSON.stringify(S.gate)); } catch (e) {}
+    return S.gate;
   }
 
   // ── theme color helpers (main-side resolution, cached ~1s) ───────
@@ -278,6 +354,18 @@
     var m = /^#([0-9a-fA-F]{6})$/.exec(String(h || ''));
     return m ? parseInt(m[1], 16) : 0xffffff;
   }
+  // v0.88: the atom triplets ("r,g,b") → int — the old code fed
+  // hexToInt('#167,139,250') which REGEX-FAILED to white: every star
+  // tinted WHITE whenever Atoms reported colors (exactly when stars
+  // exist). The DOM twin painted the true accents; now the layer does.
+  function tripletToInt(s) {
+    var m = /^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/.exec(String(s || ''));
+    if (m) {
+      return (parseInt(m[1], 10) << 16) + (parseInt(m[2], 10) << 8) + parseInt(m[3], 10);
+    }
+    var str = String(s || '');
+    return hexToInt(str.charAt(0) === '#' ? str : '#' + str);
+  }
   function atomColors() {
     if (window.Atoms && window.Atoms.colorsFor) {
       var t = window.Atoms.colorsFor();
@@ -317,7 +405,8 @@
         resolution: dpr,
         autoDensity: true,
         preference: 'webgl',
-        powerPreference: 'high-performance'
+        powerPreference: 'high-performance',
+        autoStart: false      // v0.88: OUR rAF driver owns every render (on-demand)
       }).then(function () {
         S.app = app;
         S.stageRoot = new PIXI.Container();
@@ -329,18 +418,26 @@
         } catch (e) { S.renderer = 'webgl'; }
         S.mode = settingsMode() === 'on' ? 'on' : 'auto';
         if (settingsMode() === 'off') { deactivate(); return; }
-        // the per-frame world update (positions + stars + culling)
-        S.tickerFn = function () { updateWorld(); };
-        app.ticker.add(S.tickerFn);
-        // the 1s appearance watcher (name/persona/icon changes re-raster)
-        S.watcher = setInterval(function () { watchAppearances(); }, 1000);
+        // v0.88: no ticker.add — the ON-DEMAND DRIVER (above) renders only
+        // while the world moves; the 1s appearance watcher re-rasters +
+        // re-checks motion (a stopped driver wakes on atoms/pokes).
+        S.watcher = setInterval(function () {
+          watchAppearances();
+          poke();          // the watcher re-check — nearly free when clean (no render)
+        }, 1000);
         window.addEventListener('resize', onResize);
+        window.addEventListener('doomalay:atoms-changed', onAtomsChanged);
         sync();
         syncChrome();
-        try { window.DoomalayPerf.world = 'pixi (' + S.renderer + ')'; } catch (e) {}
+        var gate = glGateVerdict();
+        try {
+          window.DoomalayPerf.world = 'pixi (' + S.renderer + ')' +
+            (gate.software ? ' — FORCED (software gl: ' + (gate.renderer || '?') + ')' : '');
+        } catch (e) {}
         // the handover frame: one repaint clears the stale #c2 stars (the
         // worker's atomsOn goes false the moment we own them)
         if (window.doomalay && window.doomalay.repaint) window.doomalay.repaint();
+        poke();
       }).catch(function (err) {
         S.lastError = String(err && err.message || err);
         S.mode = 'off';
@@ -353,22 +450,27 @@
 
   function deactivate() {
     if (S.app) {
+      stopDriver();                       // v0.88: the on-demand driver goes first
       try {
-        if (S.tickerFn) S.app.ticker.remove(S.tickerFn);
         S.app.destroy(true, { children: true, texture: true });
       } catch (e) {}
-      S.app = null; S.stageRoot = null; S.glowTex = null; S.tickerFn = null;
+      S.app = null; S.stageRoot = null; S.glowTex = null;
     }
     if (S.canvas && S.canvas.parentNode) S.canvas.parentNode.removeChild(S.canvas);
     S.canvas = null;
     if (S.watcher) { clearInterval(S.watcher); S.watcher = 0; }
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('doomalay:atoms-changed', onAtomsChanged);
     S.chats.forEach(function (rec) { unbindFlash(rec.icon); });
     S.chats.clear();
     S.icons = [];
     S.mode = settingsMode();
     syncChrome();
-    try { window.DoomalayPerf.world = 'dom icons'; } catch (e) {}
+    try {
+      var gate = S.gate;
+      window.DoomalayPerf.world = 'dom icons' +
+        (gate && gate.software ? ' (software gl: ' + (gate.renderer || '?') + ')' : '');
+    } catch (e) {}
     // the hand-back frame: one repaint restores the #c2 stars (the main
     // loop owns the atoms again — ambientActive wakes on their account)
     if (window.doomalay && window.doomalay.repaint) window.doomalay.repaint();
@@ -377,8 +479,12 @@
   function onResize() {
     if (S.app) {
       S.app.renderer.resize(window.innerWidth, window.innerHeight);
+      poke();    // one frame at the new size
     }
   }
+  // v0.88: a workspace binding changed → stars mint/unmint on the next
+  // driven frame (layoutAtoms rides the driver); the poke guarantees it.
+  function onAtomsChanged() { poke(); }
 
   // syncChrome — the DOM side: invisible hit-targets while active
   function syncChrome() {
@@ -404,7 +510,7 @@
   }
 
   var pulses = {};   // id → t0
-  function pulse(id) { pulses[id] = performance.now(); }
+  function pulse(id) { pulses[id] = performance.now(); poke(); }
 
   // ── sync — the entity mirror (add/remove/raster) ─────────────────
   function sync() {
@@ -425,6 +531,7 @@
     for (var j = 0; j < removals.length; j++) removeChat(removals[j]);
     S.icons = list.slice();
     watchAppearances();
+    poke();      // v0.88: a mirror change always deserves one frame
   }
 
   function addChat(icon) {
@@ -473,66 +580,110 @@
   }
 
   // ── layoutAtoms — shells + star sprites per current counts ───────
+  // v0.88: the HOISTED STAR PROPS — tint (level parity + accent colors),
+  // width/height (the mint-time radius p.r is a per-star CONSTANT) and
+  // the pre-computed star key all set at MINT; per frame only x/y/zIndex/
+  // alpha ride the orbit. A theme change re-mints (onThemeChanged →
+  // layoutAtoms(true)) so the tints re-derive from the fresh accents.
   function layoutAtoms(force) {
     if (!S.app) return;
     var counts = (window.Atoms && window.Atoms.countsOf()) || {};
     var AC = window.AtomCore;
     if (!AC) return;
+    var cols = atomColors();
+    var accentInt = tripletToInt(cols.accent);
+    var accent2Int = tripletToInt(cols.accent2);
+    var basis = AC.TILT_BASIS || null;   // v0.88: the precomputed per-level basis
+    var shellCol = hexToInt(themeColors().borderStrong);
     S.chats.forEach(function (rec, id) {
       var n = (rec.icon.sessionId && counts[rec.icon.sessionId]) || 0;
       if (n === rec.starCount && !force) return;
       rec.starCount = n;
       // clear the old shells/stars
+      // v0.88 FIX (a real v0.87.2 latent): the star records are {sp, L, j,
+      // R, key} — the destroy must hit st.SPRITE (st.destroy() threw on
+      // every unbind, leaving stale stars + a broken frame behind).
       if (rec.shells) { rec.shells.forEach(function (sh) { sh.destroy(); }); rec.shells = null; }
-      if (rec.stars) { rec.stars.forEach(function (st) { st.destroy(); }); rec.stars = null; }
+      if (rec.stars) { rec.stars.forEach(function (st) { st.sp.destroy(); }); rec.stars = null; }
       if (!n) return;
       var layout = AC.shellLayout(n);
       rec.shells = [];
       rec.stars = [];
       for (var L = 0; L < layout.length; L++) {
         var R = AC.SHELL_R[L];
-        var tilt = AC.SHELL_TILT[L] || AC.SHELL_TILT[0];
-        var a = tilt[0] * Math.PI / 180, b = tilt[1] * Math.PI / 180;
-        var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
-        var e1x = cb, e1y = sb, e2x = -sb * ca, e2y = cb * ca;
+        var e1x, e1y, e2x, e2y;
+        if (basis && basis[L]) {
+          e1x = basis[L].e1x; e1y = basis[L].e1y;
+          e2x = basis[L].e2x; e2y = basis[L].e2y;
+        } else {
+          var tilt = AC.SHELL_TILT[L] || AC.SHELL_TILT[0];
+          var a = tilt[0] * Math.PI / 180, b = tilt[1] * Math.PI / 180;
+          var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+          e1x = cb; e1y = sb; e2x = -sb * ca; e2y = cb * ca;
+        }
         // the shell ellipse — Graphics, stroked polyline (64 segs)
         var g = new PIXI.Graphics();
         g.zIndex = 40;
-        var col = hexToInt(themeColors().borderStrong);
         g.moveTo((e1x) * R, (e1y) * R);
         for (var k = 1; k <= 64; k++) {
           var th = (k / 64) * Math.PI * 2;
           g.lineTo(Math.cos(th) * e1x + Math.sin(th) * e2x,
                    Math.cos(th) * e1y + Math.sin(th) * e2y);
         }
-        g.stroke({ width: 0.75, color: col, alpha: 0.35 });
+        g.stroke({ width: 0.75, color: shellCol, alpha: 0.35 });
         rec.container.addChild(g);
         rec.shells.push(g);
-        // the stars on this shell
+        // the stars on this shell — MINT-TIME constants ride the record
         for (var j = 0; j < layout[L]; j++) {
           var sp = new PIXI.Sprite(S.glowTex);
           sp.anchor.set(0.5, 0.5);
           sp.blendMode = 'add';
           sp.zIndex = 150;
+          var key = rec.icon.id + '|' + L + '|' + j;
+          var pr = AC.starPos(key, L, R, 0);   // the radius is t-invariant
+          var rr = Math.max(0.9, pr.r);
+          sp.width = rr * 5.2; sp.height = rr * 5.2;
+          sp.tint = (L % 2) ? accent2Int : accentInt;   // v0.88: HOISTED (was per star per frame)
           rec.container.addChild(sp);
-          rec.stars.push({ sp: sp, L: L, j: j, R: R });
+          rec.stars.push({ sp: sp, L: L, j: j, R: R, key: key });
         }
       }
     });
   }
 
-  // ── updateWorld — the ticker: camera, positions, stars, culling ──
+  // ── updateWorld — the driver's frame: camera, positions, stars, ───
+  // culling. v0.88: returns DIRTY (a render is wanted) and latches
+  // driverWants (keep driving) — stars/pulses/motion keep it alive; a
+  // fully rested world returns false and the driver sleeps until a poke.
+  var lastCam = { ox: 0, oy: 0, sc: 1 };
   function updateWorld() {
-    if (!S.app || !S.stageRoot) return;
+    if (!S.app || !S.stageRoot) return false;
     var cam = window.DoomalayDebug && window.DoomalayDebug.camera;
     var ox = cam ? cam.x : 0, oy = cam ? cam.y : 0, sc = cam ? cam.scale : 1;
     var W = window.innerWidth, H = window.innerHeight;
-    var t = performance.now() / 1000 - t0;
+    var nowMs = performance.now();
+    var t = nowMs / 1000 - t0;
     var AC = window.AtomCore;
-    var cols = null;
     var pad = 130 * sc + 40;
     layoutAtoms(false);
-    if (S.dirtyAll) { S.dirtyAll = false; }
+    var camMoved = (ox !== lastCam.ox || oy !== lastCam.oy || sc !== lastCam.sc);
+    if (camMoved) { lastCam.ox = ox; lastCam.oy = oy; lastCam.sc = sc; }
+    var dirty = !!S.dirtyAll || camMoved;
+    if (S.dirtyAll) S.dirtyAll = false;
+    var wants = camMoved;
+    // stale pulses die at the door (an off-screen icon's pulse used to
+    // live forever and pin the old ticker)
+    for (var pk in pulses) { if (nowMs - pulses[pk] > 260) delete pulses[pk]; }
+    var hasPulse = false;
+    for (var pk2 in pulses) { hasPulse = true; break; }
+    if (hasPulse) { wants = true; dirty = true; }
+    // icons under physics/drag keep the driver alive
+    for (var ii = 0; ii < S.icons.length; ii++) {
+      var ic = S.icons[ii];
+      if (ic && (ic.dragging || Math.abs(ic.vx) > 0.01 || Math.abs(ic.vy) > 0.01)) {
+        wants = true; dirty = true; break;
+      }
+    }
     S.chats.forEach(function (rec) {
       var icon = rec.icon;
       var sx = (icon.x - ox) * sc, sy = (icon.y - oy) * sc;
@@ -544,36 +695,46 @@
       // the tap pulse (the flash twin)
       var pt = pulses[icon.id];
       if (pt !== undefined) {
-        var age = performance.now() - pt;
+        var age = nowMs - pt;
         if (age > 220) { delete pulses[icon.id]; rec.sprite.alpha = 1; }
         else {
           var k = age / 220;
           rec.sprite.alpha = 1 - 0.35 * Math.sin(k * Math.PI);
         }
       } else if (rec.sprite.alpha !== 1) rec.sprite.alpha = 1;
-      // the stars
+      // the stars — per frame only x/y/zIndex/alpha (tint/size minted)
       if (rec.stars && rec.stars.length && AC) {
-        if (!cols) cols = atomColors();
-        var accent = hexToInt('#' + String(cols.accent).replace('#', ''));
-        var accent2 = hexToInt('#' + String(cols.accent2).replace('#', ''));
+        wants = true; dirty = true;        // stars orbit — keep driving
         for (var q = 0; q < rec.stars.length; q++) {
           var st = rec.stars[q];
-          var p = AC.starPos(icon.id + '|' + st.L + '|' + st.j, st.L, st.R, t);
+          var p = AC.starPos(st.key, st.L, st.R, t);
           st.sp.x = p.x; st.sp.y = p.y;
           st.sp.zIndex = p.z >= 0 ? 150 : 45;
-          var rr = Math.max(0.9, p.r);
-          st.sp.width = rr * 5.2; st.sp.height = rr * 5.2;
           st.sp.alpha = p.z >= 0 ? 0.95 : 0.5;
-          st.sp.tint = (st.L % 2) ? accent2 : accent;
         }
       }
     });
+    driverWants = wants;
+    return dirty;
   }
 
   // ── evaluate — the gate (call on entity-count changes + settings) ─
+  // v0.88: THE GL-SPEED GATE rides here — 'auto' + a software-GL verdict
+  // (SwiftShader/llvmpipe/no-context, sticky from localStorage) never
+  // activates the sprite layer (the DOM path is FASTER there); 'on'
+  // forces through with the verdict published on DoomalayPerf.world.
   function evaluate() {
     var m = settingsMode();
     if (m === 'off') { if (S.app) deactivate(); return; }
+    var gate = glGateVerdict();
+    if (m === 'auto' && gate.software) {
+      if (S.app) deactivate();
+      try {
+        window.DoomalayPerf.world = 'dom icons (software gl: ' +
+          (gate.renderer || '?') + ')';
+      } catch (e) {}
+      return;
+    }
     var want = m === 'on' || entitiesCount() >= THRESHOLD;
     if (want && !S.app && S.mode !== 'booting') activate();
     else if (!want && S.app && m === 'auto') deactivate();
@@ -583,7 +744,7 @@
   function onThemeChanged() {
     themeStamp++;
     colCache.at = 0;
-    if (S.app) { sync(); layoutAtoms(true); }
+    if (S.app) { sync(); layoutAtoms(true); poke(); }
   }
   window.addEventListener('doomalay:theme-changed', onThemeChanged);
   window.addEventListener('doomalay:theme-applied', onThemeChanged);
@@ -605,6 +766,8 @@
       if (rec.tex) textures++;
     });
     return { active: !!S.app, mode: S.mode, renderer: S.renderer,
+             driver: driverRAF ? 'running' : 'resting',
+             gate: S.gate ? { software: S.gate.software, renderer: S.gate.renderer } : null,
              threshold: THRESHOLD, entities: entitiesCount(),
              sprites: sprites, textures: textures, stars: stars,
              lastError: S.lastError };
@@ -615,6 +778,7 @@
     evaluate: evaluate,
     atomsOwned: atomsOwned,
     pulse: pulse,
+    poke: poke,               // v0.88: the on-demand driver's restart handle
     active: function () { return !!S.app; },
     debug: function () { return debugInfo(); },
     _layoutAtoms: layoutAtoms

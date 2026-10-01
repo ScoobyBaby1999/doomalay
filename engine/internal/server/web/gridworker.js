@@ -36,6 +36,10 @@ var gctx = null, gctx2 = null;
 var W = 0, H = 0, dpr = 1;
 var P = null;          // the cached params blob
 var Pf = '';           // its fingerprint (main-side computed, passed along)
+var E = [];            // v0.88: the cached entity clones — they ride the frame
+                      // message ONLY when the main-side checksum changed;
+                      // a resting canvas posts zero clones
+var entsMsgs = 0;      // v0.88: how many messages actually carried clones
 var frames = 0, atomFrames = 0, fullFrames = 0;
 var t0 = performance.now() / 1000;
 
@@ -76,6 +80,8 @@ function applyDpr() {
 function paintFrame(m) {
   if (!gctx) return;
   if (m.P !== undefined) { P = m.P; Pf = m.pf || ''; }
+  // v0.88: the entity-clone omission — clone set arrives only on change
+  if (m.entities !== undefined && m.entities !== null) { E = m.entities; entsMsgs++; }
   var stats = null, atomStats = null;
   if (m.atomsOnly) {
     // v0.84.1 THE ATOM-ONLY FRAME (worker-side twin): nothing else moved —
@@ -83,7 +89,7 @@ function paintFrame(m) {
     if (gctx2) gctx2.clearRect(0, 0, W, H);
     if (m.atomsOn !== false && gctx2) {
       atomStats = AtomCore.paintCore(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
-        m.entities || [], m.counts || {}, m.colors || null,
+        E, m.counts || {}, m.colors || null,
         performance.now() / 1000 - t0);
       atomFrames++;
     }
@@ -109,7 +115,7 @@ function paintFrame(m) {
     }
     if (m.atomsOn !== false && gctx2) {
       atomStats = AtomCore.paintCore(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
-        m.entities || [], m.counts || {}, m.colors || null,
+        E, m.counts || {}, m.colors || null,
         performance.now() / 1000 - t0);
     }
     fullFrames++;
@@ -124,6 +130,8 @@ function paintFrame(m) {
   blob.frames = frames;
   blob.atomFrames = atomFrames;
   blob.fullFrames = fullFrames;
+  blob.ents = E.length;        // v0.88: the honest instrument — the cached clone count
+  blob.entsMsgs = entsMsgs;    // v0.88: how many frames actually carried clones
   blob.worker = true;
   if (atomStats) blob.atoms = atomStats;
   else if (m.atomsOnly) blob.atoms = atomStats || blob.atoms || { chats: 0, stars: 0, shells: 0 };

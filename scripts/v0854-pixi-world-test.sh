@@ -5,26 +5,30 @@
 #    the PixiJS world layer: icons as GPU sprites + atom stars with
 #    zIndex depth, the DOM kept as the input layer).
 #
-# THE CONTRACT:
-#  (1) THE GATE — 65 seeded entities + worldLayer auto → World3D active,
-#      renderer webgl, sprites === 65, textures ≥ 1; the #c3 canvas sits
-#      at z-index 100 with pointer-events none; #chatbots.pixi3d → the
-#      .chatbot hit-targets are opacity:0 (input never moves).
+# v0.88 THE EVOLUTION (the root-fps wave): the rig's headless Chromium
+# runs SwiftShader — exactly the software-GL world the GL-SPEED GATE
+# exists for — so the contract grows and reorders:
+#  (0) THE GL-SPEED GATE — auto + 65 entities on a SOFTWARE GL → the
+#      layer NEVER activates (dom icons, the verdict published on
+#      DoomalayPerf.world, the sticky verdict in localStorage).
+#  (1) FORCED 'on' — the layer contract under force (the gate must not
+#      block the user's explicit choice): webgl renderer, sprites === 65,
+#      textures ≥ 1, the #c3 canvas at z-index 100 pointer-events none,
+#      #chatbots.pixi3d hit-targets opacity 0.
 #  (2) INPUT — elementFromPoint at an icon center returns the .chatbot
-#      hit-target; a synthetic DRAG moves the entity AND the sprite
-#      follows (sampled over frames — the ticker reads live x/y).
-#  (3) THE ATOMS IN PIXI — a bound workspace → star sprites > 0; sampled
-#      over ~1.6s the star set's zIndex/alpha VARY (the back-and-above
-#      sweep — front stars sort above the disc, back stars below).
-#  (4) THE HANDOVER — while active, the worker's #c2 atom pass is OFF
-#      (atomsOwned; DoomalayPerf.world says pixi); below the threshold
-#      (10 icons) the layer deactivates + the DOM icons return
-#      (opacity restored, no .pixi3d) + one repaint restores the #c2
-#      stars (DoomalayDebug.atoms climbs again on the main loop).
-#  (5) THE FORCED MODES — worldLayer 'on' with 8 icons → active;
-#      'off' → inactive + DOM path untouched.
-#  (6) THE THEME — a theme switch while active re-rasters (the texture
-#      fingerprint's themeStamp bumps; sprites stay === entities).
+#      hit-target; a synthetic DRAG moves the entity AND the mirror
+#      follows (the driver reads live x/y — update()'s poke lights it).
+#  (3) THE ATOMS IN PIXI + THE ON-DEMAND DRIVER — a bound workspace →
+#      star sprites > 0 and the driver REPORTS 'running' (stars orbit);
+#      unbinding (setCount 0) → the driver falls to 'resting' (zero
+#      frames at rest — THE measured 18fps-at-rest fix).
+#  (4) THE THRESHOLD GATE (fake-hardware sticky) — with a hardware
+#      verdict planted, auto + 65 → active; 10 icons + reload →
+#      deactivate + the DOM icons return (opacity 1, no .pixi3d, #c3
+#      gone) + one repaint restores the #c2 stars.
+#  (5) THE FORCED OFF — worldLayer 'off' → inactive + DOM path.
+#  (6) THE THEME — a theme switch while active re-rasters (sprites stay
+#      === entities).
 #  (7) zero console errors.
 set -u
 cd "$(dirname "$0")/.."
@@ -79,18 +83,55 @@ print(json.dumps({'offset': {'x': 0, 'y': 0}, 'scale': 1, 'icons': icons}))
 PYEOF
 }
 
-echo "── (1) the gate: 65 entities + auto"
+echo "── (0) THE GL-SPEED GATE: auto + 65 + software GL → dom icons"
 agent-browser open "$BASE" >/dev/null 2>&1; sleep 1.2
-# the browser profile persists localStorage across runs of this rig —
-# wipe it so every run boots from the same deterministic ground
+# wipe the profile's localStorage so every run boots from deterministic
+# ground (this also clears any stale glgate sticky from earlier runs)
 ev "localStorage.clear(); 'cleared'" >/dev/null
 ev "$(seed_icons 65 yes | python3 -c "
 import sys, json
 print(\"localStorage.setItem('doomalay.state.v2', JSON.stringify(%s)); 'ok'\" % json.dumps(json.load(sys.stdin)))")" >/dev/null
 agent-browser reload >/dev/null 2>&1
-sleep 2.6   # boot + the lazy pixi.min.js injection + Application.init
+sleep 2.6   # boot + the GL probe (SwiftShader on the headless rig) + evaluate
+# FLAT values (no nested JSON strings — the sticky's escaped quotes break
+# the naive shell embedding)
+G1=$(ev "(function(){var w=window.World3D?window.World3D.debug():{}; var st=null; try{st=JSON.parse(localStorage.getItem('doomalay.glgate.v1')||'null')}catch(e){} return JSON.stringify({active: !!w.active, perf: String((window.DoomalayPerf||{}).world||''), stickySoftware: st? !!st.software : false, stickyRenderer: st? String(st.renderer||'') : ''})})()")
+ck "auto + software GL → the layer NEVER activates" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$G1''')
+    print('yes' if not d.get('active') else 'no')
+except Exception: print('no')")" "$G1"
+ck "the verdict publishes on DoomalayPerf.world (software gl named)" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$G1''')
+    print('yes' if 'software gl' in str(d.get('perf','')) else 'no')
+except Exception: print('no')")" "$G1"
+ck "the sticky verdict lives in localStorage (doomalay.glgate.v1)" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$G1''')
+    print('yes' if d.get('stickySoftware') and d.get('stickyRenderer') else 'no')
+except Exception: print('no')")" "$G1"
+DOMPATH=$(ev "(function(){var l=document.getElementById('chatbots'); var any=document.querySelector('.chatbot'); return JSON.stringify({cls: l?l.className:'nolayer', op: any?getComputedStyle(any).opacity:'noicon', c3: !!document.getElementById('c3')})})()")
+ck "the DOM icon path stays (opacity 1, no .pixi3d, no #c3)" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$DOMPATH''')
+    ok = 'pixi3d' not in d.get('cls','') and abs(float(d.get('op',0))-1)<0.01 and not d.get('c3')
+    print('yes' if ok else 'no')
+except Exception: print('no')")" "$DOMPATH"
+
+echo "── (1) forced 'on' — the layer contract under force"
+ev "Settings.setState({worldLayer:'on'}); 'ok'" >/dev/null
+sleep 2.4   # the lazy pixi.min.js injection + Application.init + sync
 D1=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false, missing:true})")
-ck "World3D active + webgl renderer" \
+ck "World3D active + webgl renderer (forced through the gate)" \
    "$(python3 -c "
 import json
 try:
@@ -120,6 +161,14 @@ try:
     ok = d.get('c3','').startswith('100/') and d.get('c3','').endswith('/none') and 'pixi3d' in d.get('cls','') and abs(float(d.get('op',1))) < 0.01
     print('yes' if ok else 'no')
 except Exception: print('no')")" "$CHROME"
+PERFW=$(ev "JSON.stringify((window.DoomalayPerf||{}).world || '')")
+ck "DoomalayPerf.world says pixi + names the forced software GL honestly" \
+   "$(python3 -c "
+import json
+try:
+    s=json.loads('''$PERFW''')
+    print('yes' if 'pixi' in str(s) and 'software gl' in str(s) else 'no')
+except Exception: print('no')")" "$PERFW"
 
 echo "── (2) input stays DOM + the sprite follows"
 HIT=$(ev "(function(){var el=document.elementFromPoint(240,90); return el ? (el.closest('.chatbot') ? 'icon' : el.tagName) : 'none'})()")
@@ -135,7 +184,7 @@ DRAG=$(ev "(function(){
   function mu(x,y){document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
   var sx = icon.x, sy = icon.y;   // camera rests at origin, scale 1
   md(sx,sy); mm(sx-45,sy+30); mm(sx-85,sy+70); mm(sx-92,sy+76); mu(sx-92,sy+76);
-  icon.vx = 0; icon.vy = 0;   // no fling — the cascade pegs the thread
+  icon.vx = 0; icon.vy = 0;   // no fling — the collision cascade pegs the thread
   return 'dragged'})()")
 ck "the drag found + moved the entity" "$([ "$DRAG" = "dragged" ] && echo yes || echo no)" "$DRAG"
 sleep 1.0
@@ -152,7 +201,7 @@ try:
     print('yes' if d.get('moved') and d.get('sprites')==65 else 'no')
 except Exception: print('no')")" "$FOLLOW"
 
-echo "── (3) the atoms in pixi (zIndex depth sweep)"
+echo "── (3) the atoms in pixi + THE ON-DEMAND DRIVER"
 curl -s -X POST $BASE/api/workspaces/device -H 'Content-Type: application/json' \
   -d "{\"name\":\"dev ws 1\",\"session_id\":\"$SID\"}" >/dev/null
 curl -s -X POST $BASE/api/workspaces/device -H 'Content-Type: application/json' \
@@ -160,43 +209,20 @@ curl -s -X POST $BASE/api/workspaces/device -H 'Content-Type: application/json' 
 ev "window.Atoms.refresh(window.doomalay.findIconForSession('$SID'))" >/dev/null
 sleep 1.2
 A1=$(ev "JSON.stringify(window.World3D.debug())")
-sleep 1.6
-A2=$(ev "JSON.stringify(window.World3D.debug())")
 ck "star sprites minted (a bound workspace → stars > 0)" \
    "$(python3 -c "
 import json
 try:
-    d=json.loads('''$A2''')
+    d=json.loads('''$A1''')
     print('yes' if (d.get('stars') or 0)>0 else 'no')
-except Exception: print('no')")" "$A2"
-SWEEP=$(ev "(function(){
-  // sample one star's zIndex + alpha across a slow sweep — the depth
-  // alternation proves the back-and-above ordering lives in pixi
-  var out = [];
-  for (var k = 0; k < 6; k++) {
-    var d = window.World3D.debug();
-    out.push((d.stars || 0) + ':' + (d.sprites || 0));
-  }
-  return out.join(',');})()")
-ck "the star layer rides the pixi ticker (samples stable, sprites live)" \
-   "$(python3 -c "
-s='''$SWEEP'''.split(',')
-ok=all((':' in x) for x in s) and len(s)==6
-print('yes' if ok else 'no')")" "$SWEEP"
-DEPTH=$(ev "(function(){
-  // THE OCCLUSION PROOF: walk World3D's live records via the debug hook —
-  // stars with zIndex BELOW the disc's (100) AND ABOVE it across the
-  // sweep. The _layoutAtoms internals aren't public, so prove by effect:
-  // rasterizing is stable while the star COUNT changes with binds.
-  var d = window.World3D.debug();
-  return JSON.stringify({stars: d.stars, active: d.active});})()")
-ck "the depth machinery is live (stars counted in the world layer)" \
+except Exception: print('no')")" "$A1"
+ck "the DRIVER runs while stars orbit (driver: running)" \
    "$(python3 -c "
 import json
 try:
-    d=json.loads('''$DEPTH''')
-    print('yes' if d.get('active') and (d.get('stars') or 0)>=2 else 'no')
-except Exception: print('no')")" "$DEPTH"
+    d=json.loads('''$A1''')
+    print('yes' if d.get('driver')=='running' else 'no')
+except Exception: print('no')")" "$A1"
 OWNED=$(ev "JSON.stringify({owned: window.World3D.atomsOwned(), world: (window.DoomalayPerf||{}).world})")
 ck "the world layer owns the atoms (worker #c2 pass off)" \
    "$(python3 -c "
@@ -205,12 +231,47 @@ try:
     d=json.loads('''$OWNED''')
     print('yes' if d.get('owned') and 'pixi' in str(d.get('world','')) else 'no')
 except Exception: print('no')")" "$OWNED"
+# THE REST PROOF: quiet any residual physics, then unbind the workspaces →
+# the stars die → nothing moves → the driver must fall asleep (the
+# measured 18fps-at-rest regression). v0.88 also fixes the v0.87.2 latent
+# (the star-destroy path threw on st.destroy → stale stars forever).
+ev "window.doomalay.world.entities.forEach(function(e){e.vx=0;e.vy=0;}); 'quiet'" >/dev/null
+sleep 0.6
+ev "window.Atoms.setCount('$SID', 0); 'unbind'" >/dev/null
+sleep 1.4
+REST=$(ev "JSON.stringify(window.World3D.debug())")
+ck "atoms unbound → the stars die + the driver RESTS (zero frames at rest)" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$REST''')
+    print('yes' if d.get('driver')=='resting' and (d.get('stars') or 0)==0 else 'no')
+except Exception: print('no')")" "$REST"
 
-echo "── (4) the hand-back (below the threshold)"
-# the drag's collision cascade can keep entities moving (and the 200ms
-# debounced save RE-ARMING) for many seconds — the trailing saveNow would
-# land AFTER the seed and clobber it. Quiet the world, let the last save
-# land, THEN seed.
+echo "── (4) the threshold gate (a planted hardware verdict)"
+ev "window.doomalay.world.entities.forEach(function(e){e.vx=0;e.vy=0;}); 'quiet'" >/dev/null
+sleep 1.0
+JS65=$(seed_icons 65 yes | python3 -c "
+import sys, json
+print(\"localStorage.setItem('doomalay.state.v2', JSON.stringify(%s)); 'ok'\" % json.dumps(json.load(sys.stdin)))")
+# the reload's pagehide flushSave re-writes the settings AFTER any clear
+# (worldLayer 'on' from the forced tests would stick) — so the seed plants
+# BOTH keys explicitly: the state AND the settings (worldLayer auto).
+FAKEHW="localStorage.setItem('doomalay.glgate.v1', JSON.stringify({software:false, renderer:'rig-fake-gpu'})); localStorage.setItem('doomalay.settings.v1', JSON.stringify({worldLayer:'auto'})); 'hw'"
+ev "localStorage.clear(); 'cleared'" >/dev/null
+ev "$JS65" >/dev/null
+ev "$FAKEHW" >/dev/null
+agent-browser reload >/dev/null 2>&1
+sleep 2.6
+D2=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false})")
+ck "hardware verdict + auto + 65 → the layer ACTIVATES (threshold gate)" \
+   "$(python3 -c "
+import json
+try:
+    d=json.loads('''$D2''')
+    print('yes' if d.get('active') and d.get('sprites')==65 else 'no')
+except Exception: print('no')")" "$D2"
+# below the threshold: quiet the world, let the last save land, re-seed 10
 ev "window.doomalay.world.entities.forEach(function(e){e.vx=0;e.vy=0;}); 'quiet'" >/dev/null
 sleep 1.0
 JS10=$(seed_icons 10 yes | python3 -c "
@@ -230,15 +291,21 @@ if [ "$N10" != "10" ]; then
   agent-browser reload >/dev/null 2>&1
   sleep 2.2
 fi
-D2=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false})")
+# the pre-reload page's pagehide flushSave may have re-written the 'on'
+# setting — plant 'auto' on the LIVE page (its own flush now saves auto)
+# and reload once more so the boot truly evaluates the auto gate at 10
+ev "Settings.setState({worldLayer:'auto'}); 'auto'" >/dev/null
+agent-browser reload >/dev/null 2>&1
+sleep 2.2
+D3=$(ev "JSON.stringify(window.World3D ? window.World3D.debug() : {active:false})")
 CHROME2=$(ev "(function(){var l=document.getElementById('chatbots'); var any=document.querySelector('.chatbot'); return JSON.stringify({cls: l?l.className:'nolayer', op: any?getComputedStyle(any).opacity:'noicon', c3: !!document.getElementById('c3')})})()")
 ck "10 icons → the layer deactivates (auto gate)" \
    "$(python3 -c "
 import json
 try:
-    d=json.loads('''$D2''')
+    d=json.loads('''$D3''')
     print('yes' if not d.get('active') else 'no')
-except Exception: print('no')")" "$D2"
+except Exception: print('no')")" "$D3"
 ck "the DOM icons return (opacity 1, no .pixi3d, #c3 gone)" \
    "$(python3 -c "
 import json
@@ -248,27 +315,27 @@ try:
     print('yes' if ok else 'no')
 except Exception: print('no')")" "$CHROME2"
 
-echo "── (5) the forced modes"
+echo "── (5) the forced off"
 ev "Settings.setState({worldLayer:'on'}); 'ok'" >/dev/null
 sleep 1.8
-D3=$(ev "JSON.stringify(window.World3D.debug())")
+D4=$(ev "JSON.stringify(window.World3D.debug())")
 ck "worldLayer 'on' with 10 icons → active" \
    "$(python3 -c "
 import json
 try:
-    d=json.loads('''$D3''')
+    d=json.loads('''$D4''')
     print('yes' if d.get('active') and d.get('sprites')==10 else 'no')
-except Exception: print('no')")" "$D3"
+except Exception: print('no')")" "$D4"
 ev "Settings.setState({worldLayer:'off'}); 'ok'" >/dev/null
 sleep 1.2
-D4=$(ev "JSON.stringify(window.World3D.debug())")
+D5=$(ev "JSON.stringify(window.World3D.debug())")
 ck "worldLayer 'off' → inactive immediately" \
    "$(python3 -c "
 import json
 try:
-    d=json.loads('''$D4''')
+    d=json.loads('''$D5''')
     print('yes' if not d.get('active') else 'no')
-except Exception: print('no')")" "$D4"
+except Exception: print('no')")" "$D5"
 
 echo "── (6) the theme re-raster"
 ev "Settings.setState({worldLayer:'on'}); 'ok'" >/dev/null
@@ -302,5 +369,5 @@ print(n)")
 ck "zero console errors" "$([ "$ERRS" = "0" ] && echo yes || echo no)" "$ERRS"
 
 echo ""
-echo "════ v0854 PHASE 3: $PASS passed, $FAIL failed"
+echo "════ v0854 PHASE 3 (v0.88 evolved): $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ] || exit 1

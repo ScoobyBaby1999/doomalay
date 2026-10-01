@@ -58,6 +58,21 @@
   var SHELL_TILT = [                          // (α° around X, β° around Z) — the axis per level
     [22, 0], [64, 45], [38, 120], [78, 210], [8, 300]
   ];
+  // v0.88 THE STAR-CONSTANT CACHE: the tilt basis is a PER-LEVEL constant
+  // (the old code re-ran 4 trig + the degree→rad conversions PER STAR PER
+  // FRAME in starPos AND per shell per icon in paintCore — the measured
+  // +atoms pixi/DOM frame cost). Precomputed once, shared by both twins.
+  var TILT_BASIS = SHELL_TILT.map(function (t) {
+    var a = t[0] * Math.PI / 180, b = t[1] * Math.PI / 180;
+    var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+    return { e1x: cb, e1y: sb, e1z: 0, e2x: -sb * ca, e2y: cb * ca, e2z: sa };
+  });
+  // v0.88: per-star derived constants (the 4 string hashes → omega/phase/
+  // radius) cached by star key — star keys are stable for a chat's whole
+  // life (icon.id|level|slot), so the hashes run once per star, not per
+  // frame. Bounded: icon ids churn across sessions; past 4096 entries the
+  // map resets (a one-frame re-hash blip, never a leak).
+  var STAR_CACHE = new Map();
   var MAX_WS = 32;                            // the chat binding cap (engine twin)
 
   var counts = {};        // sessionId → star count (the bound-workspace count)
@@ -93,22 +108,29 @@
   //   e1 = (cosβ, sinβ, 0),  e2 = (−sinβ·cosα, cosβ·cosα, sinα)
   // A star at angle θ rides u=cosθ·e1 + v=sinθ·e2 (unit circle in the
   // tilted plane); screen = (p.x, p.y), depth = p.z (positive = viewer side).
+  // v0.88: the per-star hashes + the per-level trig live in the caches
+  // above — per frame this is 2 trig + a multiply, byte-identical output.
   function starPos(key, level, R, t) {
-    var h1 = hashStr(key + '~a'), h2 = hashStr(key + '~b'),
-        h3 = hashStr(key + '~c'), h4 = hashStr(key + '~d');
-    var omega = (0.35 + h1 * 0.45) * (h2 < 0.5 ? -1 : 1);   // rad/s ±
-    var ang = t * omega + h3 * Math.PI * 2;
+    var c = STAR_CACHE.get(key);
+    if (c === undefined) {
+      var h1 = hashStr(key + '~a'), h2 = hashStr(key + '~b'),
+          h3 = hashStr(key + '~c'), h4 = hashStr(key + '~d');
+      c = {
+        omega: (0.35 + h1 * 0.45) * (h2 < 0.5 ? -1 : 1),   // rad/s ±
+        phase: h3 * Math.PI * 2,
+        r: 1.9 + h4 * 1.1                                  // star radius px @ scale 1
+      };
+      if (STAR_CACHE.size > 4096) STAR_CACHE.clear();
+      STAR_CACHE.set(key, c);
+    }
+    var ang = t * c.omega + c.phase;
     var u = Math.cos(ang), v = Math.sin(ang);
-    var tilt = SHELL_TILT[level] || SHELL_TILT[0];
-    var a = tilt[0] * Math.PI / 180, b = tilt[1] * Math.PI / 180;
-    var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
-    var e1x = cb,    e1y = sb,    e1z = 0;
-    var e2x = -sb*ca, e2y = cb*ca, e2z = sa;
+    var B = TILT_BASIS[level] || TILT_BASIS[0];
     return {
-      x: (u * e1x + v * e2x) * R,
-      y: (u * e1y + v * e2y) * R,
-      z: (u * e1z + v * e2z) * R,
-      r: 1.9 + h4 * 1.1                                  // star radius px @ scale 1
+      x: (u * B.e1x + v * B.e2x) * R,
+      y: (u * B.e1y + v * B.e2y) * R,
+      z: (u * B.e1z + v * B.e2z) * R,
+      r: c.r
     };
   }
 
@@ -197,6 +219,30 @@
     return false;
   }
 
+  // v0.88: the shell-ellipse PATH cache — the 64-segment polyline is a
+  // pure function of (level, scale); quantized at 3dp (≤0.1px drift on
+  // the largest shell) it strokes from a cached Path2D translated to the
+  // icon center instead of re-walking 64 cos/sin per shell per icon per
+  // frame. Path2D exists in both hosts (window + worker).
+  var SHELL_PATH = {};
+  function shellPath(L, s) {
+    var q = Math.round((s || 1) * 1000) / 1000;
+    var e = SHELL_PATH[L];
+    if (e && e.q === q) return e.p;
+    var R = SHELL_R[L] * q;
+    var B = TILT_BASIS[L] || TILT_BASIS[0];
+    var p = new Path2D();
+    for (var k = 0; k <= 64; k++) {
+      var th = (k / 64) * Math.PI * 2;
+      var uu = Math.cos(th), vv = Math.sin(th);
+      var px = (uu * B.e1x + vv * B.e2x) * R;
+      var py = (uu * B.e1y + vv * B.e2y) * R;
+      if (k === 0) p.moveTo(px, py); else p.lineTo(px, py);
+    }
+    SHELL_PATH[L] = { q: q, p: p };
+    return p;
+  }
+
   // ── THE PAINT — the pure core, parameterized (v0.85.2) ────────────
   // ctx: a 2d context (main #c2 or the worker's transferred offscreen).
   // icons: [{id, type, sessionId, x, y, radius}] — live icon objects OR
@@ -211,6 +257,12 @@
     var c = colors || { accent: 'a,b,c', accent2: 'd,e,f', ring: 'rgba(120,130,140,0.35)' };
     var stats = { chats: 0, stars: 0, shells: 0, backHidden: 0, frontInside: 0 };
     var pad = (SHELL_R[SHELL_R.length - 1] + 24) * s + 30;
+    // v0.88: hoisted shell-stroke state (constant for the whole frame —
+    // the star fills below only touch fillStyle, so this stays valid
+    // across every icon; the save/translate/restore per shell keeps the
+    // path cache stroke isolated from the star geometry).
+    ctx.strokeStyle = c.ring;
+    ctx.lineWidth = Math.max(0.5, 0.75 * s);
 
     for (var i = 0; i < list.length; i++) {
       var icon = list[i];
@@ -225,26 +277,15 @@
       stats.chats++;
 
       // one pass: shell ellipses (faint) + the stars
+      // v0.88: the shell strokes ride the PATH cache + hoisted canvas
+      // state (strokeStyle/lineWidth set once per frame below); the
+      // per-shell trig + 64-segment walk is gone.
       for (var L = 0; L < layout.length; L++) {
         var R = SHELL_R[L] * s;
-        var tilt = SHELL_TILT[L] || SHELL_TILT[0];
-        var a = tilt[0] * Math.PI / 180, b = tilt[1] * Math.PI / 180;
-        var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
-        var e1x = cb,    e1y = sb,    e1z = 0;
-        var e2x = -sb*ca, e2y = cb*ca, e2z = sa;
-
-        // the shell's projected path — 64 segments, faint stroke
-        ctx.beginPath();
-        for (var k = 0; k <= 64; k++) {
-          var th = (k / 64) * Math.PI * 2;
-          var uu = Math.cos(th), vv = Math.sin(th);
-          var px = cx + (uu * e1x + vv * e2x) * R;
-          var py = cy + (uu * e1y + vv * e2y) * R;
-          if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        ctx.strokeStyle = c.ring;
-        ctx.lineWidth = Math.max(0.5, 0.75 * s);
-        ctx.stroke();
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.stroke(shellPath(L, s));
+        ctx.restore();
         stats.shells++;
 
         // the stars on this shell — back half first (clipped behind the
@@ -307,6 +348,7 @@
     SHELL_CAP: SHELL_CAP,
     SHELL_R: SHELL_R,
     SHELL_TILT: SHELL_TILT,
+    TILT_BASIS: TILT_BASIS,   // v0.88: the precomputed per-level basis (pixiworld's shells ride it)
     MAX_WS: MAX_WS
   };
 

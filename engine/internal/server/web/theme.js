@@ -1400,6 +1400,17 @@
                 vm.target && vm.target.__projCosmetic === true) {
               continue;
             }
+            // v0.88: COSMETIC childList writes — the perf HUD chip's
+            // textContent (2/s), the Performance page's value spans (1/s),
+            // any __projCosmetic-flagged element whose children swap:
+            // none of these move a box or touch a projected window, but
+            // the old filter let them fall through to `full = true` → a
+            // FULL projection paint per HUD tick (the colors-pill drag's
+            // hidden second cascade).
+            if (vm.type === 'childList' && vm.target &&
+                vm.target.__projCosmetic === true) {
+              continue;
+            }
             kept.push(vm);
           }
           if (!kept.length) return;         // pure value noise — done

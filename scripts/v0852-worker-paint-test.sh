@@ -107,7 +107,16 @@ for i in $(seq 1 3); do
     -d "{\"name\":\"dev ws $i\",\"session_id\":\"$SID\"}" >/dev/null
 done
 ev "window.Atoms.refresh(window.doomalay.findIconForSession('$SID'))" >/dev/null
-sleep 1.0
+# v0.88: gate FA on the atom loop PROVABLY running (a > 0) — the mint's
+# transitional window (ambient hand-off + pan-momentum decay) can straddle
+# a fixed sleep and land full frames inside the measurement window; the
+# poll (≤2s) reads the TRUE rest window instead of racing the transition.
+for i in $(seq 1 20); do
+  A0=$(ev "(window.DoomalayDebug||{}).atomFrames||0")
+  [ "$A0" -gt 0 ] 2>/dev/null && break
+  sleep 0.1
+done
+sleep 0.3
 FA=$(ev "JSON.stringify({a:(window.DoomalayDebug||{}).atomFrames||0, f:(window.DoomalayDebug||{}).fullFrames||0, st:(window.DoomalayDebug||{}).atoms||{}})")
 sleep 1.2
 FB=$(ev "JSON.stringify({a:(window.DoomalayDebug||{}).atomFrames||0, f:(window.DoomalayDebug||{}).fullFrames||0})")

@@ -39,7 +39,10 @@
     cacheHits: 0, cacheMisses: 0,      // lifetime (app.js bumps)
     batches: 0, buckets: 0, paintMs: 0,
     nodes: 0, layers: 0,
-    painter: '', world: ''             // v0.85.2/.3 fill these
+    painter: '', world: '',            // v0.85.2/.3 fill these
+    watchers: 0, hudOn: false          // v0.88: the honest instrument — the
+                                       // meter's refcount + chip state (the
+                                       // rig proves setHud's idempotence)
   };
   window.DoomalayPerf = P;
 
@@ -74,6 +77,7 @@
   }
   function watch(on) {
     watchers = Math.max(0, watchers + (on ? 1 : -1));
+    P.watchers = watchers;             // v0.88: the honest instrument
     if (watchers > 0 && !meterRAF) {
       lastT = 0; frames = 0; msSum = 0; P.frameMsMax = 0;
       meterRAF = requestAnimationFrame(meterLoop);
@@ -119,17 +123,35 @@
     chip = document.createElement('div');
     chip.id = 'perf-hud-chip';
     chip.setAttribute('aria-hidden', 'true');
+    // v0.88: the chip's textContent rewrites are COSMETIC to the
+    // projection painter (2/s) — flag it so the theme observer's
+    // childList filter skips them (each used to trigger a FULL paint).
+    chip.__projCosmetic = true;
     document.body.appendChild(chip);
     return chip;
   }
+  var lastChipTxt = '';
   function paintChip() {
     if (!chip) return;
     var fpsTxt = P.paints > 0 || P.paintRate > 0
       ? (P.fps + ' fps · ' + P.frameMs + ' ms')
       : (P.fps + ' fps · canvas resting');
-    chip.textContent = fpsTxt + ' · ' + P.paintRate + ' paints/s';
+    var txt = fpsTxt + ' · ' + P.paintRate + ' paints/s';
+    if (txt === lastChipTxt) return;   // v0.88: value-change gate — identical text writes nothing
+    lastChipTxt = txt;
+    chip.textContent = txt;
   }
+  // v0.88: setHud is IDEMPOTENT — the boot listener + the settings
+  // onChange listener both call it, and the old non-idempotent version
+  // incremented the watch() refcount PER SETTINGS EVENT (the watcher
+  // leak: the meter never stopped, and every color-drag event ran
+  // sample() + a chip write + the observer paint on top).
+  var hudOn = false;
   function setHud(on) {
+    on = !!on;
+    if (on === hudOn && (on ? !!chip : true)) return;
+    hudOn = on;
+    P.hudOn = on;                      // v0.88: the honest instrument
     if (on) {
       ensureChip();
       chip.classList.add('on');
@@ -213,7 +235,10 @@
     var doc = document;
     function set(id, txt) {
       var el = doc.getElementById(id);
-      if (el) el.textContent = txt;
+      if (el) {
+        if (el.textContent !== txt) el.textContent = txt;   // v0.88: value-change gate
+        if (!el.__projCosmetic) el.__projCosmetic = true;   // v0.88: cosmetic to the projection painter
+      }
     }
     set('pf-fps', P.fps || '—');
     set('pf-ms', P.frameMs ? (P.frameMs + ' / ' + Math.round(P.frameMsMax) ) : '—');
@@ -254,7 +279,10 @@
     }
     applySetting();
     window.Settings.onChange(function (st) {
-      if (st && typeof st.perfHud !== 'undefined') applySetting(st);
+      // v0.88: the VALUE-CHANGE GATE — perfHud untouched means no
+      // re-entry (the old listener re-ran setHud per settings event,
+      // leaking a watch() ref each time).
+      if (st && typeof st.perfHud !== 'undefined' && !!st.perfHud !== hudOn) applySetting(st);
     });
     // v0.85.2: the paint-worker toggle lives HERE (not data-setting-key —
     // a change needs a reload for the canvas transfer to settle, so it

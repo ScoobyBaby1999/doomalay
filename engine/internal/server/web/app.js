@@ -72,7 +72,8 @@
   // v0.85.2 THE PAINTER — 'main' (lattice.js on our ctxs) | 'worker'
   // (gridworker.js owns the bitmaps; see the Painter routing block)
   var Painter = { mode: 'main', worker: null, pf: '', pending: false,
-                   framesPosted: 0, atomFramesPosted: 0 };
+                   framesPosted: 0, atomFramesPosted: 0,
+                   entsSig: null };   // v0.88: the entity-clone omission's last-sent checksum
   (function decidePainter() {
     var st = window.Settings.getState();
     if (st && st.workerPaint && canvas && canvas2 &&
@@ -200,15 +201,22 @@
 
   // the params fingerprint — everything the P blob carries (same content
   // the old renderGrid's fpNow joined; posted to the worker only when it
-  // CHANGES so dataURL-heavy specs ride exactly once per settings edit)
+  // CHANGES so dataURL-heavy specs ride exactly once per settings edit).
+  // v0.88 ROOT FIXES: (1) the spec digests ride Lattice.cheapJSON — a
+  // dataURL-bearing canvasSpec used to re-serialize its 100s-of-KB on
+  // EVERY full frame (the resting-ambient stringify tax); (2) scale/W/H
+  // are OUT — they ride the cam message per frame and the resize message
+  // on viewport changes, so a pan/zoom no longer re-posts the whole P
+  // blob (the zoom re-post was the worker path's heaviest frame).
   function latticeFingerprint(P) {
+    var cj = (window.Lattice && window.Lattice.cheapJSON) || JSON.stringify;
     return [P.scatterL, P.scatterD, P.sizeVarL, P.sizeVarD, P.rotVarL, P.rotVarD,
       P.biasL, P.biasD, P.animDots ? 1 : 0, P.animLines ? 1 : 0,
-      scale.toFixed(4), P.gridSize, P.hideLines ? 1 : 0, P.hideDots ? 1 : 0,
-      P.amp.toFixed(4), W, H,
-      P.specs && P.specs.dotColor ? JSON.stringify(P.specs.dotColor) : '', P.t.dotColor,
-      P.specs && P.specs.lineColor ? JSON.stringify(P.specs.lineColor) : '', P.t.lineColor,
-      JSON.stringify(P.canvasSpec), P.bgFallback, P.bgP.toFixed(4)].join('|');
+      P.gridSize, P.hideLines ? 1 : 0, P.hideDots ? 1 : 0,
+      P.amp.toFixed(4),
+      P.specs && P.specs.dotColor ? cj(P.specs.dotColor) : '', P.t.dotColor,
+      P.specs && P.specs.lineColor ? cj(P.specs.lineColor) : '', P.t.lineColor,
+      cj(P.canvasSpec), P.bgFallback, P.bgP.toFixed(4)].join('|');
   }
 
   // publishLatticeStats — the honest instrument (DoomalayDebug is the
@@ -235,10 +243,30 @@
   }
 
   // computeArrows — the off-screen chat arrows (positions + family hexes
-  // resolved HERE: the worker never touches getComputedStyle)
+  // resolved HERE: the worker never touches getComputedStyle).
+  // v0.88 ROOT FIX: --border-strong resolves through a 1s-TTL cache (+ a
+  // theme-event reset) instead of a getComputedStyle per DEFAULT-family
+  // off-screen bot PER FRAME — a panned canvas with a dozen off-screen
+  // default chats burned a dozen computed-style reads every frame.
+  var arrowHexCache = { at: -1e9, v: '' };
+  function borderStrongHex() {
+    var now = performance.now();
+    if (now - arrowHexCache.at > 1000) {
+      arrowHexCache.at = now;
+      try {
+        arrowHexCache.v = getComputedStyle(document.documentElement)
+          .getPropertyValue('--border-strong').trim();
+      } catch (e) {}
+    }
+    return arrowHexCache.v;
+  }
+  function resetArrowHex() { arrowHexCache.at = -1e9; }
+  window.addEventListener('doomalay:theme-changed', resetArrowHex);
+  window.addEventListener('doomalay:theme-applied', resetArrowHex);
   function computeArrows() {
     const margin = 50;
     var out = [];
+    var bs = '';
     for (const bot of world.entities) {
       const s = worldToScreen(bot.x, bot.y);
       if (s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H) continue;
@@ -248,8 +276,8 @@
       const fam = (config.families[bot.family] || config.families.default || {});
       let color = fam.color || '#4a4a5e';
       if (bot.family === 'default' || !fam.color) {
-        color = getComputedStyle(document.documentElement)
-          .getPropertyValue('--border-strong').trim() || color;
+        if (!bs) bs = borderStrongHex();
+        color = bs || color;
       }
       out.push({ x: ax, y: ay, angle: angle, color: color });
     }
@@ -275,7 +303,24 @@
   }
   function renderOffScreenArrows() { paintArrows(ctx, computeArrows()); }
 
-  // entitiesForWorker — the plain clones the atom core reads
+  // entitiesForWorker — the plain clones the atom core reads.
+  // v0.88 ROOT FIX (the entity-clone omission): the clones rode EVERY
+  // frame message — a resting canvas with atoms re-cloned + structured-
+  // cloned N icons per frame for positions that never changed. The
+  // Painter.entsSig checksum (length + quantized positions) is O(N)
+  // arithmetic with zero allocations; the clones only ride the message
+  // when it CHANGES (add/remove/motion/radius), and gridworker caches
+  // the last set. Boot/first frame: sig starts null → always sends.
+  function entitiesSig() {
+    var list = world.entities;
+    var sig = list.length;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      sig = (sig * 31 + ((e.x * 8) | 0)) | 0;
+      sig = (sig * 31 + ((e.y * 8) | 0)) | 0;
+    }
+    return sig;
+  }
   function entitiesForWorker() {
     var out = [];
     for (const e of world.entities) {
@@ -294,19 +339,26 @@
   // layer ONLY — the resting grid untouched); otherwise the full lattice
   // + arrows + atoms. Worker mode posts the frame; main mode paints it
   // inline on OUR contexts — byte-identical pipelines either way.
-  function paintGridFrame(atomsOnly) {
+  function paintGridFrame(atomsOnly, forceEnts) {
     if (Painter.mode === 'worker' && Painter.worker) {
       var msg = {
         t: 'frame',
         cam: { ox: offsetX, oy: offsetY, scale: scale },
         atomsOnly: !!atomsOnly,
         arrows: atomsOnly ? [] : computeArrows(),
-        entities: entitiesForWorker(),
+        entities: null,
         counts: (window.Atoms && window.Atoms.countsOf) ? window.Atoms.countsOf() : {},
         colors: atomColorsForWorker(),
         atomsOn: !!(window.Atoms && window.Atoms.active(world.entities) &&
                     !(window.World3D && window.World3D.atomsOwned()))   // v0.85.4: pixi owns the stars when active
       };
+      // v0.88: the clones ride ONLY on change (checksum above) or a
+      // forced frame (boot/resize settles) — the worker caches the rest.
+      var esig = entitiesSig();
+      if (forceEnts || Painter.entsSig === null || esig !== Painter.entsSig) {
+        Painter.entsSig = esig;
+        msg.entities = entitiesForWorker();
+      }
       if (!atomsOnly) {
         var P = buildLatticeParams();
         var fp = latticeFingerprint(P);
@@ -352,6 +404,7 @@
         clearTimeout(to);
         if (ok) {
           Painter.mode = 'worker';
+          Painter.entsSig = null;   // v0.88: a fresh worker has an empty entity cache — force the clones on the next frame
           try { window.DoomalayPerf.painter = 'worker'; } catch (e) {}
         } else {
           if (w) { try { w.terminate(); } catch (e) {} }
@@ -728,6 +781,10 @@
     // main-thread paint)
     renderGrid();
     for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+    // v0.88: the world layer's on-demand driver — a full-frame funnel
+    // (a pan, a drag, a repaint) means the camera or the icons moved; one
+    // poke re-lights its rAF driver (it self-stops when the world rests).
+    if (window.World3D && window.World3D.poke) window.World3D.poke();
     // v0.67: the icons ride transforms — the projection painter
     // re-anchors their gradient windows to the viewport each frame.
     if (window.DoomProjection) window.DoomProjection.poke();
@@ -785,6 +842,11 @@
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
     else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save; v0.84.1: atoms too
     else { animating = false; scheduleSave(); }
+    // v0.88: pan MOMENTUM + ambient frames keep the camera/entity state
+    // flowing through tick (not update) — one poke keeps the world layer's
+    // on-demand driver following; a clean frame renders nothing (the
+    // driver self-stops the moment nothing moves).
+    if (window.World3D && window.World3D.poke) window.World3D.poke();
   }
 
   function startAnimation() {
@@ -1681,19 +1743,24 @@
     const s = window.Settings.getState();
     const DT = window.DoomTheme || {};
     const ov = (s.themeOverrides && s.themeOverrides[s.theme || 'midnight']) || null;
+    // v0.88 ROOT FIX: the spec digests ride Lattice.cheapJSON — s.bg can
+    // carry the texture dataURL, and this gate ran on EVERY settings
+    // event (the measured ~133ms cascade behind the unusable colors pill:
+    // five full stringifies, one dataURL-heavy, per drag event).
+    const cj = (window.Lattice && window.Lattice.cheapJSON) || JSON.stringify;
     return [
       s.theme, s.gridSize, s.spaceParallax, s.hideGridLines, s.hideDots,
       s.dotScatter, s.lineScatter, s.dotSizeVariation, s.lineSizeVariation,
       s.dotSizeBias, s.lineSizeBias, s.dotRotation, s.lineRotation,
       s.dotAnimate, s.lineAnimate,
       s.gridScatter, s.gridSizeVariation, s.gridRotation,   // legacy fallbacks
-      JSON.stringify(s.bg), JSON.stringify(s.lineColor),
-      JSON.stringify(s.dotColor), JSON.stringify(s.originColor),
+      cj(s.bg), cj(s.lineColor),
+      cj(s.dotColor), cj(s.originColor),
       // the CANVAS-relevant override only: --bg-panel paints the canvas
       // background (spec + texture); --border-strong tints the canvas
       // icons. The REST of the overrides (accents, surfaces, text) have
       // zero canvas effect — an accent drag must NOT repaint the canvas.
-      JSON.stringify((ov && ov['--bg-panel']) || null),
+      cj((ov && ov['--bg-panel']) || null),
       (typeof DT.resolvedThemeVar === 'function')
         ? DT.resolvedThemeVar('--border-strong') : ''
     ].join('|');

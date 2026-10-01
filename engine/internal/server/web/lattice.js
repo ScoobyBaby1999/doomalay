@@ -22,7 +22,8 @@
 // worker, Image onload on main — both fire Lattice.onTexReady so the
 // host repaints once the bumpmap lands).
 //
-// Exposes: globalThis.Lattice = { render, onTexReady, lastStats, IN_WORKER }
+// Exposes: globalThis.Lattice = { render, onTexReady, lastStats, IN_WORKER,
+//                                cheapJSON }
 (function () {
   'use strict';
 
@@ -34,6 +35,48 @@
   var DOT_RADIUS = 1.4;
   var ORIGIN_RADIUS = 5;
   var HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+  // ── v0.88 THE CHEAP SPEC STRINGIFIER ─────────────────────────────────
+  // Both fingerprints (app.js's lattice/canvas gates + THIS file's fpNow/
+  // bgTileKey) used to JSON.stringify the whole spec EVERY frame — and a
+  // spec can carry a 100s-of-KB texture dataURL (the appearance page's
+  // texture picker), so every resting ambient frame re-serialized it, and
+  // every settings event re-serialized FIVE of them (the measured ~133ms
+  // setState cascade that made the colors pill unusable). The digest:
+  // strings ≥ 160 chars (only dataURLs ever get that long) collapse to
+  // '#L:len:fnv32' — the fnv is computed ONCE per distinct string object
+  // (a string-keyed Map hit is O(1): V8 caches the string's hash after
+  // the first probe, and the SAME dataURL string object flows through
+  // every call until the user picks a new texture). Small fields still
+  // serialize verbatim, so in-place mutations (a stop color drag) still
+  // change the digest — the gate stays HONEST, only the dataURL cost
+  // dies. Zero drift: this file defines it, both hosts run it, app.js
+  // reads it off the export.
+  var LONG_MIN = 160;
+  var longCache = new Map();      // dataURL string → '#L:len:fnv32'
+  function shortenLong(s) {
+    var c = longCache.get(s);
+    if (c !== undefined) return c;
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    c = '#L:' + s.length + ':' + h.toString(36);
+    if (longCache.size > 64) longCache.clear();   // bounded (a texture re-pick floods it)
+    longCache.set(s, c);
+    return c;
+  }
+  function cheapJSON(v) {
+    if (v === undefined) return '';
+    if (v === null) return 'null';
+    try {
+      return JSON.stringify(v, function (k, val) {
+        if (typeof val === 'string' && val.length >= LONG_MIN) return shortenLong(val);
+        return val;
+      });
+    } catch (e) { return String(v); }
+  }
 
   function mkCanvas(w, h) {
     if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
@@ -364,7 +407,7 @@
   var BG_TILE_MULT = 2;
   function bgTileKey(spec, fallbackHex, tw, th) {
     var s = '';
-    try { s = JSON.stringify(spec); } catch (e) { s = String(spec); }
+    try { s = cheapJSON(spec); } catch (e) { s = String(spec); }
     return s + '|' + tw + 'x' + th + '|' + fallbackHex;
   }
   function bgTileFor(spec, fallbackHex, tw, th) {
@@ -570,8 +613,8 @@
       biasL, biasD, animDots ? 1 : 0, animLines ? 1 : 0,
       scale.toFixed(4), P.gridSize, hideLines ? 1 : 0, hideDots ? 1 : 0,
       amp.toFixed(4), W, H,
-      dotSpec ? JSON.stringify(dotSpec) : '', dotFallback,
-      lineSpec2 ? JSON.stringify(lineSpec2) : '', lineFallback2].join('|');
+      dotSpec ? cheapJSON(dotSpec) : '', dotFallback,
+      lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
     if (fpNow !== LC.fp) { LC.fp = fpNow; LC.gen++; lcClearParams(); }
     var cfpNow = fpNow + '|' + offsetX.toFixed(2) + ',' + offsetY.toFixed(2);
     if (cfpNow !== LC.cfp) { LC.cfp = cfpNow; LC.cgen++; lcClearColors(); }
@@ -1077,6 +1120,7 @@
     render: render,
     onTexReady: function (cb) { onTexReadyCb = cb; },
     lastStats: function () { return lastStats; },
-    IN_WORKER: IN_WORKER
+    IN_WORKER: IN_WORKER,
+    cheapJSON: cheapJSON       // v0.88: the spec digests (app.js's gates)
   };
 })();

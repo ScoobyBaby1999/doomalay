@@ -789,21 +789,42 @@
       // the freshest value). The trailing `change` (wheel close /
       // slider release) flushes synchronously so the terminal value
       // always lands even if the rAF was cancelled.
+      //
+      // v0.88 THE COMMIT THROTTLE (~11Hz + trailing): the preview bar
+      // + banner still repaint per rAF (cosmetic, local canvas paint —
+      // the finger stays glued), but the h.live() COMMIT — the full
+      // setState cascade: applyTheme + the canvas fingerprint + the
+      // repaint + the worker P post — rides a 90ms throttle while the
+      // drag runs, with a trailing timer guaranteeing the terminal
+      // value. 60 commits/s → ~11 commits/s, each cheaper than before
+      // (the v0.88 fingerprints + the observer filter took the rest).
       var liveRaf = 0;
-      function flushLive() {
-        if (liveRaf) { cancelAnimationFrame(liveRaf); liveRaf = 0; }
-        paintPreview();
-        paintBanner();
+      var liveLast = 0, liveTimer = 0;
+      function paintCosmetic() { paintPreview(); paintBanner(); }
+      function commitLive() {
+        liveLast = performance.now();
         if (h.live) h.live();
       }
       function scheduleLive() {
         if (liveRaf) return;
         liveRaf = requestAnimationFrame(function () {
           liveRaf = 0;
-          paintPreview();
-          paintBanner();
-          if (h.live) h.live();
+          paintCosmetic();
+          var since = performance.now() - liveLast;
+          if (since >= 90) commitLive();
+          else if (!liveTimer) {
+            liveTimer = setTimeout(function () {
+              liveTimer = 0;
+              commitLive();
+            }, 90 - since);      // the trailing edge — the freshest value lands
+          }
         });
+      }
+      function flushLive() {
+        if (liveRaf) { cancelAnimationFrame(liveRaf); liveRaf = 0; }
+        if (liveTimer) { clearTimeout(liveTimer); liveTimer = 0; }
+        paintCosmetic();
+        commitLive();
       }
 
       // swatch values

@@ -270,31 +270,43 @@
   // ── v0.74: THE AGE CARD ───────────────────────────────────────────
   // HF's 30+ day account-age refusal, as a friendly themed card instead
   // of the long raw error blob: the headline (bigger + brighter, themed),
-  // the ⚠ shared-space warning FIRST, the community fallback link
-  // (tap-to-copy + the paste instruction), the BYOK note, and the two
-  // ways out — add your own key, or one-tap the community space.
+  // the shared-space warning FIRST (v0.88: accent-3 + the triangle-alert
+  // glyph), the community fallback link (tap-to-copy + the paste
+  // instruction), the your-keys-stay-yours note (v0.88: the Connect
+  // Cloud Providers key, always encrypted), and the one-tap way out.
   var COMMUNITY_SPACE = 'ScoobyBaby1999/doomalaysocreate';
   var COMMUNITY_URL = 'https://huggingface.co/spaces/ScoobyBaby1999/doomalaysocreate';
 
+  // v0.88 THE AGE-CARD REWORK (user spec): the shared-space warning now
+  // carries a real triangle-alert glyph riding ACCENT-3 (the warning
+  // tone — accent-2 was the old tone and read as a link color), the BYOK
+  // section + ghost button are GONE (the paste-your-key-here affordance
+  // read as "the Space wants your key"), and the new "your keys stay
+  // yours" section states the truth: the community Space runs each turn
+  // with the key you already configured in Connect Cloud Providers —
+  // your own key, always encrypted (AES-256 on this device, TLS in
+  // flight, read only for the turn it serves, never stored by the Space).
   function renderAgeCard(form, onPick) {
     form.style.display = '';
+    var warnIcon = (window.IconLib && window.IconLib.svg)
+      ? window.IconLib.svg('triangle-alert', 15) : '⚠';
     form.innerHTML =
       '<div class="hf-age-card" role="alertdialog" aria-label="Hugging Face account age requirement">' +
         '<div class="hf-age-head">Hugging Face needs your account to be <b>30+ days old</b> to create a Space.</div>' +
         '<div class="hf-age-sub">a verified email + account age — or a PRO account — unlocks creating your own.</div>' +
-        '<div class="hf-age-warn">⚠ The community Space is shared with everyone.<br>' +
-          '<b>Never share secrets or personal info in it.</b></div>' +
+        '<div class="hf-age-warn"><span class="hf-age-warn-ic">' + warnIcon + '</span>' +
+          '<span>The community Space is shared with everyone.<br>' +
+          '<b>Never share secrets or personal info in it.</b></span></div>' +
         '<div class="hf-age-sec">🌍 community fallback</div>' +
         '<div class="hf-age-copy" id="hf-age-copy" role="button" tabindex="0">' +
           '<span class="hf-age-url">' + COMMUNITY_URL + '</span>' +
           '<span class="hf-age-copybtn">tap to copy</span>' +
         '</div>' +
         '<div class="hf-age-note">paste it in <b>“use a public space”</b> below — or use the one-tap button.</div>' +
-        '<div class="hf-age-sec">🔑 bring your own key</div>' +
-        '<div class="hf-age-note">chats on the community Space use <b>your own provider key</b> (never the shared one) when you add one — your key, your bill.</div>' +
-        '<div class="hf-age-note">the community Space still <b>processes your chat</b> to run the turn — BYOK changes who pays, not who reads: keep secrets and personal info out of it.</div>' +
+        '<div class="hf-age-sec">🔒 your keys stay yours</div>' +
+        '<div class="hf-age-note">the community Space runs each turn with <b>the provider key you already saved in Connect Cloud Providers</b> — your own key, the same one your cloud chats use, never a shared one. your key, your bill.</div>' +
+        '<div class="hf-age-note">that key is <b>always encrypted</b> — AES-256 on this device, TLS in flight, readable only for the turn it serves, never stored by the Space. The Space still processes the chat itself to run the turn, so keep secrets and personal info out of it.</div>' +
         '<div class="hf-age-actions">' +
-          '<button id="hf-age-key" class="hf-age-btn hf-age-btn-ghost">🔑 add your own key</button>' +
           '<button id="hf-age-go" class="hf-age-btn hf-age-btn-go">🌍 use the community space for this chat</button>' +
         '</div>' +
       '</div>';
@@ -315,11 +327,6 @@
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); doCopy(); }
       });
     }
-    var keyBtn = form.querySelector('#hf-age-key');
-    if (keyBtn) keyBtn.addEventListener('click', function () {
-      window.ConnectOverlay.close();
-      if (window.ProvidersScreen) window.ProvidersScreen.open(null, {});
-    });
     var goBtn = form.querySelector('#hf-age-go');
     if (goBtn) goBtn.addEventListener('click', function () {
       window.ConnectOverlay.close();
@@ -569,10 +576,13 @@
         'background-clip:text}' +
       '.hf-age-head b{color:inherit}' +
       '.hf-age-sub{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45}' +
-      // the shared-space warning — reads FIRST, unmistakable.
-      '.hf-age-warn{padding:10px 12px;border-radius:10px;font-size:calc(var(--ui-small-fs) - 1px);line-height:1.5;' +
-        'color:var(--text-1);background:rgba(var(--accent-2-rgb),0.10);border:1px solid rgba(var(--accent-2-rgb),0.45)}' +
-      '.hf-age-warn b{color:var(--accent-2)}' +
+      // v0.88: the shared-space warning rides ACCENT-3 (the warning tone)
+      // + the real triangle-alert glyph (IconLib, currentColor → accent-3).
+      '.hf-age-warn{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:10px;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);line-height:1.5;color:var(--text-1);' +
+        'background:rgba(var(--accent-3-rgb),0.10);border:1px solid rgba(var(--accent-3-rgb),0.45)}' +
+      '.hf-age-warn b{color:var(--accent-3)}' +
+      '.hf-age-warn-ic{display:inline-flex;flex-shrink:0;color:var(--accent-3);margin-top:1px}' +
       '.hf-age-sec{margin-top:3px;font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;letter-spacing:0.04em;' +
         'text-transform:uppercase;color:var(--text-3)}' +
       '.hf-age-copy{display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;border-radius:10px;' +
@@ -587,8 +597,7 @@
       '.hf-age-btn{min-height:44px;padding:11px 16px;border-radius:12px;font-size:calc(var(--ui-small-fs));' +
         'font-weight:600;font-family:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.hf-age-btn-go{background:var(--accent);color:var(--on-accent);border:none;' +
-        'background-image:var(--accent-gradient,none);background-attachment:fixed}' +
-      '.hf-age-btn-ghost{background:transparent;color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.5)}';
+        'background-image:var(--accent-gradient,none);background-attachment:fixed}';
     document.head.appendChild(s);
   }
   ensureStyles();

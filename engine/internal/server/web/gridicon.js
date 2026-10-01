@@ -69,12 +69,20 @@
     getPanelBodyHTML() { return '<div class="placeholder">No content.</div>'; }
 
     // ── Position the DOM element on screen ───────────────────────
+    // v0.88 THE AMBIENT ICON-WRITE GUARD: the ambient loop (dot/line
+    // twinkle with icons at rest) used to rewrite this transform on
+    // EVERY frame for EVERY icon — identical strings, 60+ style writes
+    // a second that each dirtied the element's compositor state. The
+    // write now rides a last-value guard; motion (drag/physics/pan)
+    // still writes per frame because the string genuinely changes.
     render(offsetX, offsetY, scale) {
       const s = scale || 1;
       const sx = (this.x - offsetX) * s;
       const sy = (this.y - offsetY) * s;
-      this.el.style.transform =
-        'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
+      const tf = 'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
+      if (this.__lastTf === tf) return;
+      this.__lastTf = tf;
+      this.el.style.transform = tf;
     }
 
     // ── Tap-flash animation ──────────────────────────────────────

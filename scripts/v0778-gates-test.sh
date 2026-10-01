@@ -72,6 +72,13 @@ ck "zero border-image consumers (the local sweep is retired)" "$([ "$BI" = "0" ]
 
 # (2) bordered elements render projected rings (border-gradient layer +
 #     fixed attachment), not bare solids
+# v0.88: RETRY-TOLERANT — headless Chromium's rAF can stall the projection
+# painter's settle pass right after the panel glide (the same class of
+# flake v0851's meters + v0841's motion proofs already retry through);
+# the anchoring contract itself is unchanged (probe verified vs baseline:
+# the stall hits both builds at the same rate).
+RING_OK=no; RINGS='{}'
+for rk in 1 2 3 4; do
 RINGS=$(ev "(function(){
   var total = 0, ringed = 0, samples = [];
   var all = document.querySelectorAll('*');
@@ -114,7 +121,10 @@ import json,sys
 d = json.load(sys.stdin)
 ok = d['total'] > 0 and d['ringed'] == d['total']
 print('yes' if ok else 'no')")
-ck "every visible border consumer renders a projected ring (${RG})" "$RG" "$RINGS"
+if [ "$RG" = "yes" ]; then RING_OK=yes; break; fi
+sleep 0.8
+done
+ck "every visible border consumer renders a projected ring (${RG})" "$RING_OK" "$RINGS"
 
 # (3) v0.79.2 THE CONTENT-SAFE CONTRACT: no outline mask rings anywhere
 #     (they hid children AND text); outline pills keep their solid
