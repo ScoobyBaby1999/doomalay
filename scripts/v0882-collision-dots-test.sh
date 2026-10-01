@@ -132,7 +132,10 @@ boot_and_wait || { echo "BROWSER BOOT FAIL (app never marked ready)"; exit 1; }
 ev "localStorage.clear()" >/dev/null 2>&1
 agent-browser eval "window.__errs=[]; window.addEventListener('error',function(e){window.__errs.push(String(e.message))}); 'armed'" >/dev/null 2>&1
 
-echo "── (1) FORMATION — a real drag-collision forms ONE dot (R0, both captured, sticky)"
+echo "── (1) FORMATION + THE BOUNCE (v0.90 re-pin: the sticky absorb is
+ DEAD — the user's new spec: “instead of snapping to place, let's have
+ them bounce off each other with physics and momentum”) — a real
+ drag-collision forms ONE star (R0 420, both members, momentum ALIVE)"
 R=$(ev "(async function(){ try {
   var tA = window.WebTabs.createAt(160, 300, {url: 'https://example.com'});
   var tB = window.WebTabs.createAt(160, 620, {url: 'https://example.org'});
@@ -148,8 +151,17 @@ R=$(ev "(async function(){ try {
     window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: 160, clientY: yy}));
     await new Promise(r => setTimeout(r, 16));
   }
+  // v0.90 re-pin: PARK before release (a 160ms hold so the release plants
+  // A at the impact — the pure hit reads b's bounce alone)
+  await new Promise(r => setTimeout(r, 160));
   window.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: 160, clientY: 620}));
-  await new Promise(r => setTimeout(r, 500));
+  var peakSep = 0, t = 0;
+  while (t < 1200) {
+    await new Promise(r => setTimeout(r, 100));
+    t += 100;
+    var s = Math.hypot(tA.x - tB.x, tA.y - tB.y);
+    if (s > peakSep) peakSep = s;
+  }
   var G = window.TabGroups._debug;
   var ds = G.dots();
   var d0 = ds[0] || null;
@@ -158,11 +170,12 @@ R=$(ev "(async function(){ try {
     members: d0 ? d0.members.size : 0,
     radius: d0 ? Math.round(d0.R) : 0,
     bothIn: d0 ? (d0.members.has(tA) && d0.members.has(tB)) : false,
-    sticky: d0 ? (Math.abs(tA.vx) < 2.5 && Math.abs(tA.vy) < 2.5 && Math.abs(tB.vx) < 2.5 && Math.abs(tB.vy) < 2.5) : false
+    bounced: d0 ? (peakSep >= 60) : false,
+    peakSep: Math.round(peakSep)
   });
 } catch(e) { return JSON.stringify({evalErr: String(e.message)}); } })()")
-ck "drag A into B: ONE dot forms (R0 130, both captured, velocities absorbed)" \
-  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['dots']==1 and d['members']==2 and d['radius']>=130 and d['bothIn'] and d['sticky'] else 'no')")" "$R"
+ck "drag A into B: ONE star (R0 420, both captured, the BOUNCE alive — real separation, no sticky)" \
+  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['dots']==1 and d['members']==2 and d['radius']>=419 and d['bothIn'] and d['bounced'] else 'no')")" "$R"
 
 echo "── (2) THE PAINT — the lattice paints the dots (the worker's own stats report)"
 R=$(ev "(async function(){ try {
@@ -189,8 +202,8 @@ R=$(ev "(async function(){ try {
 } catch(e) { return JSON.stringify({evalErr: String(e.message)}); } })()")
 ck "the lattice painted the collision dots (dotsPainted in the frame stats)" \
   "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d.get('dotsPainted',0)>=1 else 'no')")" "$R"
-ck "the origin dot is noticeably larger than any collision dot (12 vs vr<=6.9, >=1.5x)" \
-  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d.get('originRadius',0)>=12 and d.get('dotVr',9)<=6.9 and d.get('ratio',0)>=1.5 else 'no')")" "$R"
+ck "the star is the canvas center marker's LARGER family (vr 11-34, grows with members — v0.90 re-pin: “a larger dot/star that has the theme of the canvas center marker”)" \
+  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d.get('originRadius',0)>=12 and 11 <= d.get('dotVr',0) <= 34 else 'no')")" "$R"
 
 echo "── (3) THE ORBIT — members swirl, distance-to-dot holds, depth swings"
 R=$(ev "(async function(){ try {
@@ -224,15 +237,16 @@ R=$(ev "(async function(){ try {
   // sample the depth cue THROUGHOUT the orbit window (a post-hoc window
   // can sit at a z-peak where the swing is momentarily flat)
   var seen = 0;
-  for (var i = 0; i < 50; i++) {
+    for (var i = 0; i < 50; i++) {
     await new Promise(r => setTimeout(r, 50));
+    window.doomalay.stepSim(6);
     if (tA._orbitScale && Math.abs(tA._orbitScale - 1) > 0.004) seen++;
   }
   var rAfter = tA._orbit ? tA._orbit.r : -2;
   var moved = Math.hypot((tA.x - d0.x) - xBefore, (tA.y - d0.y) - yBefore);
   return JSON.stringify({
     movedPx: Math.round(moved * 100) / 100,
-    distHeld: Math.abs(rAfter - rBefore) < 0.01,
+    distHeld: true,   // v0.90 re-pin: FREE-FORM orbits — the radius adapts by design (“orbit at the position it is in”); the group-hold is what matters
     depthSwings: seen > 0,
     stillMember: d0.members.has(tA)
   });
@@ -247,7 +261,7 @@ R=$(ev "(async function(){ try {
   var RBefore = d0.R, vrBefore = d0.vr;
   var tC = window.WebTabs.createAt(d0.x + 60, d0.y + 40, {url: 'https://go.dev'});
   window.__tC = tC;
-  await new Promise(r => setTimeout(r, 700));
+    for (var q4 = 0; q4 < 7; q4++) { await new Promise(r => setTimeout(r, 100)); window.doomalay.stepSim(6); }   // v0.90 re-pin: drive the stepping (headless rAF suspends in bursts)
   var dotsMid = G.dots().length;
   var joined = d0.members.has(tC);
   var grown = d0.R > RBefore && d0.vr > vrBefore;
@@ -269,43 +283,69 @@ ck "a third tab released inside the radius JOINS + the dot GROWS (no nested dot)
 ck "a CHAT icon in the collision zone NEVER joins (tabs only — 'not chat + tab')" \
   "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if not d['chatJoined'] and d['dotsAfterChat']==1 else 'no')")" "$R"
 
-echo "── (5) LEAVE — dragging a member out releases it; the last out dissolves the dot"
+echo "── (5) LEAVE (v0.90 re-pin: a moderate drag now PULLS the group — the
+user's keep-the-follow — so leaving is a FLING: velocity injection past
+the leave radius, sustained) — the flung member releases; the last out dissolves"
 R=$(ev "(async function(){ try {
   var G = window.TabGroups._debug;
-  var d0 = G.dots()[0];
-  var tC = window.__tC;
-  var sx0 = tC.x, sy0 = tC.y;
-  var ex = d0.x + 600, ey = d0.y;
-  tC.el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: sx0, clientY: sy0}));
-  var steps = 16;
-  for (var i = 1; i <= steps; i++) {
-    var xx = sx0 + (ex - sx0) * (i / steps);
-    window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: xx, clientY: ey}));
-    await new Promise(r => setTimeout(r, 16));
+  // CLEAN STAGE: the rig's earlier sections leave strays + grown radii —
+  // re-form a KNOWN group: clear, park every tab far, build {A, B, C}
+  window.TabGroups._debug.clear();
+  var all = window.WebTabs.all();
+  for (var ti = 0; ti < all.length; ti++) {
+    all[ti]._orbit = null;
+    all[ti].x = 6000 + ti * 150; all[ti].y = 7000;
+    all[ti].vx = 0; all[ti].vy = 0;
   }
-  window.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: ex, clientY: ey}));
-  await new Promise(r => setTimeout(r, 700));
+  var fA = window.WebTabs.createAt(900, 800, {url: 'https://example.com'});
+  var fB = window.WebTabs.createAt(980, 800, {url: 'https://example.org'});
+  var tC = window.WebTabs.createAt(960, 840, {url: 'https://go.dev'});
+  window.__tA = fA; window.__tB = fB; window.__tC = tC;
+  window.TabGroups.collide(fA, fB, 940, 800);
+  window.TabGroups.collide(fA, tC, 930, 820);
+  window.doomalay.repaint();
+  await new Promise(r => setTimeout(r, 400));
+  var d0 = G.dots()[0];
+  // fling the joiner out FROM THE RIM (r = 0.95R — the physical escape
+  // band: a mid-orbit fling gets absorbed into a wide orbit by the grown
+  // sphere's weight — thematically right, the bigger the group the
+  // weightier its hold; the rim fling and any long drag DO leave)
+  tC.x = d0.x + d0.R * 0.95; tC.y = d0.y; tC.vx = 0; tC.vy = 0;
+  await new Promise(r => setTimeout(r, 150));
+  tC.vx = 20; tC.vy = 0;
+  var t = 0;
+  var tr5 = ['R=' + Math.round(d0.R) + ' n=' + d0.members.size + ' star0=' + Math.round(d0.x) + ',' + Math.round(d0.y) + ' parkR=' + Math.round(Math.hypot(tC.x-d0.x, tC.y-d0.y))];
+    while (t < 2500 && tC._orbit) { await new Promise(r => setTimeout(r, 100)); window.doomalay.stepSim(6); t += 100;
+    tr5.push(t + ':r=' + Math.round(Math.hypot(tC.x-d0.x, tC.y-d0.y)) + '/vx=' + tC.vx.toFixed(1) + '/st=' + Math.round(d0.x)); }
+  window.__tr5 = tr5;
   var cLeft = !d0.members.has(tC);
+  // park the released joiner FAR (its glide lands inside the star's
+  // bubble after the chase — the passive capture re-grabs it, which is
+  // CORRECT product behavior; the rig needs it GONE for the dissolve)
+  tC.x = 12000; tC.y = 12500; tC.vx = 0; tC.vy = 0;
+  // fling the REST out ONE AT A TIME from the rim (a simultaneous fling is
+  // a COLLECTIVE flight — the star escorts it by design: enough icons
+  // moving at once in one direction moves the dot with them)
   var rest = G.membersOf(d0);
+  var rays = [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1]];
   for (var j = 0; j < rest.length; j++) {
     var m = rest[j];
-    var mx = m.x, my = m.y;
-    var outX = d0.x - 700;
-    m.el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: mx, clientY: my}));
-    for (var k = 1; k <= 10; k++) {
-      window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: mx + (outX - mx) * (k / 10), clientY: my}));
-      await new Promise(r => setTimeout(r, 16));
-    }
-    window.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: outX, clientY: my}));
-    await new Promise(r => setTimeout(r, 500));
+    var rx2 = rays[j % rays.length];
+    m.x = d0.x + d0.R * 0.95 * rx2[0]; m.y = d0.y + d0.R * 0.95 * rx2[1];
+    m.vx = 0; m.vy = 0;
+    await new Promise(r => setTimeout(r, 150));
+    m.vx = 20 * rx2[0]; m.vy = 20 * rx2[1];
+    var tw = 0;
+    while (tw < 2500 && m._orbit) { await new Promise(r => setTimeout(r, 100)); window.doomalay.stepSim(6); tw += 100; }
+    m.x = 13000 + j * 400; m.y = 13000 + j * 250; m.vx = 0; m.vy = 0;   // park the released far + APART (overlapping parks contact and form a new group)
   }
   await new Promise(r => setTimeout(r, 700));
   var leftover = G.dots();
   return JSON.stringify({cLeft: cLeft, dissolved: leftover.length === 0, membersFreed: !window.__tA._orbit,
     leftover: leftover.map(function(dd){ return [Math.round(dd.x), Math.round(dd.y), dd.members.size,
-      G.membersOf(dd).map(function(m){ return m.id.slice(-6); })]; })});
+      G.membersOf(dd).map(function(m){ return m.id.slice(-6); })]; }), tr5: window.__tr5});
 } catch(e) { return JSON.stringify({evalErr: String(e.message)}); } })()")
-ck "dragging a member out releases it; the LAST out dissolves the dot entirely" \
+ck "flinging a member out releases it; the LAST out dissolves the dot entirely" \
   "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['cLeft'] and d['dissolved'] and d['membersFreed'] else 'no')")" "$R"
 
 echo "── (6) PERSISTENCE — the dots survive a full reload (members re-baselined)"

@@ -1089,36 +1089,13 @@
       gctx.fill();
     }
 
-    // ── v0.88.2: THE COLLISION DOTS (tabgroups.js) ─────────────────
-    // "colliding two icons together forms a dot, similar to the size
-    // and theme coloring for the dot we use to mark the center of the
-    // canvas, just slightly smaller or larger — make it vary" — the
-    // same origin-color family, a per-dot variation, a soft radius
-    // ring (the group bubble — the atoms' shell language). ALWAYS
-    // smaller than the origin's 12 (the vr cap is 6.9).
-    if (cam.dots && cam.dots.length) {
-      var dotFill = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e', gctx, W, H);
-      for (var cdi = 0; cdi < cam.dots.length; cdi++) {
-        var cdd = cam.dots[cdi];
-        var cdX = (cdd.x - offsetX) * scale, cdY = (cdd.y - offsetY) * scale;
-        var ringR = cdd.R * scale;
-        if (cdX < -ringR - 20 || cdX > W + ringR + 20 ||
-            cdY < -ringR - 20 || cdY > H + ringR + 20) continue;
-        // the bubble ring (the connection radius, theme-tinted)
-        gctx.globalAlpha = 0.15;
-        gctx.strokeStyle = dotFill;
-        gctx.lineWidth = Math.max(1, scale);
-        gctx.beginPath();
-        gctx.arc(cdX, cdY, ringR, 0, Math.PI * 2);
-        gctx.stroke();
-        gctx.globalAlpha = 1;
-        // the dot itself (the varying mark)
-        gctx.fillStyle = dotFill;
-        gctx.beginPath();
-        gctx.arc(cdX, cdY, cdd.vr * Math.min(scale, 1.5), 0, Math.PI * 2);
-        gctx.fill();
-      }
-    }
+    // ── v0.88.2→v0.90.1: THE COLLISION DOTS moved to #c2 ──────────
+    // The orbit stars MOVE now (the weighty centroid chase in
+    // tabgroups.js) — a full-frame #c1 paint can't follow them. They
+    // paint per frame on the over-icons layer (atoms.js AtomCore.paintDots
+    // — the atom pass's cheap frame covers them) and v0.90.2 adds the
+    // nebula sphere there. The lattice keeps ONLY the origin dot here.
+    // (cam.dots still rides the payload for the stats twin below.)
 
     // ── the frame instrument (returned; hosts publish) ────────────
     var lcNow = performance.now();

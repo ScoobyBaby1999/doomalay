@@ -135,7 +135,7 @@
   }
 
   // ── theme colors (cached — never per-frame getComputedStyle) ────
-  var colCache = { at: 0, accent: '#a78bfa', accent2: '#38bdf8', ring: 'rgba(120,130,140,0.35)' };
+  var colCache = { at: 0, accent: '#a78bfa', accent2: '#38bdf8', ring: 'rgba(120,130,140,0.35)', origin: '#4a4a5e' };
   function cssVar(name) {
     try {
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -162,6 +162,17 @@
       if (acc2) colCache.accent2 = acc2;
       var bs = triplet(cssVar('--border-strong'));
       colCache.ring = bs ? ('rgba(' + bs + ',0.35)') : 'rgba(120,130,140,0.35)';
+      // v0.90.1: THE ORBIT STAR's family — the canvas center marker's
+      // color (originColor: the user's setting → the theme's grid.origin
+      // — the SAME resolution the lattice's origin dot rides).
+      try {
+        var DT = (typeof window !== 'undefined') ? window.DoomTheme : null;
+        var ST = (typeof window !== 'undefined' && window.Settings) ? window.Settings.getState() : null;
+        if (DT && DT.effectiveGrid && ST) {
+          var oc = DT.effectiveGrid(ST).originColor;
+          if (/^#[0-9a-fA-F]{6}$/.test(oc || '')) colCache.origin = oc;
+        }
+      } catch (e) {}
     }
     return colCache;
   }
@@ -343,6 +354,7 @@
 
   ROOT.AtomCore = {
     paintCore: paintCore,
+    paintDots: paintDotsCore,
     shellLayout: shellLayout,
     starPos: starPos,
     SHELL_CAP: SHELL_CAP,
@@ -351,6 +363,60 @@
     TILT_BASIS: TILT_BASIS,   // v0.88: the precomputed per-level basis (pixiworld's shells ride it)
     MAX_WS: MAX_WS
   };
+
+  // ── v0.90.1 THE ORBIT STARS (the collision groups' centers) ────────
+  // Painted on the over-icons layer (#c2 — the per-frame atoms pass): the
+  // star MOVES (the weighty centroid chase in tabgroups.js), so the old
+  // full-frame #c1 lattice paint is retired. USER SPEC: "a larger
+  // dot/star that has the theme of the canvas center marker (by
+  // default). This star represents the center of the orbit." — the
+  // originColor family (the same resolution the lattice's origin dot
+  // rides) + an accent-tinted glow halo, breathing ±6% (alive). vr grows
+  // with each member (VR_MEMBER) — "the dot representing the center of
+  // the sphere should grow larger with each icon aswell".
+  // Dual-environment: the worker paints the same function (zero drift).
+  function paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors, t) {
+    if (!ctx || !dots || !dots.length) return 0;
+    var s = scale || 1;
+    var c = colors || {};
+    var acc = c.accent || '167,139,250';
+    var origin = (typeof c.origin === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.origin)) ? c.origin : '#4a4a5e';
+    var painted = 0;
+    for (var i = 0; i < dots.length; i++) {
+      var d = dots[i];
+      if (!d) continue;
+      var vr = Math.max(2, (d.vr || 11) * Math.min(s, 1.5));
+      var x = (d.x - offsetX) * s;
+      var y = (d.y - offsetY) * s;
+      if (x < -vr - 120 || x > W + vr + 120 || y < -vr - 120 || y > H + vr + 120) continue;
+      var pulse = 1 + 0.06 * Math.sin((t || 0) * 1.3 + (d.seed || 0) * Math.PI * 2);
+      // v0.90.1 RED-TEAM FIX: the plain originColor disc was INVISIBLE on
+      // the dark themes (the user: "currently it is either not implemented
+      // or does not render" — it rendered, it just didn't READ). The atom
+      // stars' own visibility language rides the family: a broad accent
+      // halo (the theme's visibility color) + the origin-family core + an
+      // accent spark. The star is the CENTER OF THE ORBIT — it must glow
+      // like the electrons do.
+      ctx.fillStyle = 'rgba(' + acc + ',0.10)';
+      ctx.beginPath();
+      ctx.arc(x, y, vr * 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(' + acc + ',0.22)';
+      ctx.beginPath();
+      ctx.arc(x, y, vr * 2.1 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = origin;
+      ctx.beginPath();
+      ctx.arc(x, y, vr * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(' + acc + ',0.95)';
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(1.2, vr * 0.38), 0, Math.PI * 2);
+      ctx.fill();
+      painted++;
+    }
+    return painted;
+  }
 
   // ── the main-thread twin (the feed + the themed wrapper) ──────────
   if (typeof document === 'undefined') return;   // worker: core only
@@ -363,8 +429,13 @@
 
   // countsOf — v0.85.2: the raw counts map (the worker frame payload
   // clones it; postMessage handles the copy). colorsFor — the cached
-  // theme triplets for the worker's atom pass ("r,g,b" strings).
+  // theme triplets for the worker's atom pass ("r,g,b" strings + the
+  // v0.90.1 origin hex for the orbit stars).
   function countsOf() { return counts; }
+
+  function paintDotsMain(ctx, W, H, offsetX, offsetY, scale, dots) {
+    return paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors(), performance.now() / 1000);
+  }
 
   window.Atoms = {
     refresh: refresh,
@@ -375,6 +446,7 @@
     colorsFor: function () { return colors(); },
     active: active,
     paint: paint,
+    paintDots: paintDotsMain,
     shellLayout: shellLayout,
     MAX_WS: MAX_WS,
     SHELL_CAP: SHELL_CAP,

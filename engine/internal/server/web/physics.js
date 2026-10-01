@@ -13,6 +13,17 @@
 //   • Collisions are circle-circle, equal-mass elastic. When one entity
 //     is being dragged (dragging=true), it's treated as infinite mass —
 //     it doesn't move from physics, and other entities bounce off it.
+//   • v0.90.1 THE BOUNCE: the impact boost is VELOCITY-PROPORTIONAL ("an
+//     exponential curve out that varies depending on impact velocity") —
+//     the injected separation speed scales with the closing speed
+//     (momentum), clamped so every bounce stays inside the group sphere
+//     (R0 420 — a full-speed hit separates the pair ~300-450px and they
+//     stay grouped). Grouped members collide with EACH OTHER too (v0.89.1's
+//     same-group skip is gone — "icons can disturb other icons in the
+//     sphere when moved") and grouped members skip FRICTION while
+//     _orbit is set (tabgroups.js's steering blend is their damping —
+//     friction would bleed the sustained orbit speed to a stop; a
+//     released icon regains friction and its flight decays classically).
 //   • There are no edge collisions: the canvas is infinite, so chatbots
 //     can fly off-screen if flung hard. The user pans to find them.
 
@@ -35,12 +46,19 @@
   // 8-balls on a pool table, retaining almost all impact energy.
   const RESTITUTION = 0.98;
 
-  // Impact boost: extra velocity injected into the HIT icon on collision,
-  // on top of the elastic exchange. This makes collisions feel weighty —
-  // the hit icon gets visibly "swung" away, not just gently pushed.
-  // 17.5 = 5× the previous value. A moderate-speed hit sends the target
-  // sliding ~200-300px with a satisfying bounce. 8-ball aesthetic.
-  const IMPACT_BOOST = 17.5;
+  // Impact boost: extra velocity injected into the separation on
+  // collision, on top of the elastic exchange. v0.90.1: VELOCITY-
+  // PROPORTIONAL — the harder the hit, the harder the bounce (momentum
+  // feel). Clamps keep every bounce INSIDE the group sphere (R0 420:
+  // a full-speed free-free hit separates the pair ~300-450px — "3-4× the
+  // old visual scale" — and they stay grouped; the orbit blend's k 2.5/s
+  // is the exponential curve-out, τ≈0.4s).
+  const BOOST_K = 0.7;        // free-free: separation ≈ 0.7× closing speed each
+  const BOOST_MIN = 1.5;
+  const BOOST_MAX = 14;
+  const DRAG_BOOST_K = 0.85;   // dragged plow: the finger's speed along the normal
+  const DRAG_BOOST_MIN = 2;
+  const DRAG_BOOST_MAX = 16;
 
   // An Entity is anything that has a position, velocity, and radius.
   // Chatbot extends this (see chatbot.js).
@@ -89,14 +107,19 @@
       const ents = this.entities;
 
       // ── 1) Integration ────────────────────────────────────────
+      // v0.90.1: grouped members (e._orbit) skip friction — their damping
+      // is the orbit steering's exponential blend (a sustained orbit
+      // speed must not decay); MIN_VEL zeroing would stall slow orbits.
       for (const e of ents) {
         if (e.dragging) continue;
         e.x += e.vx;
         e.y += e.vy;
-        e.vx *= FRICTION;
-        e.vy *= FRICTION;
-        if (Math.abs(e.vx) < MIN_VEL && Math.abs(e.vy) < MIN_VEL) {
-          e.vx = 0; e.vy = 0;
+        if (!e._orbit) {
+          e.vx *= FRICTION;
+          e.vy *= FRICTION;
+          if (Math.abs(e.vx) < MIN_VEL && Math.abs(e.vy) < MIN_VEL) {
+            e.vx = 0; e.vy = 0;
+          }
         }
       }
 
@@ -120,14 +143,13 @@
 
           // v0.88.2: report the contact (both entities touched this
           // frame — the collision-dot formation listens for web-tab
-          // pairs). Same-group members skip the position correction
-          // below (the orbit owns their position — a physics push would
-          // rubber-band against it), but the contact still reports.
+          // pairs). v0.90.1: the same-group skip is GONE — members
+          // collide with and disturb each other (the orbit no longer
+          // owns positions; physics does, and the steering re-settles
+          // whatever the bounce disturbs).
           if (this.onContacts) {
             this._contacts.push({ a: a, b: b, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
           }
-          var sameGroup = !!(a._orbit && b._orbit && a._orbit.dot === b._orbit.dot);
-          if (sameGroup) continue;
 
           // ── Position correction ──────────────────────────────
           // Push entities apart so they're just touching. If one is
@@ -149,9 +171,9 @@
           // fighting the cursor)
 
           // ── Velocity response ────────────────────────────────
-          // The IMPACT_BOOST injects extra velocity into the HIT icon
-          // (the one being pushed away) so collisions feel weighty —
-          // the target gets visibly "swung" away, not just nudged.
+          // The elastic exchange + the velocity-proportional boost
+          // together make collisions feel weighty — the target gets
+          // visibly "swung" away with real momentum.
           if (a.dragging && !b.dragging) {
             // a = infinite mass, b reflects off it. n points from a → b.
             // b's velocity along n: vbn. If vbn < 0, b is moving toward
@@ -161,9 +183,14 @@
               b.vx -= (1 + RESTITUTION) * vbn * nx;
               b.vy -= (1 + RESTITUTION) * vbn * ny;
             }
-            // Boost: b gets pushed away from a along the normal.
-            b.vx += nx * IMPACT_BOOST;
-            b.vy += ny * IMPACT_BOOST;
+            // v0.90.1: the boost scales with the FINGER's plow speed
+            // along the normal (a.vx/vy carries the live drag velocity
+            // — app.js wires it) — "varies depending on impact velocity".
+            const impact = Math.max(0, a.vx * nx + a.vy * ny);
+            const boost = Math.min(DRAG_BOOST_MAX,
+              Math.max(DRAG_BOOST_MIN, impact * DRAG_BOOST_K));
+            b.vx += nx * boost;
+            b.vy += ny * boost;
           } else if (b.dragging && !a.dragging) {
             // b = infinite mass, a reflects off it. n points from a → b.
             // a's velocity along n: van. If van > 0, a is moving toward
@@ -173,9 +200,12 @@
               a.vx -= (1 + RESTITUTION) * van * nx;
               a.vy -= (1 + RESTITUTION) * van * ny;
             }
-            // Boost: a gets pushed away from b (negative normal direction).
-            a.vx -= nx * IMPACT_BOOST;
-            a.vy -= ny * IMPACT_BOOST;
+            // v0.90.1: velocity-proportional (b's plow speed toward a).
+            const impact = Math.max(0, -(b.vx * nx + b.vy * ny));
+            const boost = Math.min(DRAG_BOOST_MAX,
+              Math.max(DRAG_BOOST_MIN, impact * DRAG_BOOST_K));
+            a.vx -= nx * boost;
+            a.vy -= ny * boost;
           } else if (!a.dragging && !b.dragging) {
             // Both free — equal-mass elastic collision along the normal.
             // Exchange normal components, scaled by restitution.
@@ -195,11 +225,12 @@
               a.vy += (new_van - van) * ny;
               b.vx += (new_vbn - vbn) * nx;
               b.vy += (new_vbn - vbn) * ny;
-              // Boost: both get pushed apart along the normal so the
-              // collision has visible impact energy. b gets +n, a gets -n.
-              // Scale by the approach speed so fast hits boost more.
+              // v0.90.1: the boost scales with the APPROACH speed
+              // (momentum) — "an exponential curve out that varies
+              // depending on impact velocity". No saturation at 5 —
+              // the clamp keeps a hard fling inside the world scale.
               const approach = van - vbn;
-              const boost = IMPACT_BOOST * Math.min(1, approach / 5);
+              const boost = Math.min(BOOST_MAX, Math.max(BOOST_MIN, approach * BOOST_K));
               b.vx += nx * boost;
               b.vy += ny * boost;
               a.vx -= nx * boost;
@@ -218,5 +249,7 @@
     }
   }
 
-  window.Physics = { Entity, World, FRICTION, MIN_VEL, RESTITUTION, IMPACT_BOOST };
+  window.Physics = { Entity, World, FRICTION, MIN_VEL, RESTITUTION,
+                     BOOST_K, BOOST_MIN, BOOST_MAX,
+                     DRAG_BOOST_K, DRAG_BOOST_MIN, DRAG_BOOST_MAX };
 })();

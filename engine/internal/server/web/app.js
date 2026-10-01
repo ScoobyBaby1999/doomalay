@@ -376,6 +376,7 @@
     if (atomsOnly) {
       if (ctx2) ctx2.clearRect(0, 0, W, H);
       paintAtoms();
+      paintOrbitStars();   // v0.90.1: the orbit stars ride the cheap frame too
       return;
     }
     var stats = Lattice.render(ctx, ctx2, W, H,
@@ -385,6 +386,7 @@
     publishLatticeStats(stats);
     renderOffScreenArrows();
     paintAtoms();
+    paintOrbitStars();   // v0.90.1: the stars on the over-icons layer (they move)
   }
   function renderGrid() { paintGridFrame(false); }
 
@@ -641,6 +643,29 @@
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
       update(); scheduleSave();
     },
+    // v0.90.1: the camera readback for the E2E rigs (the collision rigs
+    // map world targets to screen mouse events).
+    getView: function () { return { ox: offsetX, oy: offsetY, scale: scale }; },
+    // v0.90.1: the camera writer (its twin) — the visual rigs center the
+    // group for the screenshot probes.
+    setView: function (ox, oy, s) {
+      if (typeof ox === 'number') offsetX = ox;
+      if (typeof oy === 'number') offsetY = oy;
+      if (typeof s === 'number') scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+      update();
+    },
+    // v0.90.1: THE SIM STEPPER for the E2E rigs — advances physics + the
+    // orbit steering TOGETHER at the tick's own 60Hz pairing with a
+    // synthetic clock (headless pages suspend rAF in bursts; the rigs
+    // drive the dynamics deterministically). Real usage never calls this.
+    stepSim: function (frames) {
+      var n = Math.max(1, frames | 0);
+      var t0 = performance.now();
+      for (var i = 1; i <= n; i++) {
+        world.step();
+        if (window.TabGroups && window.TabGroups.active()) window.TabGroups.step(t0 + i * 16.67);
+      }
+    },
     // v0.85.4: repaint — the world layer calls this when it (de)activates
     // (the handover needs exactly one fresh frame: activation clears the
     // stale #c2 stars, deactivation restores them).
@@ -796,6 +821,21 @@
     } catch (e) {}
   }
   var atomStats = null;
+  // v0.90.1: paintOrbitStars — the collision groups' stars on #c2, the
+  // per-frame layer (they MOVE — the weighty centroid chase). Painted in
+  // BOTH frame paths (the cheap atom-only frame and the full frame),
+  // independent of atom ownership (World3D may own the atom stars; the
+  // orbit stars are the group system's).
+  function paintOrbitStars() {
+    if (!window.Atoms || !window.Atoms.paintDots || !ctx2) return;
+    var dots = (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : [];
+    if (!dots.length) return;
+    var n = window.Atoms.paintDots(ctx2, W, H, offsetX, offsetY, scale, dots);
+    try {
+      if (!window.DoomalayDebug) window.DoomalayDebug = {};
+      window.DoomalayDebug.orbitStars = n;
+    } catch (e) {}
+  }
   function update() {
     world.step();
     // v0.85.2: renderGrid funnels through paintGridFrame — the lattice
@@ -832,6 +872,11 @@
     var orbitMoved = false;
     if (window.TabGroups && window.TabGroups.active()) orbitMoved = window.TabGroups.step(performance.now());
     for (const e of world.entities) {
+      // v0.90.1: grouped members' orbital drift is AMBIENT (the atoms-only
+      // cheap frame + the members' own render below cover it) — it must not
+      // classify the canvas as "moving" (that meant a full lattice frame
+      // + a save EVERY frame, forever, while a group exists).
+      if (e._orbit) continue;
       if (!e.dragging && (Math.abs(e.vx) > 0.01 || Math.abs(e.vy) > 0.01)) {
         moving = true; break;
       }
@@ -1193,6 +1238,13 @@
         dragVel.vx = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vx));
         dragVel.vy = Math.max(-MAX_FLING, Math.min(MAX_FLING, dragVel.vy));
         dragVel.t = now;
+        // v0.90.1: the LIVE drag velocity rides the entity (world units)
+        // — physics reads it for the velocity-proportional impact boost
+        // ("an exponential curve out that varies depending on impact
+        // velocity"). Physics never integrates a dragging entity, so
+        // this is purely the impact math's input.
+        draggedIcon.vx = dragVel.vx / scale;
+        draggedIcon.vy = dragVel.vy / scale;
       }
       update();
     }

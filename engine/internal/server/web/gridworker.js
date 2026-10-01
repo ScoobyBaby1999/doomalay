@@ -83,6 +83,7 @@ function paintFrame(m) {
   // v0.88: the entity-clone omission — clone set arrives only on change
   if (m.entities !== undefined && m.entities !== null) { E = m.entities; entsMsgs++; }
   var stats = null, atomStats = null;
+  var paintedDots = 0;
   if (m.atomsOnly) {
     // v0.84.1 THE ATOM-ONLY FRAME (worker-side twin): nothing else moved —
     // the grid and the icons are pixel-stable; repaint ONLY the star layer.
@@ -92,6 +93,13 @@ function paintFrame(m) {
         E, m.counts || {}, m.colors || null,
         performance.now() / 1000 - t0);
       atomFrames++;
+    }
+    // v0.90.1: THE ORBIT STARS paint on #c2 EVERY cheap frame — the star
+    // MOVES (the weighty centroid chase), independent of atom ownership
+    // (the World3D layer may own the atom stars; the orbit stars are ours).
+    if (m.dots && m.dots.length && gctx2) {
+      paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
+        m.dots, m.colors || null, performance.now() / 1000);
     }
   } else {
     // v0.88.2: m.cam.dots rides the per-frame payload (the collision
@@ -124,6 +132,11 @@ function paintFrame(m) {
         E, m.counts || {}, m.colors || null,
         performance.now() / 1000 - t0);
     }
+    // v0.90.1: the orbit stars ride the full frame's #c2 pass too
+    if (m.dots && m.dots.length && gctx2) {
+      paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
+        m.dots, m.colors || null, performance.now() / 1000);
+    }
     fullFrames++;
   }
   frames++;
@@ -139,6 +152,7 @@ function paintFrame(m) {
   blob.ents = E.length;        // v0.88: the honest instrument — the cached clone count
   blob.entsMsgs = entsMsgs;    // v0.88: how many frames actually carried clones
   blob.worker = true;
+  blob.orbitStars = paintedDots;   // v0.90.1: the honest star-paint counter (worker mode)
   if (atomStats) blob.atoms = atomStats;
   else if (m.atomsOnly) blob.atoms = atomStats || blob.atoms || { chats: 0, stars: 0, shells: 0 };
   self.postMessage({ t: 'debug', blob: blob, pf: Pf });
