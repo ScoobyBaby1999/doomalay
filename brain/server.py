@@ -156,10 +156,27 @@ def health():
 # simulations, games. This is the "turn the Space into a viewable app"
 # primitive documented in brain/HARNESS.md. Safe by construction: static
 # file types only, resolved-and-prefixed (no traversal), no listing.
-PUBLIC_ROOT = Path(os.environ.get(
-    "DOOMALAY_PUBLIC_ROOT",
-    "/data/public" if os.path.isdir("/data") else "/tmp/doomalay-public",
-))
+# v0.91.4 THE PERSISTENT PUBLIC ROOT — candidates in priority order:
+#   1. DOOMALAY_PUBLIC_ROOT (explicit override, tests ride this)
+#   2. /data/public          — persistent storage mounts (when present)
+#   3. <repo>/public         — a public/ dir COMMITTED to the space repo
+#                              (persistent by construction: restarts rebuild
+#                              from the repo — the agent commits its game
+#                              here via the HF API to survive restarts)
+#   4. /tmp/doomalay-public  — the ephemeral fallback (wiped on restart)
+def _resolve_public_root() -> Path:
+    env = os.environ.get("DOOMALAY_PUBLIC_ROOT")
+    if env:
+        return Path(env)
+    if os.path.isdir("/data"):
+        return Path("/data/public")
+    repo_pub = Path(__file__).resolve().parent.parent / "public"
+    if repo_pub.is_dir():
+        return repo_pub
+    return Path("/tmp/doomalay-public")
+
+
+PUBLIC_ROOT = _resolve_public_root()
 
 _PUB_MIME = {
     ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",

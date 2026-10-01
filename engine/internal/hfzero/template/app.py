@@ -57,7 +57,7 @@ from pathlib import Path
 import spaces  # noqa: F401  — MUST import before defining the probe
 import gradio as gr
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 HERE = Path(__file__).parent
 
@@ -277,8 +277,36 @@ async def _lifespan(_app):
 app = FastAPI(title="Doomalay Sandbox", version="0.46.0", lifespan=_lifespan)
 
 
+# ── v0.91.4 THE SPACE'S FACE IS THE AGENT'S WORK ─────────────────────────
+# User report: visiting the space shows the JSON info blob while the game
+# the agent built lives one path deeper ("/pub/"). When the agent has
+# published a public root (brain/server.py's /pub primitive — a game, a
+# dashboard, an index.html), the space ROOT serves it; the JSON blob stays
+# the EMPTY-space default (the honest inventory). Containment + size ride
+# the same rules as the /pub route.
+
+
+def _published_index():
+    """The agent's published index.html under the brain's PUBLIC_ROOT, or None."""
+    try:
+        pub = getattr(brain_mod, "PUBLIC_ROOT", None)
+        if pub is None:
+            return None
+        base = pub.resolve()
+        cand = (base / "index.html").resolve()
+        if cand.is_file() and (cand == base or base in cand.parents):
+            if cand.stat().st_size <= 64 * 1024 * 1024:
+                return cand
+    except Exception:  # noqa: BLE001 — the root must never 500 on pub probing
+        return None
+    return None
+
+
 @app.get("/")
 def root():
+    _idx = _published_index()
+    if _idx is not None:
+        return FileResponse(_idx, media_type="text/html; charset=utf-8")
     return {
         "app": "doomalay-sandbox",
         "version": "0.46.0",

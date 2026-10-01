@@ -88,19 +88,40 @@ when the package exists there.
 
 ## Serving things at the Space root (viewable apps & games)
 
-Anything you write to the **public root** (`/data/public`, or
-`$DOOMALAY_PUBLIC_ROOT` when set) is served **openly** at:
+Anything you write to the **public root** is served **openly**, and when
+an `index.html` exists there it is ALSO the **Space's landing page** —
+visiting the Space URL directly shows your work (a game, a dashboard),
+not the JSON info blob.
 
-    https://<this-space>.hf.space/pub/<file>
+The public root (first match wins):
 
-- Write `/data/public/index.html` → it becomes the landing page at `/pub/`.
+1. `$DOOMALAY_PUBLIC_ROOT` when set
+2. `/data/public` — persistent storage, when mounted
+3. `public/` in the Space's repo — **the persistent path that survives
+   restarts** (see below)
+4. `/tmp/doomalay-public` — ephemeral fallback (wiped on every restart)
+
+Serving:
+
+    https://<this-space>.hf.space/pub/<file>   ← always
+    https://<this-space>.hf.space/             ← your index.html, when present
+
 - Static files only (html/css/js/png/svg/json/csv…), correct MIME types,
   no directory listing, no traversal.
 - This is how you turn the Space into something the user can SEE and USE in
   a browser — dashboards, simulations, games. Keep the per-turn chat answer
-  short and link the `/pub/` URL.
+  short and link the Space URL.
 - The public root is shared per Space — namespace your subfolders when
-  several files coexist (e.g. `/data/public/evolution/index.html`).
+  several files coexist (e.g. `public/evolution/index.html`).
+
+**MAKING IT SURVIVE RESTARTS (v0.91.4):** `/tmp` is wiped and `/data`
+is not mounted on free Spaces — a game written to the ephemeral root
+VANISHES when the Space restarts. To publish persistently, use the `hf`
+tool to COMMIT your files into the Space repo under `public/` (e.g.
+`public/index.html`) — the repo IS the Space's disk. The serving order
+above picks the repo's `public/` up automatically on the next boot, and
+the landing page keeps working across restarts. Do this for anything the
+user should see again tomorrow.
 
 ## HF self-management (the `hf` tool)
 
