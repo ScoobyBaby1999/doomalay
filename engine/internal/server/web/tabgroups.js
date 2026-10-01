@@ -42,8 +42,11 @@
 // the orbit."
 //
 // v0.89.1 COMPAT: serialize v2 (member ids only); v1 saves (r/phi/ax
-// members) load by id. The web-only formation filter stays until v0.90.3
-// ("for now, we implement the functionality of tabs alone").
+// members) load by id. v0.90.3: ANY two icons form/join — the orbit is
+// a communication layer for every icon kind (chats orbit too — their
+// workspace stars keep orbiting THEM: nested atoms); the TAB-side
+// functionality (the keep-alive's isGrouped protection) stays tab-only
+// by consumption (webpanel's LRU only asks about web tabs).
 //
 // Exposes: window.TabGroups = { collide, step, active, isGrouped,
 //                                members, dotsFor, serialize, deserialize,
@@ -129,13 +132,13 @@
     return (icon && icon._orbit && icon._orbit.dot) || null;
   }
 
-  // ── collide(a, b, cx, cy) — the contact tap's handler (web+web only
-  // until v0.90.3; app.js filters). Returns true when the group topology
-  // changed (app.js repaints the grid furniture). v0.90: NO velocity
-  // zeroing — the bounce LIVES (physics.js owns it).
+  // ── collide(a, b, cx, cy) — the contact tap's handler (v0.90.3: ANY
+  // icon pair — "if any two icons they start the orbit and create a
+  // communication layer, not just tabs"). Returns true when the group
+  // topology changed (app.js repaints the grid furniture). v0.90: NO
+  // velocity zeroing — the bounce LIVES (physics.js owns it).
   function collide(a, b, cx, cy) {
     if (!a || !b || a === b) return false;
-    if (a.type !== 'web' || b.type !== 'web') return false;
     var da = dotOf(a), db = dotOf(b);
 
     // an INTRA-GROUP touch (both already members of the SAME dot): the
@@ -351,12 +354,13 @@
         moved = true;
       });
 
-      // ── 3) PASSIVE capture: a free web tab resting inside the bubble
-      // joins (drift-ins and drag-releases inside the radius)
+      // ── 3) PASSIVE capture: a free icon resting inside the bubble
+      // joins (drift-ins and drag-releases inside the radius) — ANY type
+      // (v0.90.3: the orbit is for every icon kind)
       var ents = (window.doomalay && window.doomalay.world && window.doomalay.world.entities) || [];
       for (var ei = 0; ei < ents.length; ei++) {
         var e = ents[ei];
-        if (e.type !== 'web' || e._orbit || e.dragging) continue;
+        if (e._orbit || e.dragging) continue;
         var edx = e.x - dot.x, edy = e.y - dot.y;
         if (Math.hypot(edx, edy) <= dot.R) {
           capture(dot, e);
@@ -417,7 +421,7 @@
         var mid = (typeof src[i] === 'string') ? src[i] : (src[i] && src[i].id);
         if (!mid) continue;
         for (var j = 0; j < ents.length; j++) {
-          if (ents[j].id === mid && ents[j].type === 'web') { capture(dot, ents[j]); break; }
+          if (ents[j].id === mid) { capture(dot, ents[j]); break; }   // v0.90.3: any icon type
         }
       }
       if (!dot.members.size) dissolve(dot);

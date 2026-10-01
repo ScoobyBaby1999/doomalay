@@ -280,8 +280,8 @@ R=$(ev "(async function(){ try {
 } catch(e) { return JSON.stringify({evalErr: String(e.message)}); } })()")
 ck "a third tab released inside the radius JOINS + the dot GROWS (no nested dot)" \
   "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['joined'] and d['grown'] and d['stillOneDot'] else 'no')")" "$R"
-ck "a CHAT icon in the collision zone NEVER joins (tabs only — 'not chat + tab')" \
-  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if not d['chatJoined'] and d['dotsAfterChat']==1 else 'no')")" "$R"
+ck "a CHAT icon in the collision zone JOINS TOO (v0.90.3 re-pin: any icon orbits — 'if any two icons they start the orbit and create a communication layer, not just tabs')" \
+  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['chatJoined'] and d['dotsAfterChat']==1 else 'no')")" "$R"
 
 echo "── (5) LEAVE (v0.90 re-pin: a moderate drag now PULLS the group — the
 user's keep-the-follow — so leaving is a FLING: velocity injection past

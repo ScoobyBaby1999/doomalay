@@ -473,18 +473,17 @@
   const world = new Physics.World();
   const iconLayer = document.getElementById('chatbots');
   // v0.88.2: THE CONTACT TAP — every physics frame's touches report here
-  // once; web-tab pairs feed THE COLLISION DOTS (tabgroups.js — "we can
-  // make tab icons form connections if the user moves them and collides
-  // the icons on the canvas"). A topology change repaints the grid
-  // furniture (the dot + its bubble ring are painted state).
+  // once; v0.90.3: ANY icon pair feeds the orbit groups ("if any two icons
+  // they start the orbit and create a communication layer, not just tabs"
+  // — chats orbit too, their workspace stars nested atop). A topology
+  // change repaints the grid furniture (the star + its sphere are painted
+  // state on #c2).
   world.onContacts = function (contacts) {
     if (!window.TabGroups) return;
     var changed = false;
     for (var i = 0; i < contacts.length; i++) {
       var c = contacts[i];
-      if (c.a && c.b && c.a.type === 'web' && c.b.type === 'web') {
-        if (window.TabGroups.collide(c.a, c.b, c.x, c.y)) changed = true;
-      }
+      if (c.a && c.b && window.TabGroups.collide(c.a, c.b, c.x, c.y)) changed = true;
     }
     if (changed) { update(); startAnimation(); }
   };
