@@ -579,6 +579,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         tabIconSrc = src
         if (src.isEmpty()) {
             activity.runOnUiThread {
+                // v0.87.5: the glyph tints with text1 (re-applied — a
+                // favicon that showed before us left the tint null)
+                tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
                 tabIconBtn?.setImageResource(R.drawable.ic_globe)
                 tabIconBtn?.visibility = View.VISIBLE
             }
@@ -588,6 +591,12 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             val bmp = loadIconBitmap(src)
             activity.runOnUiThread {
                 if (bmp != null && tabIconSrc == src) {
+                    // v0.87.5: THE WHITE-ICON FIX — a favicon bitmap is
+                    // CONTENT, not chrome: the placeholder's imageTintList
+                    // (text1) must never monochrome it (it rendered as a
+                    // white silhouette in the dark themes — the badge and
+                    // shape held, the PNG did not)
+                    tabIconBtn?.imageTintList = null
                     tabIconBtn?.setImageBitmap(bmp)
                     tabIconBtn?.visibility = View.VISIBLE
                 }
@@ -602,7 +611,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         if (icon.isNotEmpty()) setTabIcon(tabIconTab.toString())
         else activity.runOnUiThread {
             tabIconBtn?.visibility = if (tabIconTab != null) View.VISIBLE else View.GONE
-            if (tabIconTab != null) tabIconBtn?.setImageResource(R.drawable.ic_globe)
+            if (tabIconTab != null) {
+                // v0.87.5: the globe is a glyph — tints with text1
+                tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
+                tabIconBtn?.setImageResource(R.drawable.ic_globe)
+            }
         }
     }
 
@@ -1845,8 +1858,13 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // colors (favicons + uploaded images are content, not chrome —
         // the placeholder globe tints with text1 like its siblings).
         tabIconBtn?.background = chip(surface, 17f, border)
+        // v0.87.5: the tint follows the CONTENT kind — the globe glyph
+        // tints with text1; a real favicon bitmap never tints (the
+        // theme pass only owns the placeholder's look)
         if (tabIconSrc.isNullOrEmpty()) {
             tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
+        } else {
+            tabIconBtn?.imageTintList = null
         }
 
         // v0.87.3: the redirect guard banner — the theme surface + a

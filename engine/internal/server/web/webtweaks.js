@@ -392,10 +392,34 @@
   }
 
   // ── the entries ───────────────────────────────────────────────────
-  function open(panel, icon) {
+  // v0.87.5: open(panel, icon, opts) — opts.fromSheet marks the NATIVE
+  // handoff (app.js's openWebTweaksFor): the user's real browser is the
+  // native sheet (paused, its WebView state intact). When the tweaks
+  // view closes (‹ back / ✕ / Android back / Escape), the view's
+  // onClose re-opens the SHEET — not the SPA's browser twin (the old
+  // flow stranded the user on the SPA's card for frame-refusing sites —
+  // the "two pills + a website description" screen).
+  function open(panel, icon, opts) {
     if (!panel || !icon) return;
-    cur = { panel: panel, icon: icon };
-    panel.pushView(buildView());
+    cur = { panel: panel, icon: icon, fromSheet: !!(opts && opts.fromSheet) };
+    var v = buildView();
+    if (cur.fromSheet) {
+      v.onClose = function () {
+        var ic = cur && cur.icon, p = cur ? cur.panel : panel;
+        cur = null;
+        // back to THEIR browser: the sheet resumes (no reload — the
+        // WebView was only onPause'd; scroll, forms and history all
+        // survive), and the master panel steps away (ONE panel).
+        try {
+          if (ic && window.WebTabs && typeof window.WebTabs.openNative === 'function' &&
+              window.InAppBrowser) {
+            window.WebTabs.openNative(ic);
+          }
+        } catch (e) {}
+        try { if (p && p.close) p.close(); } catch (e) {}
+      };
+    }
+    panel.pushView(v);
   }
 
   // openFor(tabId) — the NATIVE handoff: PanelBrowserSheet's circle

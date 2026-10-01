@@ -575,6 +575,15 @@
     // browser view with the tweaks stacked over it. On BIB builds the
     // native panel just stepped away; here the master panel takes the
     // stage (ONE panel at a time, still).
+    // v0.87.5: the SPA's browser twin is NO LONGER rendered under the
+    // tweaks view (it was a wasted verdict fetch + iframe load — and
+    // the ‹-back TRAP: popping the view surfaced the SPA's card for
+    // frame-refusers, the "two pills + a description" screen, instead
+    // of the user's actual browser). The panel now opens with a bare
+    // placeholder; the tweaks view owns the stage; ‹ back (the view's
+    // onClose) re-opens the NATIVE SHEET — its WebView was only
+    // paused, so the user's real browsing state (scroll, forms,
+    // history) returns untouched.
     openWebTweaksFor: function (tabId) {
       var tabs = (window.WebTabs && window.WebTabs.all()) || [];
       var icon = null;
@@ -582,9 +591,20 @@
         if (tabs[i].id === tabId) { icon = tabs[i]; break; }
       }
       if (!icon) return false;
-      openWebPanelFor(icon, { skipNative: true });
+      var modelBtn = document.getElementById('panel-model-btn');
+      if (modelBtn) { modelBtn.style.display = 'none'; modelBtn.onclick = null; }
+      panel.bodyEl.style.padding = '';
+      panel.open({
+        title: icon.getPanelTitle(),
+        subtitle: icon.getPanelSubtitle(),
+        avatarHTML: icon.getAvatarHTML(),
+        bodyHTML: '<div class="wt-loading"><span>·</span><span>·</span><span>·</span></div>',
+        context: icon
+      });
+      // the circle mirrors the tab (the panel's own header twin)
+      paintTabCircle(icon);
       if (window.WebTweaks && typeof window.WebTweaks.open === 'function') {
-        window.WebTweaks.open(panel, icon);
+        window.WebTweaks.open(panel, icon, { fromSheet: true });
       }
       return true;
     },
