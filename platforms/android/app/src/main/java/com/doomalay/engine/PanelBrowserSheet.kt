@@ -685,6 +685,20 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private val searchHosts = hashSetOf(
         "duckduckgo.com", "google.com", "bing.com", "brave.com",
         "startpage.com", "ecosia.org", "qwant.com", "search.marcia.com")
+
+    // v0.89.1 (user spec): OUR OWN SITES are exempt too — "exclude
+    // hugging face, GitHub, and other sites we use from the redirect
+    // flow". These are the hosts the app's own flows land on (the Hub +
+    // Spaces, the forges, the providers' portals/signup/docs); asking
+    // "do you want to be redirected" there is noise, not safety. The
+    // test is TARGET-based (any redirect landing on one of our services
+    // follows silently) and keyed on the REGISTRABLE domain, so every
+    // subdomain (portal./docs./api./console.…) rides the same entry.
+    // Kept in lockstep with the web twin (webpanel.js TRUSTED_HOSTS).
+    private val trustedHosts = hashSetOf(
+        "huggingface.co", "hf.co", "github.com", "gitea.com",
+        "gitlab.com", "sourcehut.org", "privatemode.ai",
+        "opencode.ai", "nvidia.com")
     private fun hostOfUrl(u: String): String = try {
         java.net.URI(u).host?.lowercase()?.removePrefix("www.") ?: ""
     } catch (e: Exception) { "" }
@@ -699,6 +713,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         if (fromHost.isEmpty() || toHost.isEmpty()) return false
         if (registrableDomain(fromHost) == registrableDomain(toHost)) return false
         if (searchHosts.contains(registrableDomain(fromHost))) return false
+        if (trustedHosts.contains(registrableDomain(toHost))) return false
         activity.runOnUiThread { showGuard(target, fromHost, toHost) }
         return true
     }

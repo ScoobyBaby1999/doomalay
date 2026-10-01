@@ -346,6 +346,18 @@
     ctx._restoreScroll = false;
   }
 
+  // v0.89.1 (user spec): OUR OWN SITES are exempt from the redirect
+  // guard — "exclude hugging face, GitHub, and other sites we use from
+  // the redirect flow where the popup asks if we want to be redirected".
+  // Target-based, keyed on the REGISTRABLE domain (every subdomain
+  // rides). Kept in lockstep with the native twin (PanelBrowserSheet.kt
+  // trustedHosts).
+  var TRUSTED_HOSTS = {
+    'huggingface.co': 1, 'hf.co': 1, 'github.com': 1, 'gitea.com': 1,
+    'gitlab.com': 1, 'sourcehut.org': 1, 'privatemode.ai': 1,
+    'opencode.ai': 1, 'nvidia.com': 1
+  };
+
   // v0.87.3: an in-frame navigation the parent CAN see (same-origin
   // frames only). The entity's address updates; a cross-REGISTRABLE-
   // domain move gets the guard banner.
@@ -355,7 +367,10 @@
     if (!icon || href === icon.url) return;
     var fromHost = hostOf(icon.url);
     var toHost = hostOf(href);
-    if (fromHost && sameRegistrableDomain(fromHost, toHost)) {
+    if (fromHost && (sameRegistrableDomain(fromHost, toHost) ||
+                     TRUSTED_HOSTS[registrableDomain(toHost)])) {
+      // v0.89.1: a same-registrable move, or a landing on one of OUR
+      // service sites — follows silently (no banner, no rollback).
       icon.setTabState({ url: href });
       if (ctx.omni) ctx.omni.value = href;
       if (typeof icon.refreshIcon === 'function') icon.refreshIcon(href);
@@ -617,7 +632,15 @@
       hideGuard: function () {
         if (activeCtx) hideGuard(activeCtx);
         return !!activeCtx;
-      }
+      },
+      // v0.89.1: the rig surface for the TRUSTED-HOSTS exemptions —
+      // drives the real decision path (onFrameNavigated) on a live ctx
+      // and reads the exemption table.
+      onFrameNavigated: function (ctx, href) {
+        onFrameNavigated(ctx, href);
+        return true;
+      },
+      trustedHosts: function () { return TRUSTED_HOSTS; }
     }
   };
 })();

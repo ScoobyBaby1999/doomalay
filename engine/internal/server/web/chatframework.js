@@ -121,7 +121,9 @@
           // v0.30 (user spec): after the model method is selected the sub
           // reads "tap to change" — exactly like its sandbox sibling.
           sub: st.model ? 'tap to change' : 'tap to connect',
-          icon: '🤖',
+          // v0.89.1 (user spec): the +model row carries a weird purple
+          // ALIEN face (the 👾 space-invader glyph), not the old robot.
+          icon: '👾',
           onTap: function () { ctx.openModelPicker(); }
         }
       ];
@@ -144,10 +146,11 @@
         {
           id: 'pill-model',
           // v0.28 (user spec): the +model pill carries an icon like its
-          // sandbox sibling — 🤖 when a provider is live, ◈ for the
+          // sandbox sibling — 👾 (v0.89.1: the weird purple alien face,
+          // per the user's spec) when a provider is live, ◈ for the
           // empty "+ Model" state.
           label: ctx.state.provider
-            ? '🤖 ' + providerLabel(ctx.state.provider)
+            ? '👾 ' + providerLabel(ctx.state.provider)
             : '◈ + Model',
           onTap: function () { ctx.openModelPicker(); }
         }
