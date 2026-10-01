@@ -151,10 +151,10 @@
     if (q !== undefined) return q;
     var m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(c);
     if (!m) { QUANT_COLORS.set(c, c); return c; }
-    function lv(hh) { return Math.min(255, Math.round(parseInt(hh, 16) / 17) * 17); }
+    function lv(hh) { return Math.min(255, Math.round(parseInt(hh, 16) / 4) * 4); } // v0.89.7: 64 levels (was 17-step — gradient banding)
     function h2(v) { return (v < 16 ? '0' : '') + v.toString(16); }
     q = '#' + h2(lv(m[1])) + h2(lv(m[2])) + h2(lv(m[3]));
-    if (QUANT_COLORS.size > 4096) QUANT_COLORS.clear();
+    if (QUANT_COLORS.size > 16384) QUANT_COLORS.clear(); // v0.89.7: 64-level colors mint more entries
     QUANT_COLORS.set(c, q);
     return q;
   }
@@ -795,7 +795,7 @@
             var colS = LC.vsegC.get(skey);
             if (colS === undefined) { colS = lineSampler ? lineSampler(x, y) : null; LC.vsegC.set(skey, colS); LC.misses++; } else LC.hits++;
             var styleS = quantColor(colS || lineBandStyle);
-            var aQ = tal < 1 ? Math.round(tal * 10) / 10 : 1;
+            var aQ = tal < 1 ? Math.round(tal * 100) / 100 : 1; // v0.89.7: 100 alpha levels (was 10 — the stair-stepping shimmer on fading lines)
             var sbk = (sc === gctx2 ? '2|' : '1|') + styleS + '|' + aQ;
             var sb = segBuckets.get(sbk);
             if (!sb) { sb = { sc: sc, s: styleS, a: aQ, ops: [] }; segBuckets.set(sbk, sb); }
@@ -878,7 +878,7 @@
             var colS2 = LC.hsegC.get(hkey);
             if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2, y) : null; LC.hsegC.set(hkey, colS2); LC.misses++; } else LC.hits++;
             var styleS2 = quantColor(colS2 || lineBandStyle);
-            var aQ2 = tal2 < 1 ? Math.round(tal2 * 10) / 10 : 1;
+            var aQ2 = tal2 < 1 ? Math.round(tal2 * 100) / 100 : 1; // v0.89.7: same — 10-level alpha was visible banding
             var sbk2 = (sc2 === gctx2 ? '2|' : '1|') + styleS2 + '|' + aQ2;
             var sb2 = segBuckets.get(sbk2);
             if (!sb2) { sb2 = { sc: sc2, s: styleS2, a: aQ2, ops: [] }; segBuckets.set(sbk2, sb2); }
@@ -1029,7 +1029,7 @@
             dc.fill();
             if (tal < 1) dc.globalAlpha = 1;
           } else {
-            var aQ = tal < 1 ? Math.round(tal * 8) / 8 : 1;
+            var aQ = tal < 1 ? Math.round(tal * 100) / 100 : 1; // v0.89.7: 100 alpha levels (was 8 — the pulsing dots stepped through 8 visible brightness jumps per cycle: THE nauseating shimmer)
             var dbk = (dc === gctx2 ? '2|' : '1|') + styleD + '|' + aQ;
             var dob = dotBuckets.get(dbk);
             if (!dob) { dob = { dc: dc, s: styleD, a: aQ, ops: [] }; dotBuckets.set(dbk, dob); }
