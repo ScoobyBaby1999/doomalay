@@ -65,6 +65,12 @@
   class World {
     constructor() {
       this.entities = [];
+      // v0.88.2: THE CONTACT TAP — after each step, every pair that
+      // touched this frame is reported once ({a, b, x, y} — the contact
+      // midpoint). app.js wires this into TabGroups.collide (the web-tab
+      // collision dots). Null = nobody's listening (zero overhead).
+      this.onContacts = null;
+      this._contacts = [];
     }
 
     add(e) { this.entities.push(e); }
@@ -111,6 +117,17 @@
           if (dist > 0.0001) { nx = dx / dist; ny = dy / dist; }
           else { nx = 1; ny = 0; }       // perfectly overlapping — pick arbitrary
           const overlap = minDist - dist;
+
+          // v0.88.2: report the contact (both entities touched this
+          // frame — the collision-dot formation listens for web-tab
+          // pairs). Same-group members skip the position correction
+          // below (the orbit owns their position — a physics push would
+          // rubber-band against it), but the contact still reports.
+          if (this.onContacts) {
+            this._contacts.push({ a: a, b: b, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+          }
+          var sameGroup = !!(a._orbit && b._orbit && a._orbit.dot === b._orbit.dot);
+          if (sameGroup) continue;
 
           // ── Position correction ──────────────────────────────
           // Push entities apart so they're just touching. If one is
@@ -190,6 +207,13 @@
             }
           }
         }
+      }
+
+      // v0.88.2: THE CONTACT TAP fires (once per step, all of this
+      // frame's touches) — the collision dots form from these.
+      if (this.onContacts && this._contacts.length) {
+        try { this.onContacts(this._contacts); } catch (e) { /* a bad listener never breaks physics */ }
+        this._contacts.length = 0;
       }
     }
   }

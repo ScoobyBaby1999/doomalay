@@ -69,16 +69,24 @@
     getPanelBodyHTML() { return '<div class="placeholder">No content.</div>'; }
 
     // ── Position the DOM element on screen ───────────────────────
-    // v0.88 THE AMBIENT ICON-WRITE GUARD: the ambient loop (dot/line
-    // twinkle with icons at rest) used to rewrite this transform on
-    // EVERY frame for EVERY icon — identical strings, 60+ style writes
-    // a second that each dirtied the element's compositor state. The
-    // write now rides a last-value guard; motion (drag/physics/pan)
-    // still writes per frame because the string genuinely changes.
+    // v0.88.2: a grouped tab's ORBIT owns x/y (tabgroups.js writes it
+    // every frame); the tilted 3D plane's depth rides here — a subtle
+    // scale swing + a y-lift (the stars' parallax language, tied to the
+    // Parallax slider through tabgroups' depthK/liftK). v0.88.1-era: the
+    // AMBIENT ICON-WRITE GUARD below stays (identical transforms skip
+    // the style write; the orbit's slow drift changes the string rarely —
+    // motion still writes because the string genuinely changes).
     render(offsetX, offsetY, scale) {
-      const s = scale || 1;
+      // v0.88.2: a grouped tab's ORBIT owns x/y (tabgroups.js writes it
+      // every frame); the tilted 3D plane's depth rides here — a subtle
+      // scale swing + a y-lift (the stars' parallax language, tied to the
+      // Parallax slider through tabgroups' depthK/liftK). The v0.88
+      // AMBIENT WRITE GUARD stays (identical transforms skip the style
+      // write — the orbit's slow drift changes the string rarely; motion
+      // still writes because the string genuinely changes).
+      const s = (scale || 1) * (this._orbitScale || 1);
       const sx = (this.x - offsetX) * s;
-      const sy = (this.y - offsetY) * s;
+      const sy = (this.y - offsetY) * s - (this._orbitLift || 0);
       const tf = 'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
       if (this.__lastTf === tf) return;
       this.__lastTf = tf;

@@ -29,6 +29,17 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
 
+
+// v0.88.2: noCacheFS — the embedded SPA's assets always revalidate (the
+// heuristic cache served STALE scripts across engine rebuilds — the
+// rigs + fresh-build devices saw old code with a new binary).
+type noCacheFS struct{ inner http.Handler }
+
+func (n noCacheFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Cache-Control", "no-cache")
+        n.inner.ServeHTTP(w, r)
+}
+
 //go:embed all:web
 var webFS embed.FS
 
@@ -369,8 +380,16 @@ func (s *Server) routes() {
         forge.SetGenericCloneDir(filepath.Join(s.cfg.DataDir, "workspaces"))
 
         // Embedded PWA (serves web/dist at /).
+        // v0.88.2: THE STALE-CACHE FIX — the SPA's scripts served with NO
+        // cache headers get heuristic-cached by the browser across
+        // engine restarts (the dev flow: edit a .js, rebuild, reload —
+        // the old file kept serving from the HTTP cache; the rigs and
+        // every fresh-build device hit this). no-cache = always
+        // revalidate (the assets are embedded — the "network" hop is
+        // local + cheap); the big vendored blobs keep their own
+        // long-lived rules.
         distFS, _ := fs.Sub(webFS, "web")
-        s.mux.Handle("/", http.FileServer(http.FS(distFS)))
+        s.mux.Handle("/", noCacheFS{http.FileServer(http.FS(distFS))})
 
         // v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
         // Content-Encoding: gzip so the WebView decompresses transparently —

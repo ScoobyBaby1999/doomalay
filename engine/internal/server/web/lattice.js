@@ -23,7 +23,7 @@
 // host repaints once the bumpmap lands).
 //
 // Exposes: globalThis.Lattice = { render, onTexReady, lastStats, IN_WORKER,
-//                                cheapJSON }
+//                                cheapJSON, ORIGIN_RADIUS }
 (function () {
   'use strict';
 
@@ -33,7 +33,11 @@
   // ── constants (moved from app.js) ─────────────────────────────────
   var GRID_BASE = 48;      // base grid spacing in px (at scale 1, gridSize 1)
   var DOT_RADIUS = 1.4;
-  var ORIGIN_RADIUS = 5;
+  var ORIGIN_RADIUS = 12;   // v0.88.2: 5 → 12 — "make the dot marking the
+                            // center of the grid noticeably larger than
+                            // any variation a collision can make" (the
+                            // collision dots cap at 6.9; they share this
+                            // dot's theme colors)
   var HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
   // ── v0.88 THE CHEAP SPEC STRINGIFIER ─────────────────────────────────
@@ -1085,11 +1089,44 @@
       gctx.fill();
     }
 
+    // ── v0.88.2: THE COLLISION DOTS (tabgroups.js) ─────────────────
+    // "colliding two icons together forms a dot, similar to the size
+    // and theme coloring for the dot we use to mark the center of the
+    // canvas, just slightly smaller or larger — make it vary" — the
+    // same origin-color family, a per-dot variation, a soft radius
+    // ring (the group bubble — the atoms' shell language). ALWAYS
+    // smaller than the origin's 12 (the vr cap is 6.9).
+    if (cam.dots && cam.dots.length) {
+      var dotFill = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e', gctx, W, H);
+      for (var cdi = 0; cdi < cam.dots.length; cdi++) {
+        var cdd = cam.dots[cdi];
+        var cdX = (cdd.x - offsetX) * scale, cdY = (cdd.y - offsetY) * scale;
+        var ringR = cdd.R * scale;
+        if (cdX < -ringR - 20 || cdX > W + ringR + 20 ||
+            cdY < -ringR - 20 || cdY > H + ringR + 20) continue;
+        // the bubble ring (the connection radius, theme-tinted)
+        gctx.globalAlpha = 0.15;
+        gctx.strokeStyle = dotFill;
+        gctx.lineWidth = Math.max(1, scale);
+        gctx.beginPath();
+        gctx.arc(cdX, cdY, ringR, 0, Math.PI * 2);
+        gctx.stroke();
+        gctx.globalAlpha = 1;
+        // the dot itself (the varying mark)
+        gctx.fillStyle = dotFill;
+        gctx.beginPath();
+        gctx.arc(cdX, cdY, cdd.vr * Math.min(scale, 1.5), 0, Math.PI * 2);
+        gctx.fill();
+      }
+    }
+
     // ── the frame instrument (returned; hosts publish) ────────────
     var lcNow = performance.now();
     if (lcLastT) lcFps = lcFps * 0.9 + (1000 / (lcNow - lcLastT)) * 0.1;
     lcLastT = lcNow;
     var stats = {
+      dotsPainted: (cam.dots ? cam.dots.length : 0),
+      originRadius: ORIGIN_RADIUS,
       stars: 0, dots: dbgDots, segs: dbgSegs, amp: amp,
       dotBands: dbgDotBands, lineBands: dbgLineBands,
       dotStats: { small: dbgDotSmall, big: dbgDotBig, n: dbgDots },
@@ -1117,6 +1154,7 @@
   var lastStats = null;
 
   ROOT.Lattice = {
+    ORIGIN_RADIUS: ORIGIN_RADIUS,
     render: render,
     onTexReady: function (cb) { onTexReadyCb = cb; },
     lastStats: function () { return lastStats; },
