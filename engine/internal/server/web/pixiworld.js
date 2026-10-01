@@ -540,7 +540,9 @@
       rec.container.visible = onScreen;
       if (!onScreen) return;
       rec.container.x = sx; rec.container.y = sy;
-      rec.container.scale.set(sc);
+      // v0.88.2: the orbit depth cue rides the mirror too (the grouped
+      // tabs' tilted-plane z swings their sprite scale)
+      rec.container.scale.set(sc * (icon._orbitScale || 1));
       // the tap pulse (the flash twin)
       var pt = pulses[icon.id];
       if (pt !== undefined) {

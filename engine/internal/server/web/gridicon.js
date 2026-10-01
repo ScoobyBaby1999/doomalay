@@ -69,10 +69,14 @@
     getPanelBodyHTML() { return '<div class="placeholder">No content.</div>'; }
 
     // ── Position the DOM element on screen ───────────────────────
+    // v0.88.2: a grouped tab's ORBIT owns x/y (tabgroups.js writes it
+    // every frame); the tilted 3D plane's depth rides here — a subtle
+    // scale swing + a y-lift (the stars' parallax language, tied to the
+    // Parallax slider through tabgroups' depthK/liftK).
     render(offsetX, offsetY, scale) {
-      const s = scale || 1;
+      const s = (scale || 1) * (this._orbitScale || 1);
       const sx = (this.x - offsetX) * s;
-      const sy = (this.y - offsetY) * s;
+      const sy = (this.y - offsetY) * s - (this._orbitLift || 0);
       this.el.style.transform =
         'translate3d(' + sx + 'px,' + sy + 'px,0) translate(-50%,-50%) scale(' + s + ')';
     }

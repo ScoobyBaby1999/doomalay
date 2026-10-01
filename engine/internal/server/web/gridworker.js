@@ -88,7 +88,13 @@ function paintFrame(m) {
       atomFrames++;
     }
   } else {
-    stats = Lattice.render(gctx, gctx2, W, H, m.cam, P);
+    // v0.88.2: m.cam.dots rides the per-frame payload (the collision
+    // dots are world state, like entities — never fingerprint-cached)
+    var camWithDots = m.cam;
+    if (m.dots && m.dots.length) {
+      camWithDots = { ox: m.cam.ox, oy: m.cam.oy, scale: m.cam.scale, dots: m.dots };
+    }
+    stats = Lattice.render(gctx, gctx2, W, H, camWithDots, P);
     // the off-screen arrows (positions + hexes resolved main-side)
     if (m.arrows && m.arrows.length && gctx) {
       for (var i = 0; i < m.arrows.length; i++) {

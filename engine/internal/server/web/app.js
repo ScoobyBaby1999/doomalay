@@ -299,6 +299,7 @@
       var msg = {
         t: 'frame',
         cam: { ox: offsetX, oy: offsetY, scale: scale },
+        dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : [],
         atomsOnly: !!atomsOnly,
         arrows: atomsOnly ? [] : computeArrows(),
         entities: entitiesForWorker(),
@@ -326,7 +327,9 @@
       return;
     }
     var stats = Lattice.render(ctx, ctx2, W, H,
-      { ox: offsetX, oy: offsetY, scale: scale }, buildLatticeParams());
+      { ox: offsetX, oy: offsetY, scale: scale,
+        dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : null },
+      buildLatticeParams());
     publishLatticeStats(stats);
     renderOffScreenArrows();
     paintAtoms();
@@ -408,6 +411,22 @@
   // ── World + icons ──────────────────────────────────────────────
   const world = new Physics.World();
   const iconLayer = document.getElementById('chatbots');
+  // v0.88.2: THE CONTACT TAP — every physics frame's touches report here
+  // once; web-tab pairs feed THE COLLISION DOTS (tabgroups.js — "we can
+  // make tab icons form connections if the user moves them and collides
+  // the icons on the canvas"). A topology change repaints the grid
+  // furniture (the dot + its bubble ring are painted state).
+  world.onContacts = function (contacts) {
+    if (!window.TabGroups) return;
+    var changed = false;
+    for (var i = 0; i < contacts.length; i++) {
+      var c = contacts[i];
+      if (c.a && c.b && c.a.type === 'web' && c.b.type === 'web') {
+        if (window.TabGroups.collide(c.a, c.b, c.x, c.y)) changed = true;
+      }
+    }
+    if (changed) { update(); startAnimation(); }
+  };
   // v0.85.1 THE ICON-LAYER BUDGET: past 40 icons every .chatbot's
   // will-change:transform costs more in standing compositor layers +
   // texture memory than the rare re-promotion on drag — the .many-icons
@@ -675,6 +694,9 @@
     // ticker drives them), the main rAF loop does NOT keep itself alive
     // on the atoms' account — the stars are off this thread's books.
     if (window.World3D && window.World3D.atomsOwned()) return false;
+    // v0.88.2: the collision-dot ORBITS keep the loop alive too (the
+    // grouped tabs swirl forever — VERY slowly, but alive)
+    if (window.TabGroups && window.TabGroups.active()) return true;
     return !!(window.Atoms && window.Atoms.active(world.entities));
   }
   // v0.84.2: refreshPersonaRings — resolve each chat's ACTIVE persona and
@@ -746,6 +768,12 @@
       velX = 0; velY = 0;
     }
     world.step();
+    // v0.88.2: THE ORBIT PASS — the collision dots' members swirl (their
+    // x/y is the orbit's; the ICONS' DOM transforms re-render — the
+    // canvas furniture stays pixel-stable, no repaint needed for the
+    // drift)
+    var orbitMoved = false;
+    if (window.TabGroups && window.TabGroups.active()) orbitMoved = window.TabGroups.step(performance.now());
     for (const e of world.entities) {
       if (!e.dragging && (Math.abs(e.vx) > 0.01 || Math.abs(e.vy) > 0.01)) {
         moving = true; break;
@@ -765,8 +793,9 @@
     }
     if (!covered) {
       var atomsOnly = !moving && !ambientGridActive() &&
-                      window.Atoms && window.Atoms.active(world.entities) &&
-                      !(window.World3D && window.World3D.atomsOwned());   // v0.85.4: the world layer owns the stars
+                      ((window.Atoms && window.Atoms.active(world.entities) &&
+                        !(window.World3D && window.World3D.atomsOwned())) ||   // v0.85.4: the world layer owns the stars
+                       (window.TabGroups && window.TabGroups.active()));   // v0.88.2: the ORBITS' resting frame is CHEAP — the members are DOM (their transforms update below), the dots + rings are stable painted furniture (full frames only on camera moves + topology changes)
       if (atomsOnly) {
         // v0.84.1: THE ATOM-ONLY FRAME — nothing else is moving (no pan
         // momentum, no physics drift, no grid animate), so the grid and
@@ -781,6 +810,12 @@
         renderGrid();
         for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
       }
+    }
+    // v0.88.2: the orbiting members re-render even on a resting canvas
+    // (the atoms-only path skips icon.render — the members DID move)
+    if (orbitMoved) {
+      var mems = window.TabGroups.members();
+      for (var mi = 0; mi < mems.length; mi++) mems[mi].render(offsetX, offsetY, scale);
     }
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
     else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save; v0.84.1: atoms too
@@ -1745,6 +1780,7 @@
       scale: scale,
       currentFamily: currentFamily,
       icons: world.entities.map(function (c) { return c.serialize(); }),
+      dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
       savedAt: Date.now()
     };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
@@ -1863,6 +1899,14 @@
     // `saved` null = this device has never placed an icon (returning
     // users who deleted everything still have a saved layout → skip).
     maybeShowCanvasEmpty(!saved);
+
+    // v0.88.2: THE COLLISION DOTS restore — the grouped web tabs re-bind
+    // (each member re-baselines its (r, φ) from its saved position —
+    // "the user can move an icon somewhere and have it orbit but stay in
+    // that location")
+    if (window.TabGroups && saved && Array.isArray(saved.dots)) {
+      try { window.TabGroups.deserialize(saved.dots); } catch (e) { console.warn('dots restore failed', e); }
+    }
 
     updateIconBudget();   // v0.85.1: the restored world sets the icon budget
     // v0.85.4: the world layer evaluates its gate on the restored count
