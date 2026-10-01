@@ -368,6 +368,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
     // theme (the live CSS-var snapshot; re-applied on every open)
     private var themeJson = JSONObject()
+    // v0.87.5: the tab circle's glyph tint (text1), cached as a FIELD —
+    // setTabIcon/setTabFromOpts run outside applyTheme's scope (the CI
+    // catch: text1 was applyTheme's local; the references didn't resolve)
+    private var tabGlyphTint: Int = Color.WHITE
 
     // ─────────────────────────────────────────────────────── the surface
     fun open(url: String, optsJson: String) {
@@ -581,7 +585,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             activity.runOnUiThread {
                 // v0.87.5: the glyph tints with text1 (re-applied — a
                 // favicon that showed before us left the tint null)
-                tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
+                tabIconBtn?.imageTintList = ColorStateList.valueOf(tabGlyphTint)
                 tabIconBtn?.setImageResource(R.drawable.ic_globe)
                 tabIconBtn?.visibility = View.VISIBLE
             }
@@ -613,7 +617,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             tabIconBtn?.visibility = if (tabIconTab != null) View.VISIBLE else View.GONE
             if (tabIconTab != null) {
                 // v0.87.5: the globe is a glyph — tints with text1
-                tabIconBtn?.imageTintList = ColorStateList.valueOf(text1)
+                tabIconBtn?.imageTintList = ColorStateList.valueOf(tabGlyphTint)
                 tabIconBtn?.setImageResource(R.drawable.ic_globe)
             }
         }
@@ -1797,6 +1801,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         val bg = col("bgPanel", sysColor(android.R.attr.colorBackground, Color.BLACK))
         val surface = col("surface", bg)
         val text1 = col("text1", sysColor(android.R.attr.colorForeground, Color.WHITE))
+        tabGlyphTint = text1   // v0.87.5: the glyph-tint field (setTabIcon reads it)
         val text3 = col("text3", text1)
         val border = col("border", text1)
         val accent = col("accent", sysColor(android.R.attr.colorAccent, Color.LTGRAY))
