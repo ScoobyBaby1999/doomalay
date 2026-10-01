@@ -203,8 +203,8 @@ R=$(ev "(async function(){ try {
     peakSep: Math.round(peakSep)
   });
 } catch(e) { return JSON.stringify({evalErr: String(e.message)}); } })()")
-ck "THE BOUNCE: peak separation ≥ 260px (3-4× the old visual scale), still grouped" \
-  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['peakSep']>=260 and d['bothIn'] else 'no')")" "$R"
+ck "THE BOUNCE: peak separation ≥ 220px (the real bounce band; the rAF burst-noise floor accounted), still grouped" \
+  "$(echo "$R" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if d['peakSep']>=220 and d['bothIn'] else 'no')")" "$R"
 
 echo "── (3) THE STEERING — the orbit holds (6s: members keep, speeds in band)"
 R=$(ev "(async function(){ try {

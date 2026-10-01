@@ -361,35 +361,206 @@
     SHELL_R: SHELL_R,
     SHELL_TILT: SHELL_TILT,
     TILT_BASIS: TILT_BASIS,   // v0.88: the precomputed per-level basis (pixiworld's shells ride it)
-    MAX_WS: MAX_WS
+    MAX_WS: MAX_WS,
+    // v0.90.2: the sphere cache instrument (the rig's bound check)
+    _sphereStats: function () {
+      return { sprites: SPHERE_SPRITES.size, highlights: HIGHLIGHT_SPRITES.size };
+    }
   };
 
-  // ── v0.90.1 THE ORBIT STARS (the collision groups' centers) ────────
-  // Painted on the over-icons layer (#c2 — the per-frame atoms pass): the
-  // star MOVES (the weighty centroid chase in tabgroups.js), so the old
-  // full-frame #c1 lattice paint is retired. USER SPEC: "a larger
-  // dot/star that has the theme of the canvas center marker (by
-  // default). This star represents the center of the orbit." — the
-  // originColor family (the same resolution the lattice's origin dot
-  // rides) + an accent-tinted glow halo, breathing ±6% (alive). vr grows
-  // with each member (VR_MEMBER) — "the dot representing the center of
-  // the sphere should grow larger with each icon aswell".
-  // Dual-environment: the worker paints the same function (zero drift).
-  function paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors, t) {
+  // ── v0.90.2 THE NEBULA SPHERE — the fog the star produces ─────────
+  // USER SPEC: "Render the actual sphere or circle that the central
+  // star/dot produces as an opaque sphere that looks more like fog,
+  // clouds, nebula, a gas, kind of like it has a guassian filter and
+  // these foggy effects on it, and make it responds to the amplify
+  // parallax aswell to resemble a sphere. Also make it large… the
+  // sphere should probably be 6-8x what it is now, and grow larger
+  // with each icon."
+  // THE MODEL: a PRE-RENDERED sprite (768px, half-res headroom) per
+  // (colorKey, seed bucket) — the limb-bright gas shell (dense rim,
+  // hollow core — the icons inside stay readable, the sphere READS),
+  // 7 seeded wisps (radial-gradient blobs, 'lighter'), the gaussian
+  // feel via multi-stop radial gradients (per-frame ctx.filter is the
+  // measured 1fps class — NEVER). Per frame: ONE scaled drawImage (fog
+  // upscales gracefully — it is literally blur) + a slow churn rotation
+  // (±0.02-0.05 rad/s by seed) + the parallax highlight blob offset
+  // toward the screen center (∝ the Amplify parallax slider — the lit
+  // limb faces the viewer as the camera pans: it resembles a sphere).
+  // The fog diameter = 2.2 × the group's visual radius (6-8× the old
+  // ring at the base sizes) and grows with each member (Rv eases).
+  var SPHERE_MULT = 2.2;          // fog radius = 2.2 × R (≈7-9× the old 130 ring)
+  var SPHERE_SPRITES = new Map(); // colorKey|seed → canvas (LRU 6)
+  var HIGHLIGHT_SPRITES = new Map();
+  function mkCanvasLocal(w, h) {
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, w); c.height = Math.max(1, h);
+    return c;
+  }
+  function lruTouch(map, key) {
+    var v = map.get(key);
+    if (v) { map.delete(key); map.set(key, v); }
+    return v;
+  }
+  function lruSet(map, key, v) {
+    map.set(key, v);
+    if (map.size > 6) {
+      var oldest = map.keys().next().value;
+      map.delete(oldest);
+    }
+  }
+  function hexTripletToRgb(hex) {
+    var h = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+    if (!h) return [74, 74, 94];
+    return [parseInt(h[1].slice(0, 2), 16), parseInt(h[1].slice(2, 4), 16), parseInt(h[1].slice(4, 6), 16)];
+  }
+  // renderSphereSprite — the one-time fog bake (deterministic per seed).
+  function renderSphereSprite(colors, seed) {
+    var SZ = 768, C = SZ / 2;
+    var cv = mkCanvasLocal(SZ, SZ);
+    var g = cv.getContext('2d');
+    var accArr = (typeof (colors && colors.accent) === 'string' && colors.accent.indexOf(',') >= 0)
+      ? colors.accent.split(',').map(Number)
+      : hexTripletToRgb(colors && colors.accent);
+    var acc2Arr = (typeof (colors && colors.accent2) === 'string' && colors.accent2.indexOf(',') >= 0)
+      ? colors.accent2.split(',').map(Number)
+      : hexTripletToRgb(colors && colors.accent2);
+    // deterministic per-seed rng (mulberry-style)
+    var s = (seed || 0) * 2147483647 | 0;
+    function rnd() { s = (s * 1664525 + 1013904223) | 0; return ((s >>> 8) & 0xffffff) / 0xffffff; }
+    var A = function (a) { return 'rgba(' + accArr[0] + ',' + accArr[1] + ',' + accArr[2] + ',' + a + ')'; };
+    var B = function (a) { return 'rgba(' + acc2Arr[0] + ',' + acc2Arr[1] + ',' + acc2Arr[2] + ',' + a + ')'; };
+    // 1) the base gas — transparent core → soft body → gaussian edge
+    // (v0.90.2 red-team: the first bake read as a timid disc — the user's
+    // word is OPAQUE; the body now carries real presence while the core
+    // stays clear for the icons)
+    var base = g.createRadialGradient(C, C, 0, C, C, C);
+    base.addColorStop(0.00, A(0.02));
+    base.addColorStop(0.30, A(0.18));
+    base.addColorStop(0.55, A(0.34));
+    base.addColorStop(0.78, A(0.48));
+    base.addColorStop(0.92, A(0.55));
+    base.addColorStop(1.00, A(0.00));
+    g.fillStyle = base;
+    g.fillRect(0, 0, SZ, SZ);
+    // 2) the limb brightening (the shell — what makes it resemble a
+    // sphere): a concentrated band just inside the rim
+    var limb = g.createRadialGradient(C, C, C * 0.62, C, C, C);
+    limb.addColorStop(0.00, A(0.00));
+    limb.addColorStop(0.62, A(0.20));
+    limb.addColorStop(0.84, A(0.46));
+    limb.addColorStop(0.96, A(0.34));
+    limb.addColorStop(1.00, A(0.00));
+    g.fillStyle = limb;
+    g.fillRect(0, 0, SZ, SZ);
+    // 3) the wisps — 7 seeded radial blobs, 'lighter' (the clouds/nebula
+    // structure), alternating accent/accent2 (the atoms' two-tone)
+    g.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < 7; i++) {
+      var ang = rnd() * Math.PI * 2;
+      var rad = C * (0.32 + rnd() * 0.48);
+      var wx = C + Math.cos(ang) * rad;
+      var wy = C + Math.sin(ang) * rad;
+      var wr = C * (0.16 + rnd() * 0.20);
+      var al = 0.22 + rnd() * 0.20;
+      var wg = g.createRadialGradient(wx, wy, 0, wx, wy, wr);
+      var col = (i % 2) ? B : A;
+      wg.addColorStop(0, col(al));
+      wg.addColorStop(0.55, col(al * 0.45));
+      wg.addColorStop(1, col(0));
+      g.fillStyle = wg;
+      g.beginPath();
+      g.arc(wx, wy, wr, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalCompositeOperation = 'source-over';
+    return cv;
+  }
+  // renderHighlightSprite — the parallax "lit limb" blob (256px)
+  function renderHighlightSprite(colors) {
+    var SZ = 256, C = SZ / 2;
+    var cv = mkCanvasLocal(SZ, SZ);
+    var g = cv.getContext('2d');
+    var accArr = (typeof (colors && colors.accent) === 'string' && colors.accent.indexOf(',') >= 0)
+      ? colors.accent.split(',').map(Number)
+      : hexTripletToRgb(colors && colors.accent);
+    var hg = g.createRadialGradient(C, C, 0, C, C, C);
+    hg.addColorStop(0, 'rgba(' + accArr.join(',') + ',0.26)');
+    hg.addColorStop(0.5, 'rgba(' + accArr.join(',') + ',0.12)');
+    hg.addColorStop(1, 'rgba(' + accArr.join(',') + ',0)');
+    g.fillStyle = hg;
+    g.fillRect(0, 0, SZ, SZ);
+    return cv;
+  }
+  function sphereSpritesFor(colors, seed) {
+    var ck = ((colors && colors.accent) || '') + '|' + ((colors && colors.origin) || '');
+    var sb = Math.min(3, Math.max(0, Math.floor((seed || 0) * 4)));   // 4 seed buckets
+    var key = ck + '|' + sb;
+    var sp = lruTouch(SPHERE_SPRITES, key);
+    if (!sp) { sp = renderSphereSprite(colors, sb / 4 + 0.125); lruSet(SPHERE_SPRITES, key, sp); }
+    var hl = lruTouch(HIGHLIGHT_SPRITES, ck);
+    if (!hl) { hl = renderHighlightSprite(colors); lruSet(HIGHLIGHT_SPRITES, ck, hl); }
+    return { fog: sp, hl: hl };
+  }
+
+
+  // THE ORBIT STARS + THE NEBULA SPHERES — painted on the over-icons
+  // layer (#c2 — the per-frame atoms pass): the star MOVES (the weighty
+  // centroid chase in tabgroups.js), so the old full-frame #c1 lattice
+  // paint is retired. USER SPEC: "a larger dot/star that has the theme of
+  // the canvas center marker (by default). This star represents the
+  // center of the orbit" + the sphere it produces (v0.90.2). The pass
+  // order: ALL the spheres first (a neighbor's fog never covers a
+  // star), then the stars. Dual-environment: the worker paints the same
+  // function (zero drift). par = the Amplify-parallax slider 0..1 (the
+  // sphere's lit limb shifts toward the screen center — it resembles a
+  // sphere as the camera pans).
+  function paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors, t, par) {
     if (!ctx || !dots || !dots.length) return 0;
     var s = scale || 1;
     var c = colors || {};
     var acc = c.accent || '167,139,250';
     var origin = (typeof c.origin === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.origin)) ? c.origin : '#4a4a5e';
+    var parN = Math.max(0, Math.min(1, par || 0));
     var painted = 0;
+    // ── pass 1: THE SPHERES ─────────────────────────────────────
+    var sprites = null;
     for (var i = 0; i < dots.length; i++) {
       var d = dots[i];
       if (!d) continue;
-      var vr = Math.max(2, (d.vr || 11) * Math.min(s, 1.5));
-      var x = (d.x - offsetX) * s;
-      var y = (d.y - offsetY) * s;
+      var fogR = (d.R || 420) * s * SPHERE_MULT;
+      if (fogR > 1500) fogR = 1500;             // the draw-size cap (upscaled fog is just fog)
+      var fx = (d.x - offsetX) * s;
+      var fy = (d.y - offsetY) * s;
+      if (fx < -fogR - 40 || fx > W + fogR + 40 || fy < -fogR - 40 || fy > H + fogR + 40) continue;
+      if (!sprites) sprites = sphereSpritesFor(c, d.seed);
+      // the slow churn (the gas lives)
+      var churn = ((d.seed || 0) - 0.5) * 0.09 * (t || 0);
+      ctx.save();
+      ctx.translate(fx, fy);
+      if (churn) ctx.rotate(churn);
+      ctx.drawImage(sprites.fog, -fogR, -fogR, fogR * 2, fogR * 2);
+      ctx.restore();
+      // the parallax highlight — the lit limb faces the screen center
+      // (∝ the Amplify slider; 0 → centered, 1 → the full offset)
+      if (parN > 0.01) {
+        var hx = (W / 2 - fx), hy = (H / 2 - fy);
+        var hl = Math.hypot(hx, hy) || 1;
+        var off = (0.10 + 0.42 * parN) * fogR;
+        var hR = fogR * 0.85;
+        ctx.drawImage(sprites.hl,
+          fx + (hx / hl) * off - hR, fy + (hy / hl) * off - hR, hR * 2, hR * 2);
+      }
+    }
+    // ── pass 2: THE STARS ───────────────────────────────────────
+    for (var j = 0; j < dots.length; j++) {
+      var d2 = dots[j];
+      if (!d2) continue;
+      var vr = Math.max(2, (d2.vr || 11) * Math.min(s, 1.5));
+      var x = (d2.x - offsetX) * s;
+      var y = (d2.y - offsetY) * s;
       if (x < -vr - 120 || x > W + vr + 120 || y < -vr - 120 || y > H + vr + 120) continue;
-      var pulse = 1 + 0.06 * Math.sin((t || 0) * 1.3 + (d.seed || 0) * Math.PI * 2);
+      var pulse = 1 + 0.06 * Math.sin((t || 0) * 1.3 + (d2.seed || 0) * Math.PI * 2);
       // v0.90.1 RED-TEAM FIX: the plain originColor disc was INVISIBLE on
       // the dark themes (the user: "currently it is either not implemented
       // or does not render" — it rendered, it just didn't READ). The atom
@@ -434,7 +605,12 @@
   function countsOf() { return counts; }
 
   function paintDotsMain(ctx, W, H, offsetX, offsetY, scale, dots) {
-    return paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors(), performance.now() / 1000);
+    var par = 0;
+    try {
+      var st = window.Settings && window.Settings.getState();
+      if (st && typeof st.spaceParallax === 'number') par = Math.max(0, Math.min(100, st.spaceParallax)) / 100;
+    } catch (e) {}
+    return paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors(), performance.now() / 1000, par);
   }
 
   window.Atoms = {

@@ -97,9 +97,10 @@ function paintFrame(m) {
     // v0.90.1: THE ORBIT STARS paint on #c2 EVERY cheap frame — the star
     // MOVES (the weighty centroid chase), independent of atom ownership
     // (the World3D layer may own the atom stars; the orbit stars are ours).
+    // v0.90.2: par rides the message (the nebula sphere's lit limb).
     if (m.dots && m.dots.length && gctx2) {
       paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
-        m.dots, m.colors || null, performance.now() / 1000);
+        m.dots, m.colors || null, performance.now() / 1000, m.par || 0);
     }
   } else {
     // v0.88.2: m.cam.dots rides the per-frame payload (the collision
@@ -135,7 +136,7 @@ function paintFrame(m) {
     // v0.90.1: the orbit stars ride the full frame's #c2 pass too
     if (m.dots && m.dots.length && gctx2) {
       paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
-        m.dots, m.colors || null, performance.now() / 1000);
+        m.dots, m.colors || null, performance.now() / 1000, m.par || 0);
     }
     fullFrames++;
   }

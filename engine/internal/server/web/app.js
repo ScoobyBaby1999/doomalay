@@ -341,9 +341,15 @@
   // inline on OUR contexts — byte-identical pipelines either way.
   function paintGridFrame(atomsOnly, forceEnts) {
     if (Painter.mode === 'worker' && Painter.worker) {
+      var par01 = 0;
+      try {
+        const stp = window.Settings.getState();
+        if (stp && typeof stp.spaceParallax === 'number') par01 = Math.max(0, Math.min(100, stp.spaceParallax)) / 100;
+      } catch (e) {}
       var msg = {
         t: 'frame',
         cam: { ox: offsetX, oy: offsetY, scale: scale },
+        par: par01,   // v0.90.2: the Amplify parallax rides the frame (the nebula's lit limb)
         dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : [],
         atomsOnly: !!atomsOnly,
         arrows: atomsOnly ? [] : computeArrows(),
