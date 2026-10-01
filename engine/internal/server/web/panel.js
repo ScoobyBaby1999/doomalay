@@ -129,6 +129,31 @@
       }, true);
     }
 
+    // v0.88.1: THE DECK-SPARING WIPE — webpanel.js's tab keep-alive parks
+    // its live iframes in a persistent deck (data-wt-keep, a permanent
+    // child of this body) and its session roots (data-wt-root) re-parent
+    // safely (they hold NO iframes). THE EMPIRICAL RULE this serves: a
+    // re-parented iframe loses its browsing context (document, scroll,
+    // forms — all of it); display toggles preserve it perfectly. So every
+    // body reset below (open / _renderTopView / _restoreRoot) routes
+    // through here: the deck NEVER leaves the document, session roots
+    // park with WebPanel instead of dying, everything else goes.
+    wipeBody(html) {
+      var park = null;
+      try {
+        park = (window.WebPanel && window.WebPanel._park) ? window.WebPanel._park() : null;
+      } catch (e) { park = null; }
+      var kids = Array.prototype.slice.call(this.bodyEl.childNodes);
+      for (var i = 0; i < kids.length; i++) {
+        var n = kids[i];
+        if (n.nodeType !== 1 || !n.dataset) { this.bodyEl.removeChild(n); continue; }
+        if (n.dataset.wtKeep) continue;                    // THE DECK stays
+        if (park && n.dataset.wtRoot) { park.appendChild(n); continue; }  // a session root parks
+        this.bodyEl.removeChild(n);
+      }
+      if (html) this.bodyEl.insertAdjacentHTML('beforeend', String(html));
+    }
+
     // Open the panel with the given ROOT content.
     // `context` is stored (not used by Panel itself) so the caller can
     // retrieve it later via `panel.currentContext` — e.g. to know which
@@ -147,7 +172,7 @@
       this.nameEl.textContent = title || '';
       this.subEl.textContent = subtitle || '';
       this.avatarEl.innerHTML = avatarHTML || '';
-      this.bodyEl.innerHTML = bodyHTML || '';
+      this.wipeBody(bodyHTML);   // v0.88.1: the deck + session roots survive every open
       var self = this;
       // v0.18: open at the REMEMBERED position for this chat (no memory →
       // the half-ish default). Applied while still hidden so the slide-up
@@ -291,14 +316,25 @@
       var html = '';
       try { html = v.render ? v.render() : ''; } catch (e) { console.error('view render', e); }
       this.bodyEl.classList.add('pv-mode');
-      this.bodyEl.innerHTML = String(html || '');
+      this.wipeBody(html);   // v0.88.1: the deck survives a view render (its frames hide — covered)
       this.bodyEl.scrollTop = 0;
       if (v.onMount) { try { v.onMount(this.bodyEl); } catch (e) { console.error('view onMount', e); } }
     }
 
     _stashRoot() {
       this._rootFrag = document.createDocumentFragment();
-      while (this.bodyEl.firstChild) this._rootFrag.appendChild(this.bodyEl.firstChild);
+      // v0.88.1: THE DECK stays in the body (data-wt-keep) — the session
+      // roots ride the fragment (they hold no iframes; they come back on
+      // pop, and _dropStash parks them if the stash is discarded)
+      var n = this.bodyEl.firstChild;
+      var next;
+      while (n) {
+        next = n.nextSibling;
+        if (!(n.nodeType === 1 && n.dataset && n.dataset.wtKeep)) {
+          this._rootFrag.appendChild(n);
+        }
+        n = next;
+      }
       this._rootScroll = this.bodyEl.scrollTop;
       var mb = this._modelBtn;
       this._rootHeader = {
@@ -314,7 +350,7 @@
       this._setViewHeader(false);
       this.bodyEl.classList.remove('pv-mode');
       if (this._rootFrag) {
-        this.bodyEl.innerHTML = '';
+        this.wipeBody(null);   // v0.88.1: clears around THE DECK only
         this.bodyEl.appendChild(this._rootFrag);
         this._rootFrag = null;
         var rh = this._rootHeader || {};
@@ -350,7 +386,23 @@
     }
 
     // discard the stashed root (open()/close() replace the body anyway)
+    // v0.88.1: session roots inside a discarded stash PARK with WebPanel
+    // (their omnibox's unsent text + the card DOM survive a close-while-
+    // views-open — the keep-alive discipline holds through every exit)
     _dropStash() {
+      if (this._rootFrag) {
+        var park = null;
+        try {
+          park = (window.WebPanel && window.WebPanel._park) ? window.WebPanel._park() : null;
+        } catch (e) { park = null; }
+        if (park) {
+          var kids = Array.prototype.slice.call(this._rootFrag.childNodes);
+          for (var i = 0; i < kids.length; i++) {
+            var n = kids[i];
+            if (n.nodeType === 1 && n.dataset && n.dataset.wtRoot) park.appendChild(n);
+          }
+        }
+      }
       this._rootFrag = null;
       this._rootHeader = null;
     }

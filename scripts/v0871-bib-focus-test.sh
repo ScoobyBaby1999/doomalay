@@ -174,10 +174,11 @@ ck "the sheet-sync drove the entity (url + fast favicon + title)" \
   "$(echo "$R2" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print('yes' if 'github.com' in d['url'] and d['fav'] and d['title'] else 'no')")" "$R2"
 
 R=$(ev "(async function(){
-  // reopen the web panel (the circle paints from the live entity)
-  window.doomalay.openWebTweaksFor(window.__t.id);
-  document.getElementById('panel-view-x') ? document.getElementById('panel-view-x').click() : null;
-  await new Promise(r => setTimeout(r, 500));
+  // reopen the web panel (the circle paints from the live entity) —
+  // v0.88.1: the real panel path (the old openWebTweaksFor hack is the
+  // native handoff now: it CLOSES the panel on view exit)
+  window.doomalay.openWebPanelFor(window.__t);
+  await new Promise(r => setTimeout(r, 900));
   var t = window.__t;
   var circle = document.getElementById('panel-tab-icon');
   var dash = document.querySelector('.handle-bar');
@@ -214,9 +215,9 @@ ck "the engine's ?fast=1 lane answers {favicon} fast" "$FAST"
 
 R=$(ev "(async function(){
   // reopen + guard-accept a cross-domain move → BOTH icons refresh
-  window.doomalay.openWebTweaksFor(window.__t.id);
-  document.getElementById('panel-view-x') ? document.getElementById('panel-view-x').click() : null;
-  await new Promise(r => setTimeout(r, 500));
+  // (v0.88.1: the real panel path)
+  window.doomalay.openWebPanelFor(window.__t);
+  await new Promise(r => setTimeout(r, 900));
   var D = window.WebPanel._debug;
   D.showGuard('https://github.com/');
   var g = document.querySelector('.wt-guard');

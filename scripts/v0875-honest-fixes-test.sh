@@ -132,7 +132,8 @@ R=$(ev "(async function(){
   var v = {
     handoff: !!ok,
     tweaksOpen: !!document.querySelector('.wtw-chip, .wtw-btn'),
-    noBrowserTwin: !document.querySelector('.wt-omni') && !document.querySelector('.wt-card') && !document.querySelector('.wt-iframe'),
+    // v0.88.1 note: scoped to the panel body (session roots park in document.body — a global query would find a parked omni and lie)
+    noBrowserTwin: !document.getElementById('panel-body').querySelector('.wt-omni') && !document.getElementById('panel-body').querySelector('.wt-card') && !Array.prototype.some.call(document.querySelectorAll('.panel-body .wt-iframe'), function(f){ return f.style.display !== 'none'; }),
     previewFetches: window.__fetches,
     panelOpen: document.getElementById('chat-panel').classList.contains('open')
   };

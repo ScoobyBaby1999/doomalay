@@ -551,6 +551,10 @@
     // (materializing an icon if the grid has none) + optional jump to a
     // specific engine event (scrollIntoView + find-hit pulse).
     openChatBySession,
+    // v0.88.1: the web-tab panel opener, exposed for the E2E rigs + future
+    // surfaces (canvas taps route through it internally — the ONE-PANEL
+    // split + the keep-alive attach live there)
+    openWebPanelFor: function (icon, opts) { openWebPanelFor(icon, opts); },
     // v0.52: the canvas icon bound to an engine session id (the hub's
     // chat-connection pill asks for the icon's avatar + name after a
     // pick in the all-chats overlay). null when no icon carries it.

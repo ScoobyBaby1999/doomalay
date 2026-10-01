@@ -983,6 +983,10 @@
        visible window is content-sized. Everything else unchanged: this
        stays THE scroller every view renders into; sticky composers and
        every view's scrollport ride the window bottom (== screen bottom). */
+    /* v0.88.1: relative — THE DECK (the tab keep-alive's persistent
+       iframe host, .wt-deck inset:0) anchors to this body; the rect
+       sync rides the same per-frame truth the scroller does */
+    position: relative;
     flex: 0 0 auto;
     height: var(--panel-vis-h, 62dvh);
     overflow-y: auto;
@@ -1028,7 +1032,13 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    background: var(--bg-panel);
+    /* v0.88.1 THE TAB KEEP-ALIVE: the root is the LAYOUT authority but
+       paints ABOVE the deck (its live iframe twin) — transparent so
+       the frame shows through; the omni bar + the cards + the guard
+       carry their own surfaces. Stacking: deck (z 0) < root (z 1) <
+       stacked views (pv-mode, z 2) — every layer theme-compliant. */
+    position: relative;
+    z-index: 1;
   }
   .wt-bar {
     display: flex;
@@ -1077,14 +1087,42 @@
     min-height: 0;
     position: relative;
     display: flex;
+    /* v0.88.1: transparent — the live iframe (THE DECK's twin, below
+       this root in stacking) shows through; loading + cards + the
+       guard bring their own backgrounds */
+  }
+  /* v0.88.1 THE DECK — the persistent iframe host (a permanent child
+     of the panel body, spared by every wipe). One element, never
+     re-parented: an iframe's browsing context survives display
+     toggles but DIES on any re-parent (verified — the whole keep-alive
+     rides this). The frames are absolutely positioned + rect-synced
+     (rAF) over their session's .wt-frame placeholder; pointer-events
+     flow only to the visible one. */
+  .wt-deck {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wt-deck iframe {
+    position: absolute;
+    display: none;            /* inline 'block' shows the active twin */
+    border: none;
     background: var(--bg-app);
+    pointer-events: auto;
+  }
+  /* the parked session roots (no iframes inside — re-parenting is
+     safe): 0×0, invisible, state intact */
+  #wt-park {
+    position: fixed;
+    left: 0; top: 0;
+    width: 0; height: 0;
+    overflow: hidden;
+    visibility: hidden;
   }
   .wt-iframe {
-    flex: 1;
-    width: 100%;
-    height: 100%;
     border: none;
-    background: #fff;
+    background: var(--bg-app);
   }
   .wt-loading {
     position: absolute;
