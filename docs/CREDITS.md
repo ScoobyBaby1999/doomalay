@@ -74,3 +74,25 @@ Lucide is ISC licensed; the full license text is preserved verbatim at
 permission to use, copy, modify, and distribute the software is granted
 free of charge, "as is", without warranty of any kind, provided the
 copyright notice and this permission notice appear in all copies.
+
+## shiyu-coder/Kronos — the K-line foundation model (the kronos-shiyu bundle)
+
+`tools/kronos-corpus.py` ports
+[shiyu-coder/Kronos](https://github.com/shiyu-coder/Kronos) — "A
+Foundation Model for the Language of Financial Markets" (AAAI 2026;
+arXiv:2508.02739; Yu Shi, Zongliang Fu, Shuo Chen, Bohan Zhao, Wei Xu,
+Changshui Zhang, Jian Li) — into the public library as the
+`kronos-shiyu` bundle on the `ScoobyBaby1999/doomalay-kronos` HF
+dataset: the full upstream tree (86 text files + 13 LFS-hosted
+binaries), 6 skill items (the methodology wrappers with the upstream
+code as companions) and 4 doc items (the READMEs, 1:1). Every item
+carries `upstream="shiyu-coder/Kronos — Yu Shi et al. (AAAI 2026), MIT"`
+so every byline reads "by ScoobyBaby1999 — ported from
+shiyu-coder/Kronos" (a port NEVER reads as the publisher's original
+work). The model weights never ride the hub — the skills teach fetching
+them from the NeoQuasar HF repos.
+
+### License
+
+Kronos is MIT licensed; the full license text is preserved verbatim at
+[`docs/licenses/kronos-LICENSE`](licenses/kronos-LICENSE).

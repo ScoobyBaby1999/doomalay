@@ -516,6 +516,17 @@ func stampScanItem(item *Item, card *RepoCard, _ string) {
         if item.Type == "" {
                 item.Type = "template"
         }
+        // v0.88.4 FIX (a real pre-existing hole, surfaced by a fresh
+        // hub-native dataset): the HUB-NATIVE branch never stamped Repo —
+        // its items carried repo:"" into the caches, and every download
+        // of one died at remoteItem ("item not found"). The corpus/
+        // directory branches set it by hand; stamping it here (when
+        // empty) fixes every layout at once. (The pre-existing corpus
+        // never hit this — its live index items carry repo baked in
+        // from the publish era.)
+        if item.Repo == "" {
+                item.Repo = card.ID
+        }
         if item.Author == "" {
                 item.Author = repoOwner(card.ID)
         }
