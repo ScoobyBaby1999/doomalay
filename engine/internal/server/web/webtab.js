@@ -401,11 +401,35 @@
       sheetTab = icon;
       var u = icon.url || '';
       if (!u) { icon.url = u = 'https://duckduckgo.com'; }
+      // v0.91.1: THE GROUP CONTRACT — the orbit's web-tab ids (the native
+      // pool's protection set: tabs orbiting the same center act as a
+      // group — their live instances survive the budget's LRU) + the
+      // canvas's alive web ids (its sweep truth) ride every open,
+      // refreshed per tap. Read defensively from the orbit's own state
+      // (tabgroups.js is the parallel bot's file — this reads, never
+      // edits).
+      var group = [];
+      try {
+        var dot = icon._orbit && icon._orbit.dot;
+        if (dot && dot.members) {
+          dot.members.forEach(function (m) {
+            if (m && m.type === 'web' && m.id) group.push(m.id);
+          });
+        }
+      } catch (e) { group = []; }
+      var alive = WebTabs.all().map(function (t) { return t.id; });
       var tier = window.InAppBrowser.open(u, {
         purpose: 'web',
         // the tab identity rides the opts — the native sheet's circle
-        // (right of the dash, left of the ‹ back pill) paints from it
-        tab: { id: icon.id, icon: icon.iconSrc() || '', gradient: icon.iconMode === 'gradient' }
+        // (right of the dash, left of the ‹ back pill) paints from it;
+        // group/alive ride along for the pool (v0.91.1)
+        tab: {
+          id: icon.id,
+          icon: icon.iconSrc() || '',
+          gradient: icon.iconMode === 'gradient',
+          group: group,
+          alive: alive
+        }
       });
       return tier === 'native-panel';
     },
@@ -427,6 +451,13 @@
   document.addEventListener('doomalay:panel-state', function (e) {
     var icon = sheetTab;
     if (!icon) return;
+    // v0.91.1: the ACTIVE tab's identity rides the state (notifyState's
+    // tabId) — the sync lands ONLY on the sheet's CURRENT tab (a plain
+    // link open while a tab browsed used to write its URL into the stale
+    // tab's entity — dead now). An absent tabId (pre-v0.91 bridges)
+    // keeps the legacy behavior.
+    var tid = e && e.detail && e.detail.tabId;
+    if (tid && tid !== icon.id) return;
     try {
       var u = window.InAppBrowser && window.InAppBrowser.currentURL();
       if (u && /^https?:\/\//i.test(u) && u !== icon.url) {

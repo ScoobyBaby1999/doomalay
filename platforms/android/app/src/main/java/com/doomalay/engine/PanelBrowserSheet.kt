@@ -242,6 +242,16 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // something free like brave or duckduckgo": free, keyless, no
         // tracking — the in-app-browser default)
         private const val SEARCH_URL = "https://duckduckgo.com/?q="
+
+        // v0.91.1: THE TAB POOL — the budget (the iframe deck's
+        // philosophy, native numbers: every WebView holds renderer memory;
+        // the Android guide says all WebViews share ONE renderer process,
+        // so the cost scales sub-linearly — but it is not free). MAX_LIVE
+        // non-protected tabs stay; the orbit group's members are exempt
+        // until the HARD_CAP; the LRU goes first; the active tab NEVER.
+        private const val EXT_ID = "_ext"          // the ephemeral slot (plain links / getkey)
+        private const val MAX_LIVE_TABS = 5
+        private const val HARD_CAP_TABS = 9
     }
 
     // ── views (built once; re-added if an error screen swapped content) ──
@@ -282,6 +292,24 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     private var loadText: TextView? = null
     private var loadDots: LoadDots? = null
     private var webView: WebView? = null
+    // v0.91.1: THE TAB POOL — tabs orbiting the same center act as a group
+    // (user spec: "switching between 2 or more different tab icons in the
+    // canvas should not just reload one tab to whichever that tab icon's
+    // url was — instead, it should spawn two separate instances or
+    // tabs… as if the user had the page loaded the whole time"). ONE live
+    // WebView per canvas tab in this ledger; a switch is a VISIBILITY swap
+    // (never a reload); background tabs sit paused ("still active just
+    // idle/paused" — onPause halts JS timers + rendering; the DOM, the
+    // scroll, the forms survive). `webView` stays the ACTIVE holder's
+    // WebView — every chrome path keeps reading it unchanged.
+    private class TabHolder(val id: String, val web: WebView) {
+        var lastActive = 0L
+        var url = ""
+    }
+    private val tabs = LinkedHashMap<String, TabHolder>()
+    private var protectedIds = HashSet<String>()   // the orbit group's web ids
+    private var bodyHost: FrameLayout? = null      // the DragBodyLayout (the pool's host)
+    private var themeBg = Color.BLACK              // applyTheme's surface, read at tab build
 
     // video fullscreen (the YouTube □ button)
     private var customView: View? = null
@@ -383,28 +411,206 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         setTabFromOpts(themeJson)
         ensureViews()
         applyTheme()
-        val w = webView ?: return
-        // v0.65.1: the dismiss paused the WebView — a resurfacing sheet
-        // resumes it (no-op when it was never paused).
-        try { w.onResume() } catch (e: Exception) {}
-        liveUrl = url
+        if (webView == null) return
+        // v0.91.1: THE TAB POOL — one live WebView per canvas tab; a tap
+        // on another orbiting tab icon is a VISIBILITY SWITCH (zero loads
+        // — the page stays exactly as the user left it, live, "as if the
+        // user had the page loaded the whole time"). The orbit's group
+        // ids + the canvas's alive ids ride the tab payload (webtab.js
+        // openNative) — the protection set + the sweep truth.
+        readGroupOpts(themeJson)
+        val tabId = themeJson.optJSONObject("tab")?.optString("id", "") ?: ""
+        resolveTab(if (tabId.isNotEmpty()) tabId else EXT_ID, url)
         if (!showing) {
             // a fresh dock (or a resurface): the first ever open rides the
             // default (half) dock like the web panel; later opens resume
             // the dock the user last left the sheet at.
-            if (w.url == null || w.url != url) w.loadUrl(url)
             showAt(if (everOpened) atFull else false)
             everOpened = true
         } else {
             // a tap on another (or the same) link while the sheet is up:
             // the attention is back on the panel — rise out of any duck
             if (ducked) cancelDuck(restoreDock = true)
-            if (w.url != url) w.loadUrl(url)
         }
+        sweepTabs(themeJson)
+        evictTabs()
+        notifyState()
     }
 
     fun isOpen(): Boolean = showing
     fun currentUrl(): String = liveUrl
+
+    // ── v0.91.1: THE TAB POOL ───────────────────────────────────────────
+    // resolveTab — the pool's heart. An EXISTING holder shows (a
+    // VISIBILITY swap — zero loads; the live page IS the tab's truth,
+    // exactly "as if the user had the page loaded the whole time"); a
+    // FRESH one builds + loads; the ephemeral slot keeps the
+    // single-WebView era's contract for plain links (loadUrl whenever
+    // the URL differs — a link open replaces ITS content, never a tab's).
+    private fun resolveTab(id: String, url: String): TabHolder {
+        val body = bodyHost
+        val active = activeHolder()
+        var holder = tabs[id]
+        if (holder == null) {
+            val w = buildTabWebView()
+            holder = TabHolder(id, w)
+            tabs[id] = holder
+            val lp = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // under the loading overlay (it must stay on top)
+            val load = loading
+            if (body != null && load != null && load.parent === body) {
+                body.addView(w, body.indexOfChild(load), lp)
+            } else {
+                body?.addView(w, lp)
+            }
+            if (active != null) {
+                try { active.web.onPause() } catch (e: Exception) {}
+                active.web.visibility = View.GONE
+            }
+            webView = w
+            holder.url = url
+            liveUrl = url
+            pillText?.text = url
+            syncBackBtn(w)
+            w.loadUrl(url)
+        } else {
+            // EXISTING — the switch dance (pause/hide the outgoing, show
+            // the incoming); only the EPHEMERAL slot follows a differing
+            // URL — a plain link is ALWAYS fresh intent (the single-
+            // WebView era's contract, whether _ext already shows or is
+            // being switched back to mid-tab-browse); a TAB never
+            // reloads (the live page is the truth, exactly "as if the
+            // user had the page loaded the whole time").
+            if (holder.web.parent == null) {
+                // a defensive re-attach (a rebuilt body) — a detached view
+                // shows nothing; the ledger's word stays law
+                val lp = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                body?.addView(holder.web, lp)
+            }
+            if (holder !== active) {
+                if (active != null) {
+                    try { active.web.onPause() } catch (e: Exception) {}
+                    active.web.visibility = View.GONE
+                }
+                hideGuard()   // a pending redirect stays with its own tab
+                webView = holder.web
+                holder.web.visibility = View.VISIBLE
+            }
+            var follow = false
+            if (id == EXT_ID) {
+                val cur = try { holder.web.url } catch (e: Exception) { null }
+                follow = (cur == null || cur != url)
+            }
+            if (follow) {
+                holder.url = url
+                liveUrl = url
+                pillText?.text = url
+                holder.web.loadUrl(url)
+            } else {
+                liveUrl = holder.url.ifEmpty { url }
+                pillText?.text = liveUrl
+            }
+            syncBackBtn(holder.web)
+        }
+        try { holder.web.onResume() } catch (e: Exception) {}
+        holder.lastActive = SystemClock.uptimeMillis()
+        return holder
+    }
+
+    private fun holderOf(v: View?): TabHolder? {
+        if (v == null) return null
+        for (h in tabs.values) if (h.web === v) return h
+        return null
+    }
+    private fun activeHolder(): TabHolder? = holderOf(webView)
+
+    // the orbit group's web ids + the canvas's alive web ids ride every
+    // tab open (webtab.js openNative) — refreshed per tap: a group that
+    // formed or dissolved since the last tap lands on the next one
+    // (honest eventual consistency — the protection extends lifetimes,
+    // it never grants immortality past the hard cap).
+    private fun readGroupOpts(opts: JSONObject) {
+        val tab = opts.optJSONObject("tab") ?: return
+        val grp = tab.optJSONArray("group") ?: return
+        val s = HashSet<String>()
+        for (i in 0 until grp.length()) {
+            val v = grp.optString(i, "")
+            if (v.isNotEmpty()) s.add(v)
+        }
+        protectedIds = s
+    }
+
+    // the canvas's alive list — a tab deleted on the canvas dies here
+    // with its WebView (webpanel.js's sweepOrphans, native). The active
+    // tab + the ephemeral slot stay.
+    private fun sweepTabs(opts: JSONObject) {
+        val tab = opts.optJSONObject("tab") ?: return
+        val alive = tab.optJSONArray("alive") ?: return
+        val live = HashSet<String>()
+        for (i in 0 until alive.length()) {
+            val v = alive.optString(i, "")
+            if (v.isNotEmpty()) live.add(v)
+        }
+        val dead = ArrayList<String>()
+        for (id in tabs.keys) if (id != EXT_ID && id !in live) dead.add(id)
+        for (id in dead) {
+            val h = tabs[id] ?: continue
+            if (h.web === webView) continue   // the active tab never dies here
+            dropHolder(h)
+        }
+    }
+
+    private fun dropHolder(h: TabHolder) {
+        try { (h.web.parent as? ViewGroup)?.removeView(h.web) } catch (e: Exception) {}
+        tabs.remove(h.id)
+        // the Android guide's explicit destruction — no zombie renderers
+        try { h.web.destroy() } catch (e: Exception) { AppLog.error("tab destroy failed", e) }
+    }
+
+    // THE BUDGET — the iframe deck's philosophy, native numbers: LRU by
+    // lastActive; the orbit group's members are exempt until the hard
+    // cap; the active tab NEVER goes.
+    private fun evictTabs() {
+        var over = tabs.size - MAX_LIVE_TABS
+        if (over > 0) {
+            val cands = tabs.values
+                .filter { it.id !in protectedIds && it.web !== webView }
+                .sortedBy { it.lastActive }
+            for (h in cands) {
+                if (over <= 0) break
+                dropHolder(h); over--
+            }
+        }
+        over = tabs.size - HARD_CAP_TABS
+        if (over > 0) {
+            val rest = tabs.values
+                .filter { it.web !== webView }
+                .sortedBy { it.lastActive }
+            for (h in rest) {
+                if (over <= 0) break
+                dropHolder(h); over--
+            }
+        }
+    }
+
+    // the pause discipline — a closed sheet stops rendering ALL its tabs;
+    // a resuming activity wakes the ACTIVE tab only (background tabs
+    // stay "still active just idle/paused" — exactly the spec's words).
+    private fun pauseAllTabs() {
+        for (h in tabs.values) { try { h.web.onPause() } catch (e: Exception) {} }
+    }
+    private fun resumeActiveTab() {
+        try { webView?.onResume() } catch (e: Exception) {}
+    }
+
+    private fun syncBackBtn(w: WebView?) {
+        if (w == null) return
+        val canBack = try { w.canGoBack() } catch (e: Exception) { false }
+        backBtn?.isEnabled = canBack
+        backBtn?.alpha = if (canBack) 1f else 0.38f
+    }
 
     fun dismiss() {
         if (editMode) exitEdit(restoreDock = false)   // v0.68.0: the keyboard goes with the sheet
@@ -440,10 +646,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         showing = false
         setLoading(false, null)
         // v0.65.1: "slides down and stops rendering" — the hidden sheet
-        // also PAUSES its WebView (no compositing, no JS timers, no
+        // also PAUSES its WebViews (no compositing, no JS timers, no
         // battery burn while closed; open() pairs with onResume). The
         // history survives — the sheet stays resumable, exactly as before.
-        try { webView?.onPause() } catch (e: Exception) {}
+        // v0.91.1: the whole POOL rests now, not just the active tab.
+        pauseAllTabs()
     }
 
     // Android back (native — consumed BEFORE the SPA is ever consulted):
@@ -459,8 +666,8 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         return true
     }
 
-    fun onPause() { try { webView?.onPause() } catch (e: Exception) {} }
-    fun onResume() { try { webView?.onResume() } catch (e: Exception) {} }
+    fun onPause() { pauseAllTabs() }
+    fun onResume() { resumeActiveTab() }
 
     // rotation (configChanges — no recreate): re-measure + re-seat the
     // current dock instantly so the offsets never go stale.
@@ -558,6 +765,11 @@ class PanelBrowserSheet(private val activity: MainActivity) {
             st.put("open", showing)
             st.put("ducked", ducked)
             st.put("url", currentUrl())
+            // v0.91.1: the ACTIVE tab's identity — the entity sync in
+            // webtab.js gates on it (the URL lands on the sheet's CURRENT
+            // tab only; a plain-link open while a tab browsed no longer
+            // writes its URL into the stale tab's entity).
+            st.put("tabId", activeHolder()?.id ?: "")
             activity.spaEval("window.__doomalayPanelState && window.__doomalayPanelState(" + st.toString() + ")")
         } catch (e: Exception) {
             AppLog.error("panel state notify failed", e)
@@ -811,6 +1023,7 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         if (overlay != null && overlay?.parent != null) return
 
         val bg = col("bgPanel", sysColor(android.R.attr.colorBackground, Color.BLACK))
+        themeBg = bg   // v0.91.1: the factory's builds read it (applyTheme re-tints)
 
         // the pill: [↻ url •••••] — tap = copy, drag = the sheet (disambiguated
         // by the slop in makeDraggable); the ↻ glyph spins while loading;
@@ -949,8 +1162,167 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // v0.64.2: the hairline under the strip — the chrome's edge
         divider = View(activity)
 
-        webView = WebView(activity).apply {
-            setBackgroundColor(bg)
+        // v0.91.1: THE TAB POOL — the sheet's WebViews live in a LEDGER:
+        // one live instance per canvas tab (tabs orbiting the same center
+        // act as a group — their instances survive the budget's LRU and
+        // never reload each other) plus the EPHEMERAL slot for plain
+        // links/getkey (the single-WebView era's resident, exactly its
+        // behavior). The construction block that lived here is now THE
+        // FACTORY — buildTabWebView() (just below ensureViews). This seed
+        // arms the pool; tab holders join the body under the loading
+        // overlay as tabs open — resolveTab owns every switch: a
+        // VISIBILITY swap, never a reload.
+        if (tabs.isEmpty()) {
+            val first = TabHolder(EXT_ID, buildTabWebView())
+            tabs[EXT_ID] = first
+            webView = first.web
+        }
+
+        // v0.64.2: THE LOADING OVERLAY — the circular bar + the link
+        // text, theme-tinted per open (applyTheme); never consumes a
+        // touch (the strip — the drag surface — lives outside the body,
+        // and taps on a half-painted page pass through).
+        // v0.64.3: THE RING LIFTED — the stack rides 35% of the overlay's
+        // height ABOVE its center (center 50% → 15% — just under the
+        // strip, where a browser's progress lives), clamped so the
+        // stack's top never leaves a short body (the 30% duck peek).
+        loadRing = LoadRing(activity)
+        loadText = TextView(activity).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            maxWidth = dip(280)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(dip(10), 0, dip(10), 0)
+        }
+        val stackLocal = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(loadRing, LinearLayout.LayoutParams(dip(40), dip(40)))
+            addView(loadText, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dip(16)
+            })
+        }
+        loadStack = stackLocal
+        loading = FrameLayout(activity).apply {
+            visibility = View.GONE
+            addView(stackLocal, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER))
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                val h = v.height.toFloat()
+                if (h > 0f) {
+                    val lift = -0.35f * h                    // 35% of the body, upward
+                    val cap = dip(50) - h / 2f               // the stack's top stays ≥ ~13dp inside
+                    stackLocal.translationY = if (lift < cap) cap else lift
+                }
+            }
+        }
+
+        // v0.68.0: THE BODY CHAIN — the body is a DragBodyLayout now
+        // (gesture.js's scroll chain, the native port): while the page
+        // sits at its very top, a downward pull past the 24dp slop is
+        // HIJACKED into the sheet's own drag — the WebView gets a clean
+        // CANCEL, the finger never loses control, and release() decides
+        // full/default/close exactly like the web panel's body.
+        // v0.72: THE EASY SLIDE-DOWN — while DUCKED the rule DROPS the
+        // at-top gate (a downward pull on the 30% peek is dismiss
+        // intent wherever the page is scrolled) and the slop drops to
+        // 10dp (release()'s dragFromDuck path closes on any dy>0, so
+        // the slop is the whole distance between the finger and the
+        // away-slide).
+        val body = DragBodyLayout(activity).apply {
+            addView(webView, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(loading, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // the hijack rule (every MOVE until it fires): one finger,
+            // the page at its very top (dropped while ducked), a
+            // deliberate downward pull
+            chainRule = { ev ->
+                if (ev.pointerCount != 1 || chainMulti || dragging) false
+                else {
+                    val w = webView
+                    val pull = ev.rawY - chainDownY
+                    if (ducked) pull > dip(DUCK_CHAIN_SLOP_DP)
+                    else {
+                        val atTop = w == null || !w.canScrollVertically(-1)
+                        atTop && pull > dip(BODY_SLOP_DP)
+                    }
+                }
+            }
+        }
+        bodyHost = body   // v0.91.1: the pool's host (resolveTab adds holders here)
+
+        sheet = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(strip, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(divider, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dip(1)))
+            addView(body, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+
+        // v0.64.2: THE SCRIM IS RETIRED — it never drew anything (the
+        // dim over the canvas is the SPA's own #chat-scrim, managed via
+        // notifyState/browserdock.js), and its tap-to-dismiss is now the
+        // duck: a press on the app behind the sheet falls through the
+        // bare overlay into the SPA WebView, pans the canvas, and ducks
+        // the sheet. Dismiss stays ✕ / drag-fling / Android back.
+        overlay = FrameLayout(activity).apply {
+            addView(sheet, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            visibility = View.GONE
+        }
+        activity.addContentView(overlay, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        // ── wire the chrome ──────────────────────────────────────────
+        // v0.68.0: an act press ends the edit first (attention is back
+        // on the panel — the typed text is committed to nothing)
+        refreshIcon?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
+            webView?.reload()
+            if (ducked) cancelDuck(restoreDock = true)
+        }
+        backBtn?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
+            if (webView?.canGoBack() == true) webView?.goBack()
+            if (ducked) cancelDuck(restoreDock = true)
+        }
+        extBtn?.setOnClickListener {
+            if (editMode) exitEdit(restoreDock = false)
+            openExternal(liveUrl)
+            if (ducked) cancelDuck(restoreDock = true)
+        }
+        closeBtn?.setOnClickListener { dismiss() }
+
+        // THE DRAG SURFACE: the strip + the pill follow the finger (a tap
+        // on the pill OPENS THE BAR, a long-press COPIES — drag vs tap vs
+        // long-press is disambiguated by the slop + the system long-press
+        // timeout in makeDraggable). The act buttons consume their own
+        // touches, so a drag never fights a ‹/⧉/✕ click and vice versa.
+        makeDraggable(strip)
+        makeDraggable(pillLocal, tap = { enterEdit() }, longPress = { copyLink() })
+
+        backBtn?.isEnabled = false
+        backBtn?.alpha = 0.38f
+    }
+
+    // ── v0.91.1: buildTabWebView — THE TAB FACTORY ────────────────────
+    // One factory, every holder (the historical single-WebView block,
+    // moved verbatim): settings, the chain touch listener, the guard's
+    // WebViewClient, the video-fullscreen ChromeClient, the download
+    // handoff. The page callbacks speak for the ACTIVE tab only (the
+    // gates live inside them) — a background tab loads silently,
+    // exactly like any browser's background tab; its holder's own
+    // url follows regardless.
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+    private fun buildTabWebView(): WebView {
+        return WebView(activity).apply {
+            setBackgroundColor(themeBg)   // v0.91.1: the theme surface at build (applyTheme re-tints)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.setSupportZoom(true)
@@ -1082,6 +1454,12 @@ class PanelBrowserSheet(private val activity: MainActivity) {
 
                 override fun onPageStarted(view: WebView?, u: String?, favicon: android.graphics.Bitmap?) {
                     super.onPageStarted(view, u, favicon)
+                    // v0.91.1: the holder's own address follows first; the
+                    // CHROME (pill/loading/liveUrl) speaks for the ACTIVE
+                    // tab only — a background tab loads silently, exactly
+                    // like any browser's background tab.
+                    holderOf(view)?.let { h -> if (u != null) h.url = u }
+                    if (view !== webView) return
                     if (u != null) liveUrl = u
                     pillText?.text = u ?: liveUrl
                     setLoading(true, u)
@@ -1092,11 +1470,14 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                 // covered; onPageFinished stays as the safety net).
                 override fun onPageCommitVisible(view: WebView?, u: String?) {
                     super.onPageCommitVisible(view, u)
+                    if (view !== webView) return   // v0.91.1: the active tab's paint only
                     setLoading(false, null)
                 }
 
                 override fun onPageFinished(view: WebView?, u: String?) {
                     super.onPageFinished(view, u)
+                    holderOf(view)?.let { h -> if (u != null) h.url = u }
+                    if (view !== webView) return   // v0.91.1: the active tab's chrome only
                     if (u != null) liveUrl = u
                     pillText?.text = u ?: liveUrl
                     setLoading(false, null)
@@ -1141,138 +1522,8 @@ class PanelBrowserSheet(private val activity: MainActivity) {
                 }
             }
         }
-
-        // v0.64.2: THE LOADING OVERLAY — the circular bar + the link
-        // text, theme-tinted per open (applyTheme); never consumes a
-        // touch (the strip — the drag surface — lives outside the body,
-        // and taps on a half-painted page pass through).
-        // v0.64.3: THE RING LIFTED — the stack rides 35% of the overlay's
-        // height ABOVE its center (center 50% → 15% — just under the
-        // strip, where a browser's progress lives), clamped so the
-        // stack's top never leaves a short body (the 30% duck peek).
-        loadRing = LoadRing(activity)
-        loadText = TextView(activity).apply {
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.MIDDLE
-            maxWidth = dip(280)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(dip(10), 0, dip(10), 0)
-        }
-        val stackLocal = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            addView(loadRing, LinearLayout.LayoutParams(dip(40), dip(40)))
-            addView(loadText, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dip(16)
-            })
-        }
-        loadStack = stackLocal
-        loading = FrameLayout(activity).apply {
-            visibility = View.GONE
-            addView(stackLocal, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER))
-            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                val h = v.height.toFloat()
-                if (h > 0f) {
-                    val lift = -0.35f * h                    // 35% of the body, upward
-                    val cap = dip(50) - h / 2f               // the stack's top stays ≥ ~13dp inside
-                    stackLocal.translationY = if (lift < cap) cap else lift
-                }
-            }
-        }
-
-        // v0.68.0: THE BODY CHAIN — the body is a DragBodyLayout now
-        // (gesture.js's scroll chain, the native port): while the page
-        // sits at its very top, a downward pull past the 24dp slop is
-        // HIJACKED into the sheet's own drag — the WebView gets a clean
-        // CANCEL, the finger never loses control, and release() decides
-        // full/default/close exactly like the web panel's body.
-        // v0.72: THE EASY SLIDE-DOWN — while DUCKED the rule DROPS the
-        // at-top gate (a downward pull on the 30% peek is dismiss
-        // intent wherever the page is scrolled) and the slop drops to
-        // 10dp (release()'s dragFromDuck path closes on any dy>0, so
-        // the slop is the whole distance between the finger and the
-        // away-slide).
-        val body = DragBodyLayout(activity).apply {
-            addView(webView, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(loading, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            // the hijack rule (every MOVE until it fires): one finger,
-            // the page at its very top (dropped while ducked), a
-            // deliberate downward pull
-            chainRule = { ev ->
-                if (ev.pointerCount != 1 || chainMulti || dragging) false
-                else {
-                    val w = webView
-                    val pull = ev.rawY - chainDownY
-                    if (ducked) pull > dip(DUCK_CHAIN_SLOP_DP)
-                    else {
-                        val atTop = w == null || !w.canScrollVertically(-1)
-                        atTop && pull > dip(BODY_SLOP_DP)
-                    }
-                }
-            }
-        }
-
-        sheet = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(strip, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(divider, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dip(1)))
-            addView(body, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        }
-
-        // v0.64.2: THE SCRIM IS RETIRED — it never drew anything (the
-        // dim over the canvas is the SPA's own #chat-scrim, managed via
-        // notifyState/browserdock.js), and its tap-to-dismiss is now the
-        // duck: a press on the app behind the sheet falls through the
-        // bare overlay into the SPA WebView, pans the canvas, and ducks
-        // the sheet. Dismiss stays ✕ / drag-fling / Android back.
-        overlay = FrameLayout(activity).apply {
-            addView(sheet, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            visibility = View.GONE
-        }
-        activity.addContentView(overlay, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        // ── wire the chrome ──────────────────────────────────────────
-        // v0.68.0: an act press ends the edit first (attention is back
-        // on the panel — the typed text is committed to nothing)
-        refreshIcon?.setOnClickListener {
-            if (editMode) exitEdit(restoreDock = false)
-            webView?.reload()
-            if (ducked) cancelDuck(restoreDock = true)
-        }
-        backBtn?.setOnClickListener {
-            if (editMode) exitEdit(restoreDock = false)
-            if (webView?.canGoBack() == true) webView?.goBack()
-            if (ducked) cancelDuck(restoreDock = true)
-        }
-        extBtn?.setOnClickListener {
-            if (editMode) exitEdit(restoreDock = false)
-            openExternal(liveUrl)
-            if (ducked) cancelDuck(restoreDock = true)
-        }
-        closeBtn?.setOnClickListener { dismiss() }
-
-        // THE DRAG SURFACE: the strip + the pill follow the finger (a tap
-        // on the pill OPENS THE BAR, a long-press COPIES — drag vs tap vs
-        // long-press is disambiguated by the slop + the system long-press
-        // timeout in makeDraggable). The act buttons consume their own
-        // touches, so a drag never fights a ‹/⧉/✕ click and vice versa.
-        makeDraggable(strip)
-        makeDraggable(pillLocal, tap = { enterEdit() }, longPress = { copyLink() })
-
-        backBtn?.isEnabled = false
-        backBtn?.alpha = 0.38f
     }
+
 
     // drag + tap + long-press disambiguation on one view. `tap` fires only
     // when the touch never crossed the slop; `longPress` (the capsule's
@@ -1923,7 +2174,10 @@ class PanelBrowserSheet(private val activity: MainActivity) {
         // thinking dots follow --accent — same discipline)
         loadDots?.dotColor = accent
 
-        webView?.setBackgroundColor(bg)
+        // v0.91.1: every holder in the pool wears the theme's surface (a
+        // new tab picks themeBg up at build; this re-tints the rest).
+        themeBg = bg
+        tabs.values.forEach { h -> h.web.setBackgroundColor(bg) }
     }
 
     // ── color helpers (the ViewerActivity recipe) ─────────────────────
