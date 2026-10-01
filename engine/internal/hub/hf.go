@@ -44,9 +44,19 @@ const hubMaxBody = 8 << 20
 
 // HFClient is the (stateless) REST client against one HF instance.
 type HFClient struct {
-        base   string
-        client *http.Client
+        base    string
+        client  *http.Client
+        tokenFn func() string // v0.91.3: the connected vault token — public reads ride it
 }
+
+// SetTokenProvider wires the hub-service token lookup (the vault's
+// DOOMALAY_HF_TOKEN). v0.91.3: HF rate-limits ANONYMOUS resolve reads by IP
+// (live-found: 401/429 "We had to rate limit your IP" on /resolve — the
+// item-payload fetch died while the API-listing reads survived). Read paths
+// (FetchFile/ListTree/GetRepo) pass "" and now ride the connected token when
+// present — authenticated requests sit in a higher rate-limit bucket; an
+// unconnected hub keeps the anonymous behavior (public repos still serve).
+func (c *HFClient) SetTokenProvider(fn func() string) { c.tokenFn = fn }
 
 // NewHFClient builds a client for base ("https://huggingface.co" or a mock).
 func NewHFClient(base string) *HFClient {
@@ -106,6 +116,12 @@ type RepoCard struct {
 
 // do runs one request (JSON in, raw out). A non-2xx returns *HFError.
 func (c *HFClient) do(method, path, token string, body []byte, contentType string) ([]byte, error) {
+        // v0.91.3: no explicit token → the connected vault token (the
+        // rate-limit fix). An explicit token (per-request fan-out, connect
+        // flows) always wins; the provider may return "" (anonymous).
+        if token == "" && c.tokenFn != nil {
+                token = c.tokenFn()
+        }
         var rdr io.Reader
         if body != nil {
                 rdr = bytes.NewReader(body)

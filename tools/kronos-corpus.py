@@ -395,8 +395,56 @@ def mirror_tree(up: Path):
     return out
 
 
+# v0.91.3 THE TOPICAL TAGS (user spec: "change the tag #readme to something
+# like financial or stocks or prediction or whatever Kronos does") — every
+# member's SECOND tag is what it DOES; the docs' vague "readme" is retired.
+TOPICAL = {
+    "kronos":            ["kronos", "finance", "foundation-model"],
+    "kronos-predict":    ["kronos", "prediction", "forecasting"],
+    "kronos-data":       ["kronos", "market-data", "stocks"],
+    "kronos-backtest":   ["kronos", "backtesting", "trading"],
+    "kronos-finetune":   ["kronos", "finetuning", "qlib"],
+    "kronos-webui":      ["kronos", "webui", "visualization"],
+}
+DOC_TAGS = ["kronos", "finance", "markets"]   # was ["kronos", "readme"]
+
+# v0.91.3 THE PYTHON LIBRARY entries (user spec: "add python scripts as a
+# category in the library… even the weakest models must be able to reliably
+# run the scripts") — the runnable entry points as first-class type=python
+# items: browsable in the Python Library, bot-downloadable via hublib, each
+# description TEACHING the run (deps + weights + command). Paths validated
+# against the upstream tree below (a wrong path aborts loudly).
+PY_SCRIPTS = [
+    {"slug": "kronos-py-predict", "name": "Kronos prediction (quickstart)",
+     "file": "examples/prediction_example.py",
+     "desc": "THE canonical quickstart: downloads Kronos-mini + Tokenizer-2k weights from Hugging Face (NeoQuasar) and forecasts the next K-lines from sample data. RUN: pip install -r requirements.txt, then python3 prediction_example.py",
+     "tags": ["kronos", "prediction", "quickstart"]},
+    {"slug": "kronos-py-predict-batch", "name": "Kronos batch forecasting",
+     "file": "examples/prediction_batch_example.py",
+     "desc": "Batch forecasting over many series — the same KronosPredictor flow, looped. RUN: python3 prediction_batch_example.py (needs the model/ package + weights per the Kronos skill)",
+     "tags": ["kronos", "prediction", "batch"]},
+    {"slug": "kronos-py-predict-cn", "name": "Kronos CN-markets day forecast",
+     "file": "examples/prediction_cn_markets_day.py",
+     "desc": "The Chinese A-share daily-bars forecast pipeline. RUN: python3 prediction_cn_markets_day.py (akshare data path per the data skill)",
+     "tags": ["kronos", "prediction", "cn-markets"]},
+    {"slug": "kronos-py-data-akshare", "name": "CN market data fetch (akshare)",
+     "file": "examples/get_akshare_date_2024-2025_x.py",
+     "desc": "Fetches A-share daily OHLCV (2024-2025) into the CSV shape Kronos eats. RUN: pip install akshare, then python3 get_akshare_date_2024-2025_x.py",
+     "tags": ["kronos", "market-data", "akshare"]},
+    {"slug": "kronos-py-backtest", "name": "Kronos backtest harness",
+     "file": "examples/run_backtest_kronos.py",
+     "desc": "Evaluates forecast signals against history — the upstream backtest harness. RUN: python3 run_backtest_kronos.py (weights + sample data per the backtesting skill)",
+     "tags": ["kronos", "backtesting", "evaluation"]},
+    {"slug": "kronos-py-webui", "name": "Kronos Flask web UI",
+     "file": "webui/app.py",
+     "desc": "The interactive prediction web UI (Flask + plotly charts). RUN: pip install flask plotly, then python3 app.py (or sh start.sh) — serves on localhost",
+     "tags": ["kronos", "webui", "flask"]},
+]
+
+
 def build_items(tree):
-    """The hub-native index: 6 skills + 4 docs, all collection kronos-shiyu."""
+    """The hub-native index: 6 skills + 4 docs + 6 python scripts, all
+    collection kronos-shiyu."""
     items = []
     for sk in SKILLS:
         companions = []
@@ -413,7 +461,7 @@ def build_items(tree):
             "id": item_id(sk["slug"]), "type": "skill", "name": sk["name"],
             "description": sk["desc"], "file": skill_file,
             "author": "ScoobyBaby1999", "repo": REPO,
-            "tags": ["kronos", sk["slug"]],
+            "tags": TOPICAL[sk["slug"]],
             "icon": ICON, "upstream": UPSTREAM_CREDIT,
             "collection": COLLECTION, "files": companions,
             "createdAt": CREATED_AT,
@@ -426,9 +474,23 @@ def build_items(tree):
             "id": item_id(doc["slug"]), "type": "doc", "name": doc["name"],
             "description": doc["desc"], "file": doc["file"],
             "author": "ScoobyBaby1999", "repo": REPO,
-            "tags": ["kronos", "readme"],
+            "tags": DOC_TAGS,
             "icon": ICON, "upstream": UPSTREAM_CREDIT,
             "collection": COLLECTION, "files": [],
+            "createdAt": CREATED_AT,
+        })
+    for py in PY_SCRIPTS:
+        if py["file"] not in tree:
+            raise SystemExit(f"python payload missing from upstream tree: {py['file']}")
+        items.append({
+            "id": item_id(py["slug"]), "type": "python", "name": py["name"],
+            "description": py["desc"], "file": py["file"],
+            "author": "ScoobyBaby1999", "repo": REPO,
+            "tags": py["tags"],
+            "icon": ICON, "upstream": UPSTREAM_CREDIT,
+            "collection": COLLECTION,
+            "files": (["requirements.txt"]
+                      if py["slug"] in ("kronos-py-predict", "kronos-py-webui") else []),
             "createdAt": CREATED_AT,
         })
     return items
@@ -524,7 +586,8 @@ def commit_ops(token, repo, tree, items, dry):
         print(f"dry plan: {len(files)} tree files → text commit chunks + {len(lfs)} LFS puts "
               f"+ 1 meta commit ({len(items)} items: "
               f"{[i['type'] for i in items].count('skill')} skills, "
-              f"{[i['type'] for i in items].count('doc')} docs)")
+              f"{[i['type'] for i in items].count('doc')} docs, "
+              f"{[i['type'] for i in items].count('python')} python scripts")
         for it in items[:3]:
             print(f"  {it['type']:6} {it['id']}  file={it['file']}  companions={len(it['files'])}")
         print("dry run — no commit")

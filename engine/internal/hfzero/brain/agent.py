@@ -67,6 +67,11 @@ try:
         pass
 except ImportError:
     _HAS_STRANDS = False
+    # v0.91.3: the guard's missing piece (live-found in a fresh sandbox:
+    # litellm absent → the except ran → the module-level class def below
+    # still NameError'd, killing EVERY brain test at collection). The stub
+    # keeps the def valid in broken envs; run_turn gates on _HAS_STRANDS.
+    LiteLLMModel = object
 
 
 class BrainLiteLLMModel(LiteLLMModel):

@@ -15,6 +15,7 @@ import (
         "net/url"
         "strings"
         "sync"
+        "sync/atomic"
         "testing"
         "time"
 
@@ -1216,6 +1217,75 @@ func TestConnectAndDisconnect(t *testing.T) {
         }
 }
 
+// v0.91.3: HF rate-limits ANONYMOUS resolve reads by IP (live-found: the
+// item-payload fetch died with 401 "We had to rate limit your IP" while the
+// API-listing reads survived). The client's read paths must ride the
+// CONNECTED vault token — authenticated requests sit in a higher bucket.
+func TestFetchFileRidesConnectedToken(t *testing.T) {
+        var gotAuth atomic.Value
+        srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                if r.URL.Path == "/api/whoami-v2" {
+                        if r.Header.Get("Authorization") != "Bearer goodtoken" {
+                                w.WriteHeader(http.StatusUnauthorized)
+                                return
+                        }
+                        writeMockJSON(w, map[string]any{"type": "user", "name": "mockuser"})
+                        return
+                }
+                if strings.HasPrefix(r.URL.Path, "/datasets/") { // a resolve read
+                        gotAuth.Store(r.Header.Get("Authorization"))
+                        if r.Header.Get("Authorization") == "" {
+                                // the rate-limited anonymous path — HF's live behavior
+                                w.WriteHeader(http.StatusUnauthorized)
+                                _, _ = w.Write([]byte("We had to rate limit your IP"))
+                                return
+                        }
+                        _, _ = w.Write([]byte("# payload"))
+                        return
+                }
+                w.WriteHeader(http.StatusNotFound)
+        }))
+        defer srv.Close()
+
+        db := openTestDB(t)
+        vault, err := secrets.New(t.TempDir())
+        if err != nil {
+                t.Fatalf("vault: %v", err)
+        }
+        svc := NewService(srv.URL, db, vault)
+
+        // unconnected: the anonymous read hits the 401 rate limit
+        if _, err := svc.hf.FetchFile("alice/doomalay-personas", "items/x.md"); !IsUnauthorized(err) {
+                t.Fatalf("anonymous read must hit the 401 rate limit: %v", err)
+        }
+        if a, _ := gotAuth.Load().(string); a != "" {
+                t.Fatalf("unconnected read must carry no auth, got %q", a)
+        }
+
+        // connected: the read rides the vault token
+        if _, err := svc.Connect("goodtoken"); err != nil {
+                t.Fatalf("connect: %v", err)
+        }
+        body, err := svc.hf.FetchFile("alice/doomalay-personas", "items/x.md")
+        if err != nil {
+                t.Fatalf("connected read: %v", err)
+        }
+        if string(body) != "# payload" {
+                t.Fatalf("body = %q", body)
+        }
+        if a, _ := gotAuth.Load().(string); a != "Bearer goodtoken" {
+                t.Fatalf("connected read must ride the token, got auth %q", a)
+        }
+
+        // disconnected: anonymous again
+        if err := svc.Disconnect(); err != nil {
+                t.Fatalf("disconnect: %v", err)
+        }
+        if _, err := svc.hf.FetchFile("alice/doomalay-personas", "items/x.md"); !IsUnauthorized(err) {
+                t.Fatalf("post-disconnect read must be anonymous again: %v", err)
+        }
+}
+
 func TestTimeHelpers(t *testing.T) {
         now := time.Now().Unix()
         s := TimeString(now)
@@ -1230,60 +1300,60 @@ func TestTimeHelpers(t *testing.T) {
 // ── v0.61 pt C.10 (icons): the file:<path> icon convention ──────────────
 
 func TestSanitizeIconFileRefs(t *testing.T) {
-	// valid file: refs pass through (path normalized, refs intact)
-	cases := map[string]string{
-		"file:items/abc123/icon.svg":        "file:items/abc123/icon.svg",
-		"file:items/abc123/icon.png":        "file:items/abc123/icon.png",
-		"file:assets/superpowers-small.svg": "file:assets/superpowers-small.svg",
-		"file: icons/logo.png":              "file:icons/logo.png", // the space after the colon trims
-		"file:/leading/slash.svg":           "file:leading/slash.svg",
-	}
-	for in, want := range cases {
-		if got := SanitizeIcon(in); got != want {
-			t.Errorf("SanitizeIcon(%q) = %q, want %q", in, got, want)
-		}
-	}
-	// malformed refs drop to "" (traversal, non-image, empty)
-	for _, in := range []string{
-		"file:",
-		"file:../escape.svg",
-		"file:items/../x.svg",
-		"file:docs/readme.md", // not an image
-		"file:a\\b.svg",       // backslash
-		"file:a?b.svg",        // query
-		"file://double//slash.svg",
-	} {
-		if got := SanitizeIcon(in); got != "" {
-			t.Errorf("SanitizeIcon(%q) = %q, want \"\"", in, got)
-		}
-	}
-	// kebab names keep their old shape
-	if got := SanitizeIcon("Lightbulb!!"); got != "lightbulb" {
-		t.Errorf("kebab icon broken: %q", got)
-	}
+        // valid file: refs pass through (path normalized, refs intact)
+        cases := map[string]string{
+                "file:items/abc123/icon.svg":        "file:items/abc123/icon.svg",
+                "file:items/abc123/icon.png":        "file:items/abc123/icon.png",
+                "file:assets/superpowers-small.svg": "file:assets/superpowers-small.svg",
+                "file: icons/logo.png":              "file:icons/logo.png", // the space after the colon trims
+                "file:/leading/slash.svg":           "file:leading/slash.svg",
+        }
+        for in, want := range cases {
+                if got := SanitizeIcon(in); got != want {
+                        t.Errorf("SanitizeIcon(%q) = %q, want %q", in, got, want)
+                }
+        }
+        // malformed refs drop to "" (traversal, non-image, empty)
+        for _, in := range []string{
+                "file:",
+                "file:../escape.svg",
+                "file:items/../x.svg",
+                "file:docs/readme.md", // not an image
+                "file:a\\b.svg",       // backslash
+                "file:a?b.svg",        // query
+                "file://double//slash.svg",
+        } {
+                if got := SanitizeIcon(in); got != "" {
+                        t.Errorf("SanitizeIcon(%q) = %q, want \"\"", in, got)
+                }
+        }
+        // kebab names keep their old shape
+        if got := SanitizeIcon("Lightbulb!!"); got != "lightbulb" {
+                t.Errorf("kebab icon broken: %q", got)
+        }
 }
 
 func TestValidateIconSVG(t *testing.T) {
-	good := []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>")
-	if err := validateIconSVG(good); err != nil {
-		t.Errorf("valid svg rejected: %v", err)
-	}
-	// BOM + leading whitespace are fine
-	if err := validateIconSVG(append([]byte("  \n\ufeff"), good...)); err != nil {
-		t.Errorf("bom+ws svg rejected: %v", err)
-	}
-	for _, bad := range [][]byte{
-		[]byte("hello <svg>"), // not markup-first
-		[]byte("<div>no svg root</div>"),
-		nil,
-	} {
-		if err := validateIconSVG(bad); err == nil {
-			t.Errorf("bad svg accepted: %.20q", bad)
-		}
-	}
-	// the size cap
-	big := append([]byte("<svg>"), make([]byte, 65<<10)...)
-	if err := validateIconSVG(big); err == nil {
-		t.Error("oversized svg accepted")
-	}
+        good := []byte("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>")
+        if err := validateIconSVG(good); err != nil {
+                t.Errorf("valid svg rejected: %v", err)
+        }
+        // BOM + leading whitespace are fine
+        if err := validateIconSVG(append([]byte("  \n\ufeff"), good...)); err != nil {
+                t.Errorf("bom+ws svg rejected: %v", err)
+        }
+        for _, bad := range [][]byte{
+                []byte("hello <svg>"), // not markup-first
+                []byte("<div>no svg root</div>"),
+                nil,
+        } {
+                if err := validateIconSVG(bad); err == nil {
+                        t.Errorf("bad svg accepted: %.20q", bad)
+                }
+        }
+        // the size cap
+        big := append([]byte("<svg>"), make([]byte, 65<<10)...)
+        if err := validateIconSVG(big); err == nil {
+                t.Error("oversized svg accepted")
+        }
 }

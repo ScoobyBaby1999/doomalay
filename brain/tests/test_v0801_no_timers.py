@@ -33,11 +33,22 @@ def test_engine_idle_kill_disarmed():
 
 
 def test_engine_tool_loops_fit_long_chains():
-    """ReAct + native-tools loops: 64 rounds (30+ tool chains must fit)."""
+    """ReAct + native-tools loops: the round budgets must fit 30+ tool chains.
+
+    v0.91.3 RE-PIN: the exact-string pin ('round < 64') went stale when the
+    v0.82.2 no-cap wave raised the budgets (chat.go → 200 literal,
+    nativetools.go → maxRounds = 200, was 64). The contract is the FLOOR:
+    both loops must allow AT LEAST 64 rounds."""
+    import re as _re
+
     chat = _src("../engine/internal/llm/chat.go")
     nat = _src("../engine/internal/llm/nativetools.go")
-    assert "for round := 0; round < 64; round++" in chat
-    assert "const maxRounds = 64" in nat
+    m = _re.search(r"for round := 0; round < (\d+); round\+\+", chat)
+    assert m, "chat.go ReAct round loop not found"
+    assert int(m.group(1)) >= 64, f"chat.go rounds {m.group(1)} < 64 (long chains would die)"
+    m2 = _re.search(r"const maxRounds = (\d+)", nat)
+    assert m2, "nativetools.go maxRounds not found"
+    assert int(m2.group(1)) >= 64, f"maxRounds {m2.group(1)} < 64 (long chains would die)"
 
 
 def test_brain_model_calls_are_no_cap():

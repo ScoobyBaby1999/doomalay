@@ -516,7 +516,9 @@ func TestHubLibraries(t *testing.T) {
         // v0.63: 5 BROWSABLE libraries — persona + template + skill + theme +
         // script. doc is Hidden (bundle-companion format, not a browsable
         // category) so it never appears in the listing…
-        if len(got.Libraries) != 5 {
+        // v0.91.3: + python — runnable Python scripts as a first-class
+        // category (the Kronos bundle's entry points publish here) → 6.
+        if len(got.Libraries) != 6 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}

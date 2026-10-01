@@ -52,7 +52,10 @@ TOOL_NAMES = ["hublib"]  # primary (only) tool name built below
 # a theme's payload describes a look the user applies from the hub page.
 # v0.60 pt C.9: scripts + docs (the port's repo companions — browsable +
 # recommendable; payloads land the same way).
-HUBLIB_TYPES = ("template", "skill", "script", "doc", "persona", "theme")
+# v0.91.3: python — runnable Python scripts as a first-class category
+# (the Kronos bundle's entry points publish here; weak models get a
+# clean runnable catalog instead of digging through companions)
+HUBLIB_TYPES = ("template", "skill", "script", "doc", "persona", "theme", "python")
 
 # v0.60 pt C.9: THE LIB PILL — ONE gatekeeping switch ("Bot Library" in
 # ✦ tweaks, key botLib; absent = enabled). Legacy bots wrote per-type
@@ -65,7 +68,7 @@ LIB_KEY = "botLib"
 DL_KEY = "botDL"
 LEGACY_BOX_KEYS = ("botTemplates", "botSkills")
 TYPE_LABELS = {"template": "templates", "skill": "skills",
-               "script": "scripts", "doc": "docs"}
+               "script": "scripts", "doc": "docs", "python": "python scripts"}
 
 # The hublist event payload cap — one card per item, 12 cards is plenty for
 # a chat screen; the text return says where the rest live.

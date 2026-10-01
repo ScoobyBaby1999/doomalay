@@ -129,7 +129,7 @@ func CollectionTarget(id string) string {
 
 // NewService wires the hub to the local store + vault + an HF base URL.
 func NewService(hfBase string, db *store.DB, vault *secrets.Vault) *Service {
-        return &Service{
+        s := &Service{
                 db:        db,
                 hf:        NewHFClient(hfBase),
                 vault:     vault,
@@ -137,6 +137,11 @@ func NewService(hfBase string, db *store.DB, vault *secrets.Vault) *Service {
                 scans:     map[string]*scanEntry{},
                 manifests: map[string]cachedManifest{},
         }
+        // v0.91.3: the client's read paths ride the connected vault token
+        // (HF rate-limits anonymous resolve reads by IP — live-found on the
+        // item-payload fetch; see SetTokenProvider).
+        s.hf.SetTokenProvider(s.Token)
+        return s
 }
 
 // ── auth ─────────────────────────────────────────────────────────────────

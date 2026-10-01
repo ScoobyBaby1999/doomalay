@@ -134,4 +134,20 @@ func init() {
                 Desc:       "Markdown guides and journals shared through Hugging Face datasets",
                 Hidden:     true, // v0.63: bundled + bot-served only — never a browsable tab
         })
+        // v0.91.3: PYTHON — runnable Python scripts as a FIRST-CLASS library
+        // category (user spec: "if it helps to add python scripts as a
+        // category in the library let's do so. We want even the weakest
+        // models to be able to reliably run the scripts and use the Kronos
+        // bundle 100% of the time"). The Kronos bundle's runnable entry
+        // points (prediction, data fetch, backtest, finetune, webui) publish
+        // here as browsable, bot-downloadable .py payloads — a weak model
+        // gets a clean catalog instead of digging through skill companions.
+        // Zero Kronos strings here (the ONE LAW) — the type is generic.
+        Register(LibrarySpec{
+                Type:       "python",
+                Label:      "Python Library",
+                Tag:        "doomalay-python",
+                PayloadExt: ".py",
+                Desc:       "Runnable Python scripts shared through Hugging Face datasets",
+        })
 }

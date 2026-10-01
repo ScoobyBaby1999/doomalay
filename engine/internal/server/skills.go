@@ -657,6 +657,8 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         useLine = "USE IT: ACTION: skills {\"action\":\"load\",\"skill\":\"" + item.Name + "\"} arms it as the methodology to follow."
                 case "script":
                         useLine = "USE: read it as reference (repo tooling) — follow its convention when the task matches it; scripts are not executed in the app."
+                case "python":
+                        useLine = "USE IT: save the payload as a .py file in your workspace and run it (python3 <file>.py) — read the bundle's skill docs first for setup (requirements, model weights); the runnable entry points are also listed in the Python Library."
                 default: // doc
                         useLine = "USE: background reading — consult it when the task touches its subject."
                 }
