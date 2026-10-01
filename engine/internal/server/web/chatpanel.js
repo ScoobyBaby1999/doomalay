@@ -2478,6 +2478,14 @@
       var defPersona = (window.Persona && window.Persona.defaultPersonaFor)
         ? window.Persona.defaultPersonaFor(state.sandbox)
         : DEFAULT_PERSONA;
+      // v0.89.3: the HF default carries a {repo} slot (own-space repo or
+      // the shared marker) — substituteAll doesn't know it, so it's
+      // resolved HERE from the chat's own state (the engine twin's
+      // defaultPersonaFor {repo} replacement).
+      if (state.sandbox === 'hf') {
+        defPersona = defPersona.split('{repo}').join(
+          state.sandboxRepo ? (' (your Space: ' + state.sandboxRepo + ')') : '');
+      }
       sys += (window.Persona && window.Persona.substituteAll)
         ? window.Persona.substituteAll(defPersona, state.chatName, model, state.provider)
         : substituteVars(DEFAULT_PERSONA, model, state.provider);

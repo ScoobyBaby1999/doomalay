@@ -138,6 +138,14 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 500, "create: "+err.Error())
                 return
         }
+        // v0.89.3 THE BOT'S OWN MANUAL: an HF chat opens with the harness
+        // doc in its artifact drawer — the user reads what the bot can do
+        // from the SAME HARNESS.md the bot reads in its workspace (and the
+        // Space ships at brain/HARNESS.md). Quick/other sandboxes: nothing
+        // seeded (their bots have no harness doc).
+        if sess.Sandbox == "hf" {
+                s.seedHarnessArtifact(sess.ID)
+        }
         writeJSON(w, 201, sess)
 }
 

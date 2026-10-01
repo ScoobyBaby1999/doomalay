@@ -469,10 +469,14 @@ async def _run_strands_agent(
                 ]
                 if system_prompt:
                     nudge_msgs = [{"role": "system", "content": system_prompt}] + nudge_msgs
+                # v0.82.3: the nudge round runs with thinking DISABLED —
+                # _build_effort_disable (the documented per-family off switch)
+                # replaces the normal effort body, so the model must spend its
+                # output on visible content instead of reasoning again.
                 _nudge_kwargs = {"model": litellm_id, "messages": nudge_msgs,
                                  "api_key": api_key, "timeout": 86400,
                                  "max_retries": 1, "stream": True,
-                                 "extra_body": _build_effort_body(model, effort)}
+                                 "extra_body": _build_effort_disable(model)}
                 if litellm_base:
                     _nudge_kwargs["base_url"] = litellm_base
                 _nudge_stream = await _litellm_nudge.acompletion(**_nudge_kwargs)
@@ -1628,6 +1632,29 @@ def _build_effort_body(model: str, effort: str) -> dict:
     if "deepseek-r1" in model or "deepseek-reasoner" in model:
         mapping = {"low": 2000, "med": 8000, "high": 16000, "max": 32000}
         return {"reasoning_effort": mapping.get(effort, 8000)}
+    return {}
+
+
+def _build_effort_disable(model: str) -> dict:
+    """v0.82.3 THE ANSWER-FORCE SHAPE — thinking DISABLED for the
+    final-answer nudge round (the brain twin of the PM/engine retries).
+
+    The v0.81.7 brain nudge re-sent _build_effort_body(model, effort) —
+    a thinking model was configured to THINK AGAIN on the retry, so it
+    reproduced the reasoning-only shape and the turn still died (the
+    user's report: "it said it will give a summary, then didn't"). The
+    nudge now runs with the documented per-family disable:
+    · kimi → chat_template_kwargs {"thinking": False} (Moonshot K2.5/K2.6
+      "instant mode", web-search-verified);
+    · gemma / glm-5.1 → chat_template_kwargs {"enable_thinking": False};
+    · everything else → {} (their provider default runs non-thinking or
+      light — no unverified shapes on the rescue path).
+    """
+    m = (model or "").lower()
+    if "kimi" in m:
+        return {"chat_template_kwargs": {"thinking": False}}
+    if "gemma" in m or "glm-5.1" in m:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
     return {}
 
 

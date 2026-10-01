@@ -2405,9 +2405,26 @@ class AgentSession:
             self.workspace = AGENT_ROOT / self.id
             self.workspace.mkdir(parents=True, exist_ok=True)
         self._seed_skills()
+        self._seed_harness()
         self.thread = threading.Thread(target=self._run, daemon=True,
                                        name=f"agent-{self.id}")
         self.thread.start()
+
+    def _seed_harness(self) -> None:
+        # v0.89.3 THE BOT'S OWN MANUAL: copy brain/HARNESS.md into the
+        # workspace so the SHORT default persona's pointer ("HARNESS.md in
+        # your workspace") is literally true — the bot reads its complete
+        # capability inventory (every tool, the Linux sandbox, HF
+        # self-management, /pub serving, honest limits) with
+        # file_read("HARNESS.md") / `cat HARNESS.md`. Copy only when ABSENT:
+        # a bot-edited copy survives the session (the manual is the bot's
+        # to annotate), and a fresh workspace re-seeds the canonical doc.
+        src = HERE / "HARNESS.md"
+        try:
+            if src.is_file() and not (self.workspace / "HARNESS.md").exists():
+                shutil.copyfile(src, self.workspace / "HARNESS.md")
+        except Exception:
+            pass
 
     def _seed_skills(self) -> None:
         #   ship doomalaysocreate's skill folders into the workspace so the Claude tier

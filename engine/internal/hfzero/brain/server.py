@@ -35,7 +35,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 # Brain modules (siblings).
 sys.path.insert(0, str(Path(__file__).parent))
@@ -147,6 +147,62 @@ PANEL_PATH = Path(__file__).parent / "catalog" / "panel.json"
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "0.2.0", "brain": True, "strands": _check_strands()}
+
+
+# ── v0.89.3 THE PUBLIC ROOT — serving what the agent builds ─────────────
+# The agent (and only the agent, via its shell/file tools) writes static
+# files here; they are served OPENLY (no space token) at /pub/<file> so
+# the user can VIEW what the agent built in a browser — dashboards,
+# simulations, games. This is the "turn the Space into a viewable app"
+# primitive documented in brain/HARNESS.md. Safe by construction: static
+# file types only, resolved-and-prefixed (no traversal), no listing.
+PUBLIC_ROOT = Path(os.environ.get(
+    "DOOMALAY_PUBLIC_ROOT",
+    "/data/public" if os.path.isdir("/data") else "/tmp/doomalay-public",
+))
+
+_PUB_MIME = {
+    ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8", ".json": "application/json",
+    ".csv": "text/csv; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8", ".svg": "image/svg+xml",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+    ".wasm": "application/wasm", ".xml": "application/xml",
+    ".pdf": "application/pdf", ".woff": "font/woff", ".woff2": "font/woff2",
+}
+_PUB_MAX_BYTES = 64 * 1024 * 1024  # 64 MB per file — a game, not a dataset
+
+
+@app.get("/pub/{rel:path}", include_in_schema=False)
+def pub_serve(rel: str):
+    """Serve a static file from PUBLIC_ROOT (open route, no token).
+
+    `/pub/` and `/pub/<dir>/` resolve to that directory's index.html when
+    present (the space's viewable landing page). Traversal is impossible:
+    the resolved path must stay under PUBLIC_ROOT.
+    """
+    rel_clean = (rel or "").strip().strip("/")
+    base = PUBLIC_ROOT.resolve()
+    # bare /pub/ or a directory path → index.html
+    candidate = (base / rel_clean).resolve() if rel_clean else base
+    try:
+        if candidate.is_dir():
+            candidate = (candidate / "index.html").resolve()
+        # containment: resolved path must live under the public root
+        if candidate != base and base not in candidate.parents:
+            raise HTTPException(status_code=404, detail="not found")
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        if candidate.stat().st_size > _PUB_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="file too large")
+    except HTTPException:
+        raise
+    except OSError:
+        raise HTTPException(status_code=404, detail="not found")
+    mime = _PUB_MIME.get(candidate.suffix.lower(), "application/octet-stream")
+    return FileResponse(candidate, media_type=mime)
 
 
 def _check_strands() -> bool:

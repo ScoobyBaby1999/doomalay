@@ -67,7 +67,9 @@ brain_app = brain_mod.app  # the brain's FastAPI (health/models/templates/chat/j
 # ── auth + containment (pure ASGI — streaming-safe) ─────────────────────────
 
 OPEN_PATHS = {"/", "/health"}
-OPEN_PREFIXES = ("/ui", "/favicon.ico", "/assets/")
+# v0.89.3: /pub is OPEN — the agent's served work (HARNESS.md's
+# "turn the Space into a viewable app" primitive).
+OPEN_PREFIXES = ("/ui", "/favicon.ico", "/assets/", "/pub")
 
 _hf_token_cache: dict[str, tuple[bool, str, float]] = {}
 
