@@ -4737,16 +4737,29 @@
     background-color: var(--raised-chrome);   /* the flat fallback rides the var */
     border-color: var(--raised-ring);
   }
-  /* the chatbot disc + name KEEP the projected window — the app's face
-     on the canvas; the DOM set stays ≤59 icons below the Pixi world
-     gate (≥60 entities render as sprites) — not a scale surface */
+  /* v0.92.1 THE ORBIT REST — the chatbot disc + name go LOCAL
+     (scroll-attachment: the gradient renders at the element's own box).
+     The measured root cause of the sustained gradient lag: while a tab
+     group orbits, every member's per-frame style.transform write woke
+     the projection painter for a FULL anchor walk + raster (~30 paints/s
+     + ~92 motion ticks/s, forever — RESEARCH-V092's orbit rig), and the
+     disc's own projected window was the reason a moving icon needed
+     re-anchoring at all. Precedent: v0.91.3 dere-projected the gradient
+     editor previews with the exact argument — "viewport projection at
+     52px is invisible" — the disc is 56px, the name pill smaller. Solid
+     themes render byte-identical (no gradient vars — the plate + ring
+     unchanged); gradient themes show the field at the disc's own scale
+     instead of a 56px window into the viewport field. The projected
+     model survives on the REAL scale surfaces (panels, sections,
+     banners) — with (b) below, their anchors now only re-validate on
+     genuine layout changes, never on icon motion. */
   .chatbot .icon, .chatbot .name {
     background-image: var(--surface-2-gradient, none),
                       linear-gradient(var(--surface-2), var(--surface-2)),
                       var(--border-gradient, none);
     background-origin: padding-box, padding-box, border-box;
     background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
+    background-attachment: scroll, scroll, scroll;
   }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
@@ -4812,17 +4825,23 @@
      field (bg-app) too: it floats over the CANVAS, and its documented
      base is rgba(--bg-app, 0.85). A live bg-app twin makes it a real
      window (opaque, readable over any art); a solid bg-app keeps the
-     translucent pill exactly as before. */
+     translucent pill exactly as before.
+     v0.92.1 THE ORBIT REST: scroll-attachment (LOCAL) — the pill is
+     ~90×22px; viewport projection is invisible at that size (the
+     v0.91.3 precedent), and the projected window was the reason every
+     icon motion needed per-frame re-anchoring (RESEARCH-V092). */
   .chatbot .name {
     background-image: var(--surface-2-gradient, none), var(--bg-app-gradient, none);
-    background-attachment: fixed, fixed;
+    background-attachment: scroll, scroll;
   }
   /* v0.72: the sandbox corner badge — its documented base is
      surface-1, so it windows the SURFACE-1 field (not the raised one):
-     the badge reads as a cut of the panel behind the icon disc. */
+     the badge reads as a cut of the panel behind the icon disc.
+     v0.92.1: scroll-attachment — same orbit-rest reasoning (a ~14px
+     corner chip cannot show viewport projection). */
   .chatbot .sandbox-badge {
     background-image: var(--surface-1-gradient, none);
-    background-attachment: fixed;
+    background-attachment: scroll;
   }
   /* v0.49: the chat panel + settings pages are SURFACES — their gradient
      rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints

@@ -967,8 +967,19 @@
       function syncRoots() {
         ensureVarSheet();
         var found = [];
+        // v0.92.1 THE ORBIT REST: .chatbot LEAVES the root registry —
+        // the icon chrome (disc, name pill, sandbox badge) went LOCAL
+        // (scroll attachment, index.html v0.92.1); nothing inside a
+        // .chatbot carries a projected window anymore, so an icon's
+        // per-frame transform drift must not open motion windows (each
+        // window close fired a settle paint — the measured self-
+        // sustaining ~30 paints/s + ~92 motion ticks/s while any tab
+        // group orbited; RESEARCH-V092's orbit rig). The REAL scopes
+        // stay: the panel, the connect overlay, the hub + template
+        // sheets — their glides keep the motion path they were designed
+        // for.
         var els = document.querySelectorAll(
-          '#chat-panel, #connect-overlay, .chatbot, .hub-sheet, .tpl-sheet');
+          '#chat-panel, #connect-overlay, .hub-sheet, .tpl-sheet');
         var keep = [];
         for (var i = 0; i < els.length; i++) {
           var el = els[i];
@@ -1167,6 +1178,15 @@
               if (el.__projNoneEpoch === epoch) continue;
               var img = getComputedStyle(el).backgroundImage;
               if (!img || img === 'none') { el.__projNoneEpoch = epoch; continue; }
+              // v0.92.1: the projection model is FIXED-ATTACHMENT windows
+              // only. An element whose computed attachment carries no
+              // 'fixed' opted out (the icon chrome's LOCAL gradients —
+              // scroll attachment). It never enters the painted set, so a
+              // SEL match via a gradient var() can never resurrect the
+              // per-motion re-anchor churn. Memoized with the same epoch
+              // (a theme flip bumps memoEpoch + re-collects).
+              var att92 = getComputedStyle(el).backgroundAttachment;
+              if (att92.indexOf('fixed') === -1) { el.__projNoneEpoch = epoch; continue; }
               el.__projPainted = true;
             }
             var r = el.getBoundingClientRect();
@@ -1515,17 +1535,57 @@
             (performance.now() - window.__doomalayGestureAt < 200);
           if (muts.length && rootReg.length) {
             full = false;
+            // v0.92.1: motionWorthy — the mutations that genuinely need the
+            // motion window (the glide driver's tracked-root transform
+            // writes, the gesture cascade). A batch whose every mutation
+            // was SKIPPED (painter-owned epoch writes, v0.92.1's inert
+            // orbit transforms) needs NOTHING: not mark, not motion — the
+            // old `else motion()` kept a 90/s motion window alive from pure
+            // orbit noise, and every window close fired the settle paint
+            // (the self-sustaining 30 paints/s — RESEARCH-V092's rig).
+            var motionWorthy = 0;
             for (var i = 0; i < muts.length; i++) {
               var m = muts[i];
               if (gest && m.type === 'attributes' && m.attributeName === 'style') {
+                motionWorthy++;
                 continue;   // gesture cascade — rides motion()
               }
               if (m.type === 'attributes' && m.attributeName === 'style' &&
                   m.target && m.target.__projWriteEpoch === writeEpoch) {
                 continue;   // the painter's OWN write — never self-trigger
               }
+              // v0.92.1 ORBIT NOISE: a style write on an element that is
+              // NEITHER a tracked projection root NOR a painted window,
+              // whose old→new diff is PURE transform/translate, cannot
+              // move any box but its own (transform never affects
+              // sibling/descendant layout) and holds no window to
+              // re-anchor — provably inert for the painter. THE measured
+              // root of the sustained gradient lag: the tab groups' orbit
+              // drift writes each member's style.transform EVERY frame;
+              // with the disc + name now LOCAL (index.html v0.92.1 — the
+              // icon carries no painted window anymore), these writes
+              // used to classify as `full` (an untracked style change)
+              // → a FULL projection paint per frame, ~30/s forever while
+              // a group exists (RESEARCH-V092's orbit rig: 25-31
+              // paints/s + 92 motions/s vs 0.4/0.1 at rest). Skip them
+              // entirely — no mark, no motion. A write that also touches
+              // anything else (z-index, size, custom props…) falls
+              // through to the conservative full paint as before.
+              if (m.type === 'attributes' && m.attributeName === 'style' &&
+                  m.target && m.target.__projTracked !== true &&
+                  m.target.__projPainted !== true) {
+                var on92 = m.target.getAttribute('style') || '';
+                var oo92 = m.oldValue || '';
+                var inert92 = function (s) {
+                  return s.replace(/(^|;)\s*(transform|translate)\s*:[^;]*/g, ';');
+                };
+                if (inert92(on92) === inert92(oo92)) {
+                  continue;   // pure transform on an inert element — skip
+                }
+              }
               if (m.type !== 'attributes' || m.attributeName !== 'style' ||
                   !m.target || m.target.__projTracked !== true) { full = true; break; }
+              motionWorthy++;
               var now = m.target.getAttribute('style') || '';
               var old = m.oldValue || '';
               var strip = function (s) {
@@ -1537,6 +1597,7 @@
               };
               if (strip(now) !== strip(old)) { full = true; break; }
             }
+            if (!full && !motionWorthy) return;   // pure inert noise — nothing
           }
           if (full) mark(); else motion();
         });
