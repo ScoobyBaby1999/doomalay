@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.91.2"   // v0.91.2: THE COLOR REWORK PHASE 1 — OKX (the perceptual core) + Layer-3 goes CSS-native (color-mix/OKLCH, the projection fan-out retired for small chrome — the colors-tab lag dies); rides the group-tabs wave (0.91.0-1) and the stretch fix (0.90.4)
+var Version = "0.91.5"   // v0.91.5: THE SILENT-DEGRADATION LIGHT — the strands-agents==0.1.5 exact pin (0.1.9's registry dropped TOOL_SPEC functions: every spec-attached tool vanished live), /health surfaces strands state+version+import-error, the HF create-path existence probe (HF's create-error shape drifted), the space's-face + python-library waves ride (0.91.3-4)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

@@ -65,13 +65,26 @@ try:
         _strands_openai.OpenAIModel.format_chunk = _format_chunk_none_usage_safe
     except Exception:
         pass
-except ImportError:
+except ImportError as _strands_import_err:
     _HAS_STRANDS = False
     # v0.91.3: the guard's missing piece (live-found in a fresh sandbox:
     # litellm absent → the except ran → the module-level class def below
     # still NameError'd, killing EVERY brain test at collection). The stub
     # keeps the def valid in broken envs; run_turn gates on _HAS_STRANDS.
     LiteLLMModel = object
+    # v0.91.4 THE SILENT-DEGRADATION LIGHT (live-found on the final-test
+    # space: turns quietly fell to the no-tools direct path — the agent
+    # claimed "calculator only" and the game turn flailed for an hour
+    # while /health kept saying ok). The import failure is CAPTURED and
+    # surfaced: /health reports it, the first turn logs it.
+    STRANDS_IMPORT_ERROR = f"{type(_strands_import_err).__name__}: {_strands_import_err}"
+    try:
+        from server import log_event  # best-effort (circular-safe at boot)
+        log_event("strands_unavailable", error=STRANDS_IMPORT_ERROR[:300])
+    except Exception:
+        pass
+else:
+    STRANDS_IMPORT_ERROR = ""
 
 
 class BrainLiteLLMModel(LiteLLMModel):

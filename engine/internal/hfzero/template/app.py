@@ -325,6 +325,32 @@ def health():
         h["brain_tools"] = len([t for t in tools if t.endswith(".py")])
     except Exception:
         h["brain_tools"] = -1
+    # v0.91.4 THE SILENT-DEGRADATION LIGHT: when strands fails to import,
+    # /chat turns fall to the no-tools direct path QUIETLY (live-found: the
+    # agent claimed "calculator only" for an hour while health said ok).
+    # Surface the strands state + the import reason (type+msg only).
+    try:
+        ag = sys.modules.get("agent")  # server.py imports it as top-level
+        if ag is None:
+            aspec = importlib.util.spec_from_file_location(
+                "doomalay_health_agent", str(HERE / "brain" / "agent.py"))
+            ag = importlib.util.module_from_spec(aspec)
+            aspec.loader.exec_module(ag)
+        h["strands"] = bool(getattr(ag, "_HAS_STRANDS", False))
+        err = getattr(ag, "STRANDS_IMPORT_ERROR", "")
+        if err:
+            h["strands_error"] = err[:300]
+        # the version too — the boot-time pip can drift behind the build's
+        # back (live-found: the runtime reinstalls and a version change
+        # silently alters the tool registry's acceptance rules)
+        try:
+            import importlib.metadata as _im
+            h["strands_version"] = _im.version("strands-agents")
+        except Exception:
+            h["strands_version"] = "?"
+    except Exception as e:  # noqa: BLE001 — diagnostics must never 500 health
+        h["strands"] = False
+        h["strands_error"] = f"agent import failed: {type(e).__name__}"
     return h
 
 

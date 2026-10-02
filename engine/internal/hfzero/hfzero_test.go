@@ -69,6 +69,18 @@ func TestTemplateHackElements(t *testing.T) {
                         t.Errorf("requirements.txt: must not pin %q (preinstalled in the image)", bad)
                 }
         }
+        // v0.91.4 THE STRANDS DRIFT GUARD (live incident): the old
+        // >=0.1.5,<0.2 range let the boot-time pip resolve strands-agents
+        // 0.1.9, whose registry dropped the TOOL_SPEC-function path — every
+        // spec-attached tool (shell, python_repl, install, the guarded file
+        // tools) vanished with "unrecognized tool specification" and the
+        // agent ran calculator-only. The pin must stay EXACT.
+        if !strings.Contains(reqs, "strands-agents==0.1.5") {
+                t.Error("requirements.txt: strands-agents must be EXACTLY pinned ==0.1.5 (a range lets PyPI drift break the tool surface)")
+        }
+        if strings.Contains(reqs, "strands-agents>=") || strings.Contains(reqs, "strands-agents>") {
+                t.Error("requirements.txt: strands-agents must never be a range (the v0.91.4 live incident)")
+        }
         // the brain's server must be embedded
         found := false
         for _, f := range files {

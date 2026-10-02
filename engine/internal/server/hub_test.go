@@ -235,6 +235,14 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/spaces/"), "/")
                 m.mu.Lock()
                 defer m.mu.Unlock()
+                // v0.91.4: unknown repos 404 (matching live HF — the create
+                // handlers' EXISTENCE PROBE depends on it; the old always-200
+                // made every probe say "exists" and the create path died at
+                // the commit with a confusing 404).
+                if _, ok := m.repos[rest]; !ok {
+                        w.WriteHeader(http.StatusNotFound)
+                        return
+                }
                 rt := map[string]any{"stage": "NO_APP_FILE"}
                 if m.spaceRuntime != nil {
                         rt = m.spaceRuntime
