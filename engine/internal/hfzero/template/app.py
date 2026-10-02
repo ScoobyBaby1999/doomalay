@@ -351,6 +351,14 @@ def health():
     except Exception as e:  # noqa: BLE001 — diagnostics must never 500 health
         h["strands"] = False
         h["strands_error"] = f"agent import failed: {type(e).__name__}"
+
+    # v0.91.8: the PM sidecar light (the brain's own /health is shadowed by
+    # this route on the space — the light must live HERE to be visible)
+    try:
+        import pm_sidecar as _pms
+        h["pm_sidecar"] = _pms.pm_proxy_running()
+    except Exception:
+        h["pm_sidecar"] = False
     return h
 
 

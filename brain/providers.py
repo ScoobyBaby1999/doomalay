@@ -590,6 +590,20 @@ def make_provider_registry() -> list[provider]:
         log_event("provider_url_resolved", provider=name, url=masked_url[:120])
         limits = entry.get("limits", {}) or {}
         privacy = entry.get("privacy", {}) or {}
+        # v0.91.8 THE PM SIDECAR HOOK (the /chat + /judge path — the registry
+        # is what actually feeds these turns; agent_core's resolver wrapper
+        # covers the agent's open()): registering the PM provider means a PM
+        # turn is possible — ensure the Node shim is up. No-op when ready;
+        # honest None when node is absent (the first chat fails with
+        # connection refused, which the error events surface).
+        if name == "privatemodeai":
+            try:
+                import pm_sidecar
+                if pm_sidecar.pm_proxy_chat_url() is None:
+                    log_event("pm_sidecar_unavailable",
+                              hint="node missing or pmproxy failed to boot — see the run log")
+            except Exception as e:
+                log_event("pm_sidecar_ensure_error", error=str(e)[:200])
         providers.append(provider(
             name=name,
             url=url,

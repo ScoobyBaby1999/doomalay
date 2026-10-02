@@ -292,9 +292,11 @@ def _resolve_open_model(user_model: str) -> tuple[str, str | None, str | None, s
     if pair and pair[2] == "PRIVATEMODEAI_API_KEY":
         try:
             import pm_sidecar
-            pm_sidecar.pm_proxy_chat_url()  # ensure (no-op when up)
-        except Exception:
-            pass  # the dead URL surfaces the real error downstream
+            if pm_sidecar.pm_proxy_chat_url() is None:  # ensure (no-op when up)
+                log_event("pm_sidecar_unavailable",
+                          hint="node missing or pmproxy failed to boot — see the run log")
+        except Exception as e:
+            log_event("pm_sidecar_ensure_error", error=str(e)[:200])
     return pair
 
 

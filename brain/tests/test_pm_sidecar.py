@@ -78,6 +78,11 @@ def test_vendored_pm_sdk_synced_with_engine():
                  / "engine" / "internal" / "server" / "web" / "vendor" / "pm")
     if not engine_pm.is_dir():
         return  # the embedded brain tree — the engine web dir isn't a sibling
+    # v0.91.8 live-find: Node 18 parses .js as CJS without this marker —
+    # the sidecar SyntaxError'd at boot on the space (Node 20+ autodetects)
+    pj = brain_pm / "package.json"
+    assert pj.is_file(), "brain/vendor/pm/package.json missing (Node 18 CJS trap)"
+    assert json.loads(pj.read_text()).get("type") == "module"
     for f in ("privatemode-ai.js", "wasm.js", "wasm_exec.js", "errors.js",
               "privatemode.wasm.gz"):
         a, b = brain_pm / f, engine_pm / f
@@ -94,3 +99,22 @@ def test_pmproxy_mjs_parses():
     r = subprocess.run([node, "--check", str(brain / "pmproxy.mjs")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, f"pmproxy.mjs does not parse: {r.stderr[:300]}"
+
+
+def test_registry_hooks_pm_sidecar(monkeypatch):
+    """make_provider_registry (the /chat + /judge path) ensures the sidecar
+    when it registers the PM provider — the live-found gap: the first space
+    deployment only hooked agent_core's resolver, and the /chat flow never
+    touched it."""
+    import os
+    import providers
+    import pm_sidecar
+    calls = []
+    monkeypatch.setattr(pm_sidecar, "pm_proxy_chat_url",
+                        lambda: calls.append(1) or "http://127.0.0.1:8530/v1/chat/completions")
+    monkeypatch.setenv("PRIVATEMODEAI_API_KEY", "test-key")
+    try:
+        providers.make_provider_registry()
+    finally:
+        monkeypatch.delenv("PRIVATEMODEAI_API_KEY", raising=False)
+    assert len(calls) >= 1, "registering the PM provider must ensure the sidecar"

@@ -1,0 +1,4 @@
+{
+  "type": "module",
+  "//": "v0.91.8: Node 18 (Debian bookworm's apt nodejs — the socreate image) parses .js files as CommonJS without this marker; the SDK's ESM named exports (PrivatemodeCore) then SyntaxError at boot (live-found on the space). Node 20+ auto-detects ESM syntax, which is why the dev sandbox never caught it. Browsers don't read this file — harmless there."
+}

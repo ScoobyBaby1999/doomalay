@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.92.0"   // v0.92.0: THE PERF WAVE — the orbit rest (the sustained gradient churn root-caused + killed: ~30 projection paints/s + ~92 motion ticks/s forever while a tab group orbited → 0/0), busy-panel parity measured, the native trim bridge
+var Version = "0.92.4"   // v0.92.4: THE PM SIDECAR LIVE-FIX CHAIN riding the perf wave (0.92.0-3) — the ESM marker (Node 18 CJS trap), the polyfill FIRST import (ESM evaluates imports before the body), the REGISTRY hook (the /chat path), the health lights; LIVE-PROVEN: SPACE PM OK streaming through the encrypted sidecar on doomalaysocreate
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

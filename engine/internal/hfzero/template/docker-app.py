@@ -274,6 +274,14 @@ def health():
         h["brain_tools"] = len([t for t in tools if t.endswith(".py")])
     except Exception:
         h["brain_tools"] = -1
+
+    # v0.91.8: the PM sidecar light (the brain's own /health is shadowed by
+    # this route on the space — the light must live HERE to be visible)
+    try:
+        import pm_sidecar as _pms
+        h["pm_sidecar"] = _pms.pm_proxy_running()
+    except Exception:
+        h["pm_sidecar"] = False
     return h
 
 

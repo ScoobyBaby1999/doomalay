@@ -35,6 +35,16 @@ _proc: subprocess.Popen | None = None
 _ready = False
 
 
+def _log(kind: str, **kw) -> None:
+    """Best-effort lifecycle log — the spawner must never be silent (the
+    v0.91.5 strands lesson: a quietly-dead dependency is undebuggable)."""
+    try:
+        import json as _json
+        print(f"[pm_sidecar] {kind} {_json.dumps(kw)}", flush=True)
+    except Exception:
+        pass
+
+
 def _probe(timeout: float = 2.0) -> bool:
     """Is something already answering /healthz on the sidecar port?"""
     try:
@@ -58,13 +68,15 @@ def pm_proxy_chat_url() -> str | None:
             return PM_PROXY_CHAT_URL
         node = shutil.which("node")
         if node is None:
+            _log("spawn_fail", reason="node not found on PATH")
             return None
-        log = open(os.devnull, "wb")
+        # the node process's stdout/stderr ride the container log — the
+        # v0.91.5 lesson: a silent sidecar death is undebuggable from outside
         proc = subprocess.Popen(
             [node, str(_HERE / "pmproxy.mjs")],
             cwd=str(_HERE),
-            stdout=log,
-            stderr=subprocess.STDOUT,
+            stderr=None,  # inherit → the HF run log
+            stdout=None,
             start_new_session=True,  # survives the request; dies with the container
         )
         # the wasm decompress (5.9MB gz) + boot: give it up to 45s
@@ -72,12 +84,16 @@ def pm_proxy_chat_url() -> str | None:
         deadline = time.time() + 45
         while time.time() < deadline:
             if proc.poll() is not None:
+                _log("spawn_fail", rc=proc.returncode,
+                     hint="pmproxy.mjs died at boot — see its stderr above")
                 return None  # died at boot (missing files / node version)
             if _probe():
                 _proc = proc
                 _ready = True
+                _log("spawn_ok", port=PM_PROXY_PORT, pid=proc.pid)
                 return PM_PROXY_CHAT_URL
             time.sleep(0.5)
+        _log("spawn_timeout", port=PM_PROXY_PORT)
         try:
             proc.terminate()
         except Exception:

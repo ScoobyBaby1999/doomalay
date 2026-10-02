@@ -25,6 +25,10 @@
 // Bearer — litellm forwards api_key). One PrivatemodeCore per key (its own
 // verify + secret), capped and LRU-evicted (each core owns a wasm client —
 // memory is real).
+// THE POLYFILL MUST BE THE FIRST IMPORT (ESM evaluates imports before the
+// importing module's body — an inline polyfill runs too late; the SDK's
+// wasm_exec.js throws at module scope on Node 18, live-found on the space).
+import './pm-polyfill.mjs';
 import http from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -51,6 +55,7 @@ try {
   console.error('[pmproxy] wasm decompress failed:', e.message);
   process.exit(1);
 }
+console.log(`[pmproxy] node ${process.version} — wasm staged at ${wasmPath}`);
 
 // ── per-key core cache (LRU, capped) ──────────────────────────────────────
 const cores = new Map(); // key → {core, ready: Promise, last}
