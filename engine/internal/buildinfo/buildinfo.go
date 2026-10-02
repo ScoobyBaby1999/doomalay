@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.91.8"   // v0.91.8: THE PRIVATEMODE SIDECAR — pmproxy.mjs (Node OpenAI-compatible shim, the vendored SDK doing E2E-encrypted calls) + pm_sidecar.py spawner; PM-on-the-brain/space alive (the catalog's dead localhost:8080 proxy entry replaced); PM joins the live model-fetch ladder
+var Version = "0.92.0"   // v0.92.0: THE PERF WAVE — the orbit rest (the sustained gradient churn root-caused + killed: ~30 projection paints/s + ~92 motion ticks/s forever while a tab group orbited → 0/0), busy-panel parity measured, the native trim bridge
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
