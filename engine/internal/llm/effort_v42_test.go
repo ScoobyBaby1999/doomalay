@@ -117,15 +117,19 @@ func TestParseOpenRouterModelsV42(t *testing.T) {
         if _, ok := reg["moonshotai/kimi-latest"]; !ok {
                 t.Error("~moonshotai/kimi-latest should collapse to moonshotai/kimi-latest")
         }
-        // ":batch"/":free" route variants collapse onto the base entry.
-        if _, ok := reg["openai/gpt-oss-120b:batch"]; ok {
-                t.Error(":batch variant must not be a separate registry key")
+        // v0.93.1 THE :FREE SLUG TRUTH — route variants (":batch"/":free")
+        // STAY as their own registry keys (the real callable slugs). The old
+        // collapse made the app call base slugs OpenRouter no longer serves
+        // (live-verified: qwen/qwen3.8-27b 404s while qwen/qwen3.8-27b:free
+        // works — the user's "most models say no longer available" report).
+        if reg["openai/gpt-oss-120b:batch"] == nil {
+                t.Error(":batch variant must stay its own registry key (the true slug)")
         }
         if reg["openai/gpt-oss-120b"] == nil {
-                t.Error("openai/gpt-oss-120b missing after variant collapse")
+                t.Error("openai/gpt-oss-120b base must also stay")
         }
-        if reg["mistralai/mistral-large-2512"] == nil {
-                t.Error(":batch-only id should collapse to its base id")
+        if reg["mistralai/mistral-large-2512:batch"] == nil {
+                t.Error(":batch-only id must keep its true slug (no base to collapse onto)")
         }
         // Reasoning objects parse with every documented field.
         glm := reg["z-ai/glm-5.3"]
@@ -146,7 +150,7 @@ func TestParseOpenRouterModelsV42(t *testing.T) {
                 t.Error("nemotron-3-super supported_parameters should carry reasoning_effort")
         }
         // nil reasoning (no knob) parses as nil, not an empty object.
-        if reg["mistralai/mistral-large-2512"].Reasoning != nil {
+        if reg["mistralai/mistral-large-2512:batch"].Reasoning != nil {
                 t.Error("mistral-large reasoning should be nil (JSON null)")
         }
         // Garbage + empty input never panic.

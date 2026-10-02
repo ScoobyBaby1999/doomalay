@@ -238,13 +238,28 @@ func parseOpenRouterModels(body []byte) map[string]*orModelMeta {
                         continue
                 }
                 id := strings.TrimPrefix(m.ID, "~")
-                // Strip ":free"/":batch" — only when the ':' sits in the MODEL
-                // segment (after the last '/'), so vendor slugs survive.
-                if seg := id[strings.LastIndexByte(id, '/')+1:]; strings.Contains(seg, ":") {
-                        id = id[:len(id)-(len(seg)-strings.IndexByte(seg, ':'))]
-                }
+                // v0.93.1 THE :FREE SLUG TRUTH — the suffix STAYS.
+                //
+                // The old code stripped ":free"/":batch" here so a family
+                // collapsed to one entry — right when OpenRouter hosted the
+                // SAME model as both a paid base and a :free variant. That
+                // world is gone (live-verified 2026-10-02): the free tier is
+                // now EXCLUSIVE — `qwen/qwen3.8-27b:free` EXISTS while plain
+                // `qwen/qwen3.8-27b` 404s ("No endpoints found"), and for the
+                // big legacy pairs (deepseek-r1, llama-3.3-70b) the :free
+                // variant was retired while the base is PAID. Stripping the
+                // suffix made the app call slugs OpenRouter no longer serves —
+                // the user's "most models say they are no longer available
+                // for my account" + "even the free model says the quota is
+                // reached" reports, both from one line.
+                //
+                // Keeping the true slug: the catalog's host routes carry the
+                // REAL callable id; MakeFamily already strips ":free" for
+                // family grouping, so X + X:free group correctly with two
+                // routes (free + paid) — the user picks the free one and the
+                // wire sees exactly what OpenRouter expects.
                 if _, dup := out[id]; dup {
-                        continue // first occurrence wins (base before variants)
+                        continue // first occurrence wins (deterministic order below)
                 }
                 m.ID = id
                 out[id] = &m
@@ -982,9 +997,23 @@ func supportsNativeWebSearch(provider, rawModel string) (bool, map[string]any) {
 
 // NativeWebSearchBody returns the request fragment enabling the provider's
 // NATIVE web search (OpenRouter plugins). nil → use the injected tool loop.
+//
+// v0.93.1 THE FREE-TIER 402 (live-reproduced + captured on the wire): the
+// `web` plugin is a PAID OpenRouter feature — on ANY free-tier model
+// (`…:free`, the openrouter/free router, or a zero-priced registry entry)
+// the request answers 402 "Insufficient credits. This account never
+// purchased credits" even though the model itself is free. The engine then
+// armed it for EVERY OpenRouter web-search turn, so free-tier users could
+// never use web search — the user's "even the free model says the quota is
+// reached when I barley used it" report. Free models now return nil here,
+// which routes the turn onto the client-side ReAct web_search loop (free,
+// on-device) instead of the paid plugin.
 func NativeWebSearchBody(provider, rawModel string) map[string]any {
         if provider != "openrouter" {
                 return nil // only OpenRouter has a native plugin (verified)
+        }
+        if openRouterFreeTierModel(rawModel) {
+                return nil // paid plugin on a free model → the free tool loop instead
         }
         native, body := supportsNativeWebSearch(provider, rawModel)
         if !native {
@@ -995,6 +1024,22 @@ func NativeWebSearchBody(provider, rawModel string) map[string]any {
                 return map[string]any{"plugins": []any{map[string]any{"id": "web"}}}
         }
         return body
+}
+
+// openRouterFreeTierModel reports whether the OpenRouter model id is
+// free-tier: a `:free` suffix, the free router itself, or an exact
+// zero-priced registry entry (the lyria/stealth preview class). EXACT
+// lookup only — the fuzzy family matcher could misread a paid pick as its
+// :free sibling and strip a paying user's native search.
+func openRouterFreeTierModel(rawModel string) bool {
+        m := strings.TrimSpace(rawModel)
+        if m == "openrouter/free" || strings.HasSuffix(m, ":free") {
+                return true
+        }
+        if e := fetchOpenRouterRegistry()[m]; e != nil {
+                return parsePrice(e.Pricing.Prompt) == 0 && parsePrice(e.Pricing.Completion) == 0
+        }
+        return false
 }
 
 // lastSegment returns the text after the final "/" (or the whole string).

@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.92.4"   // v0.92.4: THE PM SIDECAR LIVE-FIX CHAIN riding the perf wave (0.92.0-3) — the ESM marker (Node 18 CJS trap), the polyfill FIRST import (ESM evaluates imports before the body), the REGISTRY hook (the /chat path), the health lights; LIVE-PROVEN: SPACE PM OK streaming through the encrypted sidecar on doomalaysocreate
+var Version = "0.93.1"   // v0.93.1: THE OPENROUTER HONESTY WAVE — 16MB SSE lines (lyria's base64 media killed turns at 256KB), delta.reasoning parsing (OpenRouter streams it; we dropped it — "much more bland"), the retired-:free 402/404/429 honest labels, TRUE :free slugs in the catalog (the suffix-stripper made us call paid slugs OpenRouter never served), openrouter/free leads the provider view, and free models skip the PAID web plugin (the free-tier 402, wire-captured)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

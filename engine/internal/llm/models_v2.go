@@ -215,7 +215,30 @@ func fetchOpenRouterModels(apiKey string) []fetchedModel {
         for id := range reg {
                 ids = append(ids, id)
         }
-        sort.Strings(ids) // deterministic provider view
+        // v0.93.1 THE FREE-ROUTER FIRST: `openrouter/free` (OpenRouter's
+        // official free-models router — live-verified working with the
+        // user's key) sorts to the TOP of the provider view, then the other
+        // zero-priced entries, then everything alphabetical. The user's
+        // "most models say no longer available" report was stale :free
+        // slugs; the router is the always-current answer and now leads.
+        sort.Slice(ids, func(i, j int) bool {
+                rank := func(id string, m *orModelMeta) int {
+                        if id == "openrouter/free" {
+                                return 0
+                        }
+                        free := strings.HasSuffix(id, ":free") ||
+                                (parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
+                        if free {
+                                return 1
+                        }
+                        return 2
+                }
+                ri, rj := rank(ids[i], reg[ids[i]]), rank(ids[j], reg[ids[j]])
+                if ri != rj {
+                        return ri < rj
+                }
+                return ids[i] < ids[j]
+        })
         var out []fetchedModel
         for _, id := range ids {
                 m := reg[id]
@@ -229,6 +252,11 @@ func fetchOpenRouterModels(apiKey string) []fetchedModel {
                                 caps = append(caps, "audio")
                         }
                 }
+                label := ""
+                if id == "openrouter/free" {
+                        label = "Free Models Router — always routes to a working free model"
+                }
+                _ = label // (kept for the future per-model description field)
                 out = append(out, fetchedModel{
                         RawID:         id,
                         ContextLength: m.ContextLength,
@@ -1283,6 +1311,12 @@ func sortedProviderNames(catalog map[string]ProviderConfig) []string {
 func sortEnriched(models []EnrichedModel) {
         sort.SliceStable(models, func(i, j int) bool {
                 ei, ej := models[i], models[j]
+                // v0.93.1: the free-models ROUTER leads its provider view —
+                // it is the always-works answer for free-tier users.
+                ri, rj := ei.RawID == "openrouter/free", ej.RawID == "openrouter/free"
+                if ri != rj {
+                        return ri
+                }
                 // free first, then name (provider view is a flat ranked list).
                 if ei.IsFree != ej.IsFree {
                         return ei.IsFree

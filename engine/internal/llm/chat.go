@@ -18,6 +18,7 @@ import (
         "bytes"
         "context"
         "encoding/json"
+        "errors"
         "fmt"
         "io"
         "log"
@@ -155,6 +156,14 @@ type openAIChunk struct {
                 Delta struct {
                         Content   string `json:"content"`
                         Reasoning string `json:"reasoning_content"`
+                        // v0.93.1: OpenRouter (and OpenAI's newer shapes)
+                        // stream reasoning as plain `reasoning` — the
+                        // DeepSeek-style `reasoning_content` above covers the
+                        // China-hosted convention, this one the Western one
+                        // (live-verified on liquid/lfm-2.5-2.6b:free — the
+                        // user's "OpenRouter is bland, no reasoning" report:
+                        // every token arrived and was DROPPED here).
+                        ReasoningOR string `json:"reasoning"`
                         // v0.38: native function-calling deltas — the FIRST
                         // chunk of a call carries id+name; the rest ride the
                         // index and append argument fragments (per the OpenAI
@@ -565,6 +574,50 @@ func waitNotices(ch chan<- ChatChunk, src interface{ silentFor() time.Duration }
 // suggest a switch of models as well").
 func friendlyHTTPError(status int, body string, provider string) string {
         b := strings.TrimSpace(body)
+        // v0.93.1 THE OPENROUTER HONESTY SET (live-probed 2026-10-02 with the
+        // user's key): three provider states the generic branches mislabeled —
+        // each now says what actually happened and what to do next.
+        if provider == "openrouter" {
+                // (1) The retired-:free 404. OpenRouter pulled the popular
+                // free variants (llama-3.3-70b:free, deepseek-r1:free, … all
+                // 404 with a "use this slug instead" pointer to the PAID
+                // slug — live-verified on 4 slugs). The user read it as "my
+                // account lost the models".
+                if status == 404 && strings.Contains(b, "use this slug instead") {
+                        paid := ""
+                        if i := strings.LastIndex(b, "instead: "); i >= 0 {
+                                rest := b[i+9:]
+                                // the slug runs to the closing quote (the body is
+                                // the raw JSON error: …instead: slug","code"…)
+                                if j := strings.IndexByte(rest, '"'); j >= 0 {
+                                        rest = rest[:j]
+                                } else if j := strings.IndexAny(rest, ",}"); j >= 0 {
+                                        rest = rest[:j]
+                                }
+                                paid = strings.TrimSpace(rest)
+                        }
+                        msg := "OpenRouter retired this free model variant (the :free tier was pared down in Sept 2026)"
+                        if paid != "" {
+                                msg += " — the paid slug is " + paid + " (needs credits)"
+                        }
+                        msg += ". Try openrouter/free — it routes to whatever is genuinely free right now"
+                        return msg
+                }
+                // (2) The never-purchased-credits 402. The generic 402 branch
+                // said "free quota used up" — wrong account state entirely
+                // (the key is FINE, the account just has no credits and this
+                // model isn't free).
+                if status == 402 || strings.Contains(b, "Insufficient credits") {
+                        return "this model is PAID on OpenRouter and your key's account has no credits — your key works; use openrouter/free or one of the live :free models instead"
+                }
+                // (3) The upstream shared-pool 429. The free pool is shared
+                // by ALL OpenRouter free users — it is NOT the user's quota
+                // (their own daily budget: 50 free requests, live-checked:
+                // 50/50 remaining while the model still 429'd upstream).
+                if status == 429 && strings.Contains(b, "upstream_provider_shared_pool") {
+                        return "the FREE pool for this model is rate-limited upstream right now (shared by all OpenRouter free users — not YOUR quota) — retry in a moment, or try openrouter/free which routes around it"
+                }
+        }
         // 404 "Function '<id>': Not found for account" — NIM dropped the model
         // for this key (observed live: kimi-k2.6 after NIM rotation).
         if status == 404 && strings.Contains(b, "Not found for account") {
@@ -864,7 +917,14 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         defer stopNotices()
 
         scanner := bufio.NewScanner(wd)
-        scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+        // v0.93.1: 256KB → 16MB max (64KB initial). Media models
+        // (google/lyria-3-clip-preview — the user's live hit) stream ONE
+        // SSE data line carrying a full base64-encoded media payload:
+        // multi-megabyte tokens that 256KB aborted with "bufio.Scanner:
+        // token too long", killing the whole turn. 16MB covers every
+        // observed payload class (images/audio clips) while still capping
+        // runaway hosts.
+        scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
         usage := &Usage{}
         var calls []nativeCall
         callIdx := map[int]int{} // delta index → position in calls
@@ -900,10 +960,13 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 }
                                 calls[pos].Arguments += tc.Function.Arguments
                         }
-                        if choice.Delta.Reasoning != "" || choice.Delta.Content != "" {
+                        if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
                                 wd.markDelta() // v0.24: real token — wait-notices go quiet
                                 if onDelta != nil {
-                                        onDelta(choice.Delta.Reasoning, choice.Delta.Content)
+                                        // v0.93.1: merge the two reasoning field
+                                        // conventions (reasoning_content · reasoning);
+                                        // only one is ever non-empty per chunk.
+                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR, choice.Delta.Content)
                                 }
                         }
                 }
@@ -916,6 +979,13 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 if wd.timedOut.Load() {
                         ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
                         return usage, calls, nil
+                }
+                // v0.93.1: the oversize-line case gets a plain-language name —
+                // "bufio.Scanner: token too long" told the user nothing. The
+                // 16MB cap means this is now a genuine runaway host or a
+                // media payload class the chat can't render.
+                if errors.Is(err, bufio.ErrTooLong) {
+                        return usage, calls, fmt.Errorf("stream: %s's response lines exceeded the 16MB line cap (a media/base64 payload the chat view can't render) — try a text model", modelShort(req.Model))
                 }
                 // v0.39: mid-stream transport failure — RETURN the error (the
                 // round-level pause ladder retries transient ones; the turn

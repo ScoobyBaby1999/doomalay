@@ -191,10 +191,13 @@ func SuggestReplacements(userModel, userProvider string, keys map[string]string,
 // class (the exact strings friendlyHTTPError emits for 404-not-found-for-
 // account and 410 end-of-life). The server hook uses this to decide when
 // to attach suggestions to the error event.
+// v0.93.1: the OpenRouter retired-:free 404 message joins the class — its
+// one-tap chips then offer the live alternatives (openrouter/free first).
 func ModelGoneMessage(msg string) bool {
         m := strings.ToLower(msg)
         return strings.Contains(m, "no longer available") ||
                 strings.Contains(m, "end of life") ||
                 strings.Contains(m, "retired by the provider") ||
-                strings.Contains(m, "not found for account")
+                strings.Contains(m, "not found for account") ||
+                strings.Contains(m, "retired this free model variant")
 }
