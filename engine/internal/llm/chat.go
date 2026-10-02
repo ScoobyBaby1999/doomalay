@@ -1960,6 +1960,22 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
                 buf.WriteString(content)
                 s := buf.String()
                 if idx := indexActionLine(s); idx >= 0 {
+                        // v0.93.3 THE ROUND SEGMENT: the preamble BEFORE the
+                        // ACTION line is the model narrating its plan ("Let me
+                        // check the repo first.") — it STAYS as its own chat
+                        // block (the user's spec: "many responses that remain
+                        // in the position they should be and stream with the
+                        // conversation"; the old flow swallowed it whole, or
+                        // worse: flushed it as final then assistant_reset
+                        // WIPED it when the ACTION parsed — the "text
+                        // generates then disappears" report). Emit preamble
+                        // → round_end (the UI finalizes the block) → suppress
+                        // from the ACTION line on.
+                        if pre := strings.TrimRight(s[:idx], " \n\t"); pre != "" {
+                                ch <- ChatChunk{Type: "assistant_delta", Text: pre}
+                                emitted = true
+                        }
+                        ch <- ChatChunk{Type: "round_end"}
                         mode = 2
                         answer.WriteString(s)
                         buf.Reset()
@@ -1989,8 +2005,20 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
         if mode == 0 && buf.Len() > 0 {
                 // stream ended while still holding — decide on the tail:
                 // an ACTION tail (even partial) suppresses; else it streams.
+                // v0.93.3: an ACTION tail still finalizes the segment — the
+                // preamble before the ACTION line emits + round_end, the
+                // ACTION itself suppresses (same split as the live path).
                 tail := buf.String()
                 if isActionLine(strings.TrimLeft(tail, " \t")) || indexActionLine(tail+"\n") >= 0 {
+                        // the preamble before the ACTION line (if any) emits;
+                        // idx>0 means real text precedes the ACTION
+                        if idx := indexActionLine(tail + "\n"); idx > 0 {
+                                if pre := strings.TrimRight(tail[:idx], " \n\t"); pre != "" {
+                                        ch <- ChatChunk{Type: "assistant_delta", Text: pre}
+                                        emitted = true
+                                }
+                        }
+                        ch <- ChatChunk{Type: "round_end"}
                         mode = 2
                         answer.WriteString(tail)
                         buf.Reset()
@@ -2006,14 +2034,18 @@ func runReActRoundStream(ctx context.Context, req ChatRequest, ch chan<- ChatChu
                 }
         }
         prog.end()
-        // v0.22 LEAK BACKSTOP: the bound flushed a very long preamble and
-        // the round turned out to be a tool call anyway. parseAction (the
-        // caller) will still execute it — emit assistant_reset so the UI
-        // clears the leaked text instead of showing prose + "ACTION: …".
+        // v0.93.3 THE LEAK BACKSTOP, REDEFINED: the >700B bound flushed a
+        // long preamble as if final, and the round turned out to be a tool
+        // call. The OLD answer (assistant_reset) WIPED the user-visible
+        // text — the exact "final output text seems to generate… then it
+        // disappears" report. The text STAYS now: round_end finalizes the
+        // block (the narration is the model's real output — the user's
+        // "many responses that remain in the position they should be"). The
+        // raw ACTION line unfortunately already streamed inside it; that is
+        // the honest price of the 700B heuristic, and it is rare.
         if mode == 1 {
                 if acts := parseActions(answer.String()); len(acts) > 0 && emitted {
-                        ch <- ChatChunk{Type: "assistant_reset"}
-                        emitted = false
+                        ch <- ChatChunk{Type: "round_end"}
                 }
         }
         // v0.22b NEVER-LOSE-CONTENT: the round entered suppression (mode 2)

@@ -105,7 +105,7 @@ async function getCore(apiKey) {
     // LRU eviction
     while (cores.size > MAX_CORES) {
       let oldest = null;
-      for (const [k, v] of cores) if (!oldest || v.last < cores.get(oldest).last) oldest = k;
+      for (const [k, v] of cores.entries()) if (!oldest || v.last < cores.get(oldest).last) oldest = k;
       const ev = cores.get(oldest);
       cores.delete(oldest);
       try { ev.core.close(); } catch (_) { /* fine */ }
@@ -114,6 +114,26 @@ async function getCore(apiKey) {
   } finally {
     corePromises.delete(apiKey);
   }
+}
+
+// v0.93.3 THE POISONED-CORE EVICTION: when a CACHED core starts failing
+// with the attestation/mesh class ("updating mesh CA: active manifest does
+// not match expected manifest", "updating secret", "getting latest
+// secret" — live-observed 2-of-3 on the shared space after PM rotated
+// their mesh CA mid-session), the core's internal wasm state is stale
+// FOREVER: every later request on that key fails. Evict it so the NEXT
+// request builds a fresh core with a fresh attestation fetch — the
+// self-heal the cache never had.
+function isPoisonedCoreError(e) {
+  const s = String((e && e.message) || e || '');
+  return /mesh ca|mesh manifest|active manifest|setting secrets|updating secret|getting latest secret|attest/i.test(s);
+}
+function evictCore(apiKey) {
+  const hit = cores.get(apiKey);
+  if (!hit) return;
+  cores.delete(apiKey);
+  try { hit.core.close(); } catch (_) { /* fine */ }
+  console.log('[pmproxy] evicted a poisoned core for key …' + String(apiKey).slice(-4));
 }
 
 // ── the server ─────────────────────────────────────────────────────────────
@@ -182,13 +202,36 @@ const server = http.createServer(async (req, res) => {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
         });
-        try {
+        const streamOnce = async (core) => {
           for await (const chunk of core.streamChatCompletions(body)) {
             res.write('data: ' + JSON.stringify(chunk) + '\n\n');
           }
           res.write('data: [DONE]\n\n');
           res.end();
+        };
+        try {
+          await streamOnce(core);
         } catch (e) {
+          // v0.93.3 THE POISON-RETRY: an attestation/mesh failure on a
+          // cached core is a STALE-CORE state, not a dead provider — evict
+          // and retry ONCE on a fresh core (fresh attestation). Only when
+          // the fresh core also fails does the honest error go out.
+          // (No bytes were written to the client yet in the poisoned case
+          // — the failure fires before the first chunk.)
+          if (isPoisonedCoreError(e)) {
+            evictCore(key);
+            try {
+              const fresh = await getCore(key);
+              await streamOnce(fresh);
+              return;
+            } catch (e2) {
+              evictCore(key);
+              res.write('data: ' + JSON.stringify({ error: { message: friendly(e2) + ' (PM attestation is flaky from this host — retried with a fresh secure session and failed again; retry the turn)', type: 'pmproxy' } }) + '\n\n');
+              res.write('data: [DONE]\n\n');
+              res.end();
+              return;
+            }
+          }
           // mid-stream failure: the SSE convention — an error event then done
           res.write('data: ' + JSON.stringify({ error: { message: friendly(e), type: 'pmproxy' } }) + '\n\n');
           res.write('data: [DONE]\n\n');
@@ -201,6 +244,19 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(r.body));
       } catch (e) {
+        if (isPoisonedCoreError(e)) {
+          evictCore(key);
+          try {
+            const fresh = await getCore(key);
+            const r2 = await fresh.chatCompletions(body);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(r2.body));
+            return;
+          } catch (e2) {
+            evictCore(key);
+            return jsonError(res, 502, friendly(e2) + ' (PM attestation is flaky from this host — retried with a fresh secure session and failed again; retry the turn)');
+          }
+        }
         return jsonError(res, 502, friendly(e));
       }
       return;

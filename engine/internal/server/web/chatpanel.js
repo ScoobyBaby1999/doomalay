@@ -4256,6 +4256,33 @@
   // reasoning text overwriting another chat's bubble by index collision).
   // renderHost rebuilds the full transcript from state on reopen, so
   // data-only updates lose nothing.
+  // v0.93.3 roundFlowApply — the PURE round-segment decision (exported for
+  // the node rig). Input: the live messages array + the event; output:
+  //   {action:'push'}                     — a NEW assistant block (replay, or
+  //                                         a text that isn't the open bubble)
+  //   {action:'finalize', index:N}        — close the open bubble at N
+  //   {action:'none'}                     — nothing to do (idempotent close)
+  // The live flow: deltas build an open bubble, the 'assistant' segment
+  // event carries the SAME text → finalize it (the block stays). A replay
+  // (or a mismatch) → push a new complete block. 'round_end' finalizes the
+  // last open bubble whatever its text (the engine's segment boundary).
+  function roundFlowApply(messages, ev, kind) {
+    var lastA = -1;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') { lastA = i; break; }
+    }
+    if (kind === 'round_end') {
+      if (lastA >= 0 && !messages[lastA].complete) return { action: 'finalize', index: lastA };
+      return { action: 'none' };
+    }
+    var text = ev.text || '';
+    if (!text) return { action: 'none' };
+    if (lastA >= 0 && !messages[lastA].complete && messages[lastA].text === text) {
+      return { action: 'finalize', index: lastA };
+    }
+    return { action: 'push' };
+  }
+
   function handleEvent(ev, state, msgContainer, scrollEl, bodyEl, _icon, _panel) {
     var type = ev.type;
     // v0.38 BELT-AND-SUSPENDERS: every engine event carries session_id —
@@ -4419,32 +4446,41 @@
       }
     } else if (type === 'assistant') {
       stampThinkEnd(state, evTsMs(ev)); // v0.27.1
-      var assembled = '';
-      for (var i = 0; i < state.messages.length; i++) {
-        if (state.messages[i].role === 'assistant') assembled += state.messages[i].text;
-      }
-      if ((ev.text || '') && assembled.indexOf(ev.text) === -1) {
+      // v0.93.3: the segment-true decision is pure (roundFlowApply —
+      // exported for the node rig); the DOM work rides it.
+      var dec = roundFlowApply(state.messages, ev, 'assistant');
+      if (dec.action === 'push') {
         var full = { role: 'assistant', text: ev.text, complete: true, ts: evTsMs(ev) };
         if (ev.i) full.ei = ev.i;
         state.messages.push(full);
         appendMessage(msgContainer, scrollEl, full, bodyEl, state._icon, state);
         finalizeArtifacts(full, state, bodyEl);
-      } else if (ev.text) {
+      } else if (dec.action === 'finalize') {
         // v0.17: the trailing full-reply event confirms the streamed text
         // (the engine has NO assistant_complete event — THIS + status idle
         // are the completion signals). Mark the streaming message done and
-        // finalize artifacts.
-        for (var j = state.messages.length - 1; j >= 0; j--) {
-          if (state.messages[j].role === 'assistant') {
-            if (!state.messages[j].complete) {
-              state.messages[j].complete = true;
-              state.messages[j].streaming = false;
-              updateMessageEl(bodyEl, state.messages[j], true, state);
-              finalizeArtifacts(state.messages[j], state, bodyEl);
-            }
-            break;
-          }
+        // finalize artifacts. v0.93.3: with round segments this fires once
+        // per segment — each closes its own block.
+        var fin = state.messages[dec.index];
+        if (fin && !fin.complete) {
+          fin.complete = true;
+          fin.streaming = false;
+          updateMessageEl(bodyEl, fin, true, state);
+          finalizeArtifacts(fin, state, bodyEl);
         }
+      }
+    } else if (type === 'round_end') {
+      // v0.93.3 THE ROUND SEGMENT (the user's "flow like a chat" spec):
+      // the engine finalized a round's narration — close its block so the
+      // next assistant_delta opens a NEW bubble under the tool pills
+      // instead of appending to (or replacing) the one above. Idempotent:
+      // the segment's own 'assistant' event may have closed it already.
+      var rdec = roundFlowApply(state.messages, { type: 'round_end' }, 'round_end');
+      if (rdec.action === 'finalize') {
+        var rfin = state.messages[rdec.index];
+        rfin.complete = true;
+        rfin.streaming = false;
+        updateMessageEl(bodyEl, rfin, true, state);
       }
     } else if (type === 'thinking') {
       bumpActivity(state);
@@ -5974,7 +6010,8 @@
       draftSaveStaleMs: draftSaveStaleMs,
       saveDraftLS: saveDraftLS,
       clearDraftLS: clearDraftLS,
-      loadDraftLS: loadDraftLS
+      loadDraftLS: loadDraftLS,
+      roundFlowApply: roundFlowApply
     };
   }
 })();

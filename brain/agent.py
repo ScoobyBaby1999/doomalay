@@ -889,6 +889,27 @@ def _build_tools(workspace: str, web_search: bool,
     if not workspace:
         workspace = str(Path(__file__).parent / ".chat-ws" / (session_id or "default"))
 
+    # v0.93.3 THE FRESH-SESSION HARNESS — the user's report: "when I ask it
+    # on a fresh chat it says it can't do it, and doesn't know what
+    # harness.md is or where it is." The v0.89.3 seeding lives in
+    # StrandsAgentCore.__init__, but the CHAT path (this builder) never
+    # runs it — the live red-team on the shared space watched the bot hunt
+    # for HARNESS.md and find it only at /app/brain/HARNESS.md, OUTSIDE its
+    # workspace (file_read is workspace-scoped → the persona's
+    # "HARNESS.md in your workspace" pointer was false). Seed it here:
+    # copy-if-absent into whatever workspace this turn uses (own-space,
+    # shared, or quick-chat .chat-ws) — idempotent, one stat+copy per
+    # fresh workspace, and a bot-edited copy survives.
+    try:
+        _src = Path(__file__).parent / "HARNESS.md"
+        _dst = Path(workspace) / "HARNESS.md"
+        if _src.is_file() and not _dst.exists():
+            _dst.parent.mkdir(parents=True, exist_ok=True)
+            import shutil as _shutil
+            _shutil.copyfile(_src, _dst)
+    except Exception:
+        pass  # a failed seed must never kill the turn — the persona still names the file
+
     # v0.75 SHARED-DISK ISOLATION (brain/sandboxing.py — the Phase 3
     # hardening): every subprocess tool (shell / python_repl / install /
     # parallel) drops to a per-workspace unprivileged uid before exec

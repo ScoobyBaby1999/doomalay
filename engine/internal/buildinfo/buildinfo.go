@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.93.1"   // v0.93.1: THE OPENROUTER HONESTY WAVE — 16MB SSE lines (lyria's base64 media killed turns at 256KB), delta.reasoning parsing (OpenRouter streams it; we dropped it — "much more bland"), the retired-:free 402/404/429 honest labels, TRUE :free slugs in the catalog (the suffix-stripper made us call paid slugs OpenRouter never served), openrouter/free leads the provider view, and free models skip the PAID web plugin (the free-tier 402, wire-captured)
+var Version = "0.93.3"   // v0.93.3: THE TOOL-CHAIN FLOW WAVE — round segments (the narration before a tool call is its own chat block finalized by round_end; assistant_reset's vanish is dead), the fresh-session HARNESS.md seed on the chat path, the pmproxy poisoned-core eviction + fresh-attest retry (the mesh-CA flakiness), the stale PM auto-fallback (kimi-k2.6→glm-latest), and wake honesty (a 3s quick probe before the scary 'waking' message — running spaces answer instantly)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

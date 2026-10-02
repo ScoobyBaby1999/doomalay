@@ -1355,14 +1355,23 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
 
         // First turn on this space (or it slept — HF gc's after 48h idle):
         // wake it with a patient probe so the user sees WHY it's slow.
+        // v0.93.3 WAKE HONESTY: `healthy` starts false at every engine boot,
+        // so the OLD flow claimed "waking the HF sandbox (up to a minute…)"
+        // + a 75s patient probe on the first turn even when the space was
+        // RUNNING and answers in ~1s (the user's "waking when it's already
+        // running" report). A 3s quick probe first: alive → straight to
+        // the turn, no scary message; only a dead/sleeping space gets the
+        // honest waking note + the patient ladder.
         if !rb.Healthy() {
-                if b, jerr := json.Marshal(map[string]any{
-                        "type": "progress", "session_id": sessionID,
-                        "message": "waking the HF sandbox (up to a minute if it slept)…",
-                }); jerr == nil {
-                        _ = pipe.send(b)
+                if !rb.ProbeTimeout(3 * time.Second) {
+                        if b, jerr := json.Marshal(map[string]any{
+                                "type": "progress", "session_id": sessionID,
+                                "message": "waking the HF sandbox (up to a minute if it slept)…",
+                        }); jerr == nil {
+                                _ = pipe.send(b)
+                        }
+                        rb.ProbeTimeout(75 * time.Second)
                 }
-                rb.ProbeTimeout(75 * time.Second)
         }
 
         events, errs, err := rb.Chat(ctx, brainReq, turnEnv)
@@ -1617,10 +1626,24 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                         if chunk.Type == "assistant_delta" && chunk.Text != "" {
                                 assistantParts = append(assistantParts, chunk.Text)
                         }
+                        if chunk.Type == "round_end" {
+                                // v0.93.3 THE ROUND SEGMENT: the model's
+                                // narration before a tool call is its own
+                                // chat block (the user's "flow like a chat"
+                                // spec) — persist it as its OWN assistant
+                                // event so replay reconstructs the same
+                                // block-per-round flow, then start the next
+                                // segment. The final segment persists at
+                                // turn end (below) as before.
+                                if len(assistantParts) > 0 {
+                                        events <- map[string]any{"type": "assistant", "text": strings.Join(assistantParts, ""), "round": true}
+                                        assistantParts = nil
+                                }
+                        }
                         if chunk.Type == "assistant_reset" {
-                                // v0.22: a very long preamble leaked as if it were the final
-                                // answer, then turned out to be a tool call — the llm loop emits
-                                // this so the UI wipes it before the tool pill renders.
+                                // v0.22 legacy (pre-v0.93.3 the leak backstop
+                                // wiped leaked preambles; kept for replays of
+                                // old logs and any residual emitter).
                                 assistantParts = nil
                         }
                         events <- ev

@@ -398,6 +398,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 // retried (no double-render).
                 var usage *Usage
                 var calls []nativeCall
+                roundHadContent := false // v0.93.3: per-round prose flag (contentSeen is turn-wide)
                 err := netPauseLadder(ctx, ch, roundReq.Provider, func() (bool, error) {
                         emitted := false
                         u, c, e := scanSSECollect(ctx, roundReq, extra, ch, func(reasoning, content string) {
@@ -411,6 +412,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 }
                                 if content != "" {
                                         contentSeen = true
+                                        roundHadContent = true
                                         ch <- ChatChunk{Type: "assistant_delta", Text: content}
                                 }
                         })
@@ -456,6 +458,17 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 }
 
                 // normalize + validate the calls, then execute in order
+                // v0.93.3 THE ROUND SEGMENT: this round produced VISIBLE
+                // prose (the model narrating: "Let me check your repos…")
+                // AND structured tool calls — finalize the prose block
+                // BEFORE the tool pills render, so the chat FLOWS like a
+                // conversation: prose block → tool pills → next block (the
+                // user's spec: "many responses that remain in the position
+                // they should be and stream with the conversation"). The
+                // prose STAYS; the next round's deltas open a NEW block.
+                if roundHadContent {
+                        ch <- ChatChunk{Type: "round_end"}
+                }
                 wire := make([]wireToolCall, 0, len(calls))
                 for _, c := range calls {
                         args := strings.TrimSpace(c.Arguments)
