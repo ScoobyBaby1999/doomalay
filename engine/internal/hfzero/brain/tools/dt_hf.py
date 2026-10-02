@@ -100,6 +100,8 @@ Actions:
                                   → render a README dataset card; upload=true
                                     also writes it into the repo as README.md
   exists [repo]                   → repo exists? + URL
+  buckets [limit]                 → your STORAGE BUCKETS (S3-like, Xet-backed)
+  bucket_create [repo, private]   → create one — large mutable files, no git history
   help                            → this cheat-sheet
 
 Notes:
@@ -115,7 +117,8 @@ Notes:
 """
 
 SHORT_HELP = ("Actions: whoami, list, publish, publish_text, dataset_card, "
-              "exists, help — call action='help' for the cheat-sheet.")
+              "exists, buckets, bucket_create, space_create, space_commit, "
+              "help — call action='help' for the cheat-sheet.")
 
 
 # ── plain, unit-testable core (NO strands / NO hub import up here) ───────
@@ -1058,6 +1061,64 @@ def _act_space(api_factory, env, repo: str) -> str:
     return _space_snapshot(raw)
 
 
+def _act_bucket_create(api_factory, env, repo: str, private: bool) -> str:
+    """Create a STORAGE BUCKET (v0.93.5) — the 2025+ Xet-backed S3-like
+    object storage: non-versioned, mutable, no git history, no license.
+    POST /api/buckets/{namespace}/{name} (NOT /api/repos/create — verified
+    against the live OpenAPI + research-p5). The namespace is the token's
+    own login; you are authorized once the account is connected."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("bucket_create")
+    who = _hf_rest("GET", "/api/whoami-v2", token)
+    if who[0] != 200:
+        return _redact(f"bucket_create: whoami failed (HTTP {who[0]}): {who[1][:200]}", [token])
+    try:
+        user = json.loads(who[1]).get("name", "")
+    except Exception:
+        return "bucket_create: could not parse whoami"
+    if not user:
+        return "bucket_create: whoami returned no name"
+    name = _slugify_name(repo or "") or f"doomalay-bucket-{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    if "/" in repo:
+        name = repo.split("/", 1)[1]
+    st, raw = _hf_rest("POST", f"/api/buckets/{user}/{name}", token, {"private": bool(private)})
+    if st not in (200, 201) and "already exists" not in raw and "already created" not in raw:
+        return _redact(f"bucket_create failed (HTTP {st}): {raw[:300]}", [token])
+    note = "created" if st in (200, 201) else "already exists"
+    url = f"https://huggingface.co/buckets/{user}/{name}"
+    return (f"bucket {note}: {url}\n"
+            f"S3-like object storage (Xet) — large mutable files, no git history. "
+            f"Uploads ride the bucket API (files land via addFile batches); "
+            f"versioned work belongs in a dataset/model repo.")
+
+
+def _act_buckets(api_factory, env, limit: int) -> str:
+    """List the account's STORAGE BUCKETS (GET /api/buckets/{user})."""
+    token = _get_token(env)
+    if not token:
+        return _no_token_msg("buckets")
+    who = _hf_rest("GET", "/api/whoami-v2", token)
+    if who[0] != 200:
+        return _redact(f"buckets: whoami failed (HTTP {who[0]}): {who[1][:200]}", [token])
+    try:
+        user = json.loads(who[1]).get("name", "")
+    except Exception:
+        return "buckets: could not parse whoami"
+    st, raw = _hf_rest("GET", f"/api/buckets/{user}", token)
+    if st != 200:
+        return _redact(f"list buckets failed (HTTP {st}): {raw[:300]}", [token])
+    try:
+        rows = json.loads(raw) or []
+    except Exception:
+        return "buckets: could not parse the list"
+    out = []
+    for b in rows[:max(1, min(int(limit or 20), 100))]:
+        out.append(f"- {b.get('id')} ({'private' if b.get('private') else 'public'})")
+    return f"{len(rows)} bucket(s) under {user}:\n" + "\n".join(out) if out \
+        else f"no buckets under {user} — create one with bucket_create"
+
+
 def _act_spaces(api_factory, env, limit: int) -> str:
     """List the account's Spaces with live runtime stages."""
     token = _get_token(env)
@@ -1293,6 +1354,14 @@ def run_action(action, *, workspace=None, state_dir=None, log=None,
             return _act_spaces(api_factory, env, limit)
         if action == "space_create":
             return _act_space_create(api_factory, env, repo, sdk, private)
+        # v0.93.5: STORAGE BUCKETS — the Xet-backed S3-like object storage
+        # (the user's "mixed use of all HF capabilities: buckets, datasets,
+        # internal storage"). The bot is authorized to create these on the
+        # user's behalf once the account is connected.
+        if action == "bucket_create":
+            return _act_bucket_create(api_factory, env, repo, private)
+        if action == "buckets":
+            return _act_buckets(api_factory, env, limit)
         if action == "space_commit":
             return _act_space_commit(api_factory, env, repo, files_json,
                                      commit_message)
@@ -1343,11 +1412,15 @@ def build(ctx) -> list:
         @strands_tool_decorator(name="hf", description=(
             "The Hugging Face toolkit — publish chat results, workspace files, "
             "or generated reports to the community library AND fully manage "
-            "the account's Spaces (create, edit files like the Dockerfile / "
-            "README / app, restart, pause, secrets, logs). Use it whenever "
-            "the user asks to upload/publish/share to HuggingFace, manage "
-            "their Space, or check their repos. Library actions: whoami, "
-            "list, publish, publish_text, dataset_card, exists. Space "
+            "the account's repos (create spaces/datasets/models/buckets, edit "
+            "files, restart, secrets, logs). Use it whenever the user asks "
+            "to upload/publish/share to HuggingFace, create any HF repo "
+            "(Space / Dataset / Model / Storage bucket), manage their Space, "
+            "or check their repos. YOU ARE AUTHORIZED to create repos with "
+            "the connected token once the user asks — say what you made. "
+            "Library actions: whoami, list, publish, publish_text, "
+            "dataset_card, exists. Bucket actions: buckets (list), "
+            "bucket_create (S3-like storage — large mutable files). Space "
             "actions: spaces (list), space (runtime snapshot), space_create "
             "(static is free everywhere — commit README sdk:docker + "
             "Dockerfile to flip it to Docker), space_commit (edit files), "
@@ -1363,7 +1436,7 @@ def build(ctx) -> list:
                 tail: int = 100, factory: bool = False,
                 sdk: str = "static") -> str:
             """Publish to the Hugging Face library + manage Spaces.
-            action: whoami | list | publish | publish_text | dataset_card | exists | spaces | space | space_create | space_commit | space_files | space_read | space_restart | space_pause | space_secret | space_logs | help
+            action: whoami | list | publish | publish_text | dataset_card | exists | buckets | bucket_create | spaces | space | space_create | space_commit | space_files | space_read | space_restart | space_pause | space_secret | space_logs | help
             path: workspace-relative file/dir/glob (publish) OR the file path inside a Space (space_read)
             repo: HF repo id; default <username>/doomalay-<slug>
             name: file name for publish_text (slugged, extension kept)

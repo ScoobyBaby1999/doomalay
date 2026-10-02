@@ -820,6 +820,84 @@ def test_tool_names_contract():
     assert dt_hf.TOOL_NAMES == ["hf"]
 
 
+# ── v0.93.5: the bucket actions (mocked _hf_rest — never the network) ────
+
+class _RestTape:
+    """Records _hf_rest calls and answers from a canned tape."""
+
+    def __init__(self, tape):
+        self.calls = []
+        self.tape = tape   # {(method, path): (status, body)}
+
+    def __call__(self, method, api_path, token, body=None, ctype=None, **kw):
+        self.calls.append((method, api_path, body))
+        key = (method.upper(), api_path)
+        if key in self.tape:
+            return self.tape[key]
+        return (404, '{"error":"no tape for ' + api_path + '"}')
+
+
+def _with_tape(tape, fn):
+    orig = dt_hf._hf_rest
+    tape_obj = _RestTape(tape)
+    dt_hf._hf_rest = tape_obj
+    try:
+        return fn(tape_obj)
+    finally:
+        dt_hf._hf_rest = orig
+
+
+def test_bucket_create_offline():
+    def run(tape):
+        out = dt_hf.run_action("bucket_create", api_factory=None,
+                               env=ENV_WITH_TOKEN, repo="my-bucket",
+                               private=True)
+        # the exact hub endpoint: POST /api/buckets/{user}/{name} — NOT
+        # /api/repos/create (buckets have their own API, verified live)
+        assert ("POST", "/api/buckets/fakeuser/my-bucket") in \
+            [(m, p) for (m, p, _b) in tape.calls]
+        body = dict((p, b) for (m, p, b) in tape.calls)["/api/buckets/fakeuser/my-bucket"]
+        assert body == {"private": True}
+        assert "bucket created" in out and "fakeuser/my-bucket" in out
+        assert FAKE_TOKEN not in out
+        return out
+    _with_tape({
+        ("GET", "/api/whoami-v2"): (200, json.dumps({"name": "fakeuser", "email": "x@y.z"})),
+        ("POST", "/api/buckets/fakeuser/my-bucket"): (200, json.dumps({"url": "u", "name": "my-bucket", "id": "0123456789abcdef01234567"})),
+    }, run)
+
+
+def test_bucket_create_needs_token():
+    out = dt_hf.run_action("bucket_create", api_factory=None, env={},
+                           repo="x", private=False)
+    assert "token" in out.lower() or "sign" in out.lower()
+
+
+def test_buckets_list_offline():
+    def run(tape):
+        out = dt_hf.run_action("buckets", api_factory=None,
+                               env=ENV_WITH_TOKEN, limit=10)
+        assert ("GET", "/api/buckets/fakeuser") in \
+            [(m, p) for (m, p, _b) in tape.calls]
+        assert "demo-bucket" in out
+        assert FAKE_TOKEN not in out
+    _with_tape({
+        ("GET", "/api/whoami-v2"): (200, json.dumps({"name": "fakeuser"})),
+        ("GET", "/api/buckets/fakeuser"): (200, json.dumps(
+            [{"id": "fakeuser/demo-bucket", "private": False, "description": None}])),
+    }, run)
+
+
+def test_help_lists_bucket_actions():
+    out = dt_hf.run_action("help")
+    assert "bucket_create" in out and "buckets" in out
+    # the strands description teaches the AUTHORIZATION (the user's spec:
+    # "让 bot 知道经授权即可执行")
+    import inspect
+    src = inspect.getsource(dt_hf)
+    assert "AUTHORIZED" in src and "bucket_create" in src
+
+
 # ── standalone runner ────────────────────────────────────────────────────
 
 if __name__ == "__main__":

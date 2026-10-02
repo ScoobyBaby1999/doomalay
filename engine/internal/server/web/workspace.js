@@ -678,8 +678,10 @@
 
     sec.innerHTML =
       signinHtml +
-      '<div class="wsp-action" id="wsp-create">✚ create new ' + esc(p.name) + ' repo' +
-        '<div style="margin-left:auto;font-weight:400;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">name · license</div></div>' +
+      '<div class="wsp-action" id="wsp-create">' + (curProv === 'hf'
+        ? '✚ create on Hugging Face'
+        : '✚ create new ' + esc(p.name) + ' repo') +
+        '<div style="margin-left:auto;font-weight:400;font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">' + (curProv === 'hf' ? 'space · dataset · model · bucket' : 'name · license') + '</div></div>' +
       '<div class="wsp-pubwrap">' +
         '<div class="wsp-pub-title">connect a public repo</div>' +
         '<div class="wsp-pub-bar"><span style="flex-shrink:0;color:var(--text-3);font-size:13px">⌕</span>' +
@@ -1191,11 +1193,81 @@
   // create pill passes the selected provider, gitea gets its own flow) ────
   function openCreateForm(kind) {
     kind = kind || 'github';
+    if (kind === 'hf') { openHFTypeChooser(); return; }
     pushPage(createFormHTML(kind), function () { wireCreateForm(kind); });
   }
 
-  function createFormHTML(kind) {
+  // v0.93.5: the HF type-first chooser (the user's redesign — "ask what to
+  // create: bucket/dataset/space/… with correct accurate options").
+  function openHFTypeChooser() {
+    var opts = [
+      { t: 'space',   ico: '🚀', name: 'Space',          meta: 'runs the app sandbox — sdk static / gradio / docker' },
+      { t: 'dataset', ico: '📊', name: 'Dataset',        meta: 'the data bucket — versioned files + card' },
+      { t: 'model',   ico: '🤖', name: 'Model repo',     meta: 'weights + model cards' },
+      { t: 'bucket',  ico: '🪣', name: 'Storage bucket', meta: 'S3-like object storage (Xet) — large mutable files, no git history' }
+    ];
+    var html =
+      '<div class="wsx">' +
+        pageHead('🤗 create on Hugging Face') +
+        '<div class="wsx-sub" style="padding:2px 0 10px">what do you want to create?</div>' +
+        opts.map(function (o) {
+          return '<div class="wsx-opt" id="hft-' + o.t + '" style="margin:8px 0">' +
+            '<span class="wsx-ico">' + o.ico + '</span>' +
+            '<span class="wsx-mid">' + o.name +
+              '<div class="wsx-meta">' + o.meta + '</div></span></div>';
+        }).join('') +
+        '<div class="wsx-note" style="padding:6px 0 0">everything creates with your connected HF account — and connects as a workspace the moment it exists.</div>' +
+      '</div>';
+    pushPage(html, function () {
+      opts.forEach(function (o) {
+        var el = document.getElementById('hft-' + o.t);
+        if (el) el.addEventListener('click', function () {
+          pushPage(createFormHTML('hf', o.t), function () { wireCreateForm('hf', o.t); });
+        });
+      });
+    });
+  }
+
+  function createFormHTML(kind, hfType) {
     kind = kind || 'github';
+    if (kind === 'hf') {
+      var label = { space: 'Space', dataset: 'Dataset', model: 'Model repo', bucket: 'Storage bucket' }[hfType] || 'repo';
+      var fields =
+        '<div class="wsx-field"><div class="wsx-label">NAME</div>' +
+          '<input class="wsx-input" id="wsc-name" placeholder="my-' + (hfType || 'repo') + '" autocomplete="off" spellcheck="false"></div>';
+      if (hfType === 'bucket') {
+        fields += '<div class="wsx-note" style="padding:2px 0 6px">buckets are S3-like storage — no license, no card, no git history. just a name and a visibility.</div>';
+      } else {
+        fields +=
+          '<div class="wsx-field"><div class="wsx-label">DESCRIPTION</div>' +
+            '<input class="wsx-input" id="wsc-desc" placeholder="what is this for? (60 chars max on the card)" autocomplete="off"></div>';
+        if (hfType === 'space') {
+          fields +=
+            '<div class="wsx-field"><div class="wsx-label">SDK</div>' +
+              '<select class="wsx-select" id="wsc-sdk">' +
+                '<option value="static" selected>static — free on every account</option>' +
+                '<option value="gradio">gradio — interactive apps (may bill)</option>' +
+                '<option value="docker">docker — full control (may bill)</option>' +
+              '</select></div>';
+        }
+        fields +=
+          '<div class="wsx-field"><div class="wsx-label">LICENSE</div>' +
+            '<select class="wsx-select" id="wsc-license"><option value="">none (decide later)</option></select>' +
+            '<div class="wsx-note" id="wsc-license-note" style="display:none;padding:3px 0 0"></div></div>';
+      }
+      fields +=
+        '<div class="wsx-field"><div class="wsx-label">VISIBILITY</div>' +
+          '<select class="wsx-select" id="wsc-priv"><option value="public">public</option>' +
+            '<option value="private">private</option></select></div>';
+      return (
+        '<div class="wsx">' +
+          pageHead('✚ create a new ' + label) +
+          signinHTML('hf', 'wsc') +
+          fields +
+          '<div class="wsx-err" id="wsc-err" style="display:none"></div>' +
+          '<button class="wsx-go" id="wsc-go">create + connect</button>' +
+        '</div>');
+    }
     return (
       '<div class="wsx">' +
         pageHead('✚ create new ' + kindLabel(kind) + ' repo') +
@@ -1205,7 +1277,8 @@
         '<div class="wsx-field"><div class="wsx-label">DESCRIPTION</div>' +
           '<input class="wsx-input" id="wsc-desc" placeholder="what is this repo for?" autocomplete="off"></div>' +
         '<div class="wsx-field"><div class="wsx-label">LICENSE</div>' +
-          '<select class="wsx-select" id="wsc-license"><option value="">none</option></select></div>' +
+          '<select class="wsx-select" id="wsc-license"><option value="">none</option></select>' +
+          '<div class="wsx-note" id="wsc-license-note" style="display:none;padding:3px 0 0"></div></div>' +
         '<div class="wsx-field"><div class="wsx-label">GITIGNORE</div>' +
           '<select class="wsx-select" id="wsc-gitignore"><option value="">none</option></select></div>' +
         '<div class="wsx-field"><div class="wsx-label">VISIBILITY</div>' +
@@ -1216,25 +1289,43 @@
       '</div>');
   }
 
-  function wireCreateForm(kind) {
+  // v0.93.5: the race is dead — lists load on EVERY form open (the user's
+  // "license stays none" report was loadLists gated on signed_in already
+  // being true at wire time, an async race it usually lost). License
+  // entries are {key, name} pairs now ("mit — MIT License"); a failed load
+  // renders the honest note instead of a silent "none".
+  function wireCreateForm(kind, hfType) {
     kind = kind || 'github';
     wireSignin(document, kind, 'wsc', function () {
-      pushPage(createFormHTML(kind), function () { wireCreateForm(kind); });
+      pushPage(createFormHTML(kind, hfType), function () { wireCreateForm(kind, hfType); });
     });
     var loadLists = function () {
       ['license', 'gitignore'].forEach(function (which) {
+        var sel = document.getElementById('wsc-' + which);
+        if (!sel) return; // HF has no gitignore field; buckets have neither
         api('/api/workspaces/' + which + 's?kind=' + encodeURIComponent(kind)).then(function (d) {
-          var sel = document.getElementById('wsc-' + which);
-          if (!sel) return;
+          var noteEl = document.getElementById('wsc-' + which + '-note');
+          if (d && d.note && noteEl) {
+            noteEl.textContent = d.note;
+            noteEl.style.display = '';
+          }
           var key = which === 'license' ? 'licenses' : 'gitignores';
           (d[key] || []).forEach(function (l) {
-            var o = document.createElement('option'); o.value = l; o.textContent = l;
+            var o = document.createElement('option');
+            if (l && typeof l === 'object') { o.value = l.key; o.textContent = l.key + ' — ' + l.name; }
+            else { o.value = l; o.textContent = l; }
             sel.appendChild(o);
           });
-        }).catch(function () {});
+        }).catch(function (e) {
+          var noteEl = document.getElementById('wsc-' + which + '-note');
+          if (noteEl) {
+            noteEl.textContent = 'couldn\u2019t load the list (' + (e && e.message ? e.message : 'offline') + ') — sign in above to load it, or leave it none';
+            noteEl.style.display = '';
+          }
+        });
       });
     };
-    if (accounts[kind] && accounts[kind].signed_in) loadLists();
+    loadLists();
     var go = document.getElementById('wsc-go');
     if (go) go.addEventListener('click', function () {
       var err = document.getElementById('wsc-err');
@@ -1245,16 +1336,25 @@
         err.textContent = 'sign in above first — the new repo needs an owner account';
         err.style.display = ''; return;
       }
+      var sdkEl = document.getElementById('wsc-sdk');
+      var licEl = document.getElementById('wsc-license');
+      var giEl = document.getElementById('wsc-gitignore');
+      var descEl = document.getElementById('wsc-desc');
       go.disabled = true; go.textContent = 'creating…';
-      api('/api/workspaces/create-repo', 'POST', {
+      var payload = {
         kind: kind,
         name: name,
-        description: document.getElementById('wsc-desc').value.trim(),
-        license: document.getElementById('wsc-license').value,
-        gitignore: document.getElementById('wsc-gitignore').value,
+        description: descEl ? descEl.value.trim() : '',
+        license: licEl ? licEl.value : '',
+        gitignore: giEl ? giEl.value : '',
         private: document.getElementById('wsc-priv').value === 'private',
         session_id: sidNow() || ''
-      }).then(function (d) {
+      };
+      if (kind === 'hf') {
+        payload.hf_type = hfType || 'model';
+        if (sdkEl) payload.sdk = sdkEl.value;
+      }
+      api('/api/workspaces/create-repo', 'POST', payload).then(function (d) {
         refreshPills();
         toast('created ' + d.name + ' — full access');
         backToPicker();

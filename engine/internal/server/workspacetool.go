@@ -634,13 +634,21 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 name := get("name")
                 if name == "" {
-                        return "OBSERVATION:\nerror: create needs {\"kind\":\"github\", \"name\":\"repo-name\", \"description\":\"…\", \"license\":\"mit\"|\"\", \"gitignore\":\"…\"|\"\", \"private\":false}"
+                        return "OBSERVATION:\nerror: create needs {\"kind\":\"github\", \"name\":\"repo-name\", \"description\":\"…\", \"license\":\"mit\"|\"\", \"gitignore\":\"…\"|\"\", \"private\":false} — or for HF: {\"kind\":\"hf\", \"hf_type\":\"space|dataset|model|bucket\", \"sdk\":\"static\", …}"
                 }
-                ws, err := s.createWorkspaceRepo(ctx, kind, name, get("description"), get("license"), get("gitignore"), wsArgBool(args, "private"))
+                ws, err := s.createWorkspaceRepoTyped(ctx, kind, name, get("description"), get("license"), get("gitignore"), get("hf_type"), get("sdk"), wsArgBool(args, "private"))
                 if err != nil {
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
-                return "OBSERVATION:\nCREATED — " + ws.Name + " (access=" + ws.Access + ", id=" + ws.ID + ") — it is now connected; bind it to this chat with the +workspace pill or ask the user to pick it."
+                what := ws.Name
+                if ws.Kind == "hf" {
+                        var meta struct {
+                                HFType string `json:"hf_type"`
+                        }
+                        _ = json.Unmarshal([]byte(ws.Meta), &meta)
+                        what = ws.Name + " (a " + strings.TrimSuffix(meta.HFType, "s") + ")"
+                }
+                return "OBSERVATION:\nCREATED — " + what + " (access=" + ws.Access + ", id=" + ws.ID + ") — it is now connected as a workspace; bind it to this chat with the +workspace pill or ask the user to pick it. url: " + ws.RepoURL
         case "discover":
                 kind := get("kind")
                 if kind == "" {
@@ -913,6 +921,7 @@ func workspaceHelpText(n int) string {
   {"action":"release_create","ws":"…","tag":"v1.2.0","name":"…","body":"notes"}      FULL access
   {"action":"fork","ws":"…"}                fork into the user's account (needs a token)
   {"action":"create","kind":"github","name":"new-repo","description":"…","license":"mit","private":false}
+  {"action":"create","kind":"hf","hf_type":"space|dataset|model|bucket","sdk":"static","name":"…","license":"mit"}  create ANY HF thing with the user's connected token — YOU ARE AUTHORIZED once they connected the account; bucket = S3-like storage, space = the app sandbox (sdk static is free)
   {"action":"discover","kind":"github"}     the token account's repos
 CODE REVIEW flow: pr_diff → (your analysis) → pr_review {event, body}.
 "ws" accepts the id, owner/repo, or the repo name.`)
@@ -1013,6 +1022,8 @@ func hostOfKind(kind string) string {
                 return "gitea.com"
         case "gitlab":
                 return "gitlab.com"
+        case "hf":
+                return "huggingface.co"
         }
         return "github.com"
 }
@@ -1032,6 +1043,13 @@ func humanBytes(n int64) string {
 // core (kind-account token → forge CreateRepo → a stored FULL-access
 // workspace row). Returns the stored workspace for the observation.
 func (s *Server) createWorkspaceRepo(ctx context.Context, kind, name, desc, license, gitignore string, private bool) (*store.Workspace, error) {
+        return s.createWorkspaceRepoTyped(ctx, kind, name, desc, license, gitignore, "", "", private)
+}
+
+// createWorkspaceRepoTyped — v0.93.5: the HF type-first create (hfType:
+// model|dataset|space|bucket; sdk applies to spaces). GitHub/Gitea/GitLab
+// ignore the type dimension.
+func (s *Server) createWorkspaceRepoTyped(ctx context.Context, kind, name, desc, license, gitignore, hfType, sdk string, private bool) (*store.Workspace, error) {
         tok := s.globalToken(kind)
         if tok == "" {
                 return nil, fmt.Errorf("creating a %s repo needs the account's token — the user signs in via the connect page (or attaches a token)", kind)
@@ -1039,7 +1057,19 @@ func (s *Server) createWorkspaceRepo(ctx context.Context, kind, name, desc, lice
         host := hostOfKind(kind)
         c := forge.NewClient(forge.HostInfo{Kind: kind, Host: host,
                 WebBase: "https://" + host, APIBase: apiBaseFor(kind, host)})
-        meta, err := c.CreateRepo(ctx, name, desc, license, gitignore, private, tok)
+        var meta *forge.RepoMeta
+        var err error
+        if kind == "hf" {
+                hft := strings.ToLower(strings.TrimSpace(hfType))
+                switch hft {
+                case "bucket", "buckets":
+                        meta, err = c.BucketCreate(ctx, name, private, tok)
+                default:
+                        meta, err = c.CreateRepoTyped(ctx, name, desc, hft, sdk, license, private, tok)
+                }
+        } else {
+                meta, err = c.CreateRepo(ctx, name, desc, license, gitignore, private, tok)
+        }
         if err != nil {
                 return nil, err
         }
@@ -1050,6 +1080,17 @@ func (s *Server) createWorkspaceRepo(ctx context.Context, kind, name, desc, lice
                 Owner: owner, Repo: repo, RepoURL: meta.WebURL,
                 Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch,
                 Access: forge.AccessFull, TokenEnv: accountEnv(kind),
+        }
+        // the HF row remembers its type (models|datasets|spaces|buckets)
+        if kind == "hf" {
+                hft := strings.ToLower(strings.TrimSpace(hfType))
+                plural := map[string]string{"model": "models", "dataset": "datasets", "space": "spaces", "bucket": "buckets"}[hft]
+                if plural == "" {
+                        plural = "models"
+                }
+                if mj, e := json.Marshal(map[string]any{"hf_type": plural}); e == nil {
+                        ws.Meta = string(mj)
+                }
         }
         if err := s.db.CreateWorkspace(ws); err != nil {
                 return nil, err

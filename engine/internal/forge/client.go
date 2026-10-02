@@ -443,6 +443,34 @@ func (c *Client) CreateRepo(ctx context.Context, name, desc, license, gitignore 
         return nil, ErrUnsupported
 }
 
+// CreateRepoTyped — v0.93.5: the TYPE-FIRST create (HF's redesign: the
+// user picks WHAT to create). HF-only today: typ = model|dataset|space
+// (+ sdk for spaces, default static = free everywhere). Other forges
+// answer ErrUnsupported — their create carries no type dimension.
+func (c *Client) CreateRepoTyped(ctx context.Context, name, desc, typ, sdk, licenseKey string, private bool, token string) (*RepoMeta, error) {
+        if c.host.Kind != "hf" {
+                return nil, ErrUnsupported
+        }
+        return c.hfCreateRepoTyped(ctx, name, desc, typ, sdk, licenseKey, private, token)
+}
+
+// BucketCreate — v0.93.5: HF Storage Buckets (Xet-backed S3-like object
+// storage, a distinct repo type with its own API — NOT /api/repos/create).
+func (c *Client) BucketCreate(ctx context.Context, name string, private bool, token string) (*RepoMeta, error) {
+        if c.host.Kind != "hf" {
+                return nil, ErrUnsupported
+        }
+        return c.hfBucketCreate(ctx, name, private, token)
+}
+
+// BucketList — the token account's own storage buckets.
+func (c *Client) BucketList(ctx context.Context, token string, limit int) ([]RepoMeta, error) {
+        if c.host.Kind != "hf" {
+                return nil, ErrUnsupported
+        }
+        return c.hfBucketList(ctx, token, limit)
+}
+
 // ListUserRepos lists the token account's own repos (the "clone and get
 // to working in your own repos" picker).
 func (c *Client) ListUserRepos(ctx context.Context, token string, limit int) ([]RepoMeta, error) {
@@ -466,6 +494,20 @@ func (c *Client) Licenses(ctx context.Context, token string) ([]string, error) {
                 return c.ghLicenses(ctx, token)
         case "gitea":
                 return c.gtLicenses(ctx, token)
+        }
+        return nil, ErrUnsupported
+}
+
+// LicensesRich — v0.93.5: key + display name for the create form (the
+// user's "license stays none, no names" report). HF answers the hub's
+// real 83-key create enum (spec-sourced); gitignore has no HF equivalent
+// and stays GitHub/Gitea-only.
+func (c *Client) LicensesRich(ctx context.Context, token string) ([]LicenseInfo, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghLicensesRich(ctx, token)
+        case "hf":
+                return c.hfLicensesRich(ctx, token)
         }
         return nil, ErrUnsupported
 }
@@ -570,6 +612,10 @@ func (c *Client) DeleteFile(ctx context.Context, path, branch, message, sha, tok
         switch c.host.Kind {
         case "github":
                 return c.ghDeleteFile(ctx, path, branch, message, sha, token)
+        case "hf":
+                // v0.93.5: the hub's NDJSON `deletedFile` op — the sha is
+                // the GitHub contents API's requirement, unused here.
+                return c.hfDeleteFile(ctx, path, branch, message, sha, token)
         }
         return "", ErrUnsupported
 }

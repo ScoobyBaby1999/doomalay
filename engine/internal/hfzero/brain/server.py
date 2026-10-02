@@ -859,9 +859,15 @@ async def chat(request: Request):
                     # philosophy — resilience, not discovery; the live
                     # catalog remains the primary mechanism) and fail with
                     # an actionable 400 when even that's impossible.
+                    # v0.93.3: the fallbacks refresh to the LIVE model sets
+                    # (kimi-k2.6 was EOL'd by PM — a direct /chat with
+                    # privatemodeai/auto died 404 "model kimi-k2.6 not
+                    # found", live-reproduced on the shared space; the
+                    # engine normally resolves auto BEFORE the turn, but a
+                    # stale session or direct brain caller still lands here).
                     AUTO_MODEL_FALLBACK = {
                         "nvidia": "z-ai/glm-5.3-flash",
-                        "privatemodeai": "kimi-k2.6",
+                        "privatemodeai": "glm-latest",
                         "opencode": "big-pickle",
                         "openrouter": "auto",  # OpenRouter natively routes auto
                     }

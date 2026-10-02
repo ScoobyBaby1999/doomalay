@@ -711,16 +711,40 @@ func (c *Client) ghListUserRepos(ctx context.Context, token string, limit int) (
 }
 
 func (c *Client) ghLicenses(ctx context.Context, token string) ([]string, error) {
-        var rows []struct {
-                Key  string `json:"key"`
-                Name string `json:"name"`
-        }
-        if err := c.ghGetJSON(ctx, "/licenses", token, &rows, maxListBody); err != nil {
+        rows, err := c.ghLicensesRich(ctx, token)
+        if err != nil {
                 return nil, err
         }
         out := make([]string, 0, len(rows))
         for _, r := range rows {
                 out = append(out, r.Key)
+        }
+        return out, nil
+}
+
+// ghLicensesRich — v0.93.5: key AND name (the user's "license stays none,
+// no names" report — bare "mit" keys told the user nothing). Live-verified
+// (research-p5): /licenses returns 13 entries {key,name,spdx_id,url}, one
+// unauthenticated call, no pagination.
+func (c *Client) ghLicensesRich(ctx context.Context, token string) ([]LicenseInfo, error) {
+        var rows []struct {
+                Key    string `json:"key"`
+                Name   string `json:"name"`
+                SpdxID string `json:"spdx_id"`
+        }
+        if err := c.ghGetJSON(ctx, "/licenses", token, &rows, maxListBody); err != nil {
+                return nil, err
+        }
+        out := make([]LicenseInfo, 0, len(rows))
+        for _, r := range rows {
+                name := r.Name
+                if name == "" {
+                        name = r.SpdxID
+                }
+                if name == "" {
+                        name = r.Key
+                }
+                out = append(out, LicenseInfo{Key: r.Key, Name: name})
         }
         return out, nil
 }

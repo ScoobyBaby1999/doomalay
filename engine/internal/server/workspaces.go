@@ -1158,13 +1158,19 @@ func shellQuote(s string) string {
 
 func (s *Server) handleWorkspaceCreateRepo(w http.ResponseWriter, r *http.Request) {
         var req struct {
-                Kind        string `json:"kind"` // github|gitea|gitlab
+                Kind        string `json:"kind"` // github|gitea|gitlab|hf
                 Host        string `json:"host"` // self-host override
                 Name        string `json:"name"`
                 Description string `json:"description"`
                 License     string `json:"license"`
                 Gitignore   string `json:"gitignore"`
                 Private     bool   `json:"private"`
+                // v0.93.5 HF type-first create (the user's redesign: "ask
+                // what to create — bucket/dataset/space/…"). HFType:
+                // model|dataset|space|bucket; SDK applies to spaces
+                // (static|gradio|docker — static is free everywhere).
+                HFType      string `json:"hf_type"`
+                SDK         string `json:"sdk"`
                 Token       string `json:"token"`
                 SessionID   string `json:"session_id"`
         }
@@ -1182,9 +1188,9 @@ func (s *Server) handleWorkspaceCreateRepo(w http.ResponseWriter, r *http.Reques
         }
         host := req.Host
         if host == "" {
-                host = map[string]string{"github": "github.com", "gitea": "gitea.com", "gitlab": "gitlab.com"}[req.Kind]
+                host = map[string]string{"github": "github.com", "gitea": "gitea.com", "gitlab": "gitlab.com", "hf": "huggingface.co"}[req.Kind]
                 if host == "" {
-                        writeError(w, 400, "kind must be github|gitea|gitlab")
+                        writeError(w, 400, "kind must be github|gitea|gitlab|hf")
                         return
                 }
         }
@@ -1196,8 +1202,26 @@ func (s *Server) handleWorkspaceCreateRepo(w http.ResponseWriter, r *http.Reques
         hi := forge.HostInfo{Kind: req.Kind, Host: host, WebBase: "https://" + host,
                 APIBase: apiBaseFor(req.Kind, host), Repo: req.Name}
         c := forge.NewClient(hi)
-        meta, err := c.CreateRepo(r.Context(), req.Name, req.Description, req.License,
-                req.Gitignore, req.Private, token)
+        var meta *forge.RepoMeta
+        var err error
+        if req.Kind == "hf" {
+                // v0.93.5: the TYPE-FIRST path — model|dataset|space via
+                // repos/create (sdk for spaces), bucket via its own Xet
+                // API. The license rides the hub's real create enum.
+                hft := strings.ToLower(strings.TrimSpace(req.HFType))
+                switch hft {
+                case "", "model", "dataset", "space", "models", "datasets", "spaces":
+                        meta, err = c.CreateRepoTyped(r.Context(), req.Name, req.Description, hft, req.SDK, req.License, req.Private, token)
+                case "bucket", "buckets":
+                        meta, err = c.BucketCreate(r.Context(), req.Name, req.Private, token)
+                default:
+                        writeError(w, 400, "hf_type must be model|dataset|space|bucket")
+                        return
+                }
+        } else {
+                meta, err = c.CreateRepo(r.Context(), req.Name, req.Description, req.License,
+                        req.Gitignore, req.Private, token)
+        }
         if err != nil {
                 s.wsErr(w, err)
                 return
@@ -1207,6 +1231,20 @@ func (s *Server) handleWorkspaceCreateRepo(w http.ResponseWriter, r *http.Reques
                 Repo: repoOf(meta.FullName), RepoURL: meta.WebURL,
                 Branch: meta.DefaultBranch, DefaultBranch: meta.DefaultBranch,
                 Access: forge.AccessFull}
+        // v0.93.5: an HF workspace remembers its type (model/dataset/
+        // space/bucket) — wsClient re-derives the API paths from it, same
+        // as the URL-path connect flow.
+        if req.Kind == "hf" {
+                hft := strings.ToLower(strings.TrimSpace(req.HFType))
+                plural := map[string]string{"model": "models", "dataset": "datasets", "space": "spaces", "bucket": "buckets"}[hft]
+                if plural == "" {
+                        plural = "models"
+                }
+                m := map[string]any{"hf_type": plural}
+                if mj, e := json.Marshal(m); e == nil {
+                        ws.Meta = string(mj)
+                }
+        }
         if strings.TrimSpace(req.Token) != "" {
                 ws.ID = mintWSID()
                 ws.TokenEnv = "WORKSPACE_" + ws.ID
@@ -1245,6 +1283,11 @@ func repoOf(full string) string {
 
 // ── form data (licenses/gitignores) + discover + resolve ─────────────────
 
+// handleWorkspaceLicenses — v0.93.5: key + name pairs ("mit — MIT License",
+// the user's "license stays none, no names" report). GitHub: the live
+// 13-entry list; HF: the hub's real 83-key create enum; gitlab/sourcehut
+// answer the honest unsupported note (HTTP 200 + note — the form renders
+// "none" + the hint instead of a dead select).
 func (s *Server) handleWorkspaceLicenses(w http.ResponseWriter, r *http.Request) {
         kind := r.URL.Query().Get("kind")
         if kind == "" {
@@ -1253,25 +1296,35 @@ func (s *Server) handleWorkspaceLicenses(w http.ResponseWriter, r *http.Request)
         host := r.URL.Query().Get("host")
         c := forge.NewClient(forge.HostInfo{Kind: kind, Host: host,
                 WebBase: "https://" + host, APIBase: apiBaseFor(kind, host)})
-        list, err := c.Licenses(r.Context(), s.globalToken(kind))
+        list, err := c.LicensesRich(r.Context(), s.globalToken(kind))
         if err != nil {
-                s.wsErr(w, err)
+                writeJSON(w, 200, map[string]any{"licenses": []forge.LicenseInfo{},
+                        "note": "couldn't load the " + kind + " license list — " + err.Error()})
                 return
         }
         writeJSON(w, 200, map[string]any{"licenses": list})
 }
 
+// handleWorkspaceGitignores — real template names (GitHub/Gitea). HF has
+// no .gitignore concept (no git working-tree conventions on the hub) —
+// the honest note rides the response instead of a silent empty list.
 func (s *Server) handleWorkspaceGitignores(w http.ResponseWriter, r *http.Request) {
         kind := r.URL.Query().Get("kind")
         if kind == "" {
                 kind = "github"
         }
         host := r.URL.Query().Get("host")
+        if kind == "hf" {
+                writeJSON(w, 200, map[string]any{"gitignores": []string{},
+                        "note": "gitignore templates are a GitHub/Gitea concept — HF repos carry license + card data instead"})
+                return
+        }
         c := forge.NewClient(forge.HostInfo{Kind: kind, Host: host,
                 WebBase: "https://" + host, APIBase: apiBaseFor(kind, host)})
         list, err := c.Gitignores(r.Context(), s.globalToken(kind))
         if err != nil {
-                s.wsErr(w, err)
+                writeJSON(w, 200, map[string]any{"gitignores": []string{},
+                        "note": "couldn't load the " + kind + " gitignore list — " + err.Error()})
                 return
         }
         writeJSON(w, 200, map[string]any{"gitignores": list})

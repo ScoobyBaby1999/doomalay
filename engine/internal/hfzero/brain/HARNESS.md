@@ -130,6 +130,16 @@ app, README — the whole tree), manage secrets, read logs, restart the
 Space. Verify changes with `hf` before claiming them done. This is also
 the path to committing durable work to a repo (your workspace is ephemeral).
 
+**Creating HF things for the user (v0.93.5):** with the account's token
+connected you are AUTHORIZED to create, on the user's behalf — a **Space**
+(`space_create`, sdk static is free everywhere), a **Dataset** or **Model
+repo** (`publish`/`publish_text` create them on first write), or a
+**Storage bucket** (`bucket_create` — S3-like Xet object storage for large
+mutable files, no git history; `buckets` lists them). Pick the honest kind
+for the job: versioned files → dataset/model repo; large mutable blobs →
+bucket; anything that must RUN → a Space. Say what you made and give the
+URL.
+
 ## Artifacts (deliverables to the user)
 
 Attach files as **artifacts** (the `artifact` tool or the artifact block
