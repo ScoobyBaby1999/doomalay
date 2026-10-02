@@ -783,6 +783,14 @@
   // v0.84.1: the atom orbits keep it alive too — every chat with bound
   // workspaces carries orbiting stars, and those stars move every frame.
   function ambientActive() {
+    // v0.92.3 THE TRIM BRIDGE: Android's onTrimMemory (running-critical
+    // + the UI-hidden signal, bridged from MainActivity through
+    // window.__doomalayTrim) parks the ambient drivers — the lattice
+    // worker's frame posts, the atoms, the orbits all rest until the
+    // next real user interaction or a return to visibility. The user's
+    // settings are NEVER touched (their animate toggles stay as chosen;
+    // this is a pressure response, not a preference write).
+    if (ambientPausedByTrim) return false;
     var st = window.Settings.getState();
     if (st && (st.dotAnimate || st.lineAnimate)) return true;
     // v0.85.4: while the WORLD LAYER owns the atom stars (Pixi's own
@@ -794,6 +802,26 @@
     if (window.TabGroups && window.TabGroups.active()) return true;
     return !!(window.Atoms && window.Atoms.active(world.entities));
   }
+  // ── v0.92.3: the trim state + the resume contract ───────────────
+  // Native call: window.__doomalayTrim(level) — levels per Android's
+  // ComponentCallbacks2 (15 = RUNNING_CRITICAL, 20 = UI_HIDDEN).
+  // Resume: the first pointerdown or a visibilitychange→visible.
+  var ambientPausedByTrim = false;
+  window.__doomalayTrim = function (level) {
+    ambientPausedByTrim = true;
+    try {
+      if (window.DoomalayPerf) window.DoomalayPerf.trimLevel = level;  // the honest instrument
+    } catch (e) {}
+  };
+  function resumeFromTrim() {
+    if (!ambientPausedByTrim) return;
+    ambientPausedByTrim = false;
+    if (ambientActive()) startAnimation();
+  }
+  document.addEventListener('pointerdown', resumeFromTrim, true);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') resumeFromTrim();
+  });
   // v0.84.2: refreshPersonaRings — resolve each chat's ACTIVE persona and
   // paint its badge ring on the canvas icon (Persona.activePersonaOf is
   // the canvas-side twin: always > shuffle-pick > none; triggers need

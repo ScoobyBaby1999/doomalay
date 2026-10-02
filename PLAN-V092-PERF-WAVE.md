@@ -59,19 +59,32 @@ sizing baseline, apply the same local-attachment dere-projection to that
 tab's specific hot elements (the four big cards are the candidates).
 Gate: the rig numbers, not feelings.
 
+**MEASURED (post-v0.92.1, mesh gradients + ambient ON, cold → warm):**
+
+| tab | cold paints | warm paints | motions | DOM nodes | long tasks |
+|---|---|---|---|---|---|
+| appearance (colors) | 11 | 3 | 4-7 | 979 | 0 new |
+| general | 4 | 3 | 4 | 201 | 0 new |
+| sizing | 3 | — | 4 | 257 | 0 new |
+| performance | 3 | — | 4 | 199 | 0 new |
+
+WARM PARITY ACHIEVED: every tab reopens at 3 paints — the colors tab's
+cold open (11) is its one-time editor DOM mount (979 nodes — the
+gradient editors themselves), with ZERO new long tasks. No further
+dere-projection needed; the parity gate is met.
+
 ## v0.92.3 — THE NATIVE MEMORY GUARDS (degradation insurance)
 
 MainActivity: `onTrimMemory` bridges into the web layer —
-`window.__doomalayTrim(level)` (app.js): level ≥ RUNNING_CRITICAL →
-pause the ambient loop (`__ambientPaused = true` until the next user
-pointer interaction) + `WebPanel._park()` the keep-alive deck's
-non-active frames is already the deck's own budget — the pause alone
-stops the raster churn under pressure; TRIM_MEMORY_UI_HIDDEN → same
-pause (Android says we're invisible). Also free `webView.clearCache`
-at CRITICAL. No settings are mutated (the user's animate toggles stay
-as chosen; the pause is a pressure response, resumed on interaction).
-Gate: the engine's JS bridge receives the level; the ambient loop
-stops within one tick; resumes on pointerdown.
+`window.__doomalayTrim(level)` (app.js): the ambient loop parks (the
+lattice worker's frame posts, the atoms, the tab-group orbits rest)
+until the next real user interaction (pointerdown) or a return to
+visibility (visibilitychange→visible). The user's settings are NEVER
+mutated (their animate toggles stay as chosen; the pause is a pressure
+response, not a preference write). The trim level rides DoomalayPerf
+(the honest instrument). Gate: the orbit freezes under trim(15),
+resumes on pointerdown, settings untouched — pinned in
+v092-orbit-rest-test.sh (13/13).
 
 ## Verification order (every phase)
 

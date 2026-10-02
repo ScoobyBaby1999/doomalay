@@ -128,6 +128,27 @@ class MainActivity : Activity() {
         proceed()
     }
 
+    // v0.92.3 THE TRIM BRIDGE — Android's memory pressure reaches the web
+    // layer. onTrimMemory (the RUNNING levels during foreground pressure +
+    // the UI_HIDDEN signal when the app leaves the screen) bridges into the
+    // PWA: window.__doomalayTrim(level) parks the ambient drivers (the
+    // lattice worker's frame posts, the atoms, the tab-group orbits) until
+    // the next real user interaction or a return to visibility — the web
+    // side (app.js v0.92.3) owns the pause/resume contract and NEVER
+    // touches the user's settings. The engine's noCacheFS already
+    // revalidates assets, so no cache flush is needed here.
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (this::webView.isInitialized) {
+            try {
+                webView.evaluateJavascript("window.__doomalayTrim && window.__doomalayTrim($level)", null)
+                AppLog.log("trim bridge: level=$level sent")
+            } catch (e: Exception) {
+                AppLog.log("trim bridge failed: ${e.message}")
+            }
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         AppLog.log("Notification permission: ${if (grantResults.isNotEmpty() && grantResults[0] == 0) "granted" else "denied"}")

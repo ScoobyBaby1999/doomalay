@@ -123,6 +123,25 @@ with sync_playwright() as pw:
     pg.evaluate("() => { if (window.Panel && window.Panel.close) window.Panel.close(); }")
     pg.wait_for_timeout(600)
 
+    # (6) v0.92.3 THE TRIM BRIDGE — the native memory-pressure signal
+    # parks the ambient drivers; a pointerdown resumes; settings untouched.
+    pg.evaluate("() => { const e = window.doomalay.world.entities; if (window.TabGroups && !window.TabGroups.active()) window.TabGroups.collide(e[0], e[1], 250, 410); }")
+    pg.wait_for_timeout(1000)
+    def tf():
+        return pg.evaluate("() => window.doomalay.world.entities[0].el.style.transform")
+    pg.evaluate("() => window.__doomalayTrim(15)")
+    pg.wait_for_timeout(300)
+    ta = tf(); pg.wait_for_timeout(1200); tb = tf()
+    ok("the orbit FROZEN under trim (the ambient loop parked)", ta == tb)
+    ok("the trim level rides the instrument",
+       pg.evaluate("() => window.DoomalayPerf ? window.DoomalayPerf.trimLevel : -1") == 15)
+    ok("the user's settings untouched by trim",
+       pg.evaluate("() => window.Settings.getState().dotAnimate") is True)
+    pg.mouse.move(200, 450); pg.mouse.down(); pg.mouse.up()
+    pg.wait_for_timeout(700)
+    tc = tf(); pg.wait_for_timeout(1000); td = tf()
+    ok("the orbit RESUMED on the next interaction", tc != td)
+
     # (5) zero errors
     ok(f"zero console/page errors ({len(errs)})", len(errs) == 0)
     br.close()
