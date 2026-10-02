@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.91.5"   // v0.91.5: THE SILENT-DEGRADATION LIGHT — the strands-agents==0.1.5 exact pin (0.1.9's registry dropped TOOL_SPEC functions: every spec-attached tool vanished live), /health surfaces strands state+version+import-error, the HF create-path existence probe (HF's create-error shape drifted), the space's-face + python-library waves ride (0.91.3-4)
+var Version = "0.91.6"   // v0.91.6: THE LADDER FIX — /data/public wins only when it EXISTS (free Docker Spaces mount an ephemeral /data that shadowed the repo public/ — the standing face 404'd); the game now serves at both space roots (final-test + socreate refreshed to the current brain)
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

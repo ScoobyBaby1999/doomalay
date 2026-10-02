@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doomalay · Evolution</title>
+<style>
+  :root{
+    --bg:#0b0b10; --panel:#14141c; --panel2:#191924; --line:#26263380;
+    --ink:#e8e8ef; --dim:#9a9ab0;
+    --green:#7fe0a8; --blue:#7fb8ff; --red:#ff8f8f;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  #wrap{display:flex;flex-direction:column;height:100vh}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+  header h1 .dot{color:var(--dim);font-weight:400}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+    background:var(--panel2);border:1px solid var(--line);font-size:12.5px;
+    font-variant-numeric:tabular-nums}
+  .chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .chip b{min-width:2.2em;text-align:right}
+  #status{font-size:12.5px;color:var(--dim);margin-left:auto}
+  main{flex:1;position:relative;min-height:0}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:10px 16px;background:var(--panel);border-top:1px solid var(--line)}
+  button{appearance:none;border:1px solid var(--line);background:var(--panel2);
+    color:var(--ink);padding:6px 12px;border-radius:10px;font-size:12.5px;cursor:pointer}
+  button:hover{filter:brightness(1.18)}
+  button:active{transform:translateY(1px)}
+  button.on{border-color:#3f6f5f;color:#8fe6b8}
+  .rules{font-size:12px;color:var(--dim);margin-left:auto;max-width:46em;text-align:right}
+  .rules b{color:var(--ink);font-weight:550}
+  #ringhud{position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    background:#0b0b10cc;border:1px solid var(--line);border-radius:10px;
+    padding:4px 12px;font-size:12px;color:var(--dim);pointer-events:none;
+    font-variant-numeric:tabular-nums}
+  #log{position:absolute;bottom:8px;left:10px;font-size:11px;color:var(--dim);
+    max-width:60%;pointer-events:none;text-shadow:0 1px 2px #000}
+  @media (max-width:700px){.rules{display:none}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>Doomalay · Evolution <span class="dot">— a 3-species ecosystem</span></h1>
+    <div class="chips">
+      <span class="chip"><i style="background:var(--green)"></i>food <b id="cg">0</b></span>
+      <span class="chip"><i style="background:var(--blue)"></i>herbivores <b id="cb">0</b></span>
+      <span class="chip"><i style="background:var(--red)"></i>predators <b id="cr">0</b></span>
+      <span class="chip">⏱ <b id="ct">0:00</b></span>
+    </div>
+    <span id="status">seeding…</span>
+  </header>
+  <main>
+    <canvas id="c"></canvas>
+    <div id="ringhud"></div>
+    <div id="log"></div>
+  </main>
+  <footer>
+    <button id="bFood">+ food ×8</button>
+    <button id="bHerb">+ herbivores ×3</button>
+    <button id="bPred">+ predators ×2</button>
+    <button id="bAuto" class="on">auto-spawn: on</button>
+    <button id="bSpeed">speed ×1</button>
+    <button id="bReset">reset</button>
+    <div class="rules">
+      <b>Rules</b> — <span style="color:var(--green)">food</span> drifts and regrows;
+      <span style="color:var(--blue)">herbivores</span> eat food and starve without it;
+      <span style="color:var(--red)">predators</span> hunt herbivores.
+      Every <b>20s</b> the ring contracts — anyone caught outside the safe zone is culled,
+      then the world blooms back. High energy splits into children; zero energy dies.
+    </div>
+  </footer>
+</div>
+<script>
+"use strict";
+/* ── Doomalay Evolution — built on the doomalaysocreate sandbox (v0.91.5) ──
+   Self-contained: no deps, no network. The three-species ecosystem the
+   Doomalay agent ran on the ZeroGPU space, now the space's standing face. */
+
+const cv = document.getElementById("c"), cx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+/* ── world state ──────────────────────────────────────────────────────── */
+const CFG = {
+  foodCap: 260, foodStart: 90,
+  herbStart: 16, predStart: 3,
+  ringEvery: 20, ringHold: 3, ringMinFrac: 0.42,
+};
+let dots = [], puffs = [], tNow = 0, speed = 1, autoSpawn = true;
+let ringT = 0, ringPhase = "idle", ringR = 1e9, cxp = 0, cyp = 0;
+let seedTag = 0;
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const dist2 = (a, b) => { const dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; };
+
+function dot(kind, x, y, e){
+  return { kind, x, y, vx: 0, vy: 0, e, dead: false,
+           wander: rand(0, Math.PI * 2), gen: seedTag,
+           born: tNow, id: ++dot.nid };
+}
+dot.nid = 0;
+
+function seed(){
+  dots = []; puffs = []; tNow = 0; ringT = 0; ringPhase = "idle"; ringR = 1e9; dot.nid = 0;
+  for (let i = 0; i < CFG.foodStart; i++) dots.push(dot("food", rand(0, W), rand(0, H), 1));
+  for (let i = 0; CFG.herbStart > 0 && i < CFG.herbStart; i++)
+    dots.push(dot("herb", rand(W * .3, W * .7), rand(H * .3, H * .7), 44));
+  for (let i = 0; i < CFG.predStart; i++)
+    dots.push(dot("pred", rand(W * .4, W * .6), rand(H * .4, H * .6), 70));
+  say("ecosystem seeded — watch the balance");
+}
+
+function puff(x, y, color, n = 6){
+  for (let i = 0; i < n; i++)
+    puffs.push({ x, y, vx: rand(-24, 24), vy: rand(-24, 24), t: .6, color });
+}
+let logT = 0, logMsg = "";
+function say(m){ logMsg = m; logT = 4; }
+
+/* ── behavior ─────────────────────────────────────────────────────────── */
+function nearest(me, kind, maxD){
+  let best = null, bd = maxD * maxD;
+  for (const d of dots){
+    if (d.kind !== kind || d.dead) continue;
+    const dd = dist2(me, d);
+    if (dd < bd){ bd = dd; best = d; }
+  }
+  return best;
+}
+
+function step(dt){
+  tNow += dt;
+  const foods = dots.filter(d => d.kind === "food" && !d.dead);
+
+  /* the 20s ring */
+  ringT += dt;
+  if (ringPhase === "idle" && ringT >= CFG.ringEvery){
+    ringPhase = "hold"; ringT = 0;
+    cxp = W / 2; cyp = H / 2;
+    ringR = Math.hypot(W, H) / 2;
+    say("⚠ the ring contracts — inside the circle!");
+  }
+  if (ringPhase === "hold"){
+    const frac = 1 - Math.min(ringT / CFG.ringHold, 1) * (1 - CFG.ringMinFrac);
+    ringR = Math.hypot(W, H) / 2 * frac;
+    if (ringT >= CFG.ringHold){
+      ringPhase = "back"; ringT = 0;
+      /* cull outside */
+      let culled = 0;
+      for (const d of dots){
+        if (d.dead || d.kind === "food") continue;
+        if (Math.hypot(d.x - cxp, d.y - cyp) > ringR){ d.dead = true; culled++; puff(d.x, d.y, "#555", 4); }
+      }
+      if (culled) say(`the ring culled ${culled} outside the zone`);
+    }
+  }
+  if (ringPhase === "back"){
+    ringR += dt * (Math.hypot(W, H) / 2) * 0.55;
+    if (ringR >= Math.hypot(W, H) / 2){ ringPhase = "idle"; ringT = 0; ringR = 1e9; bloom(); }
+  }
+
+  /* auto-spawn: the food regrows */
+  if (autoSpawn && foods.length < CFG.foodCap && Math.random() < dt * 6){
+    dots.push(dot("food", rand(0, W), rand(0, H), 1));
+  }
+
+  for (const d of dots){
+    if (d.dead) continue;
+    if (d.kind === "food"){
+      d.wander += rand(-.5, .5) * dt;
+      d.x += Math.cos(d.wander) * 6 * dt;
+      d.y += Math.sin(d.wander) * 6 * dt;
+    } else {
+      const isHerb = d.kind === "herb";
+      /* flee the predator if herbivore */
+      let ax = 0, ay = 0;
+      if (isHerb){
+        const threat = nearest(d, "pred", 130);
+        if (threat){
+          const dx = d.x - threat.x, dy = d.y - threat.y, l = Math.hypot(dx, dy) || 1;
+          ax += dx / l * 3.2; ay += dy / l * 3.2;
+        }
+        const f = nearest(d, "food", 1e9);
+        if (f){
+          const dx = f.x - d.x, dy = f.y - d.y, l = Math.hypot(dx, dy) || 1;
+          ax += dx / l * 1.5; ay += dy / l * 1.5;
+          if (l < 6){ f.dead = true; d.e += 26; puff(f.x, f.y, "#7fe0a866", 3); }
+        }
+      } else {
+        const p = nearest(d, "herb", 1e9);
+        if (p){
+          const dx = p.x - d.x, dy = p.y - d.y, l = Math.hypot(dx, dy) || 1;
+          ax += dx / l * 1.35; ay += dy / l * 1.35;
+          if (l < 7){
+            p.dead = true; d.e += 46;
+            puff(p.x, p.y, "#7fb8ff88", 5); say("predator take-down");
+          }
+        }
+      }
+      /* wander */
+      d.wander += rand(-1, 1) * dt * 2;
+      ax += Math.cos(d.wander) * .25; ay += Math.sin(d.wander) * .25;
+      const sp = isHerb ? 52 : 62;
+      d.vx += ax * sp * dt; d.vy += ay * sp * dt;
+      const vl = Math.hypot(d.vx, d.vy), cap = sp * 1.6;
+      if (vl > cap){ d.vx *= cap / vl; d.vy *= cap / vl; }
+      d.x += d.vx * dt; d.y += d.vy * dt;
+      /* metabolism */
+      d.e -= (isHerb ? 2.1 : 3.0) * dt * (1 + vl / (sp * 4));
+      /* reproduce / die */
+      if (d.e > (isHerb ? 88 : 120)){
+        d.e *= .42;
+        dots.push(dot(d.kind, d.x + rand(-6, 6), d.y + rand(-6, 6), d.e * .9));
+        puff(d.x, d.y, isHerb ? "#7fb8ff66" : "#ff8f8f66", 4);
+      }
+      if (d.e <= 0){
+        d.dead = true; puff(d.x, d.y, "#66666666", 4);
+        say(isHerb ? "a herbivore starved" : "a predator starved");
+      }
+    }
+    /* walls */
+    if (d.x < 4){ d.x = 4; d.vx = Math.abs(d.vx); }
+    if (d.x > W - 4){ d.x = W - 4; d.vx = -Math.abs(d.vx); }
+    if (d.y < 4){ d.y = 4; d.vy = Math.abs(d.vy); }
+    if (d.y > H - 4){ d.y = H - 4; d.vy = -Math.abs(d.vy); }
+  }
+  dots = dots.filter(d => !d.dead);
+  for (const p of puffs){ p.t -= dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+  puffs = puffs.filter(p => p.t > 0);
+}
+
+function bloom(){
+  /* after the ring releases: a food bloom ring pulses from the center */
+  const n = 26;
+  for (let i = 0; i < n; i++){
+    const a = (i / n) * Math.PI * 2, r = Math.min(W, H) * .3;
+    dots.push(dot("food", cxp + Math.cos(a) * r * rand(.5, 1.2),
+                          cyp + Math.sin(a) * r * rand(.5, 1.2), 1));
+  }
+  say("the ring releases — food bloom");
+}
+
+/* ── render ───────────────────────────────────────────────────────────── */
+const COL = { food: "#7fe0a8", herb: "#7fb8ff", pred: "#ff8f8f" };
+function draw(){
+  cx.clearRect(0, 0, W, H);
+  /* backdrop grid */
+  cx.strokeStyle = "#ffffff06"; cx.lineWidth = 1;
+  const g = 44;
+  cx.beginPath();
+  for (let x = g; x < W; x += g){ cx.moveTo(x, 0); cx.lineTo(x, H); }
+  for (let y = g; y < H; y += g){ cx.moveTo(0, y); cx.lineTo(W, y); }
+  cx.stroke();
+
+  /* the ring */
+  if (ringPhase !== "idle"){
+    cx.strokeStyle = ringPhase === "hold" ? "#ffd28fbb" : "#ffd28f55";
+    cx.lineWidth = ringPhase === "hold" ? 2.5 : 1.5;
+    cx.setLineDash([10, 8]);
+    cx.beginPath(); cx.arc(cxp, cyp, ringR, 0, Math.PI * 2); cx.stroke();
+    cx.setLineDash([]);
+  }
+
+  for (const d of dots){
+    if (d.kind === "food"){
+      cx.fillStyle = COL.food;
+      cx.globalAlpha = .9;
+      cx.beginPath(); cx.arc(d.x, d.y, 2.4, 0, Math.PI * 2); cx.fill();
+      cx.globalAlpha = 1;
+    } else {
+      const eFrac = Math.max(.25, Math.min(1, d.e / 90));
+      const r = (d.kind === "herb" ? 5.5 : 7) * (.7 + .45 * eFrac);
+      const gl = cx.createRadialGradient(d.x, d.y, 0, d.x, d.y, r * 3);
+      gl.addColorStop(0, COL[d.kind] + "55");
+      gl.addColorStop(1, COL[d.kind] + "00");
+      cx.fillStyle = gl;
+      cx.beginPath(); cx.arc(d.x, d.y, r * 3, 0, Math.PI * 2); cx.fill();
+      cx.fillStyle = COL[d.kind];
+      cx.beginPath(); cx.arc(d.x, d.y, r, 0, Math.PI * 2); cx.fill();
+      /* heading tick */
+      if (d.vx || d.vy){
+        const l = Math.hypot(d.vx, d.vy) || 1;
+        cx.strokeStyle = "#ffffff70"; cx.lineWidth = 1.4;
+        cx.beginPath(); cx.moveTo(d.x, d.y);
+        cx.lineTo(d.x + d.vx / l * r * 1.7, d.y + d.vy / l * r * 1.7); cx.stroke();
+      }
+    }
+  }
+  for (const p of puffs){
+    cx.globalAlpha = Math.max(0, p.t / .6) * .8;
+    cx.fillStyle = p.color;
+    cx.beginPath(); cx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); cx.fill();
+    cx.globalAlpha = 1;
+  }
+}
+
+/* ── HUD ──────────────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+let lastHud = 0;
+function hud(){
+  const c = { food: 0, herb: 0, pred: 0 };
+  for (const d of dots) c[d.kind]++;
+  $("cg").textContent = c.food; $("cb").textContent = c.herb; $("cr").textContent = c.pred;
+  const m = Math.floor(tNow / 60), s = Math.floor(tNow % 60);
+  $("ct").textContent = m + ":" + String(s).padStart(2, "0");
+  let st = "balanced";
+  if (c.pred === 0 && c.herb > 0) st = "herbivores uncontrolled";
+  else if (c.herb === 0 && c.pred > 0) st = "predators starving";
+  else if (c.herb > c.food * 1.5) st = "overgrazing";
+  else if (c.food > 200 && c.herb < 6) st = "undergrazed";
+  else if (c.pred > c.herb * .7) st = "over-predation";
+  $("status").textContent = "ecosystem: " + st;
+  const rh = $("ringhud");
+  if (ringPhase === "idle"){
+    const left = Math.max(0, CFG.ringEvery - ringT);
+    rh.textContent = "next ring in " + left.toFixed(1) + "s";
+    rh.style.color = left < 5 ? "#ffd28f" : "var(--dim)";
+  } else if (ringPhase === "hold"){
+    rh.textContent = "⚠ RING CONTRACTING — get inside";
+    rh.style.color = "#ffd28f";
+  } else {
+    rh.textContent = "ring releasing…";
+    rh.style.color = "var(--dim)";
+  }
+  if (logT > 0){ $("log").textContent = logMsg; logT -= 1/2; }
+  else $("log").textContent = "";
+}
+
+/* ── controls ─────────────────────────────────────────────────────────── */
+$("bFood").onclick = () => { for (let i = 0; i < 8; i++) dots.push(dot("food", rand(0, W), rand(0, H), 1)); say("food dropped in"); };
+$("bHerb").onclick = () => { for (let i = 0; i < 3; i++) dots.push(dot("herb", rand(0, W), rand(0, H), 44)); say("herbivores introduced"); };
+$("bPred").onclick = () => { for (let i = 0; i < 2; i++) dots.push(dot("pred", rand(0, W), rand(0, H), 70)); say("predators introduced"); };
+$("bAuto").onclick = e => { autoSpawn = !autoSpawn; e.target.classList.toggle("on", autoSpawn); e.target.textContent = "auto-spawn: " + (autoSpawn ? "on" : "off"); };
+$("bSpeed").onclick = e => { speed = speed === 1 ? 2 : speed === 2 ? .5 : 1; e.target.textContent = "speed ×" + speed; };
+$("bReset").onclick = () => { seed(); };
+
+/* click on canvas: drop food where you click */
+cv.addEventListener("pointerdown", e => {
+  const r = cv.getBoundingClientRect();
+  for (let i = 0; i < 4; i++)
+    dots.push(dot("food", e.clientX - r.left + rand(-8, 8), e.clientY - r.top + rand(-8, 8), 1));
+});
+
+/* ── loop ─────────────────────────────────────────────────────────────── */
+let last = performance.now();
+function frame(now){
+  let dt = Math.min((now - last) / 1000, .05); last = now;
+  const steps = speed > 1 ? 2 : 1;
+  for (let i = 0; i < steps; i++) step(dt * speed / steps);
+  draw();
+  hud();
+  requestAnimationFrame(frame);
+}
+resize(); seed();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

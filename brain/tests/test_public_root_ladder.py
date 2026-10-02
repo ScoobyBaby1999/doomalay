@@ -38,8 +38,9 @@ def _ladder(env=None, data_mount=False, repo_public=False):
 
     repo_public builds a REAL fake repo layout under /tmp (Path.is_dir()
     hits os.stat — it cannot be faked by patching os.path.isdir, the live
-    catch; the /data check in the module code uses os.path.isdir
-    explicitly and IS patchable)."""
+    catch; the /data/public check in the module code uses os.path.isdir
+    explicitly and IS patchable). data_mount means /data/public EXISTS
+    (v0.91.5b: the dir itself, not the bare /data mount)."""
     import server as brain_server
     old_env = os.environ.get("DOOMALAY_PUBLIC_ROOT")
     old_isdir = os.path.isdir
@@ -47,7 +48,7 @@ def _ladder(env=None, data_mount=False, repo_public=False):
 
     def fake_isdir(p):
         p = str(p)
-        if p == "/data":
+        if p == "/data/public":
             return data_mount
         return old_isdir(p)
 
@@ -85,8 +86,19 @@ def test_ladder_env_override_wins():
 
 
 def test_ladder_data_mount():
+    """A REAL /data/public (persistent tier — the agent published there)
+    wins over everything below it."""
     root, _ = _ladder(env=None, data_mount=True)
     assert str(root) == "/data/public", root
+
+
+def test_ladder_ephemeral_data_falls_to_repo_public():
+    """v0.91.5b (live-found on doomalaysocreate): free Docker Spaces mount
+    an EPHEMERAL /data with NO /data/public — the bare isdir("/data") check
+    shadowed the repo's committed public/ (the standing face 404'd while
+    the game sat in the image). The repo public/ must win here."""
+    root, tree = _ladder(env=None, data_mount=False, repo_public=True)
+    assert str(root) == str(Path(tree, "public")), root
 
 
 def test_ladder_repo_public_beats_tmp():

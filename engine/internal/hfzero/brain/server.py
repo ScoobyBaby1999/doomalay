@@ -158,7 +158,7 @@ def health():
 # file types only, resolved-and-prefixed (no traversal), no listing.
 # v0.91.4 THE PERSISTENT PUBLIC ROOT — candidates in priority order:
 #   1. DOOMALAY_PUBLIC_ROOT (explicit override, tests ride this)
-#   2. /data/public          — persistent storage mounts (when present)
+#   2. /data/public          — persistent storage mounts (when it EXISTS)
 #   3. <repo>/public         — a public/ dir COMMITTED to the space repo
 #                              (persistent by construction: restarts rebuild
 #                              from the repo — the agent commits its game
@@ -168,7 +168,14 @@ def _resolve_public_root() -> Path:
     env = os.environ.get("DOOMALAY_PUBLIC_ROOT")
     if env:
         return Path(env)
-    if os.path.isdir("/data"):
+    # v0.91.5b: /data/public wins only when it EXISTS. Live-found on
+    # doomalaysocreate (free Docker Space): HF mounts an EPHEMERAL /data —
+    # the bare isdir("/data") check resolved the root to a nonexistent
+    # /data/public and shadowed the repo's committed public/ (the standing
+    # face served 404 while the game sat in the image at /app/public).
+    # On persistent tiers the agent's first publish mkdirs /data/public,
+    # so a REAL /data/public still wins exactly as before.
+    if os.path.isdir("/data/public"):
         return Path("/data/public")
     repo_pub = Path(__file__).resolve().parent.parent / "public"
     if repo_pub.is_dir():
