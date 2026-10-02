@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "0.91.7"   // v0.91.7: THE MISTRAL WAVE — the OpenAI-compatible fetcher parses the documented field union (max_context_length + capabilities{vision,function_calling}); the base-url power override now holds for fetch+validation; the binary effort toggle (high/none) rides live OR data end-to-end
+var Version = "0.91.8"   // v0.91.8: THE PRIVATEMODE SIDECAR — pmproxy.mjs (Node OpenAI-compatible shim, the vendored SDK doing E2E-encrypted calls) + pm_sidecar.py spawner; PM-on-the-brain/space alive (the catalog's dead localhost:8080 proxy entry replaced); PM joins the live model-fetch ladder
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

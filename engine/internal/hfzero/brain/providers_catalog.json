@@ -93,7 +93,7 @@
         "optout_url": "https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models#about-data-privacy"
       },
       "models": [],
-      "note": "RETIRED: GitHub shut the Models API down on 2026-07-30 \u2014 the endpoint now answers a stub. Kept for history; it never registers (pool retired)."
+      "note": "RETIRED: GitHub shut the Models API down on 2026-07-30 — the endpoint now answers a stub. Kept for history; it never registers (pool retired)."
     },
     {
       "name": "openrouter",
@@ -157,7 +157,7 @@
           "variant": "zen"
         }
       },
-      "note": "OpenCode Zen \u2014 curated model gateway. Free models (deepseek-v4-flash-free, big-pickle, nemotron-3-ultra-free, mimo-v2.5-free, north-mini-code-free) have 0$ inference. Paid models billed per-token via Zen account. API key: opencode.ai/auth. Auto-syncs new models from /v1/models at boot."
+      "note": "OpenCode Zen — curated model gateway. Free models (deepseek-v4-flash-free, big-pickle, nemotron-3-ultra-free, mimo-v2.5-free, north-mini-code-free) have 0$ inference. Paid models billed per-token via Zen account. API key: opencode.ai/auth. Auto-syncs new models from /v1/models at boot."
     },
     {
       "name": "opencode-go",
@@ -192,8 +192,8 @@
       "name": "privatemodeai",
       "pool": "core",
       "env_var": "PRIVATEMODEAI_API_KEY",
-      "base_url": "http://localhost:8080/v1/chat/completions",
-      "models_url": "http://localhost:8080/v1/models",
+      "base_url": "http://127.0.0.1:8530/v1/chat/completions",
+      "models_url": "https://api.privatemode.ai/v1/models",
       "region": "eu",
       "limits": {
         "rpm": 20,
@@ -213,7 +213,7 @@
         "enabled": true,
         "params": {}
       },
-      "note": "Privacy-first via confidential computing (AMD SEV-SNP + NVIDIA CC). REQUIRES local proxy binary \u2014 auto-starts when PRIVATEMODEAI_API_KEY is set (adds ~15-30s boot for remote attestation). Hardware-enforced E2E encryption: Edgeless Systems, Scaleway, model vendors cannot see prompts. Free: 5M initial tokens, then 1M prompt + 1M completion/mo. All models discovered dynamically from the local proxy API or docs page \u2014 includes chat, embedding, and speech models."
+      "note": "v0.91.8 THE SIDECAR: chat rides brain/pmproxy.mjs (the Node OpenAI-compatible shim doing the E2E-encrypted calls through the vendored SDK — pm_sidecar.py spawns it lazily on first PM use; litellm cannot speak the protocol). Model LISTING stays on the real API (the /v1/models listing is not encrypted). Port via DOOMALAY_PM_PROXY_PORT (default 8530)."
     }
   ]
 }

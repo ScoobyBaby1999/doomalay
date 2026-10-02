@@ -146,7 +146,17 @@ PANEL_PATH = Path(__file__).parent / "catalog" / "panel.json"
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.2.0", "brain": True, "strands": _check_strands()}
+    # v0.91.8: the PM sidecar light — PM-on-the-space was DEAD since the
+    # original port (the catalog pointed at a localhost proxy that never
+    # ran); now /health says whether the Node shim is actually answering.
+    pm_sidecar_ok = False
+    try:
+        import pm_sidecar
+        pm_sidecar_ok = pm_sidecar.pm_proxy_running()
+    except Exception:
+        pm_sidecar_ok = False
+    return {"status": "ok", "version": "0.2.0", "brain": True,
+            "strands": _check_strands(), "pm_sidecar": pm_sidecar_ok}
 
 
 # ── v0.89.3 THE PUBLIC ROOT — serving what the agent builds ─────────────

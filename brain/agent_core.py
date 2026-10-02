@@ -281,6 +281,24 @@ def _build_open_models() -> list[tuple[str, str, str, str | None, dict | None, s
 
 
 def _resolve_open_model(user_model: str) -> tuple[str, str | None, str | None, str | None, dict | None] | None:
+    """v0.91.8 wrapper: ensures the PrivateMode sidecar is up when the
+    resolution names a PM model (the catalog's PM base_url points at the
+    Node shim pmproxy.mjs — litellm cannot speak PM's E2E-encryption
+    protocol; pm_sidecar spawns the shim lazily on first PM use). When
+    Node is unavailable the tuple still escapes with the loopback URL —
+    the litellm call fails honestly (connection refused) and route_judge
+    bounces to the next candidate."""
+    pair = _resolve_open_model_inner(user_model)
+    if pair and pair[2] == "PRIVATEMODEAI_API_KEY":
+        try:
+            import pm_sidecar
+            pm_sidecar.pm_proxy_chat_url()  # ensure (no-op when up)
+        except Exception:
+            pass  # the dead URL surfaces the real error downstream
+    return pair
+
+
+def _resolve_open_model_inner(user_model: str) -> tuple[str, str | None, str | None, str | None, dict | None] | None:
     """Match a user-provided model name to a litellm model string + base_url +
     env_var + provider name + extra_headers from the dynamic open-models list.
 
@@ -363,7 +381,17 @@ def _resolve_open_model(user_model: str) -> tuple[str, str | None, str | None, s
          "https://integrate.api.nvidia.com/v1"),
         ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/models", "openrouter",
          "https://openrouter.ai/api/v1"),
+        # v0.91.8: PM joins the live ladder — the LISTING is plain (unencrypted),
+        # the CHAT base is the sidecar (pm_sidecar spawns pmproxy.mjs; the
+        # resolver wrapper ensures it is up before the tuple escapes).
+        ("PRIVATEMODEAI_API_KEY", "https://api.privatemode.ai/v1/models", "privatemodeai",
+         getattr(__import__("pm_sidecar"), "PM_PROXY_BASE", "http://127.0.0.1:8530") + "/v1"),
     ]
+    # the HINTED provider fetches first ("privatemodeai/glm-latest" must not
+    # be answered by some other provider's same-named model)
+    if user_provider_norm:
+        _PROVIDER_FETCH.sort(
+            key=lambda e: 0 if e[2].replace("-", "").replace("_", "") == user_provider_norm else 1)
     for env, url, pname, base in _PROVIDER_FETCH:
         if not os.environ.get(env, "").strip():
             continue
