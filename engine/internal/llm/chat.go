@@ -197,8 +197,23 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
         errs := make(chan error, 1)
 
         go func() {
-                defer close(ch)
-                defer close(errs)
+                // v0.93.2 THE ENGINE-KILL GUARD: this producer goroutine is
+                // OUTSIDE every server-side recover middleware (it runs on
+                // its own stack, spawned per turn) — a panic anywhere in the
+                // ReAct loop / tool chain / stream parsing killed the WHOLE
+                // ENGINE (the Android watchdog restarted it, the user's
+                // 'gets killed by engine restart' report). The guard turns
+                // a would-be crash into one honest error chunk + a terminal
+                // status; the engine lives, the next turn works.
+                defer func() {
+                        if rec := recover(); rec != nil {
+                                log.Printf("PANIC recovered in llm.Chat (%s · %s): %v", providerLabel(req.Provider), modelShort(req.Model), rec)
+                                ch <- ChatChunk{Type: "error", Error: "panic", Message: "internal error — the turn was cancelled but the engine recovered; try again"}
+                                ch <- ChatChunk{Type: "status", State: "error"}
+                        }
+                        close(ch)
+                        close(errs)
+                }()
 
                 switch {
                 case req.DeepResearch && req.Provider != "":
@@ -2384,7 +2399,18 @@ func isTransientNetErr(err error) bool {
                 return false
         }
         s := err.Error()
-        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data`).MatchString(s)
+        // v0.93.2 THE MISTRAL TLS CLASS: 'tls: bad record MAC' (and the tls/
+        // handshake family) is mid-stream TLS record corruption — carrier
+        // NAT rebinds, mobile-network proxies, connection reuse through
+        // flaky middleboxes (the Go issue tracker's own diagnosis: 'network
+        // corruption of some sort'). The user's live hit: Mistral tool
+        // chains died terminal on api.mistral.ai with
+        //   Post "https://api.mistral.ai/v1/chat/completions": remote error:
+        //   tls: bad record MAC
+        // The cure is EXACTLY what the pause ladder does — retry on a FRESH
+        // connection (Go's transport discards the poisoned one). These are
+        // transient by nature; auth/protocol errors never match this set.
+        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure`).MatchString(s)
 }
 
 // mergeUsage sums two usage reports (nil-safe).
