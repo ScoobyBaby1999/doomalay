@@ -2151,6 +2151,17 @@
           patch.sandbox_repo = '';
         }
         updateSession(icon, state, patch);
+        // v0.93.6: THE PERSONA RE-POINT — switching the sandbox method
+        // mid-chat re-points UNEDITED personas (empty or verbatim-default
+        // text) to the new mode's default; edited personas never move.
+        // persona.js listens (web-side, live editor refresh) and the
+        // engine's PATCH handler does the same server-side (reloads, other
+        // devices — belt and braces).
+        try {
+          window.dispatchEvent(new CustomEvent('doomalay:sandbox-changed', {
+            detail: { sessionId: state.sessionId || (icon && icon.id) || '', sandbox: sandboxType }
+          }));
+        } catch (e) {}
         renderHost(bodyEl, icon, state, panel);
       },
 

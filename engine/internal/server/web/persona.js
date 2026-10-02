@@ -293,6 +293,19 @@
     if (p.mode === 'trigger' && !p.trigger) p.mode = 'always';
   }
 
+  // v0.93.6: UNEDITED-DETECTION — a persona whose text is verbatim one of
+  // the two default templates (quick / HF) is UNEDITED (the user hit ↺
+  // default or saved the prefilled editor untouched). Empty text already
+  // means "follow the mode's default" — verbatim defaults get normalized
+  // to that same empty state so a mode switch can re-point them (the
+  // user's spec: "未编辑过的 persona 应自动切换为新默认"). Edited text
+  // matches neither template and never moves.
+  function isDefaultTemplate(text) {
+    var t = String(text || '').trim();
+    if (!t) return true; // empty = already following
+    return t === DEFAULT_PERSONA_QUICK.trim() || t === DEFAULT_PERSONA_HF.trim();
+  }
+
   // v0.28 SINGLE-ACTIVE (mirrors the engine's enforceSingleActive): at
   // most ONE persona is ever "always active". Activating one demotes
   // the previous; the client keeps the list honest so the UI shows the
@@ -535,6 +548,12 @@
           '<button id="pe-ph" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">{ } placeholders</button>' +
         '</div>' +
         (trigSub ? '<p class="pv-hint" style="margin:0 2px 8px;flex:none">' + esc(trigSub) + ' — tap ⚡ trigger to edit</p>' : '') +
+        // v0.93.6: the mode-aware default note — which default the ↺ pill
+        // loads + the no-freeze contract (an untouched default follows the
+        // sandbox method, it never pins the chat to a stale prompt).
+        '<p class="pv-hint" style="margin:0 2px 8px;flex:none">↺ default loads the <b>' +
+          (cur && cur.sandbox === 'hf' ? 'Hugging Face sandbox' : 'quick chat') +
+          '</b> persona — an untouched default follows the sandbox method (switching it re-points this persona; edited text never moves).</p>' +
         '<div class="pe-body-fill" id="pe-body"><div class="art-loading">loading editor…</div></div>' +
         '</div>'
       );
@@ -629,9 +648,13 @@
 
     if (saveBtn) saveBtn.addEventListener('click', function () {
       if (!cm) return;
-      p.text = cm.getValue().trim() ? cm.getValue() : '';
+      var v = cm.getValue();
+      // v0.93.6: an UNTOUCHED default never freezes into an edited persona
+      // — saving text that is verbatim the mode's default stores EMPTY
+      // ("follow the mode"), so a later sandbox switch still re-points it.
+      p.text = v.trim() && !isDefaultTemplate(v) ? v : '';
       saveBtn.textContent = 'saving…';
-      persist().then(function () { markClean(); toast('persona saved'); })
+      persist().then(function () { markClean(); toast('persona saved' + (p.text === '' ? ' — following the sandbox default' : '')); })
         .catch(function () { saveBtn.textContent = 'save · retry?'; saveBtn.disabled = false; });
     });
 
@@ -1247,6 +1270,36 @@
   }
 
   // ── public API ────────────────────────────────────────────────────
+  // v0.93.6: THE SANDBOX-CHANGED RE-POINT (user spec: "聊天中途切换 sandbox
+  // method 时，未编辑过的 persona 应自动切换为新默认"). chatpanel's
+  // applySandbox dispatches doomalay:sandbox-changed after the PATCH;
+  // personas whose text is EMPTY or verbatim a default template (unedited)
+  // re-point to the new mode's default (empty text = "follow the mode" —
+  // the next open/composition picks the new default up). Edited personas
+  // never move. Registered ONCE, only acts when the session is loaded.
+  window.addEventListener('doomalay:sandbox-changed', function (ev) {
+    var d = (ev && ev.detail) || {};
+    if (!cur || !cur.sessionId) return;
+    if (d.sessionId && d.sessionId !== cur.sessionId) return;
+    var changed = false;
+    personas.forEach(function (p) {
+      if (isDefaultTemplate(p.text) && String(p.text || '').trim() !== '') {
+        p.text = ''; // unedited → follow the (new) mode's default
+        changed = true;
+      }
+    });
+    if (cur.sandbox !== d.sandbox) { cur.sandbox = d.sandbox || cur.sandbox; }
+    if (changed) {
+      persist().then(function () {
+        // the live editor (if open) reloads the new mode's default so the
+        // user SEES the re-point instead of a stale frozen template
+        if (cm && window.Persona && window.Persona.isOpen && window.Persona.isOpen()) {
+          try { cm.setValue(defaultPersonaFor(cur.sandbox)); } catch (e) {}
+        }
+      });
+    }
+  });
+
   window.Persona = {
     open: open,
     close: function () { var p = PV(); if (p) p.closeViews(); },

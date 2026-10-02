@@ -7,6 +7,7 @@ import (
         "net/http"
         "strconv"
         "strings"
+        "sync"
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -200,6 +201,19 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 sess.Provider = v
         }
         if v, ok := req["sandbox"].(string); ok {
+                // v0.93.6: THE PERSONA RE-POINT (server-side twin of
+                // persona.js's sandbox-changed listener — belt and braces:
+                // reloads and other devices stay honest too). When the
+                // sandbox method CHANGES mid-chat, personas whose text is
+                // empty (already following) or verbatim one of the default
+                // templates (UNEDITED — the user hit ↺ default or saved the
+                // prefilled editor untouched) re-point to the new mode's
+                // default: their text clears to "" (= "follow the mode",
+                // which now resolves to the new default). Edited personas
+                // never move.
+                if v != sess.Sandbox && (v == "hf" || sess.Sandbox == "hf" || v == "quick") {
+                        rePointUneditedPersonas(sess, sess.Sandbox, v)
+                }
                 sess.Sandbox = v
         }
         // v0.46: HF-chat routing — sandbox_mode ("shared"|"own"|"") + the
@@ -413,4 +427,129 @@ func generateID() string {
         b := make([]byte, 8)
         _, _ = rand.Read(b)
         return strconv.FormatInt(time.Now().Unix(), 16) + hex.EncodeToString(b)
+}
+
+// rePointUneditedPersonas — v0.93.6 THE PERSONA DEFAULTS WAVE (user spec:
+// "聊天中途切换 sandbox method 时，未编辑过的 persona 应自动切换为新默认").
+// Personas whose text is EMPTY (already following the mode's default) or
+// verbatim-equal to one of the two default templates (UNEDITED — a ↺
+// default load or an untouched prefilled editor that got saved) re-point to
+// the new mode: their text clears to "" which resolves to the NEW mode's
+// default at composition time (chat.go defaultPersonaFor). Edited personas
+// match neither template and never move. The {repo} placeholder stays
+// unsubstituted in stored text, so the raw-template comparison is exact.
+func rePointUneditedPersonas(sess *store.Session, oldSandbox, newSandbox string) {
+        if oldSandbox == newSandbox {
+                return // same mode — nothing re-points (belt AND braces)
+        }
+        raw := strings.TrimSpace(sess.Personas)
+        if raw == "" {
+                return // nothing stored → the chat rides the mode default already
+        }
+        var list []map[string]any
+        if err := json.Unmarshal([]byte(raw), &list); err != nil || len(list) == 0 {
+                return // the legacy single-persona column composes live; nothing to re-point
+        }
+        // the comparison set: BOTH sides' templates. The engine consts are
+        // what defaultPersonaFor injects; the WEB templates (persona.js —
+        // embedded in this very binary) are what the ↺ pill loads and what
+        // the user actually saves. They diverge today (the web quick
+        // template carries the Library section; the engine appends
+        // libraryPreamble at compose time), so a persona frozen from the
+        // editor matches the WEB form — both must count as unedited.
+        quick := strings.TrimSpace(defaultPersonaQuick)
+        hf := strings.TrimSpace(defaultPersonaHF)
+        wq, wh := webPersonaTemplates()
+        isDefault := func(t string) bool {
+                return t == quick || t == hf || (wq != "" && t == wq) || (wh != "" && t == wh)
+        }
+        changed := false
+        for _, p := range list {
+                t, _ := p["text"].(string)
+                t = strings.TrimSpace(t)
+                if t == "" {
+                        continue // empty = already following the mode
+                }
+                if isDefault(t) {
+                        p["text"] = "" // unedited → follow the (new) mode's default
+                        changed = true
+                }
+        }
+        if !changed {
+                return
+        }
+        b, err := json.Marshal(list)
+        if err != nil {
+                return
+        }
+        sess.Personas = string(b)
+}
+
+// webPersonaTemplates extracts DEFAULT_PERSONA_QUICK + DEFAULT_PERSONA_HF
+// from the embedded web/persona.js (v0.93.6). The JS side builds them as
+// 'segment' + 'segment' string concatenations — the parser walks the
+// single-quoted segments after `var NAME =` up to the terminating `;`,
+// decoding \n, \' and \\ escapes. Extracted ONCE (sync.Once); a parse
+// failure returns "" and the re-point falls back to the engine consts
+// only (never a hard failure).
+var webPersonaOnce sync.Once
+var webPersonaQuick, webPersonaHF string
+
+func webPersonaTemplates() (quick, hf string) {
+        webPersonaOnce.Do(func() {
+                data, err := webFS.ReadFile("web/persona.js")
+                if err != nil {
+                        return
+                }
+                webPersonaQuick = extractJSConst(string(data), "DEFAULT_PERSONA_QUICK")
+                webPersonaHF = extractJSConst(string(data), "DEFAULT_PERSONA_HF")
+        })
+        return strings.TrimSpace(webPersonaQuick), strings.TrimSpace(webPersonaHF)
+}
+
+// extractJSConst pulls `var <name> = 'a' + 'b' + …;` out of JS source.
+// A segment-scanning parser (NOT a naive "cut at the first ;" — the
+// persona templates carry literal semicolons INSIDE their text, e.g.
+// (ACTION: skills {"action":"load"}); which used to truncate the extract).
+// It walks quoted segments and their ` + ` glue, stopping at the
+// concatenation's real terminator (a closing quote followed by `;`).
+func extractJSConst(src, name string) string {
+        marker := "var " + name + " ="
+        i := strings.Index(src, marker)
+        if i < 0 {
+                return ""
+        }
+        src = src[i+len(marker):]
+        var b strings.Builder
+        j := 0
+        for j < len(src) {
+                // skip inter-segment glue (whitespace, +, whitespace)
+                for j < len(src) && (src[j] == ' ' || src[j] == '\n' || src[j] == '\t' || src[j] == '+') {
+                        j++
+                }
+                if j >= len(src) || src[j] != '\'' {
+                        break // the real terminator (or junk) — done
+                }
+                j++ // enter the segment
+                for ; j < len(src); j++ {
+                        c := src[j]
+                        if c == '\\' && j+1 < len(src) {
+                                j++
+                                switch src[j] {
+                                case 'n':
+                                        b.WriteByte('\n')
+                                case 't':
+                                        b.WriteByte('\t')
+                                default: // \' \\ and anything else pass through
+                                        b.WriteByte(src[j])
+                                }
+                                continue
+                        }
+                        if c == '\'' {
+                                break // segment end — back to the glue walk
+                        }
+                        b.WriteByte(c)
+                }
+        }
+        return b.String()
 }
