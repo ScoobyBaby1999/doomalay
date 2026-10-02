@@ -83,7 +83,7 @@
   "base_url": "https://api.mistral.ai/v1",
   "litellm_prefix": "mistral",
   "label": "Mistral",
-  "description": "Mistral's own models (Large, Small, Codestral). Free experiment tier with monthly token limits; paid plans scale up.",
+  "description": "Mistral's own models (Medium, Large, Small, Magistral, Devstral) plus hosted third-party open weights (Z.ai GLM 5.3) - the full list syncs live from the API. Free experiment tier with monthly token limits; paid plans scale up.",
   "signup_url": "https://console.mistral.ai/api-keys",
   "free_tier": true,
   "color": "#FF7000"

@@ -19,104 +19,105 @@
 package llm
 
 import (
-	"encoding/json"
-	"fmt"
-	"regexp"
-	"sort"
-	"strings"
-	"sync"
-	"time"
+        "encoding/json"
+        "fmt"
+        "os"
+        "regexp"
+        "sort"
+        "strings"
+        "sync"
+        "time"
 )
 
 // ModelAttributes is the presentation metadata for a logical model.
 type ModelAttributes struct {
-	Capabilities []string           `json:"capabilities,omitempty"`
-	Benchmarks   map[string]float64 `json:"benchmarks,omitempty"`
-	Pricing      string             `json:"pricing,omitempty"`
-	Ranks        []RankEntry        `json:"ranks,omitempty"`
-	EffortLevels []string           `json:"effortLevels,omitempty"`
-	// v0.42: the dynamic effort surface (additive — the pre-v0.42
-	// frontend ignores unknown fields; the new one reads them to pick
-	// the default level and hide 'off' on mandatory reasoners).
-	EffortDefault    string `json:"effortDefault,omitempty"`
-	EffortMandatory  bool   `json:"effortMandatory,omitempty"`
-	EffortCanDisable bool   `json:"effortCanDisable,omitempty"`
-	EffortBudget     bool   `json:"effortBudget,omitempty"`
-	Note             string `json:"note,omitempty"`
+        Capabilities []string           `json:"capabilities,omitempty"`
+        Benchmarks   map[string]float64 `json:"benchmarks,omitempty"`
+        Pricing      string             `json:"pricing,omitempty"`
+        Ranks        []RankEntry        `json:"ranks,omitempty"`
+        EffortLevels []string           `json:"effortLevels,omitempty"`
+        // v0.42: the dynamic effort surface (additive — the pre-v0.42
+        // frontend ignores unknown fields; the new one reads them to pick
+        // the default level and hide 'off' on mandatory reasoners).
+        EffortDefault    string `json:"effortDefault,omitempty"`
+        EffortMandatory  bool   `json:"effortMandatory,omitempty"`
+        EffortCanDisable bool   `json:"effortCanDisable,omitempty"`
+        EffortBudget     bool   `json:"effortBudget,omitempty"`
+        Note             string `json:"note,omitempty"`
 }
 
 // RankEntry is a leaderboard rank (old: design_arena top-3).
 type RankEntry struct {
-	Label string `json:"label"`
-	Rank  int    `json:"rank"`
+        Label string `json:"label"`
+        Rank  int    `json:"rank"`
 }
 
 // EnrichedModel is one model on one provider, with metadata.
 type EnrichedModel struct {
-	ID            string   `json:"id"`    // "provider/raw_id" (the slot key)
-	RawID         string   `json:"rawId"` // the id the provider expects
-	Provider      string   `json:"provider"`
-	DisplayName   string   `json:"displayName"`
-	Family        string   `json:"family"`
-	ContextLength int64    `json:"contextLength"`
-	IsFree        bool     `json:"isFree"`
-	Capabilities  []string `json:"capabilities,omitempty"`
-	Pricing       string   `json:"pricing,omitempty"`
-	EffortLevels  []string `json:"effortLevels,omitempty"`
-	// v0.42: the DYNAMIC per-model effort surface (resolved via the
-	// OpenRouter reasoning registry merge in effort.go). effortLevels is
-	// the ordered ladder the pre-v0.42 frontend already cycles; the new
-	// fields let the UI preselect the model's own default, hide 'off'
-	// for mandatory reasoners (glm-5.3, gpt-oss), and offer the budget
-	// dial where reasoning.max_tokens is accepted.
-	EffortDefault    string `json:"effortDefault,omitempty"`
-	EffortMandatory  bool   `json:"effortMandatory"` // meaningful when false too
-	EffortCanDisable bool   `json:"effortCanDisable"`
-	EffortBudget     bool   `json:"effortBudget,omitempty"`
-	Source           string `json:"effortSource,omitempty"` // openrouter | provider-default | catalog
+        ID            string   `json:"id"`    // "provider/raw_id" (the slot key)
+        RawID         string   `json:"rawId"` // the id the provider expects
+        Provider      string   `json:"provider"`
+        DisplayName   string   `json:"displayName"`
+        Family        string   `json:"family"`
+        ContextLength int64    `json:"contextLength"`
+        IsFree        bool     `json:"isFree"`
+        Capabilities  []string `json:"capabilities,omitempty"`
+        Pricing       string   `json:"pricing,omitempty"`
+        EffortLevels  []string `json:"effortLevels,omitempty"`
+        // v0.42: the DYNAMIC per-model effort surface (resolved via the
+        // OpenRouter reasoning registry merge in effort.go). effortLevels is
+        // the ordered ladder the pre-v0.42 frontend already cycles; the new
+        // fields let the UI preselect the model's own default, hide 'off'
+        // for mandatory reasoners (glm-5.3, gpt-oss), and offer the budget
+        // dial where reasoning.max_tokens is accepted.
+        EffortDefault    string `json:"effortDefault,omitempty"`
+        EffortMandatory  bool   `json:"effortMandatory"` // meaningful when false too
+        EffortCanDisable bool   `json:"effortCanDisable"`
+        EffortBudget     bool   `json:"effortBudget,omitempty"`
+        Source           string `json:"effortSource,omitempty"` // openrouter | provider-default | catalog
 }
 
 // HostRoute is one provider-hosted route of a logical model.
 type HostRoute struct {
-	Provider            string `json:"provider"`
-	ProviderDisplayName string `json:"providerDisplayName"`
-	Color               string `json:"color"`
-	ModelID             string `json:"modelId"` // raw id on that provider
-	ContextLength       int64  `json:"contextLength"`
-	HasAPIKey           bool   `json:"hasApiKey"`
-	SyncedLive          bool   `json:"syncedLive"`
-	DefaultPriority     int    `json:"defaultPriority"`
-	IsFree              bool   `json:"isFree"`
-	// v0.32.5: route-level pricing ("$X / $Y" prompt/completion per M
-	// tokens, same format as the logical attributes) — the same model
-	// can cost differently per provider.
-	Pricing string `json:"pricing,omitempty"`
+        Provider            string `json:"provider"`
+        ProviderDisplayName string `json:"providerDisplayName"`
+        Color               string `json:"color"`
+        ModelID             string `json:"modelId"` // raw id on that provider
+        ContextLength       int64  `json:"contextLength"`
+        HasAPIKey           bool   `json:"hasApiKey"`
+        SyncedLive          bool   `json:"syncedLive"`
+        DefaultPriority     int    `json:"defaultPriority"`
+        IsFree              bool   `json:"isFree"`
+        // v0.32.5: route-level pricing ("$X / $Y" prompt/completion per M
+        // tokens, same format as the logical attributes) — the same model
+        // can cost differently per provider.
+        Pricing string `json:"pricing,omitempty"`
 }
 
 // LogicalModel groups provider models by family (the "model view" row).
 type LogicalModel struct {
-	Logical       string           `json:"logical"`
-	DisplayName   string           `json:"displayName"`
-	Family        string           `json:"family"`
-	ContextLength int64            `json:"contextLength"`
-	Hosts         []HostRoute      `json:"hosts"`
-	Attributes    *ModelAttributes `json:"attributes,omitempty"`
-	IsFree        bool             `json:"isFree"`
+        Logical       string           `json:"logical"`
+        DisplayName   string           `json:"displayName"`
+        Family        string           `json:"family"`
+        ContextLength int64            `json:"contextLength"`
+        Hosts         []HostRoute      `json:"hosts"`
+        Attributes    *ModelAttributes `json:"attributes,omitempty"`
+        IsFree        bool             `json:"isFree"`
 }
 
 // ProviderGroup is the "provider view" entry: one provider + its models.
 type ProviderGroup struct {
-	Name        string          `json:"name"`
-	DisplayName string          `json:"displayName"`
-	Color       string          `json:"color"`
-	Description string          `json:"description"`
-	Models      []EnrichedModel `json:"models"`
-	HasKey      bool            `json:"hasApiKey"`
-	SyncedLive  bool            `json:"syncedLive"`
-	ModelCount  int             `json:"modelCount"`
-	SettingsURL string          `json:"settingsUrl"`
-	FreeTier    bool            `json:"freeTier"`
-	EnvVar      string          `json:"envVar,omitempty"`
+        Name        string          `json:"name"`
+        DisplayName string          `json:"displayName"`
+        Color       string          `json:"color"`
+        Description string          `json:"description"`
+        Models      []EnrichedModel `json:"models"`
+        HasKey      bool            `json:"hasApiKey"`
+        SyncedLive  bool            `json:"syncedLive"`
+        ModelCount  int             `json:"modelCount"`
+        SettingsURL string          `json:"settingsUrl"`
+        FreeTier    bool            `json:"freeTier"`
+        EnvVar      string          `json:"envVar,omitempty"`
 }
 
 // CatalogV2 is the /api/models response with the logical view.
@@ -124,74 +125,80 @@ type ProviderGroup struct {
 // still syncing in the background (v0.20) — the client re-fetches until
 // it lands a non-partial catalog.
 type CatalogV2 struct {
-	Providers   map[string]ProviderConfig `json:"providers"`
-	Models      []ModelInfo               `json:"models"`
-	Groups      []ProviderGroup           `json:"groups"`
-	Logical     []LogicalModel            `json:"logical"`
-	SyncStatus  []SyncStatus              `json:"syncStatus"`
-	TotalModels int                       `json:"totalModels"`
-	SyncedAt    string                    `json:"syncedAt"`
-	Partial     bool                      `json:"partial,omitempty"`
+        Providers   map[string]ProviderConfig `json:"providers"`
+        Models      []ModelInfo               `json:"models"`
+        Groups      []ProviderGroup           `json:"groups"`
+        Logical     []LogicalModel            `json:"logical"`
+        SyncStatus  []SyncStatus              `json:"syncStatus"`
+        TotalModels int                       `json:"totalModels"`
+        SyncedAt    string                    `json:"syncedAt"`
+        Partial     bool                      `json:"partial,omitempty"`
 }
 
 // hostPriority is the default provider order when building host routes
 // (mirrors the old backend's providers_catalog.json iteration order —
 // free/fast hosts first, paid last).
 var hostPriority = []string{
-	"nvidia", "opencode", "privatemodeai", "cloudflare", "groq",
-	"github", "openrouter", "together", "mistral", "opencode", "deepseek",
-	"openai", "anthropic",
+        "nvidia", "opencode", "privatemodeai", "cloudflare", "groq",
+        "github", "openrouter", "together", "mistral", "opencode", "deepseek",
+        "openai", "anthropic",
 }
 
 // providerPriorityIndex ranks providers for defaultPriority.
 func providerPriorityIndex(name string) int {
-	for i, p := range hostPriority {
-		if p == name {
-			return i
-		}
-	}
-	return len(hostPriority) + 1
+        for i, p := range hostPriority {
+                if p == name {
+                        return i
+                }
+        }
+        return len(hostPriority) + 1
 }
 
 // ── Per-provider live fetchers (the crown jewels) ──────────────────────────
 
 // fetchedModel is the normalized output of a provider fetcher.
 type fetchedModel struct {
-	RawID         string
-	ContextLength int64
-	IsFree        bool
-	Pricing       string
-	Caps          []string
-	SyncedLive    bool
-	// Effort is the provider's OWN live effort surface when its model
-	// listing exposes one (v0.42 hook — see effort.go SOURCE 1). nil for
-	// every current fetcher; the resolution chain treats it as top
-	// precedence when present.
-	Effort *LiveEffortInfo
+        RawID         string
+        ContextLength int64
+        IsFree        bool
+        Pricing       string
+        Caps          []string
+        SyncedLive    bool
+        // Effort is the provider's OWN live effort surface when its model
+        // listing exposes one (v0.42 hook — see effort.go SOURCE 1). nil for
+        // every current fetcher; the resolution chain treats it as top
+        // precedence when present.
+        Effort *LiveEffortInfo
 }
 
 // fetchProviderModelsV2 dispatches to the per-provider live fetcher.
 // Every fetcher uses the provider's OWN API — no static fallbacks.
 func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID string) []fetchedModel {
-	switch name {
-	case "openrouter":
-		return fetchOpenRouterModels(apiKey)
-	case "nvidia":
-		return fetchNvidiaModels(apiKey)
-	case "opencode":
-		return fetchOpenCodeModels(apiKey)
-	case "privatemodeai":
-		return fetchPrivateModeModels(apiKey)
-	case "cloudflare":
-		return fetchCloudflareModels(apiKey, accountID)
-	case "github":
-		return fetchGitHubModels(apiKey)
-	default:
-		// OpenAI-compatible /v1/models (groq, together, mistral, openai,
-		// anthropic, deepseek) — fetchProviderModels already handles the
-		// data[]/models[] shapes; re-parse raw for enrichment.
-		return fetchOpenAICompatible(name, cfg, apiKey)
-	}
+        // v0.91.7: the DOOMALAY_BASE_URL_<PROVIDER> power-feature override
+        // holds for the FETCH path too (effectiveBaseURL) — a mirror serving
+        // chat must serve its model list (the mistral e2e rig's find).
+        if v := os.Getenv("DOOMALAY_BASE_URL_" + strings.ToUpper(name)); v != "" {
+                cfg.BaseURL = strings.TrimSuffix(v, "/")
+        }
+        switch name {
+        case "openrouter":
+                return fetchOpenRouterModels(apiKey)
+        case "nvidia":
+                return fetchNvidiaModels(apiKey)
+        case "opencode":
+                return fetchOpenCodeModels(apiKey)
+        case "privatemodeai":
+                return fetchPrivateModeModels(apiKey)
+        case "cloudflare":
+                return fetchCloudflareModels(apiKey, accountID)
+        case "github":
+                return fetchGitHubModels(apiKey)
+        default:
+                // OpenAI-compatible /v1/models (groq, together, mistral, openai,
+                // anthropic, deepseek) — fetchProviderModels already handles the
+                // data[]/models[] shapes; re-parse raw for enrichment.
+                return fetchOpenAICompatible(name, cfg, apiKey)
+        }
 }
 
 // fetchOpenRouterModels — the OpenRouter provider view, derived from the
@@ -200,38 +207,38 @@ func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID st
 // + reasoning for every entry). Free detection: zero prices or ":free"
 // suffix.
 func fetchOpenRouterModels(apiKey string) []fetchedModel {
-	reg := fetchOpenRouterRegistry()
-	if len(reg) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(reg))
-	for id := range reg {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids) // deterministic provider view
-	var out []fetchedModel
-	for _, id := range ids {
-		m := reg[id]
-		free := strings.HasSuffix(id, ":free") ||
-			(parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
-		var caps []string
-		for _, mod := range m.Architecture.InputModalities {
-			if mod == "image" {
-				caps = append(caps, "vision")
-			} else if mod == "audio" {
-				caps = append(caps, "audio")
-			}
-		}
-		out = append(out, fetchedModel{
-			RawID:         id,
-			ContextLength: m.ContextLength,
-			IsFree:        free,
-			Pricing:       pricingString(m.Pricing.Prompt, m.Pricing.Completion, free),
-			Caps:          caps,
-			SyncedLive:    true,
-		})
-	}
-	return out
+        reg := fetchOpenRouterRegistry()
+        if len(reg) == 0 {
+                return nil
+        }
+        ids := make([]string, 0, len(reg))
+        for id := range reg {
+                ids = append(ids, id)
+        }
+        sort.Strings(ids) // deterministic provider view
+        var out []fetchedModel
+        for _, id := range ids {
+                m := reg[id]
+                free := strings.HasSuffix(id, ":free") ||
+                        (parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
+                var caps []string
+                for _, mod := range m.Architecture.InputModalities {
+                        if mod == "image" {
+                                caps = append(caps, "vision")
+                        } else if mod == "audio" {
+                                caps = append(caps, "audio")
+                        }
+                }
+                out = append(out, fetchedModel{
+                        RawID:         id,
+                        ContextLength: m.ContextLength,
+                        IsFree:        free,
+                        Pricing:       pricingString(m.Pricing.Prompt, m.Pricing.Completion, free),
+                        Caps:          caps,
+                        SyncedLive:    true,
+                })
+        }
+        return out
 }
 
 // fetchNvidiaModels — GET https://integrate.api.nvidia.com/v1/models
@@ -246,41 +253,41 @@ func fetchOpenRouterModels(apiKey string) []fetchedModel {
 // clients) the DEFAULT IS FREE — never guess "paid" (the v0.14
 // owned_by=="nvidia" heuristic wrongly listed Kimi K3 as paid).
 func fetchNvidiaModels(apiKey string) []fetchedModel {
-	body, err := httpGetJSON("https://integrate.api.nvidia.com/v1/models", apiKey)
-	if err != nil {
-		return nil
-	}
-	var resp struct {
-		Data []struct {
-			ID      string `json:"id"`
-			OwnedBy string `json:"owned_by"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &resp) != nil {
-		return nil
-	}
-	freeSlugs, allSlugs, scraped := nvidiaWebsiteFreeEndpoints()
-	var out []fetchedModel
-	for _, m := range resp.Data {
-		// Default: free. Paid only when the site confirms the model exists
-		// AND shows no free-endpoint badge for it.
-		free := true
-		if scraped {
-			slug := m.ID
-			if i := strings.LastIndex(slug, "/"); i >= 0 {
-				slug = slug[i+1:]
-			}
-			if siteFree, found := nvidiaSlugMatch(slug, freeSlugs, allSlugs); found {
-				free = siteFree
-			}
-		}
-		out = append(out, fetchedModel{
-			RawID:      m.ID,
-			IsFree:     free,
-			SyncedLive: true,
-		})
-	}
-	return out
+        body, err := httpGetJSON("https://integrate.api.nvidia.com/v1/models", apiKey)
+        if err != nil {
+                return nil
+        }
+        var resp struct {
+                Data []struct {
+                        ID      string `json:"id"`
+                        OwnedBy string `json:"owned_by"`
+                } `json:"data"`
+        }
+        if json.Unmarshal(body, &resp) != nil {
+                return nil
+        }
+        freeSlugs, allSlugs, scraped := nvidiaWebsiteFreeEndpoints()
+        var out []fetchedModel
+        for _, m := range resp.Data {
+                // Default: free. Paid only when the site confirms the model exists
+                // AND shows no free-endpoint badge for it.
+                free := true
+                if scraped {
+                        slug := m.ID
+                        if i := strings.LastIndex(slug, "/"); i >= 0 {
+                                slug = slug[i+1:]
+                        }
+                        if siteFree, found := nvidiaSlugMatch(slug, freeSlugs, allSlugs); found {
+                                free = siteFree
+                        }
+                }
+                out = append(out, fetchedModel{
+                        RawID:      m.ID,
+                        IsFree:     free,
+                        SyncedLive: true,
+                })
+        }
+        return out
 }
 
 // nvidiaWebsiteFreeEndpoints scrapes build.nvidia.com's model cards and
@@ -289,73 +296,73 @@ func fetchNvidiaModels(apiKey string) []fetchedModel {
 // backward from each card marker for the "Free Endpoint" badge text.
 // 30-minute cache; failures return scraped=false (→ caller defaults free).
 var (
-	nvSiteMu        sync.Mutex
-	nvSiteCache     map[string]bool // slug -> free
-	nvSiteAll       map[string]bool
-	nvSiteFetchedAt time.Time
+        nvSiteMu        sync.Mutex
+        nvSiteCache     map[string]bool // slug -> free
+        nvSiteAll       map[string]bool
+        nvSiteFetchedAt time.Time
 )
 
 func nvidiaWebsiteFreeEndpoints() (free, all map[string]bool, ok bool) {
-	nvSiteMu.Lock()
-	if time.Since(nvSiteFetchedAt) < 30*time.Minute && nvSiteAll != nil {
-		f, a := nvSiteCache, nvSiteAll
-		nvSiteMu.Unlock()
-		return f, a, true
-	}
-	nvSiteMu.Unlock()
+        nvSiteMu.Lock()
+        if time.Since(nvSiteFetchedAt) < 30*time.Minute && nvSiteAll != nil {
+                f, a := nvSiteCache, nvSiteAll
+                nvSiteMu.Unlock()
+                return f, a, true
+        }
+        nvSiteMu.Unlock()
 
-	html, err := httpGetRaw("https://build.nvidia.com/models?page=1&pageSize=1000",
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		"text/html,application/xhtml+xml")
-	if err != nil {
-		return nil, nil, false
-	}
-	freeSet, allSet := parseNvidiaCards(html)
-	if freeSet == nil {
-		return nil, nil, false
-	}
-	nvSiteMu.Lock()
-	nvSiteCache, nvSiteAll, nvSiteFetchedAt = freeSet, allSet, time.Now()
-	nvSiteMu.Unlock()
-	return freeSet, allSet, true
+        html, err := httpGetRaw("https://build.nvidia.com/models?page=1&pageSize=1000",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "text/html,application/xhtml+xml")
+        if err != nil {
+                return nil, nil, false
+        }
+        freeSet, allSet := parseNvidiaCards(html)
+        if freeSet == nil {
+                return nil, nil, false
+        }
+        nvSiteMu.Lock()
+        nvSiteCache, nvSiteAll, nvSiteFetchedAt = freeSet, allSet, time.Now()
+        nvSiteMu.Unlock()
+        return freeSet, allSet, true
 }
 
 // parseNvidiaCards extracts (free, all) slug sets from the build.nvidia.com
 // HTML (RSC stream or hydrated DOM — same card markup). Returns (nil, nil)
 // when the page has no cards (WAF interstitial / shape change).
 func parseNvidiaCards(html string) (free, all map[string]bool) {
-	// No artifact cards at all → WAF interstitial or shape change.
-	if !strings.Contains(html, "artifact-card") {
-		return nil, nil
-	}
+        // No artifact cards at all → WAF interstitial or shape change.
+        if !strings.Contains(html, "artifact-card") {
+                return nil, nil
+        }
 
-	freeSet := map[string]bool{}
-	allSet := map[string]bool{}
-	// The anchor: data-nvtrack-nav-object="artifact-card" … label="slug".
-	// The publisher row + badges ("Free Endpoint") sit just BEFORE it —
-	// bounded by the PREVIOUS card's anchor end so the lookback can never
-	// bleed into the previous card's badges.
-	cardRe := regexp.MustCompile(`data-nvtrack-nav-object="artifact-card"[^>]*data-nvtrack-nav-object-label="([^"]+)"`)
-	prevEnd := 0
-	for _, loc := range cardRe.FindAllStringSubmatchIndex(html, -1) {
-		slug := html[loc[2]:loc[3]]
-		if slug == "" {
-			continue
-		}
-		allSet[slug] = true
-		start := loc[0] - 900
-		if start < prevEnd {
-			start = prevEnd
-		}
-		if strings.Contains(html[start:loc[0]], "Free Endpoint") {
-			freeSet[slug] = true
-		}
-		prevEnd = loc[1]
-	}
-	if len(allSet) == 0 {
-		return nil, nil
-	}
-	return freeSet, allSet
+        freeSet := map[string]bool{}
+        allSet := map[string]bool{}
+        // The anchor: data-nvtrack-nav-object="artifact-card" … label="slug".
+        // The publisher row + badges ("Free Endpoint") sit just BEFORE it —
+        // bounded by the PREVIOUS card's anchor end so the lookback can never
+        // bleed into the previous card's badges.
+        cardRe := regexp.MustCompile(`data-nvtrack-nav-object="artifact-card"[^>]*data-nvtrack-nav-object-label="([^"]+)"`)
+        prevEnd := 0
+        for _, loc := range cardRe.FindAllStringSubmatchIndex(html, -1) {
+                slug := html[loc[2]:loc[3]]
+                if slug == "" {
+                        continue
+                }
+                allSet[slug] = true
+                start := loc[0] - 900
+                if start < prevEnd {
+                        start = prevEnd
+                }
+                if strings.Contains(html[start:loc[0]], "Free Endpoint") {
+                        freeSet[slug] = true
+                }
+                prevEnd = loc[1]
+        }
+        if len(allSet) == 0 {
+                return nil, nil
+        }
+        return freeSet, allSet
 }
 
 // nvidiaSlugMatch matches an API id's last segment against website slugs
@@ -363,51 +370,51 @@ func parseNvidiaCards(html string) (free, all map[string]bool) {
 // (isFree, found): found=true when the model has a website card; isFree
 // reflects its Free Endpoint badge.
 func nvidiaSlugMatch(apiSlug string, freeSet, all map[string]bool) (isFree, found bool) {
-	if all == nil {
-		return false, false
-	}
-	norm := func(s string) string { return strings.ReplaceAll(s, "_", ".") }
-	an := norm(apiSlug)
-	for ws := range all {
-		wn := norm(ws)
-		if apiSlug == ws || an == wn ||
-			strings.HasPrefix(an, wn) || strings.HasPrefix(wn, an) {
-			return freeSet[ws], true
-		}
-	}
-	return false, false
+        if all == nil {
+                return false, false
+        }
+        norm := func(s string) string { return strings.ReplaceAll(s, "_", ".") }
+        an := norm(apiSlug)
+        for ws := range all {
+                wn := norm(ws)
+                if apiSlug == ws || an == wn ||
+                        strings.HasPrefix(an, wn) || strings.HasPrefix(wn, an) {
+                        return freeSet[ws], true
+                }
+        }
+        return false, false
 }
 
 // fetchOpenCodeModels — GET https://opencode.ai/zen/v1/models (public).
 // Free: "big-pickle" (verified) or "-free" suffix, EXCEPT the known paid
 // exceptions (minimax-m3-free, qwen3.6-plus-free — paid on Zen despite the name).
 func fetchOpenCodeModels(apiKey string) []fetchedModel {
-	body, err := httpGetJSON("https://opencode.ai/zen/v1/models", apiKey)
-	if err != nil {
-		return nil
-	}
-	var resp struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &resp) != nil {
-		return nil
-	}
-	paidExceptions := map[string]bool{
-		"minimax-m3-free": true, "qwen3.6-plus-free": true,
-	}
-	var out []fetchedModel
-	for _, m := range resp.Data {
-		free := m.ID == "big-pickle" ||
-			(strings.HasSuffix(m.ID, "-free") && !paidExceptions[m.ID])
-		out = append(out, fetchedModel{
-			RawID:      m.ID,
-			IsFree:     free,
-			SyncedLive: true,
-		})
-	}
-	return out
+        body, err := httpGetJSON("https://opencode.ai/zen/v1/models", apiKey)
+        if err != nil {
+                return nil
+        }
+        var resp struct {
+                Data []struct {
+                        ID string `json:"id"`
+                } `json:"data"`
+        }
+        if json.Unmarshal(body, &resp) != nil {
+                return nil
+        }
+        paidExceptions := map[string]bool{
+                "minimax-m3-free": true, "qwen3.6-plus-free": true,
+        }
+        var out []fetchedModel
+        for _, m := range resp.Data {
+                free := m.ID == "big-pickle" ||
+                        (strings.HasSuffix(m.ID, "-free") && !paidExceptions[m.ID])
+                out = append(out, fetchedModel{
+                        RawID:      m.ID,
+                        IsFree:     free,
+                        SyncedLive: true,
+                })
+        }
+        return out
 }
 
 // privateModeModelsURL is a package var so unit tests can serve the PM
@@ -425,187 +432,223 @@ var privateModeModelsURL = "https://api.privatemode.ai/v1/models"
 // disappearing-effort-toggle bug. Now: keep CHAT models only (tasks contains
 // "generate"); entries without tasks[] pass through (older shape).
 func fetchPrivateModeModels(apiKey string) []fetchedModel {
-	if apiKey == "" {
-		return nil
-	}
-	body, err := httpGetJSON(privateModeModelsURL, apiKey)
-	if err != nil {
-		return nil
-	}
-	var resp struct {
-		Data []struct {
-			ID               string   `json:"id"`
-			MaxContextLength int64    `json:"max_context_length"`
-			ContextLength    int64    `json:"context_length"`
-			Tasks            []string `json:"tasks"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &resp) != nil {
-		return nil
-	}
-	var out []fetchedModel
-	for _, m := range resp.Data {
-		if len(m.Tasks) > 0 && !hasString(m.Tasks, "generate") {
-			continue // whisper (transcribe) / qwen3-embedding (embed) — not chat models
-		}
-		ctx := m.MaxContextLength
-		if ctx == 0 {
-			ctx = m.ContextLength
-		}
-		out = append(out, fetchedModel{
-			RawID:         m.ID,
-			ContextLength: ctx,
-			IsFree:        true, // free confidential tier
-			SyncedLive:    true,
-		})
-	}
-	// Drop "-latest" variants when a specific model exists (old dedup rule).
-	out = dedupeLatest(out)
-	return out
+        if apiKey == "" {
+                return nil
+        }
+        body, err := httpGetJSON(privateModeModelsURL, apiKey)
+        if err != nil {
+                return nil
+        }
+        var resp struct {
+                Data []struct {
+                        ID               string   `json:"id"`
+                        MaxContextLength int64    `json:"max_context_length"`
+                        ContextLength    int64    `json:"context_length"`
+                        Tasks            []string `json:"tasks"`
+                } `json:"data"`
+        }
+        if json.Unmarshal(body, &resp) != nil {
+                return nil
+        }
+        var out []fetchedModel
+        for _, m := range resp.Data {
+                if len(m.Tasks) > 0 && !hasString(m.Tasks, "generate") {
+                        continue // whisper (transcribe) / qwen3-embedding (embed) — not chat models
+                }
+                ctx := m.MaxContextLength
+                if ctx == 0 {
+                        ctx = m.ContextLength
+                }
+                out = append(out, fetchedModel{
+                        RawID:         m.ID,
+                        ContextLength: ctx,
+                        IsFree:        true, // free confidential tier
+                        SyncedLive:    true,
+                })
+        }
+        // Drop "-latest" variants when a specific model exists (old dedup rule).
+        out = dedupeLatest(out)
+        return out
 }
 
 // fetchCloudflareModels — GET
 // https://api.cloudflare.com/client/v4/accounts/{id}/ai/models/search?per_page=500&page=N
 // (Bearer token + account id, paginated). Model id = item.name.
 func fetchCloudflareModels(apiKey, accountID string) []fetchedModel {
-	if apiKey == "" || accountID == "" {
-		return nil
-	}
-	var out []fetchedModel
-	for page := 1; page <= 5; page++ {
-		u := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/models/search?hide_experimental=false&include_deprecated=true&per_page=500&page=%d", accountID, page)
-		body, err := httpGetJSON(u, apiKey)
-		if err != nil {
-			break
-		}
-		var resp struct {
-			Success bool `json:"success"`
-			Result  []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			} `json:"result"`
-			ResultInfo struct {
-				TotalCount int `json:"total_count"`
-				PerPage    int `json:"per_page"`
-			} `json:"result_info"`
-		}
-		if json.Unmarshal(body, &resp) != nil || !resp.Success {
-			break
-		}
-		for _, m := range resp.Result {
-			id := m.Name
-			if id == "" {
-				id = m.ID
-			}
-			if id == "" {
-				continue
-			}
-			out = append(out, fetchedModel{RawID: id, IsFree: true, SyncedLive: true})
-		}
-		if len(resp.Result) == 0 || len(out) >= resp.ResultInfo.TotalCount {
-			break
-		}
-	}
-	return out
+        if apiKey == "" || accountID == "" {
+                return nil
+        }
+        var out []fetchedModel
+        for page := 1; page <= 5; page++ {
+                u := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/models/search?hide_experimental=false&include_deprecated=true&per_page=500&page=%d", accountID, page)
+                body, err := httpGetJSON(u, apiKey)
+                if err != nil {
+                        break
+                }
+                var resp struct {
+                        Success bool `json:"success"`
+                        Result  []struct {
+                                ID   string `json:"id"`
+                                Name string `json:"name"`
+                        } `json:"result"`
+                        ResultInfo struct {
+                                TotalCount int `json:"total_count"`
+                                PerPage    int `json:"per_page"`
+                        } `json:"result_info"`
+                }
+                if json.Unmarshal(body, &resp) != nil || !resp.Success {
+                        break
+                }
+                for _, m := range resp.Result {
+                        id := m.Name
+                        if id == "" {
+                                id = m.ID
+                        }
+                        if id == "" {
+                                continue
+                        }
+                        out = append(out, fetchedModel{RawID: id, IsFree: true, SyncedLive: true})
+                }
+                if len(resp.Result) == 0 || len(out) >= resp.ResultInfo.TotalCount {
+                        break
+                }
+        }
+        return out
 }
 
 // fetchGitHubModels — GET https://models.github.ai/catalog/models
 // (public, no auth). Bare JSON array shape.
 func fetchGitHubModels(apiKey string) []fetchedModel {
-	headers := map[string]string{
-		"Accept":               "application/vnd.github+json",
-		"X-GitHub-Api-Version": "2026-03-10",
-	}
-	_ = headers
-	body, err := httpGetJSON("https://models.github.ai/catalog/models", apiKey)
-	if err != nil {
-		return nil
-	}
-	var entries []struct {
-		ID           string   `json:"id"`
-		Capabilities []string `json:"capabilities"`
-		Modalities   []string `json:"supported_input_modalities"`
-		Limits       struct {
-			MaxInputTokens int64 `json:"max_input_tokens"`
-		} `json:"limits"`
-	}
-	if json.Unmarshal(body, &entries) != nil {
-		return nil
-	}
-	var out []fetchedModel
-	for _, m := range entries {
-		var caps []string
-		for _, c := range m.Capabilities {
-			switch c {
-			case "tool-calling", "tools", "agents", "agentsV2":
-				caps = append(caps, "tools")
-			case "reasoning":
-				caps = append(caps, "reasoning")
-			}
-		}
-		for _, mod := range m.Modalities {
-			if mod == "image" {
-				caps = append(caps, "vision")
-			}
-		}
-		out = append(out, fetchedModel{
-			RawID:         m.ID,
-			ContextLength: m.Limits.MaxInputTokens,
-			IsFree:        true, // free tier: 15 rpm / 150 rpd
-			Caps:          caps,
-			SyncedLive:    true,
-		})
-	}
-	return out
+        headers := map[string]string{
+                "Accept":               "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2026-03-10",
+        }
+        _ = headers
+        body, err := httpGetJSON("https://models.github.ai/catalog/models", apiKey)
+        if err != nil {
+                return nil
+        }
+        var entries []struct {
+                ID           string   `json:"id"`
+                Capabilities []string `json:"capabilities"`
+                Modalities   []string `json:"supported_input_modalities"`
+                Limits       struct {
+                        MaxInputTokens int64 `json:"max_input_tokens"`
+                } `json:"limits"`
+        }
+        if json.Unmarshal(body, &entries) != nil {
+                return nil
+        }
+        var out []fetchedModel
+        for _, m := range entries {
+                var caps []string
+                for _, c := range m.Capabilities {
+                        switch c {
+                        case "tool-calling", "tools", "agents", "agentsV2":
+                                caps = append(caps, "tools")
+                        case "reasoning":
+                                caps = append(caps, "reasoning")
+                        }
+                }
+                for _, mod := range m.Modalities {
+                        if mod == "image" {
+                                caps = append(caps, "vision")
+                        }
+                }
+                out = append(out, fetchedModel{
+                        RawID:         m.ID,
+                        ContextLength: m.Limits.MaxInputTokens,
+                        IsFree:        true, // free tier: 15 rpm / 150 rpd
+                        Caps:          caps,
+                        SyncedLive:    true,
+                })
+        }
+        return out
 }
 
-// fetchOpenAICompatible — GET {base}/models for the standard providers.
+// fetchOpenAICompatible — GET {base}/models for the standard providers
+// (groq, together, mistral, openai, anthropic, deepseek), parsing the
+// field union below (data[]/models[] shapes).
+//
+// openAICompatModel is the FIELD UNION of every OpenAI-compatible /models
+// listing we consume (v0.91.7): id/name everywhere; context as
+// context_window (groq) / context_length (together) / max_context_length
+// (mistral); mistral documents capabilities{vision,function_calling}.
+// Fields a provider doesn't send stay zero — the family registry enriches
+// later. This is STRUCTURAL API knowledge (how each provider spells its
+// metadata), never model data: the ids themselves always come live.
+type openAICompatModel struct {
+        ID               string `json:"id"`
+        Name             string `json:"name"`
+        ContextWindow    int    `json:"context_window"`     // groq
+        ContextLength    int    `json:"context_length"`     // together
+        MaxContextLength int    `json:"max_context_length"` // mistral
+        Capabilities     *struct {
+                Vision          bool `json:"vision"`
+                FunctionCalling bool `json:"function_calling"`
+        } `json:"capabilities"` // mistral
+}
+
+// toFetched converts the parsed entry, carrying whatever enrichment the
+// provider's own listing documented (context + caps; everything else —
+// pricing, effort surface — stays dynamic via the registry/effort chain).
+func (m *openAICompatModel) toFetched(free bool) fetchedModel {
+        id := m.ID
+        if id == "" {
+                id = m.Name
+        }
+        out := fetchedModel{RawID: id, IsFree: free, SyncedLive: true}
+        switch {
+        case m.ContextWindow > 0:
+                out.ContextLength = int64(m.ContextWindow)
+        case m.ContextLength > 0:
+                out.ContextLength = int64(m.ContextLength)
+        case m.MaxContextLength > 0:
+                out.ContextLength = int64(m.MaxContextLength)
+        }
+        if m.Capabilities != nil {
+                if m.Capabilities.Vision {
+                        out.Caps = append(out.Caps, "vision")
+                }
+                if m.Capabilities.FunctionCalling {
+                        out.Caps = append(out.Caps, "tools")
+                }
+        }
+        return out
+}
+
 func fetchOpenAICompatible(name string, cfg ProviderConfig, apiKey string) []fetchedModel {
-	if apiKey == "" {
-		return nil
-	}
-	base := strings.TrimSuffix(cfg.BaseURL, "/")
-	body, err := httpGetJSON(base+"/models", apiKey)
-	if err != nil {
-		return nil
-	}
-	var resp struct {
-		Data []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"data"`
-		Models []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	_ = json.Unmarshal(body, &resp)
-	var out []fetchedModel
-	for _, m := range resp.Data {
-		id := m.ID
-		if id == "" {
-			id = m.Name
-		}
-		if id == "" {
-			continue
-		}
-		out = append(out, fetchedModel{
-			RawID:      id,
-			IsFree:     !cfg.FreeTier == false, // paid catalog providers are paid
-			SyncedLive: true,
-		})
-	}
-	for _, m := range resp.Models {
-		id := m.ID
-		if id == "" {
-			id = m.Name
-		}
-		if id == "" {
-			continue
-		}
-		out = append(out, fetchedModel{RawID: id, SyncedLive: true})
-	}
-	return out
+        if apiKey == "" {
+                return nil
+        }
+        base := strings.TrimSuffix(cfg.BaseURL, "/")
+        body, err := httpGetJSON(base+"/models", apiKey)
+        if err != nil {
+                return nil
+        }
+        var resp struct {
+                Data   []openAICompatModel `json:"data"`
+                Models []openAICompatModel `json:"models"`
+        }
+        _ = json.Unmarshal(body, &resp)
+        var out []fetchedModel
+        for i := range resp.Data {
+                m := &resp.Data[i]
+                if m.ID == "" && m.Name == "" {
+                        continue
+                }
+                // Same semantics as the pre-v0.91.7 parser: on free-tier
+                // providers every listed model rides the free pool.
+                out = append(out, m.toFetched(cfg.FreeTier))
+        }
+        for i := range resp.Models {
+                m := &resp.Models[i]
+                if m.ID == "" && m.Name == "" {
+                        continue
+                }
+                out = append(out, m.toFetched(false))
+        }
+        return out
 }
 
 // ── Catalog assembly ───────────────────────────────────────────────────────
@@ -616,18 +659,18 @@ func fetchOpenAICompatible(name string, cfg ProviderConfig, apiKey string) []fet
 // save can all request ?refresh=1 at once — N parallel full syncs of 11
 // providers made the app feel dead on mobile networks).
 var (
-	catalogV2Mu   sync.Mutex
-	catalogV2Ent  *CatalogV2
-	catalogV2At   time.Time
-	catalogV2Keys string // v0.32.1: keysHash the entry was built with — key changes must not serve a fresh-but-wrong cache
+        catalogV2Mu   sync.Mutex
+        catalogV2Ent  *CatalogV2
+        catalogV2At   time.Time
+        catalogV2Keys string // v0.32.1: keysHash the entry was built with — key changes must not serve a fresh-but-wrong cache
 
-	sfMu   sync.Mutex
-	sfPend map[string]*sfWaiter
+        sfMu   sync.Mutex
+        sfPend map[string]*sfWaiter
 )
 
 type sfWaiter struct {
-	done chan struct{}
-	ent  *CatalogV2
+        done chan struct{}
+        ent  *CatalogV2
 }
 
 const catalogV2TTL = 10 * time.Minute
@@ -641,63 +684,63 @@ const catalogV2TTL = 10 * time.Minute
 // "connect cloud provider" could sit dead for ~10 seconds and then render
 // an EMPTY provider list when the client timed out first. New strategy:
 //
-//	fresh cache  → return the cached entry (unchanged)
-//	stale cache  → return the stale entry IMMEDIATELY + refresh in the
-//	               background (singleflight, one refresh per key set)
-//	cold (nil)   → return the STATIC catalog INSTANTLY (provider cards
-//	               from the embedded providers.json, no models,
-//	               Partial=true) + kick the background live sync
-//	force        → blocking full sync (explicit ?refresh=1 — the user
-//	               saved a key and wants the live lists NOW)
+//      fresh cache  → return the cached entry (unchanged)
+//      stale cache  → return the stale entry IMMEDIATELY + refresh in the
+//                     background (singleflight, one refresh per key set)
+//      cold (nil)   → return the STATIC catalog INSTANTLY (provider cards
+//                     from the embedded providers.json, no models,
+//                     Partial=true) + kick the background live sync
+//      force        → blocking full sync (explicit ?refresh=1 — the user
+//                     saved a key and wants the live lists NOW)
 func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
-	kh := keysHash(keys)
-	catalogV2Mu.Lock()
-	ent := catalogV2Ent
-	// v0.32.1: a cached entry is only fresh if it was built from the SAME
-	// key set. After POST/DELETE /api/keys the vault changes — the old code
-	// kept serving the previous availability (hasApiKey) for up to the
-	// 10-minute TTL. Now a key change degrades the entry to "stale": served
-	// instantly (never block), with a background re-sync on the new keys.
-	fresh := catalogV2Ent != nil && time.Since(catalogV2At) < catalogV2TTL && catalogV2Keys == kh
-	catalogV2Mu.Unlock()
-	if !force && fresh {
-		return ent
-	}
-	if !force && ent != nil {
-		// Stale — serve it NOW, refresh quietly.
-		startCatalogRefresh(keys)
-		return ent
-	}
-	if !force {
-		// Cold boot — static cards instantly, live sync behind it.
-		startCatalogRefresh(keys)
-		return buildStaticCatalog(keys)
-	}
+        kh := keysHash(keys)
+        catalogV2Mu.Lock()
+        ent := catalogV2Ent
+        // v0.32.1: a cached entry is only fresh if it was built from the SAME
+        // key set. After POST/DELETE /api/keys the vault changes — the old code
+        // kept serving the previous availability (hasApiKey) for up to the
+        // 10-minute TTL. Now a key change degrades the entry to "stale": served
+        // instantly (never block), with a background re-sync on the new keys.
+        fresh := catalogV2Ent != nil && time.Since(catalogV2At) < catalogV2TTL && catalogV2Keys == kh
+        catalogV2Mu.Unlock()
+        if !force && fresh {
+                return ent
+        }
+        if !force && ent != nil {
+                // Stale — serve it NOW, refresh quietly.
+                startCatalogRefresh(keys)
+                return ent
+        }
+        if !force {
+                // Cold boot — static cards instantly, live sync behind it.
+                startCatalogRefresh(keys)
+                return buildStaticCatalog(keys)
+        }
 
-	// force → singleflight on a keys-hash (one live sync for identical keys;
-	// different key sets — e.g. right after a key save — get their own flight).
-	// (kh computed at the top of the function.)
-	sfMu.Lock()
-	if sfPend == nil {
-		sfPend = map[string]*sfWaiter{}
-	}
-	if w, ok := sfPend[kh]; ok {
-		sfMu.Unlock()
-		<-w.done
-		return w.ent
-	}
-	w := &sfWaiter{done: make(chan struct{})}
-	sfPend[kh] = w
-	sfMu.Unlock()
+        // force → singleflight on a keys-hash (one live sync for identical keys;
+        // different key sets — e.g. right after a key save — get their own flight).
+        // (kh computed at the top of the function.)
+        sfMu.Lock()
+        if sfPend == nil {
+                sfPend = map[string]*sfWaiter{}
+        }
+        if w, ok := sfPend[kh]; ok {
+                sfMu.Unlock()
+                <-w.done
+                return w.ent
+        }
+        w := &sfWaiter{done: make(chan struct{})}
+        sfPend[kh] = w
+        sfMu.Unlock()
 
-	freshEnt := buildCatalogV2Locked(keys)
+        freshEnt := buildCatalogV2Locked(keys)
 
-	sfMu.Lock()
-	w.ent = freshEnt
-	delete(sfPend, kh)
-	sfMu.Unlock()
-	close(w.done)
-	return freshEnt
+        sfMu.Lock()
+        w.ent = freshEnt
+        delete(sfPend, kh)
+        sfMu.Unlock()
+        close(w.done)
+        return freshEnt
 }
 
 // startCatalogRefresh runs ONE background full sync per key set (deduped —
@@ -705,26 +748,26 @@ func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
 // number of clients all share a single flight). The result fills the
 // cache so subsequent reads get the complete catalog instantly.
 func startCatalogRefresh(keys map[string]string) {
-	kh := keysHash(keys)
-	sfMu.Lock()
-	if sfPend == nil {
-		sfPend = map[string]*sfWaiter{}
-	}
-	if _, busy := sfPend[kh]; busy {
-		sfMu.Unlock()
-		return
-	}
-	w := &sfWaiter{done: make(chan struct{})}
-	sfPend[kh] = w
-	sfMu.Unlock()
-	go func() {
-		ent := buildCatalogV2Locked(keys)
-		sfMu.Lock()
-		w.ent = ent
-		delete(sfPend, kh)
-		sfMu.Unlock()
-		close(w.done)
-	}()
+        kh := keysHash(keys)
+        sfMu.Lock()
+        if sfPend == nil {
+                sfPend = map[string]*sfWaiter{}
+        }
+        if _, busy := sfPend[kh]; busy {
+                sfMu.Unlock()
+                return
+        }
+        w := &sfWaiter{done: make(chan struct{})}
+        sfPend[kh] = w
+        sfMu.Unlock()
+        go func() {
+                ent := buildCatalogV2Locked(keys)
+                sfMu.Lock()
+                w.ent = ent
+                delete(sfPend, kh)
+                sfMu.Unlock()
+                close(w.done)
+        }()
 }
 
 // buildStaticCatalog assembles the instant cold-boot catalog: real provider
@@ -732,402 +775,402 @@ func startCatalogRefresh(keys map[string]string) {
 // Partial=true. The client renders the cards immediately and re-fetches
 // until the background sync lands the full lists.
 func buildStaticCatalog(keys map[string]string) *CatalogV2 {
-	catalog, err := LoadCatalog()
-	if err != nil {
-		catalog = map[string]ProviderConfig{}
-	}
-	var groups []ProviderGroup
-	var status []SyncStatus
-	for _, name := range sortedProviderNames(catalog) {
-		cfg := catalog[name]
-		groups = append(groups, ProviderGroup{
-			Name:        name,
-			DisplayName: cfg.Label,
-			Color:       cfg.Color,
-			Description: cfg.Description,
-			HasKey:      keys[cfg.EnvVar] != "",
-			SyncedLive:  false,
-			ModelCount:  0,
-			SettingsURL: cfg.SignupURL,
-			FreeTier:    cfg.FreeTier,
-			EnvVar:      cfg.EnvVar,
-		})
-		status = append(status, SyncStatus{
-			Provider: name,
-			HasKey:   keys[cfg.EnvVar] != "",
-		})
-	}
-	return &CatalogV2{
-		Providers:  catalog,
-		Groups:     groups,
-		SyncStatus: status,
-		Partial:    true,
-		SyncedAt:   "",
-	}
+        catalog, err := LoadCatalog()
+        if err != nil {
+                catalog = map[string]ProviderConfig{}
+        }
+        var groups []ProviderGroup
+        var status []SyncStatus
+        for _, name := range sortedProviderNames(catalog) {
+                cfg := catalog[name]
+                groups = append(groups, ProviderGroup{
+                        Name:        name,
+                        DisplayName: cfg.Label,
+                        Color:       cfg.Color,
+                        Description: cfg.Description,
+                        HasKey:      keys[cfg.EnvVar] != "",
+                        SyncedLive:  false,
+                        ModelCount:  0,
+                        SettingsURL: cfg.SignupURL,
+                        FreeTier:    cfg.FreeTier,
+                        EnvVar:      cfg.EnvVar,
+                })
+                status = append(status, SyncStatus{
+                        Provider: name,
+                        HasKey:   keys[cfg.EnvVar] != "",
+                })
+        }
+        return &CatalogV2{
+                Providers:  catalog,
+                Groups:     groups,
+                SyncStatus: status,
+                Partial:    true,
+                SyncedAt:   "",
+        }
 }
 
 // keysHash makes a stable string key of the vault contents (order-sorted).
 func keysHash(keys map[string]string) string {
-	var b strings.Builder
-	names := make([]string, 0, len(keys))
-	for k := range keys {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	for _, k := range names {
-		b.WriteString(k)
-		b.WriteByte(0x1f)
-		b.WriteString(keys[k])
-		b.WriteByte(0x1e)
-	}
-	return b.String()
+        var b strings.Builder
+        names := make([]string, 0, len(keys))
+        for k := range keys {
+                names = append(names, k)
+        }
+        sort.Strings(names)
+        for _, k := range names {
+                b.WriteString(k)
+                b.WriteByte(0x1f)
+                b.WriteString(keys[k])
+                b.WriteByte(0x1e)
+        }
+        return b.String()
 }
 
 // buildCatalogV2Locked does the actual sync + assembly.
 func buildCatalogV2Locked(keys map[string]string) *CatalogV2 {
 
-	catalog, err := LoadCatalog()
-	if err != nil {
-		catalog = map[string]ProviderConfig{}
-	}
+        catalog, err := LoadCatalog()
+        if err != nil {
+                catalog = map[string]ProviderConfig{}
+        }
 
-	// Sync every provider in parallel (public listings sync even without
-	// keys so the model browser can show unavailable routes dimmed).
-	type syncOut struct {
-		name   string
-		models []fetchedModel
-		err    error
-	}
-	outCh := make(chan syncOut, len(catalog))
-	var wg sync.WaitGroup
-	for name, cfg := range catalog {
-		wg.Add(1)
-		go func(name string, cfg ProviderConfig) {
-			defer wg.Done()
-			apiKey := keys[cfg.EnvVar]
-			accountID := ""
-			if cfg.ExtraEnvVar != "" {
-				accountID = keys[cfg.ExtraEnvVar]
-			}
-			models := fetchProviderModelsV2(name, cfg, apiKey, accountID)
-			var syncErr error
-			if models == nil {
-				syncErr = fmt.Errorf("no models returned")
-			}
-			outCh <- syncOut{name: name, models: models, err: syncErr}
-		}(name, cfg)
-	}
-	go func() {
-		wg.Wait()
-		close(outCh)
-	}()
+        // Sync every provider in parallel (public listings sync even without
+        // keys so the model browser can show unavailable routes dimmed).
+        type syncOut struct {
+                name   string
+                models []fetchedModel
+                err    error
+        }
+        outCh := make(chan syncOut, len(catalog))
+        var wg sync.WaitGroup
+        for name, cfg := range catalog {
+                wg.Add(1)
+                go func(name string, cfg ProviderConfig) {
+                        defer wg.Done()
+                        apiKey := keys[cfg.EnvVar]
+                        accountID := ""
+                        if cfg.ExtraEnvVar != "" {
+                                accountID = keys[cfg.ExtraEnvVar]
+                        }
+                        models := fetchProviderModelsV2(name, cfg, apiKey, accountID)
+                        var syncErr error
+                        if models == nil {
+                                syncErr = fmt.Errorf("no models returned")
+                        }
+                        outCh <- syncOut{name: name, models: models, err: syncErr}
+                }(name, cfg)
+        }
+        go func() {
+                wg.Wait()
+                close(outCh)
+        }()
 
-	synced := map[string][]fetchedModel{}
-	syncErrs := map[string]error{}
-	// v0.30.1 (red-team fix): bound the COLLECTION wait. Providers are
-	// fetched in parallel with a 9s HTTP timeout each, but the response
-	// waited for EVERY provider — one region-throttled straggler made
-	// ?refresh=1 sit dead for tens of seconds on-device. Collect for at
-	// most 10s (9s timeout + slack); latecomers get a "timed out this
-	// pass" error entry and arrive on the next refresh. outCh is
-	// buffered to len(catalog), so the late producers never block.
-	budget := time.After(10 * time.Second)
-	seen := 0
-	total := len(catalog)
+        synced := map[string][]fetchedModel{}
+        syncErrs := map[string]error{}
+        // v0.30.1 (red-team fix): bound the COLLECTION wait. Providers are
+        // fetched in parallel with a 9s HTTP timeout each, but the response
+        // waited for EVERY provider — one region-throttled straggler made
+        // ?refresh=1 sit dead for tens of seconds on-device. Collect for at
+        // most 10s (9s timeout + slack); latecomers get a "timed out this
+        // pass" error entry and arrive on the next refresh. outCh is
+        // buffered to len(catalog), so the late producers never block.
+        budget := time.After(10 * time.Second)
+        seen := 0
+        total := len(catalog)
 collect:
-	for {
-		select {
-		case out, ok := <-outCh:
-			if !ok {
-				break collect
-			}
-			seen++
-			if out.err != nil {
-				syncErrs[out.name] = out.err
-			}
-			if out.models != nil {
-				synced[out.name] = out.models
-			}
-		case <-budget:
-			// Deadline: stop waiting for the stragglers.
-			for {
-				select {
-				case out, ok := <-outCh:
-					if !ok {
-						break collect
-					}
-					seen++
-					if out.err != nil {
-						syncErrs[out.name] = out.err
-					}
-					if out.models != nil {
-						synced[out.name] = out.models
-					}
-				default:
-					break collect
-				}
-			}
-		}
-	}
-	for name := range catalog {
-		if _, ok := synced[name]; !ok {
-			if _, err := syncErrs[name]; !err && seen < total {
-				syncErrs[name] = fmt.Errorf("timed out this pass (slow network)")
-			}
-		}
-	}
+        for {
+                select {
+                case out, ok := <-outCh:
+                        if !ok {
+                                break collect
+                        }
+                        seen++
+                        if out.err != nil {
+                                syncErrs[out.name] = out.err
+                        }
+                        if out.models != nil {
+                                synced[out.name] = out.models
+                        }
+                case <-budget:
+                        // Deadline: stop waiting for the stragglers.
+                        for {
+                                select {
+                                case out, ok := <-outCh:
+                                        if !ok {
+                                                break collect
+                                        }
+                                        seen++
+                                        if out.err != nil {
+                                                syncErrs[out.name] = out.err
+                                        }
+                                        if out.models != nil {
+                                                synced[out.name] = out.models
+                                        }
+                                default:
+                                        break collect
+                                }
+                        }
+                }
+        }
+        for name := range catalog {
+                if _, ok := synced[name]; !ok {
+                        if _, err := syncErrs[name]; !err && seen < total {
+                                syncErrs[name] = fmt.Errorf("timed out this pass (slow network)")
+                        }
+                }
+        }
 
-	// Family registry from OpenRouter (public) + GitHub (public).
-	registry := buildFamilyRegistry()
+        // Family registry from OpenRouter (public) + GitHub (public).
+        registry := buildFamilyRegistry()
 
-	// Provider groups (provider view).
-	var groups []ProviderGroup
-	var flat []ModelInfo
-	for _, name := range sortedProviderNames(catalog) {
-		cfg := catalog[name]
-		models := synced[name]
-		hasKey := keys[cfg.EnvVar] != ""
-		group := ProviderGroup{
-			Name:        name,
-			DisplayName: cfg.Label,
-			Color:       cfg.Color,
-			Description: cfg.Description,
-			HasKey:      hasKey,
-			SyncedLive:  len(models) > 0,
-			ModelCount:  len(models),
-			SettingsURL: cfg.SignupURL,
-			FreeTier:    cfg.FreeTier,
-			EnvVar:      cfg.EnvVar,
-		}
-		for _, m := range models {
-			fam := MakeFamily(m.RawID)
-			em := EnrichedModel{
-				ID:            name + "/" + m.RawID,
-				RawID:         m.RawID,
-				Provider:      name,
-				DisplayName:   DeriveDisplayName(m.RawID),
-				Family:        fam,
-				ContextLength: m.ContextLength,
-				IsFree:        m.IsFree,
-				Capabilities:  m.Caps,
-				Pricing:       m.Pricing,
-			}
-			// v0.42: the DYNAMIC effort surface (OpenRouter
-			// reasoning registry merge — see effort.go) replaces
-			// the blanket DetectEffortLevels ladder.
-			spec := ResolveEffortWithLive(name, m.RawID, m.Effort)
-			em.EffortLevels = spec.Levels
-			em.EffortDefault = spec.Default
-			em.EffortMandatory = spec.Mandatory
-			em.EffortCanDisable = spec.CanDisable
-			em.EffortBudget = spec.SupportsBudget
-			em.Source = spec.Source
-			// Enrich from the registry when the fetcher was sparse.
-			if em.ContextLength == 0 {
-				if meta, ok := registry[fam]; ok {
-					em.ContextLength = meta.Context
-				}
-			}
-			if len(em.Capabilities) == 0 {
-				if meta, ok := registry[fam]; ok {
-					em.Capabilities = meta.Capabilities
-				}
-			}
-			if em.Pricing == "" {
-				if meta, ok := registry[fam]; ok {
-					em.Pricing = meta.Pricing
-				}
-			}
-			if !em.IsFree {
-				if meta, ok := registry[fam]; ok && meta.IsFree {
-					em.IsFree = true
-				}
-			}
-			group.Models = append(group.Models, em)
-			flat = append(flat, ModelInfo{ID: name + "/" + m.RawID, Provider: name, Label: m.RawID})
-		}
-		// Sort provider view models: intelligence → context → name.
-		sortEnriched(group.Models)
-		group.ModelCount = len(group.Models)
-		groups = append(groups, group)
-	}
+        // Provider groups (provider view).
+        var groups []ProviderGroup
+        var flat []ModelInfo
+        for _, name := range sortedProviderNames(catalog) {
+                cfg := catalog[name]
+                models := synced[name]
+                hasKey := keys[cfg.EnvVar] != ""
+                group := ProviderGroup{
+                        Name:        name,
+                        DisplayName: cfg.Label,
+                        Color:       cfg.Color,
+                        Description: cfg.Description,
+                        HasKey:      hasKey,
+                        SyncedLive:  len(models) > 0,
+                        ModelCount:  len(models),
+                        SettingsURL: cfg.SignupURL,
+                        FreeTier:    cfg.FreeTier,
+                        EnvVar:      cfg.EnvVar,
+                }
+                for _, m := range models {
+                        fam := MakeFamily(m.RawID)
+                        em := EnrichedModel{
+                                ID:            name + "/" + m.RawID,
+                                RawID:         m.RawID,
+                                Provider:      name,
+                                DisplayName:   DeriveDisplayName(m.RawID),
+                                Family:        fam,
+                                ContextLength: m.ContextLength,
+                                IsFree:        m.IsFree,
+                                Capabilities:  m.Caps,
+                                Pricing:       m.Pricing,
+                        }
+                        // v0.42: the DYNAMIC effort surface (OpenRouter
+                        // reasoning registry merge — see effort.go) replaces
+                        // the blanket DetectEffortLevels ladder.
+                        spec := ResolveEffortWithLive(name, m.RawID, m.Effort)
+                        em.EffortLevels = spec.Levels
+                        em.EffortDefault = spec.Default
+                        em.EffortMandatory = spec.Mandatory
+                        em.EffortCanDisable = spec.CanDisable
+                        em.EffortBudget = spec.SupportsBudget
+                        em.Source = spec.Source
+                        // Enrich from the registry when the fetcher was sparse.
+                        if em.ContextLength == 0 {
+                                if meta, ok := registry[fam]; ok {
+                                        em.ContextLength = meta.Context
+                                }
+                        }
+                        if len(em.Capabilities) == 0 {
+                                if meta, ok := registry[fam]; ok {
+                                        em.Capabilities = meta.Capabilities
+                                }
+                        }
+                        if em.Pricing == "" {
+                                if meta, ok := registry[fam]; ok {
+                                        em.Pricing = meta.Pricing
+                                }
+                        }
+                        if !em.IsFree {
+                                if meta, ok := registry[fam]; ok && meta.IsFree {
+                                        em.IsFree = true
+                                }
+                        }
+                        group.Models = append(group.Models, em)
+                        flat = append(flat, ModelInfo{ID: name + "/" + m.RawID, Provider: name, Label: m.RawID})
+                }
+                // Sort provider view models: intelligence → context → name.
+                sortEnriched(group.Models)
+                group.ModelCount = len(group.Models)
+                groups = append(groups, group)
+        }
 
-	// Logical models (model view) — group every synced model by family.
-	logicalMap := map[string]*LogicalModel{}
-	var logicalOrder []string
-	for _, name := range sortedProviderNames(catalog) {
-		for _, m := range synced[name] {
-			fam := MakeFamily(m.RawID)
-			lm, ok := logicalMap[fam]
-			if !ok {
-				lm = &LogicalModel{
-					Logical:     fam,
-					DisplayName: DeriveDisplayName(m.RawID),
-					Family:      fam,
-				}
-				logicalMap[fam] = lm
-				logicalOrder = append(logicalOrder, fam)
-			}
-			// Host route.
-			cfg := catalog[name]
-			// v0.32.9 F1: sparse fetchers (OpenCode Zen's list
-			// carries no pricing/context) get the FAMILY's
-			// registry values — the same enrichment the
-			// provider view already applies (line ~897), so
-			// host routes stop shipping empty and the frontend
-			// quick-switch price chips / model-compare route
-			// pricing get real data. Guards: PAID models only
-			// (a free host keeps its free semantics), never
-			// copy the "$0 / $0 (free)" string onto a paid
-			// route (first-wins registry merge can pick a
-			// family's :free variant), and context only when
-			// the fetcher reported 0.
-			hostPricing := m.Pricing
-			if hostPricing == "" && !m.IsFree {
-				if meta, ok := registry[fam]; ok && meta.Pricing != "" && meta.Pricing != "$0 / $0 (free)" {
-					hostPricing = meta.Pricing
-				}
-			}
-			hostCtx := m.ContextLength
-			if hostCtx == 0 {
-				if meta, ok := registry[fam]; ok {
-					hostCtx = meta.Context
-				}
-			}
-			lm.Hosts = append(lm.Hosts, HostRoute{
-				Provider:            name,
-				ProviderDisplayName: cfg.Label,
-				Color:               cfg.Color,
-				ModelID:             m.RawID,
-				ContextLength:       hostCtx,
-				HasAPIKey:           keys[cfg.EnvVar] != "",
-				SyncedLive:          true,
-				DefaultPriority:     providerPriorityIndex(name),
-				IsFree:              m.IsFree,
-				Pricing:             hostPricing,
-			})
-			if hostCtx > lm.ContextLength {
-				lm.ContextLength = hostCtx
-			}
-			if m.IsFree {
-				lm.IsFree = true
-			}
-		}
-	}
-	// Attributes from the registry.
-	var logical []LogicalModel
-	for _, fam := range logicalOrder {
-		lm := logicalMap[fam]
-		if len(lm.Hosts) == 0 {
-			continue
-		}
-		attrs := &ModelAttributes{EffortLevels: []string{}}
-		if meta, ok := registry[fam]; ok {
-			attrs.Capabilities = meta.Capabilities
-			attrs.Benchmarks = meta.Benchmarks
-			attrs.Pricing = meta.Pricing
-			attrs.Ranks = meta.Ranks
-		}
-		if len(attrs.Capabilities) == 0 {
-			attrs.Capabilities = InferCapabilitiesFromName(fam)
-		}
-		// v0.42: effort surface — union of the per-host DYNAMIC specs
-		// (the OpenRouter reasoning registry merge). The union keeps
-		// every level any host offers; the default prefers a host
-		// that actually has one; mandatory means EVERY host that has
-		// levels is mandatory (the frontend hides 'off' then);
-		// canDisable/budget are true when ANY host offers them.
-		levelSet := map[string]bool{}
-		var levels []string
-		levelHosts := 0
-		for _, h := range lm.Hosts {
-			hspec := ResolveEffort(h.Provider, h.ModelID)
-			for _, lv := range hspec.Levels {
-				if !levelSet[lv] {
-					levelSet[lv] = true
-					levels = append(levels, lv)
-				}
-			}
-			if len(hspec.Levels) > 0 {
-				levelHosts++
-				if attrs.EffortDefault == "" && hspec.Default != "" {
-					attrs.EffortDefault = hspec.Default
-				}
-				if hspec.Mandatory {
-					attrs.EffortMandatory = true
-				}
-				if hspec.CanDisable {
-					attrs.EffortCanDisable = true
-				}
-				if hspec.SupportsBudget {
-					attrs.EffortBudget = true
-				}
-			}
-		}
-		if len(levels) > 0 {
-			attrs.EffortLevels = canonicalLevels(levels)
-			// Mandatory only when EVERY leveled host is mandatory.
-			if attrs.EffortMandatory && levelHosts > 0 {
-				for _, h := range lm.Hosts {
-					hspec := ResolveEffort(h.Provider, h.ModelID)
-					if len(hspec.Levels) > 0 && !hspec.Mandatory {
-						attrs.EffortMandatory = false
-						break
-					}
-				}
-			}
-		}
-		if len(attrs.Capabilities) > 0 && hasCapability(attrs.Capabilities, "reasoning") && len(attrs.EffortLevels) == 0 {
-			// Native reasoner — keep empty levels (frontend hides the knob).
-		}
-		lm.Attributes = attrs
-		// Sort hosts by default priority, then availability.
-		sortHosts(lm.Hosts)
-		logical = append(logical, *lm)
-	}
-	// Sort logical models: intelligence desc → context desc → name.
-	sortLogical(logical, registry)
+        // Logical models (model view) — group every synced model by family.
+        logicalMap := map[string]*LogicalModel{}
+        var logicalOrder []string
+        for _, name := range sortedProviderNames(catalog) {
+                for _, m := range synced[name] {
+                        fam := MakeFamily(m.RawID)
+                        lm, ok := logicalMap[fam]
+                        if !ok {
+                                lm = &LogicalModel{
+                                        Logical:     fam,
+                                        DisplayName: DeriveDisplayName(m.RawID),
+                                        Family:      fam,
+                                }
+                                logicalMap[fam] = lm
+                                logicalOrder = append(logicalOrder, fam)
+                        }
+                        // Host route.
+                        cfg := catalog[name]
+                        // v0.32.9 F1: sparse fetchers (OpenCode Zen's list
+                        // carries no pricing/context) get the FAMILY's
+                        // registry values — the same enrichment the
+                        // provider view already applies (line ~897), so
+                        // host routes stop shipping empty and the frontend
+                        // quick-switch price chips / model-compare route
+                        // pricing get real data. Guards: PAID models only
+                        // (a free host keeps its free semantics), never
+                        // copy the "$0 / $0 (free)" string onto a paid
+                        // route (first-wins registry merge can pick a
+                        // family's :free variant), and context only when
+                        // the fetcher reported 0.
+                        hostPricing := m.Pricing
+                        if hostPricing == "" && !m.IsFree {
+                                if meta, ok := registry[fam]; ok && meta.Pricing != "" && meta.Pricing != "$0 / $0 (free)" {
+                                        hostPricing = meta.Pricing
+                                }
+                        }
+                        hostCtx := m.ContextLength
+                        if hostCtx == 0 {
+                                if meta, ok := registry[fam]; ok {
+                                        hostCtx = meta.Context
+                                }
+                        }
+                        lm.Hosts = append(lm.Hosts, HostRoute{
+                                Provider:            name,
+                                ProviderDisplayName: cfg.Label,
+                                Color:               cfg.Color,
+                                ModelID:             m.RawID,
+                                ContextLength:       hostCtx,
+                                HasAPIKey:           keys[cfg.EnvVar] != "",
+                                SyncedLive:          true,
+                                DefaultPriority:     providerPriorityIndex(name),
+                                IsFree:              m.IsFree,
+                                Pricing:             hostPricing,
+                        })
+                        if hostCtx > lm.ContextLength {
+                                lm.ContextLength = hostCtx
+                        }
+                        if m.IsFree {
+                                lm.IsFree = true
+                        }
+                }
+        }
+        // Attributes from the registry.
+        var logical []LogicalModel
+        for _, fam := range logicalOrder {
+                lm := logicalMap[fam]
+                if len(lm.Hosts) == 0 {
+                        continue
+                }
+                attrs := &ModelAttributes{EffortLevels: []string{}}
+                if meta, ok := registry[fam]; ok {
+                        attrs.Capabilities = meta.Capabilities
+                        attrs.Benchmarks = meta.Benchmarks
+                        attrs.Pricing = meta.Pricing
+                        attrs.Ranks = meta.Ranks
+                }
+                if len(attrs.Capabilities) == 0 {
+                        attrs.Capabilities = InferCapabilitiesFromName(fam)
+                }
+                // v0.42: effort surface — union of the per-host DYNAMIC specs
+                // (the OpenRouter reasoning registry merge). The union keeps
+                // every level any host offers; the default prefers a host
+                // that actually has one; mandatory means EVERY host that has
+                // levels is mandatory (the frontend hides 'off' then);
+                // canDisable/budget are true when ANY host offers them.
+                levelSet := map[string]bool{}
+                var levels []string
+                levelHosts := 0
+                for _, h := range lm.Hosts {
+                        hspec := ResolveEffort(h.Provider, h.ModelID)
+                        for _, lv := range hspec.Levels {
+                                if !levelSet[lv] {
+                                        levelSet[lv] = true
+                                        levels = append(levels, lv)
+                                }
+                        }
+                        if len(hspec.Levels) > 0 {
+                                levelHosts++
+                                if attrs.EffortDefault == "" && hspec.Default != "" {
+                                        attrs.EffortDefault = hspec.Default
+                                }
+                                if hspec.Mandatory {
+                                        attrs.EffortMandatory = true
+                                }
+                                if hspec.CanDisable {
+                                        attrs.EffortCanDisable = true
+                                }
+                                if hspec.SupportsBudget {
+                                        attrs.EffortBudget = true
+                                }
+                        }
+                }
+                if len(levels) > 0 {
+                        attrs.EffortLevels = canonicalLevels(levels)
+                        // Mandatory only when EVERY leveled host is mandatory.
+                        if attrs.EffortMandatory && levelHosts > 0 {
+                                for _, h := range lm.Hosts {
+                                        hspec := ResolveEffort(h.Provider, h.ModelID)
+                                        if len(hspec.Levels) > 0 && !hspec.Mandatory {
+                                                attrs.EffortMandatory = false
+                                                break
+                                        }
+                                }
+                        }
+                }
+                if len(attrs.Capabilities) > 0 && hasCapability(attrs.Capabilities, "reasoning") && len(attrs.EffortLevels) == 0 {
+                        // Native reasoner — keep empty levels (frontend hides the knob).
+                }
+                lm.Attributes = attrs
+                // Sort hosts by default priority, then availability.
+                sortHosts(lm.Hosts)
+                logical = append(logical, *lm)
+        }
+        // Sort logical models: intelligence desc → context desc → name.
+        sortLogical(logical, registry)
 
-	// Sync status.
-	var status []SyncStatus
-	for _, name := range sortedProviderNames(catalog) {
-		cfg := catalog[name]
-		st := SyncStatus{
-			Provider:   name,
-			HasKey:     keys[cfg.EnvVar] != "",
-			ModelCount: len(synced[name]),
-		}
-		if e, ok := syncErrs[name]; ok && len(synced[name]) == 0 {
-			st.Error = e.Error()
-		}
-		status = append(status, st)
-	}
+        // Sync status.
+        var status []SyncStatus
+        for _, name := range sortedProviderNames(catalog) {
+                cfg := catalog[name]
+                st := SyncStatus{
+                        Provider:   name,
+                        HasKey:     keys[cfg.EnvVar] != "",
+                        ModelCount: len(synced[name]),
+                }
+                if e, ok := syncErrs[name]; ok && len(synced[name]) == 0 {
+                        st.Error = e.Error()
+                }
+                status = append(status, st)
+        }
 
-	resp := &CatalogV2{
-		Providers:   catalog,
-		Models:      flat,
-		Groups:      groups,
-		Logical:     logical,
-		SyncStatus:  status,
-		TotalModels: len(flat),
-		SyncedAt:    time.Now().UTC().Format(time.RFC3339),
-	}
-	catalogV2Mu.Lock()
-	catalogV2Ent = resp
-	catalogV2At = time.Now()
-	catalogV2Keys = keysHash(keys)
-	catalogV2Mu.Unlock()
-	return resp
+        resp := &CatalogV2{
+                Providers:   catalog,
+                Models:      flat,
+                Groups:      groups,
+                Logical:     logical,
+                SyncStatus:  status,
+                TotalModels: len(flat),
+                SyncedAt:    time.Now().UTC().Format(time.RFC3339),
+        }
+        catalogV2Mu.Lock()
+        catalogV2Ent = resp
+        catalogV2At = time.Now()
+        catalogV2Keys = keysHash(keys)
+        catalogV2Mu.Unlock()
+        return resp
 }
 
 // familyMeta is the registry entry for a model family.
 type familyMeta struct {
-	Context      int64
-	IsFree       bool
-	Pricing      string
-	Capabilities []string
-	Benchmarks   map[string]float64
-	Ranks        []RankEntry
+        Context      int64
+        IsFree       bool
+        Pricing      string
+        Capabilities []string
+        Benchmarks   map[string]float64
+        Ranks        []RankEntry
 }
 
 // buildFamilyRegistry merges OpenRouter's public list + GitHub's public
@@ -1136,158 +1179,158 @@ type familyMeta struct {
 // OpenRouter half reads from the SHARED reasoning registry (one TTL-cached
 // fetch powers the effort surface, the provider view and this metadata).
 func buildFamilyRegistry() map[string]familyMeta {
-	registry := map[string]familyMeta{}
+        registry := map[string]familyMeta{}
 
-	// OpenRouter: full list (free + paid) — metadata for the family.
-	orReg := fetchOpenRouterRegistry()
-	orIDs := make([]string, 0, len(orReg))
-	for id := range orReg {
-		orIDs = append(orIDs, id)
-	}
-	sort.Strings(orIDs) // deterministic first-wins merge
-	for _, id := range orIDs {
-		m := orReg[id]
-		fam := MakeFamily(m.ID)
-		existing, ok := registry[fam]
-		if !ok {
-			existing = familyMeta{}
-		}
-		if existing.Context == 0 {
-			existing.Context = m.ContextLength
-		}
-		if existing.Pricing == "" {
-			free := strings.HasSuffix(m.ID, ":free") ||
-				(parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
-			existing.Pricing = pricingString(m.Pricing.Prompt, m.Pricing.Completion, free)
-			if free {
-				existing.IsFree = true
-			}
-		}
-		for _, mod := range m.Architecture.InputModalities {
-			if mod == "image" {
-				existing.Capabilities = appendUnique(existing.Capabilities, "vision")
-			} else if mod == "audio" {
-				existing.Capabilities = appendUnique(existing.Capabilities, "audio")
-			}
-		}
-		for _, p := range m.SupportedParameters {
-			if p == "tools" || p == "tool_choice" {
-				existing.Capabilities = appendUnique(existing.Capabilities, "tools")
-			}
-			if p == "reasoning" || p == "include_reasoning" {
-				existing.Capabilities = appendUnique(existing.Capabilities, "reasoning")
-			}
-		}
-		if existing.Benchmarks == nil {
-			aa := m.Benchmarks.ArtificialAnalysis
-			if aa.IntelligenceIndex > 0 || aa.CodingIndex > 0 || aa.AgenticIndex > 0 {
-				existing.Benchmarks = map[string]float64{
-					"intelligence": aa.IntelligenceIndex,
-					"coding":       aa.CodingIndex,
-					"agentic":      aa.AgenticIndex,
-				}
-			}
-		}
-		if len(existing.Ranks) == 0 {
-			for _, r := range m.Benchmarks.DesignArena {
-				existing.Ranks = append(existing.Ranks, RankEntry{Label: r.Category, Rank: r.Rank})
-			}
-			if len(existing.Ranks) > 3 {
-				existing.Ranks = existing.Ranks[:3]
-			}
-		}
-		registry[fam] = existing
-	}
+        // OpenRouter: full list (free + paid) — metadata for the family.
+        orReg := fetchOpenRouterRegistry()
+        orIDs := make([]string, 0, len(orReg))
+        for id := range orReg {
+                orIDs = append(orIDs, id)
+        }
+        sort.Strings(orIDs) // deterministic first-wins merge
+        for _, id := range orIDs {
+                m := orReg[id]
+                fam := MakeFamily(m.ID)
+                existing, ok := registry[fam]
+                if !ok {
+                        existing = familyMeta{}
+                }
+                if existing.Context == 0 {
+                        existing.Context = m.ContextLength
+                }
+                if existing.Pricing == "" {
+                        free := strings.HasSuffix(m.ID, ":free") ||
+                                (parsePrice(m.Pricing.Prompt) == 0 && parsePrice(m.Pricing.Completion) == 0)
+                        existing.Pricing = pricingString(m.Pricing.Prompt, m.Pricing.Completion, free)
+                        if free {
+                                existing.IsFree = true
+                        }
+                }
+                for _, mod := range m.Architecture.InputModalities {
+                        if mod == "image" {
+                                existing.Capabilities = appendUnique(existing.Capabilities, "vision")
+                        } else if mod == "audio" {
+                                existing.Capabilities = appendUnique(existing.Capabilities, "audio")
+                        }
+                }
+                for _, p := range m.SupportedParameters {
+                        if p == "tools" || p == "tool_choice" {
+                                existing.Capabilities = appendUnique(existing.Capabilities, "tools")
+                        }
+                        if p == "reasoning" || p == "include_reasoning" {
+                                existing.Capabilities = appendUnique(existing.Capabilities, "reasoning")
+                        }
+                }
+                if existing.Benchmarks == nil {
+                        aa := m.Benchmarks.ArtificialAnalysis
+                        if aa.IntelligenceIndex > 0 || aa.CodingIndex > 0 || aa.AgenticIndex > 0 {
+                                existing.Benchmarks = map[string]float64{
+                                        "intelligence": aa.IntelligenceIndex,
+                                        "coding":       aa.CodingIndex,
+                                        "agentic":      aa.AgenticIndex,
+                                }
+                        }
+                }
+                if len(existing.Ranks) == 0 {
+                        for _, r := range m.Benchmarks.DesignArena {
+                                existing.Ranks = append(existing.Ranks, RankEntry{Label: r.Category, Rank: r.Rank})
+                        }
+                        if len(existing.Ranks) > 3 {
+                                existing.Ranks = existing.Ranks[:3]
+                        }
+                }
+                registry[fam] = existing
+        }
 
-	// GitHub: only ADDS missing fields (context, capabilities).
-	if gh := fetchGitHubModels(""); gh != nil {
-		for _, m := range gh {
-			fam := MakeFamily(m.RawID)
-			existing, ok := registry[fam]
-			if !ok {
-				existing = familyMeta{}
-			}
-			if existing.Context == 0 {
-				existing.Context = m.ContextLength
-			}
-			for _, c := range m.Caps {
-				existing.Capabilities = appendUnique(existing.Capabilities, c)
-			}
-			registry[fam] = existing
-		}
-	}
+        // GitHub: only ADDS missing fields (context, capabilities).
+        if gh := fetchGitHubModels(""); gh != nil {
+                for _, m := range gh {
+                        fam := MakeFamily(m.RawID)
+                        existing, ok := registry[fam]
+                        if !ok {
+                                existing = familyMeta{}
+                        }
+                        if existing.Context == 0 {
+                                existing.Context = m.ContextLength
+                        }
+                        for _, c := range m.Caps {
+                                existing.Capabilities = appendUnique(existing.Capabilities, c)
+                        }
+                        registry[fam] = existing
+                }
+        }
 
-	return registry
+        return registry
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
 func sortedProviderNames(catalog map[string]ProviderConfig) []string {
-	names := make([]string, 0, len(catalog))
-	for name := range catalog {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool {
-		pi, pj := providerPriorityIndex(names[i]), providerPriorityIndex(names[j])
-		if pi != pj {
-			return pi < pj
-		}
-		return names[i] < names[j]
-	})
-	return names
+        names := make([]string, 0, len(catalog))
+        for name := range catalog {
+                names = append(names, name)
+        }
+        sort.Slice(names, func(i, j int) bool {
+                pi, pj := providerPriorityIndex(names[i]), providerPriorityIndex(names[j])
+                if pi != pj {
+                        return pi < pj
+                }
+                return names[i] < names[j]
+        })
+        return names
 }
 
 func sortEnriched(models []EnrichedModel) {
-	sort.SliceStable(models, func(i, j int) bool {
-		ei, ej := models[i], models[j]
-		// free first, then name (provider view is a flat ranked list).
-		if ei.IsFree != ej.IsFree {
-			return ei.IsFree
-		}
-		if ei.ContextLength != ej.ContextLength {
-			return ei.ContextLength > ej.ContextLength
-		}
-		return ei.DisplayName < ej.DisplayName
-	})
+        sort.SliceStable(models, func(i, j int) bool {
+                ei, ej := models[i], models[j]
+                // free first, then name (provider view is a flat ranked list).
+                if ei.IsFree != ej.IsFree {
+                        return ei.IsFree
+                }
+                if ei.ContextLength != ej.ContextLength {
+                        return ei.ContextLength > ej.ContextLength
+                }
+                return ei.DisplayName < ej.DisplayName
+        })
 }
 
 func sortHosts(hosts []HostRoute) {
-	sort.SliceStable(hosts, func(i, j int) bool {
-		// Available (hasApiKey) hosts first, then default priority.
-		if hosts[i].HasAPIKey != hosts[j].HasAPIKey {
-			return hosts[i].HasAPIKey
-		}
-		if hosts[i].DefaultPriority != hosts[j].DefaultPriority {
-			return hosts[i].DefaultPriority < hosts[j].DefaultPriority
-		}
-		return hosts[i].Provider < hosts[j].Provider
-	})
+        sort.SliceStable(hosts, func(i, j int) bool {
+                // Available (hasApiKey) hosts first, then default priority.
+                if hosts[i].HasAPIKey != hosts[j].HasAPIKey {
+                        return hosts[i].HasAPIKey
+                }
+                if hosts[i].DefaultPriority != hosts[j].DefaultPriority {
+                        return hosts[i].DefaultPriority < hosts[j].DefaultPriority
+                }
+                return hosts[i].Provider < hosts[j].Provider
+        })
 }
 
 func sortLogical(models []LogicalModel, registry map[string]familyMeta) {
-	score := func(m LogicalModel) (float64, int64, float64) {
-		if m.Attributes != nil && m.Attributes.Benchmarks != nil {
-			return m.Attributes.Benchmarks["intelligence"], m.ContextLength, m.Attributes.Benchmarks["coding"]
-		}
-		if meta, ok := registry[m.Family]; ok {
-			return meta.Benchmarks["intelligence"], m.ContextLength, meta.Benchmarks["coding"]
-		}
-		return 0, m.ContextLength, 0
-	}
-	sort.SliceStable(models, func(i, j int) bool {
-		iq, ict, icd := score(models[i])
-		jq, jct, jcd := score(models[j])
-		if iq != jq {
-			return iq > jq
-		}
-		if ict != jct {
-			return ict > jct
-		}
-		if icd != jcd {
-			return icd > jcd
-		}
-		return models[i].DisplayName < models[j].DisplayName
-	})
+        score := func(m LogicalModel) (float64, int64, float64) {
+                if m.Attributes != nil && m.Attributes.Benchmarks != nil {
+                        return m.Attributes.Benchmarks["intelligence"], m.ContextLength, m.Attributes.Benchmarks["coding"]
+                }
+                if meta, ok := registry[m.Family]; ok {
+                        return meta.Benchmarks["intelligence"], m.ContextLength, meta.Benchmarks["coding"]
+                }
+                return 0, m.ContextLength, 0
+        }
+        sort.SliceStable(models, func(i, j int) bool {
+                iq, ict, icd := score(models[i])
+                jq, jct, jcd := score(models[j])
+                if iq != jq {
+                        return iq > jq
+                }
+                if ict != jct {
+                        return ict > jct
+                }
+                if icd != jcd {
+                        return icd > jcd
+                }
+                return models[i].DisplayName < models[j].DisplayName
+        })
 }
 
 // normalizeLevels was the pre-v0.42 level sorter — canonicalLevels (effort.go)
@@ -1314,132 +1357,132 @@ func sortLogical(models []LogicalModel, registry map[string]familyMeta) {
 //     re-fetch") — so the client keeps polling until the key-triggered
 //     background resync lands the models (see keys.go).
 func ApplyLiveKeyState(cat *CatalogV2, keys map[string]string) *CatalogV2 {
-	if cat == nil {
-		return cat
-	}
-	changed := false
-	envFor := map[string]string{}
-	for name, cfg := range cat.Providers {
-		envFor[name] = cfg.EnvVar
-	}
+        if cat == nil {
+                return cat
+        }
+        changed := false
+        envFor := map[string]string{}
+        for name, cfg := range cat.Providers {
+                envFor[name] = cfg.EnvVar
+        }
 
-	// Provider groups.
-	groups := make([]ProviderGroup, len(cat.Groups))
-	copy(groups, cat.Groups)
-	for i := range groups {
-		env := groups[i].EnvVar
-		if env == "" {
-			env = envFor[groups[i].Name]
-		}
-		has := env != "" && keys[env] != ""
-		if groups[i].HasKey != has {
-			groups[i].HasKey = has
-			changed = true
-		}
-	}
+        // Provider groups.
+        groups := make([]ProviderGroup, len(cat.Groups))
+        copy(groups, cat.Groups)
+        for i := range groups {
+                env := groups[i].EnvVar
+                if env == "" {
+                        env = envFor[groups[i].Name]
+                }
+                has := env != "" && keys[env] != ""
+                if groups[i].HasKey != has {
+                        groups[i].HasKey = has
+                        changed = true
+                }
+        }
 
-	// Sync status.
-	status := make([]SyncStatus, len(cat.SyncStatus))
-	copy(status, cat.SyncStatus)
-	for i := range status {
-		env := envFor[status[i].Provider]
-		has := env != "" && keys[env] != ""
-		if status[i].HasKey != has {
-			status[i].HasKey = has
-			changed = true
-		}
-	}
+        // Sync status.
+        status := make([]SyncStatus, len(cat.SyncStatus))
+        copy(status, cat.SyncStatus)
+        for i := range status {
+                env := envFor[status[i].Provider]
+                has := env != "" && keys[env] != ""
+                if status[i].HasKey != has {
+                        status[i].HasKey = has
+                        changed = true
+                }
+        }
 
-	// Logical host routes. (The Hosts slice is COPIED before any write —
-	// the LogicalModel values are shallow copies, so an in-place write
-	// would race every reader of the cached entry.)
-	var logical []LogicalModel
-	if cat.Logical != nil {
-		logical = make([]LogicalModel, len(cat.Logical))
-		copy(logical, cat.Logical)
-		for i := range logical {
-			touched := false
-			for j := range logical[i].Hosts {
-				env := envFor[logical[i].Hosts[j].Provider]
-				has := env != "" && keys[env] != ""
-				if logical[i].Hosts[j].HasAPIKey != has {
-					if !touched {
-						touched = true
-						logical[i].Hosts = append([]HostRoute(nil), logical[i].Hosts...) // copy-on-write
-					}
-					logical[i].Hosts[j].HasAPIKey = has
-				}
-			}
-			if touched {
-				changed = true
-				// Re-order: available hosts first (mirrors the
-				// build-time sort so the default route flips
-				// with the key state).
-				sortHosts(logical[i].Hosts)
-			}
-		}
-	}
+        // Logical host routes. (The Hosts slice is COPIED before any write —
+        // the LogicalModel values are shallow copies, so an in-place write
+        // would race every reader of the cached entry.)
+        var logical []LogicalModel
+        if cat.Logical != nil {
+                logical = make([]LogicalModel, len(cat.Logical))
+                copy(logical, cat.Logical)
+                for i := range logical {
+                        touched := false
+                        for j := range logical[i].Hosts {
+                                env := envFor[logical[i].Hosts[j].Provider]
+                                has := env != "" && keys[env] != ""
+                                if logical[i].Hosts[j].HasAPIKey != has {
+                                        if !touched {
+                                                touched = true
+                                                logical[i].Hosts = append([]HostRoute(nil), logical[i].Hosts...) // copy-on-write
+                                        }
+                                        logical[i].Hosts[j].HasAPIKey = has
+                                }
+                        }
+                        if touched {
+                                changed = true
+                                // Re-order: available hosts first (mirrors the
+                                // build-time sort so the default route flips
+                                // with the key state).
+                                sortHosts(logical[i].Hosts)
+                        }
+                }
+        }
 
-	out := *cat
-	out.Groups = groups
-	out.SyncStatus = status
-	if logical != nil {
-		out.Logical = logical
-	}
-	if changed {
-		out.Partial = true
-	}
-	return &out
+        out := *cat
+        out.Groups = groups
+        out.SyncStatus = status
+        if logical != nil {
+                out.Logical = logical
+        }
+        if changed {
+                out.Partial = true
+        }
+        return &out
 }
 
 func hasCapability(caps []string, want string) bool {
-	for _, c := range caps {
-		if strings.EqualFold(c, want) || strings.Contains(strings.ToLower(c), want) {
-			return true
-		}
-	}
-	return false
+        for _, c := range caps {
+                if strings.EqualFold(c, want) || strings.Contains(strings.ToLower(c), want) {
+                        return true
+                }
+        }
+        return false
 }
 
 func appendUnique(list []string, v string) []string {
-	for _, x := range list {
-		if x == v {
-			return list
-		}
-	}
-	return append(list, v)
+        for _, x := range list {
+                if x == v {
+                        return list
+                }
+        }
+        return append(list, v)
 }
 
 func parsePrice(s string) float64 {
-	var f float64
-	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%g", &f)
-	return f
+        var f float64
+        _, _ = fmt.Sscanf(strings.TrimSpace(s), "%g", &f)
+        return f
 }
 
 // pricingString formats USD/token prices × 1M (old backend's format).
 func pricingString(prompt, completion string, free bool) string {
-	if free || (parsePrice(prompt) == 0 && parsePrice(completion) == 0) {
-		return "$0 / $0 (free)"
-	}
-	return fmt.Sprintf("$%.2f / $%.2f per M", parsePrice(prompt)*1e6, parsePrice(completion)*1e6)
+        if free || (parsePrice(prompt) == 0 && parsePrice(completion) == 0) {
+                return "$0 / $0 (free)"
+        }
+        return fmt.Sprintf("$%.2f / $%.2f per M", parsePrice(prompt)*1e6, parsePrice(completion)*1e6)
 }
 
 // dedupeLatest drops "-latest" ids when a specific sibling exists.
 func dedupeLatest(models []fetchedModel) []fetchedModel {
-	base := map[string]bool{}
-	for _, m := range models {
-		if !strings.HasSuffix(m.RawID, "-latest") {
-			base[strings.TrimSuffix(m.RawID, "-latest")] = true
-		}
-	}
-	var out []fetchedModel
-	for _, m := range models {
-		if strings.HasSuffix(m.RawID, "-latest") {
-			if base[strings.TrimSuffix(m.RawID, "-latest")] {
-				continue // specific variant exists — drop the latest alias
-			}
-		}
-		out = append(out, m)
-	}
-	return out
+        base := map[string]bool{}
+        for _, m := range models {
+                if !strings.HasSuffix(m.RawID, "-latest") {
+                        base[strings.TrimSuffix(m.RawID, "-latest")] = true
+                }
+        }
+        var out []fetchedModel
+        for _, m := range models {
+                if strings.HasSuffix(m.RawID, "-latest") {
+                        if base[strings.TrimSuffix(m.RawID, "-latest")] {
+                                continue // specific variant exists — drop the latest alias
+                        }
+                }
+                out = append(out, m)
+        }
+        return out
 }

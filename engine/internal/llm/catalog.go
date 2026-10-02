@@ -208,6 +208,19 @@ func resolveBaseURL(cfg ProviderConfig, accountID string) string {
         return cfg.BaseURL
 }
 
+// effectiveBaseURL — resolveBaseURL plus the v0.39 POWER-FEATURE env
+// override (DOOMALAY_BASE_URL_<PROVIDER>). v0.91.7: the override now holds
+// for the model FETCH + key-VALIDATION paths too, not just chat turns —
+// a mirror that serves chat completions must serve its model list as
+// well (the mistral e2e rig found the fetch path ignoring it, so a
+// mirrored provider synced from the real endpoint with the wrong key).
+func effectiveBaseURL(name string, cfg ProviderConfig, accountID string) string {
+        if v := os.Getenv("DOOMALAY_BASE_URL_" + strings.ToUpper(name)); v != "" {
+                return strings.TrimSuffix(v, "/")
+        }
+        return resolveBaseURL(cfg, accountID)
+}
+
 // setAuthHeaders applies the provider's auth style to a request.
 func setAuthHeaders(req *http.Request, cfg ProviderConfig, apiKey string) {
         if cfg.AuthStyle == "anthropic" {
@@ -220,7 +233,7 @@ func setAuthHeaders(req *http.Request, cfg ProviderConfig, apiKey string) {
 
 // fetchProviderModels calls the provider's /v1/models endpoint.
 func fetchProviderModels(name string, cfg ProviderConfig, apiKey, accountID string) ([]ModelInfo, error) {
-        url := resolveBaseURL(cfg, accountID) + "/models"
+        url := effectiveBaseURL(name, cfg, accountID) + "/models"
         req, err := http.NewRequest("GET", url, nil)
         if err != nil {
                 return nil, err
@@ -352,7 +365,7 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
         switch cfg.Validate {
         case "auth_key":
                 // An endpoint that requires auth (e.g. OpenRouter /auth/key).
-                url := strings.TrimSuffix(resolveBaseURL(cfg, accountID), "/") + cfg.ValidatePath
+                url := strings.TrimSuffix(effectiveBaseURL(providerName, cfg, accountID), "/") + cfg.ValidatePath
                 req, err := http.NewRequest("GET", url, nil)
                 if err != nil {
                         return ValidateResult{State: "unverified", Reason: err.Error()}
@@ -500,7 +513,7 @@ func chatProbeResult(provider string, cfg ProviderConfig, apiKey, accountID, pro
         // its free-tier models — probing big-pickle without it always 400s).
         // v0.35: the SLOW client — NVIDIA's free tier queues ~30s before the
         // first byte, and the 9s sync client made every probe time out.
-        status, body, err := httpPostJSONWith(probeSlowHTTP, resolveBaseURL(cfg, accountID)+"/chat/completions", apiKey, payload, providerExtraHeaders(provider, apiKey))
+        status, body, err := httpPostJSONWith(probeSlowHTTP, effectiveBaseURL(provider, cfg, accountID)+"/chat/completions", apiKey, payload, providerExtraHeaders(provider, apiKey))
         if err != nil {
                 reason := "network: " + err.Error()
                 if strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Timeout") {
