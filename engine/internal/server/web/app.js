@@ -892,17 +892,47 @@
     // (a pan, a drag, a repaint) means the camera or the icons moved; one
     // poke re-lights its rAF driver (it self-stops when the world rests).
     if (window.World3D && window.World3D.poke) window.World3D.poke();
-    // v0.67: the icons ride transforms — the projection painter
-    // re-anchors their gradient windows to the viewport each frame.
-    if (window.DoomProjection) window.DoomProjection.poke();
+    // v0.94.1: THE POKE RETIREMENT — DoomProjection.poke() (a FULL
+    // projection paint every canvas frame) is GONE. It was a v0.67 relic:
+    // "the icons ride transforms — the projection painter re-anchors
+    // their gradient windows to the viewport each frame" — but v0.92.1
+    // evicted .chatbot from the root registry, so a canvas pan moves NO
+    // tracked root and every one of those paints walked ~100 selectors +
+    // a gBCR per painted window to write NOTHING. Canvas motion is inert
+    // to the projection (real DOM changes still ride the MutationObserver;
+    // panel motion rides motion(); scrolls ride scrollRebake).
     // v0.75: an animate toggle ON means the canvas never rests.
     // v0.84.1: so do the atom orbits.
     if (ambientActive()) startAnimation();
   }
 
+  // v0.94.1: THE INPUT COALESCER — touchmove/wheel events arrive at
+  // digitizer rate (up to 120Hz on this class of device) but the display
+  // paints at 60: every synchronous update() past the first per frame was
+  // pure wasted work (physics + a full lattice frame + icon transforms
+  // + the worker post, per EVENT). The state math (offset/velocity, the
+  // per-event dt EMA) stays per-event — only the RENDER is coalesced to
+  // one rAF, latest-wins. (Chrome's aligned-input guidance — the same
+  // discipline the browser applies to pointermove.)
+  var updateQueued = false;
+  function scheduleUpdate() {
+    if (updateQueued) return;
+    updateQueued = true;
+    requestAnimationFrame(function () {
+      updateQueued = false;
+      update();
+    });
+  }
+
   function tick() {
     let moving = false;
-    if (Math.abs(velX) >= 0.15 || Math.abs(velY) >= 0.15) {
+    if (inputState === 'PANNING') {
+      // v0.94.1: THE FINGER OWNS THE CAMERA — while an active finger pan
+      // is in flight, tick does NOT integrate velX/velY (the input path
+      // applies the finger deltas; the old double-integration drifted the
+      // content ahead of the finger) and does NOT re-render (the coalesced
+      // scheduleUpdate() owns the frame). Momentum takes over at release.
+    } else if (Math.abs(velX) >= 0.15 || Math.abs(velY) >= 0.15) {
       offsetX += velX; offsetY += velY;
       velX *= PAN_FRICTION; velY *= PAN_FRICTION;
       moving = true;
@@ -938,7 +968,7 @@
       const pr = pEl.getBoundingClientRect();
       covered = pr.top <= 1 && pr.bottom >= window.innerHeight - 1;
     }
-    if (!covered) {
+    if (!covered && inputState !== 'PANNING') {   // v0.94.1: during an active pan the coalesced update() owns the render
       var atomsOnly = !moving && !ambientGridActive() &&
                       ((window.Atoms && window.Atoms.active(world.entities) &&
                         !(window.World3D && window.World3D.atomsOwned())) ||   // v0.85.4: the world layer owns the stars
@@ -1267,7 +1297,7 @@
         velX = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, (ddx / dt) * 16));
         velY = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, (ddy / dt) * 16));
       }
-      update();
+      scheduleUpdate();   // v0.94.1: one render per frame, not per event
     } else if (inputState === 'ICON_DRAG' && draggedIcon) {
       draggedIcon.x += dx / scale;
       draggedIcon.y += dy / scale;
@@ -1291,7 +1321,7 @@
         draggedIcon.vx = dragVel.vx / scale;
         draggedIcon.vy = dragVel.vy / scale;
       }
-      update();
+      scheduleUpdate();   // v0.94.1: one render per frame, not per event
     }
     lastScreenX = screenX; lastScreenY = screenY; lastTime = now;
   }
@@ -1367,7 +1397,7 @@
     offsetX = offsetX + cx * f;
     offsetY = offsetY + cy * f;
     scale = newScale;
-    update();
+    scheduleUpdate();   // v0.94.1: wheel bursts coalesce to one frame
   }
 
   // ── Pinch state ───────────────────────────────────────────────
@@ -1483,7 +1513,7 @@
       offsetX = worldX - pinchCenter.x / newScale;
       offsetY = worldY - pinchCenter.y / newScale;
       scale = newScale;
-      update();
+      scheduleUpdate();   // v0.94.1: pinch moves coalesce to one frame too
     } else if (e.touches.length === 1 && !pinching) {
       e.preventDefault();
       inputMove(e.touches[0].clientX, e.touches[0].clientY);

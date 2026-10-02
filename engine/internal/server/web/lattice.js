@@ -92,7 +92,7 @@
   // ── v0.83.3 THE LATTICE CACHE (moved verbatim) ─────────────────────
   var LC = {
     fp: '', gen: 0,
-    cfp: '', cgen: 0,
+    cfp: '', cgen: 0, colFp: '',   // v0.94.1: colFp — the spec-only color fingerprint (pan/zoom-stable)
     dot: new Map(), vline: new Map(), hline: new Map(),
     vseg: new Map(), hseg: new Map(),
     dotC: new Map(), vlineC: new Map(), hlineC: new Map(),
@@ -104,8 +104,8 @@
   function lcKey(a, b) { return (a + 65536) * 131072 + (b + 65536); }
   function lcClearParams() {
     LC.dot.clear(); LC.vline.clear(); LC.hline.clear(); LC.vseg.clear(); LC.hseg.clear();
-    LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
-    LC.dotG.clear();
+    // v0.94.1: the COLOR caches no longer clear with the params — see the
+    // colFp split below (colors are world-anchored: pan/zoom-stable).
   }
   function lcClearColors() {
     LC.dotC.clear(); LC.vlineC.clear(); LC.hlineC.clear(); LC.vsegC.clear(); LC.hsegC.clear();
@@ -620,8 +620,22 @@
       dotSpec ? cheapJSON(dotSpec) : '', dotFallback,
       lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
     if (fpNow !== LC.fp) { LC.fp = fpNow; LC.gen++; lcClearParams(); }
-    var cfpNow = fpNow + '|' + offsetX.toFixed(2) + ',' + offsetY.toFixed(2);
-    if (cfpNow !== LC.cfp) { LC.cfp = cfpNow; LC.cgen++; lcClearColors(); }
+    // v0.94.1: THE WORLD-ANCHORED COLOR CACHE — the color fingerprint is
+    // the SPEC ONLY (dot/line color sources). The old fingerprint embedded
+    // offsetX/offsetY (and scale, via fpNow's param clear wiping the color
+    // maps too), so ANY finger motion wiped dotC/vlineC/hlineC/vsegC/hsegC
+    // and every visible cell re-sampled its color on the next frame
+    // (~1,100 dots + up to ~2,900 segments per frame on a 1080x2400
+    // viewport — the rig measured a 98% miss rate during pan). Colors are
+    // now sampled in PARALLAX-WORLD space (the same space the param caches
+    // already key on — see dix/diy), so a cell's color is a property of its
+    // WORLD location: pure pan and zoom NEVER invalidate it. The visual:
+    // the color field rides the world (the same anchoring model as the bg
+    // tiles + the parallax bands) instead of swimming under a viewport-
+    // fixed field; at rest the two are pixel-identical.
+    var colFp = [dotSpec ? cheapJSON(dotSpec) : '', dotFallback,
+                 lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
+    if (colFp !== LC.colFp) { LC.colFp = colFp; LC.cgen++; lcClearColors(); }
     var animT = performance.now() / 1000;
     var dbgDots = 0, dbgSegs = 0;
     // v0.85.1: the glow twin (the rig proves the per-dot derivation: how
@@ -751,7 +765,7 @@
         var tx = x + LP.dx;
         if (!segMode) {
           var colL = LC.vlineC.get(ix);
-          if (colL === undefined) { colL = lineSampler ? lineSampler(x, H / 2) : null; LC.vlineC.set(ix, colL); LC.misses++; } else LC.hits++;
+          if (colL === undefined) { colL = lineSampler ? lineSampler(x + offsetX * scale * lPF, H / 2 + offsetY * scale * lPF) : null; LC.vlineC.set(ix, colL); LC.misses++; } else LC.hits++;   // v0.94.1: world-anchored
           dbgFullLines++;
           var styleL = quantColor(colL || lineBandStyle);
           var lwFull = Math.max(0.3, LP.lwB);
@@ -793,7 +807,7 @@
             var sc = (overLinesOn && segW > overThreshL) ? gctx2 : gctx;
             if (sc === gctx2) dbgOverLines++;
             var colS = LC.vsegC.get(skey);
-            if (colS === undefined) { colS = lineSampler ? lineSampler(x, y) : null; LC.vsegC.set(skey, colS); LC.misses++; } else LC.hits++;
+            if (colS === undefined) { colS = lineSampler ? lineSampler(x + offsetX * scale * lPF, y + offsetY * scale * lPF) : null; LC.vsegC.set(skey, colS); LC.misses++; } else LC.hits++;   // v0.94.1: world-anchored
             var styleS = quantColor(colS || lineBandStyle);
             var aQ = tal < 1 ? Math.round(tal * 100) / 100 : 1; // v0.89.7: 100 alpha levels (was 10 — the stair-stepping shimmer on fading lines)
             var sbk = (sc === gctx2 ? '2|' : '1|') + styleS + '|' + aQ;
@@ -834,7 +848,7 @@
         var ty = y + HP.dy;
         if (!segMode) {
           var colL2 = LC.hlineC.get(iy);
-          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2, y) : null; LC.hlineC.set(iy, colL2); LC.misses++; } else LC.hits++;
+          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2 + offsetX * scale * lPF, y + offsetY * scale * lPF) : null; LC.hlineC.set(iy, colL2); LC.misses++; } else LC.hits++;   // v0.94.1: world-anchored
           dbgFullLines++;
           var styleL2 = quantColor(colL2 || lineBandStyle);
           var lwFull2 = Math.max(0.3, HP.lwB);
@@ -876,7 +890,7 @@
             var sc2 = (overLinesOn && segW2 > overThreshL) ? gctx2 : gctx;
             if (sc2 === gctx2) dbgOverLines++;
             var colS2 = LC.hsegC.get(hkey);
-            if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2, y) : null; LC.hsegC.set(hkey, colS2); LC.misses++; } else LC.hits++;
+            if (colS2 === undefined) { colS2 = lineSampler ? lineSampler(x2 + offsetX * scale * lPF, y + offsetY * scale * lPF) : null; LC.hsegC.set(hkey, colS2); LC.misses++; } else LC.hits++;   // v0.94.1: world-anchored
             var styleS2 = quantColor(colS2 || lineBandStyle);
             var aQ2 = tal2 < 1 ? Math.round(tal2 * 100) / 100 : 1; // v0.89.7: same — 10-level alpha was visible banding
             var sbk2 = (sc2 === gctx2 ? '2|' : '1|') + styleS2 + '|' + aQ2;
@@ -988,7 +1002,7 @@
             tox = Math.cos(orA) * DP.orR; toy = Math.sin(orA) * DP.orR;
           }
           var colD = LC.dotC.get(dkey);
-          if (colD === undefined) { colD = dotSampler ? dotSampler(x + DP.jx, y + DP.jy) : null; LC.dotC.set(dkey, colD); LC.misses++; } else LC.hits++;
+          if (colD === undefined) { colD = dotSampler ? dotSampler(x + offsetX * scale * dPF + DP.jx, y + offsetY * scale * dPF + DP.jy) : null; LC.dotC.set(dkey, colD); LC.misses++; } else LC.hits++;   // v0.94.1: sampled in parallax-world space — pan-stable per cell
           var styleD = quantColor(colD || dotSolidFill);
           // v0.85.1 (glow wave): the glow tint is PER-DOT — this dot's
           // lifted color, derived from its OWN paint color (colD when a

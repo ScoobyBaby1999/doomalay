@@ -1122,6 +1122,220 @@
           Math.abs(num(b)) + 'px - var(--panel-vis-h, 0px))';
       }
 
+      // ══ v0.94.3 TRACK 2 — THE TRANSFORM-CARRIED GRADIENT LAYERS ══
+      // The repo's own RESEARCH-V092 endgame: "the background on its OWN
+      // layer, moved with transform (compositor-only, no repaint)". The
+      // legacy bake parked the gradient ON the element as a vw×vh
+      // background-position: calc(var(--proj-tx)+B) — every motion tick
+      // the var write style-recalced EVERY painted window and each
+      // background-position change REPAINTED + RE-RASTERED its gradient
+      // (the rig: the 60Hz panel drag ran at 15fps with 78-320 long
+      // tasks — the raster storm). Track 2 moves each window's gradient
+      // to a generated ::before LAYER (its own compositor layer via
+      // will-change:transform) whose per-frame compensation rides a
+      // TRANSFORM consuming the same --proj-tx/--proj-ty vars: style
+      // recalc still happens (the vars cascade), but every consumer now
+      // resolves to a compositor transform — ZERO repaints, ZERO rasters
+      // during panel motion. Geometry is IDENTICAL to the legacy bake:
+      //   legacy: field origin = elementLeft + (var + B)      = 0 (viewport)
+      //   layer:  field origin = layerLeft + B + transform(var) = 0
+      // (the transform carries the var with the SAME sign — the layer
+      // inherits the root's translate, so +var cancels it exactly).
+      // Everything else (the read phase, the scroller tracking, the
+      // bottom-anchored --panel-vis-h compensation, scrollRebake's
+      // arithmetic) is untouched; only the WRITE side changes — and it
+      // writes CSSOM rules on OUR OWN stylesheet, so the MutationObserver
+      // never sees a single painter write (the whole __projWriteEpoch
+      // dance becomes layer-path-inert).
+      // FALLBACK: elements that already use ::before/::after, paint with
+      // background-clip:text, or are static WITH positioned descendants
+      // (adding position:relative would re-anchor them) keep TODAY's
+      // inline bake — both paths coexist, the survey says the fallback
+      // set is empty on the chat panel (0/30 conflicted).
+      var L2 = (function () {
+        var sheetEl = null, sheet = null;
+        var nextId = 1;
+        function ensure() {
+          if (sheetEl && sheetEl.isConnected) return true;
+          try {
+            sheetEl = document.createElement('style');
+            sheetEl.id = 'proj-layer-styles';
+            document.head.appendChild(sheetEl);
+            sheet = sheetEl.sheet;
+            return !!sheet;
+          } catch (e) { return false; }
+        }
+        // eligibility — memoized (el.__projL2ok: 2|1|0; 2 = ::after rider,
+        // 1 = ::before rider, 0 = fallback) — re-probed per epoch.
+        // v0.94.3: TRACK 2 IS DORMANT — the layer math is verified correct
+        // (field origin = viewport origin, eff 0.0 for every audited
+        // element; the lab renders the exact pseudo geometry perfectly),
+        // but in the live panel a later sibling's oversized layer paints
+        // over earlier elements' boxes (the strip test: the user bubble's
+        // pink ends ~90px in and surface-1 colors take over) — a stacking
+        // interaction the remote rig could not root-cause to a close. The
+        // code stays; the activation flips back on after a DevTools
+        // eyeball session. Everything below is dormant until then.
+        var L2_ON = false;
+        function ok(el, snap) {
+          if (!L2_ON) return (el.__projL2ok = 0);
+          if (el.__projL2ok !== undefined) return el.__projL2ok;
+          var good = 0;
+          try {
+            var beforeFree = getComputedStyle(el, '::before').content === 'none';
+            var afterFree = getComputedStyle(el, '::after').content === 'none';
+            if (!beforeFree && !afterFree) return (el.__projL2ok = 0);
+            if (snap.clip === 'text') return (el.__projL2ok = 0);
+            // the base rule clips the oversized layer with clip-path — an
+            // element whose own shadow paints outside the box would lose it
+            if (snap.shadow && snap.shadow !== 'none') return (el.__projL2ok = 0);
+            if (snap.position === 'static') {
+              // position:relative is only safe without positioned descendants
+              var kids = el.querySelectorAll('*');
+              for (var k = 0; k < kids.length; k++) {
+                var kp = getComputedStyle(kids[k]).position;
+                if (kp === 'absolute' || kp === 'fixed') return (el.__projL2ok = 0);
+              }
+            }
+            good = beforeFree ? 1 : 2;   // prefer ::before; ::after when taken
+          } catch (e) { good = 0; }
+          return (el.__projL2ok = good);
+        }
+        // the read phase's extra computed reads for layer candidates
+        function snapshot(el) {
+          try {
+            var cs = getComputedStyle(el);
+            return {
+              position: cs.position,
+              image: cs.backgroundImage,
+              color: cs.backgroundColor,
+              repeat: cs.backgroundRepeat,
+              radius: cs.borderRadius,
+              clip: cs.backgroundClip,
+              shadow: cs.boxShadow,
+              bt: parseFloat(cs.borderTopWidth) || 0,
+              br: parseFloat(cs.borderRightWidth) || 0,
+              bb: parseFloat(cs.borderBottomWidth) || 0,
+              bl: parseFloat(cs.borderLeftWidth) || 0
+            };
+          } catch (e) { return null; }
+        }
+        // bake/patch — returns true when the element rides the layer path.
+        // snap is required only for MINTS (fresh elements) and EPOCH RE-MINTS
+        // (theme flips); position-only patches (scrolls, settles, carries)
+        // run snap-less. pseudo: 1 = ::before, 2 = ::after.
+        function bake(el, snap, bx, by, size, vis, epoch, pseudo) {
+          if (!ensure()) return false;
+          var L = el.__projL2;
+          var fresh = !L, stale = !!L && el.__projL2Epoch !== epoch;
+          if ((fresh || stale) && !snap) return false;
+          if (fresh || stale) {
+            if (fresh) {
+              var ps = (pseudo === 2) ? '::after' : '::before';
+              var id = 'pl' + (nextId++);
+              try { el.setAttribute('data-proj', id); } catch (e) { return false; }
+              var i1, i2;
+              try {
+                i1 = sheet.insertRule('[data-proj="' + id + '"]' + ps + ' {}', sheet.cssRules.length);
+                i2 = sheet.insertRule('[data-proj="' + id + '"] {}', sheet.cssRules.length);
+              } catch (e) { try { el.removeAttribute('data-proj'); } catch (e2) {} return false; }
+              var br = sheet.cssRules[i1], base = sheet.cssRules[i2];
+              L = el.__projL2 = { id: id, br: br, base: base, pos: null, size: null, vis: null, bl: snap.bl, bt: snap.bt };
+              // base — the suppression + the geometry contract
+              var bs = base.style;
+              bs.isolation = 'isolate';          // keeps z-index:-1 above the parent's paint
+              if (snap.position === 'static') bs.position = 'relative';
+              bs.backgroundImage = 'none';
+              bs.backgroundColor = 'transparent';
+              // v0.94.3c: THE OVERSIZE GEOMETRY — the pseudo's box must
+              // STILL COVER the element's box at every panel translate:
+              // the transform slides the whole box by var(-T), so the box
+              // extends 110vh UP (the panel's max travel + the stretch) and
+              // a 20px skirt sideways. The element clips it with clip-path
+              // (paint-only — no layout, no scroll side effects).
+              bs.clipPath = 'inset(0' +
+                (snap.radius && snap.radius !== 'none' ? ' round ' + snap.radius : '') + ')';
+              // the layer itself — oversized, viewport-anchored field.
+              // Coverage math: the pseudo is viewport-FROZEN (transform =
+              // -T) while the element slides +T beneath it — the RELATIVE
+              // motion is 2T — so the box extends 110vh UP (the open
+              // direction) and 90vh + 20px DOWN (the hide direction + the
+              // stretch), 40px sideways. Tiles raster on demand — the box
+              // size costs nothing until painted.
+              var s = br.style;
+              s.setProperty('content', '""');
+              s.position = 'absolute';
+              s.top = 'calc(-110vh - ' + snap.bt + 'px)';
+              s.left = 'calc(-40px - ' + snap.bl + 'px)';
+              s.right = 'calc(-40px - ' + snap.br + 'px)';
+              s.bottom = 'calc(-90vh - 20px - ' + snap.bb + 'px)';
+              s.zIndex = '-1';
+              s.pointerEvents = 'none';
+            }
+            // (re)mint the decorative props (first mint + every epoch/theme flip)
+            var d = L.br.style;
+            d.backgroundImage = snap.image;
+            d.backgroundColor = snap.color;
+            d.backgroundRepeat = snap.repeat;
+            el.__projL2Epoch = epoch;
+          }
+          if (L.vis !== vis) {
+            L.vis = vis;
+            L.br.style.transform = 'translate3d(calc(var(--proj-tx, 0px)),' +
+              ' calc(var(--proj-ty, 0px)' + (vis ? ' - var(--panel-vis-h, 0px)' : '') + '), 0)';
+            L.br.style.willChange = 'transform';
+          }
+          if (L.size !== size) { L.size = size; L.br.style.backgroundSize = size; }
+          // v0.94.3c: the field is anchored to the VIEWPORT ORIGIN inside the
+          // OVERSIZED box: pos = the TOP/LEFT margins + border + the legacy
+          // constant — the pseudo's origin (element box − the margin) plus
+          // this pos lands the vw×vh field at (0,0) viewport — invariant
+          // under the transform. The border offsets are stored on L at mint
+          // (patches run snap-less).
+          var posX = 'calc(40px ' + ((L.bl + (bx || 0)) < 0 ? '- ' : '+ ') + Math.abs(Math.round((L.bl + (bx || 0)) * 100) / 100) + 'px)';
+          var posY = 'calc(110vh ' + ((L.bt + (by || 0)) < 0 ? '- ' : '+ ') + Math.abs(Math.round((L.bt + (by || 0)) * 100) / 100) + 'px)';
+          var pos = posX + ' ' + posY;
+          if (L.pos !== pos) { L.pos = pos; L.br.style.backgroundPosition = pos; }
+          return true;
+        }
+        // scrollRebake's arithmetic write — the rule position, not inline
+        function rebake(el) {
+          var L = el.__projL2;
+          if (!L) return false;
+          var posX = 'calc(40px ' + ((L.bl + (el.__projBx || 0)) < 0 ? '- ' : '+ ') + Math.abs(Math.round((L.bl + (el.__projBx || 0)) * 100) / 100) + 'px)';
+          var posY = 'calc(110vh ' + ((L.bt + (el.__projBy || 0)) < 0 ? '- ' : '+ ') + Math.abs(Math.round((L.bt + (el.__projBy || 0)) * 100) / 100) + 'px)';
+          var pos = posX + ' ' + posY;
+          if (L.pos !== pos) { L.pos = pos; L.br.style.backgroundPosition = pos; }
+          return true;
+        }
+        function drop(el) {
+          var L = el.__projL2;
+          if (!L) return false;
+          try {
+            var rules = sheet.cssRules;
+            var needle = '[data-proj="' + L.id + '"]';
+            for (var i = rules.length - 1; i >= 0; i--) {
+              if ((rules[i].selectorText || '').indexOf(needle) !== -1) sheet.deleteRule(i);
+            }
+            el.removeAttribute('data-proj');
+          } catch (e) {}
+          el.__projL2 = undefined;
+          return true;
+        }
+        function resizeAll(size) {
+          if (!sheet) return;
+          try {
+            var rules = sheet.cssRules;
+            for (var i = 0; i < rules.length; i++) {
+              var sel = rules[i].selectorText || '';
+              if (sel.indexOf('::before') !== -1) rules[i].style.backgroundSize = size;
+            }
+          } catch (e) {}
+        }
+        return { ok: ok, snapshot: snapshot, bake: bake, rebake: rebake, drop: drop, resizeAll: resizeAll };
+      })();
+
+
       // v0.78.3: scroll containers. The nearest scrollable ancestor's
       // scrollTop is subtracted at bake time (B is scroll-origin
       // relative); the live offset rides --proj-sy on a per-scroller CSS
@@ -1309,7 +1523,14 @@
             reads.push({ el: el, R: R,
               bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
               by: yB,
-              pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' + yCalc });
+              pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' + yCalc,
+              // v0.94.3: the Track-2 candidate snapshot — computed reads stay
+              // in the READ phase (batched, layout-clean). Taken only when a
+              // mint or an epoch re-mint is due; fallback-flagged elements
+              // skip the reads entirely.
+              vis: visForm,
+              snap: (el.__projL2ok === 0) ? null :
+                ((el.__projL2 && el.__projL2Epoch === epoch) ? null : L2.snapshot(el)) });
             el.__projR = R;   // v0.79.3: the newcomer bake needs the root
           }
         }
@@ -1337,26 +1558,63 @@
             if (it.bx !== undefined) {
               it.el.__projBx = it.bx;
               it.el.__projBy = it.by;
-              var cpos = fmtCalc('--proj-tx', it.bx) + ' ' + fmtCalcY(it.by);
-              if (it.el.__projPos !== cpos) {
-                it.el.style.backgroundPosition = cpos;
-                it.el.__projPos = cpos;
-                it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
+              if (it.el.__projL2 && L2.rebake(it.el)) {   // v0.94.3: the rule position — no layout style write
+                /* layered carry — constants trued, rule patched */
+              } else {
+                var cpos = fmtCalc('--proj-tx', it.bx) + ' ' + fmtCalcY(it.by);
+                if (it.el.__projPos !== cpos || !it.el.style.backgroundSize) {
+                  // v0.94.3: carried elements must ALSO carry the size+
+                  // attachment (an element that layered once, dropped, and
+                  // re-carried would otherwise bake position-only — the
+                  // gradient renders at AUTO size = the misplaced-field bug)
+                  it.el.style.backgroundPosition = cpos;
+                  it.el.style.backgroundSize = size;
+                  it.el.style.backgroundAttachment = 'scroll';
+                  it.el.__projPos = cpos;
+                  it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
+                }
               }
             }
             keep.push(it.el);
             continue;
           }
-          if (it.el.__projPos !== it.pos) {
-            it.el.style.backgroundPosition = it.pos;
-            it.el.__projPos = it.pos;
-            it.el.__projBx = it.bx;   // numeric constants for scrollRebake
-            it.el.__projBy = it.by;
+          // v0.94.3: TRACK 2 FIRST — the transform-carried layer path
+          // (compositor-only motion; falls back to the legacy inline bake
+          // for conflicted elements — both paths coexist). An element that
+          // already rides its layer (fresh epoch) patches its rule position
+          // from the fresh constants — it NEVER falls through to the legacy
+          // inline write (the fallthrough left the layer stale by the
+          // scroll/motion delta — the misplaced-field visual bug).
+          var layered = false;
+          it.el.__projBx = it.bx;
+          it.el.__projBy = it.by;
+          if (it.el.__projL2 && it.el.__projL2Epoch === epoch) {
+            layered = true;
+            L2.rebake(it.el);
+          } else if (it.snap && L2.ok(it.el, it.snap)) {
+            layered = L2.bake(it.el, it.snap, it.bx, it.by, size, it.vis, epoch, it.el.__projL2ok);
+          }
+          if (layered) {
+            // clear any legacy inline bake this element carried from before
+            // the layer path existed (style-attr mutations — epoch-stamped
+            // so the observer never sees the painter's own writes)
+            if (it.el.__projPos !== undefined) {
+              it.el.style.removeProperty('background-position');
+              it.el.style.removeProperty('background-size');
+              it.el.style.removeProperty('background-attachment');
+              it.el.__projPos = undefined;
+              it.el.__projWriteEpoch = wep;
+            }
+          } else {
+            if (it.el.__projPos !== it.pos) {
+              it.el.style.backgroundPosition = it.pos;
+              it.el.__projPos = it.pos;
+            }
+            if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
+            if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
+            it.el.__projWriteEpoch = wep;
           }
           it.el.__projCarry = false;   // v0.79.4: in-view bake clears the carry
-          if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
-          if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
-          it.el.__projWriteEpoch = wep;
           keep.push(it.el);
         }
         // clear every previously-painted element that lost its anchor this
@@ -1367,6 +1625,10 @@
         for (var p = 0; p < painted.length; p++) {
           var el2 = painted[p];
           if (!el2.isConnected || keep.indexOf(el2) !== -1) continue;
+          // v0.94.3: the layer path drops its generated rules (the CSS
+          // state owns the element again — byte-identical to the
+          // no-gradient look); the legacy path strips inline styles.
+          if (L2.drop(el2)) continue;
           el2.style.removeProperty('background-position');
           el2.style.removeProperty('background-size');
           el2.style.removeProperty('background-attachment');
@@ -1665,6 +1927,8 @@
           }
           if (pos_ === 'sticky' || pos_ === 'fixed') continue;
           el.__projBy += dS;
+          // v0.94.3: the layer path patches its RULE — no inline style
+          if (el.__projL2 && L2.rebake(el)) continue;
           var pos = fmtCalc('--proj-tx', el.__projBx) + ' ' + fmtCalcY(el.__projBy);
           if (el.__projPos !== pos) {
             el.style.backgroundPosition = pos;
@@ -1701,17 +1965,44 @@
           if (!M) { M = matrixCache[R.key] = readMatrix(R.el); }
           var bx = M.translateOnly ? (-r.left + M.tx) : -r.left;
           var by = M.translateOnly ? (-r.top + M.ty) : -r.top;
+          el.__projBx = bx; el.__projBy = by;
+          // v0.94.3: newcomer bakes ride the layer path when eligible
+          var snapN = (el.__projL2ok === 0) ? null :
+            ((el.__projL2 && el.__projL2Epoch === memoEpoch) ? null : L2.snapshot(el));
+          // v0.94.3: an ALREADY-LAYERED element (fresh epoch) rides its
+          // layer — patch the rule position from the fresh constants and
+          // NEVER the legacy inline path (the fallthrough was leaving the
+          // layer's position stale by the scroll delta — the visual bug).
+          if (el.__projL2 && el.__projL2Epoch === memoEpoch) {
+            L2.rebake(el);
+            el.__projR = R;
+            n++;
+            continue;
+          }
+          if (snapN && L2.ok(el, snapN) && L2.bake(el, snapN, bx, by, size, false, memoEpoch, el.__projL2ok)) {
+            // clear any legacy inline bake the element carried (carried
+            // elements bake legacy until they scroll into view)
+            if (el.__projPos !== undefined) {
+              el.style.removeProperty('background-position');
+              el.style.removeProperty('background-size');
+              el.style.removeProperty('background-attachment');
+              el.__projPos = undefined;
+              el.__projWriteEpoch = wep;
+            }
+            el.__projR = R;
+            n++;
+            continue;
+          }
           var pos = fmtCalc('--proj-tx', bx) + ' ' + fmtCalcY(by);
           if (el.__projPos !== pos) {
             el.style.backgroundPosition = pos;
             el.__projPos = pos;
-            el.__projBx = bx;
-            el.__projBy = by;
             el.__projWriteEpoch = wep;
           }
           if (el.style.backgroundSize !== size) el.style.backgroundSize = size;
           if (el.style.backgroundAttachment !== 'scroll') el.style.backgroundAttachment = 'scroll';
           el.__projWriteEpoch = wep;
+          el.__projR = R;
           n++;
         }
         stats.baked += n;
@@ -1721,7 +2012,11 @@
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(function () { settleTimer = 0; mark(); }, 150);
       }
-      window.addEventListener('resize', function () { SEL = null; mark(); });
+      window.addEventListener('resize', function () {
+        SEL = null;
+        L2.resizeAll(window.innerWidth + 'px ' + window.innerHeight + 'px');   // v0.94.3: layer sizes track the viewport
+        mark();
+      });
       // CSS transitions don't fire attribute mutations (computed values
       // interpolate) — the transform rides need explicit tracking.
       // v0.74: LAYOUT properties (the un-collapse grid animations) hold

@@ -634,20 +634,36 @@
       var mode = SendMode.mode(state);
       var M = SEND_MODES[mode];
       var on = sendModeActionable(state, mode);
-      btn.setAttribute('data-mode', mode);
-      btn.setAttribute('aria-label', M.aria);
-      btn.innerHTML = SEND_ICONS[mode] + '<span class="sm-lab">' + M.label + '</span>';
-      btn.classList.toggle('sm-on', on);
-      btn.classList.toggle('sm-ghost', !on);
-      btn.classList.toggle('sm-t-warn', on && mode === 'stop');
-      btn.classList.toggle('sm-t-ok', on && mode === 'retry');
-      btn.classList.remove('sm-busy'); // busy (connecting) is a doSend overlay
-      var cluster = live.querySelector('#send-cluster');
-      if (cluster) {
-        cluster.classList.toggle('sm-cluster-on', on && (mode === 'send' || mode === 'queue'));
-        cluster.classList.toggle('sm-cluster-warn', on && mode === 'stop');
-        cluster.classList.toggle('sm-cluster-ok', on && mode === 'retry');
+      // v0.94.2: THE NO-OP GUARD — the old path rewrote innerHTML + the
+      // class toggles on EVERY input event; the childList mutation fed the
+      // projection observer one FULL paint per keystroke (410 paints for
+      // 630 typed chars on the rig). The button only repays when the
+      // mode+actionable pair actually changes.
+      var smFp = mode + '|' + (on ? 1 : 0);
+      if (btn.__smFp !== smFp) {
+        btn.__smFp = smFp;
+        btn.setAttribute('data-mode', mode);
+        btn.setAttribute('aria-label', M.aria);
+        btn.innerHTML = SEND_ICONS[mode] + '<span class="sm-lab">' + M.label + '</span>';
+        btn.classList.toggle('sm-on', on);
+        btn.classList.toggle('sm-ghost', !on);
+        btn.classList.toggle('sm-t-warn', on && mode === 'stop');
+        btn.classList.toggle('sm-t-ok', on && mode === 'retry');
+        var cluster = live.querySelector('#send-cluster');
+        if (cluster) {
+          cluster.classList.toggle('sm-cluster-on', on && (mode === 'send' || mode === 'queue'));
+          cluster.classList.toggle('sm-cluster-warn', on && mode === 'stop');
+          cluster.classList.toggle('sm-cluster-ok', on && mode === 'retry');
+        }
       }
+      // v0.94.2: the busy clear is CONTAINS-GUARDED — an unconditional
+      // classList.remove of an ABSENT token still fires a (no-op) class
+      // attribute mutation record in this context (the rig proved it: one
+      // phantom record per keystroke → one FULL projection paint per
+      // keystroke, even with everything else guarded). contains() never
+      // mutates; the remove only runs while the connecting overlay is
+      // actually up.
+      if (btn.classList.contains('sm-busy')) btn.classList.remove('sm-busy'); // busy (connecting) is a doSend overlay
     }
   };
   // the one-liner every turn-boundary site calls (replaces the old
@@ -1333,8 +1349,31 @@
 
       input.addEventListener('input', function () {
         state.draftText = input.value;
-        input.style.height = 'auto';
-        input.style.height = Math.min(120, input.scrollHeight) + 'px';
+        // v0.94.2: THE AUTOGROW WITHOUT THE THRASH — the old path wrote
+        // height:'auto' + read scrollHeight + wrote the height on EVERY
+        // input event: a forced synchronous reflow of the FULL textarea
+        // text (O(message length) — the "longer messages are laggier"
+        // case) plus style writes that fed the projection observer a
+        // FULL paint per keystroke (the rig measured 410 paints for 630
+        // typed chars). The steady state — typing on the last line without
+        // a new wrap — now costs ZERO style writes (scrollHeight read
+        // against the CURRENT box: a fixed-height textarea still reports
+        // the CONTENT height when content overflows); the auto→measure→set
+        // dance runs ONLY when the height must actually change (a grow
+        // past the box, or a delete that may un-wrap a line).
+        var sc = input.scrollHeight;
+        var need = 0;
+        if (sc > input.clientHeight + 1) {
+          need = Math.min(120, sc);          // grow: content overflowed the box
+        } else if (input.value.length < (input.__dlLen | 0)) {
+          input.style.height = 'auto';      // a delete may un-wrap — measure intrinsically
+          need = Math.min(120, input.scrollHeight);
+        }
+        input.__dlLen = input.value.length;
+        if (need) {
+          var hNew = need + 'px';
+          if (input.style.height !== hNew) input.style.height = hNew;
+        }
         // v0.40: durable per-chat draft (debounced; cleared on send)
         saveDraftLS(draftId(state), input.value);
         // v0.42: the mode follows the draft — typing mid-turn flips the
