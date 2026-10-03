@@ -102,10 +102,72 @@ class BrainLiteLLMModel(LiteLLMModel):
     mixed reasoning→tool turns drop the reasoning from the history (same
     as the native Bedrock path), so tool rounds never see reasoning
     content in the request.
+
+    v0.95.3 THE REASONING RESCUE: litellm 1.55.10's transformation layer
+    STRIPS ``reasoning_content`` before any Python sees it (live-proven
+    against a mock NIM: the wire carries the field, the parsed Delta shows
+    None — scripts/litellm-reasoning-probe.py). PrivateMode reads raw SSE
+    in the browser and the Go engine reads raw SSE too, so ONLY the brain
+    path was blind — "anything that isn't privatemodeai doesn't return
+    reasoning". On the engine-registry path (custom base_url — every
+    non-PM provider) the stream now goes through the RAW openai client
+    (same key/base_url/timeout/retries): openai's pydantic chunks keep
+    unknown delta fields (extra=allow), so reasoning survives to the
+    thinking stream AND thinking params (chat_template_kwargs etc.) reach
+    the wire verbatim via extra_body. litellm remains the path for
+    provider-native model ids (no base_url).
     """
 
+    # What the openai SDK's chat.completions.create accepts as typed
+    # kwargs — everything else rides extra_body (thinking params,
+    # provider extensions) so the JSON body is byte-shaped like litellm's.
+    _OPENAI_TYPED_KWARGS = frozenset({
+        "model", "messages", "stream", "stream_options", "tools",
+        "tool_choice", "temperature", "top_p", "max_tokens",
+        "max_completion_tokens", "stop", "n", "presence_penalty",
+        "frequency_penalty", "logit_bias", "logprobs", "top_logprobs",
+        "response_format", "seed", "user", "parallel_tool_calls",
+        "functions", "function_call",
+    })
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._raw_client = None
+        ca = (args[0] if args else None) or kwargs.get("client_args") or {}
+        if isinstance(ca, dict) and ca.get("base_url"):
+            try:
+                import openai as _openai
+                self._raw_client = _openai.OpenAI(
+                    api_key=ca.get("api_key") or "dummy",
+                    base_url=ca["base_url"],
+                    timeout=ca.get("timeout", 600),
+                    max_retries=int(ca.get("max_retries", 2) or 0),
+                )
+            except Exception:
+                self._raw_client = None  # litellm path stays the fallback
+
+    def _raw_stream(self, request: dict):
+        """Route through the raw openai client, splitting typed kwargs
+        from provider extensions (extra_body) so thinking params survive
+        the wire exactly as litellm would send them."""
+        req = dict(request)
+        model = req.pop("model", "")
+        if model.startswith("openai/"):
+            model = model[len("openai/"):]
+        extra_body = {}
+        for k in list(req.keys()):
+            if k not in self._OPENAI_TYPED_KWARGS:
+                extra_body[k] = req.pop(k)
+        if extra_body:
+            req["extra_body"] = extra_body
+        req["model"] = model
+        return self._raw_client.chat.completions.create(**req)
+
     def stream(self, request: dict):
-        response = self.client.chat.completions.create(**request)
+        if self._raw_client is not None:
+            response = self._raw_stream(request)
+        else:
+            response = self.client.chat.completions.create(**request)
 
         yield {"chunk_type": "message_start"}
         yield {"chunk_type": "content_start", "data_type": "text"}
@@ -116,7 +178,13 @@ class BrainLiteLLMModel(LiteLLMModel):
             choice = event.choices[0]
             delta = getattr(choice, "delta", None)
             if delta is not None:
+                # v0.95.3: BOTH spellings + the pydantic model_extra
+                # fallback (openai keeps unknown delta fields there).
                 reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if not reasoning:
+                    extras = getattr(delta, "model_extra", None)
+                    if isinstance(extras, dict):
+                        reasoning = extras.get("reasoning_content") or extras.get("reasoning")
                 if reasoning:
                     yield {"chunk_type": "content_delta", "data_type": "reasoning", "data": reasoning}
                 if getattr(delta, "content", None):

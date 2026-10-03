@@ -69,7 +69,7 @@ for (const f of frames) {
   console.log(`  i=${f.i} ${f.type}${d}`);
 }
 writeFileSync('/tmp/bug-a-brain-frames.json', JSON.stringify(frames, null, 1));
-if (!frames.length || frames[frames.length - 1].type !== 'status') {
+if (!frames.length || frames[frames.length - 1].type !== 'status' || frames.length < 6) {
   console.log('\n[engine log tail]\n' + engLog.split('\n').slice(-25).join('\n'));
 }
 killAll();
