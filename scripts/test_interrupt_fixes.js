@@ -430,7 +430,11 @@ ok('message queued for the new socket', client3._eventQueue.length === 1);
 var sock5 = wsInstances[wsInstances.length - 1];
 sock5.readyState = FakeWS.OPEN;
 sock5.onopen();
-ok('queue flushed on open', sock5.sent.indexOf(JSON.stringify({ type: 'send', message: 'queued' })) >= 0);
+// v0.95.1: the frame now carries session_id (the isolation contract —
+// scripts/test_isolation_v0951.js pins it directly); match on the pair.
+ok('queue flushed on open', sock5.sent.some(function (m) {
+  try { var p = JSON.parse(m); return p.type === 'send' && p.message === 'queued' && p.session_id === 'sess-3'; } catch (e) { return false; }
+}));
 
 // ── verdict ─────────────────────────────────────────────────────────
 if (fails.length) {

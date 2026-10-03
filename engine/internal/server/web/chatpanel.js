@@ -318,6 +318,10 @@
         artifactSaved: {},    // msg-index → true (avoid re-saving)
         _icon: icon
       };
+      // v0.95.1: a newly-created state that lands with a session CLAIMS it
+      // — any other live state holding the same session is unbound (the
+      // runtime twin of app.js's restore-time v0.38 heal).
+      if (chatStates[chatId].sessionId) healDuplicateSessionBinds(chatStates[chatId], chatStates[chatId].sessionId);
       if (icon) icon._sessionData = sessionData || null;
     }
     return chatStates[chatId];
@@ -3933,8 +3937,18 @@
   }
 
   // ── WebSocket connect ─────────────────────────────────────────
+  // v0.95.1 THE CROSS-BIND GUARD: if a chat's state ever adopts a session
+  // that its live ChatClient was NOT built for (icon rebinding, state
+  // restore races, storage sync), the old code blindly REVIVED that client
+  // and every subsequent send executed in the WRONG session's event log —
+  // the live cross-chat leak (one chat's model reply appearing inside
+  // another chat's transcript). The client is rebuilt instead.
   function connectWS(bodyEl, state, msgContainer) {
     if (!state.sessionId) return;
+    if (state.client && state.client.sessionId !== state.sessionId) {
+      try { state.client.close(); } catch (e) { /* already dead */ }
+      state.client = null;
+    }
     if (state.client) {
       state.client.onEvent = function (ev) {
         handleEvent(ev, state, msgContainer, bodyEl.querySelector('#chat-scroll'), bodyEl, null, null);
@@ -4043,6 +4057,31 @@
   }
 
   // Reattach to the ENGINE session the icon was bound to.
+  // v0.95.1 THE RUNTIME DUPLICATE-BIND HEAL: the v0.38 heal unbinds
+  // same-session icons ONLY at restore time. Any runtime path (a state
+  // adoption, a bind, a storage sync) could still land two chats on ONE
+  // engine session — both replay each other's history and interleave
+  // writes into one event log (the data-level chat leak). Whenever a chat
+  // CLAIMS a session, every OTHER state holding that session is unbound
+  // (it creates a fresh session on its next open). The claimer wins
+  // because it's the chat the user is actively opening.
+  function healDuplicateSessionBinds(keepState, sessionId) {
+    if (!sessionId) return;
+    for (var k in chatStates) {
+      var st = chatStates[k];
+      if (!st || st === keepState || st.sessionId !== sessionId) continue;
+      st.sessionId = null;
+      if (st.client) {
+        try { st.client.close(); } catch (e) { /* already dead */ }
+        st.client = null;
+      }
+      if (st._icon) {
+        st._icon.sessionId = '';
+        if (typeof st._icon.save === 'function') { try { st._icon.save(); } catch (e) {} }
+      }
+    }
+  }
+
   function bindEngineSession(icon, state, cb) {
     if (state.sessionId) { cb(); return 'sync'; }
     var sid = icon && icon.sessionId;
@@ -4055,6 +4094,22 @@
       return r.json();
     }).then(function (data) {
       if (data && data.ID) {
+        // v0.95.1 FIRST-CLAIM-WINS: if another live chat state already
+        // holds this session (the duplicate-bind corruption class), this
+        // icon does NOT adopt it — it creates a fresh session instead.
+        // (Healing the OTHER state here would ping-pong the two icons;
+        // the restore-time v0.38 heal and the explicit bindSessionToIcon
+        // claim-heal cover the remaining paths.)
+        var claimed = false;
+        for (var k in chatStates) {
+          var other = chatStates[k];
+          if (other && other !== state && other.sessionId === data.ID) { claimed = true; break; }
+        }
+        if (claimed) {
+          if (icon) icon.sessionId = '';
+          ensureSession(icon, state, cb);
+          return;
+        }
         state.sessionId = data.ID;
         icon._sessionData = data;
         // v0.76.5: same repaint-on-adoption as ensureSession (the badge
@@ -4128,6 +4183,15 @@
   function bindSessionToIcon(icon, sessionId) {
     if (!icon) return;
     icon.sessionId = sessionId;
+    // v0.95.1: a bind is a CLAIM — no other chat may hold this session.
+    for (var k in chatStates) {
+      var st = chatStates[k];
+      if (!st || st._icon === icon) continue;
+      if (st.sessionId === sessionId) {
+        st.sessionId = null;
+        if (st.client) { try { st.client.close(); } catch (e) {} st.client = null; }
+      }
+    }
     if (typeof icon.save === 'function') icon.save();
   }
 
@@ -6061,7 +6125,10 @@
       saveDraftLS: saveDraftLS,
       clearDraftLS: clearDraftLS,
       loadDraftLS: loadDraftLS,
-      roundFlowApply: roundFlowApply
+      roundFlowApply: roundFlowApply,
+      // v0.95.1 isolation seam (scripts/test_isolation_v0951.js)
+      healDuplicateSessionBinds: healDuplicateSessionBinds,
+      states: function () { return chatStates; }
     };
   }
 })();

@@ -241,7 +241,7 @@
     // v0.44: template_id + template_brief ride the send when the
     // composer has a method template active (the template pill — the
     // brief is the resolved methodology text the engine injects).
-    var payload = { type: 'send', message: text };
+    var payload = { type: 'send', message: text, session_id: this.sessionId };
     if (opts) {
       if (opts.effort !== undefined) payload.effort = opts.effort;
       if (opts.web_search !== undefined) payload.web_search = !!opts.web_search;
@@ -255,6 +255,11 @@
       if (opts.model !== undefined && opts.model !== null && opts.model !== '') payload.model = opts.model;
       if (opts.provider !== undefined && opts.provider !== null && opts.provider !== '') payload.provider = opts.provider;
     }
+    // v0.95.1 THE ISOLATION CONTRACT: every frame names its session. The
+    // engine rejects any frame whose session_id doesn't match the socket's
+    // (chatclient.js:244 historically sent NOTHING — a stale client bound to
+    // another chat executed its turns into the wrong event log, the live
+    // cross-chat leak). See the twin in stop().
     var msg = JSON.stringify(payload);
     this.turnActive = true; // v0.39: the ladder's long rung is earned from here
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -272,7 +277,7 @@
   ChatClient.prototype.stop = function () {
     this.turnActive = false; // a user stop ends the turn even if the ack is lost
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'stop' }));
+      this.ws.send(JSON.stringify({ type: 'stop', session_id: this.sessionId })); // v0.95.1: the isolation contract twin
     }
   };
 
@@ -280,6 +285,7 @@
   // masking). Same queueing semantics as send: if the socket is down, the
   // frame is dropped (the POST /events endpoint is the fallback path).
   ChatClient.prototype.sendRaw = function (payload) {
+    if (payload && typeof payload === 'object' && !payload.session_id) payload.session_id = this.sessionId; // v0.95.1 isolation contract
     var msg = JSON.stringify(payload);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(msg);

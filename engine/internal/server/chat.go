@@ -803,6 +803,28 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                         continue
                 }
                 msgType, _ := msg["type"].(string)
+                // v0.95.1 THE ISOLATION GUARD: a frame that names a session
+                // must match the socket's session. The send frame historically
+                // carried NO session identity — a client state cross-bind (two
+                // chats sharing one stale ChatClient, or two icons bound to one
+                // session) executed chat A's turn inside chat B's event log,
+                // persisting A's user text and A's model's reply into B's
+                // transcript (the live Nemotron leak: scooby/deepseek's log
+                // carried another nvidia chat's "Hello! I'm Nemotron" turn).
+                // Absent session_id = the legacy frame shape (allowed).
+                if frameSid, _ := msg["session_id"].(string); frameSid != "" && frameSid != sessionID {
+                        log.Printf("ws session mismatch: %s frame for %q on socket for %q — rejected", msgType, frameSid, sessionID)
+                        // An EPHEMERAL error frame (the progress shape — never
+                        // persisted: the socket's session log must not record
+                        // another chat's rejected traffic).
+                        if b, err := json.Marshal(map[string]any{
+                                "type": "error", "session_id": sessionID,
+                                "text": fmtError("session", "session mismatch — this connection serves another chat", "", ""),
+                        }); err == nil {
+                                _ = pipe.send(b)
+                        }
+                        continue
+                }
                 switch msgType {
                 case "send":
                         go s.handleTurn(pipe, sessionID, sess, msg)
@@ -998,19 +1020,14 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                         }
                 }
         }
-        // Persist capability changes so the next turn / reload keeps them.
-        // v0.15: also persist per-message model/provider overrides (they
-        // ARE the session's new config — the UI already PATCHed them, this
-        // is just the safety net).
-        if _, ok := msg["effort"]; ok {
-                if err := s.db.UpdateSession(sess); err != nil {
-                        log.Printf("persist session caps: %v", err)
-                }
-        } else if _, ok := msg["model"]; ok {
-                if err := s.db.UpdateSession(sess); err != nil {
-                        log.Printf("persist session model: %v", err)
-                }
-        }
+        // v0.95.1: the send frame NEVER persists session config anymore.
+        // The model/provider overrides above are PER-TURN ONLY (they ride
+        // the fresh per-turn copy of the session) — the UI persists real
+        // changes through PATCH /api/sessions (chatpanel.js updateSession,
+        // the model picker / capability pills). The old engine-side
+        // persistence was the leak's amplifier: one misrouted send frame
+        // not only wrote chat A's turn into chat B's log, it also
+        // REWROTE chat B's saved model to chat A's model.
 
         // v0.38 BRAIN HISTORY: brain turns used to run with NO conversation
         // memory — brainReq never carried a "history" key, so the fresh
