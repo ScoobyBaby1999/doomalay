@@ -355,6 +355,15 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         if req.WorkspaceManifest != "" && len(history) > 0 && history[0].Role == "system" {
                 history[0].Content = req.WorkspaceManifest + "\n" + history[0].Content
         }
+        // v0.95.4 THE DROPPED BUNDLE (protocol-honesty wave): the attached
+        // bundle's manifest rode the ReAct path (composeTurnSystem) and the
+        // brain path (brainReq), but runNativeToolsTurn NEVER prepended it —
+        // a bundle-attached chat on a native-tools provider silently lost
+        // the whole "review members, load the pick" instruction. It rides
+        // the system message now, same as the template brief above.
+        if req.BundleManifest != "" && len(history) > 0 && history[0].Role == "system" {
+                history[0].Content = req.BundleManifest + "\n" + history[0].Content
+        }
 
         var allSources []SearchResult
         var totalUsage *Usage
@@ -376,6 +385,8 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         contentSeen := false
         think := ""
         nudged := false
+        // v0.95.4: the repeat-call cache (see the twin in the ReAct loop).
+        seenCalls := map[string]string{}
 
         for round := 0; round < maxRounds; round++ {
                 roundReq := req
@@ -476,6 +487,19 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 args = "{}"
                         }
                         if !json.Valid([]byte(args)) {
+                                // v0.95.4 THE HONESTY LINE (the .MD-artifact cutoff
+                                // class): arguments cut MID-STRING (the provider's
+                                // token cap ate the tail) must NOT execute — the old
+                                // repair silently closed the string and the tool ran
+                                // with HALF the content. Tell the model to re-send.
+                                if _, cut := repairJSONReport(args); cut {
+                                        ch <- ChatChunk{Type: "tool_use", Name: c.Name, Summary: "(arguments cut off)"}
+                                        ch <- ChatChunk{Type: "tool_result", Text: "error: your " + c.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call — or split the work into smaller calls.", Name: c.Name}
+                                        wire = append(wire, wireToolCall{ID: c.ID, Type: "function"})
+                                        wire[len(wire)-1].Function.Name = c.Name
+                                        wire[len(wire)-1].Function.Arguments = "{}"
+                                        continue
+                                }
                                 // belt-and-suspenders: repair truncated streamed JSON
                                 if fixed := repairJSON(args); json.Valid([]byte(fixed)) {
                                         args = fixed
@@ -502,7 +526,18 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 
                 // execute + append role:"tool" results
                 for _, c := range wire {
-                        observation := executeAction(ctx, req, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                        var observation string
+                        dedupKey := c.Function.Name + "\x00" + c.Function.Arguments
+                        if cached, seen := seenCalls[dedupKey]; seen {
+                                // v0.95.4 THE REPEAT-CALL CACHE (the nativetools
+                                // twin): an exact repeat serves the cached
+                                // observation — no re-execution, no wasted round.
+                                ch <- ChatChunk{Type: "tool_use", Name: c.Function.Name, Summary: "(identical repeat — cached result)"}
+                                observation = "OBSERVATION:\n(identical " + c.Function.Name + " call already executed this turn — same result)\n" + cached
+                        } else {
+                                observation = executeAction(ctx, req, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
+                        }
                         // strip the protocol prefix — the wire tool message is plain content
                         obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
                         history = append(history, Message{

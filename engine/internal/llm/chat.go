@@ -741,6 +741,29 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         }
         _, hasTools := body["tools"]
 
+        // v0.95.4: the DSML filter's consumer mode — a request WITH a
+        // tools array hands rescued calls to the native loop (take());
+        // without one the calls re-render as ACTION lines in the visible
+        // stream so the ReAct parser executes them.
+        var dsml dsmlFilter
+        dsml.reinject = !hasTools
+
+        // v0.95.4 THE OUTPUT FLOOR (the .MD-artifact cutoff class): no
+        // max_tokens was EVER set on any chat request — providers that
+        // default LOW (NIM: 1024 output tokens ≈ 4KB) silently cut long
+        // outputs mid-file, which reads downstream as "the artifact's
+        // contents got cut off". Set an explicit floor for the providers
+        // KNOWN to default low; every other host keeps its server default
+        // (never cap a host that would have given more). A 400 that names
+        // max_tokens strips it and retries once (the effortKeys pattern).
+        var bodyKeys []string
+        if _, exists := body["max_tokens"]; !exists {
+                if floor, known := providerMaxTokensFloor(req.Provider); known {
+                        body["max_tokens"] = floor
+                        bodyKeys = append(bodyKeys, "max_tokens")
+                }
+        }
+
         bodyBytes, err := json.Marshal(body)
         if err != nil {
                 return nil, nil, fmt.Errorf("marshal: %w", err)
@@ -900,15 +923,45 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                         return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
                                 }
                         } else {
-                                // v0.39: record the provider failure class (auth →
-                                // engine-lifetime blacklist, quota/payload/5xx →
-                                // 60s cooldown) — alternate routing + later
-                                // turns consult the table.
-                                RecordProviderFailure(req.Provider,
-                                        ClassifyProviderError(resp.StatusCode, string(bts)),
-                                        fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
-                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
-                                return nil, nil, nil
+                                // v0.95.4 OUTPUT-FLOOR RESILIENCE: a 400 that
+                                // names max_tokens means the host rejected the
+                                // floor (a model with a lower output headroom)
+                                // — strip it and retry once, then never send
+                                // it to this provider again (the effortKeys
+                                // pattern; the server's own default returns).
+                                if len(bodyKeys) > 0 && resp.StatusCode == 400 && mentionsMaxTokens(string(bts)) {
+                                        for _, k := range bodyKeys {
+                                                delete(body, k)
+                                        }
+                                        bodyKeys = nil
+                                        clean, _ := json.Marshal(body)
+                                        resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
+                                        if resp2 == nil {
+                                                return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
+                                        }
+                                        if resp2.StatusCode == 200 {
+                                                resp = resp2
+                                        } else {
+                                                bts2, _ := io.ReadAll(resp2.Body)
+                                                resp2.Body.Close()
+                                                RecordProviderFailure(req.Provider,
+                                                        ClassifyProviderError(resp2.StatusCode, string(bts2)),
+                                                        fmt.Sprintf("HTTP %d on %s (post max_tokens-strip)", resp2.StatusCode, modelShort(req.Model)))
+                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+                                                return nil, nil, nil
+                                        }
+                                        // fall through to the stream with the stripped body
+                                } else {
+                                        // v0.39: record the provider failure class (auth →
+                                        // engine-lifetime blacklist, quota/payload/5xx →
+                                        // 60s cooldown) — alternate routing + later
+                                        // turns consult the table.
+                                        RecordProviderFailure(req.Provider,
+                                                ClassifyProviderError(resp.StatusCode, string(bts)),
+                                                fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
+                                        ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
+                                        return nil, nil, nil
+                                }
                         }
                 }
         }
@@ -927,6 +980,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         wd.startMS.Store(time.Now().UnixMilli())
         wd.lastDelta.Store(0)
         defer resp.Body.Close()
+        // v0.95.4: finish_reason == "length" honesty — the provider cut the
+        // output at its token cap. NEVER silently: the note rides the visible
+        // stream so it persists, replays, and the user knows to say
+        // "continue" (the silent .MD-artifact cutoff class).
+        hitLength := false
         defer wd.Close()
         stopNotices := waitNotices(ch, wd, req.Model, req.Provider)
         defer stopNotices()
@@ -957,6 +1015,9 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         continue
                 }
                 for _, choice := range chunk.Choices {
+                        if choice.FinishReason == "length" {
+                                hitLength = true
+                        }
                         // v0.38: assemble streamed tool-call fragments — the
                         // first carries id+name, later ones only arguments.
                         for _, tc := range choice.Delta.ToolCalls {
@@ -975,19 +1036,48 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 }
                                 calls[pos].Arguments += tc.Function.Arguments
                         }
+                        // v0.95.4 THE DSML FILTER: deepseek-family models
+                        // stream their native tool markup (<｜DSML｜calls>…)
+                        // as CONTENT when they fall back to their own format
+                        // — the markup leaked into the visible transcript and
+                        // the calls inside never executed (the user's live
+                        // scooby export). Split each fragment: visible text
+                        // passes through, the markup is stripped, and a
+                        // closed block's calls are RESCUED (native call list
+                        // when the request carries tools; ACTION lines in the
+                        // content stream for the ReAct parser when not).
                         if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
                                 wd.markDelta() // v0.24: real token — wait-notices go quiet
+                                visible := dsml.feed(choice.Delta.Content)
                                 if onDelta != nil {
                                         // v0.93.1: merge the two reasoning field
                                         // conventions (reasoning_content · reasoning);
                                         // only one is ever non-empty per chunk.
-                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR, choice.Delta.Content)
+                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR, visible)
                                 }
                         }
                 }
                 if chunk.Usage != nil {
                         usage.InputTokens = chunk.Usage.PromptTokens
                         usage.OutputTokens = chunk.Usage.CompletionTokens
+                }
+        }
+        // v0.95.4 END-OF-STREAM: flush the DSML filter (salvage an
+        // unterminated block — the finish_reason=length class — release held
+        // partial openers, deliver rescued calls to the right consumer) and
+        // surface the token-cap note when the provider cut the output.
+        if dCalls, _, dVisible := dsml.flush(); len(dCalls) > 0 || dVisible != "" {
+                if !dsml.reinject {
+                        calls = append(calls, dCalls...)
+                }
+                if onDelta != nil && dVisible != "" {
+                        onDelta("", dVisible)
+                }
+        }
+        if hitLength {
+                note := "\n\n_(the provider cut this output at its token cap — say \"continue\" to resume)_"
+                if onDelta != nil {
+                        onDelta("", note)
                 }
         }
         if err := scanner.Err(); err != nil {
@@ -1360,6 +1450,12 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         var totalUsage *Usage // v0.21: accumulate across rounds for cost tracking
         nudged := false       // v0.24: the auto-proceed push fired (max once/turn)
         toolsRun := 0         // v0.24: tools executed so far this turn
+        // v0.95.4 THE REPEAT-CALL CACHE: weak models re-issue the IDENTICAL
+        // call round after round (the live logs: `workspace tree` at / three
+        // times in a row — three full LLM round-trips for one answer). An
+        // exact (name, args) repeat within a turn returns the cached
+        // observation with a note — no re-execution, no re-request.
+        seenActions := map[string]string{}
         // v0.80.1: 64 rounds (was 16) — the user directive says models keep
         // going as long as they like; a 30+ tool chain (live-proven on the
         // brain path) must also fit on the direct ReAct path. The cap stays
@@ -1457,7 +1553,10 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 // the FINAL answer.
                 var live []parsedAction
                 for _, act := range acts {
-                        if actionHasRequiredArg(act.Name, act.Args) {
+                        // v0.95.4: a TRUNCATED call always rides (its refusal
+                        // observation is the point — the required-arg filter
+                        // would drop it before the model learned anything).
+                        if act.Truncated || actionHasRequiredArg(act.Name, act.Args) {
                                 live = append(live, act)
                         }
                 }
@@ -1473,7 +1572,21 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                 acts = live
                 var obsParts []string
                 for ai, act := range acts {
-                        observation := executeAction(ctx, req, ch, act.Name, act.Args, &allSources)
+                        var observation string
+                        dedupKey := act.Name + "\x00" + act.Args
+                        if cached, seen := seenActions[dedupKey]; seen && !act.Truncated {
+                                // v0.95.4: exact repeat — serve the cached observation.
+                                ch <- ChatChunk{Type: "tool_use", Name: act.Name, Summary: "(identical repeat — cached result)"}
+                                observation = "OBSERVATION:\n(identical " + act.Name + " call already executed this turn — same result)\n" + strings.TrimPrefix(cached, "OBSERVATION:\n")
+                        } else if act.Truncated {
+                                // v0.95.4: refuse the half-content call — the model
+                                // re-sends complete instead of a file landing cut.
+                                ch <- ChatChunk{Type: "tool_use", Name: act.Name, Summary: "(arguments cut off)"}
+                                observation = "OBSERVATION:\nerror: your " + act.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call — or split the work into smaller calls (e.g. write the file in parts)."
+                        } else {
+                                observation = executeAction(ctx, req, ch, act.Name, act.Args, &allSources)
+                                seenActions[dedupKey] = observation
+                        }
                         if len(acts) > 1 {
                                 obsParts = append(obsParts, fmt.Sprintf("OBSERVATION (%d of %d — %s):\n%s", ai+1, len(acts), act.Name, strings.TrimPrefix(observation, "OBSERVATION:\n")))
                         } else {
@@ -2480,6 +2593,10 @@ func parseAction(answer string) (action, argJSON string, ok bool) {
 type parsedAction struct {
         Name string
         Args string
+        // v0.95.4: the payload arrived cut MID-STRING (finish_reason=length
+        // class) — the executor REFUSES it and tells the model to re-send
+        // instead of running a half-content call.
+        Truncated bool
 }
 
 // parseActions extracts EVERY executable ACTION from a reply (v0.25).
@@ -2604,6 +2721,15 @@ func parseActions(answer string) []parsedAction {
                         // v0.28: then LENIENT — single-quoted / trailing-comma /
                         // smart-quote JSON (Python-trained habits) — both orders,
                         // because either flaw can mask the other.
+                        // v0.95.4 THE HONESTY LINE: a payload cut MID-STRING (the
+                        // provider's token cap ate the tail — the live .MD-artifact
+                        // "contents got cut off" class) must NOT execute: the old
+                        // repair silently closed the string and the tool ran with
+                        // HALF the content and no error. Refuse + tell the model.
+                        if _, cut := repairJSONReport(r); cut {
+                                out = append(out, parsedAction{Name: n, Args: `{"__truncated": true}`, Truncated: true})
+                                continue
+                        }
                         if fixed := repairJSON(r); json.Valid([]byte(fixed)) {
                                 r = fixed
                         } else if fixed := lenientJSON(repairJSON(r)); json.Valid([]byte(fixed)) {
@@ -2714,6 +2840,19 @@ func balancedJSON(s string) bool {
 //     "files": [{…} needs "]" AND "}" — the old brace-only repair left the
 //     array open and the JSON stayed invalid).
 func repairJSON(s string) string {
+        fixed, _ := repairJSONReport(s)
+        return fixed
+}
+
+// repairJSONReport repairs malformed model JSON AND reports whether the
+// original was cut MID-STRING (v0.95.4). The distinction is the honesty
+// line: a call that only misses closing braces (the model forgot the
+// closers, the VALUES are complete) repairs safely; a call cut inside a
+// string value (the provider's token cap ate the tail — the live .MD
+// artifact cutoff class) would, repaired, EXECUTE WITH TRUNCATED CONTENT
+// and no error. Callers refuse the inString-truncated class and tell the
+// model to re-send instead.
+func repairJSONReport(s string) (string, bool) {
         var b strings.Builder
         // open bracket stack: '{' or '[' for each currently-open container
         var stack []byte
@@ -2765,7 +2904,7 @@ func repairJSON(s string) string {
         for i := len(stack) - 1; i >= 0; i-- {
                 out += string(stack[i])
         }
-        return out
+        return out, inStr
 }
 
 // canonicalToolName maps the plausible names models invent onto the real

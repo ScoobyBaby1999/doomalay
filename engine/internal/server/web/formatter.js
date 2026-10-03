@@ -181,6 +181,28 @@
       }) - 1;
       return '\n\n%%DOOMALAY-ARTIFACT-' + idx + '%%\n\n';
     });
+    // v0.95.4 THE UNCLOSED-FENCE SALVAGE (the ".MD contents got cut off"
+    // class): a fence that OPENED but never closed means the provider cut
+    // the output mid-artifact (token cap / stream drop). The old extractor
+    // silently saved NOTHING — the user saw a fence, no file, no reason.
+    // Salvage the partial content with the honest marker so the drawer,
+    // the count, and the user all see what actually happened.
+    if (found.length === 0) {
+      var m = /```artifact[ \t]+([^\n]*)\n([\s\S]*)$/.exec(text);
+      if (m) {
+        var info = parseArtifactInfo(String(m[1]));
+        var partial = String(m[2]).replace(/\n+$/, '');
+        if (info.file && partial.trim()) {
+          found.push({
+            file: info.file,
+            encoding: info.encoding,
+            content: partial + '\n\n<!-- TRUNCATED: the provider cut this output before the artifact closed — ask the model to continue or re-send the file -->',
+            truncated: true
+          });
+          out = text.slice(0, m.index) + '\n\n%%DOOMALAY-ARTIFACT-0%%\n\n';
+        }
+      }
+    }
     return { text: out, artifacts: found };
   }
 

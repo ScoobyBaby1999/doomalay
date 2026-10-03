@@ -51,6 +51,16 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(ln) or b"{}")
         msgs = req.get("messages") or []
         tool_rounds = sum(1 for m in msgs if m.get("role") == "tool")
+        # v0.95.4 rig mode: a message containing "dsml" makes the mock emit
+        # deepseek-style native tool markup AS CONTENT (no tool_calls array
+        # — the live leak shape: markup in the visible stream, calls lost).
+        first_user = next((m.get("content", "") for m in msgs if m.get("role") == "user"), "")
+        if "dsml" in str(first_user).lower() and tool_rounds == 0:
+            sse(self, [
+                chunk({"content": "I will run the calculator now.\n<｜DSML｜calls>\n<｜DSML｜invoke name=\"calculator\">\n<｜DSML｜parameter name=\"expression\">2+2*10<｜DSML｜/parameter>\n<｜DSML｜/invoke>\n<｜DSML｜/calls>"}),
+                chunk(None, "stop", {"prompt_tokens": 5, "completion_tokens": 25, "total_tokens": 30}),
+            ])
+            return
         # litellm (brain path) or the engine (direct path) — same mock shape
         N[0] += 1
         if tool_rounds < 3:

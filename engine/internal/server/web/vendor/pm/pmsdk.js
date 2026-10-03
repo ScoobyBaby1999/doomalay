@@ -428,6 +428,47 @@ function isActionLineJS(line) {
   return ACTION_HEAD_RE.test(stripActionDecorations(line));
 }
 
+
+// v0.95.4 THE DSML HELPERS (the PM twin of the Go engine's llm/dsml.go) —
+// deepseek-family models stream their native tool markup
+// (<｜DSML｜calls>…<｜DSML｜/calls>) as content when they fall back to their
+// own format; the markup must never render and the calls inside must not
+// be lost. dsmlClean strips the markup from a VISIBLE fragment; the full
+// conversion (calls → ACTION lines) happens at the parse layer.
+function dsmlClean(s) {
+  if (String(s).indexOf('<｜') < 0 && String(s).indexOf('<|') < 0) return s;
+  var out = String(s)
+    .replace(/<｜DSML｜\s*calls>[\s\S]*?<｜DSML｜\s*\/calls>/g, '')
+    .replace(/<\|DSML\|\s*calls>[\s\S]*?<\|DSML\|\s*\/calls>/g, '');
+  // an UNTERMINATED block (the stream cut mid-call) — strip the tail too
+  out = out.replace(/<｜DSML｜[\s\S]*$/, '').replace(/<\|DSML\|[\s\S]*$/, '');
+  return out;
+}
+// convertDSMLToActions — the parse-layer conversion: strip the markup and
+// re-render each invoke/parameter pair as an ACTION line (findActions picks
+// them up naturally; PM is always the text protocol).
+function convertDSMLToActions(s) {
+  if (String(s).indexOf('<｜') < 0 && String(s).indexOf('<|') < 0) return s;
+  var out = String(s);
+  var actions = [];
+  var blockRe = /<｜DSML｜\s*calls>([\s\S]*?)(?:<｜DSML｜\s*\/calls>|$)/g;
+  var m;
+  while ((m = blockRe.exec(out)) !== null) {
+    var invRe = /<｜DSML｜\s*invoke\s+name="([^"]*)"\s*>([\s\S]*?)(?:<｜DSML｜\s*\/invoke>|<\/｜DSML｜\s*invoke>|$)/g;
+    var im;
+    while ((im = invRe.exec(m[1])) !== null) {
+      var args = {};
+      var parRe = /<｜DSML｜\s*parameter\s+name="([^"]*)"\s*>([\s\S]*?)(?:<｜DSML｜\s*\/parameter>|<\/｜DSML｜\s*parameter>|$)/g;
+      var pm;
+      while ((pm = parRe.exec(im[2])) !== null) args[pm[1]] = pm[2];
+      actions.push('ACTION: ' + im[1] + ' ' + JSON.stringify(args));
+    }
+  }
+  out = dsmlClean(out);
+  if (actions.length) out = (out ? out + '\n\n' : '') + actions.join('\n');
+  return out;
+}
+
 function findActionLine(text) {
   var lines = String(text || '').split('\n');
   for (var i = lines.length - 1; i >= 0; i--) {
@@ -629,6 +670,15 @@ async function runToolLoop(c, opts) {
     usage = mergeUsage(usage, res.usage);
     if (res.think) lastThink = String(res.think); // v0.81.7: the net's raw material
     var reply = (res.text || '').trim();
+
+    // v0.95.4 THE DSML FILTER (the PM twin of the Go engine's llm/dsml.go):
+    // deepseek-family models stream their native tool markup
+    // (<｜DSML｜calls>…<｜DSML｜/calls>) as content when they fall back to
+    // their own format — the markup leaked into the visible transcript and
+    // the calls inside never executed. PM is always the text protocol, so
+    // the rescued calls convert to ACTION lines (findActions picks them up
+    // naturally) and the markup never renders.
+    reply = convertDSMLToActions(reply);
 
     // v0.77.5 NEVER-LOSE-CONTENT — the twin of the Go loop's flush
     // (llm/chat.go "turn ended idle with NO reply — flush it now"): a
@@ -1361,13 +1411,13 @@ async function roundTripOnce(c, opts, messages, force) {
             // suppressed — round is a tool call, but progress stays live
             progObserve();
           } else if (decided === 'final') {
-            enqueue(d.content);
+            enqueue(dsmlClean(d.content)); // v0.95.4: DSML markup never renders
           } else if (findActionLine(full + '\n')) {
             decided = 'action';
             progStart();
           } else if (!stillMaybePreamble(full)) {
             decided = 'final';
-            enqueue(full);
+            enqueue(dsmlClean(full)); // v0.95.4
           }
         }
       }
@@ -1381,7 +1431,7 @@ async function roundTripOnce(c, opts, messages, force) {
         progStart();
       } else {
         decided = 'final';
-        if (full) enqueue(full);
+        if (full) enqueue(dsmlClean(full)); // v0.95.4
       }
     }
     await drainPump(); // visual stream finishes BEFORE the round resolves

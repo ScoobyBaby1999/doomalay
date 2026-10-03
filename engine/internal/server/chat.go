@@ -2196,7 +2196,7 @@ func bundleManifestText(b map[string]any) string {
         sb.WriteString("The user attached this WHOLE bundle instead of one member. For EVERY request:\n")
         sb.WriteString("1. Review the members below against the task BEFORE answering.\n")
         sb.WriteString("2. Decide which member(s) fit the work best — never guess or answer from memory when a member covers it. The descriptions state WHEN each member fires; pick the smallest fitting one, never the whole bundle at once.\n")
-        sb.WriteString("3. LOAD the pick BEFORE starting: an installed skill via ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}; any hub member (skill/template/doc/script) via ACTION: hublib {\"action\":\"download\",\"type\":\"…\",\"repo\":\"…\",\"id\":\"…\"} then load it — the type/repo/id ride the manifest lines.\n")
+        sb.WriteString("3. LOAD the pick BEFORE starting: call the skills tool with action \"load\" + the skill name, or the hublib tool with action \"download\" + its type/repo/id from the manifest lines — as a native tool call when your tools are offered as functions, or as an `ACTION: <tool> {<json>}` line on text-protocol chats.\n")
         sb.WriteString("4. Follow the loaded member to the letter, and say briefly WHICH member you used and why.\n")
         if wf := superpowersWorkflowBlock(id, true); wf != "" {
                 sb.WriteString(wf)
