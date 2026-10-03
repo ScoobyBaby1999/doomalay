@@ -251,7 +251,7 @@
         setTimeout(function () {
           try {
             if (panelRef && !panelRef.isOpen() && panelRef.bodyEl &&
-                panelRef.bodyEl.childElementCount > 25) {
+                panelRef.bodyEl.querySelectorAll('*').length > 25) {
               panelRef.wipeBody();
               if (window.DoomProjection && window.DoomProjection.poke) window.DoomProjection.poke();
             }

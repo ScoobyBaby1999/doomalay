@@ -19,7 +19,11 @@
 //                    data-fmt-scope hooks, the '· this chat' marker,
 //                    noTex editors with dir pills) and the full
 //                    appearance page render (tv-/gc-/fmt- editors,
-//                    NO legacy color inputs anywhere)
+//                    NO legacy color inputs anywhere). v0.98 C3 made
+//                    the row editors LAZY (banner + empty shell until
+//                    the user expands) — the rig EXPANDS every row
+//                    through the module's real wireColorRows click
+//                    path before the editor-markup assertions.
 //
 // Prints 'SELF-TEST OK' + exit 0 on success; failures + exit 1.
 
@@ -283,8 +287,81 @@ ok('appearance loaded on the stub window', !!A);
 ok('appearance exposes wireFmtEditors', typeof A.wireFmtEditors === 'function');
 A.wireFmtEditors({});   // non-DOM root → early return, no throw
 
+// ── v0.98: the LAZY-EXPAND driver (the real user flow, node-side) ──
+// v0.98 C3 made the color-row editors LAZY: render() mounts the banner
+// + an EMPTY shell; the editor markup only exists after the user clicks
+// the row head. The rig therefore expands before asserting editor
+// internals — through the module's REAL path: wireColorRows attaches
+// the REAL click handler to a stub head, the click runs the REAL
+// buildLazyEditor, which invokes the REAL rowEditorBuilders[pfx]
+// closure the render registered; that closure writes the REAL
+// GradientUI.editor markup into the stub body. The captured markup is
+// spliced back into the html exactly where the (now-filled) body shell
+// sits — data-lazy-pfx consumed, editor inside: the post-expand DOM
+// shape, byte-for-byte what the eager render used to emit.
+function stubColorRowDom(pfx) {
+  var body = {
+    _html: '',
+    _built: false,
+    getAttribute: function (k) { return (k === 'data-lazy-pfx' && !this._built) ? pfx : null; },
+    removeAttribute: function (k) { if (k === 'data-lazy-pfx') this._built = true; },
+    querySelector: function () { return null; },   // nothing to re-find in a stub
+    closest: function () { return null; }
+  };
+  Object.defineProperty(body, 'innerHTML', {
+    get: function () { return this._html; },
+    set: function (h) { this._html = h; }
+  });
+  var row = {
+    classList: {
+      _expanded: false,
+      contains: function (c) { return c === 'expanded' && this._expanded; },
+      toggle: function (c) { if (c === 'expanded') this._expanded = !this._expanded; }
+    },
+    querySelector: function (sel) { return sel === '[data-color-body]' ? body : null; }
+  };
+  var clicks = [];
+  var head = {
+    addEventListener: function (t, fn) { if (t === 'click') clicks.push(fn); },
+    getAttribute: function (k) { return k === 'data-color-toggle' ? pfx : null; },
+    closest: function (sel) { return sel === '.color-row-collapsed' ? row : null; },
+    click: function () {
+      clicks.forEach(function (fn) {
+        fn({ target: { closest: function () { return null; } } });
+      });
+    }
+  };
+  return { head: head, body: body };
+}
+
+// expandLazyEditors(html) — expand every lazy row in a rendered html
+// string: one wiring pass over a stub root (the real wireColorRows),
+// then a click per head; each real buildLazyEditor fills a stub body
+// whose captured markup is spliced into the string in place.
+function expandLazyEditors(html) {
+  var re = /<div class="color-row-body" data-color-body="([^"]+)" data-lazy-pfx="([^"]+)"><\/div>/g;
+  var rows = [], m;
+  while ((m = re.exec(html))) rows.push({ at: m.index, len: m[0].length, body: m[1], pfx: m[2] });
+  if (!rows.length) return html;
+  var doms = rows.map(function (r) { return stubColorRowDom(r.pfx); });
+  A.wireColorRows({
+    querySelectorAll: function (sel) {
+      return sel === '[data-color-toggle]' ? doms.map(function (d) { return d.head; }) : [];
+    }
+  });
+  doms.forEach(function (d) { d.head.click(); });
+  var out = '', last = 0;
+  rows.forEach(function (r, i) {
+    out += html.slice(last, r.at) +
+      '<div class="color-row-body" data-color-body="' + r.body + '">' + doms[i].body._html + '</div>';
+    last = r.at + r.len;
+  });
+  return out + html.slice(last);
+}
+
 // the shared fmt row builder (tweaks.js reuses THIS exact signature)
 var row = A.fmtColorRow('a1', 'Accent 1', 'headings', '#22d3ee', false, '');
+row = expandLazyEditors(row);   // v0.98: expand the row's lazy editor first
 has('fmt row slot hook', row, 'data-fmt-slot="a1"');
 lacks('fmt row no scope attr', row, 'data-fmt-scope');
 has('fmt row editor id', row, 'id="fmt-a1-gr"');
@@ -300,6 +377,7 @@ var chatRow = A.fmtColorRow('link', 'Links', '', '#67e8f9', true, 'chat');
 has('chat row scope attr', chatRow, 'data-fmt-scope="chat"');
 has('chat row marker', chatRow, '· this chat');
 var specRow = A.fmtColorRow('a1', 'Accent 1', '', { colors: ['#22d3ee', '#f472b6'], dir: 'h' }, false, '');
+specRow = expandLazyEditors(specRow);   // v0.98: expand, then count the swatches
 ok('spec row renders 2 swatches', (specRow.match(/class="gr-color"/g) || []).length === 2);
 
 // paintChatFmtTwins — the per-chat #chat-root twin paint (chat-scope
@@ -326,6 +404,7 @@ var page = registeredPages.appearance;
 ok('appearance page registered', !!page);
 resetRec();
 var html = page.render(settingsStub.getState, settingsStub.setState);
+html = expandLazyEditors(html);   // v0.98: expand ALL color rows before the editor assertions
 has('page token wrapper', html, 'data-appr-render="r');
 has('page theme editor accent', html, 'id="tv-accent-gr"');
 has('page theme editor accent2', html, 'id="tv-accent-2-gr"');

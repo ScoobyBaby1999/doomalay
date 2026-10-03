@@ -100,6 +100,13 @@ R=$(ev "(async function(){
   var t = document.querySelector('.settings-nav .tab[data-page=appearance]') || Array.from(document.querySelectorAll('.settings-nav .tab')).filter(function(x){return /color/i.test(x.textContent)})[0];
   if (t) t.click();
   await new Promise(r=>setTimeout(r,1500));
+  // v0.98: the color-row editors are LAZY (banner + empty shell until
+  // the user expands) — expand EVERY row before the chip/editor gates.
+  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
+    var rw = h.closest('.color-row-collapsed');
+    if (rw && !rw.classList.contains('expanded')) h.click();
+  });
+  await new Promise(function(rs){ setTimeout(rs,500); });
   var sp = document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var card = sp.querySelector('.settings-section');
@@ -168,6 +175,13 @@ echo "── (4b) the gradient-twin path (a gradient surface-2 must NOT re-proje
 R4=$(ev "(async function(){
   Settings.setState({themeOverrides: {midnight: {'--surface-2': {colors: ['#201a2e','#3a2a50'], dir: 'h'}}}});
   await new Promise(r=>setTimeout(r,1200));
+  // v0.98: lazy editors — re-expand (idempotent) in case the page
+  // re-rendered, then measure the chips.
+  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
+    var rw = h.closest('.color-row-collapsed');
+    if (rw && !rw.classList.contains('expanded')) h.click();
+  });
+  await new Promise(function(rs){ setTimeout(rs,500); });
   var sp = document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var inline = mini ? (mini.getAttribute('style') || '') : 'MISSING';
@@ -197,6 +211,13 @@ ck "gradient surface-2 twin: chips stay native (no window, ≤60 projected)" "$G
 
 echo "── (5) theme-following, natively (a surface-2 override, no repaint call)"
 R2=$(ev "(async function(){
+  // v0.98: lazy editors — the chip must EXIST before the before/after
+  // recalc measurement (expand-all, idempotent).
+  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
+    var rw = h.closest('.color-row-collapsed');
+    if (rw && !rw.classList.contains('expanded')) h.click();
+  });
+  await new Promise(function(rs){ setTimeout(rs,500); });
   var sp = document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var before = getComputedStyle(mini).backgroundColor;
