@@ -2772,12 +2772,24 @@
         setActivity(bodyEl, state, p && p.text);
       },
       onReset: function () {
-        // v0.22: a long preamble streamed, then turned out to be a tool
-        // call — clear it so the tool pills render on a clean slate.
-        if (streamMsg) {
-          streamMsg.text = '';
-          updateMessageEl(bodyEl, streamMsg, false, state);
+        // v0.95.2 THE SEGMENTED FLOW (PM path — the user's live report:
+        // "the final response replaces the previous final response in the
+        // previous final response's location"): the old code WIPED the
+        // singleton streamMsg (streamMsg.text = '') and left it in place,
+        // so the next round's text re-streamed into the SAME bubble at its
+        // OLD position high up the transcript. The narration before a tool
+        // call is a real response block (the engine paths have kept it as
+        // one since v0.93.3) — CLOSE it as its own completed block, persist
+        // it as a segment, and null the singleton so the next round's
+        // deltas open a NEW bubble at the bottom, under the tool pills.
+        if (streamMsg && (streamMsg.text || '').trim()) {
+          streamMsg.complete = true;
+          streamMsg.streaming = false;
+          updateMessageEl(bodyEl, streamMsg, true, state);
+          persist('assistant', streamMsg.text, streamMsg);
+          streamMsg._segPersisted = true;
         }
+        streamMsg = null; // the next onDelta opens a fresh bubble at the bottom
       },
       onTool: function (ev) {
         bumpActivity(state);
@@ -4393,6 +4405,16 @@
     if (!text) return { action: 'none' };
     if (lastA >= 0 && !messages[lastA].complete && messages[lastA].text === text) {
       return { action: 'finalize', index: lastA };
+    }
+    // v0.95.2: a text-matching 'assistant' event on an ALREADY-COMPLETE
+    // bubble is the same segment arriving twice (the pre-v0.95.2 engine
+    // shipped the final assistant AFTER status:idle — completeAllStreaming
+    // had closed the bubble, and this event then DUPLICATED into a second
+    // full-text block; replays of old logs still carry that order). A
+    // matching complete block is a no-op; a DIFFERING text is a genuine
+    // new segment and still pushes.
+    if (lastA >= 0 && messages[lastA].complete && messages[lastA].text === text) {
+      return { action: 'none' };
     }
     return { action: 'push' };
   }

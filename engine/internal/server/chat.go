@@ -1406,7 +1406,7 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
                 s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
                 return
         }
-        s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
 }
 
 // streamFromBrain proxies the chat turn through the Python brain (full
@@ -1430,7 +1430,65 @@ func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID 
                 s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
                 return
         }
-        s.forwardEvents(ctx, pipe, sessionID, sess, userText, events, errs, terminal)
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
+}
+
+// synthesizeRounds wraps a brain/remote-brain event stream with the v0.93.3
+// ROUND CONTRACT the engine's own paths already emit — the brain emits NO
+// segment events, so on multi-round tool turns the model's narration for
+// round N glommed into round N-1's still-open bubble at its old position
+// high up the transcript (the user's live report: "the final response
+// replaces the previous final response in the previous final response's
+// location while it spams tools down the chatlog, having its final output
+// remain all the way up top").
+//
+// The synthesis (single choke point — works for every brain/space version):
+//   · assistant_delta text accumulates in a segment buffer;
+//   · a tool_use boundary closes the open segment FIRST (assistant
+//     {round:true} + round_end), so the pill renders below a COMPLETED
+//     block and the next round's deltas open a NEW bubble at the bottom;
+//   · a terminal status/error closes the final segment before the terminal,
+//     so replay reconstructs the same block-per-round flow.
+// No-op for single-segment turns (nothing buffered at boundary) and for
+// brains that grow their own round events (a tool_use with an empty buffer
+// synthesizes nothing).
+func (s *Server) synthesizeRounds(sessionID string, events <-chan map[string]any) <-chan map[string]any {
+        out := make(chan map[string]any, 64)
+        go func() {
+                defer close(out)
+                var seg strings.Builder
+                for ev := range events {
+                        t, _ := ev["type"].(string)
+                        if t == "assistant_delta" {
+                                if txt, ok := ev["text"].(string); ok {
+                                        seg.WriteString(txt)
+                                }
+                                out <- ev
+                                continue
+                        }
+                        boundary := false
+                        round := false
+                        switch t {
+                        case "tool_use":
+                                boundary, round = true, true
+                        case "error":
+                                boundary = true
+                        case "status":
+                                if st, _ := ev["state"].(string); st == "idle" || st == "error" {
+                                        boundary = true
+                                }
+                        }
+                        if boundary && seg.Len() > 0 {
+                                out <- map[string]any{"type": "assistant", "text": seg.String(), "round": true, "session_id": sessionID}
+                                if round {
+                                        out <- map[string]any{"type": "round_end", "session_id": sessionID}
+                                }
+                                seg.Reset()
+                        }
+                        out <- ev
+                }
+        }()
+        return out
 }
 
 // streamFromDirectProxy calls the cloud LLM directly from Go (no Python brain
@@ -1656,6 +1714,20 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                         events <- map[string]any{"type": "assistant", "text": strings.Join(assistantParts, ""), "round": true}
                                         assistantParts = nil
                                 }
+                        }
+                        // v0.95.2 THE ORDERING FIX: the terminal status chunk
+                        // used to reach the client BEFORE the turn's final
+                        // full-text assistant event (the goroutine only
+                        // pushed it AFTER the chunk loop) — the client's
+                        // completeAllStreaming ran on status:idle and marked
+                        // the open bubble complete, so the trailing assistant
+                        // event then DUPLICATED into a second full-text
+                        // bubble. Flush the final segment BEFORE the terminal
+                        // ships (the post-loop flush stays as the no-terminal
+                        // backstop for died streams).
+                        if chunk.Type == "status" && (chunk.State == "idle" || chunk.State == "error") && len(assistantParts) > 0 {
+                                events <- map[string]any{"type": "assistant", "text": strings.Join(assistantParts, "")}
+                                assistantParts = nil
                         }
                         if chunk.Type == "assistant_reset" {
                                 // v0.22 legacy (pre-v0.93.3 the leak backstop

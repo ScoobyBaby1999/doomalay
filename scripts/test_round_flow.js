@@ -73,6 +73,23 @@ eq('replay final segment pushes too',
   P.roundFlowApply(replay, { type: 'assistant', text: 'The repo has 42 files.' }, 'assistant'),
   { action: 'push' });
 
+// ── 4. v0.95.2 THE DUPLICATE SUPPRESSOR: a text-matching 'assistant' event
+// on an ALREADY-COMPLETE bubble is the same segment twice (the pre-v0.95.2
+// engine shipped the final assistant AFTER status:idle — completeAllStreaming
+// had closed the bubble and the event duplicated into a second full-text
+// block; replays of old logs still carry that order). No-op on match, push on
+// differing text.
+var dup = [
+  { role: 'user', text: 'go' },
+  { role: 'assistant', text: 'The result is 22.', complete: true }
+];
+eq('a matching assistant event on a completed bubble no-ops',
+  P.roundFlowApply(dup, { type: 'assistant', text: 'The result is 22.' }, 'assistant'),
+  { action: 'none' });
+eq('a DIFFERING assistant event still pushes (a genuine new segment)',
+  P.roundFlowApply(dup, { type: 'assistant', text: 'And one more thing…' }, 'assistant'),
+  { action: 'push' });
+
 // ── 4. a mismatched text on an OPEN bubble pushes a NEW block ──
 var mismatch = [{ role: 'assistant', text: 'partial…', complete: false, streaming: true }];
 eq('mismatched text pushes a new block (never replaces the open one)',
