@@ -930,6 +930,7 @@
     var PROJ = (function () {
       if (!HAS_DOM) return null;   // the node harness mounts a stub window — no DOM, no painter
       var SEL = null;             // the compiled projection selector
+      var POS_SEL = null;   // v0.98 C1: the descendant-position matcher (see collect)
       var painted = [];           // elements carrying painter styles
       var rootReg = [];           // tracked transformed roots: {el, key, rule}
       var varSheet = null;        // the CSSOM sheet holding the per-root var rules
@@ -1071,6 +1072,7 @@
 
       function collect() {
         var sels = [];
+        var posSels = [];
         try {
           for (var s = 0; s < document.styleSheets.length; s++) {
             var sheet = document.styleSheets[s];
@@ -1090,11 +1092,28 @@
                   // drop pseudo-elements (::after etc) — they never match
                   sels.push(r.selectorText.replace(/::[a-z-]+/g, ''));
                 }
+                // v0.98 C1: POSITIONED rules — L2.ok()'s descendant gate
+                // rides ONE native querySelector sweep over these instead
+                // of getComputedStyle per descendant (the colors-tab mount
+                // was ~1000 forced computed reads interleaved with mint
+                // writes — the stall + the black-flash window).
+                var pos = r.style.getPropertyValue('position');
+                if (pos === 'absolute' || pos === 'fixed' || pos === 'sticky') {
+                  var ps = r.selectorText.replace(/::[a-z-]+/g, '');
+                  if (posSels.indexOf(ps) < 0 && posSels.length < 400) posSels.push(ps);
+                }
               }
             })(rules);
           }
         } catch (e) { /* a locked sheet is simply skipped */ }
         SEL = sels.length ? sels.join(',') : null;
+        // v0.98 C1: the static-position descendant gate matcher — the
+        // stylesheet-derived positioned selectors + the inline-style
+        // catchers. null when the sheet walk found nothing (ok() falls
+        // back to the per-kid walk — correctness preserved either way).
+        POS_SEL = posSels.length
+          ? posSels.join(',') + ',[style*="position:absolute"],[style*="position:fixed"],[style*="position:sticky"]'
+          : '[style*="position:absolute"],[style*="position:fixed"],[style*="position:sticky"]';
       }
 
       function num(v) { return (Math.round(v * 10) / 10); }
@@ -1199,11 +1218,20 @@
             // base rule's inset() — it rides the legacy bake instead.
             if (snap.clipPath && snap.clipPath !== 'none') return (el.__projL2ok = 0);
             if (snap.position === 'static') {
-              // position:relative is only safe without positioned descendants
-              var kids = el.querySelectorAll('*');
-              for (var k = 0; k < kids.length; k++) {
-                var kp = getComputedStyle(kids[k]).position;
-                if (kp === 'absolute' || kp === 'fixed') return (el.__projL2ok = 0);
+              // position:relative is only safe without positioned
+              // descendants. v0.98 C1: ONE native querySelector sweep
+              // over POS_SEL (derived from the stylesheets in collect)
+              // replaces the getComputedStyle-per-descendant walk — the
+              // colors-tab mount was thousands of forced reads. Falls
+              // back to the walk when POS_SEL is not derived.
+              if (POS_SEL) {
+                try { if (el.querySelector(POS_SEL)) return (el.__projL2ok = 0); } catch (e2) {}
+              } else {
+                var kids = el.querySelectorAll('*');
+                for (var k = 0; k < kids.length; k++) {
+                  var kp = getComputedStyle(kids[k]).position;
+                  if (kp === 'absolute' || kp === 'fixed') return (el.__projL2ok = 0);
+                }
               }
             }
             good = beforeFree ? 1 : 2;   // prefer ::before; ::after when taken
@@ -1473,7 +1501,7 @@
         for (var ri = 0; ri < rootReg.length; ri++) {
           var R = rootReg[ri];
           var els;
-          try { els = R.el.querySelectorAll(SEL); } catch (e) { SEL = null; return; }
+          try { els = R.el.querySelectorAll(SEL); } catch (e) { SEL = null; POS_SEL = null; return; }
           var M = readMatrix(R.el);
           for (var i = 0; i < els.length; i++) {
             var el = els[i];
@@ -1617,17 +1645,25 @@
               yB = flatBy + v0;
               yCalc = fmtCalcYVis(yB);
             }
+            // v0.94.3: the Track-2 candidate snapshot — computed reads stay
+            // in the READ phase (batched, layout-clean). Taken only when a
+            // mint or an epoch re-mint is due; fallback-flagged elements
+            // skip the reads entirely.
+            // v0.98 C2: the MINT DECISION computes here too (okv) — the
+            // write phase used to call L2.ok() (a getComputedStyle walk)
+            // between mint writes, forcing a style recalc per cycle: the
+            // colors-tab mount was ~1000 reads interleaved with writes
+            // (the stall + the black-flash window). Reads before writes,
+            // always.
+            var _snap = (el.__projL2ok === 0) ? null :
+              ((el.__projL2 && el.__projL2Epoch === epoch) ? null : L2.snapshot(el));
+            var _okv = _snap ? L2.ok(el, _snap) : 0;
             reads.push({ el: el, R: R,
               bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
               by: yB,
               pos: fmtCalc('--proj-tx', M.translateOnly ? (-r.left + M.tx) : -r.left) + ' ' + yCalc,
-              // v0.94.3: the Track-2 candidate snapshot — computed reads stay
-              // in the READ phase (batched, layout-clean). Taken only when a
-              // mint or an epoch re-mint is due; fallback-flagged elements
-              // skip the reads entirely.
               vis: visForm,
-              snap: (el.__projL2ok === 0) ? null :
-                ((el.__projL2 && el.__projL2Epoch === epoch) ? null : L2.snapshot(el)) });
+              snap: _snap, okv: _okv });
             el.__projR = R;   // v0.79.3: the newcomer bake needs the root
           }
         }
@@ -1693,8 +1729,8 @@
           if (it.el.__projL2 && it.el.__projL2Epoch === epoch) {
             layered = true;
             L2.rebake(it.el);
-          } else if (it.snap && L2.ok(it.el, it.snap)) {
-            layered = L2.bake(it.el, it.snap, it.bx, it.by, size, it.vis, epoch, it.el.__projL2ok);
+          } else if (it.snap && it.okv) {   // v0.98 C2: the read-phase decision
+            layered = L2.bake(it.el, it.snap, it.bx, it.by, size, it.vis, epoch, it.okv);
           }
           if (layered) {
             // clear any legacy inline bake this element carried from before
@@ -1847,8 +1883,10 @@
             for (var j = 0; j < mm.addedNodes.length; j++) {
               var nn = mm.addedNodes[j];
               if (nn.nodeType === 1 && (nn.tagName === 'STYLE' || nn.tagName === 'LINK') &&
-                  nn.id !== 'doom-proj-vars' && nn.id !== 'doom-derived-gates') {
+                  nn.id !== 'doom-proj-vars' && nn.id !== 'doom-derived-gates' &&
+                  nn.id !== 'proj-layer-styles') {   // v0.98 C4: OUR L2 sheet carries layer rules, not windows — no SEL re-walk
                 SEL = null;
+                POS_SEL = null;
               }
             }
           }
@@ -2199,7 +2237,7 @@
       return {
         poke: mark,             // app.js's physics tick calls this per frame
         motion: motion,         // v0.74: the CHEAP per-frame path (writeY rides it)
-        repaint: function () { SEL = null; memoEpoch++; paint(); },
+        repaint: function () { SEL = null; POS_SEL = null; memoEpoch++; paint(); },
         paint: paint,
         stats: stats            // v0.78.3: {paints, motions} — the perf rig
       };

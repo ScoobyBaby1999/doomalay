@@ -386,6 +386,9 @@
     }
     var fmtAttr = (opts.fmtSlot ? ' data-fmt-slot="' + opts.fmtSlot + '"' : '') +
       (opts.fmtScope ? ' data-fmt-scope="' + opts.fmtScope + '"' : '');
+    // v0.98 C3: opts.lazy → the editor builds on first expand (the shell
+    // mounts empty; buildLazyEditor fills it from rowEditorBuilders).
+    var lazyAttr = (opts.lazy && !editorHtml) ? ' data-lazy-pfx="' + pfx + '"' : '';
     return '<div class="color-row-collapsed" data-color-row="' + pfx + '"' + fmtAttr + '>' +
       '<div class="color-row-head" data-color-toggle="' + pfx + '">' +
         '<span class="color-row-name">' + label + '</span>' +
@@ -393,7 +396,7 @@
         '<button class="color-row-reset" data-color-reset="' + pfx + '" title="reset this row" aria-label="reset this row">↺</button>' +
         '<span class="color-row-arrow">▶</span>' +
       '</div>' +
-      '<div class="color-row-body" data-color-body="' + pfx + '">' + editorHtml + '</div>' +
+      '<div class="color-row-body" data-color-body="' + pfx + '"' + lazyAttr + '>' + editorHtml + '</div>' +
     '</div>';
   }
 
@@ -410,7 +413,10 @@
         if (e.target && e.target.closest && e.target.closest('[data-color-reset]')) return;
         var pfx = h.getAttribute('data-color-toggle');
         var row = h.closest('.color-row-collapsed');
-        if (row) row.classList.toggle('expanded');
+        if (!row) return;
+        var wasExpanded = row.classList.contains('expanded');
+        row.classList.toggle('expanded');
+        if (!wasExpanded) buildLazyEditor(row);   // v0.98 C3: first expand builds
       });
     });
     var resets = rootEl.querySelectorAll('[data-color-reset]');
@@ -426,6 +432,23 @@
     });
   }
   var rowResetFns = {};   // pfx → onReset closure (set by colorRowCollapsed callers)
+  // v0.98 C3: THE LAZY EDITOR — the colors tab mounted ~979 nodes because
+  // every collapsed color row built its full GradientUI editor eagerly
+  // (18 editors, ~50 nodes each, collapsed-but-in-DOM + the wire sweeps).
+  // The rows now mount as banner + empty shell; the editor builds on
+  // FIRST expand — one row, user-initiated, ~50 nodes at a time.
+  var rowEditorBuilders = {};   // pfx → function(bodyEl) builds + wires the editor
+
+  function buildLazyEditor(row) {
+    var body = row.querySelector('[data-color-body]');
+    if (!body) return;
+    var pfx = body.getAttribute('data-lazy-pfx');
+    if (!pfx) return;                       // already built (or never lazy)
+    body.removeAttribute('data-lazy-pfx');
+    var build = rowEditorBuilders[pfx];
+    if (!build) return;
+    try { build(body); } catch (err) { console.error('lazy editor build', err); }
+  }
 
   function gridColorRow(key, label, spec) {
     var G = window.GradientUI;
@@ -440,7 +463,15 @@
         if (el && G && G.wire) G.wire(el, { spec: spec, live: live, rebuild: rebuild });
       })) Settings.rerender();
     };
-    queueEditorWire(pfx + '-gr', spec, live, rebuild);
+    // v0.98 C3: the editor builds on first expand (lazy) — the mount drops
+    // the eager G.editor() HTML build + the queueEditorWire sweep.
+    if (G && G.editor && G.wire) {
+      rowEditorBuilders[pfx] = function (body) {
+        body.innerHTML = G.editor(pfx, spec, edOpts);
+        var el = body.querySelector('#' + pfx + '-gr');
+        if (el) G.wire(el, { spec: spec, live: live, rebuild: rebuild });
+      };
+    }
     // v0.45 ITEM 5: collapsed color row — banner + expand arrow + per-row reset
     var onReset = function () {
       var defaults = { bg: '#0a0a0b', lineColor: '#131318',
@@ -450,9 +481,8 @@
     };
     rowResetFns[pfx] = onReset;
     return colorRowCollapsed({
-      pfx: pfx, label: label, spec: spec,
-      editorHtml: (G ? G.editor(pfx, spec, { noTex: true }) :
-        '<span class="color-hex">' + String((spec.colors || [])[0] || '') + '</span>'),
+      pfx: pfx, label: label, spec: spec, lazy: true,
+      editorHtml: '',
       onReset: onReset
     });
   }
@@ -532,9 +562,16 @@
     var spec = (G && G.norm) ? G.norm(val) :
       { colors: [String((val && typeof val === 'object' && val.colors) ? val.colors[0] : val)], dir: 'auto' };
     fmtSpecs[key + '|' + (scope || '')] = spec;
-    var editorHtml = (G && G.editor)
-      ? G.editor('fmt-' + key, spec, { noTex: true })
-      : '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>';
+    // v0.98 C3: the fmt editor builds on first expand (lazy) — wireFmtRow
+    // wires it the moment it lands (idempotent via editorEl._fmtWired).
+    if (G && G.editor && G.wire) {
+      rowEditorBuilders['fmt-' + key] = function (body) {
+        body.innerHTML = G.editor('fmt-' + key, spec, { noTex: true });
+        var row = body.closest('[data-color-row]');
+        if (row) wireFmtRow(row);
+      };
+    }
+    var editorHtml = '';
     var onReset = function () {
       if (scope === 'chat' && window.ChatTweaks) {
         window.ChatTweaks.setFmtSlot(key, null);
@@ -551,7 +588,7 @@
     return colorRowCollapsed({
       pfx: 'fmt-' + key, label: label + (hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + hint + '</span>' : '') +
         (customized ? ' <span class="crc-mark crc-mark--chat">· this chat</span>' : ''),
-      spec: spec, editorHtml: editorHtml,
+      spec: spec, editorHtml: editorHtml, lazy: true,
       fmtSlot: key, fmtScope: scope,
       onReset: onReset
     });
@@ -661,9 +698,16 @@
           if (el && G && G.wire) G.wire(el, { spec: spec, live: tvLive, rebuild: tvRebuild });
         })) Settings.rerender();
       };
-      queueEditorWire(pfx + '-gr', spec, tvLive, tvRebuild);
-      var editorHtml = (G ? G.editor(pfx, spec, edOpts) :
-        '<span class="color-hex">' + String(spec.colors[0] || '') + '</span>');
+      // v0.98 C3: the editor builds on first expand (lazy) — the Customize
+      // section was 10 eager editors (~500 of the ~979 mount nodes).
+      if (G && G.editor && G.wire) {
+        rowEditorBuilders[pfx] = function (body) {
+          body.innerHTML = G.editor(pfx, spec, edOpts);
+          var el = body.querySelector('#' + pfx + '-gr');
+          if (el) G.wire(el, { spec: spec, live: tvLive, rebuild: tvRebuild });
+        };
+      }
+      var editorHtml = '';
       var onReset = function () {
         var sR = Settings.getState();
         var curR = sR.theme || 'midnight';
@@ -681,7 +725,7 @@
         pfx: pfx,
         label: c.label + (stored ? ' <span class="crc-mark">· customized</span>' : '') +
           (c.hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + c.hint + '</span>' : ''),
-        spec: spec, editorHtml: editorHtml,
+        spec: spec, editorHtml: editorHtml, lazy: true,
         onReset: onReset
       });
     });
@@ -855,9 +899,64 @@
       '</div>';
   }
 
+  // v0.98 C5: the accounts fetch is session-cached (60s TTL) — the General
+  // tab re-mounts on every open and re-fired all three fetches; the async
+  // innerHTML then landed mid-panel-life as observer-triggered repaints.
+  // acctAction() clears the cache so the rows go honest after any action.
+  var acctCache = { t: 0, res: null };
+
+  function paintAcctRows(res) {
+    var cur = document.getElementById('acct-rows');
+    if (!cur) return;
+    var hf = res[0] || {};
+    var accts = res[1].accounts || [];
+    var keys = res[2] || {};
+    var gh = null, gt = null;
+    (accts || []).forEach(function (a) {
+      if (a.kind === 'github') gh = a;
+      if (a.kind === 'gitea') gt = a;
+    });
+    var keyCount = 0;
+    Object.keys(keys).forEach(function (k) { if (keys[k] && keys[k].has_key) keyCount++; });
+    var html = '';
+    // Hugging Face
+    html += acctRow('🤗 Hugging Face',
+      hf.connected ? ('connected as ' + (hf.user || 'you')) : 'not connected — sandbox chats + the Hub need it',
+      !!hf.connected,
+      hf.connected ? 'acct-hf-out' : 'acct-hf-in',
+      hf.connected ? 'log out' : 'connect', 0);
+    // GitHub
+    var ghIn = !!(gh && gh.signed_in);
+    html += acctRow('🐙 GitHub',
+      ghIn ? ('signed in as ' + (gh.login || 'you')) : 'not connected — hub publishing + workspace forges',
+      ghIn,
+      ghIn ? 'acct-gh-out' : 'acct-gh-in',
+      ghIn ? 'log out' : 'connect', 0);
+    // Gitea — only surfaces when it's actually signed in (self-hosted
+    // forges aren't a default row).
+    if (gt && gt.signed_in) {
+      html += acctRow('🔧 Gitea',
+        'signed in as ' + (gt.login || 'you'), true, 'acct-gt-out', 'log out', 0);
+    }
+    // Cloud providers (BYOK vault)
+    html += acctRow('☁️ Cloud providers',
+      keyCount ? (keyCount + ' API key' + (keyCount === 1 ? '' : 's') + ' set — your chats bill YOUR keys')
+                 : 'no API keys yet — bring your own for every chat',
+      keyCount > 0, 'acct-keys', 'manage', 0);
+    cur.innerHTML = html;
+    // The rows land AFTER wireInputs ran — attach the listeners directly.
+    cur.querySelectorAll('[data-acct]').forEach(function (btn) {
+      btn.addEventListener('click', function () { acctAction(btn.dataset.acct); });
+    });
+  }
+
   function hydrateAccounts() {
     var host = document.getElementById('acct-rows');
     if (!host) return;
+    if (acctCache.res && (Date.now() - acctCache.t) < 60000) {
+      paintAcctRows(acctCache.res);   // v0.98 C5: cached — no fetch, no async repaint
+      return;
+    }
     Promise.all([
       acctJSON('/api/hf/account').catch(function () { return { connected: false, user: '' }; }),
       acctJSON('/api/workspaces/accounts').catch(function () { return { accounts: [] }; }),
@@ -865,46 +964,8 @@
     ]).then(function (res) {
       var cur = document.getElementById('acct-rows');
       if (!cur || cur !== host) return; // the page moved on — stop
-      var hf = res[0] || {};
-      var accts = res[1].accounts || [];
-      var keys = res[2] || {};
-      var gh = null, gt = null;
-      (accts || []).forEach(function (a) {
-        if (a.kind === 'github') gh = a;
-        if (a.kind === 'gitea') gt = a;
-      });
-      var keyCount = 0;
-      Object.keys(keys).forEach(function (k) { if (keys[k] && keys[k].has_key) keyCount++; });
-      var html = '';
-      // Hugging Face
-      html += acctRow('🤗 Hugging Face',
-        hf.connected ? ('connected as ' + (hf.user || 'you')) : 'not connected — sandbox chats + the Hub need it',
-        !!hf.connected,
-        hf.connected ? 'acct-hf-out' : 'acct-hf-in',
-        hf.connected ? 'log out' : 'connect', 0);
-      // GitHub
-      var ghIn = !!(gh && gh.signed_in);
-      html += acctRow('🐙 GitHub',
-        ghIn ? ('signed in as ' + (gh.login || 'you')) : 'not connected — hub publishing + workspace forges',
-        ghIn,
-        ghIn ? 'acct-gh-out' : 'acct-gh-in',
-        ghIn ? 'log out' : 'connect', 0);
-      // Gitea — only surfaces when it's actually signed in (self-hosted
-      // forges aren't a default row).
-      if (gt && gt.signed_in) {
-        html += acctRow('🔧 Gitea',
-          'signed in as ' + (gt.login || 'you'), true, 'acct-gt-out', 'log out', 0);
-      }
-      // Cloud providers (BYOK vault)
-      html += acctRow('☁️ Cloud providers',
-        keyCount ? (keyCount + ' API key' + (keyCount === 1 ? '' : 's') + ' set — your chats bill YOUR keys')
-                 : 'no API keys yet — bring your own for every chat',
-        keyCount > 0, 'acct-keys', 'manage', 0);
-      host.innerHTML = html;
-      // The rows land AFTER wireInputs ran — attach the listeners directly.
-      host.querySelectorAll('[data-acct]').forEach(function (btn) {
-        btn.addEventListener('click', function () { acctAction(btn.dataset.acct); });
-      });
+      acctCache = { t: Date.now(), res: res };
+      paintAcctRows(res);
     }).catch(function () {
       var cur2 = document.getElementById('acct-rows');
       if (cur2 === host) {
@@ -916,6 +977,7 @@
   // acctAction — the one implementation behind both the direct row
   // listeners and the doomalay:action dispatch.
   function acctAction(action) {
+    acctCache = { t: 0, res: null };
     if (action === 'acct-hf-out') {
       acctJSON('/api/hub/auth/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
         .then(function () { hydrateAccounts(); })
