@@ -101,6 +101,9 @@ function sizeBitmaps() {
 function applyDpr() {
   if (gctx) gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (gctx2) gctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // v0.97: the one-object lattice bakes its tiles at the host's DPR —
+  // sharp, and geometry-independent (the pattern fill compensates).
+  try { if (globalThis.Lattice && globalThis.Lattice.setDpr) globalThis.Lattice.setDpr(dpr); } catch (e) {}
 }
 
 function paintFrame(m) {
@@ -165,6 +168,12 @@ function paintFrame(m) {
         m.dots, m.colors || null, performance.now() / 1000, m.par || 0);
     }
     fullFrames++;
+    // v0.97.1: this frame painted with a STALE tile bake (the rebake
+    // debounce is pending) — ask main for ONE follow-up frame to land
+    // the fresh bake (the tex-ready pattern, minus the texture)
+    if (Lattice.rebakePending && Lattice.rebakePending()) {
+      try { self.postMessage({ t: 'repaint-wanted' }); } catch (e) {}
+    }
   }
   frames++;
   // the honest instrument: the full lattice twin + the atom twin
@@ -185,6 +194,9 @@ function paintFrame(m) {
   blob.entsMsgs = entsMsgs;    // v0.88: how many frames actually carried clones
   blob.worker = true;
   blob.orbitStars = paintedDots;   // v0.90.1: the honest star-paint counter (worker mode)
+  // v0.97.1: the worker's one-object state rides the blob (the rigs + the
+  // perf HUD read it main-side; the worker's TL is otherwise unreachable)
+  if (Lattice.oneObject) { try { blob.oneObject = Lattice.oneObject(); } catch (e) {} }
   if (atomStats) blob.atoms = atomStats;
   else if (m.atomsOnly) blob.atoms = atomStats || blob.atoms || { chats: 0, stars: 0, shells: 0 };
   self.postMessage({ t: 'debug', blob: blob, pf: Pf });

@@ -261,6 +261,7 @@
   // counts: {sessionId → n}; colors: {accent, accent2, ring} triplets;
   // t: seconds (the host clock — worker frames arrive with their own).
   function paintCore(ctx, W, H, offsetX, offsetY, scale, icons, counts, colors, t) {
+    t = t * MOTION_TEMPO;   // v0.97: the global slow-down (both hosts call this one function)
     if (!ctx) return { chats: 0, stars: 0, shells: 0 };
     var list = Array.isArray(icons) ? icons : [];
     if (!list.length) return { chats: 0, stars: 0, shells: 0 };
@@ -516,6 +517,7 @@
   // sphere's lit limb shifts toward the screen center — it resembles a
   // sphere as the camera pans).
   function paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors, t, par) {
+    t = t * MOTION_TEMPO;   // v0.97: the orbit stars + nebula churn slow with everything else
     if (!ctx || !dots || !dots.length) return 0;
     var s = scale || 1;
     var c = colors || {};
@@ -588,6 +590,14 @@
     }
     return painted;
   }
+
+  // v0.97: THE MOTION TEMPO — the user's canvas ask: "make everything,
+  // dots, stars, icons, workspace stars, everything that has movement,
+  // much slower". 0.5 = half speed everywhere the AMBIENT world moves
+  // (lattice dots/shuttle, atom shell orbits, orbit-star pulse). NOT
+  // applied to: physics (drag/throw stays 1:1) or TabGroups ω (already
+  // glacial at 1.7–10.5 min/orbit and rig-pinned).
+  var MOTION_TEMPO = 0.5;
 
   // ── the main-thread twin (the feed + the themed wrapper) ──────────
   if (typeof document === 'undefined') return;   // worker: core only

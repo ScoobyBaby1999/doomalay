@@ -1040,13 +1040,21 @@
     // isolation tests count #chat-messages children, and message-row
     // semantics stay pure). appendMessage removes them with the greeting
     // when the first real message lands.
+    // v0.97 C3 THE TAIL WINDOW: a history-heavy reopen used to parse the
+    // WHOLE transcript in one innerHTML + run the formatter on every
+    // bubble before the panel could paint (the measured open cost —
+    // PLAN-V094's open item). Render the last OPEN_TAIL messages now;
+    // the older history prepends in idle chunks (scheduleBackfill) — the
+    // reader lands at the bottom either way and never sees the head
+    // arrive (it inserts above the fold, scroll-compensated).
+    var tailFrom = (state.messages.length > OPEN_TAIL) ? state.messages.length - OPEN_TAIL : 0;
     var chatHTML = complete
       ? '<div id="chat-live" style="flex:1 1 auto;display:flex;flex-direction:column;min-height:55%">' +
           '<div id="chat-messages" style="flex:1;padding:calc(16px * var(--chat-scale,1));display:flex;flex-direction:column;gap:calc(12px * var(--chat-scale,1))">' +
             (state.messages.length === 0
               ? '<div id="chat-greeting" style="text-align:center;color:var(--text-3);font-size: calc(var(--ui-fs) - 1px);padding:32px 20px 12px">' +
                   esc(type.greeting) + ' ' + esc(icon.name) + '…</div>'
-              : renderMessages(state.messages)) +
+              : renderMessages(state.messages.slice(tailFrom), tailFrom)) +
           '</div>' +
           (state.messages.length === 0 ? renderStarters(state, type) : '') +
           // Sticky input bar — stays visible while scrolled.
@@ -1093,6 +1101,10 @@
     // mount formatting into every rendered bubble (renderMessages emits
     // empty shells; the Formatter fills user/assistant/thinking)
     mountAllFormatting(msgContainer, state);
+    // v0.97 C3: the older history prepends in idle chunks — off the open
+    // path entirely (fires after the first paint; cancels itself if the
+    // panel re-renders or the chat stops owning the live DOM).
+    scheduleBackfill(msgContainer, scrollEl, state, tailFrom);
 
     ctx.scrollEl = scrollEl;
     ctx.msgContainer = msgContainer;
@@ -3223,6 +3235,10 @@
       var host = bodyEl.querySelector('#chat-messages');
       if (!host) return;
       clearHits();
+      // v0.97 C3: the match may live in the not-yet-backfilled head — flush
+      // it so the row exists to scroll to (search runs on state.messages,
+      // the DOM only carries the tail until the backfill drains).
+      ensureTranscriptMounted(state);
       // locate the DOM bubble by data-mi (user/assistant bubbles carry it;
       // the index is the transcript's message index — same key as edit/delete)
       var bubble = host.querySelector('[data-mi="' + m.mi + '"]');
@@ -5161,7 +5177,16 @@
   }
 
   // ── THE MESSAGE RENDERER (everything formatted) ────────────────
-  function renderMessages(messages) {
+  // v0.97 C3: `from` is the DATA-MI BASE OFFSET — the caller passes a
+  // SLICE (renderHost's tail window, the backfill chunks) and the rows
+  // carry their ABSOLUTE transcript indices (edit/delete/streaming
+  // updates re-find bubbles by them). No `from` → the whole array, mi 0..n
+  // (the full-render paths: rebuild, regenerate).
+  // v0.97.1 FIX: `from` used to be a SKIP offset into the passed array
+  // — with a slice it double-offset (the v097 rig's [80..89] hole: the
+  // chunk dropped its first 10 rows and mislabeled the rest).
+  function renderMessages(messages, from) {
+    var off = (typeof from === 'number' && from > 0) ? from : 0;
     var html = '';
     var prevTs = 0;
     for (var i = 0; i < messages.length; i++) {
@@ -5171,7 +5196,7 @@
         html += dayDividerHTML(messages[i].ts);
       }
       if (messages[i].ts) prevTs = messages[i].ts;
-      html += messageHTML(messages[i], i);
+      html += messageHTML(messages[i], i + off);
     }
     return html;
   }
@@ -5404,8 +5429,25 @@
       el.classList.add('msg-new');
       setTimeout(function () { if (el.classList) el.classList.remove('msg-new'); }, 400);
     }
-    if (!ownerState || isOwner(ownerState)) scrollBottom(bodyEl || container);
+    if (!ownerState || isOwner(ownerState)) queueScrollBottom(bodyEl || container);
     return bubble || el;
+  }
+
+  // v0.97 C3: THE REPLAY SCROLL COALESCE — the WS backlog burst (a fresh
+  // open replays the whole history as tagged events) used to fire one
+  // scrollBottom PER MESSAGE (each reads scrollHeight right after an
+  // append ⇒ one forced layout per message — a 200-message backlog paid
+  // 200 forced layouts inside the open path). One per frame is visually
+  // identical (the burst spans many frames anyway); the smart-freeze
+  // semantics live inside scrollBottom and are untouched.
+  var _sbQueued = false;
+  function queueScrollBottom(bodyEl) {
+    if (_sbQueued) return;
+    _sbQueued = true;
+    requestAnimationFrame(function () {
+      _sbQueued = false;
+      scrollBottom(bodyEl);
+    });
   }
 
   // re-format an existing message's bubble (found via data-mi)
@@ -5538,8 +5580,116 @@
   function rebuildTranscript(container, state) {
     if (!container) return;
     salvageFormatted(container, state);   // v0.83.4: the formatter's work survives the rebuild
+    // v0.97 C3: a full rebuild renders EVERYTHING — any in-flight idle
+    // backfill is stale (it would re-insert old slices into the fresh
+    // DOM); cancel it. state.messages already holds the truth.
+    if (state) { state._bfGen = 0; state._bfFrom = 0; }
     container.innerHTML = renderMessages(state.messages);
     mountAllFormatting(container, state);
+  }
+
+  // ── v0.97 C3 THE SPLIT TRANSCRIPT RENDER ────────────────────────────
+  // renderHost mounts the LAST OPEN_TAIL messages (the reader lands at
+  // the bottom; the head is off-screen). The older history prepends in
+  // BACKFILL_CHUNK idle slices — one parse + one insert per slice, scroll
+  // compensated so the visible window never moves. Cancellation: every
+  // renderHost bumps state._bfGen; a stale loop exits on the first idle
+  // tick. Search-jump / global-search paths query [data-ei]/[data-mi]
+  // rows — a not-yet-backfilled row backfills on demand via
+  // ensureTranscriptMounted (the search-scroll case below).
+  var OPEN_TAIL = 30;
+  var BACKFILL_CHUNK = 80;
+  function scheduleBackfill(container, scrollEl, state, from) {
+    if (!container || !state || !from) return;
+    var gen = (state._bfGen || 0) + 1;
+    state._bfGen = gen;
+    state._bfFrom = from;   // v0.97 C3: the pending boundary — ensureTranscriptMounted flushes [0, _bfFrom)
+    var idx = from;
+    var t0 = performance.now();
+    var idle = (typeof requestIdleCallback === 'function')
+      ? requestIdleCallback : function (fn) { return setTimeout(fn, 16); };
+    function step() {
+      if (state._bfGen !== gen) return;                       // superseded — a newer render owns the DOM
+      var liveC = (currentCtx && currentCtx.state === state && currentCtx.bodyEl)
+        ? currentCtx.bodyEl.querySelector('#chat-messages') : null;
+      if (liveC !== container || !container.isConnected) {    // the panel moved on
+        state._bfGen = 0;
+        return;
+      }
+      if (idx <= 0) { state._bfGen = 0; state._bfFrom = 0; return; }   // fully mounted
+      // v0.97.1: hidden/background tabs throttle requestIdleCallback to
+      // near-zero — after a 2s grace the remaining chunks ride a plain
+      // timeout (32ms) so a backgrounded open still finishes its history
+      var sched = (performance.now() - t0 > 2000)
+        ? function (fn) { return setTimeout(fn, 32); } : idle;
+      var next = Math.max(0, idx - BACKFILL_CHUNK);
+      state._bfFrom = next;                                        // in-flight boundary (ensureTranscriptMounted may flush past us)
+      var sc = scrollEl || (container.closest ? container.closest('#chat-scroll') : null);
+      var h0 = sc ? sc.scrollHeight : 0;
+      var holder = document.createElement('div');
+      holder.innerHTML = renderMessages(state.messages.slice(next, idx), next);
+      var frag = document.createDocumentFragment();
+      while (holder.firstChild) frag.appendChild(holder.firstChild);
+      container.insertBefore(frag, container.firstChild);
+      if (sc) {
+        var grew = sc.scrollHeight - h0;                      // one forced layout per slice
+        if (grew > 0) sc.scrollTop += grew;                   // pixel-stable viewport
+        else if (state._scrollPos != null) restoreChatScroll(sc, state); // shrink? re-anchor
+      }
+      mountChunkFormatting(container, state, next, idx);
+      idx = next;
+      sched(step);
+    }
+    idle(step);
+  }
+
+  // the backfill's scoped formatter mount — same contract as
+  // mountAllFormatting but only the slice's rows (a full walk would
+  // querySelector per message across the whole container, O(n²) here).
+  function mountChunkFormatting(container, state, from, to) {
+    var salv = state._fmtSalvage;
+    for (var i = from; i < to; i++) {
+      var msg = state.messages[i];
+      if (!msg || (msg.role !== 'user' && msg.role !== 'assistant' && msg.role !== 'thinking')) continue;
+      var wrapper = container.querySelector('[data-mi="' + i + '"]');
+      if (!wrapper) continue;
+      var el = wrapper.classList.contains('msg-bubble') ? wrapper : wrapper.querySelector('.msg-bubble');
+      if (salv && salv[i] && !msg.streaming &&
+          salv[i].role === msg.role && salv[i].raw === escAttr(msg.text || '')) {
+        el.appendChild(salv[i].frag);
+        delete salv[i];
+        continue;
+      }
+      if (salv && salv[i]) delete salv[i];
+      mountFormatting(el, msg, true);
+    }
+  }
+
+  // v0.97 C3: a jump that targets a message row which is not mounted
+  // yet (search result into the un-backfilled head) — flush the whole
+  // pending head synchronously, then answer the row.
+  function ensureTranscriptMounted(state) {
+    if (!state || !state._bfGen || !state._bfFrom) return true;   // nothing pending
+    var st = state;
+    var liveC = (currentCtx && currentCtx.state === st && currentCtx.bodyEl)
+      ? currentCtx.bodyEl.querySelector('#chat-messages') : null;
+    if (!liveC) return false;
+    var to = st._bfFrom;
+    var sc = currentCtx.bodyEl.querySelector('#chat-scroll');
+    var h0 = sc ? sc.scrollHeight : 0;
+    liveC.insertBefore(holderOf(st, 0, to), liveC.firstChild);
+    if (sc) { var grew = sc.scrollHeight - h0; if (grew > 0) sc.scrollTop += grew; }
+    mountChunkFormatting(liveC, st, 0, to);
+    st._bfGen = 0;   // cancel any idle loop — everything is mounted now
+    st._bfFrom = 0;
+    return true;
+  }
+  function holderOf(st, from, to) {
+    var holder = document.createElement('div');
+    holder.innerHTML = renderMessages(st.messages.slice(from, to), from);
+    var frag = document.createDocumentFragment();
+    while (holder.firstChild) frag.appendChild(holder.firstChild);
+    return frag;
   }
 
 
@@ -6114,6 +6264,12 @@
     },
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },
+    // v0.97 C3: jump-to-event / find paths call this before querying a
+    // row — a not-yet-backfilled head flushes synchronously so the row
+    // exists to scroll to.
+    ensureMounted: function () {
+      return (currentCtx && currentCtx.state) ? ensureTranscriptMounted(currentCtx.state) : true;
+    },
     // v0.42: the global keyboard layer's Ctrl/Cmd+F hook — open the
     // LIVE chat's find bar. Only meaningful when the chat root is up
     // (a stacked view stashes the root DOM; find searches the live

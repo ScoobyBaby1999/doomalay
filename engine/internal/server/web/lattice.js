@@ -1,4 +1,6 @@
-// lattice.js — v0.85.2 THE EXTRACTED GRID PAINTER (renderer-path Phase 2:
+// lattice.js — v0.97 THE ONE-OBJECT LATTICE (PLAN-V097, the canvas wave).
+//
+// v0.85.2 THE EXTRACTED GRID PAINTER (renderer-path Phase 2:
 // "OffscreenCanvas the grid painter into a worker" — PLAN-V085 §A).
 //
 // Everything renderGrid painted — the parallax background tile painter,
@@ -88,6 +90,13 @@
     c.width = Math.max(1, w); c.height = Math.max(1, h);
     return c;
   }
+
+  // v0.97: the hosts tell the painter their DPR (tile bake resolution).
+  // app.js (main mode, applyBitmapResize) and gridworker.js (init/resize)
+  // both call Lattice.setDpr — the pattern fill auto-compensates for any
+  // mismatch, so this only tunes SHARPNESS, never geometry.
+  var TL_DPR = 1;
+  function setDpr(d) { if (isFinite(d) && d > 0) TL_DPR = Math.min(d, 2); }
 
   // ── v0.83.3 THE LATTICE CACHE (moved verbatim) ─────────────────────
   var LC = {
@@ -576,12 +585,766 @@
   // ── the rolling fps instrument (frame-to-frame arrival cadence) ────
   var lcFps = 0, lcLastT = 0;
 
-  // ══ THE RENDER — the verbatim renderGrid body, parameterized ═══════
+  // ══ v0.97 THE ONE-OBJECT LATTICE (PLAN-V097) ═══════════════════════
+  // The user's ask: "make every individual dot and line in the grid act
+  // as one object, or possibly two… fake the math, fake the parallax…
+  // make them all render as more of a static background when it is not."
+  // THE ROOT CAUSE this kills: the legacy render re-walks EVERY visible
+  // cell on EVERY ambient frame (~1,100 dots + up to ~2,900 segments on a
+  // 1080×2400 phone) — the per-cell cost is why spacing the grid apart
+  // visibly doubled the frame rate.
+  // THE DESIGN: the lattice bakes ONCE into per-(band × kind) TILES
+  // (MEGA grid cells per side — the per-cell hashes become tile-local =
+  // periodic by construction, the blessed "fake"); every frame after
+  // that is ONE pattern fill per tile (createPattern + fillRect — the
+  // GPU-backed repeating primitive; web-research verdict: NO second
+  // WebGL context on a phone that caps at 8). Parallax survives EXACTLY
+  // (each band is one object moving at its own bandPF — "all dots as one
+  // object, all lines as another"), and the animation is the ILLUSION:
+  //   · the dot sea BREATHES — two checker-parity groups drawn with
+  //     counter-phase global alpha (one sin() per frame, not 1,100);
+  //   · HERO FIREFLIES — the glow-candidate cells (top band, jr ≥ 1.6×
+  //     base) are excluded from the bake while animDots is on and drawn
+  //     live (pulse + tiny orbit + halo, capped) — a handful of real
+  //     movers sells "not static";
+  //   · colors sample at a MIRROR-FOLDED tile position (seamless tile
+  //     repetition for EVERY spec — the samplers already mirror-fold at
+  //     bgView; the fold moves that guarantee to tile granularity);
+  //   · segments DRAW WRAPPED (a quad crossing a tile edge is drawn
+  //     again at ±tileSize — complete coverage, zero double-draw);
+  //   · full-line mode (no variation, no line animation) stays
+  //     IMMEDIATE (≈40 quads, ≤2 fills) — the v0723 source contracts
+  //     and the exact full-line look ride the legacy code, kept intact
+  //     below as renderLegacy (also the runtime fallback:
+  //     ROOT.__doomalayLatticeLegacy = true A/Bs the two paths live).
+  // Zoom: tiles bake at the current scale; a mid-gesture scale delta
+  // scales the pattern (soft, transient — the fill auto-compensates),
+  // the rebake lands 150ms after settle. Params churn (slider drags):
+  // the same 150ms debounce — the worker bakes, the main thread never
+  // pays it. TEMPO = the global slow-down (the user's other ask).
+  var TEMPO = 0.5;
+  var TL = { fp: '', tiles: null, pendP: null, pendCam: null, bakeT: 0,
+             gen: 0, cellRecords: 0, legacyFails: 0 };
+
+  function tlFoldIdx(c, M) { var h = (M + 1) >> 1; return c < h ? c : (M - 1 - c); }
+
+  function tlFingerprint(P, scaleQ, M, bgKey) {
+    var cj = cheapJSON;
+    return [P.scatterL, P.scatterD, P.sizeVarL, P.sizeVarD, P.rotVarL, P.rotVarD,
+      P.biasL, P.biasD, P.animDots ? 1 : 0, P.animLines ? 1 : 0, P.gridSize,
+      P.hideLines ? 1 : 0, P.hideDots ? 1 : 0, P.amp.toFixed(4),
+      P.specs && P.specs.dotColor ? cj(P.specs.dotColor) : '', P.t.dotColor,
+      P.specs && P.specs.lineColor ? cj(P.specs.lineColor) : '', P.t.lineColor,
+      cj(P.canvasSpec), P.bgFallback, scaleQ.toFixed(4), M, bgKey,
+      Math.round(TL_DPR * 10)].join('|');
+  }
+
+  // tlBake — builds every (band × kind) tile for the current params.
+  // Returns the tile SET record (also stored on TL.tiles).
+  function tlBake(P, cam) {
+    var tb0 = performance.now();
+    var scaleQ = cam.scale;
+    var t = P.t, specs = P.specs;
+    var spacingQ = GRID_BASE * (P.gridSize || 1) * scaleQ;
+    var M = Math.max(2, Math.min(12, Math.round(384 / spacingQ) || 2));
+    var bgKey = Math.round(bgView.tw) + 'x' + Math.round(bgView.th) + '@' + (bgView.zx || 1).toFixed(3);
+    var fp = tlFingerprint(P, scaleQ, M, bgKey);
+    if (TL.fp === fp && TL.tiles) return TL.tiles;
+
+    var amp = P.amp;
+    var scatterPxL = P.scatterL * 0.6, scatterPxD = P.scatterD * 0.6;
+    var sizeFracL = P.sizeVarL / 100 * 3.4;
+    var sizeFracD = P.sizeVarD / 100 * 3.4;
+    var effFracL = Math.max(sizeFracL, Math.abs(P.biasL) / 100 * 1.7);
+    var effFracD = Math.max(sizeFracD, Math.abs(P.biasD) / 100 * 1.7);
+    var rotDegL = P.rotVarL * 0.6;
+    var bExpL = Math.pow(2, -2.5 * (P.biasL / 100));
+    var bExpD = Math.pow(2, -2.5 * (P.biasD / 100));
+    function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
+    function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
+    var dotSpec = specs && specs.dotColor;
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var lineSpec = specs && specs.lineColor;
+    var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var dotSampler = lcSampler(dotSpec, dotFallback);
+    var lineSampler = lcSampler(lineSpec, lineFallback);
+    var dotRBaseQ = Math.max(0.6, DOT_RADIUS * Math.min(scaleQ, 1.3));
+    var AMP_BANDS = 5;
+    var animDots = !!P.animDots, animLines = !!P.animLines;
+    var segMode = effFracL > 0 || animLines;
+    var overDotsOn = !!(amp >= 0.5 && effFracD > 0.02);
+    var overLinesOn = !!(amp >= 0.5 && effFracL > 0.02);
+    var overThreshD = 0.7 * dotRBaseQ * (1 + effFracD);
+    var overThreshL = 0.7 * (1 + effFracL);
+    function bandPF(k) { return 1 + amp * (0.25 + 0.75 * (-0.85 + 1.5 * (k / (AMP_BANDS - 1)))); }
+    function depthT(h, sizeFrac) { return sizeFrac > 0.02 ? h : 0.5; }
+    function bandOf(tt) { var k = Math.floor(tt * AMP_BANDS); return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k); }
+
+    // ── occupancy + the memory budget (shrink M if the set is too fat) ──
+    for (;;) {
+      var dotBandSet = {}, lineBandSet = {};
+      for (var q = 0; q < M; q++) {
+        lineBandSet[bandOf(depthT(warpL(hashCell(q, 2)), effFracL))] = 1;
+        lineBandSet[bandOf(depthT(warpL(hashCell(2, q)), effFracL))] = 1;
+      }
+      for (var qx = 0; qx < M; qx++) for (var qy = 0; qy < M; qy++) {
+        dotBandSet[bandOf(depthT(warpD(hashCell(qx + 7, qy + 7)), effFracD))] = 1;
+      }
+      var nDotBands = 0, nLineBands = 0;
+      for (var kb = 0; kb < AMP_BANDS; kb++) { if (dotBandSet[kb]) nDotBands++; if (lineBandSet[kb]) nLineBands++; }
+      if (amp <= 0) { nDotBands = Math.min(1, nDotBands); nLineBands = Math.min(1, nLineBands); }
+      var dotKinds = P.hideDots ? 0 : (animDots ? 2 : 1);
+      var lineKinds = (P.hideLines || !segMode) ? 0 : 1;
+      var overDotKinds = (overDotsOn && !P.hideDots) ? (animDots ? 2 : 1) : 0;
+      var overLineKinds = (overLinesOn && segMode && !P.hideLines) ? 1 : 0;
+      var D = Math.max(8, Math.ceil(M * spacingQ * TL_DPR));
+      var tileBytes = D * D * 4;
+      var totalTiles = nDotBands * (dotKinds + overDotKinds) + nLineBands * (lineKinds + overLineKinds);
+      if (totalTiles * tileBytes <= 40 * 1024 * 1024 || M <= 4) break;
+      M -= 2;   // the graceful degradation: smaller tiles, same illusion
+    }
+
+    var T = { fp: fp, M: M, scaleQ: scaleQ, spacingQ: spacingQ, list: [],
+              heroes: [], cellRecords: 0, gen: ++TL.gen, bakeMs: 0 };
+
+    function mkTile() {
+      var cv = mkCanvas(D, D);
+      var g = cv.getContext('2d');
+      g.scale(TL_DPR, TL_DPR);
+      return { canvas: cv, g: g, D: D, n: 0, small: 0, big: 0,
+               jrMin: Infinity, jrMax: 0, wMin: Infinity, wMax: 0,
+               glowN: 0, glowCols: [] };
+    }
+    function foldSample(sampler, a, b, jx, jy) {
+      if (!sampler) return null;
+      return sampler(tlFoldIdx(a, M) * spacingQ + jx, tlFoldIdx(b, M) * spacingQ + jy);
+    }
+    // drawWrapped — the seamless-tile primitive: an item crossing an edge
+    // is drawn AGAIN shifted by ±tileSize (complete coverage, and no
+    // pixel is ever painted twice — the periodic copies are disjoint).
+    function drawWrapped(g, TS, bbox, x0, y0, draw) {
+      var xs = [x0], ys = [y0];
+      if (x0 + bbox.r > TS) xs.push(x0 - TS);
+      if (x0 + bbox.l < 0) xs.push(x0 + TS);
+      if (y0 + bbox.b > TS) ys.push(y0 - TS);
+      if (y0 + bbox.t < 0) ys.push(y0 + TS);
+      for (var i = 0; i < xs.length; i++)
+        for (var j = 0; j < ys.length; j++) draw(xs[i], ys[j]);
+    }
+
+    // ── THE DOT WALK (per band, per group) ────────────────────────────
+    var TS = M * spacingQ;    // tile CSS size at bake scale
+    // v0.97.1: the firefly budget — at high variation EVERY top-band dot
+    // clears the 1.6× glow bar; without a per-tile budget the whole band
+    // minted as heroes and the runtime cap (40) VANISHED the rest (the
+    // v097 rig's band-4-zero catch). The biggest HERO_PER_TILE per tile
+    // animate live; the remainder bake static (with their glow).
+    var HERO_PER_TILE = 5;
+    for (var band = 0; band < (amp > 0 ? AMP_BANDS : 1); band++) {
+      var topBand = (amp > 0) && band === AMP_BANDS - 1;
+      var groups = animDots ? 2 : 1;
+      // (a) the hero pre-pass: candidates, then the biggest few win
+      var heroCands = [], Tj = { jrMin: Infinity, jrMax: 0 };
+      for (var px = 0; px < M; px++) for (var py = 0; py < M; py++) {
+        var phd2 = warpD(hashCell(px + 7, py + 7));
+        if (amp > 0 && bandOf(depthT(phd2, effFracD)) !== band) continue;
+        // the weight ratio rides the UNFLOORED radius (the legacy twin —
+        // v0831 pins jrMin <= 0.05: the raw spread goes negative before
+        // the draw-side 0.15 floor)
+        var praw = (1 + effFracD * (phd2 - 0.5) * 2);
+        if (praw < Tj.jrMin) Tj.jrMin = praw;
+        if (praw > Tj.jrMax) Tj.jrMax = praw;
+        // v0.97.1: the hero candidate bar rides the FLOORED radius (the
+        // draw's own size — a negative raw spread must not mint heroes)
+        var pjr = Math.max(0.15, dotRBaseQ * praw);
+        if (animDots && topBand && pjr >= dotRBaseQ * 1.6)
+          heroCands.push({ dx: px, dy: py, jr: pjr });
+      }
+      heroCands.sort(function (a, b) { return b.jr - a.jr; });
+      var heroSet = {}, heroesHere = [];
+      for (var hci = 0; hci < heroCands.length && hci < HERO_PER_TILE; hci++) {
+        var hc = heroCands[hci];
+        heroSet[hc.dx + ',' + hc.dy] = 1;
+        var hjx = scatterPxD * (hashCell(hc.dx, hc.dy) - 0.5) * 2;
+        var hjy = scatterPxD * (hashCell(hc.dx + 3, hc.dy + 5) - 0.5) * 2;
+        var hcol = foldSample(dotSampler, hc.dx, hc.dy, hjx, hjy) || dotFallback;
+        var hgb = (HEX_RE.test(hcol)) ? hcol : null;
+        heroesHere.push({ tx: hc.dx, ty: hc.dy, jx: hjx, jy: hjy, jr: hc.jr,
+          col: hcol, glow: hgb ? shadeHex(hgb, 0.42) : null,
+          tsp: 0.5 + hashCell(hc.dx + 21, hc.dy + 21) * 1.8,
+          tph: hashCell(hc.dx + 23, hc.dy + 23) * 6.283,
+          ospd: (0.25 + hashCell(hc.dx + 27, hc.dy + 27) * 0.9) * (hashCell(hc.dx + 29, hc.dy + 29) < 0.5 ? -1 : 1),
+          orR: spacingQ * (0.06 + 0.08 * hashCell(hc.dx + 31, hc.dy + 31)) });
+      }
+      for (var hh = 0; hh < heroesHere.length; hh++) heroesHere[hh].pf = (amp > 0) ? bandPF(band) : 1;
+      T.heroes.push.apply(T.heroes, heroesHere);
+      T.jrMin = Tj.jrMin; T.jrMax = Tj.jrMax;
+      // (b) the group tile walk (the chosen fireflies stay live)
+      for (var gi = 0; gi < groups; gi++) {
+        var tile = mkTile(), overTile = overDotsOn ? mkTile() : null;
+        var g = tile.g;
+        for (var dx = 0; dx < M; dx++) for (var dy = 0; dy < M; dy++) {
+          var hd = hashCell(dx, dy);
+          var hd2 = warpD(hashCell(dx + 7, dy + 7));
+          // legacy parity: at amp<=0 the single band renders EVERY dot
+          // (the band filter only exists when there are 5 bands)
+          if (amp > 0 && bandOf(depthT(hd2, effFracD)) !== band) continue;
+          if (animDots && ((dx + dy) & 1) !== gi) continue;
+          if (heroSet[dx + ',' + dy]) continue;      // the live fireflies
+          var jrB = dotRBaseQ * (1 + effFracD * (hd2 - 0.5) * 2);
+          var jx = scatterPxD * (hd - 0.5) * 2;
+          var jy = scatterPxD * (hashCell(dx + 3, dy + 5) - 0.5) * 2;
+          var isOver = overDotsOn && jrB > overThreshD;
+          var tgt = isOver ? overTile : tile;
+          if (!tgt) continue;
+          var gg = tgt.g;
+          var rr = Math.max(0.15, jrB);
+          var colD2 = foldSample(dotSampler, dx, dy, jx, jy) || dotFallback;
+          var cxp = dx * spacingQ + jx, cyp = dy * spacingQ + jy;
+          var ext = rr + ((topBand && jrB >= dotRBaseQ * 1.6) ? jrB * 2.6 : 0);
+          var styleD = colD2;
+          // the static glow: halo sprite + lifted core color, per-dot —
+          // baked for every glow-class dot that did NOT win a firefly slot
+          if (topBand && jrB >= dotRBaseQ * 1.6) {
+            var gbase = (HEX_RE.test(colD2)) ? colD2 : null;
+            var glowFill = gbase ? shadeHex(gbase, 0.42) : null;
+            if (glowFill) {
+              if (jrB >= 1.6) {
+                var spG = lcGlowSprite(glowFill);
+                var R = jrB * 2.6;
+                drawWrapped(gg, TS, { l: -R, r: R, t: -R, b: R }, cxp, cyp, function (wx, wy) {
+                  gg.globalAlpha = 0.55;
+                  gg.drawImage(spG.c, wx - R, wy - R, R * 2, R * 2);
+                  gg.globalAlpha = 1;
+                });
+              }
+              tgt.glowN++;
+              if (tgt.glowCols.indexOf(glowFill) < 0) tgt.glowCols.push(glowFill);
+              styleD = glowFill;
+            }
+          }
+          var fillStyle = styleD;
+          drawWrapped(gg, TS, { l: -ext, r: ext, t: -ext, b: ext }, cxp, cyp, function (wx, wy) {
+            gg.fillStyle = fillStyle;
+            gg.beginPath(); gg.arc(wx, wy, rr, 0, Math.PI * 2); gg.fill();
+          });
+          tgt.n++;
+          if (rr < dotRBaseQ * 0.9) tgt.small++; else if (rr > dotRBaseQ * 1.1) tgt.big++;
+        }
+        // push ONLY the tiles with content (an empty transparent tile
+        // would still cost a full-screen GPU fill for nothing)
+        var pf = (amp > 0) ? bandPF(band) : 1;
+        if (tile.n > 0) T.list.push({ kind: gi === 0 ? 'dotsA' : 'dotsB', band: band, pf: pf, over: false, tile: tile });
+        if (overTile && overTile.n > 0) T.list.push({ kind: gi === 0 ? 'dotsA' : 'dotsB', band: band, pf: pf, over: true, tile: overTile });
+        T.cellRecords += tile.n + (overTile ? overTile.n : 0);
+      }
+    }
+
+    // ── THE SEGMENT WALK (per band; segMode only) ─────────────────────
+    if (segMode && !P.hideLines) {
+      for (var lband = 0; lband < (amp > 0 ? AMP_BANDS : 1); lband++) {
+        var lpf = (amp > 0) ? bandPF(lband) : 1;
+        var tile = mkTile(), overTile = overLinesOn ? mkTile() : null;
+        var g = tile.g, drew = false;
+        var baseSegLen = spacingQ * 1.35;
+        // vertical segments: columns tx, rows ty (bands come from the
+        // COLUMN hash — hashCell(tx, 2), the legacy vline band twin)
+        for (var vx = 0; vx < M; vx++) {
+          var lwH = warpL(hashCell(vx, 2));
+          var vBand = bandOf(depthT(lwH, effFracL));
+          var rotD = rotDegL * (hashCell(vx, 1) - 0.5) * 2;
+          var rr2 = rotD * Math.PI / 180;
+          var LP = { dx: scatterPxL * (hashCell(vx, 0) - 0.5) * 2, c: Math.cos(rr2), s: Math.sin(rr2) };
+          if (amp > 0 && vBand !== lband) continue;   // legacy parity: no filter at 1 band
+          for (var vy = 0; vy < M; vy++) {
+            var SP = {
+              len: (animLines && effFracL === 0)
+                ? spacingQ * (0.30 + hashCell(vx + 31, vy + 33) * 0.55)
+                : Math.max(spacingQ * 0.06,
+                    (effFracL > 0 ? spacingQ : baseSegLen) * (1 + effFracL * (warpL(hashCell(vx + 5, vy)) - 0.5) * 2)),
+              w: Math.max(0.12,
+                (animLines ? (0.9 + hashCell(vx + 35, vy + 37) * 0.9) : 1) *
+                (1 + effFracL * (warpL(hashCell(vx + 9, vy)) - 0.5) * 2))
+            };
+            var segW = SP.w;
+            var isOver = overLinesOn && segW > overThreshL;
+            var tgt = isOver ? overTile : tile;
+            if (!tgt) continue;
+            var gg = tgt.g;
+            var colS = foldSample(lineSampler, vx, vy, 0, 0) || lineFallback;
+            var txL = vx * spacingQ + LP.dx;
+            var ly1 = vy * spacingQ - SP.len / 2, ly2 = vy * spacingQ + SP.len / 2;
+            var ax1 = txL - ly1 * LP.s, ay1 = ly1 * LP.c;
+            var ax2 = txL - ly2 * LP.s, ay2 = ly2 * LP.c;
+            var pxs = LP.c * segW / 2, pys = LP.s * segW / 2;
+            var bb = { l: -Math.abs(pxs) - Math.abs(ly1 * LP.s) - Math.abs(ly2 * LP.s),
+                       r: Math.abs(pxs) + Math.abs(ly1 * LP.s) + Math.abs(ly2 * LP.s),
+                       t: -Math.abs(pys) - Math.abs(ly2 * LP.c) - Math.abs(ly1 * LP.c) - SP.len,
+                       b: Math.abs(pys) + Math.abs(ly2 * LP.c) + Math.abs(ly1 * LP.c) + SP.len };
+            var fillStyle = colS;
+            drawWrapped(gg, TS, bb, ax1, ay1, function (wx, wy) {
+              gg.fillStyle = fillStyle;
+              gg.beginPath();
+              gg.moveTo(wx - pxs, wy - pys);
+              gg.lineTo(wx + pxs, wy + pys);
+              gg.lineTo((wx - (ly2 - ly1) * LP.s) + pxs, (wy + (ly2 - ly1) * LP.c) + pys);
+              gg.lineTo((wx - (ly2 - ly1) * LP.s) - pxs, (wy + (ly2 - ly1) * LP.c) - pys);
+              gg.closePath();
+              gg.fill();
+            });
+            tgt.n++;
+            if (segW < 0.9) tgt.small++; else if (segW > 1.1) tgt.big++;
+            if (segW < tgt.wMin) tgt.wMin = segW;
+            if (segW > tgt.wMax) tgt.wMax = segW;
+            drew = true;
+          }
+        }
+        // horizontal segments: rows iy, columns ix (band from hashCell(2, iy))
+        for (var hy = 0; hy < M; hy++) {
+          var lwH2 = warpL(hashCell(2, hy));
+          var hBand = bandOf(depthT(lwH2, effFracL));
+          var rot2D = rotDegL * (hashCell(1, hy) - 0.5) * 2;
+          var rr3 = rot2D * Math.PI / 180;
+          var HP = { dy: scatterPxL * (hashCell(0, hy) - 0.5) * 2, c: Math.cos(rr3), s: Math.sin(rr3) };
+          if (amp > 0 && hBand !== lband) continue;   // legacy parity: no filter at 1 band
+          for (var hx = 0; hx < M; hx++) {
+            var HS = {
+              len: (animLines && effFracL === 0)
+                ? spacingQ * (0.30 + hashCell(hx + 33, hy + 31) * 0.55)
+                : Math.max(spacingQ * 0.06,
+                    (effFracL > 0 ? spacingQ : baseSegLen) * (1 + effFracL * (warpL(hashCell(hx, hy + 5)) - 0.5) * 2)),
+              w: Math.max(0.12,
+                (animLines ? (0.9 + hashCell(hx + 37, hy + 35) * 0.9) : 1) *
+                (1 + effFracL * (warpL(hashCell(hx, hy + 9)) - 0.5) * 2))
+            };
+            var segW2 = HS.w;
+            var isOver2 = overLinesOn && segW2 > overThreshL;
+            var tgt2 = isOver2 ? overTile : tile;
+            if (!tgt2) continue;
+            var gg2 = tgt2.g;
+            var colS2 = foldSample(lineSampler, hx, hy, 0, 0) || lineFallback;
+            var tyL = hy * spacingQ + HP.dy;
+            var lx1 = hx * spacingQ - HS.len / 2, lx2 = hx * spacingQ + HS.len / 2;
+            var bx1 = lx1 * HP.c, by1 = tyL + lx1 * HP.s;
+            var bx2 = lx2 * HP.c, by2 = tyL + lx2 * HP.s;
+            var pxs2 = -HP.s * segW2 / 2, pys2 = HP.c * segW2 / 2;
+            var bb2 = { l: -HS.len - Math.abs(pxs2), r: HS.len + Math.abs(pxs2),
+                        t: -Math.abs(pys2), b: Math.abs(pys2) };
+            var fillStyle2 = colS2;
+            drawWrapped(gg2, TS, bb2, bx1, by1, function (wx, wy) {
+              gg2.fillStyle = fillStyle2;
+              gg2.beginPath();
+              gg2.moveTo(wx - pxs2, wy - pys2);
+              gg2.lineTo(wx + pxs2, wy + pys2);
+              gg2.lineTo((wx + (lx2 - lx1) * HP.c) + pxs2, (wy + (lx2 - lx1) * HP.s) + pys2);
+              gg2.lineTo((wx + (lx2 - lx1) * HP.c) - pxs2, (wy + (lx2 - lx1) * HP.s) - pys2);
+              gg2.closePath();
+              gg2.fill();
+            });
+            tgt2.n++;
+            if (segW2 < 0.9) tgt2.small++; else if (segW2 > 1.1) tgt2.big++;
+            if (segW2 < tgt2.wMin) tgt2.wMin = segW2;
+            if (segW2 > tgt2.wMax) tgt2.wMax = segW2;
+            drew = true;
+          }
+        }
+        if (tile.n > 0) T.list.push({ kind: 'lines', band: lband, pf: lpf, over: false, tile: tile });
+        if (overTile && overTile.n > 0) T.list.push({ kind: 'lines', band: lband, pf: lpf, over: true, tile: overTile });
+        T.cellRecords += tile.n + (overTile ? overTile.n : 0);
+      }
+    }
+
+    T.bakeMs = performance.now() - tb0;
+    TL.fp = fp;
+    TL.tiles = T;
+    TL.cellRecords = T.cellRecords;   // v0.97.1: the instrument read TL, not T
+    return T;
+  }
+
+  // tlBakeTiles — the entry: returns the current set, baking synchronously
+  // on FIRST use (boot parity: the old first frame cost exactly this once)
+  // and debouncing REPLACEMENT bakes 150ms (slider drags, pinch settles —
+  // the interim frames render with the current tiles).
+  function tlBakeTiles(P, cam) {
+    if (TL.tiles && TL.fp) {
+      var spacingQ = GRID_BASE * (P.gridSize || 1) * cam.scale;
+      var M = Math.max(2, Math.min(12, Math.round(384 / spacingQ) || 2));
+      var bgKey = Math.round(bgView.tw) + 'x' + Math.round(bgView.th) + '@' + (bgView.zx || 1).toFixed(3);
+      var fp = tlFingerprint(P, cam.scale, M, bgKey);
+      if (fp !== TL.fp) {
+        // v0.97.1 FIX — the trailing debounce must NOT re-arm itself every
+        // frame (the ambient frames kept resetting the 150ms clock, so a
+        // rebake NEVER fired and the app rendered the stale tile set
+        // forever — the classic self-arming debounce bug, caught by the
+        // v097 rig's mesh worst case). The clock starts at the FIRST
+        // mismatch; later frames only refresh the payload (bake whatever
+        // is newest when it fires; convergence re-arms if still stale).
+        TL.pendP = P; TL.pendCam = { ox: cam.ox, oy: cam.oy, scale: cam.scale };
+        if (!TL.bakeT) {
+          TL.bakeT = setTimeout(function () {
+            TL.bakeT = 0;
+            var p = TL.pendP, c = TL.pendCam;
+            TL.pendP = null; TL.pendCam = null;
+            if (p && c) {
+              try { tlBake(p, c); }
+              catch (e) {
+                // v0.97.1: a worker-side bake throw is INVISIBLE (the boot
+                // onerror is a settled no-op) — stash it for the instrument
+                TL.bakeError = String(e && e.message || e);
+                try { if (typeof console !== 'undefined') console.warn('doomalay: tile rebake failed:', TL.bakeError); } catch (e2) {}
+              }
+            }
+          }, 150);
+        }
+        return TL.tiles;
+      }
+      return TL.tiles;
+    }
+    return tlBake(P, cam);
+  }
+
+  // tlFill — THE one-object draw: one pattern fill paints an entire band.
+  // The pattern's user-unit = its own pixel; scaling by Tcss/D maps the
+  // tile onto exactly M grid cells at the CURRENT scale (any bake-scale
+  // mismatch auto-compensates — only sharpness changes).
+  function tlFill(gc, tile, phx, phy, Tcss, alpha, W, H) {
+    if (!tile.pat || tile.patCtx !== gc) {
+      tile.pat = gc.createPattern(tile.canvas, 'repeat');
+      tile.patCtx = gc;
+    }
+    var k = Tcss / tile.D;
+    gc.save();
+    if (alpha < 1) gc.globalAlpha = alpha;
+    gc.translate(phx, phy);
+    gc.scale(k, k);
+    gc.fillStyle = tile.pat;
+    gc.fillRect(-phx / k, -phy / k, W / k, H / k);
+    gc.restore();
+  }
+
+  // ══ THE RENDER — the v0.97 dispatcher ══════════════════════════════
+  function render(gctx, gctx2, W, H, cam, P) {
+    if (ROOT.__doomalayLatticeLegacy) return renderLegacy(gctx, gctx2, W, H, cam, P);
+    try {
+      return renderTiled(gctx, gctx2, W, H, cam, P);
+    } catch (e) {
+      TL.legacyFails++;
+      TL.lastError = String(e && e.message || e) + ' @ ' + String(e && e.stack || '').split('\n')[1];
+      try { if (typeof console !== 'undefined' && TL.legacyFails < 3) console.warn('doomalay: one-object lattice fell back to legacy:', e && e.message, e && e.stack); } catch (e2) {}
+      TL.tiles = null; TL.fp = '';
+      return renderLegacy(gctx, gctx2, W, H, cam, P);
+    }
+  }
+
+  function renderTiled(gctx, gctx2, W, H, cam, P) {
+    var t0 = performance.now();
+    var offsetX = cam.ox, offsetY = cam.oy, scale = cam.scale;
+    var t = P.t, specs = P.specs;
+
+    paintCanvasBackground(gctx, P.canvasSpec, P.bgFallback, W, H, P.bgP, scale, offsetX, offsetY);
+
+    var amp = P.amp;
+    var scatterPxL = P.scatterL * 0.6, scatterPxD = P.scatterD * 0.6;
+    var sizeFracL = P.sizeVarL / 100 * 3.4;
+    var sizeFracD = P.sizeVarD / 100 * 3.4;
+    var effFracL = Math.max(sizeFracL, Math.abs(P.biasL) / 100 * 1.7);
+    var effFracD = Math.max(sizeFracD, Math.abs(P.biasD) / 100 * 1.7);
+    var rotDegL = P.rotVarL * 0.6;
+    var bExpL = Math.pow(2, -2.5 * (P.biasL / 100));
+    function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
+    var hideLines = !!P.hideLines;
+    var hideDots = !!P.hideDots;
+    var animDots = !!P.animDots;
+    var animLines = !!P.animLines;
+    var dotSpec = specs && specs.dotColor;
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var lineSpec2 = specs && specs.lineColor;
+    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var fpNow = [P.scatterL, P.scatterD, P.sizeVarL, P.sizeVarD, P.rotVarL, P.rotVarD,
+      P.biasL, P.biasD, animDots ? 1 : 0, animLines ? 1 : 0,
+      scale.toFixed(4), P.gridSize, hideLines ? 1 : 0, hideDots ? 1 : 0,
+      amp.toFixed(4), W, H,
+      dotSpec ? cheapJSON(dotSpec) : '', dotFallback,
+      lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
+    if (fpNow !== LC.fp) { LC.fp = fpNow; LC.gen++; lcClearParams(); }
+    var colFp = [dotSpec ? cheapJSON(dotSpec) : '', dotFallback,
+                 lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
+    if (colFp !== LC.colFp) { LC.colFp = colFp; LC.cgen++; lcClearColors(); }
+    var animT = performance.now() / 1000 * TEMPO;    // v0.97: the tempo slow-down
+    var dbg = { dots: 0, segs: 0, fullLines: 0, batches: 0, buckets: 0,
+      dotBands: [], lineBands: [], dotSmall: 0, dotBig: 0, lineSmall: 0, lineBig: 0,
+      jrMin: Infinity, jrMax: 0, wMin: Infinity, wMax: 0,
+      glow: 0, glowCols: [], overDots: 0, overLines: 0 };
+    var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+    var segMode = effFracL > 0 || animLines;
+    var overDotsOn = !!(gctx2 && amp >= 0.5 && effFracD > 0.02);
+    var overLinesOn = !!(gctx2 && amp >= 0.5 && effFracL > 0.02);
+    var overThreshD = 0.7 * dotRBase * (1 + effFracD);
+    var overThreshL = 0.7 * (1 + effFracL);
+    var AMP_BANDS = 5;
+    var bandPF = function (k) { return 1 + amp * (0.25 + 0.75 * (-0.85 + 1.5 * (k / (AMP_BANDS - 1)))); };
+    if (gctx2) gctx2.clearRect(0, 0, W, H);
+
+    var nBandsArr = amp > 0 ? AMP_BANDS : 1;
+    for (var zb = 0; zb < nBandsArr; zb++) { dbg.dotBands.push(0); dbg.lineBands.push(0); }
+
+    // ── FULL-LINE MODE (no variation, no line animation): the immediate
+    // pass, lifted from the legacy renderer — ≈40 quads, ≤2 fills, and
+    // the v0723 source contracts live in the legacy copy below.
+    if (!hideLines && !segMode) {
+      var lineBands = amp > 0 ? AMP_BANDS : 1;
+      var segBuckets = new Map();
+      var lineBandStyle = lcPaint(lineSpec2, lineFallback2, gctx, W, H);
+      gctx.strokeStyle = lineBandStyle;
+      gctx.lineWidth = 1;
+      var lineSampler = lcSampler(lineSpec2, lineFallback2);
+      var startX = ((-offsetX * scale) % (GRID_BASE * (P.gridSize || 1) * scale) + (GRID_BASE * (P.gridSize || 1) * scale)) % (GRID_BASE * (P.gridSize || 1) * scale);
+      var startY = ((-offsetY * scale) % (GRID_BASE * (P.gridSize || 1) * scale) + (GRID_BASE * (P.gridSize || 1) * scale)) % (GRID_BASE * (P.gridSize || 1) * scale);
+      var scaledGrid = GRID_BASE * (P.gridSize || 1) * scale;
+      function depthT(h, sizeFrac) { return sizeFrac > 0.02 ? h : 0.5; }
+      function bandOf(tt) { var k = Math.floor(tt * AMP_BANDS); return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k); }
+      for (var lb = 0; lb < lineBands; lb++) {
+        var lPF = lineBands === 1 ? 1 : bandPF(lb);
+        var lStartX = lineBands === 1 ? startX : (((-offsetX * scale * lPF) % scaledGrid + scaledGrid) % scaledGrid);
+        var lStartY = lineBands === 1 ? startY : (((-offsetY * scale * lPF) % scaledGrid + scaledGrid) % scaledGrid);
+        var lBandN = 0;
+        for (var x = lStartX; x < W; x += scaledGrid) {
+          var ix = Math.round((x + offsetX * scale * lPF) / scaledGrid);
+          var LP = LC.vline.get(ix);
+          if (LP === undefined) {
+            var lwH = warpL(hashCell(ix, 2));
+            var rotD = rotDegL * (hashCell(ix, 1) - 0.5) * 2;
+            var rrd = rotD * Math.PI / 180;
+            LP = { dx: scatterPxL * (hashCell(ix, 0) - 0.5) * 2,
+                   lwB: 1 * (1 + effFracL * (lwH - 0.5) * 2),
+                   band: bandOf(depthT(lwH, effFracL)),
+                   c: Math.cos(rrd), s: Math.sin(rrd) };
+            LC.vline.set(ix, LP);
+            if (LC.vline.size > 8192) LC.vline.clear();
+          }
+          if (lineBands > 1 && LP.band !== lb) continue;
+          lBandN++;
+          if (LP.lwB < 0.9) dbg.lineSmall++; else if (LP.lwB > 1.1) dbg.lineBig++;
+          var lc = (overLinesOn && LP.lwB > overThreshL) ? gctx2 : gctx;
+          if (lc === gctx2) dbg.overLines++;
+          var tx = x + LP.dx;
+          var colL = LC.vlineC.get(ix);
+          if (colL === undefined) { colL = lineSampler ? lineSampler(x + offsetX * scale * lPF, H / 2 + offsetY * scale * lPF) : null; LC.vlineC.set(ix, colL); LC.misses++; } else LC.hits++;
+          dbg.fullLines++;
+          var styleL = quantColor(colL || lineBandStyle);
+          var lwFull = Math.max(0.3, LP.lwB);
+          var pxv = LP.c * lwFull / 2, pyv = LP.s * lwFull / 2;
+          var fbk = (lc === gctx2 ? '2|' : '1|') + styleL;
+          var fb = segBuckets.get(fbk);
+          if (!fb) { fb = { sc: lc, s: styleL, a: 1, ops: [] }; segBuckets.set(fbk, fb); }
+          fb.ops.push(tx - pxv, 0 - pyv, tx + pxv, 0 + pyv,
+                      (tx - H * LP.s) + pxv, H * LP.c + pyv, (tx - H * LP.s) - pxv, H * LP.c - pyv);
+          if (LP.lwB < dbg.wMin) dbg.wMin = LP.lwB;
+          if (LP.lwB > dbg.wMax) dbg.wMax = LP.lwB;
+        }
+        for (var y = lStartY; y < H; y += scaledGrid) {
+          var iy = Math.round((y + offsetY * scale * lPF) / scaledGrid);
+          var HP = LC.hline.get(iy);
+          if (HP === undefined) {
+            var lw2H = warpL(hashCell(2, iy));
+            var rot2D = rotDegL * (hashCell(1, iy) - 0.5) * 2;
+            var rr2d = rot2D * Math.PI / 180;
+            HP = { dy: scatterPxL * (hashCell(0, iy) - 0.5) * 2,
+                   lwB: 1 * (1 + effFracL * (lw2H - 0.5) * 2),
+                   band: bandOf(depthT(lw2H, effFracL)),
+                   c: Math.cos(rr2d), s: Math.sin(rr2d) };
+            LC.hline.set(iy, HP);
+            if (LC.hline.size > 8192) LC.hline.clear();
+          }
+          if (lineBands > 1 && HP.band !== lb) continue;
+          lBandN++;
+          if (HP.lwB < 0.9) dbg.lineSmall++; else if (HP.lwB > 1.1) dbg.lineBig++;
+          var lc2 = (overLinesOn && HP.lwB > overThreshL) ? gctx2 : gctx;
+          if (lc2 === gctx2) dbg.overLines++;
+          var ty = y + HP.dy;
+          var colL2 = LC.hlineC.get(iy);
+          if (colL2 === undefined) { colL2 = lineSampler ? lineSampler(W / 2 + offsetX * scale * lPF, y + offsetY * scale * lPF) : null; LC.hlineC.set(iy, colL2); LC.misses++; } else LC.hits++;
+          dbg.fullLines++;
+          var styleL2 = quantColor(colL2 || lineBandStyle);
+          var lwFull2 = Math.max(0.3, HP.lwB);
+          var pxh = -HP.s * lwFull2 / 2, pyh = HP.c * lwFull2 / 2;
+          var fbk2 = (lc2 === gctx2 ? '2|' : '1|') + styleL2;
+          var fb2 = segBuckets.get(fbk2);
+          if (!fb2) { fb2 = { sc: lc2, s: styleL2, a: 1, ops: [] }; segBuckets.set(fbk2, fb2); }
+          fb2.ops.push(0 - pxh, ty - pyh, 0 + pxh, ty + pyh,
+                       W * HP.c + pxh, ty + W * HP.s + pyh, W * HP.c - pxh, ty + W * HP.s - pyh);
+          if (HP.lwB < dbg.wMin) dbg.wMin = HP.lwB;
+          if (HP.lwB > dbg.wMax) dbg.wMax = HP.lwB;
+        }
+        dbg.lineBands[lb] = (dbg.lineBands[lb] || 0) + lBandN;
+      }
+      segBuckets.forEach(function (bk) {
+        var sc = bk.sc;
+        sc.fillStyle = bk.s;
+        sc.beginPath();
+        var ops = bk.ops;
+        for (var oi = 0; oi < ops.length; oi += 8) {
+          sc.moveTo(ops[oi], ops[oi + 1]);
+          sc.lineTo(ops[oi + 2], ops[oi + 3]);
+          sc.lineTo(ops[oi + 4], ops[oi + 5]);
+          sc.lineTo(ops[oi + 6], ops[oi + 7]);
+          sc.closePath();
+        }
+        sc.fill();
+        dbg.batches++; dbg.buckets++;
+      });
+    }
+
+    // ── THE ONE-OBJECT TILES ──────────────────────────────────────────
+    var T = tlBakeTiles(P, cam);
+    var ps = T.scaleQ ? (scale / T.scaleQ) : 1;
+    var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
+    var TcssNow = T.M * spacingNow;
+    var dprSnap = TL_DPR || 1;
+    // the BREATH: two checker-parity groups, counter-phase — the shimmer
+    // that replaces 1,100 per-dot sin() evaluations
+    var breathA = animDots ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * 1.6))) : 1;
+    var breathB = animDots ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * 1.6 + Math.PI))) : 1;
+    var nx = Math.ceil(W / TcssNow) + 1, ny = Math.ceil(H / TcssNow) + 1;
+
+    for (var li = 0; li < T.list.length; li++) {
+      var bt = T.list[li];
+      if (bt.kind === 'lines' && (hideLines || !segMode)) continue;
+      if (bt.kind !== 'lines' && hideDots) continue;
+      var gc = bt.over ? gctx2 : gctx;
+      if (!gc) continue;
+      var bpf = bt.pf;
+      var bx = -(offsetX * scale * bpf), by = -(offsetY * scale * bpf);
+      var phx = ((bx % TcssNow) + TcssNow) % TcssNow;
+      var phy = ((by % TcssNow) + TcssNow) % TcssNow;
+      phx = Math.round(phx * dprSnap) / dprSnap;
+      phy = Math.round(phy * dprSnap) / dprSnap;
+      var alpha = bt.kind === 'dotsA' ? breathA : (bt.kind === 'dotsB' ? breathB : 1);
+      tlFill(gc, bt.tile, phx, phy, TcssNow, alpha, W, H);
+      dbg.batches++;
+      var cov = nx * ny * bt.tile.n;
+      var reps = nx * ny;
+      if (bt.kind === 'lines') {
+        dbg.segs += cov;
+        dbg.lineBands[bt.band] = (dbg.lineBands[bt.band] || 0) + cov;
+        dbg.lineSmall += bt.tile.small * reps; dbg.lineBig += bt.tile.big * reps;
+        if (bt.tile.wMin < dbg.wMin) dbg.wMin = bt.tile.wMin;
+        if (bt.tile.wMax > dbg.wMax) dbg.wMax = bt.tile.wMax;
+        if (bt.over) dbg.overLines += cov;
+      } else {
+        dbg.dots += cov;
+        dbg.dotBands[bt.band] = (dbg.dotBands[bt.band] || 0) + cov;
+        dbg.dotSmall += bt.tile.small * reps; dbg.dotBig += bt.tile.big * reps;
+        if (bt.tile.jrMin < dbg.jrMin) dbg.jrMin = bt.tile.jrMin;
+        if (bt.tile.jrMax > dbg.jrMax) dbg.jrMax = bt.tile.jrMax;
+        dbg.glow += bt.tile.glowN * reps;
+        for (var gcx = 0; gcx < bt.tile.glowCols.length; gcx++)
+          if (dbg.glowCols.indexOf(bt.tile.glowCols[gcx]) < 0) dbg.glowCols.push(bt.tile.glowCols[gcx]);
+        if (bt.over) dbg.overDots += cov;
+      }
+    }
+
+    // ── THE HERO FIREFLIES (animDots only — the few real movers) ──────
+    // v0.97.1: the band-level weight range (heroes included) feeds the
+    // instrument — the tiles alone miss the biggest dots at high variation
+    if (T.jrMin < dbg.jrMin) dbg.jrMin = T.jrMin;
+    if (T.jrMax > dbg.jrMax) dbg.jrMax = T.jrMax;
+    var heroCount = 0;
+    if (!hideDots && T.heroes.length) {
+      var HERO_CAP = 40;
+      for (var hi = 0; hi < T.heroes.length && heroCount < HERO_CAP; hi++) {
+        var h = T.heroes[hi];
+        var hbx = -(offsetX * scale * h.pf), hby = -(offsetY * scale * h.pf);
+        var hbT = TcssNow;
+        var k0x = Math.floor((-hbx - 120) / hbT), k1x = Math.floor((W - hbx + 120) / hbT);
+        var k0y = Math.floor((-hby - 120) / hbT), k1y = Math.floor((H - hby + 120) / hbT);
+        for (var kx = k0x; kx <= k1x && heroCount < HERO_CAP; kx++) {
+          for (var ky = k0y; ky <= k1y && heroCount < HERO_CAP; ky++) {
+            var gx = (kx * T.M + h.tx) * spacingNow + h.jx + hbx;
+            var gy = (ky * T.M + h.ty) * spacingNow + h.jy + hby;
+            var pulse = Math.sin(animT * h.tsp + h.tph);
+            var jr = h.jr * (1 + 0.4 * pulse) * ps;   // ps: the bake→runtime scale
+            var orA = animT * h.ospd + h.tph;
+            var hx2 = gx + Math.cos(orA) * h.orR * ps;
+            var hy2 = gy + Math.sin(orA) * h.orR * ps;
+            if (hx2 < -20 || hx2 > W + 20 || hy2 < -20 || hy2 > H + 20) continue;
+            var tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
+            var hgc = (overDotsOn && h.jr > overThreshD) ? gctx2 : gctx;
+            if (!hgc) continue;
+            hgc.save();
+            hgc.globalAlpha = tal;
+            if (h.glow && jr >= 1.6) {
+              var spG = lcGlowSprite(h.glow);
+              var R = jr * 2.6;
+              hgc.globalAlpha = tal * 0.55;
+              hgc.drawImage(spG.c, hx2 - R, hy2 - R, R * 2, R * 2);
+              hgc.globalAlpha = tal;
+            }
+            hgc.fillStyle = h.glow || h.col;
+            hgc.beginPath();
+            hgc.arc(hx2, hy2, Math.max(0.15, jr), 0, Math.PI * 2);
+            hgc.fill();
+            hgc.restore();
+            heroCount++;
+            dbg.glow++;
+            if (dbg.glowCols.indexOf(h.glow || h.col) < 0) dbg.glowCols.push(h.glow || h.col);
+          }
+        }
+      }
+    }
+
+    // ── the origin dot (verbatim) ────────────────────────────────────
+    const o = { x: (0 - offsetX) * scale, y: (0 - offsetY) * scale };
+    if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
+      gctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e', gctx, W, H);
+      gctx.beginPath();
+      gctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
+      gctx.fill();
+    }
+
+    // ── the frame instrument (the rigs' contract, unchanged shape) ────
+    var lcNow = performance.now();
+    if (lcLastT) lcFps = lcFps * 0.9 + (1000 / (lcNow - lcLastT)) * 0.1;
+    lcLastT = lcNow;
+    var stats = {
+      dotsPainted: (cam.dots ? cam.dots.length : 0),
+      originRadius: ORIGIN_RADIUS,
+      stars: 0, dots: dbg.dots, segs: dbg.segs, amp: amp,
+      dotBands: dbg.dotBands, lineBands: dbg.lineBands,
+      dotStats: { small: dbg.dotSmall, big: dbg.dotBig, n: dbg.dots },
+      lineStats: { small: dbg.lineSmall, big: dbg.lineBig, n: dbg.segs + dbg.fullLines },
+      weight: { jrMin: dbg.jrMin === Infinity ? 0 : dbg.jrMin, jrMax: dbg.jrMax,
+        wMin: dbg.wMin === Infinity ? 0 : dbg.wMin, wMax: dbg.wMax,
+        effFracD: effFracD, effFracL: effFracL },
+      overIcons: { on: !!(overDotsOn || overLinesOn),
+        dots: dbg.overDots, lines: dbg.overLines,
+        threshD: overDotsOn ? overThreshD : null,
+        threshL: overLinesOn ? overThreshL : null },
+      camera: { x: offsetX, y: offsetY, scale: scale },
+      fps: Math.round(lcFps),
+      batches: dbg.batches, buckets: dbg.buckets + T.list.length,
+      cache: { gen: LC.gen, colorGen: LC.cgen,
+        dot: TL.cellRecords, vline: LC.vline.size, hline: LC.hline.size,
+        vseg: T.M * T.M, hseg: T.M * T.M },
+      // v0.97: the one-object instrument — the rigs can prove the mode
+      oneObject: { tiles: T.list.length, mega: T.M, heroes: heroCount,
+                   bakeGen: T.gen, tileMs: Math.round(T.bakeMs || 0),
+                   bakeError: TL.bakeError || null },
+      glow: { n: dbg.glow, colors: dbg.glowCols, sprites: LC.sprites.size },
+      hits: LC.hits, misses: LC.misses,
+      paintMs: Math.round((lcNow - t0) * 10) / 10
+    };
+    lastStats = stats;
+    return stats;
+  }
+
+  // ══ THE LEGACY RENDER (pre-v0.97, byte-identical behavior) ════════
+  // The verbatim renderGrid body, parameterized:
   // P: {specs, t, canvasSpec, bgFallback, gridSize, hideLines, hideDots,
   //     scatterL, scatterD, sizeVarL, sizeVarD, rotVarL, rotVarD,
   //     biasL, biasD, animDots, animLines, amp (0..1), bgP (0.08..0.35)}
   // cam: {ox, oy, scale}
-  function render(gctx, gctx2, W, H, cam, P) {
+  function renderLegacy(gctx, gctx2, W, H, cam, P) {
     var t0 = performance.now();
     var offsetX = cam.ox, offsetY = cam.oy, scale = cam.scale;
     var t = P.t, specs = P.specs, st = P;
@@ -1147,9 +1910,32 @@
   ROOT.Lattice = {
     ORIGIN_RADIUS: ORIGIN_RADIUS,
     render: render,
+    renderLegacy: renderLegacy,     // v0.97: the A/B switch (also the fallback)
+    setDpr: setDpr,                 // v0.97: the hosts report their DPR (tile bake sharpness)
     onTexReady: function (cb) { onTexReadyCb = cb; },
+    // v0.97.1: the hosts ask after every frame — a pending debounced rebake
+    // means THIS frame rendered stale tiles; the host schedules ONE
+    // follow-up frame to land the fresh bake (without it, the last stale
+    // frame sat on the bitmap forever once the ambient loop rested —
+    // the mesh→plain parity catch).
+    rebakePending: function () { return !!TL.bakeT; },
     lastStats: function () { return lastStats; },
     IN_WORKER: IN_WORKER,
-    cheapJSON: cheapJSON       // v0.88: the spec digests (app.js's gates)
+    cheapJSON: cheapJSON,       // v0.88: the spec digests (app.js's gates)
+    // v0.97: the one-object debug twin (the rigs' proof of mode + memory)
+    oneObject: function () {
+      return {
+        active: !!(TL.tiles && TL.fp),
+        tiles: TL.tiles ? TL.tiles.list.length : 0,
+        mega: TL.tiles ? TL.tiles.M : 0,
+        heroes: TL.tiles ? TL.tiles.heroes.length : 0,
+        bakeGen: TL.gen,
+        pending: !!TL.bakeT,
+        legacyFails: TL.legacyFails,
+        legacy: !!ROOT.__doomalayLatticeLegacy,
+        lastError: TL.lastError || null,
+        bakeError: TL.bakeError || null
+      };
+    }
   };
 })();

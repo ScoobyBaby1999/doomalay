@@ -182,16 +182,26 @@ print('yes' if 'many-icons' not in s[0] and s[1]=='transform' else 'no')")" "$FE
 ck "containment on .chatbot (contain: layout style)" \
    "$(ev "(function(){var any=document.querySelector('.chatbot'); return any && getComputedStyle(any).contain.indexOf('layout')>=0 ? 'yes':'no'})()")" "contain"
 
-echo "── (5) the cache ledger (ambient = 100% hits)"
+echo "── (5) the cache ledger (v0.97 RE-PIN: the one-object bake ledger)"
+# v0.97 re-pin: the one-object lattice retired the per-frame cell walk —
+# ambient frames no longer consult LC.dotC/vsegC per cell (the tiles bake
+# ONCE; the frame is a few pattern fills). The ledger's old contract
+# ("cacheHits climb every ambient frame") is architecturally obsolete; its
+# INTENT — ambient frames recompute nothing — now lives in the bake
+# ledger: bakeGen stays STABLE through ambient animation (no per-frame
+# rebake) and paintMs stays trivial.
 setstate "{ dotAnimate: true, lineAnimate: true }"
-H1=$(ev "window.DoomalayPerf.cacheHits + ':' + window.DoomalayPerf.cacheMisses")
+H1=$(ev "(window.Lattice.oneObject().bakeGen) + ':' + ((window.DoomalayDebug||{}).paintMs || 0)")
 sleep 1.2
-H2=$(ev "window.DoomalayPerf.cacheHits + ':' + window.DoomalayPerf.cacheMisses")
-ck "ambient frames climb the hits, misses stay flat" \
+H2=$(ev "(window.Lattice.oneObject().bakeGen) + ':' + ((window.DoomalayDebug||{}).paintMs || 0)")
+ck "ambient frames rebake nothing (bakeGen stable, paintMs trivial)" \
    "$(python3 -c "
-a=[int(x) for x in '''$H1'''.split(':')]
-b=[int(x) for x in '''$H2'''.split(':')]
-print('yes' if b[0]>a[0] and b[1]==a[1] else 'no')")" "$H1 → $H2"
+a=\"\"\"$H1\"\"\".split(':'); b=\"\"\"$H2\"\"\".split(':')
+gen_stable = a[0] == b[0]
+ms_ok = True
+try: ms_ok = float(b[1]) <= 8.0
+except Exception: ms_ok = False
+print('yes' if gen_stable and ms_ok else 'no')")" "$H1 → $H2"
 
 echo "── (6) visual: the canvas paints under the mesh worst case"
 LEN=$(ev "document.getElementById('c').toDataURL().length")

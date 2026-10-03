@@ -140,6 +140,9 @@
       canvas.width = Math.floor(W * dpr);
       canvas.height = Math.floor(H * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // v0.97: the one-object lattice bakes at the host DPR (sharp tiles;
+      // the pattern fill compensates for any mismatch geometrically)
+      try { if (window.Lattice && window.Lattice.setDpr) window.Lattice.setDpr(dpr); } catch (e) {}
       // v0.81.2: the over-icons twin rides the EXACT same geometry
       if (canvas2 && ctx2) {
         canvas2.width = Math.floor(W * dpr);
@@ -410,11 +413,30 @@
         dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : null },
       buildLatticeParams());
     publishLatticeStats(stats);
+    // v0.97.1: a pending debounced rebake means this frame painted stale
+    // tiles — land the fresh bake with ONE follow-up frame (the ambient
+    // loop may be resting; without this the stale raster sat forever)
+    if (window.Lattice && window.Lattice.rebakePending && window.Lattice.rebakePending())
+      schedulePostBakeFrame();
     renderOffScreenArrows();
     paintAtoms();
     paintOrbitStars();   // v0.90.1: the stars on the over-icons layer (they move)
   }
   function renderGrid() { paintGridFrame(false); }
+
+  // v0.97.1: THE POST-BAKE FRAME — the tile lattice rebakes params/zoom
+  // changes 150ms after they settle (tlBakeTiles' debounce); the interim
+  // frames render the previous bake. This one-shot follow-up lands the
+  // fresh tiles once the bake fires — in BOTH painter modes (the worker
+  // asks for it via the repaint-wanted reply).
+  var postBakeT = 0;
+  function schedulePostBakeFrame() {
+    if (postBakeT) return;
+    postBakeT = setTimeout(function () {
+      postBakeT = 0;
+      renderGrid();
+    }, 240);
+  }
 
   // ── v0.85.2 THE WORKER BOOT ──────────────────────────────────────
   // transferControlToOffscreen is ONE-WAY and must precede ANY getContext
@@ -493,6 +515,10 @@
           } catch (e) {}
         } else if (m.t === 'tex-ready') {
           update();
+        } else if (m.t === 'repaint-wanted') {
+          // v0.97.1: the worker's tile lattice rebaked (or is about to) —
+          // one follow-up frame lands the fresh tiles on the bitmap
+          schedulePostBakeFrame();
         } else if (m.t === 'paint-error') {
           console.warn('doomalay: grid worker paint error:', m.message);
         }
@@ -949,6 +975,7 @@
   // on a throttled/busy phone the world decelerates at the same rate
   // instead of getting literally heavier (the audit's F3).
   var lastStepAt = 0;
+  var lastAmbientFull = 0;   // v0.97: the ambient cadence gate's clock
   function tick() {
     let moving = false;
     var now = performance.now();
@@ -1011,9 +1038,30 @@
         // worker mode posts {atomsOnly:true}, main mode clears + paints.
         paintGridFrame(true);
       } else {
-        // v0.85.2: the lattice + arrows + atoms ride renderGrid's funnel
-        renderGrid();
-        for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+        // v0.97 THE AMBIENT CADENCE GATE — when ONLY the ambient lattice
+        // animation moves (no pan, no physics, no camera), the full
+        // lattice frame runs at ≥66ms cadence (~15fps) instead of every
+        // rAF: the one-object lattice is a few pattern fills, but the
+        // over-icons fills + hero fireflies + the worker round-trip still
+        // cost — and a 15fps twinkle READS as calm (the TEMPO slow-down
+        // makes the stepping invisible). Stars/atoms keep their own 60fps
+        // cheap frame between lattice frames. Pans/momentum pin full
+        // cadence exactly as before (v0779's pan proof rides it).
+        var atomsLive = (window.Atoms && window.Atoms.active(world.entities) &&
+                         !(window.World3D && window.World3D.atomsOwned())) ||
+                        (window.TabGroups && window.TabGroups.active());
+        var latticeDue = moving || !ambientGridActive() ||
+                         (now - lastAmbientFull >= 66);
+        if (latticeDue) {
+          renderGrid();
+          lastAmbientFull = now;
+          for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+        } else if (atomsLive) {
+          paintGridFrame(true);
+        }
+        // else: nothing is due this frame — the canvas keeps its last
+        // raster (the compositor owns it); grouped members still render
+        // below when their orbit moved.
       }
     }
     // v0.88.2: the orbiting members re-render even on a resting canvas
@@ -1730,6 +1778,10 @@
     var tries = 0;
     var t = setInterval(function () {
       tries++;
+      // v0.97 C3: the transcript's head backfills in idle chunks — a jump
+      // targeting history that is not mounted yet flushes it now (one
+      // synchronous slice, then the row exists to scroll to).
+      try { if (window.ChatPanel && window.ChatPanel.ensureMounted) window.ChatPanel.ensureMounted(); } catch (e) {}
       var row = panel.bodyEl && panel.bodyEl.querySelector('[data-ei="' + ei + '"]');
       if (row) {
         clearInterval(t);
