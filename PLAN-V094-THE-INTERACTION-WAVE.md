@@ -215,3 +215,105 @@ should DevTools-eyeball the stacking (prime suspects: the clip-path
 interaction with the composited oversized pseudo; z-index:-1 between
 isolated sibling contexts; the scroller's clipping), fix the interaction,
 flip `L2_ON = true`, and re-run `scripts/v094-interaction-profile.py`.
+
+## v0.95.0 — THE TRACK 2 WAVE (the ledger resolved)
+
+### THE "STACKING BUG" — ROOT-CAUSED AND DEAD (2026-10-03)
+
+The v0.94.3 dormancy note above said "a later sibling's oversized layer
+paints over earlier elements' boxes." That diagnosis was WRONG. The real
+mechanism, caught with a live-page evidence chain (pixel diff → resolved
+field origins → pseudo computed styles → winning-declaration walks → a
+0.00% isolated lab that proved the geometry perfect → a forced-suppression
+experiment):
+
+**THE EPOCH RE-MINT CANNIBALIZED ITSELF.** The first mint is correct
+(the snapshot reads a live element). Every epoch bump AFTER (theme flip,
+gate-CSS injection → `repaint()`) re-mints from a snapshot taken while
+OUR OWN base rule had already suppressed the element's gradient →
+`snap.image = 'none'` → the re-mint paints a DEAD layer over a
+suppressed element. The elements went see-through, and whatever raw
+background sat behind showed up: the panel root's own fixed gradient
+(squeezed by its transform — the exact bug the projection system exists
+to fix) and the surviving `!important` twins. That composition reads
+exactly like a sibling-overrun to a pixel diff.
+
+The four fixes (theme.js, L2 module):
+1. **Lift-read-restore** in `L2.snapshot` — for elements already riding
+   a layer, the base-rule AND inline suppressions lift for the computed
+   read and restore after; CSSOM writes, writeEpoch-stamped, invisible
+   to the MutationObserver, zero layout cost.
+2. **Base suppression goes `!important`** — the twins carry their own.
+3. **The INLINE `!important` suppression** — the gate twins reach
+   (0,2,0)+ specificity (`[data-a1-grad] [style*="color:var(--accent)"]`
+   on the model pills, `[data-s2-grad] …` on the composer buttons); no
+   attribute rule out-specifies an ID-matched twin. The element's inline
+   style + `!important` beats every selector at any specificity. Cleared
+   on `drop()` and on every legacy fallthrough (4 sites).
+4. **`contain: paint` on overflow:visible bases** — the oversized
+   pseudo's skirt was (a) extending the transcript scroller 3511 vs
+   3029px — a 482px void the auto-scroll drowned in — and (b) turning
+   every bubble into a `findScroller()` false positive. Lab: 538→300.
+   (overflow:hidden bases deliberately EXCLUDED — see the code comment:
+   the paint-containment-implies-layout-containment cost on
+   .panel-body regressed open/resize/settle on the rig.)
+
+### Verification (all on the 6× rig, live engine)
+
+- All pseudos alive: 13/13 at rest, **17/17 through a live theme flip**
+  (the re-mint case that used to kill them).
+- Every own background suppressed (0 unsuppressed, was 6/12).
+- Scroller parity restored (3312 = 3312 with identical traversal).
+- Header band parity 2.4–3.7% (antialiasing noise). Transcript ±1/255.
+- The composer strip delta that REMAINS is Track 2 being MORE correct
+  than the shipped reference: those elements keep the twins'
+  `background-attachment: fixed !important`, which defeated the LEGACY
+  path's plain inline `attachment: scroll` write — the legacy rendering
+  of them was already broken (fixed-under-transform). The layers render
+  the true viewport windows.
+- `L2_ON = (window.__doomalayL2 !== false)` — the answer to "why does the
+  variable exist": it is now the runtime kill-switch / device-class
+  escape hatch (oversized composited layers cost GPU memory on
+  low-memory WebViews). Default ON.
+
+### The wave's numbers (6× CPU throttle, BlackView class)
+
+| scenario | L2 off (this build) | L2 on (this build) |
+|---|---|---|
+| panel-drag paints / 4.6s | 72–108 | **4–12** |
+| panel-drag fps | 15–16 | **19** |
+| typing paints | 24–25 | 22–26 |
+| canvas pan | 0 paints both | 0 paints |
+
+### The rest of the wave
+
+- **D1/D2 resize**: SEL survives resizes (stylesheet-derived only);
+  the re-bake + `L2.resizeAll` + the canvas bitmap realloc debounce
+  150ms; the boot resize stays synchronous.
+- **F2 spatial hash**: the O(n²) physics scan is retired — uniform grid
+  broadphase (the same one Matter.js/planck use, hand-rolled), rebuilt
+  per substep, half-neighborhood pair walk. 400 entities step in
+  **0.15ms** (~30–60× the old cost at that count) — the complexity
+  headroom the "much more complex canvas" needs.
+- **F3 time-scaled integration**: `step(dtFrames)` with ≤1-frame
+  substeps (no tunneling); at 60Hz byte-identical (verified numerically:
+  dt=2 == 2×dt=1 to the last decimal); at 30fps the world decelerates at
+  the same rate instead of getting heavier.
+- **F6 poller**: webpanel.js's 2s scroll-save `setInterval` replaced with
+  real scroll events (500ms debounce, `scrollend`, re-attached per
+  same-origin navigation via the iframe `load` event).
+- **GSAP verdict** (re-researched at the user's ask): NOT vendored. The
+  canvas world renders in a dedicated OffscreenCanvas worker where GSAP
+  cannot operate; the DOM-side motion now rides compositor-only
+  transforms; the measured bottlenecks (DOM build, style recalc,
+  raster) are not drag-math problems. The spatial hash + the compositor
+  path ARE the complexity enablement.
+
+### Known residue (next wave, with data)
+
+The panel-open L2 overhead: ~+12% busy time under 6× throttle
+(`/home/z/l2dbg/openprofile.py` CPU profile: the eligibility probe 1.8%,
+`scrollBottom`/`restoreChatScroll`/`scrollRebake` ≈ 6% — the
+scroll-anchoring churn as progressive containment lands mid-rise) and
+the transcript DOM build itself (one innerHTML parse of the whole
+transcript). The C3 "split the transcript render" remains the open item.

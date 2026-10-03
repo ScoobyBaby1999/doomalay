@@ -101,6 +101,15 @@
                            // main-thread spacing math; the painter owns
                            // the real one)
 
+  // v0.94.4 (D2): THE RESIZE WAVE — a resize burst (Android inset
+  // animations fire one per frame) used to resize the canvas BITMAPS on
+  // every event (a realloc + full clear per frame — the bitmap churn
+  // behind the post-gesture-nav lag). The CHEAP part (the CSS style
+  // sizing) stays per-event so the canvas never visually desyncs; the
+  // EXPENSIVE part (bitmap realloc + repaint) debounces 150ms — one
+  // realloc at the end of the burst.
+  var resizeDebounce = 0;
+  var resizeBooted = false;
   function resize() {
     W = window.innerWidth;
     H = window.innerHeight;
@@ -110,23 +119,34 @@
       canvas2.style.width = W + 'px';
       canvas2.style.height = H + 'px';
     }
-    // v0.85.2: worker mode — the BITMAPS belong to the worker; it sizes
-    // them + reapplies the DPR transform (the DOM style above is ours)
-    if (Painter.mode === 'worker' || Painter.pending) {
-      try { if (Painter.worker) Painter.worker.postMessage({ t: 'resize', W: W, H: H, dpr: dpr }); } catch (e) {}
+    // the BOOT resize applies synchronously (the first frame must be
+    // true-geometry — a 300×150 default for 150ms would flash on the
+    // non-worker path)
+    if (!resizeBooted) { resizeBooted = true; applyBitmapResize(); return; }
+    if (resizeDebounce) return;
+    resizeDebounce = setTimeout(function () {
+      resizeDebounce = 0;
+      applyBitmapResize();
+    }, 150);
+  }
+  function applyBitmapResize() {
+      // v0.85.2: worker mode — the BITMAPS belong to the worker; it sizes
+      // them + reapplies the DPR transform (the DOM style above is ours)
+      if (Painter.mode === 'worker' || Painter.pending) {
+        try { if (Painter.worker) Painter.worker.postMessage({ t: 'resize', W: W, H: H, dpr: dpr }); } catch (e) {}
+        update();
+        return;
+      }
+      canvas.width = Math.floor(W * dpr);
+      canvas.height = Math.floor(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // v0.81.2: the over-icons twin rides the EXACT same geometry
+      if (canvas2 && ctx2) {
+        canvas2.width = Math.floor(W * dpr);
+        canvas2.height = Math.floor(H * dpr);
+        ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
       update();
-      return;
-    }
-    canvas.width = Math.floor(W * dpr);
-    canvas.height = Math.floor(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // v0.81.2: the over-icons twin rides the EXACT same geometry
-    if (canvas2 && ctx2) {
-      canvas2.width = Math.floor(W * dpr);
-      canvas2.height = Math.floor(H * dpr);
-      ctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    update();
   }
 
   function worldToScreen(wx, wy) {
@@ -924,8 +944,16 @@
     });
   }
 
+  // v0.94.4 F3: the physics step rides REAL elapsed time (frames of
+  // 16.667ms) — at 60Hz dt=1 (byte-identical to the old fixed step);
+  // on a throttled/busy phone the world decelerates at the same rate
+  // instead of getting literally heavier (the audit's F3).
+  var lastStepAt = 0;
   function tick() {
     let moving = false;
+    var now = performance.now();
+    var dtF = lastStepAt ? Math.min(3, (now - lastStepAt) / 16.667) : 1;
+    lastStepAt = now;
     if (inputState === 'PANNING') {
       // v0.94.1: THE FINGER OWNS THE CAMERA — while an active finger pan
       // is in flight, tick does NOT integrate velX/velY (the input path
@@ -939,7 +967,7 @@
     } else if (velX !== 0 || velY !== 0) {
       velX = 0; velY = 0;
     }
-    world.step();
+    world.step(dtF);
     // v0.88.2: THE ORBIT PASS — the collision dots' members swirl (their
     // x/y is the orbit's; the ICONS' DOM transforms re-render — the
     // canvas furniture stays pixel-stable, no repaint needed for the

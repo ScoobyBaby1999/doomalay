@@ -570,8 +570,34 @@
       }
     } catch (e) { /* cross-origin — sealed */ }
   }
-  // best-effort scroll sampling while the tab browses (same-origin)
-  setInterval(saveScrollNow, 2000);
+  // v0.94.4 (F6): the 2s FOREVER poll is RETIRED — the scroll position
+  // saves on real scroll events (debounced 500ms; scrollend where
+  // supported) + on teardown/hide (below). A poller that fires every
+  // 2 seconds for the life of the page was CPU-governor/battery noise
+  // on mobile for a value that only changes when the user scrolls.
+  // NB: scroll events live on the IFRAME'S WINDOW (content scrolling
+  // never bubbles to the parent element), and a same-origin navigation
+  // REPLACES that window — the listeners re-attach on every load.
+  var scrollSaveT = 0;
+  function queueScrollSave() {
+    if (scrollSaveT) return;
+    scrollSaveT = setTimeout(function () { scrollSaveT = 0; saveScrollNow(); }, 500);
+  }
+  function bindScrollSave() {
+    try {
+      var cw = ctx.iframe.contentWindow;
+      if (!cw) return;
+      cw.addEventListener('scroll', queueScrollSave, { passive: true });
+      if ('onscrollend' in cw) {
+        cw.addEventListener('scrollend', function () {
+          if (scrollSaveT) { clearTimeout(scrollSaveT); scrollSaveT = 0; }
+          saveScrollNow();
+        }, { passive: true });
+      }
+    } catch (e) { /* cross-origin — sealed */ }
+  }
+  bindScrollSave();
+  try { ctx.iframe.addEventListener('load', bindScrollSave); } catch (e) {}
 
   function teardown() {
     var out = activeCtx;

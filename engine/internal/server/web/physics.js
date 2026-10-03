@@ -10,6 +10,34 @@
 //     on purpose — keeping the math simple. At 30fps the chatbots will
 //     decelerate faster; on 144Hz displays, slower. Acceptable for a
 //     touch-driven UI.
+//   • v0.94.4 F2: THE SPATIAL HASH — the pairwise O(n²) scan is gone.
+//     A uniform grid broadphase (cell = the max pair distance, rebuilt
+//     per substep — n Map inserts) checks only same-cell + half-neighbor
+//     cells; each pair is visited at most once. This is the same grid
+//     broadphase Matter.js/planck use internally, hand-rolled dependency-
+//     free (~40 lines) — the world now scales to hundreds of chatbots at
+//     flat per-step cost. “Pairwise O(n²) is fine for n < ~50” is retired.
+//   • v0.94.4 F3: TIME-SCALED INTEGRATION — step(dtFrames) normalizes
+//     friction AND position advance to real elapsed time (substeps of ≤1
+//     frame so fast entities can't tunnel). At 60Hz the math is byte-
+//     identical to the old fixed-frame step; on a throttled/busy phone at
+//     30fps the chatbots decelerate at the SAME rate instead of twice as
+//     fast (the old “the world literally gets heavier the longer it
+//     runs” — F3 in the perf audit).
+//   • v0.94.4 F2: THE SPATIAL HASH — the pairwise O(n²) scan is gone.
+//     A uniform grid broadphase (cell = the max pair distance, rebuilt
+//     per substep — n Map inserts) checks only same-cell + half-neighbor
+//     cells; each pair is visited at most once. This is the same grid
+//     broadphase Matter.js/planck use internally, hand-rolled dependency-
+//     free (~40 lines) — the world now scales to hundreds of chatbots at
+//     flat per-step cost. “Pairwise O(n²) is fine for n < ~50” is retired.
+//   • v0.94.4 F3: TIME-SCALED INTEGRATION — step(dtFrames) normalizes
+//     friction AND position advance to real elapsed time (substeps of ≤1
+//     frame so fast entities can't tunnel). At 60Hz the math is byte-
+//     identical to the old fixed-frame step; on a throttled/busy phone at
+//     30fps the chatbots decelerate at the SAME rate instead of twice as
+//     fast (the old “the world literally gets heavier the longer it
+//     runs” — F3 in the perf audit).
 //   • Collisions are circle-circle, equal-mass elastic. When one entity
 //     is being dragged (dragging=true), it's treated as infinite mass —
 //     it doesn't move from physics, and other entities bounce off it.
@@ -89,6 +117,10 @@
       // collision dots). Null = nobody's listening (zero overhead).
       this.onContacts = null;
       this._contacts = [];
+      // v0.94.4 F2: the spatial hash (rebuilt per substep — entities
+      // move every frame; a persistent grid's update cost exceeds the
+      // rebuild for n ≤ a few thousand).
+      this._grid = new Map();
     }
 
     add(e) { this.entities.push(e); }
@@ -100,45 +132,106 @@
 
     get(id) { return this.entities.find(e => e.id === id); }
 
-    // Step the simulation by one frame.
-    // 1) Integrate motion + apply friction (skip dragged entities).
-    // 2) Pairwise circle-circle collision detection + response.
-    step() {
+    // Step the simulation. dtF = elapsed time in 16.667ms frames
+    // (default 1 = the classic fixed-frame step, byte-identical math).
+    // Internally substeps in <=1-frame slices (no tunneling: a fast
+    // entity never advances more than one frame's travel between
+    // collision checks).
+    //   1) Integrate motion + apply friction (skip dragged entities).
+    //   2) Grid-broadphase circle-circle collision detection + response.
+    step(dtF) {
+      if (!dtF || dtF <= 0 || !isFinite(dtF)) dtF = 1;
+      if (dtF > 3) dtF = 3;             // a stalled tab resumes gently
+      var remaining = dtF;
+      while (remaining > 0.001) {
+        var slice = remaining > 1 ? 1 : remaining;
+        this._substep(slice);
+        remaining -= slice;
+      }
+    }
+
+    _substep(dt) {
       const ents = this.entities;
 
-      // ── 1) Integration ────────────────────────────────────────
-      // v0.90.1: grouped members (e._orbit) skip friction — their damping
+      // -- 1) Integration --------------------------------------
+      // v0.90.1: grouped members (e._orbit) skip friction -- their damping
       // is the orbit steering's exponential blend (a sustained orbit
       // speed must not decay); MIN_VEL zeroing would stall slow orbits.
+      // v0.94.4 F3: friction + travel scale by the real elapsed time.
+      const fr = dt === 1 ? FRICTION : Math.pow(FRICTION, dt);
       for (const e of ents) {
         if (e.dragging) continue;
-        e.x += e.vx;
-        e.y += e.vy;
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
         if (!e._orbit) {
-          e.vx *= FRICTION;
-          e.vy *= FRICTION;
+          e.vx *= fr;
+          e.vy *= fr;
           if (Math.abs(e.vx) < MIN_VEL && Math.abs(e.vy) < MIN_VEL) {
             e.vx = 0; e.vy = 0;
           }
         }
       }
 
-      // ── 2) Pairwise collisions ────────────────────────────────
+      // -- 2) THE SPATIAL HASH BROADPHASE (v0.94.4 F2) -------
+      // Cell = the max pair distance (2x max radius, min 64). Every
+      // entity bins into its cell; each pair is visited exactly once
+      // via the half-neighborhood walk (own bin above-diagonal + the
+      // E/SW/S/SE neighbors).
       const n = ents.length;
+      if (n < 2) return;
+      let maxR = 0;
+      for (let i = 0; i < n; i++) if (ents[i].radius > maxR) maxR = ents[i].radius;
+      const cell = Math.max(64, maxR * 2);
+      const grid = this._grid;
+      grid.clear();
       for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          const a = ents[i];
-          const b = ents[j];
-          const dx = b.x - a.x;          // vector from a → b
+        const e = ents[i];
+        e._gi = i;                      // own-bin pair ordering
+        // integer merge key -- a hash collision only adds a harmless
+        // extra check (the pair test verifies the real distance)
+        const k = ((e.x / cell) | 0) * 46341 + ((e.y / cell) | 0);
+        let bin = grid.get(k);
+        if (!bin) { bin = []; grid.set(k, bin); }
+        bin.push(e);
+      }
+      for (let i = 0; i < n; i++) {
+        const a = ents[i];
+        const cx = (a.x / cell) | 0, cy = (a.y / cell) | 0;
+        this._collideBin(a, grid.get(cx * 46341 + cy), true);
+        this._collideBin(a, grid.get((cx + 1) * 46341 + cy), false);
+        this._collideBin(a, grid.get((cx - 1) * 46341 + (cy + 1)), false);
+        this._collideBin(a, grid.get(cx * 46341 + (cy + 1)), false);
+        this._collideBin(a, grid.get((cx + 1) * 46341 + (cy + 1)), false);
+      }
+      this.fireContacts();
+    }
+
+    // check entity a against a bin's members. sameBin = only entries
+    // AFTER a (each own-bin pair is visited exactly once, i<j order --
+    // identical to the retired pairwise loop).
+    _collideBin(a, bin, sameBin) {
+      if (!bin) return;
+      const lim = bin.length;
+      for (let k = 0; k < lim; k++) {
+        const b = bin[k];
+        if (sameBin ? (b === a || b._gi <= a._gi) : b === a) continue;
+        this._collidePair(a, b);
+      }
+    }
+
+    // one circle-circle pair: detection + contact report + response.
+    // (the exact v0.90.1 math, verbatim)
+    _collidePair(a, b) {
+          const dx = b.x - a.x;          // vector from a -> b
           const dy = b.y - a.y;
           const distSq = dx * dx + dy * dy;
           const minDist = a.radius + b.radius;
-          if (distSq >= minDist * minDist) continue;  // not touching
+          if (distSq >= minDist * minDist) return;  // not touching
 
           const dist = Math.sqrt(distSq);
-          let nx, ny;                    // unit normal from a → b
+          let nx, ny;                    // unit normal from a -> b
           if (dist > 0.0001) { nx = dx / dist; ny = dy / dist; }
-          else { nx = 1; ny = 0; }       // perfectly overlapping — pick arbitrary
+          else { nx = 1; ny = 0; }       // perfectly overlapping -- pick arbitrary
           const overlap = minDist - dist;
 
           // v0.88.2: report the contact (both entities touched this
@@ -237,11 +330,11 @@
               a.vy -= ny * boost;
             }
           }
-        }
-      }
+    }
 
-      // v0.88.2: THE CONTACT TAP fires (once per step, all of this
-      // frame's touches) — the collision dots form from these.
+    // v0.88.2: THE CONTACT TAP fires (once per substep, all of this
+    // frame's touches) — the collision dots form from these.
+    fireContacts() {
       if (this.onContacts && this._contacts.length) {
         try { this.onContacts(this._contacts); } catch (e) { /* a bad listener never breaks physics */ }
         this._contacts.length = 0;

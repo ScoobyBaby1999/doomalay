@@ -1166,17 +1166,22 @@
           } catch (e) { return false; }
         }
         // eligibility — memoized (el.__projL2ok: 2|1|0; 2 = ::after rider,
-        // 1 = ::before rider, 0 = fallback) — re-probed per epoch.
-        // v0.94.3: TRACK 2 IS DORMANT — the layer math is verified correct
-        // (field origin = viewport origin, eff 0.0 for every audited
-        // element; the lab renders the exact pseudo geometry perfectly),
-        // but in the live panel a later sibling's oversized layer paints
-        // over earlier elements' boxes (the strip test: the user bubble's
-        // pink ends ~90px in and surface-1 colors take over) — a stacking
-        // interaction the remote rig could not root-cause to a close. The
-        // code stays; the activation flips back on after a DevTools
-        // eyeball session. Everything below is dormant until then.
-        var L2_ON = false;
+        // 1 = ::before rider, 0 = fallback).
+        // v0.94.4: TRACK 2 IS LIVE. The v0.94.3 dormancy is resolved — the
+        // "later sibling's layer paints over earlier elements" was NOT a
+        // stacking-context bug at all: the epoch RE-MINT (theme flip /
+        // gate-CSS injection → repaint()) snapshotted elements whose own
+        // gradient OUR base rule had already suppressed → it minted DEAD
+        // layers (background-image: none), the suppressed elements went
+        // see-through, and whatever raw background sat behind (the panel
+        // root's own transform-squeezed fixed gradient, the surviving
+        // !important twins) showed through — reading exactly like a
+        // stacking overrun. Three fixes below (lift-read-restore in
+        // snapshot, !important suppression, contain:paint) + the runtime
+        // kill-switch. L2_ON defaults TRUE; window.__doomalayL2 = false
+        // is the device-class escape hatch (low-memory WebViews bail to
+        // the legacy bake — oversized composited layers cost GPU memory).
+        var L2_ON = (window.__doomalayL2 !== false);
         function ok(el, snap) {
           if (!L2_ON) return (el.__projL2ok = 0);
           if (el.__projL2ok !== undefined) return el.__projL2ok;
@@ -1189,6 +1194,10 @@
             // the base rule clips the oversized layer with clip-path — an
             // element whose own shadow paints outside the box would lose it
             if (snap.shadow && snap.shadow !== 'none') return (el.__projL2ok = 0);
+            // v0.94.4: an element with its OWN clip-path shape (the hub
+            // bundle flag's polygon) must not have it overridden by the
+            // base rule's inset() — it rides the legacy bake instead.
+            if (snap.clipPath && snap.clipPath !== 'none') return (el.__projL2ok = 0);
             if (snap.position === 'static') {
               // position:relative is only safe without positioned descendants
               var kids = el.querySelectorAll('*');
@@ -1201,11 +1210,31 @@
           } catch (e) { good = 0; }
           return (el.__projL2ok = good);
         }
-        // the read phase's extra computed reads for layer candidates
+        // the read phase's extra computed reads for layer candidates.
+        // v0.94.4: THE LIFT-READ-RESTORE — an element already riding its
+        // layer carries OUR suppression (background-image:none !important)
+        // on its base rule; a plain read would snapshot 'none' and the
+        // epoch re-mint would paint a DEAD layer over a suppressed
+        // element (the v0.94.3 "stacking bug" — actually self-
+        // cannibalization). The suppression lifts for the read and
+        // restores right after; both are CSSOM writes on OUR OWN rule —
+        // the MutationObserver never sees them, and background-image has
+        // zero layout cost, so the lift can't thrash.
         function snapshot(el) {
+          var L = el.__projL2, lift = false;
           try {
+            if (L && L.base) {
+              try {
+                // stamp FIRST — the lift's own attr mutation must read as
+                // painter-owned even if this element was quiet last paint
+                el.__projWriteEpoch = writeEpoch;
+                L.base.style.removeProperty('background-image');
+                el.style.removeProperty('background-image');
+                lift = true;
+              } catch (e0) {}
+            }
             var cs = getComputedStyle(el);
-            return {
+            var out = {
               position: cs.position,
               image: cs.backgroundImage,
               color: cs.backgroundColor,
@@ -1213,12 +1242,27 @@
               radius: cs.borderRadius,
               clip: cs.backgroundClip,
               shadow: cs.boxShadow,
+              clipPath: cs.clipPath,
+              ovfX: cs.overflowX,
               bt: parseFloat(cs.borderTopWidth) || 0,
               br: parseFloat(cs.borderRightWidth) || 0,
               bb: parseFloat(cs.borderBottomWidth) || 0,
               bl: parseFloat(cs.borderLeftWidth) || 0
             };
-          } catch (e) { return null; }
+            if (lift) {
+              L.base.style.setProperty('background-image', 'none', 'important');
+              el.style.setProperty('background-image', 'none', 'important');
+            }
+            return out;
+          } catch (e) {
+            try {
+              if (lift && L && L.base) {
+                L.base.style.setProperty('background-image', 'none', 'important');
+                el.style.setProperty('background-image', 'none', 'important');
+              }
+            } catch (e1) {}
+            return null;
+          }
         }
         // bake/patch — returns true when the element rides the layer path.
         // snap is required only for MINTS (fresh elements) and EPOCH RE-MINTS
@@ -1245,8 +1289,49 @@
               var bs = base.style;
               bs.isolation = 'isolate';          // keeps z-index:-1 above the parent's paint
               if (snap.position === 'static') bs.position = 'relative';
-              bs.backgroundImage = 'none';
-              bs.backgroundColor = 'transparent';
+              // v0.94.4: !important — the gradient TWIN rules (index.html's
+              // [style*="background:var(--surface-2)"] etc.) carry their own
+              // !important image declarations; a plain 'none' lost to them.
+              // Our sheet is appended last in document order, so at equal
+              // (0,1,0)+important WE win — but see the INLINE suppression
+              // below for the twins that out-specify us.
+              bs.setProperty('background-image', 'none', 'important');
+              bs.setProperty('background-color', 'transparent', 'important');
+              // v0.94.4b: THE INLINE SUPPRESSION — the gate twins reach
+              // (0,2,0)+ specificity with their own !important gradients
+              // ([data-a1-grad] [style*="color:var(--accent)"] on the model
+              // pills, [data-s2-grad] … on the composer buttons) and NO
+              // attribute rule of ours can out-specify an ID-matched twin.
+              // The element's inline style + !important beats EVERY
+              // selector at any specificity (only a later inline-important
+              // could — nothing writes those). Inline writes are observer-
+              // invisible via the writeEpoch stamp — the same dance the
+              // legacy bake has ridden since v0.78.3. Cleared on drop()
+              // and on every legacy fallthrough.
+              try {
+                el.style.setProperty('background-image', 'none', 'important');
+                el.style.setProperty('background-color', 'transparent', 'important');
+                el.__projWriteEpoch = writeEpoch;   // painter-owned — the observer skips it
+              } catch (e3) {}
+              // v0.94.4: paint containment — the oversized pseudo (its box
+              // extends 110vh up / 90vh+20px down) would otherwise extend
+              // every scrollable ancestor's scrollHeight (the rig measured
+              // the transcript scroller at 3511px vs 3029 — a 482px void the
+              // auto-scroll drowned in) AND turn every layered element into
+              // a findScroller() false positive (scrollHeight > clientHeight
+              // on plain bubbles). contain:paint clips the pseudo to the
+              // element's box — zero scroll-overflow contribution, and the
+              // element itself becomes a stacking context (already isolated)
+              // at no extra cost. ONLY for overflow:visible bases (the
+              // v0.94.4 attempt to include overflow:hidden elements
+              // (.panel-body) REGRESSED the open/resize/settle scenarios
+              // on the rig — paint containment implies layout containment,
+              // and isolating a container that the panel stretch animates
+              // re-layouts it expensively; a hidden-overflow base's own
+              // clip already covers its pseudo's painting, and its
+              // scrollHeight inflation (481→741 in the rig) only matters
+              // to programmatic scrollTop nobody performs).
+              if (snap.ovfX === 'visible') bs.contain = 'paint';
               // v0.94.3c: THE OVERSIZE GEOMETRY — the pseudo's box must
               // STILL COVER the element's box at every panel translate:
               // the transform slides the whole box by var(-T), so the box
@@ -1319,6 +1404,13 @@
             }
             el.removeAttribute('data-proj');
           } catch (e) {}
+          // v0.94.4b: clear the INLINE suppression — the CSS state owns the
+          // element again (byte-identical to the no-gradient look)
+          try {
+            el.style.removeProperty('background-image');
+            el.style.removeProperty('background-color');
+            el.__projWriteEpoch = writeEpoch;   // painter-owned removal
+          } catch (e4) {}
           el.__projL2 = undefined;
           return true;
         }
@@ -1390,7 +1482,13 @@
               // (majority) solid twins on every paint; the epoch clears
               // the memo on repaint/theme swaps.
               if (el.__projNoneEpoch === epoch) continue;
-              var img = getComputedStyle(el).backgroundImage;
+              // v0.94.4 (C3): ONE computed read, BOTH properties — the old
+              // two-call probe (image, then attachment) forced two style
+              // flushes per element per first-encounter paint; on the
+              // open of a long transcript that was 120+ flushes under
+              // 6× CPU throttle (the panel-open long tasks).
+              var pcs = getComputedStyle(el);
+              var img = pcs.backgroundImage;
               if (!img || img === 'none') { el.__projNoneEpoch = epoch; continue; }
               // v0.92.1: the projection model is FIXED-ATTACHMENT windows
               // only. An element whose computed attachment carries no
@@ -1399,8 +1497,7 @@
               // SEL match via a gradient var() can never resurrect the
               // per-motion re-anchor churn. Memoized with the same epoch
               // (a theme flip bumps memoEpoch + re-collects).
-              var att92 = getComputedStyle(el).backgroundAttachment;
-              if (att92.indexOf('fixed') === -1) { el.__projNoneEpoch = epoch; continue; }
+              if (pcs.backgroundAttachment.indexOf('fixed') === -1) { el.__projNoneEpoch = epoch; continue; }
               el.__projPainted = true;
             }
             var r = el.getBoundingClientRect();
@@ -1570,6 +1667,11 @@
                   it.el.style.backgroundPosition = cpos;
                   it.el.style.backgroundSize = size;
                   it.el.style.backgroundAttachment = 'scroll';
+                  // v0.94.4b: a carried element that fell back to legacy
+                  // must shed any stale INLINE suppression — the legacy
+                  // bake paints via the element's OWN background-image.
+                  it.el.style.removeProperty('background-image');
+                  it.el.style.removeProperty('background-color');
                   it.el.__projPos = cpos;
                   it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
                 }
@@ -1606,6 +1708,12 @@
               it.el.__projWriteEpoch = wep;
             }
           } else {
+            // v0.94.4b: the legacy fallthrough — clear any stale INLINE
+            // suppression first (the legacy bake paints via the element's
+            // OWN background-image; the inline none would blank it).
+            // removeProperty on an absent decl fires no mutation record.
+            it.el.style.removeProperty('background-image');
+            it.el.style.removeProperty('background-color');
             if (it.el.__projPos !== it.pos) {
               it.el.style.backgroundPosition = it.pos;
               it.el.__projPos = it.pos;
@@ -1931,6 +2039,11 @@
           if (el.__projL2 && L2.rebake(el)) continue;
           var pos = fmtCalc('--proj-tx', el.__projBx) + ' ' + fmtCalcY(el.__projBy);
           if (el.__projPos !== pos) {
+            // v0.94.4b: shed any stale INLINE suppression (a dropped layer
+            // leaves none — drop clears it — but belt-and-braces for any
+            // element that fell back without a drop)
+            el.style.removeProperty('background-image');
+            el.style.removeProperty('background-color');
             el.style.backgroundPosition = pos;
             el.__projPos = pos;
             el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
@@ -1994,6 +2107,10 @@
             continue;
           }
           var pos = fmtCalc('--proj-tx', bx) + ' ' + fmtCalcY(by);
+          // v0.94.4b: the legacy fallthrough — shed any stale INLINE
+          // suppression first (it would blank the element's own gradient).
+          el.style.removeProperty('background-image');
+          el.style.removeProperty('background-color');
           if (el.__projPos !== pos) {
             el.style.backgroundPosition = pos;
             el.__projPos = pos;
@@ -2012,10 +2129,23 @@
         if (settleTimer) clearTimeout(settleTimer);
         settleTimer = setTimeout(function () { settleTimer = 0; mark(); }, 150);
       }
+      // v0.94.4 (D1): THE RESIZE WAVE — a resize burst (Android inset
+      // animations fire one per frame) used to null SEL (a full stylesheet
+      // re-walk — every rule of every sheet — on EVERY event) + paint
+      // unbatched. SEL depends on stylesheets only, never on viewport
+      // size: it stays. The re-bake rides the same 150ms debounce the
+      // scroll settle uses — one paint at the end of the burst (the bake
+      // constants re-read vw/vh fresh per paint anyway). The layer
+      // resizeAll is equally bursty (a CSSOM write per rule) — same
+      // debounce.
+      var resizeTimer = 0;
       window.addEventListener('resize', function () {
-        SEL = null;
-        L2.resizeAll(window.innerWidth + 'px ' + window.innerHeight + 'px');   // v0.94.3: layer sizes track the viewport
-        mark();
+        if (resizeTimer) return;
+        resizeTimer = setTimeout(function () {
+          resizeTimer = 0;
+          L2.resizeAll(window.innerWidth + 'px ' + window.innerHeight + 'px');
+          mark();
+        }, 150);
       });
       // CSS transitions don't fire attribute mutations (computed values
       // interpolate) — the transform rides need explicit tracking.
