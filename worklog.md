@@ -315,3 +315,18 @@ Work Log:
 Stage Summary:
 - PUSHED: main 504ee975 → 925b5820 (v0.99.3) → 58957a81 (v0.99.4).
 - Next: v0.99.5 THE REASSIGNMENT (the census walk: 74 dividers → --border, plate stacks 3→2, the title family → fmt-a1, glyph catchers die, the 16 text-vs-accent rules → ink/fmt, modelbrowser border-strong text → ink tint).
+
+---
+Task ID: v099 wave (repo record)
+Agent: Z.ai Code (main orchestrator)
+Task: v0.99.5-.7 + the v0.99.0 ship — the repo-side record.
+
+Work Log:
+- 208b0acc v0.99.5: the census reassignment (one hairline owner; 2-layer plates; accent-text ban; title family → fmt-a1; glyph death) — v099-reassign-audit 6/6 NEW.
+- 442f9240 v0.99.6: the 7-slot Colors tab + the floating picker (Floating UI debut; GradientUI slim 8→2; grid+fmt folded in; 126-node mount) — v098 panel rig re-pinned 21/21.
+- 7874c91a v0.99.7: the nested-box recipe (settled cv:hidden; ≤2 accordion; cv:auto rows) — v099-settings-open 6/6 NEW.
+- 2dbcdee6 + tag v0.99.0-the-field + release: version 0.99.0; full battery green; CI (APK + desktop + HF Space) ALL SUCCESS.
+
+Stage Summary:
+- v0.99 THE FIELD is COMPLETE AND SHIPPED.
+- Next: v0.100 THE MASKS per PLAN-V099: (1) the cheap consolidations (toast ×6→1, keys.js→Overlay, localmodels double-✕, amber star→accent); (2) the gradient-text tiers (title family → local-box clip — one paint, no per-scroll projection); (3) L2 pseudo-only (the legacy inline bake retires — the deep PROJ surgery); (4) @tanstack/virtual-core on the catalogue + hub grid.
