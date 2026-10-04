@@ -40,9 +40,11 @@
 
       var html =
         '<div style="padding:20px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">' +
+        // v1.00.5: the double-✕ dies (the v0.98.1 modelbrowser precedent) —
+        // ConnectOverlay's static ✕ floats on every instance; the header keeps
+        // its right edge CLEAR of it (padding-right)
+        '<div style="display:flex;align-items:center;margin-bottom:16px;padding-right:34px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Local Models</h2>' +
-        '<button id="lm-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:4px 8px">✕</button>' +
         '</div>' +
         '<p style="font-size: var(--ui-small-fs);color:var(--text-3);margin:0 0 16px">Run AI on your device. Private, offline, no API key.</p>' +
         '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:8px;padding:10px;margin-bottom:16px;font-size: var(--ui-small-fs);color:var(--text-3)">' +
@@ -103,8 +105,6 @@
       // listeners to the OLD content (v0.10.1 dead-buttons bug).
       var wireUp = function () {
         var contentEl = window.ConnectOverlay.getContentEl();
-        var closeBtn = contentEl.querySelector('#lm-close');
-        if (closeBtn) closeBtn.addEventListener('click', function () { window.ConnectOverlay.close(); });
 
         // Wire up model selection
         contentEl.querySelectorAll('[data-model]').forEach(function (el) {

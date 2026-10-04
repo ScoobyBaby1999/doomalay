@@ -1611,6 +1611,36 @@
     };
   })();
 
+
+  // ── v1.00.5: THE ONE TOAST ─────────────────────────────────────
+  // Eight per-screen toast implementations (hub, lookio, hubitem,
+  // hubpublish, persona, templatesheet, artifacts, chatsview — each
+  // minted its own fixed div with byte-identical CSS) collapse into
+  // this one. The screen-local `toast()` names stay as thin delegates
+  // (zero call-site churn); every toast rides the SAME themed element
+  // + timer stack. window.toast aliases it for the bare-global
+  // callers (appearance.js's window.toast checks).
+  var toastEl = null, toastTimer = 0;
+  function DoomToast(msg, opts) {
+    opts = opts || {};
+    try {
+      if (!toastEl || !toastEl.isConnected) {
+        toastEl = document.createElement('div');
+        toastEl.id = 'doom-toast';
+        toastEl.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+          'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);padding:8px 16px;' +
+          'border-radius:10px;font-size:var(--ui-small-fs);z-index:3450;opacity:0;transition:opacity 0.2s;pointer-events:none';
+        document.body.appendChild(toastEl);
+      }
+      toastEl.textContent = msg;
+      toastEl.style.opacity = '1';
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+      if (!opts.hold) {
+        toastTimer = setTimeout(function () { toastEl.style.opacity = '0'; }, opts.ms || 1900);
+      }
+    } catch (e) { /* a toast never takes the app down */ }
+  }
+
   // ── exports: browser globals, or the node module path for the
   // self-test script (nothing above touches document/window at load
   // time except the guarded style injection) ──
@@ -1618,6 +1648,8 @@
     window.UIPills = UIPills;
     window.GradientUI = GradientUI;
     window.CropUI = CropUI;
+    window.DoomToast = DoomToast;
+    if (!window.toast) window.toast = DoomToast;   // the bare-global callers
   } else if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       GradientUI: GradientUI,

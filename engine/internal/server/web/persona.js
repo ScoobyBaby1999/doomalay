@@ -1252,22 +1252,8 @@
     if (cm && cm.refresh) { try { cm.refresh(); } catch (e) {} }
   });
 
-  var toastTimer = null;
-  function toast(msg) {
-    var t = document.getElementById('persona-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'persona-toast';
-      t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
-        'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);padding:8px 16px;' +
-        'border-radius:10px;font-size:var(--ui-small-fs);z-index:3450;opacity:0;transition:opacity 0.2s;pointer-events:none';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.opacity = '1';
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.style.opacity = '0'; }, 1700);
-  }
+  // v1.00.5: THE ONE TOAST — the delegate (uikit.js DoomToast)
+  function toast(msg) { window.DoomToast(msg); }
 
   // ── public API ────────────────────────────────────────────────────
   // v0.93.6: THE SANDBOX-CHANGED RE-POINT (user spec: "聊天中途切换 sandbox

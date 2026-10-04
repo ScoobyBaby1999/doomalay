@@ -2244,7 +2244,10 @@
     color: var(--text-3); font-size: 15px; cursor: pointer;
     font-family: inherit; touch-action: manipulation; line-height: 1;
   }
-  .ts-star-on { color: #f5b642; border-color: rgba(245, 182, 66, 0.55); background: rgba(245, 182, 66, 0.1); }
+  /* v1.00.5: the hardcoded amber dies (the v0982 census finding) — the
+     template star rides the theme's warn semantic (the same slot the
+     model-browser stars use), triplet-composed like every themed tint */
+  .ts-star-on { color: var(--warn); border-color: rgba(var(--warn-rgb), 0.55); background: rgba(var(--warn-rgb), 0.1); }
   .ts-empty { text-align: center; color: var(--text-3); font-size: var(--ui-small-fs); padding: 34px 18px; line-height: 1.6; }
   .ts-empty-title { font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
   .ts-empty-sub { font-size: var(--ui-micro-fs); }

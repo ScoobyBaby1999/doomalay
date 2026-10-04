@@ -64,25 +64,8 @@
     };
   }
 
-  var toastTimer = null;
-  function toast(msg, opts) {
-    if (window.Hub && window.Hub.toast) { window.Hub.toast(msg, opts); return; }
-    var t = document.getElementById('hubitem-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'hubitem-toast';
-      t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
-        'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);padding:8px 16px;' +
-        'border-radius:10px;font-size:var(--ui-small-fs);z-index:3450;opacity:0;transition:opacity 0.2s;pointer-events:none';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.opacity = '1';
-    if (toastTimer) clearTimeout(toastTimer);
-    if (!(opts && opts.hold)) {
-      toastTimer = setTimeout(function () { t.style.opacity = '0'; }, (opts && opts.ms) || 1900);
-    }
-  }
+  // v1.00.5: THE ONE TOAST — the delegate (uikit.js DoomToast)
+  function toast(msg, opts) { window.DoomToast(msg, opts); }
 
   function api(method, path, body) {
     var opts = { method: method, headers: {} };

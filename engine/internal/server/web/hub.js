@@ -126,27 +126,12 @@
     };
   }
 
-  var toastTimer = null;
   // v0.58 (user spec pt 7): toast(msg, {hold}) — the transient footer pill.
   // hold keeps it on screen (a "downloading…" / "endorsing…" state) until a
   // later normal toast swaps the text and fades; ms tunes the dwell.
-  function toast(msg, opts) {
-    var t = document.getElementById('hub-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'hub-toast';
-      t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
-        'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);padding:8px 16px;' +
-        'border-radius:10px;font-size:var(--ui-small-fs);z-index:3450;opacity:0;transition:opacity 0.2s;pointer-events:none';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.opacity = '1';
-    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
-    if (!(opts && opts.hold)) {
-      toastTimer = setTimeout(function () { t.style.opacity = '0'; }, (opts && opts.ms) || 1900);
-    }
-  }
+  // v1.00.5: THE ONE TOAST — the delegate (uikit.js DoomToast owns
+  // the element + the timer stack now)
+  function toast(msg, opts) { window.DoomToast(msg, opts); }
 
   // fetch wrapper — rejects with Error(message) + .status, so callers
   // can branch (401 → the connect flow).

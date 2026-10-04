@@ -21,35 +21,23 @@
 (function () {
   'use strict';
 
-  var overlayEl = null;
+  // v1.00.5: the shortcuts ride THE OVERLAY SCREEN (ConnectOverlay —
+  // the one rounded box over everything, per the standing UI rule:
+  // every new front-facing screen is the panel or the Overlay). The
+  // rogue self-styled .kb-scrim DIES — and with it the LAST hardcoded
+  // rgba(0,0,0,.48) scrim in the app (the Overlay class owns every
+  // scrim now, themed by the color system).
+  var shortcutsActive = false;
 
-  // ── theming ──────────────────────────────────────────────────────────
+  // ── theming: the CONTENT styles only (the keycaps + rows ride the
+  //    Overlay's box + scrim + close chrome — themed vars throughout) ──
   var styleEl = null;
   function ensureStyle() {
     if (styleEl && styleEl.isConnected) return;
     styleEl = document.createElement('style');
     styleEl.id = 'keys-style';
     styleEl.textContent = [
-      '.kb-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.48);',
-      '  z-index: 3400; display: flex; align-items: center; justify-content: center;',
-      '  opacity: 0; transition: opacity .18s ease; }',
-      '.kb-scrim.kb-in { opacity: 1; }',
-      '.kb-card { width: min(420px, calc(100vw - 40px)); max-height: min(560px, calc(100vh - 56px));',
-      '  background-color: var(--surface-1); border: 1px solid var(--surface-2);',
-      '  border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,.5);',
-      '  display: flex; flex-direction: column; overflow: hidden;',
-      '  transform: translateY(10px) scale(.97); transition: transform .2s cubic-bezier(0.32,0.72,0,1); }',
-      '.kb-scrim.kb-in .kb-card { transform: none; }',
-      '.kb-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px;',
-      '  border-bottom: 1px solid var(--surface-2);',
-      '  background: linear-gradient(180deg, var(--surface-2), transparent); }',
-      '.kb-title { flex: 1; font-size: calc(var(--ui-fs) + 1px); font-weight: 600; color: var(--text-1); }',
-      '.kb-close { background: transparent; border: 1px solid var(--border); color: var(--text-3);',
-      '  border-radius: 9px; width: 30px; height: 30px; font-size: 14px; cursor: pointer;',
-      '  font-family: inherit; transition: color .14s, border-color .14s; flex-shrink: 0; }',
-      '.kb-close:hover, .kb-close:focus-visible { color: var(--text-1); border-color: var(--border-strong);',
-      '  outline: none; }',
-      '.kb-body { overflow-y: auto; padding: 6px 16px 16px; }',
+      '.kb-body { padding: 4px 4px 16px; }',
       '.kb-sec { margin-top: 12px; }',
       '.kb-sec-title { font-size: calc(var(--ui-micro-fs) + .5px); font-weight: 700;',
       '  letter-spacing: .07em; text-transform: uppercase; color: var(--text-2);',
@@ -65,10 +53,7 @@
       '  font-size: calc(var(--ui-micro-fs) + .5px); font-weight: 600; color: var(--text-1);',
       '  background-color: var(--surface-2); border: 1px solid var(--border-strong);',
       '  border-bottom-width: 2px; border-radius: 6px; }',
-      '.kb-plus { color: var(--text-3); font-size: 10px; }',
-      '@media (prefers-reduced-motion: reduce) {',
-      '  .kb-scrim, .kb-card { transition: none; }',
-      '}'
+      '.kb-plus { color: var(--text-3); font-size: 10px; }'
     ].join('\n');
     document.head.appendChild(styleEl);
   }
@@ -141,37 +126,25 @@
       }
       secs += '<div class="kb-sec"><h3 class="kb-sec-title">' + esc(SECTIONS[i].title) + '</h3>' + rows + '</div>';
     }
-    return '<div class="kb-card" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">' +
-      '<div class="kb-head">' +
-        '<span class="kb-title">Keyboard shortcuts</span>' +
-        '<button class="kb-close" aria-label="Close shortcuts">✕</button>' +
-      '</div>' +
-      '<div class="kb-body">' + secs + '</div>' +
-    '</div>';
+    // v1.00.5: the BODY only — ConnectOverlay owns the rounded box, the
+    // scrim, the close chrome and the theming
+    return '<div class="kb-body" role="document" aria-label="Keyboard shortcuts">' + secs + '</div>';
   }
 
   function openShortcuts() {
+    if (!window.ConnectOverlay) return;
     ensureStyle();
     closeShortcuts();
-    overlayEl = document.createElement('div');
-    overlayEl.className = 'kb-scrim';
-    overlayEl.id = 'kb-overlay';
-    overlayEl.innerHTML = overlayHTML();
-    overlayEl.addEventListener('click', function (e) {
-      if (e.target === overlayEl) closeShortcuts();
-    });
-    overlayEl.querySelector('.kb-close').addEventListener('click', closeShortcuts);
-    document.body.appendChild(overlayEl);
-    requestAnimationFrame(function () { overlayEl.classList.add('kb-in'); });
-    try { overlayEl.querySelector('.kb-close').focus(); } catch (e) {}
+    shortcutsActive = true;
+    window.ConnectOverlay.open(overlayHTML(), {});
   }
 
   function closeShortcuts() {
-    if (!overlayEl) return;
-    var el = overlayEl;
-    overlayEl = null;
-    el.classList.remove('kb-in');
-    setTimeout(function () { el.remove(); }, 190);
+    if (!shortcutsActive) return;
+    shortcutsActive = false;
+    if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
+      window.ConnectOverlay.close();
+    }
   }
 
   function isTypingTarget(t) {
@@ -199,7 +172,7 @@
     if (mod && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
       e.stopPropagation();
-      if (overlayEl) { closeShortcuts(); return; }
+      if (shortcutsActive) { closeShortcuts(); return; }
       if (window.GlobalSearch) window.GlobalSearch.open();
       return;
     }
@@ -213,13 +186,13 @@
       (e.code === 'Slash' && e.shiftKey && e.key !== '/');
     if (isQuestion && !mod && !e.altKey && !isTypingTarget(e.target)) {
       e.preventDefault();
-      if (overlayEl) closeShortcuts();
+      if (shortcutsActive) closeShortcuts();
       else openShortcuts();
       return;
     }
 
     // Esc closes the overlay (the panel/view stacks handle their own).
-    if (e.key === 'Escape' && overlayEl) {
+    if (e.key === 'Escape' && shortcutsActive) {
       e.preventDefault();
       closeShortcuts();
     }

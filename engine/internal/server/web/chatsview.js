@@ -359,17 +359,8 @@
     start();
   }
 
-  function toastNoHost() {
-    var t = document.createElement('div');
-    t.textContent = 'no chats yet — start a conversation first';
-    t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);' +
-      'background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);' +
-      'border-radius:10px;padding:8px 14px;font-size:var(--ui-small-fs);z-index:3600;' +
-      'opacity:0;transition:opacity .18s;font-family:inherit';
-    document.body.appendChild(t);
-    requestAnimationFrame(function () { t.style.opacity = '1'; });
-    setTimeout(function () { t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 250); }, 2100);
-  }
+  // v1.00.5: THE ONE TOAST — the delegate (uikit.js DoomToast)
+  function toastNoHost() { window.DoomToast('no chats yet — start a conversation first'); }
 
   function mountView(panel, mode) {
     var pickMode = !!(mode && mode.onPick);

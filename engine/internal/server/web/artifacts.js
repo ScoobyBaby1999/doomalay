@@ -842,17 +842,9 @@
     });
   }
 
-  function toast(msg) {
-    var t = document.createElement('div');
-    t.className = 'art-toast';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(function () { t.classList.add('show'); }, 10);
-    setTimeout(function () {
-      t.classList.remove('show');
-      setTimeout(function () { t.remove(); }, 300);
-    }, 2200);
-  }
+  // v1.00.5: THE ONE TOAST — the delegate (uikit.js DoomToast owns the
+  // element + timers; window.Artifacts.toast callers unchanged)
+  function toast(msg) { window.DoomToast(msg); }
 
   // ── THE EDITOR ─────────────────────────────────────────────────
   // v0.18: every destructive/exit action is IN-DOM (no window.confirm /
