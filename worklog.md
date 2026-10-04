@@ -330,3 +330,23 @@ Work Log:
 Stage Summary:
 - v0.99 THE FIELD is COMPLETE AND SHIPPED.
 - Next: v0.100 THE MASKS per PLAN-V099: (1) the cheap consolidations (toast ×6→1, keys.js→Overlay, localmodels double-✕, amber star→accent); (2) the gradient-text tiers (title family → local-box clip — one paint, no per-scroll projection); (3) L2 pseudo-only (the legacy inline bake retires — the deep PROJ surgery); (4) @tanstack/virtual-core on the catalogue + hub grid.
+
+---
+Task ID: v1.00.1 (pushed)
+Agent: Z.ai Code (main orchestrator)
+Task: THE TOUCH FIX — the user-reported picker-dead-on-Android bug (the 6th #sheet-root recurrence), fixed at the root + the v1.00/v1.01 plan docs.
+
+Work Log:
+- Re-cloned @ af028270 (sandbox reset again); rebase check: no parallel-bot movement.
+- Root-caused from primary sources (W3C Touch Events L2 §9, MDN, Chrome docs, Playwright source — evidence in /home/z/my-project/tool-results/v100-research/): the v0.99.6 .slot-pop popover is body-appended → isInsideUI never learned it → touchstart preventDefault → the synthetic click suppressed → every click-wired control dead on touch; mouse clicks fire regardless (why every desktop rig was blind — Playwright #2903's own note).
+- THE FIX — THE POSITIVE LIST (app.js): isInsideUI RETIRES; the canvas input owns ONLY #c + #chatbots (panel.js _wireDuck's v0.69 pattern). Touch/mouse/wheel/contextmenu gates flip to !onCanvasSurface → return. The class dies at the root: every present AND future body-appended overlay gets native taps. Wheel over the popover now scrolls it (the mouse twin, same fix).
+- index.html: the popover's sticky head top:-12px → 0 (the ✕ VANISHED mid-scroll — pinned above the scrollport, clipped; the rig caught it); touch-action: manipulation on .slot-pop.
+- THE REAL-TOUCH RIG (scripts/v1000-touch-test.mjs + v1000-touch-tap.sh): Playwright hasTouch + tap() = trusted CDP touches + raw CDP drag sequences; 19 assertions (class-death proof: a stop added by a real tap + touchstarts NOT prevented; refactor proof: canvas pan + preventDefault still engage; popover scroll; wheel twin; zero errors).
+- NEGATIVE CONTROL PROVEN: against the old code the rig fails 6 (T3a/b/c, T4a, T7c, T8b — exactly the bug class); with the fix 19/19.
+- DISCOVERED + documented: the Go build cache does NOT invalidate on embedded-file changes (measured: stashed web/app.js → fresh go build → binary served the OLD assets) — the wrapper now always builds with -a. Every rig that assumes a prebuilt binary after web-asset edits runs stale.
+- Full battery green: touch 19/19 · twins 194 · uikit 140 · go vet+test 8 pkgs · v099 5/6/6 · v098 21/13/10 · v097 29 · v092 13 · v0911 12.
+- PLAN-V100-THE-MASKS.md + PLAN-V101-THE-ASSETS.md written (the research-backed wave plans; BitmapText gradient = broken in pixi 8.21 (1px atlas span, verified from dist source) → the generateTexture bake; virtual-core vanilla wiring; the .doomtheme v2 ladder).
+
+Stage Summary:
+- PUSHED: main af028270 → 5554349e (v1.00.1). CI builds the APK with the fix.
+- Next: v1.00.2 gradient-text tiers (the bake) → v1.00.3 L2 pseudo-only → v1.00.4 virtual-core → v1.00.5 consolidations → v1.00.0 ship; then v1.01 THE ASSETS.
