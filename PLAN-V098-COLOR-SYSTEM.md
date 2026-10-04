@@ -1,5 +1,10 @@
 # PLAN-V098-COLOR-SYSTEM — THE FIELD & THE MASKS (the color system rework)
 
+> BUILD ORDER: PLAN-V099-THE-FIELD.md (supersedes the wave list below with
+> the phase cadence, the library manifest from
+> docs/RESEARCH-V099-LIBRARY-SCAN.md, the census reassignment, and the
+> v0.102 LIBRARY wave; the vision sections here remain canonical).
+
 > The user's directive (2026-10-03): "My recommendation… is to scrap the
 > whole color system. Scan the entire repo (not in a single turn - we can go
 > in batches) find every single thing that uses a color, completely reassign
