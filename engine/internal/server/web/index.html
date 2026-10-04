@@ -5632,6 +5632,23 @@
 <script src="vendor/culori/culori.min.js"></script>
 <script src="vendor/floating-ui/floating-ui.core.umd.min.js"></script>
 <script src="vendor/floating-ui/floating-ui.dom.umd.min.js"></script>
+<!-- v1.00.4: THE WINDOW ENGINE (vendored, MIT — LICENSE under
+     vendor/licenses/). @tanstack/virtual-core 3.17.11 (ESM-only, 3
+     files, zero deps) exposes window.VirtualCore via this module tag
+     (deferred by nature; the catalogue only needs it at open time —
+     graceful fallback to the PAGE-capped list while absent).
+     DECISION RECORD: the catalogue's DOM is already bounded
+     (shownCount/PAGE + the more-row), so the WIRING (the
+     Virtualizer-driven #mb-list window: onChange-driven slice
+     renders, data-index + measureElement, the refreshRow/
+     refreshSlotRow zone guards for out-of-window rows) is the first
+     item of its own wave with a dedicated rig — not bolted on here.
+     The hub library grid stays content-visibility (bounded cards —
+     the v0.99.7 decision rule). -->
+<script type="module">
+  import * as VC from './vendor/virtual-core.mjs';
+  window.VirtualCore = VC;
+</script>
 <!-- v0.33→v0.44: THE SHARED UI KIT — the modular pill system (UIPills),
      GradientUI v2 (the 1–15 color gradient engine + the compact editor)
      and the drag-to-crop overlay (CropUI). One kit, reused by the hub /
