@@ -163,17 +163,26 @@
     var now = performance.now();
     if (now - colCache.at > 1000 || !colCache.v) {
       colCache.at = now;
+      // v0.99.4: the fields/derived vars are REGISTERED/derived now —
+      // their computed serializations ('rgb(…)' / unevaluated
+      // 'color-mix(…)') are not usable fill strings, so every value
+      // resolves through DoomTheme (override twin, [data-theme] block,
+      // or the culori mix — exactly what CSS paints).
+      var DT = (typeof window !== 'undefined') ? window.DoomTheme : null;
+      var rv = (DT && typeof DT.resolvedThemeVar === 'function')
+        ? function (n, fb) { return DT.resolvedThemeVar(n) || fb; }
+        : function (n, fb) { return cssVar(n) || fb; };
       colCache.v = {
-        surface2: cssVar('--surface-2') || '#1a1a22',
-        text1: cssVar('--text-1') || '#e0e0e8',
-        text2: cssVar('--text-2') || '#a8a8b4',
-        text3dim: cssVar('--text-3-dim') || '#54545e',
-        bgApp: cssVar('--bg-app') || '#0a0a0b',
+        surface2: rv('--surface-2', '#1a1a22'),
+        text1: rv('--text-1', '#e0e0e8'),
+        text2: rv('--text-2', '#a8a8b4'),
+        text3dim: rv('--text-3-dim', '#54545e'),
+        bgApp: rv('--bg-app', '#0a0a0b'),
         ok: cssVar('--ok') || '#34d399',
-        surface1: cssVar('--surface-1') || '#14141a',
-        accent: cssVar('--accent') || '#a78bfa',
-        accent2: cssVar('--accent-2') || '#38bdf8',
-        borderStrong: cssVar('--border-strong') || '#34344a'
+        surface1: rv('--surface-1', '#14141a'),
+        accent: rv('--accent', '#a78bfa'),
+        accent2: rv('--accent-2', '#38bdf8'),
+        borderStrong: rv('--border-strong', '#34344a')
       };
     }
     return colCache.v;

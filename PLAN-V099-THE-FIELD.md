@@ -27,6 +27,36 @@ window. The Colors tab becomes 7 slot rows + one popover picker. All
 per the approved plan, now with libraries assigned and the census
 verifying the reassignment.
 
+## IMPLEMENTATION DECISIONS (v0.99.3/.4 — measured, documented)
+
+- **The derivation space is OKLAB, not oklch.** The rig
+  (scripts/v099-field-parity.sh) caught the browser landmine: Chromium's
+  `color-mix(in oklch, …)` renders near-achromatic inputs with a
+  POWERLESS hue (serialized `oklch(… none)`) and paints them hue-0
+  warm-gray — midnight/mono borders drifted 7/255 off the calibrated
+  value. `color-mix(in oklab, …)` is degeneracy-free and culori matches
+  it PIXEL-EXACTLY (parity rig worst diff = 0/channel). The calibration
+  fits are identical in both spaces (all field pairs are hue-adjacent);
+  the table below is unchanged.
+- **The gradient-twin aliases.** Only FIELDS hold gradient twins
+  (--field-X-gradient); the ~60 consumer sites keep their historical
+  spellings (--surface-1-gradient, --accent-N-gradient) as pure aliases
+  applyTheme writes both. Zero consumer churn in .4.
+- **The JS hex boundary.** @property-registered fields compute to
+  'rgb(…)' and derived vars keep unevaluated 'color-mix(…)' streams, so
+  every JS consumer that needs a REAL hex (canvas arrows, Pixi fills,
+  the Kotlin panel, atoms' rings) resolves through
+  DoomTheme.resolvedThemeVar (fields via the block cache, derived names
+  via FieldMath culori) instead of getComputedStyle.
+- **uikit's HSL recipe math stays.** The plan said route
+  shadeHex/lighten/darken/mixHex through culori — but those outputs are
+  byte-pinned by 140 test assertions AND every saved user gradient; oklch
+  rerouting would change every recipe's look. Picky call: culori owns the
+  NEW field derivations (the CSS-parity truth); the HSL recipes are a
+  settled contract.
+- **Ink is solid-only** (the dual track): a legacy --text-1 gradient
+  override folds to its FIRST COLOR; text gradients live in the fmt field.
+
 ## THE RATIFIED SLOT MODEL (from v0982 PART C — unchanged)
 
 | Today | Field model |
@@ -67,7 +97,7 @@ counter-example).
   (docs/CENSUS-V099-SLOT-SCAN.md) + the library decision record
   (docs/RESEARCH-V099-LIBRARY-SCAN.md).
 - **v0.99.2 ✅ (shipped this turn):** this build order.
-- **v0.99.3 VENDOR:** culori 4.0.2 (`vendor/culori/culori.min.js`, IIFE,
+- **v0.99.3 ✅ VENDOR:** culori 4.0.2 (`vendor/culori/culori.min.js`, IIFE,
   23.3KB gz) + @floating-ui/dom 1.8.0
   (`vendor/floating-ui/floating-ui.dom.umd.min.js`, 4.0KB gz) + LICENSE
   files into `vendor/licenses/`. index.html gains the two script tags
@@ -77,7 +107,12 @@ counter-example).
   + theme OKLab blends through culori (same call sites, one math truth).
   **Gate:** boot smoke (0 errors), theme twins 165/165, uikit 140/140,
   go build/vet/test.
-- **v0.99.4 SLOTS:** theme.js implements the 7-field model with
+- **v0.99.4 ✅ SLOTS (SHIPPED, gates green:**
+  twins 196/196 · uikit 140/140 · v099-field-parity 5/5 (the NEW rig:
+  CSS≡JS pixel-exact + drift ≤ 0.028 + 10-theme cascade + triplets) ·
+  v098 panel 21/21 (257 nodes) · v097 oneobject 29/29 · v092 orbit-rest
+  13/13 · v0911 native-layer3 12/12 (re-pinned to the field contract) ·
+  go build/vet/test green):** theme.js implements the 7-field model with
   `@property` registration; legacy vars become derived aliases on the
   same epoch (`--surface-2: color-mix(...)` etc. — index.html rules keep
   working UNTOUCHED during migration, the reassignment is CSS-free until

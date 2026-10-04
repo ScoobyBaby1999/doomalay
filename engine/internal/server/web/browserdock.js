@@ -88,15 +88,22 @@
   // ── the theme snapshot (rides every openPanel call — nothing on the
   //    Kotlin side is ever hardcoded) ───────────────────────────────
   function themeSnapshot() {
+    // v0.99.4: the Kotlin side paints NATIVE views — it needs real hexes,
+    // not the 'rgb(…)' / unevaluated 'color-mix(…)' serializations the
+    // registered/derived vars compute to. Everything resolves through
+    // DoomTheme (culori parity with what CSS paints).
+    var DT = (typeof window !== 'undefined') ? window.DoomTheme : null;
+    var rv = (DT && typeof DT.resolvedThemeVar === 'function')
+      ? DT.resolvedThemeVar : function () { return ''; };
     var cs = getComputedStyle(document.documentElement);
     var pick = function (v) { var s = cs.getPropertyValue(v).trim(); return s || ''; };
     return {
-      accent: pick('--accent'),
-      bgPanel: pick('--bg-panel') || pick('--bg-app'),
-      surface: pick('--surface-2'),
-      text1: pick('--text-1'),
-      text3: pick('--text-3'),
-      border: pick('--border')
+      accent: rv('--accent') || pick('--accent'),
+      bgPanel: rv('--bg-panel') || pick('--bg-panel') || pick('--bg-app'),
+      surface: rv('--surface-2') || pick('--surface-2'),
+      text1: rv('--text-1') || pick('--text-1'),
+      text3: rv('--text-3') || pick('--text-3'),
+      border: rv('--border') || pick('--border')
     };
   }
 

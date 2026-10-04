@@ -252,29 +252,70 @@
     return OKX.avg(colors);
   }
 
-  // v0.56 deriveBorderTwins(raw) — the BORDER-SAFE twin. Root cause (user
-  // report: "outlines don't follow the gradient and display the first
-  // color" + "changing the borders option changes the entire scrollable
-  // box"): patterned recipes (mesh / checker / gingham / navy…) are
-  // MULTI-LAYER background-image values — invalid as a border-image
-  // (browsers drop the whole declaration → the solid stays) and, in the
-  // radius-safe double-background rules, the extra layers cycle the
-  // background-clip list and paint the WHOLE element. The border twin is
-  // therefore ALWAYS a single layer: a linear sweep of the full palette
-  // (the spec's angle when set, else 135°). Solid specs → 'none' (the
-  // plain border-color path, exactly as before).
-  function deriveBorderTwins(raw) {
-    var G = (typeof window !== 'undefined') ? window.GradientUI : null;
-    var spec = (G && G.norm) ? G.norm(raw)
-      : { colors: [String(raw == null ? '' : raw)], dir: 'auto' };
-    if (spec.tex) delete spec.tex;
-    var solid = spec.colors[0];
-    if (spec.colors.length < 2) return { solid: solid, css: solid, grad: 'none' };
-    var angle = (typeof spec.angle === 'number' && isFinite(spec.angle))
-      ? spec.angle : 135;
-    var css = 'linear-gradient(' + angle + 'deg, ' + spec.colors.join(', ') + ')';
-    return { solid: solid, css: css, grad: css };
-  }
+  // ── v0.99.3 FIELDMATH — the culori-backed CSS-PARITY core ─────────
+  // THE FIELD's DOM derivations live in CSS (color-mix(in oklch, …) in
+  // the :root block) — zero JS at paint time. But JS still must KNOW a
+  // few derived colors (the -rgb triplets rgba() composition needs, the
+  // canvas family tint, the readable-ink gates, the status-bar hex), and
+  // those must match what CSS computes: RECTANGULAR OKLAB (the browser's oklch mixes go
+  // hue-powerless on near-achromatic pairs and paint warm-gray; oklab
+  // is degeneracy-free and the calibration fits are identical — the
+  // field pairs are hue-adjacent). OKX (oklab, rectangular) diverges from CSS on hue-distant
+  // pairs — culori 4.0.2 (vendored, MIT) interpolates oklch exactly the
+  // way color-mix does, so the JS and CSS sides of THE FIELD share one
+  // math truth. The byte-pinned HSL recipe helpers (uikit
+  // darken/lighten/mixHex — 140 test pins + every saved user gradient)
+  // are a DIFFERENT, settled contract and deliberately stay as they are.
+  // Resolution: the vendored IIFE defines `var culori` at script scope
+  // (browser: window/globalThis; node tests: the harness indirect-evals
+  // the file so globalThis.culori appears before theme.js is required).
+  var CULORI = (typeof window !== 'undefined' && window.culori) ||
+    (typeof globalThis !== 'undefined' && globalThis.culori) || null;
+  var FieldMath = (function () {
+    if (!CULORI) return null;   // boot survives without culori (OKX paths)
+    var interp = CULORI.interpolate;   // ([a,b], 'oklch') → t => color
+    var fmt = CULORI.formatHex;         // gamut-clamped '#rrggbb'
+    var OKL = 'oklab';
+    function normHex(v) {
+      var m = /^#?([0-9a-fA-F]{6})$/.exec(String(v == null ? '' : v));
+      return m ? ('#' + m[1].toLowerCase()) : null;
+    }
+    // cssMix(a, b, t) — the JS twin of color-mix(in oklab, a, calc((1-t)*100%) b):
+    // rectangular OKLAB interpolation, sRGB gamut clamp — the same
+    // computation the :root derivation block performs in CSS.
+    // EDGES ARE EXACT PASSTHROUGH (t<=0 → a, t>=1 → b, normalized hex)
+    // — the twins' identity contracts hold byte-identical.
+    function cssMix(a, b, t) {
+      var A = normHex(a), B = normHex(b);
+      if (!A || !B) return null;
+      if (t <= 0) return A;
+      if (t >= 1) return B;
+      try {
+        var fn = interp([A, B], OKL);
+        var out = fn(Math.max(0, Math.min(1, t)));
+        return fmt(out) || null;
+      } catch (e) { return null; }
+    }
+    // luminance(hex) — WCAG relative luminance (the on-accent/veil gates
+    // are defined in WCAG contrast math; culori ships the same formula).
+    function luminance(hex) {
+      var A = normHex(hex);
+      if (!A) return null;
+      try { return CULORI.wcagLuminance(CULORI.parse(A)); }
+      catch (e) { return null; }
+    }
+    return {
+      cssMix: cssMix,
+      luminance: luminance,
+      available: true
+    };
+  })();
+
+  // v0.56 deriveBorderTwins — RETIRED in v0.99.4: the border is a
+  // DERIVED solid now (color-mix of surface+ink in the :root block),
+  // so there is no border gradient twin to derive. The v0.56 lesson
+  // (patterned recipes are multi-layer values — invalid as border-image)
+  // is now enforced by construction: borders can't hold gradients at all.
 
   function isChatSchemePinned(s) {
     return !!((s.chatScheme && s.chatScheme !== 'teal') ||
@@ -292,40 +333,108 @@
     return THEMES[id].scheme;
   }
 
-  // v0.26→v0.49: the customizable variables and their -rgb triplet
-  // partners (auto-derived when overridden). v0.49 SEMANTIC REWORK
-  // (user spec): "Panel background" is now CANVAS BACKGROUND — it drives
-  // the infinite grid canvas (app.js renderGrid), not any DOM panel;
-  // "App background" is now OVERLAY BACKGROUND — overlay screens,
-  // collapsible headers, scrims and sticky bars. Panels/cards/bubbles
-  // are SURFACES (--surface-1). `hint` rides to the settings row.
-  var RGB_PAIRS = {
-    '--accent': '--accent-rgb', '--accent-2': '--accent-2-rgb', '--accent-3': '--accent-3-rgb',
-    '--accent-4': '--accent-4-rgb',
-    '--ok': '--ok-rgb', '--warn': '--warn-rgb', '--err': '--err-rgb',
-    '--bg-app': '--bg-app-rgb', '--surface-1': '--surface-1-rgb', '--surface-2': '--surface-2-rgb',
-    '--bg-panel': '--bg-panel-rgb'
+  // ── v0.99.4 THE FIELD SLOT MODEL (the ratified 7-slot set) ────────
+  // The 10-customizable-var era is over: surface-2/3, border(+strong),
+  // raised-chrome/ring and bg-app are CSS color-mix DERIVATIONS of the
+  // fields (index.html :root block — the border/surface fight ends by
+  // construction), and accent-4 is theme-carried. What the user edits:
+  // the 6 gradient-capable fields + the fmt stops (formatter.js, the
+  // text-gradient track). THE DUAL TRACK: text = ink (solids/tints) +
+  // fmt (all text gradients); objects = everything else. No var is
+  // shared between the tracks.
+  //
+  // STORAGE: themeOverrides[themeId] keys are FIELD names now. Legacy
+  // keys fold on read (foldThemeOverrides below — the lookio loader
+  // pattern); the derived-era keys (--bg-app/--surface-2/--surface-3/
+  // --border overrides) are DROPPED: those looks now follow the fields,
+  // which is the entire point of the rework.
+  var LEGACY_FIELD_MAP = {
+    '--surface-1': '--field-surface',
+    '--text-1': '--field-ink',
+    '--bg-panel': '--field-canvas',
+    '--accent': '--field-accent-1',
+    '--accent-2': '--field-accent-2',
+    '--accent-3': '--field-accent-3'
   };
-  var CUSTOMIZABLE = [
-    { var: '--bg-panel', label: 'Canvas background', rgb: false,
-      hint: 'the infinite grid canvas · gradients, patterns + textures', canvas: true },
-    { var: '--bg-app', label: 'Overlay background', rgb: false,
-      hint: 'overlay screens · collapsible headers · scrims' },
-    { var: '--surface-1', label: 'Surface', rgb: false,
-      hint: 'panels · cards · bubbles' },
-    { var: '--surface-2', label: 'Surface raised', rgb: false,
-      hint: 'inputs · hover · raised cards' },
-    { var: '--border', label: 'Borders', rgb: false,
-      hint: 'hairlines + outlines' },
-    { var: '--text-1', label: 'Primary text', rgb: false,
-      hint: 'body text · gradients paint the titles' },
-    { var: '--accent', label: 'Accent 1', rgb: true, hint: 'the primary accent · user bubbles' },
-    { var: '--accent-2', label: 'Accent 2', rgb: true, hint: 'the adjacent accent' },
-    { var: '--accent-3', label: 'Accent 3', rgb: true, hint: 'the third accent' },
-    // v0.63 (user spec): the FOURTH accent — library categories (scripts)
-    // and workspace providers (sourcehut) ride it.
-    { var: '--accent-4', label: 'Accent 4', rgb: true, hint: 'the fourth accent · scripts + providers' }
+  var FIELDS = [
+    { field: '--field-surface', label: 'Surface', suffix: 'surface',
+      hint: 'the plate — panels · cards · bubbles' },
+    { field: '--field-ink', label: 'Ink', suffix: 'ink', solid: true,
+      hint: 'every text color — solid only, tints derive' },
+    { field: '--field-canvas', label: 'Canvas', suffix: 'canvas', canvas: true,
+      hint: 'the world — the grid canvas · gradients, patterns + textures' },
+    { field: '--field-accent-1', label: 'Accent 1', suffix: 'accent-1',
+      hint: 'the primary accent · user bubbles' },
+    { field: '--field-accent-2', label: 'Accent 2', suffix: 'accent-2',
+      hint: 'the adjacent accent' },
+    { field: '--field-accent-3', label: 'Accent 3', suffix: 'accent-3',
+      hint: 'the third accent' }
   ];
+  // The GRADIENT-TWIN ALIASES: gradient twins belong to FIELDS (only a
+  // field can hold a gradient), but the consumer-facing var names (the
+  // CSS rules + the JS-injected styles spelling var(--accent-gradient)
+  // etc. — ~60 consumer sites) keep their historical spellings as pure
+  // aliases of the field twins. applyTheme writes BOTH spellings.
+  var FIELD_TWIN_ALIAS = {
+    '--field-surface': '--surface-1-gradient',
+    '--field-accent-1': '--accent-gradient',
+    '--field-accent-2': '--accent-2-gradient',
+    '--field-accent-3': '--accent-3-gradient'
+  };
+  var FIELD_RGB = {
+    '--field-accent-1': '--accent-rgb',
+    '--field-accent-2': '--accent-2-rgb',
+    '--field-accent-3': '--accent-3-rgb'
+  };
+  // The JS-side mirror of the :root color-mix derivation block —
+  // culori (polar oklch, shorter hue) so every triplet/tint JS computes
+  // is what CSS actually paints. THE CALIBRATED TABLE (v099-calibrate).
+  var DERIVED_MIXES = {
+    '--surface-2':   ['--field-surface', '--field-ink', 0.05],
+    '--surface-3':   ['--field-surface', '--field-ink', 0.11],
+    '--border':      ['--field-surface', '--field-ink', 0.13],
+    '--border-strong': ['--field-surface', '--field-ink', 0.24],
+    '--raised-chrome': ['--field-surface', '--field-ink', 0.05],
+    '--raised-ring': ['--field-surface', '--field-ink', 0.16],
+    '--bg-app':      ['--field-canvas', '--field-surface', 0.08],
+    '--text-2':      ['--field-ink', '--field-surface', 0.26],
+    '--text-3':      ['--field-ink', '--field-surface', 0.47],
+    '--text-3-dim':  ['--field-ink', '--field-surface', 0.61]
+  };
+  var TRIPLET_VARS = {
+    '--surface-1-rgb': '--field-surface',
+    '--surface-2-rgb': '--surface-2',
+    '--surface-3-rgb': '--surface-3',
+    '--bg-panel-rgb': '--field-canvas',
+    '--bg-app-rgb': '--bg-app',
+    '--text-2-rgb': '--text-2',
+    '--text-3-rgb': '--text-3',
+    '--accent-rgb': '--field-accent-1',
+    '--accent-2-rgb': '--field-accent-2',
+    '--accent-3-rgb': '--field-accent-3',
+    '--accent-4-rgb': '--accent-4'
+  };
+  // foldThemeOverrides(raw) → the field-keyed override set. Legacy keys
+  // map to their fields (--text-1 gradients degrade to the FIRST COLOR —
+  // ink is solid-only now; the fmt field owns text gradients). Derived-era
+  // keys (--surface-2/--border/--bg-app/--surface-3/--accent-4) are
+  // dropped: those looks follow the fields.
+  function foldThemeOverrides(raw) {
+    var out = {};
+    if (!raw) return out;
+    Object.keys(raw).forEach(function (k) {
+      if (k.indexOf('--field-') === 0) { out[k] = raw[k]; return; }
+      var to = LEGACY_FIELD_MAP[k];
+      if (!to) return;   // a dropped derived-era key — dead by design
+      if (out[to] !== undefined) return;   // a field key already won
+      var v = raw[k];
+      if (to === '--field-ink' && v && typeof v === 'object' && Array.isArray(v.colors)) {
+        v = v.colors[0];   // ink is SOLID-ONLY: the gradient era's first color
+      }
+      out[to] = v;
+    });
+    return out;
+  }
 
   // ── v0.79.1: THE APPLIED-VALUE LEDGER + PURE-JS VAR RESOLUTION ──
   // The theme-drag surgery (PLAN-V079 §C). applyTheme used to
@@ -342,8 +451,8 @@
   var appliedAttrs = {};   // attribute → live value on <html> (null = absent)
   var blockCacheId = null; // the theme id the block cache was read for
   var blockCache = {};     // [data-theme] block values (the read set below)
-  var BLOCK_READ_SET = ['--bg-panel', '--bg-app', '--surface-1', '--surface-2',
-    '--accent', '--accent-2', '--accent-3', '--accent-4', '--border-strong'];
+  var BLOCK_READ_SET = ['--field-surface', '--field-ink', '--field-canvas',
+    '--field-accent-1', '--field-accent-2', '--field-accent-3', '--accent-4'];
   var lastFmtKey = null;   // the applyScheme identity gate
   var lastTopology = null;  // the gate/painter topology fingerprint
   var lastMetaColor = '';   // the meta theme-color value guard
@@ -448,10 +557,12 @@
   // the override's solid twin when the user customized the var, else the
   // theme block's value (from the cache). This is exactly what the old
   // getComputedStyle reads returned, without touching the style system.
+  // v0.99.4: `overrides` here is the FOLDED (field-keyed) set. DERIVED
+  // legacy names (--border-strong etc.) resolve through FieldMath — the
+  // same mix the :root block performs in CSS.
   function resolvedVar(id, overrides, name) {
     if (overrides && Object.prototype.hasOwnProperty.call(overrides, name)) {
-      var twins = (name === '--border') ? deriveBorderTwins(overrides[name])
-                                        : deriveTwins(overrides[name]);
+      var twins = deriveTwins(overrides[name]);
       if (twins && twins.solid) return twins.solid;
     }
     if (blockCacheId === id && Object.prototype.hasOwnProperty.call(blockCache, name)) {
@@ -459,21 +570,32 @@
     }
     return '';
   }
+  // resolvedDerived(id, overrides, name) — the CSS color-mix result of a
+  // DERIVED_MIXES entry, in pure JS (culori parity). app.js's canvas
+  // fingerprint + the family tint read the derived border-strong here.
+  function resolvedDerived(id, overrides, name) {
+    var spec = DERIVED_MIXES[name];
+    if (!spec || !FieldMath) return '';
+    var a = resolvedVar(id, overrides, spec[0]);
+    var b = resolvedVar(id, overrides, spec[1]);
+    return FieldMath.cssMix(a, b, spec[2]) || '';
+  }
 
   function applyTheme(s) {
     var id = THEMES[s.theme] ? s.theme : 'midnight';
     var t = THEMES[id];
     var docEl = document.documentElement;
-    var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
+    // v0.99.4: the FOLD — legacy override keys become field keys here,
+    // at the single read point (saved states + .doomtheme imports keep
+    // working; derived-era keys die by design).
+    var overrides = foldThemeOverrides(
+      (s.themeOverrides && s.themeOverrides[id]) || null);
+    var hasOverride = Object.keys(overrides).length > 0;
 
-    // 1. the variable palette (CSS cascade does the whole UI).
-    // v0.79.1: the theme flip is the ONLY path that pays a style read —
-    // the previous theme's inline overrides clear and the fresh
-    // [data-theme] block resolves in ONE batched computed-style read
-    // (cached until the id changes again). Same-theme applies (the
-    // drags — the "barely usable 8fps" report) never read the style
-    // system at all: every resolved value comes from the cache or the
-    // override twins, computed in pure JS.
+    // 1. the theme flip is the ONLY path that pays a style read — the
+    // fresh [data-theme] block resolves in ONE batched read (cached
+    // until the id changes). Same-theme applies (the drags) never read
+    // the style system at all.
     setAttr(docEl, 'data-theme', id);
     if (blockCacheId !== id) {
       for (var rk in appliedVars) { docEl.style.removeProperty(rk); }
@@ -481,101 +603,85 @@
       buildBlockCache(docEl, id);
     }
 
-    // 1b. v0.26: the user's CUSTOMIZATIONS for this theme — inline CSS
-    // vars beat the [data-theme] block. v0.79.1: the DESIRED inline set
-    // is computed PURE first (no interleaved reads), then DIFFED against
-    // the ledger — a drag on one var writes exactly that var's
-    // properties; unchanged values write nothing at all (the old
-    // remove-all-then-set-all was an invalidation storm per event).
+    // 1b. THE FIELD TWINS — the user's customizations, field-keyed.
+    // The write set is computed PURE first, then DIFFED against the
+    // ledger (a drag on one field writes exactly that field's twin
+    // pair; unchanged values write nothing at all).
+    //   --field-X          the SOLID (the compat hex every legacy
+    //                      color:/border: consumer keeps resolving)
+    //   --field-X-gradient the image, or the literal 'none'
+    //   + the FIELD_TWIN_ALIAS spelling (--surface-1-gradient /
+    //      --accent-N-gradient — the ~60 consumer sites keep their
+    //      historical var names as pure aliases of the field twins)
+    //   --field-ink is SOLID-ONLY: no gradient twin, never a window —
+    //      the fmt field owns text gradients (the dual track).
     var want = {};
-    var gradByKey = {};   // override key → isGradient (the topo inputs)
-    var textGrad = false;
-    // v0.77.7: the --text-1 override's raw spec + solid twin — the
-    // secondary-text derivation reads them after the loop.
-    var text1Spec = null, twinsText1Solid = '';
-    // v0.67: per-accent gradient gates — [data-aN-grad] on the root
-    // while accent N's twin is a real image (see the gates in index.html).
-    var accGrad = { '--accent': false, '--accent-2': false,
-      '--accent-3': false, '--accent-4': false };
-    if (overrides) {
-      Object.keys(overrides).forEach(function (k) {
-        // v0.44: the override value may be a hex (legacy) or a gradient
-        // spec — deriveTwins folds both into the var-TWIN pair and the
-        // write below lands --X (solid) + --X-gradient (image or 'none';
-        // consumer rules in index.html layer it over the solid).
-        // v0.56: --border uses the SINGLE-LAYER sweep twin (patterns are
-        // multi-layer values — invalid as border-image and leaky in the
-        // radius-safe double-background rules; see deriveBorderTwins).
-        var twins = (k === '--border')
-          ? deriveBorderTwins(overrides[k])
-          : deriveTwins(overrides[k]);
-        want[k] = twins.solid;
-        want[k + '-gradient'] = twins.grad;
-        gradByKey[k] = (twins.grad !== 'none');
-        // v0.57: --border-strong rides the SAME sweep as --border when the
-        // user overrides it (no twin when the border is solid — base
-        // themes stay flat).
-        if (k === '--border' && twins.grad !== 'none') {
-          want['--border-strong-gradient'] = twins.grad;
-        }
-        if (k === '--text-1') {
-          // v0.77.7: the secondary-text derivation's inputs — the RAW
-          // spec (for the average stop) + the solid twin (the fallback).
-          text1Spec = overrides[k];
-          twinsText1Solid = twins.solid;
-          if (twins.grad !== 'none') textGrad = true;
-        }
-        if (accGrad.hasOwnProperty(k) && twins.grad !== 'none') accGrad[k] = true;
-        // auto-derive the -rgb triplet (rgba() composition needs it) —
-        // ALWAYS from the SOLID twin (a gradient's stops can't compose
-        // rgba(); the first color is the canonical tint, v0.26 contract)
-        var pair = RGB_PAIRS[k];
-        var triplet = hexTriplet(twins.solid);
-        if (pair && triplet) want[pair] = triplet;
-      });
+    var gradByKey = {};   // field key → isGradient (the topo inputs)
+    var i, k;
+    for (i = 0; i < FIELDS.length; i++) {
+      var F = FIELDS[i];
+      if (!Object.prototype.hasOwnProperty.call(overrides, F.field)) continue;
+      var twins = deriveTwins(overrides[F.field]);
+      want[F.field] = twins.solid;
+      if (F.solid) continue;             // ink: never a window
+      want[F.field + '-gradient'] = twins.grad;
+      gradByKey[F.field] = (twins.grad !== 'none');
+      var alias = FIELD_TWIN_ALIAS[F.field];
+      if (alias) want[alias] = twins.grad;
     }
 
-    // v0.57: --bg-panel-rgb — derived EVERY apply (base themes included):
-    // the scrim family composes rgba(var(--bg-panel-rgb), α). v0.79.1:
-    // resolvedVar is the pure-JS equivalent of the old getComputedStyle
-    // read (override twin or theme block — never the style system).
-    var panelTriplet = hexTriplet(resolvedVar(id, overrides, '--bg-panel'));
-    if (panelTriplet) want['--bg-panel-rgb'] = panelTriplet;
-    // v0.65 FIX: --on-accent derived for BASE THEMES too (light accents
-    // need readable ink on the user bubbles).
-    var accResolved = resolvedVar(id, overrides, '--accent');
-    if (/^#[0-9a-fA-F]{6}$/.test(accResolved)) {
-      want['--on-accent'] = onColorFor(accResolved);
+    // 1c. THE RESOLVED FIELD SET — every derivation below reads THIS,
+    // never the style system (v0.79.1's pure-JS contract, now feeding
+    // the CSS color-mix mirrors).
+    var resolved = {};
+    for (i = 0; i < BLOCK_READ_SET.length; i++) {
+      k = BLOCK_READ_SET[i];
+      resolved[k] = resolvedVar(id, hasOverride ? overrides : null, k);
     }
-    // v0.66: --on-accent-N for EVERY accent (the projection rework makes
-    // pills/windows that RENDER accent-N's own field, so their labels
-    // need the same readable-ink derivation the user bubbles have).
-    var ON_VAR = { '--accent-2': '--on-accent-2',
-      '--accent-3': '--on-accent-3', '--accent-4': '--on-accent-4' };
-    Object.keys(ON_VAR).forEach(function (av) {
-      var v = resolvedVar(id, overrides, av);
-      if (/^#[0-9a-fA-F]{6}$/.test(v)) want[ON_VAR[av]] = onColorFor(v);
+    var fm = FieldMath;
+    function mixOf(name) {
+      var spec = DERIVED_MIXES[name];
+      if (!spec) return '';
+      var a = resolved[spec[0]], b = resolved[spec[1]];
+      if (!a || !b) return '';
+      if (fm) return fm.cssMix(a, b, spec[2]) || '';
+      return OKX.mix(a, b, spec[2]) || '';   // the no-culori approximation
+    }
+    var derived = {};
+    Object.keys(DERIVED_MIXES).forEach(function (dn) {
+      var v = mixOf(dn);
+      if (v) derived[dn] = v;
     });
-    // v0.57→v0.65 FIX: --veil-ink follows the RESOLVED SURFACE
-    // luminance (dark surfaces → BLACK ink, light → WHITE).
-    var s1 = resolvedVar(id, overrides, '--surface-1');
-    // v0.77.7 THE SECONDARY-TEXT DERIVATION — when --text-1 carries an
-    // override, the secondary tones DERIVE from it (blends toward the
-    // resolved surface-1, keeping the 1 > 2 > 3 hierarchy).
-    if (text1Spec) {
-      var t1Tone = avgStops(text1Spec.colors) ||
-        (/^#[0-9a-fA-F]{6}$/.test(twinsText1Solid || '') ? twinsText1Solid : null);
-      var t1Mix = mixHex(t1Tone, s1, 0.38);
-      if (t1Tone && t1Mix) {
-        want['--text-2'] = t1Mix;
-        want['--text-3'] = mixHex(t1Tone, s1, 0.62) || t1Mix;
-        want['--text-3-dim'] = mixHex(t1Tone, s1, 0.76) || t1Mix;
-        // the rgb triplets (rgba composition users) stay consistent
-        var t2Tri = hexTriplet(t1Mix);
-        if (t2Tri) want['--text-2-rgb'] = t2Tri;
+
+    // 1d. THE TRIPLETS — rgba() composition needs 'r,g,b' strings, and
+    // CSS can't split a color; JS derives every triplet from the SAME
+    // mixes the :root block performs (culori parity). Base themes get
+    // the derived values too, so the old static drift (midnight's
+    // --text-3-rgb on every theme) is gone.
+    Object.keys(TRIPLET_VARS).forEach(function (tv) {
+      var src = TRIPLET_VARS[tv];
+      var hex = (src.indexOf('--field-') === 0 || src === '--accent-4')
+        ? resolved[src] : (derived[src] || '');
+      var tri = hexTriplet(hex);
+      if (tri) want[tv] = tri;
+    });
+
+    // 1e. THE READABLE-INK FAMILY — on-accent for every accent (user
+    // bubbles + the accent windows' labels), veil-ink from the surface
+    // luminance (the text-shadow ink).
+    var ACCENT_FIELDS = ['--field-accent-1', '--field-accent-2',
+      '--field-accent-3', '--accent-4'];
+    var ON_VAR = { '--field-accent-1': '--on-accent',
+      '--field-accent-2': '--on-accent-2',
+      '--field-accent-3': '--on-accent-3', '--accent-4': '--on-accent-4' };
+    for (i = 0; i < ACCENT_FIELDS.length; i++) {
+      var av = ACCENT_FIELDS[i];
+      if (/^#[0-9a-fA-F]{6}$/.test(resolved[av])) {
+        want[ON_VAR[av]] = onColorFor(resolved[av]);
       }
     }
-    var inkM = /^#([0-9a-fA-F]{6})$/.exec(s1);
+    var fS = resolved['--field-surface'];
+    var inkM = /^#([0-9a-fA-F]{6})$/.exec(fS);
     if (inkM) {
       var s1Lum = (function (h) {
         var r = parseInt(h.slice(0, 2), 16) / 255;
@@ -588,27 +694,19 @@
       want['--veil-ink-rgb'] = (s1Lum > 0.45) ? '255, 255, 255' : '0, 0, 0';
     }
 
-    // v0.74: BRIGHT-SURFACE INK GATES — derive the readable ink from the
-    // RESOLVED solid and gate a flip rule (fires only when the user
-    // paints a BRIGHT surface; base themes leave the gates unset).
+    // 1f. BRIGHT-INK GATES — the readable ink for the derived surfaces
+    // (a bright surface twin flips the gate so labels stay readable).
     var BRIGHT_VARS = [
-      { v: '--surface-1', ink: '--on-surface-1', gate: 'data-bright-s1' },
-      { v: '--surface-2', ink: '--on-surface-2', gate: 'data-bright-s2' },
-      { v: '--bg-app',    ink: '--on-bg-app',    gate: 'data-bright-bg' },
-      // v0.79.3: the BORDER family — the outline-pill group (settings
-      // tabs, search bars, reset pills, kbd, util buttons) now rides the
-      // border variable (the user's "assign less variables to surface
-      // raised and assign them to border"); a bright border twin gets
-      // the same readable-ink derivation the surfaces have.
-      { v: '--border',    ink: '--on-border',    gate: 'data-bright-border' }
+      { hex: fS, ink: '--on-surface-1', gate: 'data-bright-s1' },
+      { hex: derived['--surface-2'] || fS, ink: '--on-surface-2', gate: 'data-bright-s2' },
+      { hex: derived['--bg-app'] || fS, ink: '--on-bg-app', gate: 'data-bright-bg' },
+      { hex: derived['--border'] || fS, ink: '--on-border', gate: 'data-bright-border' }
     ];
     var brightGates = {};
     BRIGHT_VARS.forEach(function (B) {
-      var resolved = resolvedVar(id, overrides, B.v);
-      var bm = /^#([0-9a-fA-F]{6})$/.exec(resolved);
+      var bm = /^#([0-9a-fA-F]{6})$/.exec(B.hex || '');
       if (bm) {
-        var hex = '#' + bm[1];
-        var ink = onColorFor(hex);
+        var ink = onColorFor('#' + bm[1]);
         want[B.ink] = ink;
         // dark ink ⇒ the surface is bright ⇒ trip the gate
         brightGates[B.gate] = (ink !== '#ffffff') ? '1' : null;
@@ -617,10 +715,8 @@
       }
     });
 
-    // 2. chat markdown scheme — v0.79.1: the IDENTITY GATE. The scheme
-    // + fmt overrides are byte-stable through a theme drag; the old
-    // unconditional applyScheme re-wrote ~15 root properties + flipped
-    // data-fmt-grad PER INPUT EVENT for nothing.
+    // 2. chat markdown scheme — the IDENTITY GATE (byte-stable through
+    // a theme drag; the scheme + fmt overrides re-apply exactly once).
     if (window.Formatter) {
       var pinned = isChatSchemePinned(s);
       var schemeName = pinned ? (s.chatScheme || 'teal') : t.scheme;
@@ -642,33 +738,31 @@
     var sm = (typeof s.smallTextSize === 'number') ? s.smallTextSize : 50; // 0-100 → 9.5-15px
     want['--ui-small-fs'] = (9.5 + (sm / 100) * 5.5).toFixed(1) + 'px';
 
-    // ── THE WRITE PHASE (v0.79.1) — pure diffs against the ledger ──
+    // ── THE WRITE PHASE — pure diffs against the ledger ──
     for (var wk in want) setVar(docEl, wk, want[wk]);
     for (var dk in appliedVars) if (!(dk in want)) setVar(docEl, dk, null);
 
-    // the root attributes — every flip value-guarded (an attribute set
-    // to the value it already has was still an invalidation).
-    setAttr(docEl, 'data-text-grad', textGrad ? '1' : null);
-    var A_ATTR = { '--accent': 'data-a1-grad', '--accent-2': 'data-a2-grad',
-      '--accent-3': 'data-a3-grad', '--accent-4': 'data-a4-grad' };
+    // the root attributes — every flip value-guarded. v0.99.4: the
+    // gradient gates are FIELD-owned: data-s1-grad (surface) +
+    // data-a1/2/3-grad (accents). data-text-grad is GONE (the title
+    // family joins the fmt track in v0.99.5); data-a4/s2/bg/border-grad
+    // are GONE (those vars are derived solids — never gradients).
+    setAttr(docEl, 'data-s1-grad', gradByKey['--field-surface'] ? '1' : null);
+    var A_ATTR = { '--field-accent-1': 'data-a1-grad',
+      '--field-accent-2': 'data-a2-grad', '--field-accent-3': 'data-a3-grad' };
     Object.keys(A_ATTR).forEach(function (av) {
-      setAttr(docEl, A_ATTR[av], accGrad[av] ? '1' : null);
+      setAttr(docEl, A_ATTR[av], gradByKey[av] ? '1' : null);
     });
-    // v0.77.8: the SURFACE + BORDER gates — same gradByKey inputs the
-    // override loop already derived (no re-derivation).
-    var S_ATTR = { '--surface-1': 'data-s1-grad', '--surface-2': 'data-s2-grad',
-      '--bg-app': 'data-bg-grad' };
-    Object.keys(S_ATTR).forEach(function (sv) {
-      setAttr(docEl, S_ATTR[sv], gradByKey[sv] ? '1' : null);
-    });
-    setAttr(docEl, 'data-border-grad', gradByKey['--border'] ? '1' : null);
+    setAttr(docEl, 'data-text-grad', null);
+    setAttr(docEl, 'data-a4-grad', null);
+    setAttr(docEl, 'data-s2-grad', null);
+    setAttr(docEl, 'data-bg-grad', null);
+    setAttr(docEl, 'data-border-grad', null);
     Object.keys(brightGates).forEach(function (g) {
       setAttr(docEl, g, brightGates[g]);
     });
 
     // 4. Android status bar tint — needs a REAL hex (no var() in meta).
-    //    v0.79.1: value-guarded (a drag re-set the same content attr
-    //    per event; now only on a real change).
     var meta = document.getElementById('meta-theme-color');
     if (meta) {
       var cbSpec = canvasBgSpec(s);
@@ -682,36 +776,21 @@
 
     // 5. re-tint the default chatbot family so canvas-drawn arrows/icons
     //    follow the theme (the family color is drawn on <canvas>, where
-    //    var() doesn't resolve — it needs a real hex). v0.79.1: resolved
-    //    in pure JS + value-guarded.
+    //    var() doesn't resolve). v0.99.4: the tint is the DERIVED
+    //    border-strong — the same mix CSS paints (culori parity).
     if (window.DoomalayConfig && window.DoomalayConfig.families &&
         window.DoomalayConfig.families.default) {
-      var tint = resolvedVar(id, overrides, '--border-strong') || '#4a4a5e';
+      var tint = derived['--border-strong'] || resolvedDerived(id, overrides, '--border-strong') || '#4a4a5e';
       if (tint !== lastFamilyTint) {
         window.DoomalayConfig.families.default.color = tint;
         lastFamilyTint = tint;
       }
     }
 
-    // v0.67→v0.79.1: the TOPOLOGY FINGERPRINT gates the painter + the
-    // derived gates. The projection anchors and the derived gate CSS
-    // are GEOMETRY/STYLESHEET facts — a value-only change (a hue shift,
-    // an angle tweak inside the same gradient-ness, a stop recolor)
-    // moves no box and rewrites no selector, so the full re-anchor the
-    // old code paid per input event buys nothing. The fingerprint
-    // covers: the override KEY SET with each var's solid↔gradient
-    // state, and the fmt-grad slots. A real topology change (a stop
-    // added to a solid, a gradient flattened to one color, a theme
-    // switch that changes gradient-ness) re-anchors exactly once.
-    // v0.83.4: the bare theme ID is GONE from the key — a base→base
-    // flip changes no gradient-ness (both all-solid), yet the id
-    // mismatch fired DoomProjection.repaint + DoomGates.refresh on
-    // EVERY theme tap, and repaint's layout reads ran right after the
-    // var writes invalidated the whole document → a forced synchronous
-    // FULL recalc inside the click handler (~60ms at the settings
-    // page's DOM — the heart of the "themes tab is barely functional"
-    // report). Value changes cascade naturally at the next paint; the
-    // painter only needs re-anchoring when the WINDOW SET changes.
+    // THE TOPOLOGY FINGERPRINT gates the painter + the derived gates
+    // (a value-only change moves no box and rewrites no selector; a
+    // real topology change — a stop added to a solid, a gradient
+    // flattened — re-anchors exactly once).
     var topo = [];
     Object.keys(gradByKey).sort().forEach(function (gk) {
       topo.push(gk + ':' + (gradByKey[gk] ? 'g' : 's'));
@@ -720,8 +799,6 @@
     var topoKey = topo.join('|');
     if (topoKey !== lastTopology) {
       lastTopology = topoKey;
-      // re-anchor every projection window + re-derive the gates (the
-      // painter's selector set may have gained/lost gradient windows)
       if (window.DoomProjection) window.DoomProjection.repaint();
       if (window.DoomGates) window.DoomGates.refresh();
     }
@@ -804,8 +881,11 @@
   function canvasBgSpec(s) {
     var id = THEMES[s.theme] ? s.theme : 'midnight';
     var t = THEMES[id];
-    var overrides = (s.themeOverrides && s.themeOverrides[id]) || null;
-    var raw = overrides ? overrides['--bg-panel'] : null;
+    // v0.99.4: reads THE FIELD (--field-canvas, after the legacy fold —
+    // a saved --bg-panel key still lands here through foldThemeOverrides).
+    var overrides = foldThemeOverrides(
+      (s.themeOverrides && s.themeOverrides[id]) || null);
+    var raw = overrides ? overrides['--field-canvas'] : null;
     if (raw) {
       // a stored spec (object/array) or a hex — norm via GradientUI if present
       if (typeof raw === 'object') return raw;
@@ -850,20 +930,50 @@
       onColorFor: onColorFor,
       pendingScheme: pendingScheme,
       isLight: function (id) { return !!(THEMES[id] && THEMES[id].light); },
-      customizable: CUSTOMIZABLE,
+      // v0.99.4: the 6 gradient-capable fields (the Colors tab iterates
+      // these; the fmt stops ride formatter.js — the text-gradient track)
+      fields: FIELDS,
+      // v0.99.4 compat: the old name maps to the field set (shape differs —
+      // appearance.js migrated; kept one release for stray consumers)
+      customizable: FIELDS,
       // v0.45 ITEM 3: the canonical twin derivation — appearance.js's per-chat
       // #chat-root paint + any future consumer reuses THIS one function
       // (the same math formatter.js's fmtTwins mirrors; the node harness
       // asserts the parity).
       deriveTwins: deriveTwins,
+      // v0.99.3: the culori-backed CSS-parity math (color-mix(in oklch)
+      // in JS — the derivations' single truth with the :root block).
+      fieldMath: FieldMath,
+      // v0.99.4: the legacy fold (public — lookio + tests share it)
+      foldThemeOverrides: foldThemeOverrides,
       // v0.79.1: the pure-JS resolved value of a theme var (override twin
       // or [data-theme] block, from the cache — never the style system).
-      // app.js's canvas fingerprint reads the family tint through it.
+      // v0.99.4: DERIVED names (--border-strong, --surface-2, --bg-app,
+      // --text-3…) resolve through the FieldMath mix — what CSS paints.
+      // v0.99.4b: THE ALIAS PROBLEM — @property-registered fields compute
+      // to 'rgb(…)' serializations and derived vars keep unevaluated
+      // 'color-mix(…)' token streams, so every JS consumer that needs a
+      // REAL HEX (canvas paints, Pixi fills, the Kotlin panel, the meta
+      // theme-color) resolves HERE instead of getComputedStyle. The
+      // alias map covers the legacy names the blocks no longer declare.
       resolvedThemeVar: function (name) {
         var st = (window.Settings && window.Settings.getState()) || {};
         var rid = THEMES[st.theme] ? st.theme : 'midnight';
-        return resolvedVar(rid,
-          (st.themeOverrides && st.themeOverrides[rid]) || null, name);
+        var ov = foldThemeOverrides(
+          (st.themeOverrides && st.themeOverrides[rid]) || null);
+        if (DERIVED_MIXES[name]) {
+          return resolvedDerived(rid, ov, name);
+        }
+        var r = resolvedVar(rid, ov, name);
+        if (r) return r;
+        var ALIAS = {
+          '--text-1': '--field-ink', '--surface-1': '--field-surface',
+          '--bg-panel': '--field-canvas',
+          '--accent': '--field-accent-1', '--accent-2': '--field-accent-2',
+          '--accent-3': '--field-accent-3'
+        };
+        if (ALIAS[name]) return resolvedVar(rid, ov, ALIAS[name]);
+        return '';
       }
     };
 
@@ -2290,11 +2400,13 @@
       // that changes the facts (an injected <style>/<link>). Cleared
       // there; rebuilt here on the next refresh.
       var scanMemo = null;
+      // v0.99.4: accent-4 is THEME-CARRIED (a static — never a
+      // gradient), so its gate never fires; the entry is gone from the
+      // scan. The a1..a3 entries stay (they are FIELDS — gradient-capable).
       var ACC = [
         { gate: 'data-a1-grad', varName: '--accent',        rgb: '--accent-rgb',        img: '--accent-gradient',        ink: '--on-accent' },
         { gate: 'data-a2-grad', varName: '--accent-2',      rgb: '--accent-2-rgb',      img: '--accent-2-gradient',      ink: '--on-accent-2' },
-        { gate: 'data-a3-grad', varName: '--accent-3',      rgb: '--accent-3-rgb',      img: '--accent-3-gradient',      ink: '--on-accent-3' },
-        { gate: 'data-a4-grad', varName: '--accent-4',      rgb: '--accent-4-rgb',      img: '--accent-4-gradient',      ink: '--on-accent-4' }
+        { gate: 'data-a3-grad', varName: '--accent-3',      rgb: '--accent-3-rgb',      img: '--accent-3-gradient',      ink: '--on-accent-3' }
       ];
       var MAX_SEL = 400;   // pathological-sheet guard
 
@@ -2319,10 +2431,12 @@
       //     rules keep their solid border-color — the border variable's
       //     solid twin, still theme-following — and their content
       //     always paints.
+      // v0.99.4: surface-2 + bg-app are DERIVED SOLIDS now (never
+      // gradients — their twins are never written, their gates never
+      // fire); only the SURFACE FIELD owns a gradient twin. The s2/bg
+      // entries are gone from the scan.
       var SURF = [
-        { gate: 'data-s1-grad', varName: '--surface-1', img: '--surface-1-gradient', inkGate: 'data-bright-s1', ink: '--on-surface-1' },
-        { gate: 'data-s2-grad', varName: '--surface-2', img: '--surface-2-gradient', inkGate: 'data-bright-s2', ink: '--on-surface-2' },
-        { gate: 'data-bg-grad', varName: '--bg-app',    img: '--bg-app-gradient',    inkGate: 'data-bright-bg', ink: '--on-bg-app' }
+        { gate: 'data-s1-grad', varName: '--surface-1', img: '--surface-1-gradient', inkGate: 'data-bright-s1', ink: '--on-surface-1' }
       ];
       var BORDER_GATE = 'data-border-grad';
 
@@ -2635,7 +2749,9 @@
       themes: THEMES,
       legacyGrid: LEGACY_GRID,
       deriveTwins: deriveTwins,
-      deriveBorderTwins: deriveBorderTwins,
+      fieldMath: FieldMath,
+      foldThemeOverrides: foldThemeOverrides,
+      fields: FIELDS,
       hexTriplet: hexTriplet,
       OKX: OKX,
       gridSpecFor: gridSpecFor,

@@ -57,12 +57,14 @@ var docEl = {
 var rafQueue = [];
 var settingsState = {
   theme: 'midnight',
-  // a SPEC override + a LEGACY hex override → applyTheme's boot writes
-  // the twins for both shapes
+  // v0.99.4: the FOLD exercise — a legacy --accent SPEC override + a
+  // derived-era --bg-app hex (dropped by design) + a legacy --text-1
+  // gradient (ink is solid-only → first color)
   themeOverrides: {
     midnight: {
       '--accent': { colors: ['#ff00aa', '#00ffcc'], dir: 'h' },
-      '--bg-app': '#123456'
+      '--bg-app': '#123456',
+      '--text-1': { colors: ['#feedcc', '#abcdef'], dir: 'v' }
     }
   },
   chatScheme: 'teal',
@@ -101,8 +103,22 @@ var chatRoot = {
 };
 global.requestAnimationFrame = function (fn) { rafQueue.push(fn); return rafQueue.length; };
 global.getComputedStyle = function () {
-  return { getPropertyValue: function (n) { return n === '--accent' ? '#a78bfa' : ''; } };
+  // v0.99.4: the FIELD statics the real :root/[data-theme] blocks carry
+  // (midnight) — the derivation chain (culori mixes → triplets → gates)
+  // resolves from these when the stub has no readable stylesheets.
+  var FIELD_STATIC = {
+    '--field-surface': '#14141a', '--field-ink': '#e0e0e8',
+    '--field-canvas': '#101016', '--field-accent-1': '#a78bfa',
+    '--field-accent-2': '#38bdf8', '--field-accent-3': '#f472b6',
+    '--accent-4': '#34d399', '--accent': '#a78bfa'
+  };
+  return { getPropertyValue: function (n) { return FIELD_STATIC[n] || ''; } };
 };
+// v0.99.3: culori — the vendored IIFE defines `var culori` at script
+// scope; the indirect eval lands it on globalThis so theme.js's
+// FieldMath boots live (the same file the browser <script>s).
+(0, eval)(require('fs').readFileSync(
+  path.join(WEB, 'vendor', 'culori', 'culori.min.js'), 'utf8'));
 
 // ── assertions ──────────────────────────────────────────────────────
 var fails = [];
@@ -123,15 +139,55 @@ var T = require(path.join(WEB, 'theme.js'));
 eq('theme exports deriveTwins', typeof T.deriveTwins, 'function');
 eq('theme exports hexTriplet', typeof T.hexTriplet, 'function');
 eq('theme exports gridSpecFor', typeof T.gridSpecFor, 'function');
+eq('theme exports foldThemeOverrides', typeof T.foldThemeOverrides, 'function');
 
-// applyTheme ran at require time (Settings stub present) — the twin
-// writes for BOTH override shapes are already in rec:
-eq('applyTheme solid twin', rec.props['--accent'], '#ff00aa');
-eq('applyTheme gradient twin', rec.props['--accent-gradient'],
+// ── v0.99.4 THE FOLD (pure) ─────────────────────────────────────────
+var folded = T.foldThemeOverrides({
+  '--surface-1': '#111111', '--field-surface': '#222222',
+  '--text-1': { colors: ['#feedcc', '#abcdef'], dir: 'v' },
+  '--bg-panel': '#131313', '--accent': '#ff00aa',
+  '--accent-2': '#00ffcc', '--accent-3': '#abcdef',
+  '--bg-app': '#090909', '--surface-2': '#191919',
+  '--surface-3': '#262626', '--border': '#2a2a35', '--accent-4': '#34d399'
+});
+eq('fold surface (field key wins)', folded['--field-surface'], '#222222');
+eq('fold ink (legacy gradient → FIRST COLOR, solid-only)', folded['--field-ink'], '#feedcc');
+eq('fold canvas', folded['--field-canvas'], '#131313');
+eq('fold accent-1', folded['--field-accent-1'], '#ff00aa');
+eq('fold accent-2', folded['--field-accent-2'], '#00ffcc');
+eq('fold accent-3', folded['--field-accent-3'], '#abcdef');
+ok('fold DROPS --bg-app', folded['--bg-app'] === undefined);
+ok('fold DROPS --surface-2', folded['--surface-2'] === undefined);
+ok('fold DROPS --surface-3', folded['--surface-3'] === undefined);
+ok('fold DROPS --border', folded['--border'] === undefined);
+ok('fold DROPS --accent-4', folded['--accent-4'] === undefined);
+
+// applyTheme ran at require time (Settings stub present) — the field
+// twin writes are already in rec:
+eq('applyTheme field solid twin', rec.props['--field-accent-1'], '#ff00aa');
+eq('applyTheme field gradient twin', rec.props['--field-accent-1-gradient'],
+  'linear-gradient(90deg, #ff00aa, #00ffcc)');
+eq('applyTheme ALIAS gradient twin', rec.props['--accent-gradient'],
   'linear-gradient(90deg, #ff00aa, #00ffcc)');
 eq('applyTheme rgb triplet from solid', rec.props['--accent-rgb'], '255,0,170');
-eq('applyTheme legacy hex solid', rec.props['--bg-app'], '#123456');
-eq('applyTheme legacy hex gradient none', rec.props['--bg-app-gradient'], 'none');
+ok('applyTheme writes NO --accent solid (CSS alias owns it)', rec.props['--accent'] === undefined);
+ok('applyTheme DROPS the derived-era --bg-app key', rec.props['--bg-app'] === undefined);
+ok('applyTheme drops the --bg-app gradient twin', rec.props['--bg-app-gradient'] === undefined);
+// the legacy --text-1 override folded to ink: SOLID ONLY (no window)
+eq('applyTheme ink fold (first color)', rec.props['--field-ink'], '#feedcc');
+ok('ink NEVER gets a gradient twin', rec.props['--field-ink-gradient'] === undefined);
+// the derived triplets (culori parity with the :root color-mix block)
+ok('derived triplet --text-3-rgb present', typeof rec.props['--text-3-rgb'] === 'string');
+ok('derived triplet --surface-2-rgb present', typeof rec.props['--surface-2-rgb'] === 'string');
+ok('derived triplet --bg-app-rgb present', typeof rec.props['--bg-app-rgb'] === 'string');
+// the ink override drives the veil/bright gates off the SURFACE (not text)
+ok('veil-ink derived', rec.props['--veil-ink'] === '#000000');
+// FieldMath — the culori CSS-parity core
+ok('fieldMath available', !!(T.fieldMath && T.fieldMath.available));
+eq('fieldMath cssMix edge 0', T.fieldMath.cssMix('#14141a', '#e0e0e8', 0), '#14141a');
+eq('fieldMath cssMix edge 1', T.fieldMath.cssMix('#14141a', '#e0e0e8', 1), '#e0e0e8');
+ok('fieldMath cssMix midpoint is a hex', /^#[0-9a-f]{6}$/.test(T.fieldMath.cssMix('#ffffff', '#000000', 0.5) || ''));
+ok('fieldMath luminance sane', (T.fieldMath.luminance('#ffffff') || 0) > 0.9);
 
 // ── deriveTwins: hex-only → 'none', spec → solid+css pair ───────────
 eq('twins.hex.solid', T.deriveTwins('#aabbcc').solid, '#aabbcc');
@@ -406,13 +462,19 @@ resetRec();
 var html = page.render(settingsStub.getState, settingsStub.setState);
 html = expandLazyEditors(html);   // v0.98: expand ALL color rows before the editor assertions
 has('page token wrapper', html, 'data-appr-render="r');
-has('page theme editor accent', html, 'id="tv-accent-gr"');
+has('page theme editor surface', html, 'id="tv-surface-gr"');
+has('page theme editor accent1', html, 'id="tv-accent-1-gr"');
 has('page theme editor accent2', html, 'id="tv-accent-2-gr"');
-has('page theme editor bgapp', html, 'id="tv-bg-app-gr"');
-// v0.49: the canvas background moved into the Customize section (the
-// --bg-panel row — seeded from canvasBgSpec, texture-capable); the Grid
-// Colors section no longer carries its own Background row.
-has('page canvas bg editor (customize)', html, 'id="tv-bg-panel-gr"');
+has('page theme editor accent3', html, 'id="tv-accent-3-gr"');
+// v0.99.4: the INK row is solid-only — a plain color input, no editor
+has('page ink solid input', html, 'id="tv-ink-solid"');
+lacks('page ink has NO gradient editor', html, 'id="tv-ink-gr"');
+lacks('page NO surface-raised row', html, 'id="tv-surface-2-gr"');
+lacks('page NO border row', html, 'id="tv-border-gr"');
+lacks('page NO bg-app row', html, 'id="tv-bg-app-gr"');
+// the canvas background row (field-keyed, texture-capable, seeded from
+// canvasBgSpec); the Grid Colors section carries no own Background row.
+has('page canvas field editor (customize)', html, 'id="tv-canvas-gr"');
 lacks('page grid NO own bg row', html, 'id="gc-bg-gr"');
 has('page grid editor origin', html, 'id="gc-originColor-gr"');
 has('page fmt row a1', html, 'data-fmt-slot="a1"');
@@ -422,10 +484,8 @@ lacks('page NO legacy grid color input', html, 'data-setting-key="bg"');
 lacks('page NO legacy fmt color input', html, 'data-custom="fmt"');
 lacks('page NO hex readouts', html, 'data-color-hex=');
 has('page customized marker (stored override)', html, '· customized');
-// the stored --accent spec renders 2 swatches; the computed-hex vars
-// (getComputedStyle stub → '#a78bfa' for --accent only) fall back to
-// '#000000' like the v0.26 code did
-var accentSeg = html.split('id="tv-accent-gr"')[1].split('id="tv-accent-2-gr"')[0];
+// the stored --accent spec (folded to --field-accent-1) renders 2 swatches
+var accentSeg = html.split('id="tv-accent-1-gr"')[1].split('id="tv-accent-2-gr"')[0];
 ok('page accent editor 2 swatches', (accentSeg.match(/class="gr-color"/g) || []).length === 2);
 
 // the scheduled drain fires against the stub document (querySelector →

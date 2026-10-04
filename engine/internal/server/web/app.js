@@ -277,8 +277,17 @@
     if (now - arrowHexCache.at > 1000) {
       arrowHexCache.at = now;
       try {
-        arrowHexCache.v = getComputedStyle(document.documentElement)
-          .getPropertyValue('--border-strong').trim();
+        // v0.99.4: --border-strong is a DERIVED color-mix now (its
+        // computed token stream stays unevaluated in the custom
+        // property) — the real hex comes from DoomTheme (culori parity
+        // with what CSS paints). Fallback: the legacy computed read.
+        var DT = window.DoomTheme;
+        var hex = (DT && typeof DT.resolvedThemeVar === 'function')
+          ? DT.resolvedThemeVar('--border-strong') : '';
+        arrowHexCache.v = (/^#[0-9a-fA-F]{6}$/.test(hex))
+          ? hex
+          : getComputedStyle(document.documentElement)
+              .getPropertyValue('--border-strong').trim();
       } catch (e) {}
     }
     return arrowHexCache.v;
@@ -1998,11 +2007,13 @@
       s.gridScatter, s.gridSizeVariation, s.gridRotation,   // legacy fallbacks
       cj(s.bg), cj(s.lineColor),
       cj(s.dotColor), cj(s.originColor),
-      // the CANVAS-relevant override only: --bg-panel paints the canvas
-      // background (spec + texture); --border-strong tints the canvas
-      // icons. The REST of the overrides (accents, surfaces, text) have
-      // zero canvas effect — an accent drag must NOT repaint the canvas.
-      cj((ov && ov['--bg-panel']) || null),
+      // the CANVAS-relevant override only: --field-canvas paints the
+      // canvas background (spec + texture — the legacy --bg-panel key
+      // folds into it); --border-strong (DERIVED since v0.99.4 — the
+      // culori mix) tints the canvas icons. The REST of the fields
+      // (accents, surface, ink) have zero canvas effect — an accent
+      // drag must NOT repaint the canvas.
+      cj((ov && (ov['--field-canvas'] !== undefined ? ov['--field-canvas'] : ov['--bg-panel'])) || null),
       (typeof DT.resolvedThemeVar === 'function')
         ? DT.resolvedThemeVar('--border-strong') : ''
     ].join('|');

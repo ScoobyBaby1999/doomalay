@@ -13,23 +13,75 @@
      Themes carry richer, contrasting-but-adjacent accent families —
      each also recommends a matching chat markdown scheme (theme.js).
      -rgb triplets exist for rgba() composition. */
+  /* ══ v0.99.4 THE FIELD — the 7-slot color model (dual track) ══
+     ONE field per slot; everything else DERIVES. The tracks never share
+     a variable:
+       · TEXT   — --field-ink (every text color, via tints) + the --fmt-*
+                  stops (ALL text gradients). Ink is SOLID-ONLY: never a
+                  window, never background-clip:text. No accent-colored
+                  text, no chat-specific text colors.
+       · OBJECT — --field-surface (the plate) / --field-canvas (the
+                  world) / --field-accent-1..3 (fills, windows, active
+                  states) + the derived raised/hairline/bg-app family.
+     Derivation percentages are CALIBRATED against the 10 approved theme
+     looks (scripts/v099-calibrate.js — best fit across all themes; mean
+     oklab ΔE per var ≤ 0.033, the imperceptible class). JS mirrors these
+     mixes in theme.js FieldMath (culori, polar oklch — CSS-parity) only
+     where a triplet or a canvas-side hex is needed. Registered with
+     @property so the fields are always-typed colors (WebView 85+). */
+  @property --field-surface  { syntax: '<color>'; inherits: true; initial-value: #14141a; }
+  @property --field-ink      { syntax: '<color>'; inherits: true; initial-value: #e0e0e8; }
+  @property --field-canvas   { syntax: '<color>'; inherits: true; initial-value: #101016; }
+  @property --field-accent-1 { syntax: '<color>'; inherits: true; initial-value: #a78bfa; }
+  @property --field-accent-2 { syntax: '<color>'; inherits: true; initial-value: #38bdf8; }
+  @property --field-accent-3 { syntax: '<color>'; inherits: true; initial-value: #f472b6; }
+  /* the theme-carried FOURTH tone (scripts + providers) — part of the
+     theme's curated set, deliberately NOT a user slot (the slot count is
+     capped at 7 by the ratified model) */
+  @property --accent-4 { syntax: '<color>'; inherits: true; initial-value: #34d399; }
+
   :root {
-    --bg-app: #0a0a0b;
-    --bg-panel: #101016;
-    --surface-1: #14141a;  --surface-1-rgb: 20,20,26;
-    --surface-2: #1a1a22;  --surface-2-rgb: 26,26,34;
-    --surface-3: #26262f;  --surface-3-rgb: 38,38,47;
-    --border: #2a2a35;
-    --border-strong: #34344a;
-    --text-1: #e0e0e8;
-    --text-2: #a8a8b4;
-    --text-3: #71717a;      --text-3-rgb: 113,113,122;
-    --text-3-dim: #54545e;
-    --accent: #a78bfa;      --accent-rgb: 167,139,250;
-    --accent-2: #38bdf8;    --accent-2-rgb: 56,189,248;
-    --on-accent: #ffffff;    /* v0.49: text ON accent fills — theme.js re-derives it when Accent 1 is customized */
-    --accent-3: #f472b6;    --accent-3-rgb: 244,114,182;
-    --accent-4: #34d399;    --accent-4-rgb: 52,211,153;   /* v0.63: the fourth accent (library categories + workspace providers) */
+    /* THE FIELDS — midnight defaults; [data-theme] blocks override */
+    --field-surface: #14141a;   /* the plate: panels · cards · bubbles */
+    --field-ink: #e0e0e8;       /* THE text color — solids + tints only */
+    --field-canvas: #101016;    /* the world: the infinite grid canvas */
+    --field-accent-1: #a78bfa;  /* the primary accent · user bubbles */
+    --field-accent-2: #38bdf8;  /* the adjacent accent */
+    --field-accent-3: #f472b6;  /* the third accent */
+  }
+  /* THE DERIVATIONS — CSS-native color-mix(in oklab). The old
+     border-vs-surface fight (25 shared objects, 74 surface-painted
+     hairlines, the entangled raised-ring) ends BY CONSTRUCTION: raised
+     + hairlines are products of the SAME two fields, so they can never
+     disagree. color-mix(A, B X%) = (100-X)% A + X% B. */
+  :root {
+    --surface-1: var(--field-surface);
+    --surface-2: color-mix(in oklab, var(--field-surface), var(--field-ink) 5%);
+    --surface-3: color-mix(in oklab, var(--field-surface), var(--field-ink) 11%);
+    --border: color-mix(in oklab, var(--field-surface), var(--field-ink) 13%);
+    --border-strong: color-mix(in oklab, var(--field-surface), var(--field-ink) 24%);
+    /* overlays sit between the world and the plate: canvas, slightly plated */
+    --bg-app: color-mix(in oklab, var(--field-canvas), var(--field-surface) 8%);
+    --bg-panel: var(--field-canvas);
+    --accent: var(--field-accent-1);
+    --accent-2: var(--field-accent-2);
+    --accent-3: var(--field-accent-3);
+    /* THE TEXT TRACK — one ink, three tints toward the surface */
+    --text-1: var(--field-ink);
+    --text-2: color-mix(in oklab, var(--field-ink), var(--field-surface) 26%);
+    --text-3: color-mix(in oklab, var(--field-ink), var(--field-surface) 47%);
+    --text-3-dim: color-mix(in oklab, var(--field-ink), var(--field-surface) 61%);
+  }
+  :root {
+    /* the -rgb triplet ALIASES (rgba() composition can't split a color):
+       statics here = midnight's; [data-theme] blocks carry their own;
+       applyTheme re-derives EVERY triplet from the resolved fields via
+       FieldMath (culori) on every apply, so overrides stay exact too */
+    --surface-1-rgb: 20,20,26; --surface-2-rgb: 26,26,34; --surface-3-rgb: 38,38,47;
+    --accent-rgb: 167,139,250; --accent-2-rgb: 56,189,248; --accent-3-rgb: 244,114,182;
+    --accent-4-rgb: 52,211,153;
+    --bg-app-rgb: 10,10,11; --bg-panel-rgb: 16,16,22;
+    --text-3-rgb: 113,113,122;
     --ok: #34d399;         --ok-rgb: 52,211,153;
     --warn: #fbbf24;       --warn-rgb: 251,191,36;
     --err: #f87171;        --err-rgb: 248,113,113;
@@ -42,17 +94,12 @@
        themes override with deeper mixes for contrast on pale surfaces) */
     --persona-tint: #a78bfa;  --persona-rgb: 167,139,250;
     --template-tint: #4ade80; --template-rgb: 74,222,128;
-    /* v0.66 PROJECTION — the veil tokens are GONE. The old layer system
-       composited translucent ink washes (linear-gradient(var(--veil-card)))
-       over every gradient field; when --veil-ink derived WHITE (a light
-       surface-1 first stop in the user's palette) every card, header and
-       pill under the wash turned 36-48% milky — the "stained white" model
-       + sandbox pills in the APK. Objects now render ONLY their own
-       variable's viewport projection (the v0.66 block at the bottom).
-       --veil-ink survives for ONE job: the text-shadow ink — a shadow
-       can restore contrast under a loud user gradient without ever
-       washing the fill (theme.js re-derives it from the resolved
-       surface-1 luminance on every applyTheme). */
+    /* v0.49: text ON accent fills — theme.js re-derives per accent */
+    --on-accent: #ffffff;
+    /* v0.66: --veil-ink survives for ONE job: the text-shadow ink — a
+       shadow can restore contrast under a loud user gradient without
+       ever washing the fill (theme.js re-derives it from the resolved
+       field-surface luminance on every applyTheme). */
     --veil-ink: #000000;
     --veil-ink-rgb: 0, 0, 0;
     /* the text safety net — a soft veil-ink-colored shadow under
@@ -76,127 +123,95 @@
   }
   /* ── Nebula: brighter violet / magenta / cyan ── */
   [data-theme="nebula"] {
-    --bg-app: #0b0912; --bg-panel: #120e1d;
-    --surface-1: #171226; --surface-1-rgb: 23,18,38;
-    --surface-2: #1e1832; --surface-2-rgb: 30,24,50;
-    --surface-3: #2b2344; --surface-3-rgb: 43,35,68;
-    --border: #2f2749; --border-strong: #413463;
+    --field-surface: #171226; --field-ink: #ece8f8; --field-canvas: #120e1d;
+    --field-accent-1: #c084fc; --field-accent-2: #22d3ee; --field-accent-3: #f0abfc;
+    --accent-4: #fbbf24; --accent-4-rgb: 251,191,36;
+    --surface-1-rgb: 23,18,38; --surface-2-rgb: 30,24,50; --surface-3-rgb: 43,35,68;
+    --accent-rgb: 192,132,252; --accent-2-rgb: 34,211,238; --accent-3-rgb: 240,171,252;
+    --bg-panel-rgb: 18,14,29; --bg-app-rgb: 11,9,18;
     /* v0.70 (the user's "the chatbot metadata seems to follow no theme"
     on nebula): nebula was the ONE theme shipping without its own text
     family — every label, sub-header and metadata line rendered
     midnight's neutral grays, so the text looked unthemed next to the
     violet/cyan surfaces. A cool violet-leaning family, matching the
     theme's accents (every other theme already carries its four). */
-    --text-1: #ece8f8; --text-2: #b4aede; --text-3: #7d76a8; --text-3-dim: #5d5784;
-    --accent: #c084fc; --accent-rgb: 192,132,252;
-    --accent-2: #22d3ee; --accent-2-rgb: 34,211,238;  /* v0.38 FIX: hex was stale #38bdf8 while the tint said cyan */
-    --accent-3: #f0abfc; --accent-3-rgb: 240,171,252;
-    --accent-4: #fbbf24; --accent-4-rgb: 251,191,36;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #6ee7b7; --ok-rgb: 110,231,183; --warn: #fcd34d; --warn-rgb: 252,211,77; --err: #fda4af; --err-rgb: 253,164,175; --notice: #fdba74; --notice-rgb: 253,186,116;
   }
   /* ── Ember: warm ambers / orange / rose ── */
   [data-theme="ember"] {
-    --bg-app: #0f0a08; --bg-panel: #171009;
-    --surface-1: #1d150c; --surface-1-rgb: 29,21,12;
-    --surface-2: #251b10; --surface-2-rgb: 37,27,16;
-    --surface-3: #342717; --surface-3-rgb: 52,39,23;
-    --border: #3a2c1b; --border-strong: #57401f;
-    --text-1: #f2e9df; --text-2: #b8a894; --text-3: #8a7a66; --text-3-dim: #6a5a48;
-    --accent: #fb923c; --accent-rgb: 251,146,60;
-    --accent-2: #fbbf24; --accent-2-rgb: 251,191,36;
-    --accent-3: #fb7185; --accent-3-rgb: 251,113,133;
+    --field-surface: #1d150c; --field-ink: #f2e9df; --field-canvas: #171009;
+    --field-accent-1: #fb923c; --field-accent-2: #fbbf24; --field-accent-3: #fb7185;
     --accent-4: #2dd4bf; --accent-4-rgb: 45,212,191;
+    --surface-1-rgb: 29,21,12; --surface-2-rgb: 37,27,16; --surface-3-rgb: 52,39,23;
+    --accent-rgb: 251,146,60; --accent-2-rgb: 251,191,36; --accent-3-rgb: 251,113,133;
+    --bg-panel-rgb: 23,16,9; --bg-app-rgb: 15,10,8;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #86efac; --ok-rgb: 134,239,172; --warn: #f59e0b; --warn-rgb: 245,158,11; --err: #f87171; --err-rgb: 248,113,113; --notice: #f97316; --notice-rgb: 249,115,22;
   }
   /* ── Forest: emerald / lime / teal ── */
   [data-theme="forest"] {
-    --bg-app: #080d0a; --bg-panel: #0c1410;
-    --surface-1: #101a14; --surface-1-rgb: 16,26,20;
-    --surface-2: #14211a; --surface-2-rgb: 20,33,26;
-    --surface-3: #1d3026; --surface-3-rgb: 29,48,38;
-    --border: #213528; --border-strong: #2f4a37;
-    --text-1: #e4eee6; --text-2: #a3b8a9; --text-3: #6f8476; --text-3-dim: #56695c;
-    --accent: #4ade80; --accent-rgb: 74,222,128;
-    --accent-2: #2dd4bf; --accent-2-rgb: 45,212,191;  /* v0.38 FIX: hex was stale #38bdf8 while the tint said teal */
-    --accent-3: #a3e635; --accent-3-rgb: 163,230,53;
+    --field-surface: #101a14; --field-ink: #e4eee6; --field-canvas: #0c1410;
+    --field-accent-1: #4ade80; --field-accent-2: #2dd4bf; --field-accent-3: #a3e635;
     --accent-4: #fb923c; --accent-4-rgb: 251,146,60;
+    --surface-1-rgb: 16,26,20; --surface-2-rgb: 20,33,26; --surface-3-rgb: 29,48,38;
+    --accent-rgb: 74,222,128; --accent-2-rgb: 45,212,191; --accent-3-rgb: 163,230,53;
+    --bg-panel-rgb: 12,20,16; --bg-app-rgb: 8,13,10;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #4ade80; --ok-rgb: 74,222,128; --warn: #eab308; --warn-rgb: 234,179,8; --err: #f87171; --err-rgb: 248,113,113; --notice: #d97706; --notice-rgb: 217,119,6;
   }
   /* ── Ocean: sky / cyan / deep blue ── */
   [data-theme="ocean"] {
-    --bg-app: #070b10; --bg-panel: #0b1219;
-    --surface-1: #0f1822; --surface-1-rgb: 15,24,34;
-    --surface-2: #132029; --surface-2-rgb: 19,32,41;
-    --surface-3: #1b2d3a; --surface-3-rgb: 27,45,58;
-    --border: #1f3341; --border-strong: #2b4759;
-    --text-1: #e2ecf3; --text-2: #a0b4c2; --text-3: #6d8291; --text-3-dim: #55697a;
-    --accent: #38bdf8; --accent-rgb: 56,189,248;
-    --accent-2: #7dd3fc; --accent-2-rgb: 125,211,252;  /* v0.38 FIX: sky-300 secondary — distinct from the primary */
-    --accent-3: #818cf8; --accent-3-rgb: 129,140,248;
+    --field-surface: #0f1822; --field-ink: #e2ecf3; --field-canvas: #0b1219;
+    --field-accent-1: #38bdf8; --field-accent-2: #7dd3fc; --field-accent-3: #818cf8;
     --accent-4: #fb7185; --accent-4-rgb: 251,113,133;
+    --surface-1-rgb: 15,24,34; --surface-2-rgb: 19,32,41; --surface-3-rgb: 27,45,58;
+    --accent-rgb: 56,189,248; --accent-2-rgb: 125,211,252; --accent-3-rgb: 129,140,248;
+    --bg-panel-rgb: 11,18,25; --bg-app-rgb: 7,11,16;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #2dd4bf; --ok-rgb: 45,212,191; --warn: #fde047; --warn-rgb: 253,224,71; --err: #fb7185; --err-rgb: 251,113,133; --notice: #fb923c; --notice-rgb: 251,146,60;
   }
   /* ── Rose: pinks / magenta / warm coral ── */
   [data-theme="rose"] {
-    --bg-app: #100a0d; --bg-panel: #171016;
-    --surface-1: #1e141b; --surface-1-rgb: 30,20,27;
-    --surface-2: #261a21; --surface-2-rgb: 38,26,33;
-    --surface-3: #34242e; --surface-3-rgb: 52,36,46;
-    --border: #3a2833; --border-strong: #523744;
-    --text-1: #f3e6ea; --text-2: #c0a8b1; --text-3: #8e757f; --text-3-dim: #6d5862;
-    --accent: #f472b6; --accent-rgb: 244,114,182;
-    --accent-2: #fb7185; --accent-2-rgb: 251,113,133;
-    --accent-3: #e879f9; --accent-3-rgb: 232,121,249;
+    --field-surface: #1e141b; --field-ink: #f3e6ea; --field-canvas: #171016;
+    --field-accent-1: #f472b6; --field-accent-2: #fb7185; --field-accent-3: #e879f9;
     --accent-4: #38bdf8; --accent-4-rgb: 56,189,248;
+    --surface-1-rgb: 30,20,27; --surface-2-rgb: 38,26,33; --surface-3-rgb: 52,36,46;
+    --accent-rgb: 244,114,182; --accent-2-rgb: 251,113,133; --accent-3-rgb: 232,121,249;
+    --bg-panel-rgb: 23,16,22; --bg-app-rgb: 16,10,13;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #6ee7b7; --ok-rgb: 110,231,183; --warn: #fbbf24; --warn-rgb: 251,191,36; --err: #fda4af; --err-rgb: 253,164,175; --notice: #fb923c; --notice-rgb: 251,146,60;
   }
   /* ── Mono: pure greyscale (accent = bright silver) ── */
   [data-theme="mono"] {
-    --bg-app: #0a0a0a; --bg-panel: #111111;
-    --surface-1: #161616; --surface-1-rgb: 22,22,22;
-    --surface-2: #1c1c1c; --surface-2-rgb: 28,28,28;
-    --surface-3: #282828; --surface-3-rgb: 40,40,40;
-    --border: #2c2c2c; --border-strong: #3d3d3d;
-    --text-1: #e8e8e8; --text-2: #ababab; --text-3: #757575; --text-3-dim: #585858;
-    --accent: #d4d4d4; --accent-rgb: 212,212,212;
-    --accent-2: #a8a8a8; --accent-2-rgb: 168,168,168;
-    --accent-3: #8a8a8a; --accent-3-rgb: 138,138,138;
+    --field-surface: #161616; --field-ink: #e8e8e8; --field-canvas: #111111;
+    --field-accent-1: #d4d4d4; --field-accent-2: #a8a8a8; --field-accent-3: #8a8a8a;
     --accent-4: #6e6e6e; --accent-4-rgb: 110,110,110;
+    --surface-1-rgb: 22,22,22; --surface-2-rgb: 28,28,28; --surface-3-rgb: 40,40,40;
+    --accent-rgb: 212,212,212; --accent-2-rgb: 168,168,168; --accent-3-rgb: 138,138,138;
+    --bg-panel-rgb: 17,17,17; --bg-app-rgb: 10,10,10;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #a1a1aa; --ok-rgb: 161,161,170; --warn: #d4d4d8; --warn-rgb: 212,212,216; --err: #f87171; --err-rgb: 248,113,113; --notice: #e4e4e7; --notice-rgb: 228,228,231;
   }
   /* ── Solar: deep navy + vivid amber (high contrast) ── */
   [data-theme="solar"] {
-    --bg-app: #060810; --bg-panel: #0a0e1a;
-    --surface-1: #0e1322; --surface-1-rgb: 14,19,34;
-    --surface-2: #131a2c; --surface-2-rgb: 19,26,44;
-    --surface-3: #1b2438; --surface-3-rgb: 27,36,56;
-    --border: #1f2a42; --border-strong: #2e3d5e;
-    --text-1: #eef2fb; --text-2: #a9b6cf; --text-3: #7484a3; --text-3-dim: #5a6a88;
-    --accent: #fbbf24; --accent-rgb: 251,191,36;
-    --accent-2: #38bdf8; --accent-2-rgb: 56,189,248;
-    --accent-3: #a5b4fc; --accent-3-rgb: 165,180,252;
+    --field-surface: #0e1322; --field-ink: #eef2fb; --field-canvas: #0a0e1a;
+    --field-accent-1: #fbbf24; --field-accent-2: #38bdf8; --field-accent-3: #a5b4fc;
     --accent-4: #fb7185; --accent-4-rgb: 251,113,133;
+    --surface-1-rgb: 14,19,34; --surface-2-rgb: 19,26,44; --surface-3-rgb: 27,36,56;
+    --accent-rgb: 251,191,36; --accent-2-rgb: 56,189,248; --accent-3-rgb: 165,180,252;
+    --bg-panel-rgb: 10,14,26; --bg-app-rgb: 6,8,16;
     /* v0.38: the theme's own semantic tones — pills + cost follow the theme */
     --ok: #84cc16; --ok-rgb: 132,204,22; --warn: #f59e0b; --warn-rgb: 245,158,11; --err: #ef4444; --err-rgb: 239,68,68; --notice: #f97316; --notice-rgb: 249,115,22;
   }
   /* ── Paper: warm light ── */
   [data-theme="paper"] {
-    --bg-app: #f4f1ea; --bg-panel: #fbf9f4;
-    --surface-1: #efeae0; --surface-1-rgb: 239,234,224;
-    --surface-2: #e7e0d3; --surface-2-rgb: 231,224,211;
-    --surface-3: #dcd3c2; --surface-3-rgb: 220,211,194;
-    --border: #d5ccba; --border-strong: #b5a98f;
-    --text-1: #2c2620; --text-2: #5c5347; --text-3: #7d7364; --text-3-dim: #9a8f7e;
-    --accent: #b45309; --accent-rgb: 180,83,9;
-    --accent-2: #0e7490; --accent-2-rgb: 14,116,144;
-    --accent-3: #be185d; --accent-3-rgb: 190,24,93;
+    --field-surface: #efeae0; --field-ink: #2c2620; --field-canvas: #fbf9f4;
+    --field-accent-1: #b45309; --field-accent-2: #0e7490; --field-accent-3: #be185d;
     --accent-4: #4d7c0f; --accent-4-rgb: 77,124,15;
+    --surface-1-rgb: 239,234,224; --surface-2-rgb: 231,224,211; --surface-3-rgb: 220,211,194;
+    --accent-rgb: 180,83,9; --accent-2-rgb: 14,116,144; --accent-3-rgb: 190,24,93;
+    --bg-panel-rgb: 251,249,244; --bg-app-rgb: 244,241,234;
     --ok: #047857; --ok-rgb: 4,120,87;
     --warn: #b45309; --warn-rgb: 180,83,9;
     --err: #b91c1c; --err-rgb: 185,28,28;
@@ -206,16 +221,12 @@
   }
   /* ── Frost: cool light ── */
   [data-theme="frost"] {
-    --bg-app: #eef2f7; --bg-panel: #f8fafc;
-    --surface-1: #e6ebf2; --surface-1-rgb: 230,235,242;
-    --surface-2: #dde5ee; --surface-2-rgb: 221,229,238;
-    --surface-3: #d0dbe8; --surface-3-rgb: 208,219,232;
-    --border: #c9d5e3; --border-strong: #9fb2c9;
-    --text-1: #1d2733; --text-2: #4c5a6b; --text-3: #6d7c8e; --text-3-dim: #8b99a9;
-    --accent: #4f6ef7; --accent-rgb: 79,110,247;
-    --accent-2: #0891b2; --accent-2-rgb: 8,145,178;
-    --accent-3: #c026d3; --accent-3-rgb: 192,38,211;
+    --field-surface: #e6ebf2; --field-ink: #1d2733; --field-canvas: #f8fafc;
+    --field-accent-1: #4f6ef7; --field-accent-2: #0891b2; --field-accent-3: #c026d3;
     --accent-4: #ea580c; --accent-4-rgb: 234,88,12;
+    --surface-1-rgb: 230,235,242; --surface-2-rgb: 221,229,238; --surface-3-rgb: 208,219,232;
+    --accent-rgb: 79,110,247; --accent-2-rgb: 8,145,178; --accent-3-rgb: 192,38,211;
+    --bg-panel-rgb: 248,250,252; --bg-app-rgb: 238,242,247;
     --ok: #059669; --ok-rgb: 5,150,105;
     --warn: #d97706; --warn-rgb: 217,119,6;
     --err: #dc2626; --err-rgb: 220,38,38;
@@ -4703,15 +4714,16 @@
      raised chrome — inputs, textareas, selects, switch tracks, chips,
      hover states, the chatbot disc — the 'inputs · hover · raised
      cards' contract of the Surface-raised variable. */
-  /* v0.91.2: THE NATIVE RAISED CHROME — one derivation point for every
-     small control's fill + ring. Falls back to the plain variables on
-     browsers without color-mix (the second block is dropped as invalid
-     there); on modern Chromium the browser derives both natively in
-     style recalc — theme flips re-resolve with zero JS. */
+  /* v0.91.2 → v0.99.4: THE RAISED CHROME derives from THE FIELDS now —
+     one derivation point for every small control's fill + ring (flat
+     fallback first for browsers without color-mix; the second block is
+     dropped as invalid there). The ring sits between the hairline (13%)
+     and border-strong (24%) so outline pills read distinctly from flat
+     cards — calibrated with the rest of the table. */
   :root { --raised-chrome: var(--surface-2); --raised-ring: var(--border); }
   :root {
-    --raised-chrome: color-mix(in oklch, var(--surface-2), var(--bg-app) 12%);
-    --raised-ring: color-mix(in oklch, var(--border), var(--surface-2) 30%);
+    --raised-chrome: color-mix(in oklab, var(--field-surface), var(--field-ink) 5%);
+    --raised-ring: color-mix(in oklab, var(--field-surface), var(--field-ink) 16%);
   }
   /* v0.91.2: LAYER-3 GOES NATIVE (the color-rework Track 1). For four
      versions every control here was a 3-layer projected WINDOW on the
@@ -5542,6 +5554,17 @@
      the DoomalayPerf meters, the Settings Performance page, and the opt-in
      canvas chip (fps · frame ms · paints/s + the cache hit-rate ledger). -->
 <script src="perfhud.js"></script>
+<!-- v0.99.3: THE FIELD MATH + THE PICKER ANCHOR (both vendored, MIT —
+     LICENSEs under vendor/licenses/). culori 4.0.2 is the ONE color math
+     truth for every JS-side derivation that must match CSS
+     color-mix(in oklch) (polar OKLCH interpolation — the v0.91 OKX twin
+     stays for the oklab paths the twins suite pins). Floating UI
+     (core+dom 1.8.0) anchors the v0.99.6 slot-picker popover.
+     Both load BEFORE uikit/theme/lattice — they boot-apply color math
+     the moment their IIFEs run. -->
+<script src="vendor/culori/culori.min.js"></script>
+<script src="vendor/floating-ui/floating-ui.core.umd.min.js"></script>
+<script src="vendor/floating-ui/floating-ui.dom.umd.min.js"></script>
 <!-- v0.33→v0.44: THE SHARED UI KIT — the modular pill system (UIPills),
      GradientUI v2 (the 1–15 color gradient engine + the compact editor)
      and the drag-to-crop overlay (CropUI). One kit, reused by the hub /

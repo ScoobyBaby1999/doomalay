@@ -20,13 +20,13 @@
 #      the panel chrome + the section cards keep the projected field).
 #  (4) THE GATES HONOR IT — the derived-gates sheet contains NO .gr-mini
 #      window (self-deriving color-mix values never re-project).
-#  (5) THEME-FOLLOWING, NATIVELY — flipping the surface-2 theme override
+#  (5) THEME-FOLLOWING, NATIVELY — flipping the SURFACE field override
 #      changes the chip's computed background with NO repaint call (the
 #      style engine re-derives; the projection layer is not involved).
 #  (6) THE RAISED LOOK — the chip reads raised against its section card
 #      (luminance delta ≥ 0.004 in either direction — distinct layers).
-#  (7) THE BRIGHT-INK GATE — a BRIGHT surface-2 override trips
-#      [data-bright-s2] and the chip ink follows --on-surface-2 (the
+#  (7) THE BRIGHT-INK GATE — a BRIGHT surface field trips the
+#      DERIVED [data-bright-s2] and the chip ink follows --on-surface-2 (the
 #      v0.74 contract survives the native chrome).
 #  (8) zero console errors.
 set -u
@@ -152,10 +152,10 @@ try:
     bg=d.get('miniBg',''); s2=d.get('s2','')
     # resolved color-mix serializes as oklch(...) or color(...); the flat
     # var would serialize as rgb(...)
-    ok = bg.startswith('oklch(') or bg.startswith('color(') or bg.startswith('lab(')
+    ok = bg.startswith('oklch(') or bg.startswith('oklab(') or bg.startswith('color(') or bg.startswith('lab(')
     print('yes' if ok else 'no')
 except Exception: print('no')")
-ck "the chip's background is the browser-derived mix (oklch serialization)" "$MIX_OK" "$R"
+ck "the chip's background is the browser-derived mix (color serialization)" "$MIX_OK" "$R"
 PROJ_OK=$(python3 -c "
 import json
 try:
@@ -171,9 +171,9 @@ try:
 except Exception: print('no')")
 ck "the gates engine did NOT re-project the chips (self-deriving skip)" "$GATES_OK" "$R"
 
-echo "── (4b) the gradient-twin path (a gradient surface-2 must NOT re-project the chips)"
+echo "── (4b) the gradient-twin path (a gradient SURFACE FIELD must NOT re-project the chips — raised chrome is derived, never a window)"
 R4=$(ev "(async function(){
-  Settings.setState({themeOverrides: {midnight: {'--surface-2': {colors: ['#201a2e','#3a2a50'], dir: 'h'}}}});
+  Settings.setState({themeOverrides: {midnight: {'--field-surface': {colors: ['#201a2e','#3a2a50'], dir: 'h'}}}});
   await new Promise(r=>setTimeout(r,1200));
   // v0.98: lazy editors — re-expand (idempotent) in case the page
   // re-rendered, then measure the chips.
@@ -207,9 +207,9 @@ try:
     ok = d.get('inline')=='' and not d.get('gatesHasMini') and d.get('projected',999) <= 60
     print('yes' if ok else 'no')
 except Exception: print('no')")
-ck "gradient surface-2 twin: chips stay native (no window, ≤60 projected)" "$GT_OK" "$R4"
+ck "gradient SURFACE field: chips stay native (no window, ≤60 projected)" "$GT_OK" "$R4"
 
-echo "── (5) theme-following, natively (a surface-2 override, no repaint call)"
+echo "── (5) theme-following, natively (a SURFACE field override, no repaint call)"
 R2=$(ev "(async function(){
   // v0.98: lazy editors — the chip must EXIST before the before/after
   // recalc measurement (expand-all, idempotent).
@@ -222,7 +222,7 @@ R2=$(ev "(async function(){
   var mini = sp.querySelector('.gr-mini');
   var before = getComputedStyle(mini).backgroundColor;
   var flipsBefore = (window.DoomalayPerf||{}).paints || 0;
-  Settings.setState({themeOverrides: {midnight: {'--surface-2': '#3a2a1a'}}});
+  Settings.setState({themeOverrides: {midnight: {'--field-surface': '#3a2a1a'}}});
   await new Promise(r=>setTimeout(r,900));
   var after = getComputedStyle(mini).backgroundColor;
   var flipsAfter = (window.DoomalayPerf||{}).paints || 0;
@@ -238,7 +238,7 @@ try:
     ok = d.get('before') != d.get('after') and d.get('before') not in ('MISSING',)
     print('yes' if ok else 'no')
 except Exception: print('no')")
-ck "the chip follows a surface-2 override (native recalc)" "$FOLLOW_OK" "$R2"
+ck "the chip follows the SURFACE field (native recalc of the derived chrome)" "$FOLLOW_OK" "$R2"
 
 echo "── (6) the raised look (chip vs card contrast)"
 RAISE_OK=$(python3 -c "
@@ -262,7 +262,7 @@ ck "the chip reads distinct from its card (the raised contract)" "$RAISE_OK" "$R
 
 echo "── (7) the bright-ink gate (the v0.74 contract on native chrome)"
 R3=$(ev "(async function(){
-  Settings.setState({themeOverrides: {midnight: {'--surface-2': '#f5f0e0'}}});
+  Settings.setState({themeOverrides: {midnight: {'--field-surface': '#f5f0e0'}}});
   await new Promise(r=>setTimeout(r,900));
   var de = document.documentElement;
   var gate = de.getAttribute('data-bright-s2');

@@ -160,7 +160,13 @@
       if (acc) colCache.accent = acc;
       var acc2 = triplet(cssVar('--accent-2-rgb')) || triplet(cssVar('--accent-2'));
       if (acc2) colCache.accent2 = acc2;
-      var bs = triplet(cssVar('--border-strong'));
+      // v0.99.4: --border-strong is a DERIVED color-mix now (its computed
+      // token stream is unevaluated) — the resolved hex comes from
+      // DoomTheme (culori parity with what CSS paints).
+      var DT = (typeof window !== 'undefined') ? window.DoomTheme : null;
+      var bsHex = (DT && typeof DT.resolvedThemeVar === 'function')
+        ? DT.resolvedThemeVar('--border-strong') : '';
+      var bs = triplet(bsHex);
       colCache.ring = bs ? ('rgba(' + bs + ',0.35)') : 'rgba(120,130,140,0.35)';
       // v0.90.1: THE ORBIT STAR's family — the canvas center marker's
       // color (originColor: the user's setting → the theme's grid.origin

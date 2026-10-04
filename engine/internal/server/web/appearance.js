@@ -636,6 +636,19 @@
   // writes the spec back into themeOverrides (theme.js re-applies the
   // twins immediately, exactly like the old input handler did); rebuild()
   // re-renders the page so the editor's shape is fresh.
+  // v0.99.4: field → the LEGACY override keys that fold into it (the
+  // row's reset clears them all so a saved pre-v0.99 override dies with
+  // the row, not on the next boot's fold).
+  var LEGACY_FIELD_KEYS = {
+    '--field-surface': ['--surface-1'],
+    '--field-ink': ['--text-1'],
+    '--field-canvas': ['--bg-panel'],
+    '--field-accent-1': ['--accent'],
+    '--field-accent-2': ['--accent-2'],
+    '--field-accent-3': ['--accent-3']
+  };
+  function LEGACY_FIELD_KEYS_FOR(field) { return LEGACY_FIELD_KEYS[field] || []; }
+
   function writeThemeVar(varName, spec) {
     var s = Settings.getState();
     var cur = s.theme || 'midnight';
@@ -651,46 +664,49 @@
     var themes = (window.DoomTheme && window.DoomTheme.themes) || {};
     var t = themes[cur] || {};
     var ov = (s.themeOverrides && s.themeOverrides[cur]) || {};
-    var customCount = Object.keys(ov).length;
+    // v0.99.4: the FOLD view — a saved legacy key ('--surface-1', '--text-1',
+    // '--bg-panel', '--accent'…) still seeds its field row here.
+    var ovFolded = (window.DoomTheme && window.DoomTheme.foldThemeOverrides)
+      ? window.DoomTheme.foldThemeOverrides(ov) : ov;
+    var customCount = Object.keys(ovFolded).length;
     var rows = '';
-    var customizable = (window.DoomTheme && window.DoomTheme.customizable) || [];
+    var fields = (window.DoomTheme && window.DoomTheme.fields) || [];
     var G = window.GradientUI;
-    customizable.forEach(function (c) {
-      var pfx = 'tv-' + String(c.var || '').replace(/^--/, '');  // '--accent' → 'tv-accent'
-      var stored = ov[c.var];
+    fields.forEach(function (c) {
+      // '--field-accent-1' → 'tv-accent-1'; the ink row keeps its own pfx
+      var pfx = 'tv-' + (c.suffix || String(c.field || '').replace(/^--field-/, ''));
+      var stored = ovFolded[c.field];
       var spec;
       if (stored) {
         // the stored override: a gradient spec or a legacy hex — norm
         // folds either (a COPY: wire() mutates the editor's live spec)
         spec = (G && G.norm) ? G.norm(stored) :
           { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
-        // v0.49: the CANVAS row keeps its stored texRev-free texture
-        // dataURL alive (norm carries it) — the canvas paints it; CSS
-        // twins strip it (theme.js), which is fine: --bg-panel has no
-        // CSS consumers anymore.
+        // v0.99.4: the ink field is SOLID-ONLY — a folded legacy text-1
+        // spec degrades to its first color here too (banner + editor agree)
+        if (c.solid && spec.colors.length > 1) spec = { colors: [spec.colors[0]], dir: 'auto' };
+        // v0.49: the CANVAS field keeps its stored texture dataURL alive
+        // (norm carries it) — the canvas paints it; CSS twins strip it.
       } else if (c.canvas && window.DoomTheme && window.DoomTheme.canvasBgSpec) {
-        // v0.49: the canvas row seeds from the RESOLVED canvas spec (the
-        // theme's grid bg when never customized — what the canvas paints
-        // right now), NOT the old --bg-panel CSS hex (which painted panels
-        // and had nothing to do with the canvas).
+        // the canvas row seeds from the RESOLVED canvas spec (the theme's
+        // grid bg when never customized — what the canvas paints now).
         var cbRaw = window.DoomTheme.canvasBgSpec(s);
         spec = (G && G.norm) ? G.norm(cbRaw) :
           { colors: [String((cbRaw && cbRaw.colors) || [])[0] || '#0a0a0b'], dir: 'auto' };
       } else {
-        // not customized: the theme's CURRENT computed hex, as a 1-color
+        // not customized: the field's CURRENT computed hex, as a 1-color
         // spec (what the editor offers is what the app looks like now)
-        var live = cssVarLive(c.var);
+        var live = cssVarLive(c.field);
         var liveHex = /^#[0-9a-fA-F]{6}$/.test(live || '') ? live : '#000000';
         spec = { colors: [liveHex], dir: 'auto' };
       }
-      // v0.49: ONLY the canvas row offers the texture picker (bumpmaps —
+      // ONLY the canvas field offers the texture picker (bumpmaps —
       // app.js's canvas renderer paints them with a real 'color'
-      // composite pass); every other theme var still hides it (static CSS
-      // consumers can't blend a texture).
+      // composite pass); every other field hides it.
       var edOpts = { noTex: !c.canvas };
-      var tvLive = function () { writeThemeVar(c.var, spec); };
+      var tvLive = function () { writeThemeVar(c.field, spec); };
       var tvRebuild = function () {
-        writeThemeVar(c.var, spec);
+        writeThemeVar(c.field, spec);
         // v0.54: in-place refresh — the row stays open (no full rerender
         // slamming the editor shut on every dir pill tap)
         if (!refreshEditorInPlace(pfx, spec, edOpts, function () {
@@ -698,9 +714,25 @@
           if (el && G && G.wire) G.wire(el, { spec: spec, live: tvLive, rebuild: tvRebuild });
         })) Settings.rerender();
       };
-      // v0.98 C3: the editor builds on first expand (lazy) — the Customize
-      // section was 10 eager editors (~500 of the ~979 mount nodes).
-      if (G && G.editor && G.wire) {
+      // v0.98 C3: the editor builds on first expand (lazy).
+      // v0.99.4: the INK field is solid-only — a plain color input (ink
+      // is never a window; the fmt field owns text gradients).
+      if (c.solid) {
+        var inkHex = spec.colors[0] || '#e0e0e8';
+        rowEditorBuilders[pfx] = function (body) {
+          body.innerHTML =
+            '<div style="padding:12px;display:flex;align-items:center;gap:10px">' +
+            '<input type="color" id="' + pfx + '-solid" value="' + (/^#[0-9a-fA-F]{6}$/.test(inkHex) ? inkHex : '#e0e0e8') + '" ' +
+            'style="width:56px;height:44px;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:4px;cursor:pointer" ' +
+            'aria-label="Ink color">' +
+            '<span style="font-size:var(--ui-small-fs);color:var(--text-3)">every text color derives from this one ink — solid only</span>' +
+            '</div>';
+          var inp = body.querySelector('#' + pfx + '-solid');
+          if (inp) inp.addEventListener('input', function () {
+            writeThemeVar(c.field, inp.value);
+          });
+        };
+      } else if (G && G.editor && G.wire) {
         rowEditorBuilders[pfx] = function (body) {
           body.innerHTML = G.editor(pfx, spec, edOpts);
           var el = body.querySelector('#' + pfx + '-gr');
@@ -713,14 +745,19 @@
         var curR = sR.theme || 'midnight';
         var allR = Object.assign({}, sR.themeOverrides || {});
         if (allR[curR]) {
-          delete allR[curR][c.var];
+          // v0.99.4: clear the FIELD key AND any legacy key that folds
+          // into it (a saved '--surface-1' override resets with the row)
+          delete allR[curR][c.field];
+          (LEGACY_FIELD_KEYS_FOR(c.field) || []).forEach(function (lk) {
+            delete allR[curR][lk];
+          });
           if (!Object.keys(allR[curR]).length) delete allR[curR];
         }
         Settings.setState({ themeOverrides: allR });
         Settings.rerender();
       };
       rowResetFns[pfx] = onReset;
-      // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS var's override)
+      // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS field's override)
       rows += colorRowCollapsed({
         pfx: pfx,
         label: c.label + (stored ? ' <span class="crc-mark">· customized</span>' : '') +
@@ -741,8 +778,19 @@
   }
 
   function cssVarLive(name) {
-    // the EFFECTIVE var (theme block + any live overrides)
-    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { return ''; }
+    // the EFFECTIVE var (theme block + any live overrides).
+    // v0.99.4: the FIELD vars are @property-registered (<color>) so the
+    // engine serializes them as 'rgb(r, g, b)' — the editors need the
+    // canonical hex, so the computed string normalizes here.
+    var v = '';
+    try {
+      v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    } catch (e) { return ''; }
+    if (!v) return v;
+    var m = /^rgb\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)\s*\)$/.exec(v);
+    if (!m) return v;
+    function h2(x) { var s = Number(x).toString(16); return s.length < 2 ? '0' + s : s; }
+    return '#' + h2(m[1]) + h2(m[2]) + h2(m[3]);
   }
 
   // (v0.44) — the old data-theme-var 'input' listener is DELETED: the
