@@ -1768,6 +1768,23 @@
             // always.
             var _snap = (el.__projL2ok === 0) ? null :
               ((el.__projL2 && el.__projL2Epoch === epoch) ? null : L2.snapshot(el));
+            // v1.00.3: THE PHANTOM PURGE — an un-minted painted element
+            // snapshots EVERY paint (no __projL2 to memoize it away), so
+            // the snapshot IS the cheap per-paint verification: an element
+            // that painted during a mid-flip/expand transient and resolves
+            // 'none' at any stable snapshot LEAVES the painted set (the
+            // keep-miss cleanup strips its flags + any stale inline bake).
+            // The measured class: the set-theme swatch cards — their
+            // --surface-2-gradient twin resolves none in the v0.99 field
+            // model (nothing writes it), but the v0.98 plate catcher
+            // (linear-gradient(var(--surface-2), var(--surface-2)) — the
+            // flat-gradient window trick) computes NON-none in a transient,
+            // so they painted and rode the set as inert-but-processed
+            // riders forever.
+            if (_snap && (!_snap.image || _snap.image === 'none')) {
+              el.__projPainted = false;
+              continue;
+            }
             var _okv = _snap ? L2.ok(el, _snap) : 0;
             reads.push({ el: el, R: R,
               bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
