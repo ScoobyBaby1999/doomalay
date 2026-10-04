@@ -409,6 +409,7 @@
     '--bg-app-rgb': '--bg-app',
     '--text-2-rgb': '--text-2',
     '--text-3-rgb': '--text-3',
+    '--border-rgb': '--border',
     '--accent-rgb': '--field-accent-1',
     '--accent-2-rgb': '--field-accent-2',
     '--accent-3-rgb': '--field-accent-3',
@@ -2438,7 +2439,6 @@
       var SURF = [
         { gate: 'data-s1-grad', varName: '--surface-1', img: '--surface-1-gradient', inkGate: 'data-bright-s1', ink: '--on-surface-1' }
       ];
-      var BORDER_GATE = 'data-border-grad';
 
       // splitSelector — a grouped selector ('.a, .b') into its parts, so
       // EVERY part carries its own gate prefix (the v0.70 lesson, now
@@ -2473,19 +2473,16 @@
       }
 
       function derive() {
-        var wins, glyphs, surfWins, borderPlate, protectedSels;
+        var wins, surfWins, protectedSels;
         if (scanMemo) {
-          wins = scanMemo.wins; glyphs = scanMemo.glyphs;
-          surfWins = scanMemo.surfWins; borderPlate = scanMemo.borderPlate;
+          wins = scanMemo.wins; surfWins = scanMemo.surfWins;
           protectedSels = scanMemo.protectedSels;
         } else {
-        wins = {}; glyphs = {};
-        for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; glyphs[ACC[i].gate] = []; }
+        wins = {};
+        for (var i = 0; i < ACC.length; i++) { wins[ACC[i].gate] = []; }
         var surfWins = {};   // SURF[i].gate → [selectors]
-        var borderPlate = { };  // plate rings keyed by fill var
         for (var si = 0; si < SURF.length; si++) {
           surfWins[SURF[si].gate] = [];
-          borderPlate[SURF[si].varName] = [];
         }
         var protectedSels = {};   // selectors already carrying a plate/window/ring stack
         try {
@@ -2560,10 +2557,10 @@
                 if (raw.indexOf('var(--wsp') !== -1) continue;
                 for (var a = 0; a < ACC.length; a++) {
                   var kind = ruleAccent(ACC[a], r);
+                  // v0.99.5: only 'win' collects — the GLYPH kind is
+                  // retired (accent text is the ink track's business).
                   if (kind === 'win' && wins[ACC[a].gate].length < MAX_SEL) {
                     splitSelector(sel).forEach(function (part) { wins[ACC[a].gate].push(part); });
-                  } else if (kind === 'glyph' && glyphs[ACC[a].gate].length < MAX_SEL) {
-                    splitSelector(sel).forEach(function (part) { glyphs[ACC[a].gate].push(part); });
                   }
                 }
                 // v0.77.8: the SURFACE + BORDER derivation
@@ -2605,33 +2602,19 @@
                       }
                     }
                   }
-                  if (hasBorderVar) {
-                    var bgEmpty = !bgCol && !bgShorthand && !bgImgX;
-                    // 'transparent'/'none' fills are outlines too (the
-                    // #chat-send pattern: background:transparent)
-                    var bgVoid = bgEmpty ||
-                      (/^(transparent|none)\s*$/i.test(bgCol) && !bgShorthand && !bgImgX) ||
-                      (/^(transparent|none)\s*$/i.test(bgShorthand) && !bgCol && !bgImgX);
-                    if (fillVar) {
-                      if (borderPlate[fillVar].length < MAX_SEL) {
-                        parts.forEach(function (p) { borderPlate[fillVar].push(p); });
-                      }
-                    }
-                    // v0.79.2: outline (bgVoid) rules derive NOTHING — the
-                    // mask ring is retired (it hid children AND text
-                    // inside the padding-box: the chat-scheme chips, the
-                    // send-mode glyph, every text-bearing outline pill).
-                    // They keep their solid border-color — the border
-                    // variable's solid twin, still theme-following.
-                    void bgVoid;
-                  }
+                  // v0.99.5: the PLATE-ring minting is RETIRED — hairlines
+                  // are DERIVED solids now (no border twin ever exists),
+                  // so a minted 3-layer plate would carry a dead third
+                  // layer. Filled bordered rules keep their plain solid
+                  // border + their fill's window (the surfWins path above).
+                  void hasBorderVar;
                 }
               }
             })(rules);
           }
         } catch (e) { /* a locked sheet is simply skipped */ }
-        scanMemo = { wins: wins, glyphs: glyphs, surfWins: surfWins,
-          borderPlate: borderPlate, protectedSels: protectedSels };
+        scanMemo = { wins: wins, surfWins: surfWins,
+          protectedSels: protectedSels };
         }
 
         var css = '';
@@ -2650,13 +2633,10 @@
               'background-attachment:fixed!important;' +
               'color:var(' + A.ink + ')!important;}';
           }
-          if (glyphs[A.gate].length) {
-            css += gateSel(glyphs[A.gate]) + '{' +
-              'background-image:var(' + A.img + ',none)!important;' +
-              'background-attachment:fixed!important;' +
-              '-webkit-background-clip:text!important;background-clip:text!important;' +
-              'color:transparent!important;}';
-          }
+          // v0.99.5: the GLYPH windows are RETIRED — text is the INK
+          // track (solids) + the fmt field (gradients); accent glyph
+          // clip-windows were the text/accent entanglement the dual
+          // track deletes. Lone accent labels keep the solid color.
         }
         // ── v0.77.8: the SURFACE windows + their bright-ink flips ──────
         for (var sw = 0; sw < SURF.length; sw++) {
@@ -2673,30 +2653,6 @@
               return '[' + SP.inkGate + '] ' + s;
             }).join(',');
             css += inkSel + '{color:var(' + SP.ink + ',var(--text-1));text-shadow:none;}';
-          }
-        }
-        // ── v0.77.8→v0.79.2: the BORDER rings ────────────────────────
-        // (a) the OUTLINE mask ring is RETIRED (it hid children AND
-        //     text inside the padding-box — see the derivation note);
-        //     outline rules keep their solid border-color.
-        // (b) the PLATE rings — a filled bordered rule gets the v0.72
-        //     stack DERIVED for it: its own fill's window + the opaque
-        //     plate + the border ring (clips + fixed attachment). The
-        //     fill variable IS the plate variable — derivable by
-        //     definition.
-        for (var pp = 0; pp < SURF.length; pp++) {
-          var PV = SURF[pp];
-          if (borderPlate[PV.varName].length) {
-            var plateSel = borderPlate[PV.varName].map(function (s) {
-              return '[' + BORDER_GATE + '] ' + s;
-            }).join(',');
-            css += plateSel + '{' +
-              'background-image:var(' + PV.img + ',none),' +
-                'linear-gradient(var(' + PV.varName + '),var(' + PV.varName + ')),' +
-                'var(--border-gradient,none);' +
-              'background-origin:padding-box,padding-box,border-box;' +
-              'background-clip:padding-box,padding-box,border-box;' +
-              'background-attachment:fixed,fixed,fixed;}';
           }
         }
         if (css !== lastCSS) {

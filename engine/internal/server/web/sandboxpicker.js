@@ -533,7 +533,7 @@
         'color:var(--text-3);display:block}' +
       // spaces list rows
       '.hf-space-row{display:flex;justify-content:space-between;align-items:center;gap:8px;' +
-        'background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;' +
+        'background:var(--surface-1);border:1px solid var(--border);border-radius:10px;' +
         'padding:10px 12px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;' +
         'touch-action:manipulation}' +
       '.hf-space-row:active{border-color:rgba(var(--accent-rgb),0.55)}' +
@@ -544,7 +544,7 @@
       // the create pill (bottom row)
       '.hf-create-pill{display:flex;align-items:center;gap:8px;min-height:44px;padding:8px 12px;' +
         'border-radius:12px;cursor:pointer;border:1.5px dashed var(--border-strong);' +
-        'color:var(--accent);font-weight:600;font-size:var(--ui-small-fs);' +
+        'color:var(--text-1);font-weight:600;font-size:var(--ui-small-fs);' +
         'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.10),rgba(var(--accent-2-rgb),0.06));' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.hf-create-pill:active{background:linear-gradient(135deg,rgba(var(--accent-rgb),0.20),rgba(var(--accent-2-rgb),0.12))}' +
@@ -557,7 +557,7 @@
       // the footer public-space search bar
       '.hf-public-wrap{margin:14px 0 18px;padding:12px;border-radius:12px;' +
         'background:rgba(var(--accent-2-rgb),0.05);border:1px solid rgba(var(--accent-2-rgb),0.28)}' +
-      '.hf-public-title{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--accent-2);margin-bottom:7px}' +
+      '.hf-public-title{font-size:calc(var(--ui-small-fs) - 1px);font-weight:700;color:var(--text-1);margin-bottom:7px}' +
       '.hf-public-bar{flex:1;display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:999px;' +
         'background:var(--surface-2);border:1px solid var(--border);min-width:0}' +
       '.hf-public-bar input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:var(--text-1);' +
@@ -571,7 +571,7 @@
       '.hf-age-card{margin-top:10px;padding:16px 14px;border-radius:14px;display:flex;flex-direction:column;gap:9px;' +
         'background:rgba(var(--accent-rgb),0.07);border:1px solid rgba(var(--accent-rgb),0.35)}' +
       // the headline: LARGER + BRIGHTER (the user spec) — accent ink, bold.
-      '.hf-age-head{font-size:calc(var(--ui-fs) + 2px);line-height:1.4;font-weight:700;color:var(--accent);' +
+      '.hf-age-head{font-size:calc(var(--ui-fs) + 2px);line-height:1.4;font-weight:700;color:var(--text-1);' +
         'background-image:var(--accent-gradient,none);background-attachment:fixed;-webkit-background-clip:text;' +
         'background-clip:text}' +
       '.hf-age-head b{color:inherit}' +
@@ -581,14 +581,14 @@
       '.hf-age-warn{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:10px;' +
         'font-size:calc(var(--ui-small-fs) - 1px);line-height:1.5;color:var(--text-1);' +
         'background:rgba(var(--accent-3-rgb),0.10);border:1px solid rgba(var(--accent-3-rgb),0.45)}' +
-      '.hf-age-warn b{color:var(--accent-3)}' +
-      '.hf-age-warn-ic{display:inline-flex;flex-shrink:0;color:var(--accent-3);margin-top:1px}' +
+      '.hf-age-warn b{color:var(--text-2)}' +
+      '.hf-age-warn-ic{display:inline-flex;flex-shrink:0;color:var(--warn);margin-top:1px}' +
       '.hf-age-sec{margin-top:3px;font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;letter-spacing:0.04em;' +
         'text-transform:uppercase;color:var(--text-3)}' +
       '.hf-age-copy{display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;border-radius:10px;' +
         'background:var(--surface-2);border:1px dashed var(--border);cursor:pointer;' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
-      '.hf-age-url{flex:1;min-width:0;font-size:calc(var(--ui-small-fs) - 2px);color:var(--accent-2);' +
+      '.hf-age-url{flex:1;min-width:0;font-size:calc(var(--ui-small-fs) - 2px);color:var(--fmt-link);' +
         'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.hf-age-copybtn{flex-shrink:0;font-size:calc(var(--ui-small-fs) - 2px);font-weight:600;color:var(--text-3)}' +
       '.hf-age-note{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3);line-height:1.5}' +

@@ -534,7 +534,7 @@
       '  background:transparent; color:var(--text-3);',
       '  transition: background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease; }',
       '#chat-send .sm-lab { font-size:9px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; line-height:1; }',
-      '#chat-send.sm-on { background:rgba(var(--accent-rgb),0.16); border-color:rgba(var(--accent-rgb),0.55); color:var(--accent); }',
+      '#chat-send.sm-on { background:rgba(var(--accent-rgb),0.16); border-color:rgba(var(--accent-rgb),0.55); color:var(--text-1); }',
       '#chat-send.sm-on.sm-t-warn { background:rgba(var(--warn-rgb),0.15); border-color:rgba(var(--warn-rgb),0.5); color:var(--warn); }',
       '#chat-send.sm-on.sm-t-ok { background:rgba(var(--ok-rgb),0.15); border-color:rgba(var(--ok-rgb),0.5); color:var(--ok); }',
       '#chat-send.sm-ghost { background:var(--surface-2); border-color:var(--border); color:var(--text-3); }',
@@ -546,7 +546,7 @@
       '  display:flex; align-items:center; justify-content:center;',
       '  transition: background .15s ease, color .15s ease, border-color .15s ease; }',
       '#chat-send-more:active { transform: scale(0.94); }',
-      '#send-cluster.sm-cluster-on #chat-send-more { border-color:rgba(var(--accent-rgb),0.55); background:rgba(var(--accent-rgb),0.10); color:var(--accent); }',
+      '#send-cluster.sm-cluster-on #chat-send-more { border-color:rgba(var(--accent-rgb),0.55); background:rgba(var(--accent-rgb),0.10); color:var(--text-1); }',
       '#send-cluster.sm-cluster-warn #chat-send-more { border-color:rgba(var(--warn-rgb),0.5); background:rgba(var(--warn-rgb),0.09); color:var(--warn); }',
       '#send-cluster.sm-cluster-ok #chat-send-more { border-color:rgba(var(--ok-rgb),0.5); background:rgba(var(--ok-rgb),0.09); color:var(--ok); }',
       '#chat-send-more:focus-visible, .sm-row:focus-visible, .sq-x:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }',
@@ -559,7 +559,7 @@
       '  transition:color .14s ease, border-color .14s ease, background .14s ease; }',
       '.chat-find-chip:active { transform:scale(0.94); }',
       '.chat-find-chip[aria-pressed="true"] {',
-      '  color:var(--accent); border-color:rgba(var(--accent-rgb),0.55);',
+      '  color:var(--text-1); border-color:rgba(var(--accent-rgb),0.55);',
       '  background:rgba(var(--accent-rgb),0.12); }',
       '.chat-find-chip:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }',
       // the queued-pills rail (inside the sticky composer)
@@ -571,7 +571,7 @@
       '.sq-row:hover { background:rgba(var(--accent-rgb),0.13); }',
       '.sq-row .sq-text { flex:1; min-width:0; font-size:var(--ui-small-fs);',
       '  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
-      '.sq-row .sq-tag { flex-shrink:0; font-size:var(--ui-micro-fs); font-weight:700; color:var(--accent);',
+      '.sq-row .sq-tag { flex-shrink:0; font-size:var(--ui-micro-fs); font-weight:700; color:var(--text-3);',
       '  text-transform:uppercase; letter-spacing:.06em; }',
       '.sq-x { width:32px; height:32px; flex-shrink:0; border:none; border-radius:7px;',
       '  background:transparent; color:var(--text-3); cursor:pointer; font-size:15px; font-family:inherit;',
@@ -587,7 +587,7 @@
       '.sm-head { display:flex; align-items:center; justify-content:space-between; gap:8px;',
       '  padding:6px 10px 4px; font-size:var(--ui-micro-fs); font-weight:700; color:var(--text-3);',
       '  text-transform:uppercase; letter-spacing:.07em; }',
-      '.sm-reset { border:none; background:transparent; color:var(--accent); cursor:pointer;',
+      '.sm-reset { border:none; background:transparent; color:var(--text-1); cursor:pointer;',
       '  font:inherit; font-size:var(--ui-micro-fs); font-weight:700; padding:4px 6px; border-radius:6px;',
       '  text-transform:none; letter-spacing:0; }',
       '.sm-reset:active { background:rgba(var(--accent-rgb),0.14); }',
@@ -1551,11 +1551,13 @@
   // window + derived ink. (The catchers match this exact
   // "background-color:rgba(var(--accent-N-rgb)" spelling.)
   function projPillStyle(colorVar, rgbVar) {
+    // v0.99.5: the pill's LABEL is the INK track (the dual track — no
+    // accent text); the accent rides the wash + ring (the object track).
     return 'background-color:rgba(var(' + rgbVar + '),0.14);' +
       'background-image:var(' + colorVar + '-gradient, none);' +
       'background-attachment:fixed;' +
       'border:1px solid rgba(var(' + rgbVar + '),0.5);' +
-      'color:var(' + colorVar + ');' +
+      'color:var(--text-1);' +
       'text-shadow:var(--text-shadow);';
   }
 

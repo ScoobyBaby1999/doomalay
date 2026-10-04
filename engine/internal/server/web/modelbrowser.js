@@ -211,7 +211,7 @@
       '.mb-detail{animation:mb-drawer-in 240ms cubic-bezier(0.32,0.72,0,1)}' +
       // v0.32.3 F4: keyboard focus rings on the roving-tabindex rows.
       '.mb-logrow:focus-visible,[data-provhead]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}' +
-      '.mb-keyform input::placeholder{color:var(--border-strong)}' +
+      '.mb-keyform input::placeholder{color:var(--text-3)}' +
       // ── v0.34: THE 6-COLUMN ROW ────────────────────────────────────
       // One grid for every catalogue row (models, favorites, provider
       // rows): NAME takes the remaining width and WRAPS (the full model
@@ -225,7 +225,7 @@
       '.mb-r6 .mb-price.mb-free{color:var(--ok);background:rgba(var(--ok-rgb),0.12)}' +
       '.mb-ic{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--surface-2);background:rgba(var(--text-3-rgb),0.06);border-radius:8px;color:var(--text-2);padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
       '.mb-ic[data-on="1"]{border-color:rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.10);color:var(--accent)}' +
-      '.mb-starbtn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:transparent;border:none;color:var(--border-strong);font-size:17px;line-height:1;padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
+      '.mb-starbtn{display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:transparent;border:none;color:var(--text-3);font-size:17px;line-height:1;padding:0;cursor:pointer;font-family:inherit;touch-action:manipulation}' +
       '.mb-starbtn[data-on="1"]{color:var(--warn)}' +
       // the subtext line (models + favorites rows): stats + pills left,
       // provider dots + the ➜ arrow right-aligned.
@@ -240,11 +240,11 @@
       '.mb-hrow{display:grid;grid-template-columns:26px minmax(0,1fr) 44px 58px auto;gap:7px;align-items:center;padding:9px 12px;border-bottom:1px solid rgba(var(--surface-3-rgb),0.04);cursor:pointer;touch-action:manipulation;min-height:44px}' +
       '.mb-hrow .mb-hname{font-size:var(--ui-small-fs);color:var(--text-1);overflow-wrap:anywhere;word-break:break-word;line-height:1.25;min-width:0}' +
       '.mb-hrow .mb-hname .mb-hprov{font-weight:700;color:var(--text-2)}' +
-      '.mb-hrow .mb-hname .mb-hid{color:var(--border-strong);font-size:calc(var(--ui-small-fs) - 2px)}' +
+      '.mb-hrow .mb-hname .mb-hid{color:var(--text-3);font-size:calc(var(--ui-small-fs) - 2px)}' +
       '.mb-keyic{display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;flex-shrink:0}' +
       '.mb-keyic svg{width:15px;height:15px}' +
       '.mb-keyic[data-key="1"]{color:var(--ok)}' +
-      '.mb-keyic[data-key="0"]{color:var(--border-strong);opacity:0.7}' +
+      '.mb-keyic[data-key="0"]{color:var(--text-3);opacity:0.7}' +
       '.mb-hbtn{background:transparent;border:1px solid var(--border);color:var(--text-3);font-size:9px;padding:6px 8px;border-radius:6px;cursor:pointer;flex-shrink:0;font-family:inherit;touch-action:manipulation;min-width:30px}' +
       '.mb-hbtn:hover{background:rgba(var(--text-3-rgb),0.12);color:var(--text-1)}' +
       '.mb-hrow .mb-ctx,.mb-hrow .mb-price{font-size:calc(var(--ui-small-fs) - 2px)}' +
@@ -757,7 +757,7 @@
         '<button id="mb-refresh" style="display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--surface-2);color:var(--text-3);font-size:11px;font-family:inherit;padding:5px 10px;border-radius:8px;cursor:pointer;touch-action:manipulation">' +
         '<span id="mb-refresh-icon" style="display:inline-block;' + (syncing ? 'animation:mb-spin 0.9s linear infinite' : '') + '">⟳</span>' +
         '<span id="mb-sync-label">' + syncLabel() + '</span></button>' +
-        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);flex:1;text-align:right">' + liveCount() + ' providers live · ' + totalModels() + ' models</span>' +
+        '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);flex:1;text-align:right">' + liveCount() + ' providers live · ' + totalModels() + ' models</span>' +
         '</div>';
     }
 
@@ -1053,7 +1053,7 @@
       out += moreRow(shown, matching.length);
       var hidden = logical.length - matching.length;
       if (hidden > 0 && matching.length) {
-        out += '<div data-clearall title="clear all filters" style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);text-align:center;cursor:pointer">' + hidden + ' models hidden by filters · <span style="color:var(--accent);text-decoration:underline">clear</span></div>';
+        out += '<div data-clearall title="clear all filters" style="padding:10px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);text-align:center;cursor:pointer">' + hidden + ' models hidden by filters · <span style="color:var(--text-1);text-decoration:underline">clear</span></div>';
       }
       if (!logical.length) {
         out = '<div style="text-align:center;color:var(--text-3);padding:40px 20px;font-size: calc(var(--ui-fs) - 1px)">Syncing models…</div>';
@@ -1324,7 +1324,7 @@
           rows += providerModelRow(g, matching[m], lm, m === 0 && kbFirst);
         }
         if (filteredOut > 0) {
-          rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--border-strong);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
+          rows += '<div style="padding:8px 12px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3);opacity:0.8">▸ ' + filteredOut + ' filtered out</div>';
         }
       }
       var liveDot = g.syncedLive ? '<span class="dd-live-dot" title="synced live from provider API"></span>' : '<span class="dd-live-dot dd-stale" title="no live sync"></span>';

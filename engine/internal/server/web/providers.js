@@ -205,7 +205,7 @@
         // unlocked behind this overlay — this GUI is just a nudge that
         // more providers can be connected. ✕ or scrim tap dismisses.
         reminder = '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--accent);line-height:1.5">' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--text-2);line-height:1.5">' +
           '✓ chat is ready — you can tap ✕ and start talking right now. ' +
           '<span style="color:var(--text-3)">This screen is just a reminder you can connect more providers.</span></div>';
       }
@@ -213,7 +213,7 @@
       // cards are live, model counts arrive in seconds.
       if (isPartial) {
         reminder += '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--accent);line-height:1.5">' +
+          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--text-2);line-height:1.5">' +
           '⟳ syncing live model lists — provider cards are ready now, models fill in within seconds.</div>';
       }
       return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
@@ -286,9 +286,9 @@
       if (val && val.checking) {
         // v0.24: bright theme accent (was grey var(--text-3) — unreadable against
         // the dark card; user asked for a color from the selected theme).
-        valHTML = '<span class="dd-validating" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent-2,var(--accent-2))">⟳ validating…</span>';
+        valHTML = '<span class="dd-validating" style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-3)">⟳ validating…</span>';
       } else if (val && val.state === 'valid') {
-        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
+        valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">✓ ' + (val.model_count ? val.model_count + ' models' : 'key works') + '</span>';
       } else if (val && val.state === 'invalid') {
         valHTML = '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--err)">✕ invalid — see details below</span>';
       } else if (val && val.state === 'unverified') {
@@ -352,7 +352,7 @@
         // viewer / a desktop popup) — the user never leaves the app to
         // grab a key. webview-hostile providers (Google-only OAuth) hand
         // off to a Chrome Custom Tab on the APK instead.
-        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--accent);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
+        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--text-1);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
         '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the in-app browser. Copy your API key there, tap ✕ to come straight back, and paste it above.</div>' +
         '</div>';
     }

@@ -82,6 +82,7 @@
     --accent-4-rgb: 52,211,153;
     --bg-app-rgb: 10,10,11; --bg-panel-rgb: 16,16,22;
     --text-3-rgb: 113,113,122;
+    --border-rgb: 42,42,53;
     --ok: #34d399;         --ok-rgb: 52,211,153;
     --warn: #fbbf24;       --warn-rgb: 251,191,36;
     --err: #f87171;        --err-rgb: 248,113,113;
@@ -496,7 +497,7 @@
     /* v0.74: the backdrop blur is gone (the overlay-effects wave) —
        the fill carries the legibility on its own now. */
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     border-radius: 22px;
     display: flex;
     align-items: center;
@@ -576,7 +577,7 @@
   }
   #dock-expando.open {
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-    border-color: var(--surface-3);
+    border-color: var(--border);
     padding: 4px 4px 6px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
   }
@@ -606,7 +607,7 @@
      bubble expanded rather than a second one spawning beside it. */
   #dock-expando:not(.open) #dock-toggle {
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-    border-color: var(--surface-3);
+    border-color: var(--border);
   }
   /* v0.78.4: the glyph ROTATES instead of swapping ›/‹ — a transform
      transition (motion-grade, never a layout paint). */
@@ -740,7 +741,7 @@
     text-align: center;
     padding: 26px 22px 20px;
     background: color-mix(in srgb, var(--surface-1) 92%, transparent);
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     border-radius: 20px;
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
     opacity: 0;
@@ -825,7 +826,7 @@
                               (v0.38 dvh kept: dynamic viewport units);
                               default = translated down ~38% by gesture.js */
     background: var(--surface-1);
-    border-top: 1px solid var(--surface-2);
+    border-top: 1px solid var(--border);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
     z-index: 2000;
@@ -888,7 +889,7 @@
     padding: 0;
     margin-right: 8px;
     border-radius: 50%;
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     background-color: var(--raised-chrome);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
@@ -919,7 +920,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    border-bottom: 1px solid var(--surface-2);
+    border-bottom: 1px solid var(--border);
     cursor: grab;
     -webkit-tap-highlight-color: transparent;
     touch-action: none;      /* header drag tracked by hand (panel.js) */
@@ -952,7 +953,7 @@
     gap: 5px;
     background: rgba(var(--accent-rgb),0.08);
     border: 1px solid rgba(var(--accent-rgb),0.28);
-    color: var(--accent);
+    color: var(--text-1);
     padding: 6px 10px;
     border-radius: 10px;
     font-size: calc(var(--ui-small-fs) - 1px);
@@ -1056,7 +1057,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--surface-3);
+    border-bottom: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface-1) 92%, transparent);
   }
   .wt-omni {
@@ -1065,7 +1066,7 @@
     height: 34px;
     padding: 0 12px;
     border-radius: 17px;
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     background-color: var(--raised-chrome);
     color: var(--text-1);
     font-size: calc((var(--ui-small-fs) + 1px) * var(--wt-fs, 1));
@@ -1077,7 +1078,7 @@
     flex-shrink: 0;
     width: 34px; height: 34px;
     border-radius: 17px;
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     background-color: var(--raised-chrome);
     color: var(--text-3);
     display: flex; align-items: center; justify-content: center;
@@ -1089,7 +1090,7 @@
   @media (hover: hover) {
     .wt-go:hover, .wt-ext:hover {
       background: color-mix(in srgb, var(--surface-3) 70%, transparent);
-      color: var(--accent);
+      color: var(--text-1);
       border-color: rgba(var(--accent-rgb), 0.4);
     }
   }
@@ -1167,7 +1168,7 @@
     padding: 22px 20px;
     border-radius: 16px;
     background: var(--surface-1);
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     text-align: center;
   }
   .wt-card-fav { width: 40px; height: 40px; border-radius: 10px; }
@@ -1190,7 +1191,7 @@
     max-height: 140px;
     object-fit: cover;
     border-radius: 10px;
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
   }
   .wt-card-why {
     font-size: calc((var(--ui-small-fs) - 2px) * var(--wt-fs, 1));
@@ -1203,7 +1204,7 @@
     border-radius: 12px;
     border: 1px solid rgba(var(--accent-rgb), 0.35);
     background: rgba(var(--accent-rgb), 0.08);
-    color: var(--accent);
+    color: var(--text-1);
     font-size: calc(var(--ui-small-fs) * var(--wt-fs, 1));
     font-weight: 600;
     cursor: pointer;
@@ -1256,7 +1257,7 @@
     border-radius: 12px;
     border: 1px solid rgba(var(--accent-rgb), 0.5);
     background: rgba(var(--accent-rgb), 0.14);
-    color: var(--accent);
+    color: var(--text-1);
     font-size: calc((var(--ui-small-fs) - 1px) * var(--wt-fs, 1));
     font-weight: 700;
     font-family: inherit;
@@ -1290,7 +1291,7 @@
   }
   .wt-root.custom-tint .wt-card {
     background: color-mix(in srgb, var(--wt-c1, var(--accent)) 8%, var(--surface-1));
-    border-color: color-mix(in srgb, var(--wt-c1, var(--accent)) 22%, var(--surface-3));
+    border-color: color-mix(in srgb, var(--wt-c1, var(--accent)) 22%, var(--border));
   }
   .wt-root.custom-tint .wt-guard {
     background: color-mix(in srgb, var(--wt-c1, var(--accent)) 92%, transparent);
@@ -1303,7 +1304,7 @@
   .wtw-chip {
     padding: 6px 12px;
     border-radius: 12px;
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     background: transparent;
     color: var(--text-3);
     font-size: calc(var(--ui-small-fs) - 1px);
@@ -1317,7 +1318,7 @@
   .wtw-chip.on {
     border-color: rgba(var(--accent-rgb), 0.5);
     background: rgba(var(--accent-rgb), 0.1);
-    color: var(--accent);
+    color: var(--text-1);
   }
   .wtw-btn {
     display: block;
@@ -1399,7 +1400,7 @@
     gap: 4px;
     overflow-x: auto;
     padding: 2px 0 10px;
-    border-bottom: 1px solid var(--surface-2);
+    border-bottom: 1px solid var(--border);
     margin-bottom: 14px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;           /* v0.25: tabs scroll sideways — no scrollbar clutter */
@@ -1429,21 +1430,21 @@
   .settings-nav .tab[data-page="appearance"].active {
     background: rgba(var(--accent-rgb), 0.16);
     border-color: rgba(var(--accent-rgb), 0.55);
-    color: var(--accent);
+    color: var(--text-1);
   }
   .settings-nav .tab[data-page="sizing"].active {
     background: rgba(var(--accent-2-rgb), 0.14);
     border-color: rgba(var(--accent-2-rgb), 0.5);
-    color: var(--accent-2);
+    color: var(--text-1);
   }
   .settings-nav .tab[data-page="general"].active {
     background: rgba(var(--accent-3-rgb), 0.14);
     border-color: rgba(var(--accent-3-rgb), 0.5);
-    color: var(--accent-3);
+    color: var(--text-1);
   }
   .settings-section {
     margin-bottom: 14px;
-    border: 1px solid var(--surface-2);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
@@ -1521,12 +1522,12 @@
     gap: 8px;
     padding: 12px 0;
     min-height: 44px;
-    border-bottom: 1px solid var(--surface-2);
+    border-bottom: 1px solid var(--border);
   }
   .setting-row:last-child { border-bottom: none; }
   /* v0.45 ITEM 5: collapsed color rows — banner + expand + per-row reset */
   .color-row-collapsed {
-    border-bottom: 1px solid var(--surface-2);
+    border-bottom: 1px solid var(--border);
     padding: 10px 0;
   }
   .color-row-collapsed:last-child { border-bottom: none; }
@@ -1973,7 +1974,7 @@
      something to land on (the touch UI never sees this). */
   @media (hover: hover) {
     .msg-row-user > .msg-bubble:hover, .msg-row-assistant > .msg-bubble:hover {
-      outline: 1px solid rgba(var(--surface-3-rgb), 0.6);
+      outline: 1px solid rgba(var(--border-rgb), 0.6);
     }
   }
   /* ── v0.37 EDITING BANNER (pinned inside the sticky input bar) ── */
@@ -2045,7 +2046,7 @@
   .ts-group-n { color: var(--text-3); opacity: 0.7; font-weight: 600; }
   .ts-row {
     display: flex; align-items: center; gap: 10px; padding: 10px 10px;
-    border: 1px solid var(--surface-2); border-radius: 10px;
+    border: 1px solid var(--border); border-radius: 10px;
     margin-bottom: 7px; cursor: pointer; background: var(--surface-1);
     transition: background 0.15s, border-color 0.15s;
   }
@@ -2064,7 +2065,7 @@
   .ts-row-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .ts-chip {
     display: inline-block; padding: 2px 8px; border-radius: 7px;
-    background-color: var(--raised-chrome); border: 1px solid var(--surface-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--border);
     color: var(--text-3); font-size: var(--ui-micro-fs); font-weight: 700;
     letter-spacing: 0.2px; max-width: 110px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
@@ -2090,20 +2091,20 @@
   .ts-detail-name { font-size: var(--ui-fs); font-weight: 700; color: var(--text-1); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ts-detail-desc { font-size: var(--ui-small-fs); color: var(--text-3); line-height: 1.55; margin-top: 6px; }
   .ts-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .ts-detail-body { border-top: 1px solid var(--surface-2); padding-top: 10px; }
-  .ts-stage { border: 1px solid var(--surface-2); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
+  .ts-detail-body { border-top: 1px solid var(--border); padding-top: 10px; }
+  .ts-stage { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
   .ts-stage-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .ts-stage-n {
     width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    background: rgba(var(--accent-rgb), 0.14); color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.14); color: var(--text-1);
     font-size: var(--ui-micro-fs); font-weight: 700;
   }
   /* v0.44 var-twin: the step number chip layers the accent gradient
      over its tint (no-op while the accent is a solid) */
   .ts-stage-n { background-image: var(--accent-gradient, none); background-attachment: fixed; }
   .ts-stage-name { font-size: calc(var(--ui-fs) - 2px); font-weight: 700; color: var(--text-1); }
-  .ts-stage-fo { font-size: var(--ui-micro-fs); color: var(--accent-2); font-weight: 600; margin-top: 4px; }
+  .ts-stage-fo { font-size: var(--ui-micro-fs); color: var(--text-3); font-weight: 600; margin-top: 4px; }
   .ts-stage-ins { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5; margin-top: 6px; }
   .ts-detail-actions { display: flex; gap: 8px; margin: 12px 2px 2px; }
   .ts-md { font-size: var(--ui-small-fs); }
@@ -2127,7 +2128,7 @@
   .fmt ul, .fmt ol { margin: 0.45em 0; padding-left: 1.3em; }
   .fmt li { margin: 0.22em 0; }
   .fmt li::marker { color: var(--fmt-a2); }
-  .fmt hr { border: none; border-top: 1px solid var(--surface-3); margin: 0.8em 0; }
+  .fmt hr { border: none; border-top: 1px solid var(--border); margin: 0.8em 0; }
   .fmt blockquote {
     margin: 0.5em 0; padding: 0.3em 0.85em;
     border-left: 3px solid var(--fmt-a2);
@@ -2203,13 +2204,13 @@
   /* ── v0.28 MEDIA EMBEDS (user spec: clickable / expandable / zoom / redirect) ── */
   .fmt-media-img {
     display: block; max-width: min(100%, 460px); max-height: 62vh;
-    border-radius: 10px; border: 1px solid var(--surface-3);
+    border-radius: 10px; border: 1px solid var(--border);
     margin: 0.5em 0; cursor: zoom-in;
     object-fit: contain; background: var(--bg-app);
   }
   .fmt-yt {
     margin: 0.55em 0; max-width: min(100%, 460px);
-    border: 1px solid var(--surface-3); border-radius: 12px; overflow: hidden;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
     cursor: pointer; background: var(--surface-1);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2253,7 +2254,7 @@
      external link opens IN the app; theme vars only ── */
   .lv-card {
     margin: 0.4em 0; max-width: min(100%, 560px);
-    border: 1px solid var(--surface-3); border-radius: 12px;
+    border: 1px solid var(--border); border-radius: 12px;
     background: var(--surface-1); overflow: hidden;
     font-size: calc(var(--chat-fs) * 0.8);
   }
@@ -2278,7 +2279,7 @@
     display: block; margin-bottom: 8px; background: var(--surface-2); }
   .lv-open { display: inline-flex; align-items: center; gap: 5px;
     background: var(--surface-2); color: var(--text-1);
-    border: 1px solid var(--surface-3); border-radius: 8px;
+    border: 1px solid var(--border); border-radius: 8px;
     padding: 6px 11px; font-size: 0.92em; cursor: pointer; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   /* v0.63.4: the frameable/pdf card's ⤢ row (opens THE DOCK) */
@@ -2311,20 +2312,20 @@
     background: var(--surface-2); color: var(--fmt-a1);
     padding: calc(1.5px * var(--chat-scale)) calc(6px * var(--chat-scale)); border-radius: 6px;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.88em; border: 1px solid var(--surface-3);
+    font-size: 0.88em; border: 1px solid var(--border);
     overflow-wrap: break-word; word-break: break-word;
   }
   /* code CARD: header (lang + copy + save) + scrollable body —
      v0.34: the whole card rides --chat-scale (was fixed to the ui sizes;
      code stayed tiny under a big chat font = the misalignment complaint) */
   .fmt-codecard {
-    margin: 0.55em 0; border: 1px solid var(--surface-3); border-radius: 10px;
+    margin: 0.55em 0; border: 1px solid var(--border); border-radius: 10px;
     background: var(--surface-1); overflow: hidden; max-width: 100%;
   }
   .fmt-codehead {
     display: flex; align-items: center; gap: calc(8px * var(--chat-scale));
     background: color-mix(in srgb, var(--bg-panel) 82%, #000); padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
-    border-bottom: 1px solid var(--surface-3);
+    border-bottom: 1px solid var(--border);
   }
   .fmt-codelang {
     font-size: calc(var(--chat-fs) * 0.62); font-weight: 700; letter-spacing: 0.6px;
@@ -2359,7 +2360,7 @@
   .fmt table tbody tr:hover td { background: rgba(var(--accent-rgb), 0.06); }
   @media (hover: none) { .fmt table tbody tr:hover td { background: transparent; } }
   .fmt th { color: var(--fmt-a2); font-weight: 700; }
-  .fmt th, .fmt td { border: 1px solid var(--surface-3); padding: calc(5px * var(--chat-scale)) calc(9px * var(--chat-scale)); text-align: left; }
+  .fmt th, .fmt td { border: 1px solid var(--border); padding: calc(5px * var(--chat-scale)) calc(9px * var(--chat-scale)); text-align: left; }
   .fmt tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
   .fmt-cursor {
     display: inline-block; width: 7px; height: 1.05em;
@@ -2381,7 +2382,7 @@
     border-radius: 10px; padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale));
   }
   .msg-think-summary {
-    font-size: calc(var(--chat-fs) * 0.75); color: var(--accent); cursor: pointer;
+    font-size: calc(var(--chat-fs) * 0.75); color: var(--text-2); cursor: pointer;
     user-select: none; -webkit-user-select: none;
     display: flex; align-items: center; gap: calc(6px * var(--chat-scale));
   }
@@ -2405,7 +2406,7 @@
     display: flex; align-items: center; gap: calc(10px * var(--chat-scale));
     margin: 0.6em 0; padding: calc(10px * var(--chat-scale)) calc(12px * var(--chat-scale));
     background: linear-gradient(135deg, rgba(var(--accent-2-rgb),0.08), rgba(var(--accent-2-rgb),0.04));
-    border: 1px solid color-mix(in srgb, var(--fmt-a3) 45%, var(--surface-3));
+    border: 1px solid color-mix(in srgb, var(--fmt-a3) 45%, var(--border));
     border-radius: 12px; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2415,7 +2416,7 @@
   .fmt-artifact-sub { color: var(--text-3); font-size: calc(var(--chat-fs) * 0.66); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fmt-artifact-dl {
     background: rgba(var(--accent-2-rgb),0.12); border: 1px solid rgba(var(--accent-2-rgb),0.4);
-    color: var(--accent-2); border-radius: 8px; padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
+    color: var(--fmt-link); border-radius: 8px; padding: calc(5px * var(--chat-scale)) calc(10px * var(--chat-scale));
     font-size: calc(var(--chat-fs) - 1px); cursor: pointer; flex-shrink: 0;
     touch-action: manipulation; font-family: inherit;
   }
@@ -2537,7 +2538,7 @@
   .tool-pill-row { min-width: 0; }
   .tool-pill-row > span { min-width: 0; overflow-wrap: anywhere; }
   .tool-pill-chev { font-size: calc(var(--chat-fs) * 0.6); color: currentColor; opacity: 0.7; flex-shrink: 0; }
-  .tool-pill-use { color: var(--accent-2); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
+  .tool-pill-use { color: var(--text-1); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
   .tool-pill-detail {
@@ -2581,7 +2582,7 @@
   .src-wrap[open] > .src-wrap-label { margin-bottom: calc(6px * var(--chat-scale)); }
   .src-wrap .src-wrap-label::-webkit-details-marker { display: none; }
   .src-wrap .src-count {
-    background: rgba(var(--accent-2-rgb), 0.14); color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.14); color: var(--text-1);
     border-radius: 999px; padding: 0 7px; font-weight: 700; letter-spacing: 0;
     font-size: calc(9px * var(--chat-scale));
   }
@@ -2623,7 +2624,7 @@
   .hub-wrap[open] > .hub-wrap-label { margin-bottom: calc(6px * var(--chat-scale)); }
   .hub-wrap .hub-wrap-label::-webkit-details-marker { display: none; }
   .hub-count {
-    background: rgba(var(--accent-2-rgb), 0.14); color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.14); color: var(--text-1);
     border-radius: 999px; padding: 0 7px; font-weight: 700; letter-spacing: 0;
     font-size: calc(9px * var(--chat-scale));
   }
@@ -2669,7 +2670,7 @@
   .hmsg-dl {
     flex-shrink: 0; width: calc(34px * var(--chat-scale)); height: calc(34px * var(--chat-scale));
     border-radius: 9px; border: 1px solid rgba(var(--accent-2-rgb),0.35);
-    background: rgba(var(--accent-2-rgb),0.07); color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb),0.07); color: var(--text-1);
     font-size: calc(15px * var(--chat-scale)); font-weight: 700; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -2708,7 +2709,7 @@
   .msg-action-ts {
     padding: 8px 14px 2px; font-size: 11px; font-weight: 600;
     color: var(--text-3); font-variant-numeric: tabular-nums;
-    letter-spacing: 0.3px; border-bottom: 1px solid var(--surface-2);
+    letter-spacing: 0.3px; border-bottom: 1px solid var(--border);
     margin-bottom: 4px;
   }
   /* v0.37: destructive actions (delete) read as such. */
@@ -2724,7 +2725,7 @@
   .token.selector, .token.attr-name, .token.string, .token.char, .token.builtin, .token.inserted { color: var(--fmt-a2); }
   .token.operator, .token.entity, .token.url { color: var(--text-2); }
   .token.atrule, .token.attr-value, .token.keyword { color: var(--fmt-a1); font-weight: 600; }
-  .token.function, .token.class-name { color: var(--accent-3); }
+  .token.function, .token.class-name { color: var(--fmt-a3); }
   .token.regex, .token.important, .token.variable { color: var(--fmt-link); }
 
   /* ══ v0.17 — ARTIFACTS DRAWER + EDITOR ══ */
@@ -2744,7 +2745,7 @@
   }
   .art-panel {
     position: absolute; left: 0; right: 0; bottom: 0; top: 6vh;
-    background: var(--surface-1); border: 1px solid var(--surface-2); border-bottom: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-bottom: none;
     border-radius: 18px 18px 0 0;
     display: flex; flex-direction: column;
     transform: translateY(30px); opacity: 0;
@@ -2753,7 +2754,7 @@
   }
   .art-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 14px 16px 10px; border-bottom: 1px solid var(--surface-2); flex-shrink: 0;
+    padding: 14px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
     /* v0.98.1: the head is the sheet's drag handle (slide down to
        dismiss, like the regular panels) — touches starting here belong
        to the drag, never to scroll. */
@@ -2771,7 +2772,7 @@
   .art-empty-sub { color: var(--text-3-dim); font-size: calc(var(--ui-small-fs) - 0.5px); text-align: center; padding: 0 20px; line-height: 1.6; }
   .art-row {
     display: flex; align-items: center; gap: 11px;
-    background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 12px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
     padding: 11px 12px; margin-bottom: 9px; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2799,7 +2800,7 @@
     color: var(--text-1); font-size: 11px; padding: 4px 9px; cursor: pointer; font-family: inherit;
   }
   .art-confirm-yes { color: var(--err); border-color: rgba(var(--err-rgb),0.4); }
-  .art-ed-actions { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--surface-2); flex-shrink: 0; overflow-x: auto; }
+  .art-ed-actions { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
   .art-ed-btn {
     background: transparent; border: 1px solid var(--border); color: var(--text-2);
     border-radius: 8px; padding: 6px 12px; font-size: var(--ui-small-fs); font-weight: 600;
@@ -2823,7 +2824,7 @@
     --wb-row-outer-height: 34px;
     --wb-row-inner-height: 32px;
     --wb-node-text-color: var(--text-1);
-    --wb-border-color: var(--surface-2);
+    --wb-border-color: var(--border);
     --wb-background-color: transparent;
     --wb-background-color-dark: transparent;
     --wb-alternate-row-color: transparent;
@@ -2877,7 +2878,7 @@
   /* the ⋯ action strip (mobile action sheet at the bottom of the drawer) */
   .art-sheet {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
-    background: var(--surface-1); border-top: 1px solid var(--surface-2);
+    background: var(--surface-1); border-top: 1px solid var(--border);
     border-radius: 16px 16px 0 0; padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px));
     transform: translateY(110%); transition: transform 0.22s cubic-bezier(0.32,0.72,0,1);
     box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
@@ -2890,7 +2891,7 @@
   }
   .art-sheet-btn {
     display: flex; align-items: center; gap: 12px; width: 100%;
-    background-color: var(--raised-chrome); border: 1px solid var(--surface-2); border-radius: 10px;
+    background-color: var(--raised-chrome); border: 1px solid var(--border); border-radius: 10px;
     color: var(--text-1); font-size: var(--ui-fs); font-weight: 600;
     padding: 13px 14px; margin-bottom: 7px; cursor: pointer; font-family: inherit;
     text-align: left; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -2910,7 +2911,7 @@
   .vw-doc { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .vw-doc { padding: 22px 20px 40px; max-width: 720px; margin: 0 auto; color: var(--text-1); font-size: var(--ui-fs); line-height: 1.62; }
   .vw-title { font-size: 24px; font-weight: 800; text-align: center; color: var(--text-1); margin: 10px 0 18px; }
-  .vw-h1 { font-size: calc(var(--ui-fs) + 4px); font-weight: 700; color: var(--text-1); margin: 20px 0 8px; border-bottom: 1px solid var(--surface-2); padding-bottom: 6px; }
+  .vw-h1 { font-size: calc(var(--ui-fs) + 4px); font-weight: 700; color: var(--text-1); margin: 20px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
   .vw-h2 { font-size: 15.5px; font-weight: 700; color: var(--text-1); margin: 16px 0 6px; }
   .vw-quote { border-left: 3px solid var(--fmt-a2, var(--accent)); padding: 4px 12px; margin: 10px 0; color: var(--text-2); font-style: italic; background: rgba(var(--accent-rgb),0.04); border-radius: 0 8px 8px 0; }
   .vw-li { margin: 4px 0 4px 4px; }
@@ -2921,18 +2922,18 @@
   .vw-b { font-weight: 700; color: var(--text-1); }
   .vw-sheets { display: flex; gap: 6px; padding: 10px 12px 0; overflow-x: auto; flex-shrink: 0; }
   .vw-tab {
-    background: transparent; border: 1px solid var(--surface-3); color: var(--text-2);
+    background: transparent; border: 1px solid var(--border); color: var(--text-2);
     padding: 5px 14px; border-radius: 8px 8px 0 0; font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 600;
     cursor: pointer; font-family: inherit; white-space: nowrap;
   }
-  .vw-tab[data-on="1"] { background: rgba(var(--accent-2-rgb),0.08); border-color: rgba(var(--accent-2-rgb),0.4); color: var(--accent-2); }
+  .vw-tab[data-on="1"] { background: rgba(var(--accent-2-rgb),0.08); border-color: rgba(var(--accent-2-rgb),0.4); color: var(--text-1); }
   .vw-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
   .vw-table { border-collapse: collapse; font-size: var(--ui-small-fs); min-width: 40%; }
-  .vw-table td { border: 1px solid var(--surface-3); padding: 5px 10px; color: var(--text-2); white-space: nowrap; }
+  .vw-table td { border: 1px solid var(--border); padding: 5px 10px; color: var(--text-2); white-space: nowrap; }
   .vw-table td.vw-th { background: rgba(var(--accent-rgb),0.07); color: var(--text-1); font-weight: 700; position: sticky; top: 0; }
   .vw-table td.vw-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ok); }
-  .vw-arch-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--surface-2); flex-shrink: 0; }
-  .vw-arch-fmt { font-size: calc(var(--ui-small-fs) - 2px); font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: var(--accent-2); background: rgba(var(--accent-2-rgb),0.08); border: 1px solid rgba(var(--accent-2-rgb),0.3); padding: 3px 8px; border-radius: 6px; }
+  .vw-arch-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .vw-arch-fmt { font-size: calc(var(--ui-small-fs) - 2px); font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-3); background: rgba(var(--accent-2-rgb),0.08); border: 1px solid rgba(var(--accent-2-rgb),0.3); padding: 3px 8px; border-radius: 6px; }
   .vw-arch-n { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px); flex: 1; }
   .vw-arch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px; }
   .vw-arch-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; }
@@ -2940,8 +2941,8 @@
   .vw-arch-ico { font-size: calc(var(--ui-fs) + 1px); width: 22px; text-align: center; flex-shrink: 0; }
   .vw-arch-name { flex: 1; min-width: 0; color: var(--text-1); font-size: calc(var(--ui-small-fs) + 0.5px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
   .vw-arch-size { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1.5px); flex-shrink: 0; font-variant-numeric: tabular-nums; }
-  .vw-arch-member { flex: 2; min-height: 0; overflow-y: auto; border-top: 1px solid var(--surface-2); padding: 10px 12px; }
-  .vw-member-title { color: var(--accent-2); font-size: 12px; font-weight: 700; margin-bottom: 8px; font-family: ui-monospace, Menlo, monospace; }
+  .vw-arch-member { flex: 2; min-height: 0; overflow-y: auto; border-top: 1px solid var(--border); padding: 10px 12px; }
+  .vw-member-title { color: var(--text-2); font-size: 12px; font-weight: 700; margin-bottom: 8px; font-family: ui-monospace, Menlo, monospace; }
   .vw-member-pre {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: var(--ui-small-fs); line-height: 1.55; color: var(--text-2);
@@ -2982,12 +2983,12 @@
 
   .pe-identity {
     display: flex; align-items: center; gap: 8px;
-    padding: 7px 14px; border-bottom: 1px solid var(--surface-2);
+    padding: 7px 14px; border-bottom: 1px solid var(--border);
     font-size: calc(var(--ui-small-fs) - 1px); flex-shrink: 0; overflow: hidden;
   }
   .pe-identity-k {
     flex-shrink: 0; font-weight: 700; font-size: var(--ui-micro-fs); letter-spacing: 0.4px;
-    text-transform: uppercase; color: var(--accent);
+    text-transform: uppercase; color: var(--text-3);
     background: rgba(var(--accent-rgb),0.1); border: 1px solid rgba(var(--accent-rgb),0.3);
     padding: 2px 7px; border-radius: 5px;
   }
@@ -3012,7 +3013,7 @@
 
   /* CodeMirror theme — doomalay (matches the fmt scheme) */
   .cm-s-doomalay.CodeMirror { background: var(--surface-1); color: var(--text-1); }
-  .cm-s-doomalay .CodeMirror-gutters { background: color-mix(in srgb, var(--bg-panel) 88%, #000); border-right: 1px solid var(--surface-2); }
+  .cm-s-doomalay .CodeMirror-gutters { background: color-mix(in srgb, var(--bg-panel) 88%, #000); border-right: 1px solid var(--border); }
   .cm-s-doomalay .CodeMirror-linenumber { color: var(--text-3-dim); }
   .cm-s-doomalay .CodeMirror-cursor { border-left: 2px solid var(--fmt-a1); }
   .cm-s-doomalay .CodeMirror-selected { background: rgba(var(--accent-2-rgb),0.13); }
@@ -3020,7 +3021,7 @@
   .cm-s-doomalay .cm-keyword { color: var(--fmt-a1); }
   .cm-s-doomalay .cm-atom { color: var(--warn); }
   .cm-s-doomalay .cm-number { color: var(--warn); }
-  .cm-s-doomalay .cm-def { color: var(--accent-3); }
+  .cm-s-doomalay .cm-def { color: var(--fmt-a3); }
   .cm-s-doomalay .cm-variable { color: var(--text-1); }
   .cm-s-doomalay .cm-variable-2 { color: var(--fmt-a3); }
   .cm-s-doomalay .cm-variable-3, .cm-s-doomalay .cm-type { color: var(--fmt-a3); }
@@ -3061,7 +3062,7 @@
   /* rows inside panel views */
   .pv-row {
     display: flex; align-items: center; gap: 11px; width: 100%;
-    background: var(--surface-1); border: 1px solid var(--surface-2); border-radius: 10px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 12px 13px; margin-bottom: 9px; cursor: pointer; text-align: left;
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -3122,7 +3123,7 @@
   .pe-mode-pill {
     flex: 1 1 0; min-width: 0; padding: 7px 4px;
     border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
-    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.85);
+    box-shadow: 1px 1px 0 rgba(var(--border-rgb), 0.85);
     font-size: var(--ui-micro-fs); font-weight: 700; letter-spacing: 0.2px;
     font-family: inherit; cursor: pointer; text-align: center;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -3144,14 +3145,14 @@
   }
   .pe-root .pe-body-fill {
     flex: 1 1 auto; min-height: 140px; position: relative;
-    border: 1px solid var(--surface-2); border-radius: 10px;
+    border: 1px solid var(--border); border-radius: 10px;
     overflow: hidden; margin-bottom: 2px;
   }
   .pe-body-fill .art-cm-host { position: absolute; inset: 0; }
   .pe-body-fill .art-cm-host .CodeMirror { height: 100%; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
   /* placeholder scope pill (global ⇄ local) in the placeholders view */
   .ph-scope-pill {
-    display: flex; align-items: stretch; border: 1px solid var(--surface-2);
+    display: flex; align-items: stretch; border: 1px solid var(--border);
     border-radius: 10px; overflow: hidden; flex-shrink: 0;
     font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -3161,7 +3162,7 @@
     cursor: pointer; font-family: inherit; letter-spacing: 0.2px;
   }
   .ph-scope-pill button[data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.16); color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.16); color: var(--text-1);
   }
   /* trigger builder: three boxes on one row + an example hint */
   .tr-grid {
@@ -3185,7 +3186,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   .pv-btn:active { background: var(--surface-3); }
-  .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--accent); }
+  .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--text-1); }
   /* v0.44 var-twin: the primary action layers the accent gradient over
      its tint (no-op while the accent is a solid) */
   .pv-btn-primary { background-image: var(--accent-gradient, none); background-attachment: fixed; }
@@ -3245,10 +3246,10 @@
        --bg-app repaint tiled a same-var box inside a same-var box and
        stayed flat when the overlay background carried a gradient). */
     background-color: var(--raised-chrome);
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     color: var(--text-3); padding: 5px 8px;
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
-    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.85);
+    box-shadow: 1px 1px 0 rgba(var(--border-rgb), 0.85);
     font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
     font-family: inherit; cursor: pointer; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent; line-height: 1.25;
@@ -3335,9 +3336,9 @@
     display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
     padding: 6px 12px; margin: 0; font: inherit; cursor: pointer;
     font-size: var(--ui-small-fs); font-weight: 600; color: var(--text-1);
-    background: var(--surface-1); border: 1px solid var(--surface-2);
+    background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 999px; transition: border-color .16s ease, background .16s ease;
-    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.55);
+    box-shadow: 1.5px 1.5px 0 rgba(var(--border-rgb), 0.55);
   }
   .hub-chatpill:hover { border-color: rgba(var(--accent-rgb), .45); }
   .hub-chatpill:active { background: rgba(var(--accent-rgb), .10); }
@@ -3388,7 +3389,7 @@
        frame, one of the heaviest constant GPU costs in the library.
        The fill rises 72% → 90% so the dock stays readable bare. */
     background: color-mix(in srgb, var(--surface-1) 90%, transparent);
-    border: 1px solid var(--surface-2);
+    border: 1px solid var(--border);
     border-radius: 16px;
     box-shadow: 0 4px 16px rgba(var(--bg-app-rgb), 0.28);
   }
@@ -3415,7 +3416,7 @@
   .pub-status b { color: var(--ok); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pub-status button {
     background: none; border: none; cursor: pointer; font-family: inherit;
-    color: var(--accent-2); font-size: var(--ui-micro-fs); padding: 0; flex-shrink: 0;
+    color: var(--text-1); font-size: var(--ui-micro-fs); padding: 0; flex-shrink: 0;
     text-decoration: underline; text-underline-offset: 2px;
   }
   .pub-chev { color: var(--text-3); font-size: var(--ui-small-fs); flex-shrink: 0;
@@ -3510,7 +3511,7 @@
     flex: 1 1 0; min-width: 74px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 3px; min-height: 54px; padding: 7px 6px;
-    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--border); color: var(--text-2);
     border-radius: 14px;
     box-shadow: 0 2px 8px rgba(var(--bg-app-rgb), 0.22);
     font-size: calc(var(--ui-small-fs)); font-weight: 700; text-align: center;
@@ -3529,30 +3530,30 @@
   }
   .hub-libpill[data-on="1"] {
     background: rgba(var(--accent-2-rgb), 0.10);
-    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--accent-2);
+    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--text-1);
   }
   /* v0.63: every lib pill rides a customizable accent (persona=2,
      template=1, skill=3, script=4, doc=1 — the hidden format, themes
      ride the default accent-2). */
   .hub-libpill[data-tone="persona"][data-on="1"] {
     background: rgba(var(--accent-2-rgb), 0.13);
-    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--accent-2);
+    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--text-1);
   }
   .hub-libpill[data-tone="template"][data-on="1"] {
     background: rgba(var(--accent-rgb), 0.12);
-    border-color: rgba(var(--accent-rgb), 0.55); color: var(--accent);
+    border-color: rgba(var(--accent-rgb), 0.55); color: var(--text-1);
   }
   .hub-libpill[data-tone="skill"][data-on="1"] {
     background: rgba(var(--accent-3-rgb), 0.12);
-    border-color: rgba(var(--accent-3-rgb), 0.5); color: var(--accent-3);
+    border-color: rgba(var(--accent-3-rgb), 0.5); color: var(--text-1);
   }
   .hub-libpill[data-tone="script"][data-on="1"] {
     background: rgba(var(--accent-4-rgb), 0.12);
-    border-color: rgba(var(--accent-4-rgb), 0.5); color: var(--accent-4);
+    border-color: rgba(var(--accent-4-rgb), 0.5); color: var(--text-1);
   }
   .hub-libpill[data-tone="doc"][data-on="1"] {
     background: rgba(var(--accent-rgb), 0.12);
-    border-color: rgba(var(--accent-rgb), 0.5); color: var(--accent);
+    border-color: rgba(var(--accent-rgb), 0.5); color: var(--text-1);
   }
   .hub-libpill-ghost { cursor: default; }
 
@@ -3682,7 +3683,7 @@
      (the marquee; marqueeScan measures + paints --slide-d/--slide-t).
      v0.74: will-change rides the .marquee class ONLY — the always-on
      promotion composited every card name in the library (the
-     shadow-only-names bug on WebView; see the [data-text-grad]
+     shadow-only-names bug on WebView; see the [data-fmt-grad~="a1"]
      .hub-card-name-in note in the projection block). */
   .hub-card-name-in { display: inline-block; white-space: nowrap; }
   .hub-card-name.marquee { text-overflow: clip; }
@@ -3717,7 +3718,7 @@
     font-size: calc(var(--ui-small-fs) + 1px);
   }
   .hub-card-stat .icl { display: block; }
-  .hub-card-stat.on { color: var(--accent); }
+  .hub-card-stat.on { color: var(--text-1); }
   /* v0.58 (pt 14): the endorse HOTBOX — padding + matching negative
      margins grow the hit target to ~44px with zero visual shift (the
      half-height panel made the old ~17px strip nearly untappable). */
@@ -3945,7 +3946,7 @@
   /* v0.60 pt C.8: THE REPO VIEW — the file preview head + image wrap. */
   .hubrepo-file-head {
     display: flex; flex-direction: column; gap: 2px; padding: 4px 2px 10px;
-    border-bottom: 1px solid var(--surface-2); margin-bottom: 12px;
+    border-bottom: 1px solid var(--border); margin-bottom: 12px;
   }
   .hubrepo-file-path {
     font-size: var(--ui-fs); font-weight: 700; color: var(--text-1);
@@ -3958,13 +3959,13 @@
   }
   .hubrepo-imgwrap { display: flex; justify-content: center; padding: 8px 0; }
   .hubrepo-imgwrap img {
-    max-width: 100%; border-radius: 12px; border: 1px solid var(--surface-2);
+    max-width: 100%; border-radius: 12px; border: 1px solid var(--border);
     background: var(--surface-2);
   }
   .hub-empty {
     padding: 34px 18px; text-align: center; color: var(--text-3);
     font-size: var(--ui-small-fs); line-height: 1.6;
-    border: 1px dashed var(--surface-3); border-radius: 12px;
+    border: 1px dashed var(--border); border-radius: 12px;
   }
   /* v0.67.4: the empty-state retry pill — one tap re-fetches the failed
      library (theme vars only, the dx-pill house pattern). */
@@ -3972,7 +3973,7 @@
     display: inline-flex; align-items: center; gap: 5px; margin-top: 4px;
     padding: 6px 14px; border-radius: 999px; cursor: pointer; font-family: inherit;
     background: rgba(var(--accent-rgb), 0.10); border: 1px solid rgba(var(--accent-rgb), 0.40);
-    color: var(--accent); font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
+    color: var(--text-1); font-size: calc(var(--ui-small-fs) - 1px); font-weight: 700;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hub-empty-retry:active { transform: scale(0.95); }
@@ -3983,7 +3984,7 @@
   }
   .hub-nav {
     width: 34px; height: 28px; border-radius: 8px; background-color: var(--raised-chrome);
-    border: 1px solid var(--surface-3); color: var(--text-2); font-size: var(--ui-small-fs);
+    border: 1px solid var(--border); color: var(--text-2); font-size: var(--ui-small-fs);
     font-family: inherit; cursor: pointer; line-height: 1;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -4043,7 +4044,7 @@
   .hi-root[data-tone="doc"]      { --hub-tone: var(--accent);        --hub-tone-rgb: var(--accent-rgb); }
   .hi-head {
     position: relative; border-radius: 16px; overflow: hidden; flex-shrink: 0;
-    border: 1px solid var(--surface-2); cursor: pointer;
+    border: 1px solid var(--border); cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hi-head-bg { position: absolute; inset: 0; background-size: cover; background-position: center; }
@@ -4245,14 +4246,14 @@
   .hp-addfile {
     width: 100%; padding: 9px 12px; border-radius: 10px; cursor: pointer;
     background: rgba(var(--accent-2-rgb), 0.08); border: 1px dashed rgba(var(--accent-2-rgb), 0.5);
-    color: var(--accent-2); font-size: var(--ui-small-fs); font-weight: 700; font-family: inherit;
+    color: var(--text-1); font-size: var(--ui-small-fs); font-weight: 700; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .hp-chip {
     display: inline-flex; align-items: center; gap: 5px;
     background: rgba(var(--accent-2-rgb), 0.12); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
-    color: var(--accent-2); border-radius: 999px; padding: 3px 9px;
+    color: var(--text-2); border-radius: 999px; padding: 3px 9px;
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
   }
   .hp-chip button {
@@ -4260,7 +4261,7 @@
     font-size: inherit; padding: 0; font-family: inherit; line-height: 1;
   }
   .hp-seg {
-    display: flex; gap: 6px; border: 1px solid var(--surface-2);
+    display: flex; gap: 6px; border: 1px solid var(--border);
     border-radius: 11px 9px 12px 10px / 10px 12px 9px 11px;
     overflow: hidden; background: var(--surface-1);
   }
@@ -4271,7 +4272,7 @@
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
   .hp-seg button[data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.16); color: var(--accent-2);
+    background: rgba(var(--accent-2-rgb), 0.16); color: var(--text-1);
   }
   .hp-design { display: flex; flex-direction: column; gap: 8px; }
   .hp-colors { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -4280,7 +4281,7 @@
     background-color: var(--raised-chrome); cursor: pointer; padding: 2px;
   }
   .hp-mini {
-    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--border); color: var(--text-2);
     border-radius: 8px; padding: 6px 10px; font-size: calc(var(--ui-small-fs) - 1px);
     font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -4296,7 +4297,7 @@
     display: flex; align-items: center; gap: 8px;
   }
   .hp-preview {
-    height: 64px; border-radius: 10px; border: 1px solid var(--surface-2);
+    height: 64px; border-radius: 10px; border: 1px solid var(--border);
     background-size: cover; background-position: center; flex-shrink: 0;
   }
   .hp-err { font-size: var(--ui-small-fs); color: var(--err); line-height: 1.5; min-height: 4px; }
@@ -4330,10 +4331,10 @@
     position: relative; display: inline-flex; align-items: center; justify-content: center;
     gap: 6px; padding: 6px 12px; min-height: 32px;
     background-color: var(--raised-chrome); color: var(--text-2);
-    border: 1px solid var(--surface-3);
+    border: 1px solid var(--border);
     font-size: calc(var(--ui-small-fs) - 0.5px); font-weight: 700; letter-spacing: 0.25px;
     font-family: inherit; cursor: pointer; white-space: nowrap;
-    box-shadow: 1px 1.5px 0 rgba(var(--surface-3-rgb), 0.9);   /* the sketch stroke */
+    box-shadow: 1px 1.5px 0 rgba(var(--border-rgb), 0.9);   /* the sketch stroke */
     transition: background 0.15s, border-color 0.15s, color 0.15s;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -4345,7 +4346,7 @@
   .dx-pill:active { background: var(--surface-3); }
   .dx-pill[data-on="1"] {
     background: rgba(var(--accent-2-rgb), 0.14);
-    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--accent-2);
+    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--text-1);
   }
   .dx-pill[data-tone="persona"][data-on="1"] {
     background: rgba(var(--persona-rgb), 0.14);
@@ -4374,9 +4375,9 @@
   .dx-chip {
     display: inline-flex; align-items: center; gap: 5px;
     background: rgba(var(--accent-2-rgb), 0.12); border: 1px solid rgba(var(--accent-2-rgb), 0.4);
-    color: var(--accent-2); border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
+    color: var(--text-2); border-radius: 9px 7px 10px 8px / 8px 10px 7px 9px;
     padding: 3px 9px; font-size: calc(var(--ui-small-fs) - 1px); font-weight: 600;
-    box-shadow: 1px 1px 0 rgba(var(--surface-3-rgb), 0.8);
+    box-shadow: 1px 1px 0 rgba(var(--border-rgb), 0.8);
   }
   .dx-chip button {
     background: none; border: none; color: inherit; cursor: pointer;
@@ -4488,9 +4489,9 @@
      away and come back with one tap). The * rides the theme's primary. */
   .hp-root { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
   .hp-sec {
-    border: 1px solid var(--surface-2); border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
+    border: 1px solid var(--border); border-radius: 13px 10px 14px 11px / 11px 14px 10px 13px;
     background: var(--surface-1); overflow: hidden;
-    box-shadow: 1.5px 1.5px 0 rgba(var(--surface-3-rgb), 0.5);
+    box-shadow: 1.5px 1.5px 0 rgba(var(--border-rgb), 0.5);
   }
   .hp-sec-bar {
     display: flex; align-items: center; gap: 8px; width: 100%;
@@ -4509,7 +4510,7 @@
   .hp-sec.folded .hp-sec-body { display: none; }
   .hp-star { color: var(--accent); }
   .hp-focus-btn {
-    background-color: var(--raised-chrome); border: 1px solid var(--surface-3); color: var(--text-2);
+    background-color: var(--raised-chrome); border: 1px solid var(--border); color: var(--text-2);
     border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
     font-family: inherit; font-size: var(--ui-micro-fs); font-weight: 700;
     padding: 4px 9px; cursor: pointer; flex-shrink: 0;
@@ -4559,7 +4560,7 @@
     position: absolute; right: 9px; bottom: 7px; z-index: 1;
     display: flex; align-items: center; justify-content: center;
     width: 24px; height: 24px; border-radius: 50%;
-    background: rgba(var(--surface-3-rgb), 0.75);
+    background: rgba(var(--border-rgb), 0.75);
     color: var(--text-3-dim); font-size: calc(var(--ui-small-fs) - 1px);
     cursor: pointer; line-height: 1;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
@@ -4648,12 +4649,15 @@
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
   .cv-section, .mb-more, .wsx-opt {
+    /* v0.99.5: THE 2-LAYER PLATE (window + opaque plate) — the border
+       ring is the DERIVED hairline now (a solid border-color), never a
+       gradient layer: the 3rd background layer + its clip cycling died
+       with the border twin (the v097 overlap-artifact class with it). */
     background-image: var(--surface-1-gradient, none),
-                      linear-gradient(var(--surface-1), var(--surface-1)),
-                      var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
+                      linear-gradient(var(--surface-1), var(--surface-1));
+    background-origin: padding-box, padding-box;
+    background-clip: padding-box, padding-box;
+    background-attachment: fixed, fixed;
     text-shadow: var(--text-shadow);
   }
   /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
@@ -4669,8 +4673,8 @@
   .gr-editor, .gr-swatches, .gr-tools {
     background-color: var(--surface-1);  /* the flat fallback */
     border-color: var(--border);
-    background-color: color-mix(in oklch, var(--surface-1), var(--surface-2) 26%);
-    border-color: color-mix(in oklch, var(--border), var(--surface-1) 30%);
+    background-color: color-mix(in oklab, var(--surface-1), var(--surface-2) 26%);
+    border-color: color-mix(in oklab, var(--border), var(--surface-1) 30%);
     text-shadow: var(--text-shadow);
   }
   /* v0.72: src-wrap / hub-wrap moved OUT of Layer 2 — they are the
@@ -4680,12 +4684,9 @@
      (borders follow the border variable — the old --surface-2 divider
      read as a hairline from the wrong family). */
   .src-wrap, .hub-wrap {
-    background-image: var(--bg-app-gradient, none),
-                      linear-gradient(var(--bg-app), var(--bg-app)),
-                      var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: fixed, fixed, fixed;
+    /* v0.99.5: 2-layer (bg-app is DERIVED now — solid; the window layer
+       is the flat plate itself, the ring is the derived hairline) */
+    background-image: linear-gradient(var(--bg-app), var(--bg-app));
     text-shadow: var(--text-shadow);
   }
 
@@ -4770,12 +4771,9 @@
      banners) — with (b) below, their anchors now only re-validate on
      genuine layout changes, never on icon motion. */
   .chatbot .icon, .chatbot .name {
-    background-image: var(--surface-2-gradient, none),
-                      linear-gradient(var(--surface-2), var(--surface-2)),
-                      var(--border-gradient, none);
-    background-origin: padding-box, padding-box, border-box;
-    background-clip: padding-box, padding-box, border-box;
-    background-attachment: scroll, scroll, scroll;
+    /* v0.99.5: 2-layer — surface-2 is DERIVED (never a twin); the ring
+       is the derived hairline's border-color */
+    background-image: linear-gradient(var(--surface-2), var(--surface-2));
   }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
@@ -4899,23 +4897,18 @@
   [style*="solid var(--border)"][style*="background: var(--surface-1)"],
   [style*="solid var(--border)"][style*="background-color:var(--surface-1)"],
   [style*="solid var(--border)"][style*="background-color: var(--surface-1)"] {
+    /* v0.99.5: the 2-layer inline plate (the ring is the derived border) */
     background-image: var(--surface-1-gradient, none),
-                      linear-gradient(var(--surface-1), var(--surface-1)),
-                      var(--border-gradient, none) !important;
-    background-origin: padding-box, padding-box, border-box !important;
-    background-clip: padding-box, padding-box, border-box !important;
-    background-attachment: fixed, fixed, fixed !important;
+                      linear-gradient(var(--surface-1), var(--surface-1)) !important;
+    background-origin: padding-box, padding-box !important;
+    background-clip: padding-box, padding-box !important;
+    background-attachment: fixed, fixed !important;
   }
   [style*="solid var(--border)"][style*="background:var(--surface-2)"],
   [style*="solid var(--border)"][style*="background: var(--surface-2)"],
   [style*="solid var(--border)"][style*="background-color:var(--surface-2)"],
   [style*="solid var(--border)"][style*="background-color: var(--surface-2)"] {
-    background-image: var(--surface-2-gradient, none),
-                      linear-gradient(var(--surface-2), var(--surface-2)),
-                      var(--border-gradient, none) !important;
-    background-origin: padding-box, padding-box, border-box !important;
-    background-clip: padding-box, padding-box, border-box !important;
-    background-attachment: fixed, fixed, fixed !important;
+    background-image: linear-gradient(var(--surface-2), var(--surface-2)) !important;
   }
   [style*="solid var(--border)"][style*="background:var(--surface-3)"],
   [style*="solid var(--border)"][style*="background: var(--surface-3)"],
@@ -4925,22 +4918,13 @@
   [style*="solid var(--border-strong)"][style*="background: var(--surface-3)"],
   [style*="solid var(--border-strong)"][style*="background-color:var(--surface-3)"],
   [style*="solid var(--border-strong)"][style*="background-color: var(--surface-3)"] {
-    background-image: linear-gradient(var(--surface-3), var(--surface-3)),
-                      var(--border-gradient, none) !important;
-    background-origin: padding-box, border-box !important;
-    background-clip: padding-box, border-box !important;
-    background-attachment: fixed, fixed !important;
+    background-image: linear-gradient(var(--surface-3), var(--surface-3)) !important;
   }
   [style*="solid var(--border)"][style*="background:var(--bg-app)"],
   [style*="solid var(--border)"][style*="background: var(--bg-app)"],
   [style*="solid var(--border)"][style*="background-color:var(--bg-app)"],
   [style*="solid var(--border)"][style*="background-color: var(--bg-app)"] {
-    background-image: var(--bg-app-gradient, none),
-                      linear-gradient(var(--bg-app), var(--bg-app)),
-                      var(--border-gradient, none) !important;
-    background-origin: padding-box, padding-box, border-box !important;
-    background-clip: padding-box, padding-box, border-box !important;
-    background-attachment: fixed, fixed, fixed !important;
+    background-image: linear-gradient(var(--bg-app), var(--bg-app)) !important;
   }
   /* ══ v0.79.3 THE BORDER FAMILY (the outline-pill rework) — v0.91.2:
      NATIVE. The fixed-attachment border-gradient window + plate + ring
@@ -4987,56 +4971,39 @@
   #connect-overlay {
     text-shadow: var(--text-shadow);
   }
-  /* v0.49 GRADIENT TEXT — when Primary text carries a gradient (theme.js
-     sets data-text-grad on :root), the PROMINENT text clips to it.
-     v0.67 (user spec: "all text that isn't a title text or header don't
-     follow gradients"): the pass now extends to BODY text — the .fmt
-     message scope, row labels, card names, viewer prose. Every text-1
-     consumer is a window on the same fixed field. color: transparent
-     (no -webkit-text-fill-color here) so children that set their own
-     colors — links, code tokens, fmt slots — keep them.
-     EXCLUDED: elements with their own fills (inputs, chips, cards —
-     the Layer-2/3 windows already own their boxes; painting the text
-     field over them would REPLACE their projection). */
-  [data-text-grad] .settings-section h3 span,
-  [data-text-grad] .pub-title,
-  [data-text-grad] .chatbot .name,
-  [data-text-grad] .gatelock-title,
-  [data-text-grad] .panel-header .meta .name,
-  [data-text-grad] .wsx-title,
-  [data-text-grad] .fmt,
-  [data-text-grad] .placeholder,
-  [data-text-grad] .setting-row label,
-  [data-text-grad] .pv-row-title, [data-text-grad] .pv-sub-label,
-  [data-text-grad] .ts-row-name, [data-text-grad] .ts-detail-name,
-  [data-text-grad] .ts-stage-name,
-  [data-text-grad] .color-row-name, [data-text-grad] .art-row-name,
-  [data-text-grad] .art-title, [data-text-grad] .art-sheet-name,
-  [data-text-grad] .art-binary-name, [data-text-grad] .crop-title,
-  [data-text-grad] .lv-title, [data-text-grad] .hub-bunch-hero-name,
-  [data-text-grad] .hi-title,
-  [data-text-grad] .hi-delbar-text, [data-text-grad] .hubrepo-file-path,
-  /* v0.70 TRIM: .hi-counts b is a --text-2 consumer and
-     .chat-working-stalled is a WARN-tinted status label — neither is a
-     Primary-text object, so neither rides the --text-1 field (the
-     accuracy contract: text follows ITS OWN variable, nothing else). */
-  [data-text-grad] .vw-h1, [data-text-grad] .vw-h2, [data-text-grad] .vw-b,
-  [data-text-grad] .vw-doc, [data-text-grad] .vw-title,
-  [data-text-grad] .vw-arch-name, [data-text-grad] #menu button,
-  [data-text-grad] h1, [data-text-grad] h2, [data-text-grad] h3 {
-    background-image: var(--text-1-gradient);
+  /* v0.99.5 THE TEXT-GRADIENT TRACK — ONE WAY (the dual track): all
+     text gradients ride the FMT FIELD's a1 stop, gate-keyed exactly like
+     the chat fmt slots. The old --text-1-gradient family is RETIRED
+     (ink is solid-only, never a window; body text/labels/placeholder
+     text stay solid ink forever — the v0.100 tiers). What joins a1:
+     the TITLE + NAME class (headers, card/row/artifact names, viewer
+     headings). color: transparent only while the gradient lives (the
+     -ink twin pattern); children that set their own colors keep them. */
+  [data-fmt-grad~="a1"] .settings-section h3 span,
+  [data-fmt-grad~="a1"] .pub-title,
+  [data-fmt-grad~="a1"] .chatbot .name,
+  [data-fmt-grad~="a1"] .gatelock-title,
+  [data-fmt-grad~="a1"] .panel-header .meta .name,
+  [data-fmt-grad~="a1"] .wsx-title,
+  [data-fmt-grad~="a1"] .pv-row-title,
+  [data-fmt-grad~="a1"] .ts-row-name, [data-fmt-grad~="a1"] .ts-detail-name,
+  [data-fmt-grad~="a1"] .ts-stage-name,
+  [data-fmt-grad~="a1"] .color-row-name, [data-fmt-grad~="a1"] .art-row-name,
+  [data-fmt-grad~="a1"] .art-title, [data-fmt-grad~="a1"] .art-sheet-name,
+  [data-fmt-grad~="a1"] .art-binary-name, [data-fmt-grad~="a1"] .crop-title,
+  [data-fmt-grad~="a1"] .lv-title, [data-fmt-grad~="a1"] .hub-bunch-hero-name,
+  [data-fmt-grad~="a1"] .hi-title,
+  [data-fmt-grad~="a1"] .hubrepo-file-path,
+  [data-fmt-grad~="a1"] .vw-h1, [data-fmt-grad~="a1"] .vw-h2,
+  [data-fmt-grad~="a1"] .vw-title,
+  [data-fmt-grad~="a1"] .vw-arch-name,
+  [data-fmt-grad~="a1"] h1, [data-fmt-grad~="a1"] h2, [data-fmt-grad~="a1"] h3 {
+    background-image: var(--fmt-a1-gradient, none);
     background-attachment: fixed;
     background-repeat: no-repeat;
     -webkit-background-clip: text;
     background-clip: text;
-    color: transparent;
-    /* v0.74 FIX: NO -webkit-text-fill-color here — it INHERITS, so it
-       killed every child that sets its own color (the '· customized'
-       accent marker, links, code tokens: the user's "primary text…
-       paints over text that accents color, both colors try to render
-       over each other" report). color: transparent alone clips the
-       element's own glyphs; explicit-color children keep their ink —
-       exactly what the comment above always promised. */
+    color: var(--fmt-a1-ink, var(--fmt-a1, var(--text-1)));
   }
   /* v0.74 THE LIBRARY CARD NAMES — the marquee fix. User report:
      "the library where the main text disappears or renders only as a
@@ -5050,13 +5017,13 @@
      and its glyphs paint (and slide) as ONE atomic unit, immune to
      the promotion; will-change is scoped to .marquee only, so short
      names lose the pointless layer entirely. */
-  [data-text-grad] .hub-card-name-in {
-    background-image: var(--text-1-gradient);
+  [data-fmt-grad~="a1"] .hub-card-name-in {
+    background-image: var(--fmt-a1-gradient, none);
     background-attachment: fixed;
     background-repeat: no-repeat;
     -webkit-background-clip: text;
     background-clip: text;
-    color: transparent;
+    color: var(--fmt-a1-ink, var(--fmt-a1, var(--text-1)));
   }
   /* ══ v0.77.7 THE CUSTOMIZED MARKER — ONE VARIABLE, NO Z-FIGHT ════
      User report: "the dynamic customized text that appears next to
@@ -5072,25 +5039,19 @@
      retires any inherited text-grad window (no !important war with the
      gates: they load later in <head> and win at equal !important). */
   .crc-mark {
-    color: var(--accent);
+    /* v0.99.5: the marker is TEXT — the metadata ink (the dual track
+       deletes accent-colored text and the z-fight override with it) */
+    color: var(--text-3);
     font-size: var(--ui-micro-fs);
     font-weight: 600;
   }
-  .crc-mark--chat { color: var(--accent-2); }
-  [data-text-grad] .crc-mark {
-    background-image: none !important;
-    -webkit-background-clip: border-box !important;
-    background-clip: border-box !important;
-    background-attachment: scroll !important;
-    color: var(--accent) !important;
-  }
-  [data-text-grad] .crc-mark--chat { color: var(--accent-2) !important; }
+  .crc-mark--chat { color: var(--text-3); }
   /* v0.65 HARDENING: the canvas name pill is backdrop-filtered — on some
      Chromium/WebView builds the backdrop-filter + background-clip:text
      combination paints an OPAQUE WHITE box (the blur layer ignores the
      text clip). The pill is already 85%-opaque; the blur is imperceptible
      there — drop it while the name rides the gradient clip. */
-  [data-text-grad] .chatbot .name {
+  [data-fmt-grad~="a1"] .chatbot .name {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -5112,7 +5073,7 @@
        readable ink (var(--on-accent-N)).
      · GLYPHS — accent-colored TEXT with no fill of its own clips the
        same fixed projection through the letters (background-clip:
-       text — the [data-text-grad] mechanism, per accent).
+       text — RETIRED in v0.99.5: text gradients are the fmt field's one way).
      · INLINE CATCHERS — the JS-built pills (model browser tone pills,
        provider Free/Paid badges, workspace chips, composer segments)
        set their tint/ring/color as INLINE styles; !important beaters
@@ -5194,12 +5155,6 @@
   }
   /* — Accent 4 WINDOWS — scripts + sourcehut (hub + workspace inject
      their classes; the inline catchers below catch their styles). */
-  [data-a4-grad] .wsx-chip.c1,
-  [data-a4-grad] .wsx-type.pub {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-4) !important;
-  }
 
   /* ══ v0.70 THE ACCURACY WAVE — the named pill families ═══════════
      (the user's report: "The pill boxes … the ones we use for the
@@ -5241,11 +5196,6 @@
     background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
-  [data-a4-grad] .hub-libpill[data-tone="script"][data-on="1"] {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-4) !important;
-  }
   /* the library CHROME pills — the publish button, the my-xyz filter,
      the tone strip — ride the BROWSED category's tone (the
      .hub-root[data-tone] scope decides which accent that is). */
@@ -5272,12 +5222,6 @@
     background-image: var(--accent-3-gradient, none) !important;
     background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
-  }
-  [data-a4-grad] .hub-root[data-tone="script"] .hub-publish,
-  [data-a4-grad] .hub-root[data-tone="script"] .hub-chatpill--mine.on {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-4) !important;
   }
 
   /* the CONNECT pills — the workspace picker's provider pills + sign-in
@@ -5315,13 +5259,6 @@
     background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
-  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-pill[data-on="1"],
-  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-signin,
-  [data-a4-grad] .wsp[data-prov="sourcehut"] .wsp-pub-go {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-4) !important;
-  }
 
   /* — INLINE CATCHERS — the JS-built accent pills (background tint
      as an inline style: model browser pills/chips, provider Free/Paid
@@ -5353,48 +5290,11 @@
     background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
-  [data-a4-grad] [style*="background:rgba(var(--accent-4-rgb)"],
-  [data-a4-grad] [style*="background-color:rgba(var(--accent-4-rgb)"],
-  [data-a4-grad] [style*="background: rgba(var(--accent-4-rgb)"],
-  [data-a4-grad] [style*="background-color: rgba(var(--accent-4-rgb)"] {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-4) !important;
-  }
-  /* INLINE GLYPH CATCHERS — accent-colored text with NO background of
-     its own (labels, values, links in the overlays). */
-  [data-a1-grad] [style*="color:var(--accent)"]:not([style*="background"]),
-  [data-a1-grad] [style*="color: var(--accent)"]:not([style*="background"]) {
-    background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
-    -webkit-background-clip: text !important;
-    background-clip: text !important;
-    color: transparent !important;
-  }
-  [data-a2-grad] [style*="color:var(--accent-2)"]:not([style*="background"]),
-  [data-a2-grad] [style*="color: var(--accent-2)"]:not([style*="background"]) {
-    background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
-    -webkit-background-clip: text !important;
-    background-clip: text !important;
-    color: transparent !important;
-  }
-  [data-a3-grad] [style*="color:var(--accent-3)"]:not([style*="background"]),
-  [data-a3-grad] [style*="color: var(--accent-3)"]:not([style*="background"]) {
-    background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
-    -webkit-background-clip: text !important;
-    background-clip: text !important;
-    color: transparent !important;
-  }
-  [data-a4-grad] [style*="color:var(--accent-4)"]:not([style*="background"]),
-  [data-a4-grad] [style*="color: var(--accent-4)"]:not([style*="background"]) {
-    background-image: var(--accent-4-gradient, none) !important;
-    background-attachment: fixed !important;
-    -webkit-background-clip: text !important;
-    background-clip: text !important;
-    color: transparent !important;
-  }
+  /* v0.99.5: THE INLINE GLYPH CATCHERS ARE RETIRED — accent-colored
+     text is the INK track's business now (the dual track: no accent
+     text at all). The JS-built labels that spelled color:var(--accent)
+     inline are being reassigned to ink tones in the .5 pass; this block
+     no longer mints clip-windows for them. */
 
   /* v0.45 ITEM 4 fix (kept): --bg-app-rgb was referenced (L282, L1451)
      but never defined — per-theme statics below; theme.js now also writes

@@ -97,7 +97,7 @@
       '.wsx-conn{display:flex;align-items:center;justify-content:center;gap:8px;' +
         'min-height:38px;padding:7px 14px;border-radius:11px;cursor:pointer;' +
         'border:1px solid rgba(var(--accent-rgb),0.5);' +
-        'color:var(--accent);font-weight:700;font-size:var(--ui-small-fs);' +
+        'color:var(--text-1);font-weight:700;font-size:var(--ui-small-fs);' +
         'background:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
         'background-image:linear-gradient(135deg,rgba(var(--accent-rgb),0.16),rgba(var(--accent-2-rgb),0.10));' +
         'box-shadow:inset 0 0 12px rgba(var(--accent-rgb),0.05);' +
@@ -226,7 +226,7 @@
       // is theme vars — every theme recolors it (no raw hex).
       '.wsp-loader{padding:14px 12px 12px}' +
       '.wsp-loader-row{display:flex;align-items:baseline;gap:8px}' +
-      '.wsp-loader-text{font-size:var(--ui-small-fs);font-weight:600;color:var(--accent)}' +
+      '.wsp-loader-text{font-size:var(--ui-small-fs);font-weight:600;color:var(--text-2)}' +
       '.wsp-loader-sec{font-size:calc(var(--ui-small-fs) - 1px);color:var(--accent);' +
         'opacity:0.75;font-variant-numeric:tabular-nums}' +
       '.wsp-loader-bar{position:relative;height:3px;border-radius:2px;margin-top:9px;' +
@@ -281,7 +281,7 @@
         'rgba(var(--accent-2-rgb),0.28),rgba(var(--accent-rgb),0.18))}' +
       '.wsx-signin.done{background:rgba(var(--ok-rgb),0.07);border-color:rgba(var(--ok-rgb),0.4)}' +
       '.wsx-signin-title{display:flex;align-items:center;gap:8px;font-weight:700;' +
-        'color:var(--accent-2);font-size:var(--ui-fs)}' +
+        'color:var(--text-1);font-size:var(--ui-fs)}' +
       '.wsx-signin.done .wsx-signin-title{color:var(--ok)}' +
       '.wsx-signin-sub{font-size:var(--ui-small-fs);color:var(--text-3);margin-top:3px;line-height:1.4}' +
       '.wsx-manual{margin:8px 12px 0;border:1px dashed var(--border-strong);border-radius:10px;' +
@@ -436,7 +436,7 @@
       return (
         '<div class="wsx-signin done" id="' + id + '">' +
           '<div class="wsx-signin-title">✓ signed in' +
-            (a.login ? ' as <span style="color:var(--accent-2)">@' + esc(a.login) + '</span>' : '') +
+            (a.login ? ' as <span style="color:var(--text-2)">@' + esc(a.login) + '</span>' : '') +
           '</div>' +
           '<div class="wsx-signin-sub">' + esc(kind) + ' account saved (encrypted) — ' +
             'repos you connect will use it. no repeated token prompts.</div>' +

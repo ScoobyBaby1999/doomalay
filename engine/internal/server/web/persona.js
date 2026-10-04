@@ -1047,12 +1047,12 @@
         return '<div class="pv-row" style="cursor:default">' +
           '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
           '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
-          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--accent-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
+          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
         '</div>';
       }
       function customRow(k, v, scope) {
         var badge = scope === 'global'
-          ? '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--accent-2);letter-spacing:0.3px">🌐 global</span>'
+          ? '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--text-3);letter-spacing:0.3px">🌐 global</span>'
           : '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--text-3);letter-spacing:0.3px">📍 this chat</span>';
         return '<div class="pv-row" style="cursor:default">' +
           '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +

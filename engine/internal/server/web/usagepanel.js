@@ -39,14 +39,14 @@
   }
 
   function statCell(val, label, color, id) {
-    return '<div style="flex:1;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:10px;text-align:center;min-width:0">' +
+    return '<div style="flex:1;background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center;min-width:0">' +
       '<div' + (id ? ' id="' + id + '"' : '') + ' style="font-size:calc(var(--ui-fs) + 3px);font-weight:700;color:' + (color || 'var(--text-1)') + '">' + val + '</div>' +
       '<div style="font-size:var(--ui-micro-fs);color:var(--text-3);margin-top:2px">' + label + '</div>' +
     '</div>';
   }
   function modelRow(m) {
     var cost = fmtCost(m);
-    return '<div data-usmodel="' + esc(String(m.model || '')) + '" style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px">' +
+    return '<div data-usmodel="' + esc(String(m.model || '')) + '" style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px">' +
         '<span style="flex:1;min-width:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(String(m.model || '').split('/').pop()) + '</span>' +
         '<span style="font-size:var(--ui-micro-fs);color:var(--text-3);flex-shrink:0">' + (m.turns || 0) + ' turns</span>' +
         '<span style="font-size:var(--ui-micro-fs);color:var(--text-2);flex-shrink:0">↑' + fmtTokens(m.tokensIn) + ' ↓' + fmtTokens(m.tokensOut) + '</span>' +
@@ -183,7 +183,7 @@
             statCell(fmtTokens(t.tokensOut), 'tokens out', null, 'us-out') +
             statCell(t.hasCost ? fmtCost(t) : '—', t.hasCost ? 'est. cost' : 'unpriced', t.hasCost ? 'var(--warn)' : 'var(--text-3)', 'us-cost') +
           '</div>' +
-          '<div style="background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:12px;margin-top:12px">' +
+          '<div style="background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px">' +
             '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:8px">' +
               '<span style="font-size:calc(var(--ui-small-fs) - 0.5px);font-weight:600;color:var(--text-1);flex-shrink:0">context</span>' +
               '<span id="us-ctx-model" style="font-size:var(--ui-micro-fs);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(String(ctx.model || '').split('/').pop() || '') + ' · ' + fmtTokens(ctx.usedTokens) + ' / ~' + fmtTokens(ctx.limit) + ' tok</span>' +
@@ -238,7 +238,7 @@
     Object.keys(provs).sort().forEach(function (k) {
       var p = provs[k];
       rows +=
-        '<div data-usprov="' + esc(k) + '" style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px">' +
+        '<div data-usprov="' + esc(k) + '" style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px">' +
           '<span style="flex:1;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1)">' + esc(k) + '</span>' +
           '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + (p.turns || 0) + ' turns</span>' +
           '<span style="font-size:var(--ui-micro-fs);color:var(--text-2)">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
@@ -282,7 +282,7 @@
               if (!k) return;
               var p = (d.providers || {})[k];
               nr +=
-                '<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px">' +
+                '<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px">' +
                   '<span style="flex:1;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1)">' + esc(k) + '</span>' +
                   '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + (p.turns || 0) + ' turns</span>' +
                   '<span style="font-size:var(--ui-micro-fs);color:var(--text-2)">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
