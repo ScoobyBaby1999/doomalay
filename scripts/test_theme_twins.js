@@ -88,7 +88,10 @@ global.window = {
 global.document = {
   documentElement: docEl,
   querySelector: function () { return null; },   // drain safety path
-  getElementById: function (id) { return id === 'chat-root' ? chatRoot : null; }
+  getElementById: function (id) { return id === 'chat-root' ? chatRoot : null; },
+  addEventListener: function () {},              // v0.99.6: the slot-row delegation
+  createElement: function () { return { style: {}, classList: { add: function () {}, remove: function () {} }, setAttribute: function () {}, appendChild: function () {}, querySelector: function () { return null; } }; },
+  body: { appendChild: function () {} }
 };
 
 // the #chat-root stub — appearance.js's per-chat twin paint targets it
@@ -462,31 +465,31 @@ resetRec();
 var html = page.render(settingsStub.getState, settingsStub.setState);
 html = expandLazyEditors(html);   // v0.98: expand ALL color rows before the editor assertions
 has('page token wrapper', html, 'data-appr-render="r');
-has('page theme editor surface', html, 'id="tv-surface-gr"');
-has('page theme editor accent1', html, 'id="tv-accent-1-gr"');
-has('page theme editor accent2', html, 'id="tv-accent-2-gr"');
-has('page theme editor accent3', html, 'id="tv-accent-3-gr"');
-// v0.99.4: the INK row is solid-only — a plain color input, no editor
-has('page ink solid input', html, 'id="tv-ink-solid"');
-lacks('page ink has NO gradient editor', html, 'id="tv-ink-gr"');
-lacks('page NO surface-raised row', html, 'id="tv-surface-2-gr"');
-lacks('page NO border row', html, 'id="tv-border-gr"');
-lacks('page NO bg-app row', html, 'id="tv-bg-app-gr"');
-// the canvas background row (field-keyed, texture-capable, seeded from
-// canvasBgSpec); the Grid Colors section carries no own Background row.
-has('page canvas field editor (customize)', html, 'id="tv-canvas-gr"');
-lacks('page grid NO own bg row', html, 'id="gc-bg-gr"');
-has('page grid editor origin', html, 'id="gc-originColor-gr"');
-has('page fmt row a1', html, 'data-fmt-slot="a1"');
-has('page fmt row link', html, 'data-fmt-slot="link"');
+// v0.99.6: THE SLOT ROWS (7 pickers — the editors live in the floating
+// popover, built on open; the page mounts banners only)
+has('page slot row surface', html, 'data-slot-open="surface"');
+has('page slot row ink', html, 'data-slot-open="ink"');
+has('page slot row canvas', html, 'data-slot-open="canvas"');
+has('page slot row accent1', html, 'data-slot-open="accent-1"');
+has('page slot row accent2', html, 'data-slot-open="accent-2"');
+has('page slot row accent3', html, 'data-slot-open="accent-3"');
+has('page slot row text-style', html, 'data-slot-open="text-style"');
+// the old inline-editor era is over at mount time
+lacks('page NO inline surface editor', html, 'id="tv-surface-gr"');
+lacks('page NO inline accent editor', html, 'id="tv-accent-1-gr"');
+lacks('page NO inline ink input', html, 'id="tv-ink-solid"');
+// the Grid Colors + Chat Colors sections folded into the pickers
+lacks('page NO grid colors section', html, 'id="gc-originColor-gr"');
+lacks('page NO chat colors section row', html, 'data-fmt-slot="a1"');
+// 7 banners (one per slot row) render at mount
+ok('page 7 slot banners', (html.match(/class="slot-row-banner"/g) || []).length === 7);
+// the stored --accent spec (folded to --field-accent-1) marks the row
+has('page customized marker (stored override)', html, '· customized');
+// the legacy ban list still holds
 lacks('page NO legacy theme color input', html, 'data-theme-var');
 lacks('page NO legacy grid color input', html, 'data-setting-key="bg"');
 lacks('page NO legacy fmt color input', html, 'data-custom="fmt"');
 lacks('page NO hex readouts', html, 'data-color-hex=');
-has('page customized marker (stored override)', html, '· customized');
-// the stored --accent spec (folded to --field-accent-1) renders 2 swatches
-var accentSeg = html.split('id="tv-accent-1-gr"')[1].split('id="tv-accent-2-gr"')[0];
-ok('page accent editor 2 swatches', (accentSeg.match(/class="gr-color"/g) || []).length === 2);
 
 // the scheduled drain fires against the stub document (querySelector →
 // null → the safe early-return path) — no throw

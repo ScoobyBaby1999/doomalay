@@ -115,47 +115,45 @@ OPENR=$(ev "(function(){
   var lt=window.__lt, mx=0, i;
   for(i=0;i<lt.length;i++){ if(lt[i].d>mx) mx=lt[i].d; }
   return [b.querySelectorAll('*').length, lt.length, Math.round(mx), (window.DoomalayPerf.paints-window.__pOpen0),
-          document.querySelectorAll('.color-row-body .gr-editor').length,
-          document.querySelectorAll('[data-lazy-pfx]').length,
+          document.querySelectorAll('.slot-pop .gr-editor').length,
+          document.querySelectorAll('[data-slot-open]').length,
           document.querySelectorAll('.settings-section').length].join('|');
 })()")
 NODES=$(f "$OPENR" 1); NLT=$(f "$OPENR" 2); MAXLT=$(f "$OPENR" 3); PDELTA=$(f "$OPENR" 4)
 EDN=$(f "$OPENR" 5); LAZY=$(f "$OPENR" 6); SECS=$(f "$OPENR" 7)
-echo "  open: nodes=$NODES longtasks=$NLT(max ${MAXLT}ms) paintsΔ=$PDELTA lazy=$LAZY sections=$SECS"
+echo "  open: nodes=$NODES longtasks=$NLT(max ${MAXLT}ms) paintsΔ=$PDELTA slotRows=$LAZY sections=$SECS"
 ck "the Colors tab mounts LEAN (≤ 450 body nodes)" "$([ "$NODES" -le 450 ] 2>/dev/null && echo yes || echo no)" "nodes=$NODES"
 ck "the open stays off the main thread (longest task < 600ms headless 2-CPU)" "$([ "$MAXLT" -lt 600 ] 2>/dev/null && echo yes || echo no)" "maxLT=${MAXLT}ms over ${NLT} longtasks"
 ck "the open paints bounded (DoomalayPerf.paints delta ≤ 10 over the mount second)" "$([ "$PDELTA" -le 10 ] 2>/dev/null && echo yes || echo no)" "paints delta=$PDELTA"
-ck "collapsed rows carry NO editors until expanded" "$([ "$EDN" -eq 0 ] 2>/dev/null && echo yes || echo no)" "gr-editors inside .color-row-body=$EDN"
-ck "the lazy shells are marked" "$([ "$LAZY" -ge 10 ] 2>/dev/null && echo yes || echo no)" "[data-lazy-pfx]=$LAZY"
-ck "the section cards render (4 sections)" "$([ "$SECS" -eq 4 ] 2>/dev/null && echo yes || echo no)" "sections=$SECS"
+ck "no picker exists until a slot row opens (the popover is on-demand)" "$([ "$EDN" -eq 0 ] 2>/dev/null && echo yes || echo no)" "gr-editors in popovers=$EDN"
+ck "the 7 slot rows render (the field set + text style)" "$([ "$LAZY" -eq 7 ] 2>/dev/null && echo yes || echo no)" "[data-slot-open]=$LAZY"
+ck "the section cards render (2 sections: Theme + The Fields)" "$([ "$SECS" -eq 2 ] 2>/dev/null && echo yes || echo no)" "sections=$SECS"
 
-# 4 — expand a Customize row (a user opens the Customize card first)
-echo "  expand path: the Customize card's [data-section-toggle], then its first [data-color-toggle] row"
-ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/customize/i.test(hs[i].textContent)){ hs[i].click(); return 'ok'; } } return 'none'; })()" >/dev/null
+# 4 — open the SURFACE slot picker (the popover path — v0.99.6)
+echo "  picker path: tap the Surface slot row → the floating picker opens"
+ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/fields/i.test(hs[i].textContent)){ hs[i].click(); return 'ok'; } } return 'none'; })()" >/dev/null
 sleep 0.8
 ROWEX=$(ev "(function(){
-  var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); var sec=null;
-  for(var i=0;i<hs.length;i++){ if(/customize/i.test(hs[i].textContent)){ sec=hs[i].closest('.settings-section'); } }
-  if(!sec) return 'nosec';
-  var t=sec.querySelector('[data-color-toggle]'); if(!t) return 'norow';
+  var t=document.querySelector('[data-slot-open="surface"]'); if(!t) return 'norow';
   window.__ltX0=window.__lt.length; window.__pX0=window.DoomalayPerf.paints;
   t.click();
-  return 'pfx=' + t.getAttribute('data-color-toggle');
+  return 'field=' + t.getAttribute('data-slot-open');
 })()")
 sleep 0.8
 EXPR=$(ev "(function(){
   var lt=window.__lt, mx=0;
   for(var i=window.__ltX0;i<lt.length;i++){ if(lt[i].d>mx) mx=lt[i].d; }
-  return [document.querySelectorAll('.color-row-body .gr-editor').length,
-          document.querySelectorAll('.panel-body .gr-editor').length,
+  var pop=document.querySelector('.slot-pop');
+  return [(pop && pop.querySelector('.gr-editor') ? 1 : 0),
+          document.querySelectorAll('.gr-editor').length,
           Math.round(mx), (window.DoomalayPerf.paints-window.__pX0),
-          document.querySelectorAll('[data-lazy-pfx]').length].join('|');
+          (pop && pop.classList.contains('open') ? 1 : 0)].join('|');
 })()")
-echo "  expand: $ROWEX → rowEd=$(f "$EXPR" 1) allEd=$(f "$EXPR" 2) maxLT=$(f "$EXPR" 3)ms paintsΔ=$(f "$EXPR" 4)"
-ck "the lazy editor builds on expand" "$([ "$(f "$EXPR" 1)" -ge 1 ] 2>/dev/null && echo yes || echo no)" "row editors=$(f "$EXPR" 1) ($ROWEX)"
-ck "the expand is cheap (longest task during expand < 300ms)" "$([ "$(f "$EXPR" 3)" -lt 300 ] 2>/dev/null && echo yes || echo no)" "maxLT=$(f "$EXPR" 3)ms over the expand window"
-ck "the expand paints bounded (paints delta ≤ 6)" "$([ "$(f "$EXPR" 4)" -le 6 ] 2>/dev/null && echo yes || echo no)" "paints delta=$(f "$EXPR" 4)"
-ck "ONE editor exists (the others stay lazy)" "$([ "$(f "$EXPR" 2)" -eq 1 ] 2>/dev/null && echo yes || echo no)" "total gr-editors in panel=$(f "$EXPR" 2), lazy shells left=$(f "$EXPR" 5)"
+echo "  picker: $ROWEX → popEd=$(f "$EXPR" 1) allEd=$(f "$EXPR" 2) maxLT=$(f "$EXPR" 3)ms paintsΔ=$(f "$EXPR" 4) open=$(f "$EXPR" 5)"
+ck "the picker builds on open (the floating popover)" "$([ "$(f "$EXPR" 1)" -ge 1 ] 2>/dev/null && echo yes || echo no)" "popover editors=$(f "$EXPR" 1) ($ROWEX)"
+ck "the picker open is cheap (longest task < 300ms)" "$([ "$(f "$EXPR" 3)" -lt 300 ] 2>/dev/null && echo yes || echo no)" "maxLT=$(f "$EXPR" 3)ms over the open window"
+ck "the picker open paints bounded (paints delta ≤ 6)" "$([ "$(f "$EXPR" 4)" -le 6 ] 2>/dev/null && echo yes || echo no)" "paints delta=$(f "$EXPR" 4)"
+ck "ONE editor exists (the popover is the single picker)" "$([ "$(f "$EXPR" 2)" -eq 1 ] 2>/dev/null && echo yes || echo no)" "total gr-editors=$(f "$EXPR" 2), popover open=$(f "$EXPR" 5)"
 
 # 5 — interact: the '+' tool chip on the GradientUI tools row
 echo "  add chip: the expanded row's .gr-tools [data-gr-add] (uikit.js)"
@@ -163,14 +161,14 @@ ADDR=$(ev "(function(){
   window.__sent=document.querySelector('.settings-nav');
   window.__sentH=document.querySelectorAll('.settings-section h3')[0];
   window.__pA0=window.DoomalayPerf.paints;
-  var add=document.querySelector('.color-row-collapsed.expanded [data-color-body] .gr-tools [data-gr-add]');
+  var add=document.querySelector('.slot-pop .gr-tools [data-gr-add]');
   if(!add) return 'noadd';
   add.click();
   return 'ok';
 })()")
 sleep 0.6
 ADDJ=$(ev "(function(){
-  var row=document.querySelector('.color-row-collapsed.expanded');
+  var row=document.querySelector('.slot-pop');
   return [(window.__sent&&window.__sent.isConnected?1:0),
           (window.__sentH&&window.__sentH.isConnected?1:0),
           (row?1:0),
@@ -182,12 +180,14 @@ echo "  add: sentinels=$SENT/$SENTH rowStillOpen=$ROWOPEN colors=$NCOLORS paints
 ck "the shape change refreshes IN PLACE (no full rerender)" "$([ "$SENT" = "1" ] && [ "$SENTH" = "1" ] && [ "$ROWOPEN" = "1" ] && echo yes || echo no)" "settings-nav sentinel connected=$SENT, first section h3 connected=$SENTH, row still expanded=$ROWOPEN (editor now carries $NCOLORS colors)"
 ck "the interaction paints bounded (delta ≤ 8)" "$([ "$APD" -le 8 ] 2>/dev/null && echo yes || echo no)" "paints delta=$APD"
 
-# 6 — collapse a section card, then re-open it (the toggle pair)
-echo "  collapse/expand pair: the Customize [data-section-toggle] twice"
+# 6 — close the picker (outside-tap), then collapse a section card + re-open
+echo "  close picker + collapse/expand pair: the Fields [data-section-toggle] twice"
+ev "(function(){ var c=document.querySelector('.slot-pop [data-slot-close]'); if(c) c.click(); return 'closed'; })()" >/dev/null
+sleep 0.4
 ev "window.__pC0=window.DoomalayPerf.paints; 'ok'" >/dev/null
-ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/customize/i.test(hs[i].textContent)){ hs[i].click(); return 't1'; } } })()" >/dev/null
+ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/fields/i.test(hs[i].textContent)){ hs[i].click(); return 't1'; } } })()" >/dev/null
 sleep 0.5
-ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/customize/i.test(hs[i].textContent)){ hs[i].click(); return 't2'; } } })()" >/dev/null
+ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/fields/i.test(hs[i].textContent)){ hs[i].click(); return 't2'; } } })()" >/dev/null
 sleep 0.5
 CPD=$(ev "window.DoomalayPerf.paints - window.__pC0")
 ck "the collapse animation paints bounded (≤ 12 paints across the toggle pair)" "$([ "$CPD" -le 12 ] 2>/dev/null && echo yes || echo no)" "paints delta=$CPD"

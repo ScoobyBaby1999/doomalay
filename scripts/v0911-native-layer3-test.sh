@@ -57,7 +57,7 @@ $ENG -open=false -port=$PORT -data-dir=$DATA >/tmp/v0911-eng.log 2>&1 &
 ENGPID=$!
 cleanup(){ kill $ENGPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
 trap cleanup EXIT
-for i in $(seq 1 80); do curl -s $BASE/api/health >/dev/null 2>&1 && break; sleep 0.25; done
+for i in $(seq 1 240); do curl -s $BASE/api/health >/dev/null 2>&1 && break; sleep 0.25; done
 curl -s $BASE/api/health >/dev/null 2>&1 && echo "engine up" || { echo "BOOT FAIL"; exit 1; }
 OWN=$(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
 ck "our child owns the listener" "$([ "$OWN" = "$ENGPID" ] && echo yes || echo no)" "$OWN"
@@ -69,7 +69,7 @@ agent-browser open "$BASE" >/dev/null 2>&1
 # clear/reload: every rig run boots a FRESH engine + data dir (storage is
 # empty by construction) and a reload mid-boot races the app into a
 # half-loaded page the polls then time out on.
-for i in $(seq 1 80); do
+for i in $(seq 1 240); do
   RD=$(timeout 10 agent-browser eval "window.__doomalayReady === true" 2>/dev/null | tr -d '"')
   [ "$RD" = "true" ] && break
   sleep 0.25
@@ -100,14 +100,12 @@ R=$(ev "(async function(){
   var t = document.querySelector('.settings-nav .tab[data-page=appearance]') || Array.from(document.querySelectorAll('.settings-nav .tab')).filter(function(x){return /color/i.test(x.textContent)})[0];
   if (t) t.click();
   await new Promise(r=>setTimeout(r,1500));
-  // v0.98: the color-row editors are LAZY (banner + empty shell until
-  // the user expands) — expand EVERY row before the chip/editor gates.
-  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
-    var rw = h.closest('.color-row-collapsed');
-    if (rw && !rw.classList.contains('expanded')) h.click();
-  });
-  await new Promise(function(rs){ setTimeout(rs,500); });
-  var sp = document.querySelector('.settings-page');
+  // v0.99.6: the chips/editors live in the SLOT PICKER POPOVER — open
+  // the Surface picker (the shape chips + the editor mount there).
+  var slotRow = document.querySelector('[data-slot-open=\"surface\"]');
+  if (slotRow) slotRow.click();
+  await new Promise(function(rs){ setTimeout(rs,600); });
+  var sp = document.querySelector('.slot-pop') || document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var card = sp.querySelector('.settings-section');
   var editor = sp.querySelector('.gr-editor');
@@ -175,14 +173,12 @@ echo "── (4b) the gradient-twin path (a gradient SURFACE FIELD must NOT re-p
 R4=$(ev "(async function(){
   Settings.setState({themeOverrides: {midnight: {'--field-surface': {colors: ['#201a2e','#3a2a50'], dir: 'h'}}}});
   await new Promise(r=>setTimeout(r,1200));
-  // v0.98: lazy editors — re-expand (idempotent) in case the page
-  // re-rendered, then measure the chips.
-  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
-    var rw = h.closest('.color-row-collapsed');
-    if (rw && !rw.classList.contains('expanded')) h.click();
-  });
-  await new Promise(function(rs){ setTimeout(rs,500); });
-  var sp = document.querySelector('.settings-page');
+  // v0.99.6: re-open the Surface picker (the page re-rendered with the
+  // override; the popover is on-demand) then measure the chips.
+  var slotRow = document.querySelector('[data-slot-open=\"surface\"]');
+  if (slotRow) slotRow.click();
+  await new Promise(function(rs){ setTimeout(rs,600); });
+  var sp = document.querySelector('.slot-pop') || document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var inline = mini ? (mini.getAttribute('style') || '') : 'MISSING';
   var gs = document.getElementById('doom-derived-gates');
@@ -211,14 +207,12 @@ ck "gradient SURFACE field: chips stay native (no window, ≤60 projected)" "$GT
 
 echo "── (5) theme-following, natively (a SURFACE field override, no repaint call)"
 R2=$(ev "(async function(){
-  // v0.98: lazy editors — the chip must EXIST before the before/after
-  // recalc measurement (expand-all, idempotent).
-  document.querySelectorAll('[data-color-toggle]').forEach(function(h){
-    var rw = h.closest('.color-row-collapsed');
-    if (rw && !rw.classList.contains('expanded')) h.click();
-  });
-  await new Promise(function(rs){ setTimeout(rs,500); });
-  var sp = document.querySelector('.settings-page');
+  // v0.99.6: the chip must EXIST before the before/after recalc
+  // measurement — open the Surface picker.
+  var slotRow0 = document.querySelector('[data-slot-open=\"surface\"]');
+  if (slotRow0) slotRow0.click();
+  await new Promise(function(rs){ setTimeout(rs,600); });
+  var sp = document.querySelector('.slot-pop') || document.querySelector('.settings-page');
   var mini = sp.querySelector('.gr-mini');
   var before = getComputedStyle(mini).backgroundColor;
   var flipsBefore = (window.DoomalayPerf||{}).paints || 0;

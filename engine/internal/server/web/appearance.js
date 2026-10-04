@@ -636,6 +636,179 @@
   // writes the spec back into themeOverrides (theme.js re-applies the
   // twins immediately, exactly like the old input handler did); rebuild()
   // re-renders the page so the editor's shape is fresh.
+  // ══ v0.99.6 THE SLOT PICKER — one floating popover per field ════
+  // The Colors tab is 2 nesting levels deep (section → slot row); the
+  // GradientUI internals live INSIDE the popover (Floating UI anchored,
+  // flip/shift-guarded), not nested in the row. One singleton popover
+  // element; the content builds per open (the v0.98 lazy pattern, one
+  // editor at a time, now floating).
+  var slotPop = null;       // the singleton element
+  var slotPopCleanup = null; // the floating-ui autoUpdate disposer
+
+  function slotPopover() {
+    if (slotPop) return slotPop;
+    slotPop = document.createElement('div');
+    slotPop.className = 'slot-pop';
+    slotPop.setAttribute('role', 'dialog');
+    slotPop.setAttribute('aria-modal', 'false');
+    document.body.appendChild(slotPop);
+    return slotPop;
+  }
+  function closeSlotPopover() {
+    if (!slotPop || !slotPop.classList.contains('open')) return;
+    slotPop.classList.remove('open');
+    if (slotPopCleanup) { try { slotPopCleanup(); } catch (e) {} slotPopCleanup = null; }
+    // let the close transition finish before the content wipe
+    setTimeout(function () {
+      if (slotPop && !slotPop.classList.contains('open')) slotPop.innerHTML = '';
+    }, 200);
+  }
+  function openSlotPopover(anchorEl, title, buildContent) {
+    var pop = slotPopover();
+    var wasOpen = pop.classList.contains('open');
+    if (slotPopCleanup) { try { slotPopCleanup(); } catch (e) {} slotPopCleanup = null; }
+    pop.innerHTML =
+      '<div class="slot-pop-head">' +
+        '<div class="slot-pop-title">' + title + '</div>' +
+        '<button type="button" class="slot-pop-close" data-slot-close="1" aria-label="close picker">✕</button>' +
+      '</div>' +
+      '<div class="slot-pop-body"></div>';
+    buildContent(pop.querySelector('.slot-pop-body'));
+    pop.querySelector('[data-slot-close]').addEventListener('click', closeSlotPopover);
+    if (!wasOpen) {
+      // mount invisible at the anchor, measure, then animate in
+      pop.style.visibility = 'hidden';
+      pop.classList.add('open');
+    }
+    var FUID = window.FloatingUIDOM;
+    if (FUID && FUID.computePosition) {
+      var update = function () {
+        FUID.computePosition(anchorEl, pop, {
+          placement: 'bottom-start',
+          middleware: [FUID.offset(8), FUID.flip({ padding: 10 }), FUID.shift({ padding: 10 })]
+        }).then(function (_ref) {
+          var x = _ref.x, y = _ref.y;
+          pop.style.left = Math.max(8, Math.min(x, window.innerWidth - 8)) + 'px';
+          pop.style.top = Math.max(8, y) + 'px';
+          if (pop.style.visibility === 'hidden') {
+            pop.style.visibility = '';
+            pop.classList.remove('open');
+            void pop.offsetHeight;   // reflow — the transition lands open
+            pop.classList.add('open');
+          }
+        }).catch(function () {});
+      };
+      update();
+      if (FUID.autoUpdate) slotPopCleanup = FUID.autoUpdate(anchorEl, pop, update);
+    } else {
+      // no floating-ui (defensive): anchor below the row, clamped
+      var r = anchorEl.getBoundingClientRect();
+      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 392)) + 'px';
+      pop.style.top = Math.min(r.bottom + 8, window.innerHeight - 80) + 'px';
+      if (pop.style.visibility === 'hidden') {
+        pop.style.visibility = '';
+        pop.classList.remove('open');
+        void pop.offsetHeight;
+        pop.classList.add('open');
+      }
+    }
+  }
+  // one delegated listener wires every slot row forever (the panel body
+  // re-renders per tab switch; delegation survives it)
+  var slotRowsWired = false;
+  function wireSlotRows() {
+    if (slotRowsWired) return;
+    slotRowsWired = true;
+    document.addEventListener('click', function (e) {
+      var openBtn = e.target.closest ? e.target.closest('[data-slot-open]') : null;
+      if (openBtn) {
+        var rowEl = openBtn.closest('.slot-row');
+        var field = openBtn.getAttribute('data-slot-open');
+        var builder = slotBuilders[field];
+        if (rowEl && builder) {
+          e.preventDefault();
+          e.stopPropagation();
+          builder(rowEl);
+        }
+        return;
+      }
+      var resetBtn = e.target.closest ? e.target.closest('[data-slot-reset]') : null;
+      if (resetBtn) {
+        var fn = slotResetFns[resetBtn.getAttribute('data-slot-reset')];
+        if (fn) { e.preventDefault(); e.stopPropagation(); fn(); }
+        return;
+      }
+      // outside-tap closes the popover (the panel chrome counts as outside)
+      if (slotPop && slotPop.classList.contains('open') &&
+          !(e.target.closest && e.target.closest('.slot-pop'))) {
+        closeSlotPopover();
+      }
+    }, true);
+  }
+  var slotBuilders = {};   // field → (anchorRow) => opens the popover
+  var slotResetFns = {};   // field → () => clears the override + rerenders
+
+  // slotRow(opts) — the 2nd-level row: banner + name + reset + chevron;
+  // tapping opens the floating picker (no inline expansion, no nesting).
+  function slotRow(opts) {
+    var G = window.GradientUI;
+    var spec = opts.spec || { colors: ['#000000'], dir: 'auto' };
+    var bannerCss;
+    if (G && G.css) {
+      var cssVal = G.css(spec, { scale: 0.28 });
+      bannerCss = cssVal.charAt(0) === '#'
+        ? ('background-color:' + cssVal + ';')
+        : ('background-image:' + cssVal + ';');
+    } else {
+      bannerCss = 'background:' + spec.colors[0] + ';';
+    }
+    return '<div class="slot-row">' +
+      '<div class="slot-row-head" data-slot-open="' + opts.field + '" role="button" tabindex="0" aria-label="edit ' + opts.label + '">' +
+        '<span class="slot-row-name">' + opts.label +
+          (opts.customized ? ' <span class="crc-mark">· customized</span>' : '') +
+          (opts.hint ? '<span class="hint">' + opts.hint + '</span>' : '') +
+        '</span>' +
+        '<span class="slot-row-banner" style="' + bannerCss + '"></span>' +
+        '<button type="button" class="slot-row-reset" data-slot-reset="' + opts.field + '" title="reset this field" aria-label="reset ' + opts.label + '">↺</button>' +
+        '<span class="slot-row-arrow">▶</span>' +
+      '</div>' +
+    '</div>';
+  }
+  // a GradientUI editor wired for popover life (the same spec/write
+  // contract the collapsed rows used; live() applies instantly)
+  function popoverEditor(body, pfx, spec, edOpts, onLive, onRebuild) {
+    var G = window.GradientUI;
+    if (!G || !G.editor || !G.wire) return;
+    body.insertAdjacentHTML('beforeend', G.editor(pfx, spec, edOpts));
+    var el = body.querySelector('#' + pfx + '-gr');
+    if (el) G.wire(el, {
+      spec: spec,
+      live: onLive || function () {},
+      rebuild: onRebuild || function () { onLive && onLive(); }
+    });
+    // the live writes repaint the ROW banner too (the visible affordance)
+    var rowBanner = document.querySelector('[data-slot-open="' + pfx.replace(/^sp-/, '') + '"] .slot-row-banner');
+    if (rowBanner && G && G.css) {
+      var paint = function () {
+        var v = G.css(spec, { scale: 0.28 });
+        if (v.charAt(0) === '#') {
+          rowBanner.style.backgroundImage = 'none';
+          rowBanner.style.backgroundColor = v;
+        } else {
+          rowBanner.style.backgroundImage = v;
+          rowBanner.style.backgroundColor = '';
+        }
+      };
+      var origLive = onLive || function () {};
+      // re-wire with the banner side effect
+      if (el) G.wire(el, {
+        spec: spec,
+        live: function () { origLive(); paint(); },
+        rebuild: function () { origLive(); paint(); }
+      });
+    }
+  }
+
   // v0.99.4: field → the LEGACY override keys that fold into it (the
   // row's reset clears them all so a saved pre-v0.99 override dies with
   // the row, not on the next boot's fold).
@@ -757,24 +930,165 @@
         Settings.rerender();
       };
       rowResetFns[pfx] = onReset;
-      // v0.45 ITEM 5: collapsed color row with per-row reset (clears just THIS field's override)
-      rows += colorRowCollapsed({
-        pfx: pfx,
-        label: c.label + (stored ? ' <span class="crc-mark">· customized</span>' : '') +
-          (c.hint ? ' <span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:500">' + c.hint + '</span>' : ''),
-        spec: spec, editorHtml: editorHtml, lazy: true,
-        onReset: onReset
+      // v0.99.6: the SLOT ROW (2nd nesting level; the editor lives in the
+      // floating popover, not nested here)
+      rows += slotRow({
+        field: c.suffix, label: c.label, hint: c.hint, spec: spec,
+        customized: !!stored
       });
+      var thisPfx = pfx, thisSpec = spec, thisOpts = edOpts;
+      // v0.99.6: the DOM-field pickers are SLIM (linear/radial + angle +
+      // stops); ONLY the canvas picker keeps patterns + texture (the
+      // lattice bakes them natively).
+      if (!c.canvas && !edOpts.noDir) thisOpts = Object.assign({}, edOpts, { slim: true });
+      var tvLive2 = tvLive, tvRebuild2 = tvRebuild;
+      slotBuilders[c.suffix] = function (anchorRow) {
+        openSlotPopover(anchorRow, c.label, function (body) {
+          if (c.solid) {
+            // INK: the plain solid input (never a window)
+            var inkHex = thisSpec.colors[0] || '#e0e0e8';
+            body.innerHTML =
+              '<div style="display:flex;align-items:center;gap:10px;padding:6px 2px">' +
+              '<input type="color" value="' + (/^#[0-9a-fA-F]{6}$/.test(inkHex) ? inkHex : '#e0e0e8') + '" ' +
+              'style="width:56px;height:44px;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:4px;cursor:pointer" aria-label="Ink color">' +
+              '<span style="font-size:var(--ui-small-fs);color:var(--text-3)">every text color derives from this one ink — solid only</span>' +
+              '</div>';
+            var inp = body.querySelector('input[type=color]');
+            if (inp) inp.addEventListener('input', function () {
+              writeThemeVar(c.field, inp.value);
+            });
+          } else {
+            // the popover rebuild path: write the spec + swap the
+            // POPOVER's editor in place (never a full rerender — the
+            // panel underneath stays put; the row banner follows live)
+            var spRebuild = function () {
+              writeThemeVar(c.field, thisSpec);
+              var el = body.querySelector('.gr-editor');
+              if (el) el.remove();
+              popoverEditor(body, 'sp-' + c.suffix, thisSpec, thisOpts, tvLive2, spRebuild);
+            };
+            popoverEditor(body, 'sp-' + c.suffix, thisSpec, thisOpts,
+              tvLive2, spRebuild);
+          }
+          // v0.99.6: the CANVAS picker carries the GRID CHILDREN (the
+          // world's lines/dots/origin — Grid Colors folded in here)
+          if (c.canvas) {
+            var gs = document.createElement('div');
+            gs.className = 'slot-pop-grid-sec';
+            // v0.99.6: the three grid children, seeded from the resolved
+            // specs (the same rows Grid Colors carried — expandable in
+            // place inside the picker)
+            var specS = window.DoomTheme.effectiveGridSpecs(Settings.getState());
+            gs.innerHTML = '<div class="slot-pop-grid-title">grid children</div>' +
+              gridColorRow('lineColor', 'Grid Lines', specS.lineColor) +
+              gridColorRow('dotColor', 'Dots', specS.dotColor) +
+              gridColorRow('originColor', 'Origin Marker', specS.originColor);
+            body.appendChild(gs);
+            // the grid rows keep their collapsed-row wiring (expand/reset)
+            wireColorRows(gs);
+            var fr = document.createElement('div');
+            fr.className = 'slot-pop-actions';
+            fr.innerHTML = '<button type="button" class="slot-pop-btn" data-act="grid-reset">follow theme again</button>';
+            body.appendChild(fr);
+            fr.querySelector('[data-act=grid-reset]').addEventListener('click', function () {
+              Settings.setState({
+                bg: '#0a0a0b', lineColor: '#131318',
+                dotColor: '#2e2e3a', originColor: '#4a4a5e'
+              });
+              Settings.rerender();
+            });
+          }
+        });
+      };
+      slotResetFns[c.suffix] = onReset;
     });
-    return section('Customize ' + (t.label || 'Theme'),
-      // v0.56: no intro hint (user spec — keep ONLY the per-row hints that
-      // describe what changes around and beneath each row; those ride the
-      // row labels via c.hint below).
-      rows +
+    return section('The Fields · ' + (t.label || 'Theme'),
+      // v0.99.6: 6 field rows + the TEXT STYLE row (the fmt family) — the
+      // Canvas row carries the grid children in its picker; the Chat
+      // Colors section collapsed into Text style.
+      rows + textStyleRow() +
       '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
       '</div>'
     );
+  }
+
+  // ── v0.99.6: the TEXT STYLE slot row (the fmt family, collapsed to ONE
+  // row — the scheme presets + the 5 stops live in its popover) ──────
+  function textStyleRow() {
+    var s = Settings.getState();
+    var pinned = !!((s.chatScheme && s.chatScheme !== 'teal') ||
+      (s.fmtOverrides && Object.keys(s.fmtOverrides).length > 0));
+    var G = window.GradientUI;
+    // resolve the 5 stop specs (override ?? scheme preset) — the same
+    // resolution formatter.applyScheme performs
+    var sch = s.chatScheme || (window.DoomTheme && window.DoomTheme.themes &&
+      window.DoomTheme.themes[s.theme] && window.DoomTheme.themes[s.theme].scheme) || 'teal';
+    var presets = (window.Formatter && window.Formatter.schemes && window.Formatter.schemes[sch]) || {};
+    var fmtSpecsNow = {};
+    FMT_SLOTS_ALL.forEach(function (k) {
+      fmtSpecsNow[k] = (s.fmtOverrides && s.fmtOverrides[k]) || presets[k] || { colors: ['#38bdf8'] };
+    });
+    // the banner: the a1 stop (the title-gradient stop)
+    var a1 = fmtSpecsNow.a1;
+    var bannerCss;
+    if (G && G.css) {
+      var v = G.css(a1, { scale: 0.28 });
+      bannerCss = v.charAt(0) === '#' ? ('background-color:' + v + ';') : ('background-image:' + v + ';');
+    } else {
+      bannerCss = 'background:' + a1.colors[0] + ';';
+    }
+    slotBuilders['text-style'] = function (anchorRow) {
+      openSlotPopover(anchorRow, 'Text style', function (body) {
+        // the scheme presets (the fmt defaults per theme)
+        body.innerHTML = '<div class="slot-pop-grid-title">scheme</div>';
+        var sw = schemeSwatches();
+        var wrap = document.createElement('div');
+        wrap.innerHTML = sw;
+        body.appendChild(wrap);
+        wrap.querySelectorAll('[data-scheme]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            // the same write the global chat-scheme action performs
+            Settings.setState({ chatScheme: b.getAttribute('data-scheme'), fmtOverrides: {} });
+            Settings.rerender();
+          });
+        });
+        // the 5 stops (the same fmt machinery the Chat Colors rows used)
+        var sec = document.createElement('div');
+        sec.className = 'slot-pop-grid-sec';
+        var inner = '';
+        FMT_SLOTS_ALL.forEach(function (k) {
+          inner += fmtColorRow(k, fmtSpecsNow[k], 'global');
+        });
+        sec.innerHTML = inner;
+        body.appendChild(sec);
+        // the collapsed fmt rows need BOTH wirings: the toggle/reset
+        // heads (wireColorRows → buildLazyEditor) + the editors
+        wireColorRows(sec);
+        wireFmtEditors(sec);
+        // the collapse-all reset
+        var act = document.createElement('div');
+        act.className = 'slot-pop-actions';
+        act.innerHTML = '<button type="button" class="slot-pop-btn" data-act="reset-fmt">reset chat colors</button>';
+        body.appendChild(act);
+        act.querySelector('[data-act=reset-fmt]').addEventListener('click', function () {
+          Settings.setState({ chatScheme: 'teal', fmtOverrides: {} });
+          Settings.rerender();
+        });
+      });
+    };
+    slotResetFns['text-style'] = function () {
+      Settings.setState({ chatScheme: null, fmtOverrides: {} });
+      Settings.rerender();
+    };
+    return '<div class="slot-row">' +
+      '<div class="slot-row-head" data-slot-open="text-style" role="button" tabindex="0" aria-label="edit text style">' +
+        '<span class="slot-row-name">Text style' + (pinned ? ' <span class="crc-mark">· customized</span>' : '') +
+          '<span class="hint">the text track — every text gradient, chat + titles</span></span>' +
+        '<span class="slot-row-banner" style="' + bannerCss + '"></span>' +
+        '<span class="slot-row-arrow">▶</span>' +
+      '</div>' +
+    '</div>';
   }
 
   function cssVarLive(name) {
@@ -804,22 +1118,14 @@
     icon: '🎨',
     render: function (getState, setState) {
       const s = getState();
+      // v0.99.6: TWO sections — the grid children live in the Canvas
+      // picker, the fmt family in the Text style picker. 2 nesting levels.
+      wireSlotRows();
       return pageRender(
         section('Theme', '' +
           themeSwatches()
         ) +
-        themeCustomizeSection() +
-        gridSection() +
-        section('Chat Colors', '' +
-          // v0.56: no intro hint (user spec); the per-row hints stay.
-          schemeSwatches() +
-          fmtColorRow('a1', 'Accent 1', 'headings · keywords') +
-          fmtColorRow('a2', 'Accent 2', 'subheads · code') +
-          fmtColorRow('a3', 'Accent 3', 'emphasis · links') +
-          fmtColorRow('bright', 'Bright text', 'bold') +
-          fmtColorRow('link', 'Links', '') +
-          '<button data-action="chat-colors-reset" style="background:transparent;border:1px solid var(--border);color:var(--text-3);padding:8px 14px;border-radius:8px;font-size:calc(var(--ui-small-fs) - 1px);font-family:inherit;cursor:pointer;margin-top:6px">reset to preset defaults</button>'
-        )
+        themeCustomizeSection()
       );
     }
   });

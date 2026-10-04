@@ -660,16 +660,19 @@
         }
         return out;
       }
+      var styleList = opts.slim
+        ? [['auto','linear'], ['radial','radial']]   // v0.99.6: the field pickers slim to 2 styles
+        : DIR_STYLES;
       var styleRow = opts.noDir ? '' :
-        '<div class="gr-row gr-row-dir">' + dirPills(DIR_STYLES) + '</div>';
-      var patRow = opts.noDir ? '' :
+        '<div class="gr-row gr-row-dir">' + dirPills(styleList) + '</div>';
+      var patRow = (opts.noDir || opts.slim) ? '' :    // v0.99.6: patterns are canvas-family only
         '<div class="gr-row gr-row-pat">' +
           '<span class="gr-row-label">patterns</span>' + dirPills(DIR_PATTERNS) +
         '</div>';
 
       // 6 — the angle slider (diag only; 135 is the default)
       var ang = (typeof spec.angle === 'number') ? spec.angle : 135;
-      var angleRow = (spec.dir === 'diag') ?
+      var angleRow = (spec.dir === 'diag' || (opts.slim && spec.dir !== 'radial')) ?
         '<div class="gr-row gr-row-angle">' +
           '<span class="gr-row-label">angle</span>' +
           '<input type="range" min="0" max="360" step="5" class="gr-angle" data-gr-angle="1" value="' + ang + '" aria-label="gradient angle">' +
