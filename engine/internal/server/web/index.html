@@ -5652,6 +5652,31 @@
   import * as VC from './vendor/virtual-core.mjs';
   window.VirtualCore = VC;
 </script>
+<!-- v1.01.1: THE ASSETS VENDORS (all permissive — LICENSEs under
+     vendor/licenses/).
+     · fflate 0.8.3 (MIT, UMD 33KB raw / ~12.6KB gz) — the .doomtheme
+       v2 zip container read/write (unzip/zip + strToU8/strFromU8);
+       the zip-bomb defense is OURS (per-entry filter on
+       file.originalSize + total caps) and zip-slip entry names are
+       OUR normalization burden (fflate never touches the fs).
+     · maxrects-packer 2.7.3 (MIT, UMD min 12.4KB) — the field atlas
+       (2048² clamp, spill to bins; we own pixel extraction).
+     · @material/material-color-utilities 0.4.0 (Apache-2.0, the
+       official +esm single-file bundle, 103KB raw) — GENERATION-TIME
+       ONLY: the image → source color → DynamicScheme suggester. HCT
+       never becomes a second runtime truth (culori OKLCH stays the
+       one truth); MCU runs when the USER asks for a suggestion and
+       its output is just a 7-slot proposal the user accepts or
+       rejects. -->
+<script src="vendor/fflate.js"></script>
+<script type="module">
+  import * as MRP from './vendor/maxrects-packer.mjs';
+  window.MaxRectsPackerLib = MRP;
+</script>
+<script type="module">
+  import * as MCU from './vendor/mcu.esm.js';
+  window.MCU = MCU;
+</script>
 <!-- v0.33→v0.44: THE SHARED UI KIT — the modular pill system (UIPills),
      GradientUI v2 (the 1–15 color gradient engine + the compact editor)
      and the drag-to-crop overlay (CropUI). One kit, reused by the hub /
