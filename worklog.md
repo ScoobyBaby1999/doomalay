@@ -155,3 +155,92 @@ Stage Summary:
   (their per-turn ACTIVE segment + my persistent whole-bundle attach)
   compose into one UX: attach ▣ → segment shows the bundle → the bot
   loads the member it picks → the segment refines to that member.
+
+---
+Task ID: v0981-wave
+Agent: Super Z (main, continued session)
+Task: Land the in-flight v0.97.1 CATALOGUE & SHEETS POLISH WAVE (previous
+  session died mid phase-E: code was done, rig/rebuild/push were not), then
+  begin the v0.98.2 research turn (element catalog + library swap study).
+
+Work Log:
+- REBASE: stashed the uncommitted wave, fast-forwarded main to origin/main
+  (upstream parallel bot had pushed v0.97.0 THE CANVAS WAVE + v0.98.0 THE
+  FINISH WAVE — 4 commits, zero overlap with this wave's files; only the
+  engine binary conflicted, resolved by rebuild). Re-versioned the wave
+  v0.97.1 -> v0.98.1 (upstream took the 0.97.x line).
+- Fresh sandbox had NO Go: installed go1.25.0 to /home/z/sdk (go.mod wants
+  1.25.0). Rebuilt the binary with the merged tree + ldflags 0.98.1.
+- RIG DEBUG (9/19 -> 19/19): the code was RIGHT, the rig had bugs —
+  (a) FOUR uncalled-IIFE evals (agent-browser serializes a function object
+  as '{}' — the nvidia save click, the wsx-connect click etc silently
+  no-oped); (b) True/yes translation missing on one ck; (c) the picker
+  loader is real but unobservable post-hoc (fresh engine resolves the
+  empty globals list in ~20ms — rig-proven loader seen 19ms gone 24ms) ->
+  added the fetch delay harness (1.6s on /api/workspaces + discover only);
+  (d) the github account must be POSTed BEFORE the first picker open
+  (v0.98 C5's 60s hydrateAccounts cache reads an out-of-band later add as
+  stale).
+- ONE REAL CODE FIX: wireSheetDrag's fling detector used raw instantaneous
+  velocity — a sub-frame move pair read as an enormous px/ms fling and
+  dismissed on a gentle pull. Now rides gesture.js's own discipline (its
+  v0.42 fix): the 4ms dt floor + 0.7/0.3 EMA.
+- KEY REFRESH: .secrets rewritten with the user's new batch (github,
+  opencode, privatemode, nvidia, openrouter, hf, mistral mstrl_, new
+  tunnel) — nvidia + github live-validated against the real APIs.
+- VERIFIED: rig v0981 19/19 ALL GREEN (incl. the real nvidia key save ->
+  cache bust -> reopen auto-sync, and the real github account -> 12 repos
+  in the connect box), go test ./... ok, uikit 140, theme twins 165,
+  v098-panel-colors 21/21 (upstream's suite on the merged tree; needed
+  cp engine/bin/doomalay-engine /tmp/doomalay-engine for its fixed path).
+- PUSHED: main 0881d47a..94a064ff + tag v0.98.1-catalogue-sheets-wave.
+
+Stage Summary:
+- The 8-issue batch is now FULLY closed (1-3 here, 4-8 by the parallel
+  waves). Engine 0.98.1. Next: the v0.98.2 research turn (every element on
+  every screen -> the swappable-element set list + MIT/Apache library swap
+  study for the color system + gradient text perf) — NO implementation.
+
+---
+Task ID: v0982-research
+Agent: Super Z (main)
+Task: The user's research turn: push the previous wave (done: v0.98.1 above),
+  then browse the repo for EVERY element displayed in EVERY screen and group
+  each into the allowed swappable-element set + the final library-swap study
+  for the v0.98 color system plan. NO implementation.
+
+Work Log:
+- Five parallel census agents read the full web surface (canvas world, chat
+  surface, settings/appearance, overlays/connect flows, artifacts/library/
+  shared kit) — every element carries file:line.
+- 16 web searches (scripts/research-v0982/) for MIT/Apache library
+  candidates + license verification.
+- Synthesized docs/RESEARCH-V0982-ELEMENT-CATALOG.md:
+  * PART A: the ratified 22-member set (user's 16 + editor box, list
+    renderer, library card [user-anticipated, census-confirmed] + toast,
+    meter, node [census-forced]) with fold decisions.
+  * PART B: the complete catalog — every element on every screen mapped
+    to one member (~400 elements, per-surface tables).
+  * PART C: the border vs surface-raised evidence (8 file:line findings —
+    the user's complaint confirmed) + the 10-vars -> FIELD model mapping
+    table.
+  * PART D: the library swap study — ADOPT culori (MIT, replaces
+    shadeHex/mixHex/quantColor/OKLab blends), material-color-utilities
+    (Apache-2.0, the image->palette pipeline), PixiJS extensions
+    (NineSliceSprite/FillGradient/RenderTexture — already vendored),
+    DTCG token format (the .doomtheme v2 keys). REJECT Shoelace/Lion/UI5,
+    Style Dictionary runtime, node-vibrant, chroma. PRUNE wunderbaum
+    (dead since v0.42), the .artt-* tree CSS shipped twice, keys.js rogue
+    overlay + its hardcoded rgba(0,0,0,.48), localmodels duplicate X,
+    .ts-star-on hardcoded #f5b642.
+  * PART E: gradient text lag root cause (background-clip:text mask tax +
+    fixed-attachment unsupported on Android WebView -> the L2 emulation
+    cost) + the 3-tier verdict (ink never a window / static titles use
+    local gradients / animated heroes use Pixi FillGradient).
+  * PART F: how it feeds v0.99/v0.100/v0.101.
+
+Stage Summary:
+- The element catalog is the Batch-2 input the color plan was waiting for;
+  the library study picks 4 adoptions (2 of them free — already vendored)
+  and kills 6 homegrown/duplicated systems. Research only — nothing
+  implemented.
