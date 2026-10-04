@@ -350,3 +350,23 @@ Work Log:
 Stage Summary:
 - PUSHED: main af028270 → 5554349e (v1.00.1). CI builds the APK with the fix.
 - Next: v1.00.2 gradient-text tiers (the bake) → v1.00.3 L2 pseudo-only → v1.00.4 virtual-core → v1.00.5 consolidations → v1.00.0 ship; then v1.01 THE ASSETS.
+
+---
+Task ID: v1.00 + v1.01 waves (repo record)
+Agent: Z.ai Code (main orchestrator)
+Task: The user order: push v1.00 + v1.01 together; fix the picker overlay that doesn't register touches. Iron law per phase: plan → web search → real plan → build → red-team with real tests.
+
+Work Log:
+- 5554349e v1.00.1: THE POSITIVE LIST — isInsideUI retires; the canvas input owns ONLY #c + #chatbots; the #sheet-root class dies at the root (6th recurrence was the v0.99.6 popover). THE REAL-TOUCH RIG (v1000, Playwright hasTouch + CDP): 19/19 with the fix, 13/19 against the old code (negative-control proven). + the sticky-head top:0 fix (the ✕ vanished mid-scroll) + touch-action: manipulation. LANDMINE documented: the Go build cache does NOT invalidate on embedded web-asset changes — rigs must go build -a.
+- 6f4abf8b v1.00.2: THE GRADIENT-TEXT TIERS (PART E) — the fmt family + the title family + the 2 accent-glyph stragglers drop background-attachment: fixed (local-box, one paint, zero projection; clip:text can never ride L2); the object track untouched. v1002 rig 6/6 (drag with live gradient text = ZERO longtasks).
+- e2fb1c0b v1.00.3: THE PHANTOM PURGE — painted-set hygiene (image-none riders leave the set; the set-theme swatch class caught live with instrumented builds: the v0.98 flat-gradient plate catcher computes non-none in a mid-flip transient). The legacy-bake retirement proven (v1003 rig 5/5: every VISIBLE painted element rides L2). THE OFFSCREEN MINT prototyped + REVERTED (exposed a pre-existing settings-page-render/root-registry race — future wave, documented).
+- 2ca3729d v1.00.4: @tanstack/virtual-core 3.17.11 vendored + loaded (window.VirtualCore, browser-verified). The WIRING = its own wave (the catalogue's DOM is already PAGE-capped — the anti-spaghetti call).
+- 191893b7 v1.00.5: THE CHEAP CONSOLIDATIONS — toast ×8 → uikit DoomToast (delegates, zero call-site churn); keys.js rides THE OVERLAY SCREEN (the last hardcoded rgba(0,0,0,.48) scrim dies); the localmodels double-✕ gone; the amber ts-star themed (var(--warn) + triplet).
+- 9e3bcc1e + tag v1.00.0-the-masks: version 1.00.0 SHIPPED. Battery: go 8 pkgs · v1000 19/19 · v1002 6/6 · v1003 5/5 · v099 5/6/6 · v098 21/13/10 · v097 29/29 · v092 13/13 · v0911 12/12 · twins 194 · uikit 140.
+- 1f451188 v1.01.1: THE ASSETS VENDORS — fflate 0.8.3 (MIT UMD) + maxrects-packer 2.7.3 (MIT ESM .mjs — the dist min.js is plain CJS, ReferenceErrors in the browser) + material-color-utilities 0.4.0 (Apache-2.0, the +esm single-file). All browser-verified (fflate zip round-trip; MCU image→SchemeContent end-to-end; MCU.sourceColorFromImage needs a real IMAGE element — a canvas hangs its load path).
+- 36cf2709 + tag v1.01.0-the-assets: THE IMAGE→PALETTE SUGGESTER — the canvas picker: pick an image → MCU quantize+score → SchemeContent dark-first → the 6-swatch proposal → apply writes the 7 fields (one-runtime-truth: MCU is generation-time only). v1012 rig 7/7 (real file upload end-to-end). Version 1.01.0.
+
+Stage Summary:
+- BOTH WAVES SHIPPED: v1.00.0-the-masks + v1.01.0-the-assets (CI building the APKs).
+- The user's touch bug is FIXED AT THE ROOT and negative-control-proven.
+- NEXT (per PLAN-V101): the field atlas (maxrects, 2048² clamp, MAX_TEXTURE_SIZE query), the 9-slice/icon registry, the .doomtheme v2 zip container + the 8-rung security ladder; then the virtual-core wiring wave; then v1.02 THE LIBRARY.
