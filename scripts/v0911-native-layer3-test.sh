@@ -72,7 +72,13 @@ agent-browser open "$BASE" >/dev/null 2>&1
 for i in $(seq 1 240); do
   RD=$(timeout 10 agent-browser eval "window.__doomalayReady === true" 2>/dev/null | tr -d '"')
   [ "$RD" = "true" ] && break
-  sleep 0.25
+  # the about:blank race (a cold session's open can land before the tab
+  # exists) — re-open instead of polling a blank page forever
+  BL=$(timeout 10 agent-browser eval "location.href" 2>/dev/null | tr -d '"')
+  if [ "$BL" = "about:blank" ] || [ -z "$BL" ]; then
+    agent-browser open "$BASE" >/dev/null 2>&1
+  fi
+  sleep 0.4
 done
 ck "the app booted (__doomalayReady)" "$([ "$RD" = "true" ] && echo yes || echo no)" "$RD"
 echo "[boot-dbg] $(timeout 10 agent-browser eval "JSON.stringify({url:location.href, rs:document.readyState, bodyKids:(document.body?document.body.children.length:-1), scripts:document.querySelectorAll('script').length, err:window.__bootErr||null})" 2>&1 | head -c 300)"

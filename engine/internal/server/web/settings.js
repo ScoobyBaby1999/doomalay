@@ -350,13 +350,50 @@
     });
 
     // Wire up collapsible section headers (tap to toggle).
+    // v0.99.7 THE SETTLED COLLAPSE — the slide-out animation must keep
+    // laying out; content-visibility:hidden lands AFTER it ends (the
+    // <details> slot pattern), turning a collapsed section's hidden
+    // content from paint-skipped into LAYOUT-skipped too.
+    function settleCollapsed(section) {
+      if (!section) return;
+      if (section._settleT) clearTimeout(section._settleT);
+      section._settleT = setTimeout(function () {
+        section._settleT = 0;
+        if (!section.classList.contains('expanded')) {
+          section.classList.add('collapsed-settled');
+        }
+      }, 320);
+    }
+
     const sectionHeaders = rootEl.querySelectorAll('[data-section-toggle]');
     sectionHeaders.forEach(function (h) {
       h.addEventListener('click', function () {
         const section = h.parentElement;
-        if (section) section.classList.toggle('expanded');
+        if (!section) return;
+        const opening = !section.classList.contains('expanded');
+        section.classList.toggle('expanded');
+        if (opening) {
+          // expanding clears the settled-skip instantly (the content
+          // must lay out for the slide-in)
+          section.classList.remove('collapsed-settled');
+          // v0.99.7 THE CAP-OPEN ACCORDION: at most TWO sections stay
+          // expanded per page (bounded DOM work; the newest open + the
+          // previous stays for compare) — the oldest collapses.
+          const open = Array.from(rootEl.querySelectorAll('.settings-section.expanded'))
+            .filter(function (el) { return el !== section; });
+          while (open.length >= 2) {
+            const oldest = open.shift();
+            oldest.classList.remove('expanded');
+            settleCollapsed(oldest);
+          }
+        } else {
+          settleCollapsed(section);
+        }
       });
     });
+    // sections that START collapsed (a fresh render) settle immediately —
+    // no animation to wait out.
+    rootEl.querySelectorAll('.settings-section:not(.expanded)').forEach(settleCollapsed);
 
     // Wire up buttons with data-action (for things like "reset view").
     const btns = rootEl.querySelectorAll('[data-action]');

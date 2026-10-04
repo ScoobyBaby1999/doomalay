@@ -1495,6 +1495,12 @@
     min-height: 0;
     overflow: hidden;
     padding: 0 16px;
+    /* v0.99.7 THE NESTED-BOX RECIPE: a SETTLED collapsed section skips
+       LAYOUT too (content-visibility:hidden — the <details> slot's
+       native pattern per the WHATWG rendering spec). 'settled' lands
+       via transitionend (settings.js) so the collapse ANIMATION keeps
+       laying out through its slide; the expand clears it instantly. */
+    contain-intrinsic-size: auto 480px;
     /* v0.81.7: collapsed accordion content leaves the tree entirely.
        RED-TEAM FINDING (live, agent-browser): a collapsed section's
        clipped buttons stayed in the ACCESSIBILITY tree — an a11y-ref
@@ -1511,6 +1517,24 @@
   .settings-section.expanded .section-inner {
     padding: 2px 16px 14px;
     visibility: visible;
+  }
+  .settings-section.collapsed-settled .section-inner {
+    content-visibility: hidden;
+  }
+  /* v0.99.7: OFFSCREEN rows inside expanded panes skip render until
+     scrolled near (cv:auto + the intrinsic-size estimate keeps scroll
+     stable; the L2 read-phase is untouched — cv:auto keeps layout, so
+     geometry reads never force anything). Applies to every settings
+     surface's row classes (settings/slot/color/pv/ts/hp). */
+  .settings-section .setting-row,
+  .settings-section .slot-row,
+  .settings-section .color-row-collapsed,
+  .settings-section .pv-row,
+  .settings-section .ts-row,
+  .settings-section .hp-sec,
+  .settings-section .art-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px;
   }
   /* v0.25: rows STACK — label (+hint) on its own line, control BELOW it
      full-width. Nothing gets pushed off-screen; every control is
