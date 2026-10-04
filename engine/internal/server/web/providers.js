@@ -377,6 +377,9 @@
             devBtn.textContent = 'use public key'; devBtn.disabled = false;
             if (window.toast) window.toast('✓ public keys installed (' + ((d.installed || []).length) + ') — validating…');
             // refresh keys + models exactly like a manual save
+            // v0.98.1: the catalog changed (public keys landed) — the
+            // same invalidation signal a manual key save fires.
+            try { window.dispatchEvent(new CustomEvent('doomalay:catalog-changed')); } catch (e) {}
             fetch('/api/keys').then(function (r) { return r.json(); }).then(function (k) {
               keys = k || {};
               revalidated = false;
@@ -594,6 +597,14 @@
           fetch('/api/models?refresh=1').then(function (r) { return r.json(); })
         ]);
       }).then(function (results) {
+        // v0.98.1 THE CATALOG-CHANGED SIGNAL (user spec: 'when the cloud
+        // provider screen is updated and new provider added, the catalogue
+        // should auto refresh without me having to manually click resync'):
+        // the engine's catalog is fresh NOW (the ?refresh=1 above synced it
+        // with the new key) — tell every catalog reader (the model browser's
+        // localStorage cache + the quick-switch cache) to drop their stale
+        // copies so the next open re-fetches.
+        try { window.dispatchEvent(new CustomEvent('doomalay:catalog-changed')); } catch (e) {}
         keys = results[0] || {};
         providers = (results[1] && results[1].providers) || providers;
         catalogModels = (results[1] && results[1].models) || catalogModels;

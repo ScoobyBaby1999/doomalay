@@ -183,6 +183,82 @@
     });
   }
 
+  // v0.98.1 THE SHEET DRAG-DOWN (user spec: the artifacts screen 'should
+  // be able to slide down to dismiss via a gesture from the top like the
+  // regular panels — currently only gesture-nav back or the X button').
+  // The drawer/editor head is the grab handle: a downward drag translates
+  // the panel under the finger (rigid, transition frozen); release commits
+  // the dismiss past 25% of the panel height (or a ~0.5px/ms downward
+  // fling — gesture.js's own thresholds), otherwise the panel springs
+  // back. The onClose guard rides the SAME dirty-check the ✕ uses (an
+  // editor with unsaved changes blocks the drag-dismiss too). Buttons in
+  // the head are excluded — taps on ✕ / ‹ / tree controls stay theirs.
+  function wireSheetDrag(root, onClose) {
+    var panel = root.querySelector('.art-panel');
+    var head = root.querySelector('.art-head');
+    if (!panel || !head) return;
+    var dragging = false, sy = 0, dy = 0, lastY = 0, lastT = 0, vel = 0;
+
+    head.addEventListener('pointerdown', function (e) {
+      if (e.target && e.target.closest && e.target.closest('button')) return;
+      if (!root.isConnected || root.style.display === 'none') return;
+      dragging = true; sy = e.clientY; dy = 0; vel = 0;
+      lastY = e.clientY; lastT = performance.now();
+      try { head.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault(); // no text selection while sheet-dragging
+    });
+    head.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      dy = Math.max(0, e.clientY - sy);
+      var now = performance.now();
+      // v0.98.1: gesture.js's own discipline (its v0.42 fix) — the 4ms dt
+      // floor + 0.7/0.3 EMA. A raw sub-frame move pair (synthetic events,
+      // the scroll-chain rebase class) reads as an enormous px/ms fling and
+      // dismisses on a gentle pull; real fingers never produce sub-frame
+      // pairs, so the floor changes nothing for them.
+      if (now - lastT > 4) {
+        vel = vel * 0.7 + (((e.clientY - lastY) / (now - lastT)) * 0.3);
+      }
+      lastY = e.clientY; lastT = now;
+      if (dy > 8) { // slop — taps and micro-jitter never move the sheet
+        panel.style.transition = 'none';
+        panel.style.transform = 'translateY(' + dy + 'px)';
+      }
+    });
+    function springBack() {
+      panel.style.transition = '';
+      panel.style.transform = '';
+    }
+    head.addEventListener('pointerup', function () {
+      if (!dragging) return;
+      dragging = false;
+      var h = panel.offsetHeight || 400;
+      var commit = dy > Math.min(h * 0.25, 160) || (vel > 0.5 && dy > 8);
+      if (!commit) { springBack(); return; }
+      if (onClose && onClose() === false) { springBack(); return; } // dirty editor
+      // THE DISMISS SLIDE: continue under the finger's momentum to 105%,
+      // then let closeOverlay's own cleanup hide the overlay. The inline
+      // transition must carry opacity too (an inline `transition` replaces
+      // the class rule for ALL properties — without it the fade snaps).
+      panel.style.transform = 'translateY(' + (dy || 40) + 'px)';
+      requestAnimationFrame(function () {
+        if (!panel.isConnected) return;
+        panel.style.transition = 'transform 0.19s cubic-bezier(0.32,0.72,0,1), opacity 0.15s';
+        panel.style.transform = 'translateY(105%)';
+      });
+      closeOverlay();
+      setTimeout(function () {
+        panel.style.transition = '';
+        panel.style.transform = '';
+      }, 260);
+    });
+    head.addEventListener('pointercancel', function () {
+      if (!dragging) return;
+      dragging = false;
+      springBack();
+    });
+  }
+
   // v0.18: the Android BACK gesture. Returns:
   //   false   — nothing open (caller falls through)
   //   'blocked' — the editor has unsaved changes: the in-DOM discard
@@ -255,6 +331,8 @@
       '</div>';
     var root = openOverlay(html);
     wireClose(root, null);
+    // v0.98.1: the head is a drag handle — slide down to dismiss.
+    wireSheetDrag(root, null);
 
     var listEl = root.querySelector('#art-list');
     list(sessionId).then(function (items) {
@@ -1042,6 +1120,9 @@
     }
 
     wireClose(root, function () { return guardFor('close'); });
+    // v0.98.1: the head is a drag handle here too — a drag-dismiss rides
+    // the SAME dirty-guard as the ✕ (unsaved edits block + banner).
+    wireSheetDrag(root, function () { return guardFor('close'); });
     root.querySelector('.art-back').addEventListener('click', function () {
       if (isGhostTap()) return; // ghost of the row-tap that opened the editor
       if (guardFor('back')) openDrawer(sessionId, currentChat);

@@ -58,7 +58,25 @@
   // v0.38: the app session's birth — the catalog cache refreshes in the
   // background on the FIRST browser open of each session (boot), later
   // opens in the same session are pure cache.
+  // v0.98.1: that "later opens are pure cache" rule is RETIRED — every
+  // open revalidates in the background now (stale-while-revalidate),
+  // because a key saved mid-session (a NEW provider) must appear without
+  // a manual resync (user spec: 'when the cloud provider screen is updated
+  // and new provider added, the catalogue should auto refresh without me
+  // having to manually click resync or anything').
   var bootedAt = Date.now();
+
+  // v0.98.1 THE CATALOG-CHANGED SIGNAL: providers.js dispatches
+  // 'doomalay:catalog-changed' on every successful key save (the engine
+  // catalog was already force-refreshed server-side by its ?refresh=1
+  // call — this event is the CLIENT-side invalidation: the localStorage
+  // cache and the quick-switch cache die so the next read re-fetches).
+  var CAT_CACHE_KEY = 'doomalay.modelcache.v1';
+  window.addEventListener('doomalay:catalog-changed', function () {
+    try { localStorage.removeItem(CAT_CACHE_KEY); } catch (e) {}
+    quickCat = null;   // the quick-switch path re-fetches too
+    quickCatAt = 0;
+  });
 
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
   var LS = 'doomalay.model-select.';
@@ -478,7 +496,8 @@
     // the open was re-downloading the full payload every time). The cache
     // refreshes whenever a fetch succeeds: boot (ensureCatalog), the sync
     // button (refresh=1), and key add/remove (providers.js forces refresh).
-    var CAT_CACHE_KEY = 'doomalay.modelcache.v1';
+    // v0.98.1: the key lives at MODULE level now (the catalog-changed
+    // listener busts it from outside open()).
     function cacheSave() {
       try {
         localStorage.setItem(CAT_CACHE_KEY, JSON.stringify({ at: Date.now(), catalog: catalog }));
@@ -524,12 +543,14 @@
     };
 
     // v0.38: hydrate from the persisted cache FIRST — the overlay opens
-    // instantly. The FIRST open of each app session revalidates in the
-    // background (stale-while-revalidate); an explicit resync (the sync
-    // button / a key save) forces refresh=1 as before.
+    // instantly. v0.98.1: EVERY open revalidates in the background
+    // (stale-while-revalidate — the first-open-only rule left a mid-session
+    // key save invisible until a manual resync; the engine's catalog is
+    // already fresh server-side, the client just re-reads it). A fresh
+    // fetch lands → render() swaps in the new provider rows.
     if (cacheLoad()) {
       render();
-      if (syncedAt < bootedAt) fetchCatalog(false, function () { render(); });
+      fetchCatalog(false, function () { render(); });
     }
     else fetchCatalog(false, function () { render(); });
 
@@ -715,7 +736,14 @@
       var isFav = view === 'favorites';
       var isProv = view === 'providers';
       var favCount = starred.length;
-      return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+      // v0.98.1 (user spec: 'the provider and model catalogue screen has 2
+      // X's — small x under hardcoded one, remove it'): the header's own
+      // #mb-close is GONE — ConnectOverlay's static ✕ (#connect-overlay-x,
+      // v0.46) floats on every instance and already closes this overlay
+      // (both called the same ConnectOverlay.close()). The header row now
+      // keeps its right edge CLEAR of that static X (padding-right:34px)
+      // so the tab group never renders underneath it.
+      return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-right:34px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 3px);font-weight:600;color:var(--text-1);margin:0;flex:1">Select a model</h2>' +
         // v0.34: the three tabs — ★ favorites | Providers | Models
         '<div style="display:flex;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:3px">' +
@@ -723,7 +751,6 @@
           tabBtn('providers', 'Providers', 'var(--ok)') +
           tabBtn('models', 'Models', 'var(--accent)') +
         '</div>' +
-        '<button id="mb-close" style="background:transparent;border:none;color:var(--text-3);font-size:22px;cursor:pointer;padding:2px 6px">✕</button>' +
         '</div>' +
         // Sync line + refresh
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
@@ -2632,7 +2659,8 @@
         renderList();
         return;
       }
-      if (t.closest('#mb-close')) { window.ConnectOverlay.close(); return; }
+      // v0.98.1: #mb-close is retired (the double X) — the overlay's
+      // static ✕ owns the close; nothing to route here anymore.
       if ((el = t.closest('[data-viewtab]'))) {
         e.stopPropagation();
         switchView(el.getAttribute('data-viewtab'));

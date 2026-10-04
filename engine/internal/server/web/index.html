@@ -2743,6 +2743,10 @@
   .art-head {
     display: flex; align-items: center; gap: 10px;
     padding: 14px 16px 10px; border-bottom: 1px solid var(--surface-2); flex-shrink: 0;
+    /* v0.98.1: the head is the sheet's drag handle (slide down to
+       dismiss, like the regular panels) — touches starting here belong
+       to the drag, never to scroll. */
+    touch-action: none; cursor: grab;
   }
   .art-title { font-size: calc(var(--ui-fs) + 1px); font-weight: 700; color: var(--text-1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .art-count { font-size: calc(var(--ui-small-fs) - 1px); color: var(--text-3); flex-shrink: 0; }

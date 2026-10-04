@@ -216,6 +216,25 @@
         'background:rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.12);' +
         'box-shadow:0 0 10px rgba(var(--wsp-rgb, var(--accent-2-rgb)),0.4)}' +
       '.wsp-loading{padding:14px 12px;font-size:var(--ui-small-fs);color:var(--text-3)}' +
+      // v0.98.1 THE THEMED LOADER (user spec: the loading-repos section
+      // needs 'a dynamic counter or loading bar with primary colors and
+      // loading repos... text with accent colors'). The sweep bar rides the
+      // theme's primary (var(--accent), the same recipe as the chat's
+      // .cwk-bar activity line — accent-rgb gradient on an accent-tinted
+      // track); the label reads in accent; the elapsed counter is
+      // tabular-nums so the digits don't jitter as they tick. Everything
+      // is theme vars — every theme recolors it (no raw hex).
+      '.wsp-loader{padding:14px 12px 12px}' +
+      '.wsp-loader-row{display:flex;align-items:baseline;gap:8px}' +
+      '.wsp-loader-text{font-size:var(--ui-small-fs);font-weight:600;color:var(--accent)}' +
+      '.wsp-loader-sec{font-size:calc(var(--ui-small-fs) - 1px);color:var(--accent);' +
+        'opacity:0.75;font-variant-numeric:tabular-nums}' +
+      '.wsp-loader-bar{position:relative;height:3px;border-radius:2px;margin-top:9px;' +
+        'overflow:hidden;background:rgba(var(--accent-rgb),0.12)}' +
+      '.wsp-loader-bar::after{content:"";position:absolute;left:0;top:0;bottom:0;width:45%;' +
+        'border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);' +
+        'animation:wsp-sweep 1.4s linear infinite}' +
+      '@keyframes wsp-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(226%)}}' +
       '.wsp-note-row{padding:8px 2px;font-size:var(--ui-small-fs);color:var(--text-3);line-height:1.45}' +
       '.wsp-secdiv{margin:10px 12px 0;border-top:1px solid var(--surface-2)}' +
       '.wsx-acts{display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 10px 48px}' +
@@ -617,7 +636,10 @@
         '</div>' +
         '<div class="wsx-yw-head">▣ your workspaces</div>' +
         '<div class="wsx-list wsx-list--tall" id="wsx-list">' +
-          '<div class="wsx-sub">loading…</div>' +
+          // v0.98.1: the themed loader (accent label + primary sweep bar +
+          // live counter) — loadGlobals() starts the ticker when the
+          // picker lands and the list content replaces it on resolve.
+          loaderHTML('wsx-load', 'loading workspaces…') +
         '</div>' +
         '<div class="wsx-conn-wrap">' +
           '<div class="wsx-conn" id="wsx-connect" role="button" tabindex="0">' +
@@ -692,7 +714,7 @@
       '</div>' +
       (hasAccount && signedIn
         ? '<div class="wsp-repos-head">your ' + esc(p.name) + ' repos</div>' +
-          '<div class="wsp-repos" id="wsp-repos"><div class="wsp-loading">loading your repos…</div></div>'
+          '<div class="wsp-repos" id="wsp-repos">' + loaderHTML('wsp-repos-load', 'loading your repos…') + '</div>'
         : (hasAccount
             ? '<div class="wsp-note-row">sign in above to browse your ' + esc(p.name) + ' repos + create with one tap</div>'
             : ''))
@@ -834,11 +856,44 @@
       '</div>';
   }
 
+  // ── v0.98.1 THE THEMED LOADER ────────────────────────────────────────
+  // One markup + one ticker for every workspace loading state (the picker
+  // list, the connect page's repos box). startLoader(id) RESETS on re-call
+  // (a reload restarts the clock); the interval self-clears the moment its
+  // counter leaves the DOM (page swapped / list rendered / error path) —
+  // no leaked timers across overlay navigations.
+  var loaderIvs = {};
+  function loaderHTML(id, label) {
+    return '<div class="wsp-loader">' +
+      '<div class="wsp-loader-row">' +
+        '<span class="wsp-loader-text">' + label + '</span>' +
+        '<span class="wsp-loader-sec" id="' + id + '-sec">0.0s</span>' +
+      '</div>' +
+      '<div class="wsp-loader-bar"></div>' +
+    '</div>';
+  }
+  function startLoader(id) {
+    if (loaderIvs[id]) clearInterval(loaderIvs[id]);
+    var t0 = Date.now();
+    loaderIvs[id] = setInterval(function () {
+      var el = document.getElementById(id + '-sec');
+      if (!el || !el.isConnected) {
+        clearInterval(loaderIvs[id]);
+        delete loaderIvs[id];
+        return;
+      }
+      el.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's';
+    }, 100);
+  }
+
   function loadProvRepos() {
     var box = document.getElementById('wsp-repos');
     if (!box) return;
     var p = provByKind(curProv);
-    box.innerHTML = '<div class="wsp-loading">loading your repos…</div>';
+    // v0.98.1: the themed loader replaces the plain 'loading your repos…'
+    // text (accent label + primary sweep bar + live elapsed counter).
+    box.innerHTML = loaderHTML('wsp-repos-load', 'loading your repos…');
+    startLoader('wsp-repos-load');
     api('/api/workspaces/discover?kind=' + encodeURIComponent(curProv) +
         (p.host ? '&host=' + encodeURIComponent(p.host) : '') + '&limit=100').then(function (d) {
       if (!document.getElementById('wsp-repos')) return;   // page swapped
@@ -891,6 +946,9 @@
     var listEl = document.getElementById('wsx-list');
     var cntEl = document.getElementById('wsx-count');
     if (!listEl) return;
+    // v0.98.1: the picker's loader ticker starts here (the loader markup
+    // rendered with pickerHTML; the interval dies when the list fills).
+    if (document.getElementById('wsx-load-sec')) startLoader('wsx-load');
     var sid = sidNow();
     var globalsP = api('/api/workspaces');
     var boundP = sid
