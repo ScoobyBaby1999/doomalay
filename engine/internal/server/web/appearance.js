@@ -645,6 +645,108 @@
   var slotPop = null;       // the singleton element
   var slotPopCleanup = null; // the floating-ui autoUpdate disposer
 
+  // ── v1.01.2: THE IMAGE→PALETTE SUGGESTER (MCU, generation-time only)
+  // ─────────────────────────────────────────────────────────────────
+  // The user picks an image → MCU quantizes+scores the source color →
+  // SchemeContent (dark-first, matching the active theme's light flag)
+  // → a 7-slot PROPOSAL previewed in the popover. Apply writes the
+  // seven fields as 1-color specs through the normal writeThemeVar
+  // path (the user accepts or rejects; culori OKLCH stays the one
+  // runtime truth — MCU never runs again after the apply).
+  function mcuSuggestSection(body) {
+    if (!window.MCU) return;   // the module never loaded — no section
+    var sec = document.createElement('div');
+    sec.className = 'slot-pop-grid-sec';
+    sec.innerHTML =
+      '<div class="slot-pop-grid-title">suggest from an image</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<button type="button" class="slot-pop-btn" data-act="mcu-pick" style="flex:0 0 auto;min-width:120px">🖼 pick an image</button>' +
+        '<span style="font-size:var(--ui-micro-fs);color:var(--text-3);flex:1;min-width:120px">a 7-slot proposal from its palette — accept or ignore</span>' +
+      '</div>' +
+      '<input type="file" accept="image/png,image/jpeg,image/webp" data-mcu-file="1" style="display:none" aria-hidden="true">' +
+      '<div class="mcu-preview" style="display:none;margin-top:10px">' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap"></div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px">' +
+          '<button type="button" class="slot-pop-btn" data-act="mcu-apply" style="color:var(--text-1);font-weight:600">use these colors</button>' +
+          '<button type="button" class="slot-pop-btn" data-act="mcu-dismiss">dismiss</button>' +
+        '</div>' +
+      '</div>';
+    body.appendChild(sec);
+    var file = sec.querySelector('input[type=file]');
+    var preview = sec.querySelector('.mcu-preview');
+    var strip = preview.querySelector('div');
+    var proposal = null;
+
+    sec.querySelector('[data-act=mcu-pick]').addEventListener('click', function () {
+      file.value = '';
+      file.click();
+    });
+    file.addEventListener('change', function () {
+      var f = file.files && file.files[0];
+      if (!f) return;
+      var rd = new FileReader();
+      rd.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          window.MCU.sourceColorFromImage(img).then(function (src) {
+            try {
+              var cur = Settings.getState().theme || 'midnight';
+              var isLight = !!(window.DoomTheme.themes[cur] || {}).light;
+              var scheme = new window.MCU.SchemeContent(
+                window.MCU.Hct.fromInt(src), isLight ? 0 : 1, 0);
+              proposal = {
+                surface: window.MCU.hexFromArgb(scheme.surfaceContainer),
+                ink: window.MCU.hexFromArgb(scheme.onSurface),
+                canvas: window.MCU.hexFromArgb(scheme.surfaceDim),
+                'accent-1': window.MCU.hexFromArgb(scheme.primary),
+                'accent-2': window.MCU.hexFromArgb(scheme.secondary),
+                'accent-3': window.MCU.hexFromArgb(scheme.tertiary)
+              };
+              var labels = { surface: 'surface', ink: 'ink', canvas: 'canvas',
+                'accent-1': 'accent 1', 'accent-2': 'accent 2', 'accent-3': 'accent 3' };
+              var sw = '';
+              for (var k in proposal) {
+                sw += '<span style="display:flex;flex-direction:column;align-items:center;gap:3px;min-width:52px">' +
+                  '<span style="width:52px;height:36px;border-radius:8px;border:1px solid var(--border);background:' + proposal[k] + '"></span>' +
+                  '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + labels[k] + '</span></span>';
+              }
+              strip.innerHTML = sw;
+              preview.style.display = 'block';
+            } catch (e) {
+              if (window.DoomToast) window.DoomToast('could not read that image');
+            }
+          }).catch(function () {
+            if (window.DoomToast) window.DoomToast('could not read that image');
+          });
+        };
+        img.onerror = function () {
+          if (window.DoomToast) window.DoomToast('could not read that image');
+        };
+        img.src = String(rd.result);
+      };
+      rd.readAsDataURL(f);
+    });
+    sec.querySelector('[data-act=mcu-dismiss]').addEventListener('click', function () {
+      preview.style.display = 'none';
+      proposal = null;
+    });
+    sec.querySelector('[data-act=mcu-apply]').addEventListener('click', function () {
+      if (!proposal) return;
+      var map = {
+        surface: '--field-surface', ink: '--field-ink', canvas: '--field-canvas',
+        'accent-1': '--field-accent-1', 'accent-2': '--field-accent-2',
+        'accent-3': '--field-accent-3'
+      };
+      for (var k in map) {
+        if (proposal[k]) writeThemeVar(map[k], { colors: [proposal[k]], dir: 'auto' });
+      }
+      preview.style.display = 'none';
+      proposal = null;
+      Settings.rerender();   // the slot rows re-seed from the new fields
+      if (window.DoomToast) window.DoomToast('palette applied');
+    });
+  }
+
   function slotPopover() {
     if (slotPop) return slotPop;
     slotPop = document.createElement('div');
@@ -997,6 +1099,9 @@
               });
               Settings.rerender();
             });
+            // v1.01.2: the image→palette suggester rides the canvas picker
+            // (the "make my theme from this image" home)
+            mcuSuggestSection(body);
           }
         });
       };
