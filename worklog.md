@@ -244,3 +244,58 @@ Stage Summary:
   the library study picks 4 adoptions (2 of them free — already vendored)
   and kills 6 homegrown/duplicated systems. Research only — nothing
   implemented.
+---
+Task ID: v0991-research
+Agent: Z.ai Code (main orchestrator)
+Task: The user's final-research turn for the color system: find every
+  MIT/Apache library that replaces a homegrown piece of PLAN-V098-COLOR-SYSTEM
+  ("choose a library over home grown"), diagnose the nested-box lag +
+  the border/surface-raised edit-cost asymmetry + the variable confusion,
+  and produce the build order. NO implementation.
+
+Work Log:
+- Re-cloned @ 21ec824 (rebased onto the parallel wave's v0.98.1 + v0.98.2
+  mid-session; the census was reconciled against RESEARCH-V0982, not
+  duplicated).
+- Four parallel research agents: (1) the repo census — 91 vars, 701
+  var-consuming rules, per-family usage, the overlap evidence, the colors-tab
+  structure, the canvas path, the .doomtheme shape (docs/CENSUS-V099-SLOT-SCAN.md);
+  (2) color engines; (3) UI primitives; (4) text/atlas/bundle security.
+  Every license/size/version verified first-hand (npm registry JSON, raw
+  LICENSE files, measured gzip of shipped dist files); artifacts in
+  tool-results/v099-research/.
+- Wrote docs/RESEARCH-V099-LIBRARY-SCAN.md — the consolidated decision record:
+  5 NEW adoptions beyond v0982 (@floating-ui/dom 1.8.0 MIT 4KB — picker/
+  select anchoring; @tanstack/virtual-core 3.17.11 MIT 7KB — catalogue/library
+  windowing; fflate 0.8.3 MIT 12.6KB — the .doomtheme v2 zip container;
+  maxrects-packer 2.7.3 MIT 3.3KB — the field-atlas packer; Ajv 8.20
+  standalone MIT ~KBs — untrusted-bundle validation), the 8-rung import
+  security ladder, the nested-box recipe (cv:hidden/auto + accordion caps +
+  the L2 read guard), the WebView-111 CSS floor + @property guardrails,
+  and 2 CORRECTIONS on v0982 (chroma.js is BSD-3-Clause code — not Apache;
+  Pixi Text+FillGradient carries upstream bugs #10595/#10926, so the GPU
+  text tier rides BitmapText/RenderTexture bakes instead; vendored Pixi
+  verified as v8.21.0, not 11.x).
+- The census adjudicated the user's reports: border/surface-raised edits fan
+  over ~86/~110 rules incl. every L2 window + gate re-mint vs the canvas's
+  one debounced atlas rebake (the asymmetry is real); 5 overlap findings
+  confirm the variable confusion (25 dual-family rules, 74+ dividers painted
+  with surface vars, border-as-fills, the entangled raised-ring, the
+  surface-3 ghost).
+- Wrote PLAN-V099-THE-FIELD.md — the build order: the 7-field model (raised +
+  hairlines become derived color-mix products), the phase cadence v0.99.3-.7
+  + v0.99.0 ship (vendor -> slots -> reassign -> tab -> nested boxes), the
+  v0.100 MASKS (pseudo-only, plate 3->2 layers, gradient-text tiers, virtual-
+  core, consolidations), the v0.101 ASSETS (fflate/maxrects/Ajv/MCU, 9-slice
+  members, icon-pack registry, .doomtheme v2 + security), the new v0.102
+  LIBRARY wave (public sharing, per-user bundle looks).
+
+Stage Summary:
+- The library question is CLOSED for the color system: culori + floating-ui
+  land in v0.99.3 (27.3KB gz total); virtual-core in v0.100; fflate +
+  maxrects + compiled validators + MCU in v0.101; everything else verified
+  and rejected with evidence. GradientUI, the Field/Mask core, the panel
+  drag, and the icon registry stay homegrown because the open-source world
+  has not solved them (proof on record).
+- Research only — nothing implemented. The census + these two docs are the
+  complete input set for the v0.99 build.
