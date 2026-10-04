@@ -299,3 +299,19 @@ Stage Summary:
   has not solved them (proof on record).
 - Research only — nothing implemented. The census + these two docs are the
   complete input set for the v0.99 build.
+
+---
+Task ID: v099.3 + v099.4 (pushed)
+Agent: Z.ai Code (main orchestrator)
+Task: THE FIELD phases 3+4 — vendoring + the 7-slot model (per PLAN-V099-THE-FIELD.md).
+
+Work Log:
+- v0.99.3: culori 4.0.2 IIFE + Floating UI core/dom 1.8.0 UMD vendored (MIT, LICENSEs filed); theme.js gains FieldMath (cssMix + luminance, exported); scripts/v099-calibrate.js = the calibration tool (fits against the v0.98.0 tag).
+- v0.99.4: index.html :root = @property (7 fields + accent-4) + THE DERIVATION BLOCK + the 10 [data-theme] blocks rewritten to field values (carrying accent-4/semantics/tints/triplet statics); theme.js = FIELDS/LEGACY_FIELD_MAP/foldThemeOverrides/DERIVED_MIXES/TRIPLET_VARS + the applyTheme rewrite (field twins + aliases + culori triplets + on-accent/veil/bright gates + field-owned grad gates) + GATES slimmed (ACC 3, SURF 1) + deriveBorderTwins RETIRED; appearance.js = 6 field rows (ink = plain color input) + fold-seeded + legacy-aware resets; app.js/atoms/pixiworld/browserdock resolve real hexes through the upgraded resolvedThemeVar (the @property rgb()/color-mix boundary); canvasFingerprint reads --field-canvas.
+- THE OKLAB DECISION (rig-caught): Chromium's color-mix(in oklch) paints near-achromatic inputs hue-powerless (oklch(… none) → warm-gray, 7/255 off calibration on midnight/mono) — switched the derivations to color-mix(in oklab): identical calibration fits (hue-adjacent pairs), culori parity PIXEL-EXACT.
+- Rigs: v099-field-parity.sh NEW (5/5: CSS≡JS worst 0/channel, drift ≤ 0.028, 10-theme cascade, triplets, zero errors); test_theme_twins re-pinned (196); v0911 re-pinned to the field contract (12/12); v098 panel 21/21 (257 nodes); v097 29/29; v092 13/13; go green.
+- Browser-verified: boot clean, all 10 themes cascade, ink edit live-writes --field-ink (tints follow), accent gradient edit fires data-a1-grad + writes both twin spellings + storage holds field keys, lookio legacy round-trip folds, fmt gradients + light-theme veil flip correct.
+
+Stage Summary:
+- PUSHED: main 504ee975 → 925b5820 (v0.99.3) → 58957a81 (v0.99.4).
+- Next: v0.99.5 THE REASSIGNMENT (the census walk: 74 dividers → --border, plate stacks 3→2, the title family → fmt-a1, glyph catchers die, the 16 text-vs-accent rules → ink/fmt, modelbrowser border-strong text → ink tint).
