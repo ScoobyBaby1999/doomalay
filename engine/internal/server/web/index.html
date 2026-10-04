@@ -2343,28 +2343,30 @@
      twin, independent of color:) so the affordance survives clipping. */
   [data-fmt-grad~="a1"] .fmt h2 {
     background-image: var(--fmt-a1-gradient, none);
-    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-a1-ink, var(--fmt-a1));
   }
+  /* v1.00.2 THE GRADIENT-TEXT TIERS (PART E, ratified): short static
+     gradient moments paint LOCAL-BOX — one paint per element, native
+     scroll, ZERO projection (the fixed-attachment illusion is the
+     OBJECT track's design; text clip:text can never ride an L2 layer,
+     so the shared-field emulation only ever bought the per-motion
+     re-raster tax on the phone). Body/long text stays solid ink. */
   [data-fmt-grad~="a3"] .fmt em,
   [data-fmt-grad~="a3"] .fmt h4 {
     background-image: var(--fmt-a3-gradient, none);
-    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-a3-ink, var(--fmt-a3));
   }
   [data-fmt-grad~="bright"] .fmt strong,
   [data-fmt-grad~="bright"] .fmt h1 {
     background-image: var(--fmt-bright-gradient, none);
-    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-bright-ink, var(--fmt-bright));
   }
   [data-fmt-grad~="link"] .fmt a.fmt-link,
   [data-fmt-grad~="link"] .fmt-user a.fmt-link {
     background-image: var(--fmt-link-gradient, none);
-    background-attachment: fixed;
     -webkit-background-clip: text; background-clip: text;
     color: var(--fmt-link-ink, var(--fmt-link));
   }
@@ -5166,7 +5168,6 @@
   [data-fmt-grad~="a1"] .vw-arch-name,
   [data-fmt-grad~="a1"] h1, [data-fmt-grad~="a1"] h2, [data-fmt-grad~="a1"] h3 {
     background-image: var(--fmt-a1-gradient, none);
-    background-attachment: fixed;
     background-repeat: no-repeat;
     -webkit-background-clip: text;
     background-clip: text;
@@ -5186,7 +5187,6 @@
      names lose the pointless layer entirely. */
   [data-fmt-grad~="a1"] .hub-card-name-in {
     background-image: var(--fmt-a1-gradient, none);
-    background-attachment: fixed;
     background-repeat: no-repeat;
     -webkit-background-clip: text;
     background-clip: text;
@@ -5271,11 +5271,12 @@
   [data-a1-grad] .ts-row-on .ts-on-ico,
   [data-a1-grad] #edit-banner .eb-ico,
   [data-a1-grad] #tpl-chip .tpl-chip-ico { color: var(--on-accent) !important; }
-  /* — Accent 1 GLYPHS — the accent-colored labels with no fill. */
+  /* — Accent 1 GLYPHS — the accent-colored labels with no fill.
+     (v1.00.2: local-box — clip:text rides no L2 layer; the fixed
+     emulation only bought the per-motion re-raster tax.) */
   [data-a1-grad] .ts-on-ico,
   [data-a1-grad] .hub-step-val {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     -webkit-background-clip: text !important;
     background-clip: text !important;
     color: transparent !important;
@@ -5298,10 +5299,9 @@
     background-attachment: fixed !important;
     color: var(--on-accent-2) !important;
   }
-  /* — Accent 2 GLYPHS. */
+  /* — Accent 2 GLYPHS. (v1.00.2: local-box, same tier call.) */
   [data-a2-grad] .ts-stage-fo {
     background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
     -webkit-background-clip: text !important;
     background-clip: text !important;
     color: transparent !important;
