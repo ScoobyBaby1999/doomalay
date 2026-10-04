@@ -1634,15 +1634,27 @@
     transition: opacity 0.16s ease-out, transform 0.16s cubic-bezier(0.32,0.72,0,1);
     pointer-events: none;
     overscroll-behavior: contain;
+    /* v1.00.1: belt-and-braces for the touch fix — manipulation kills
+       any double-tap-zoom intent inside the picker (no 300ms delay:
+       the viewport meta already owns that); with the positive-list
+       canvas gate the popover's touches are never preventDefault-ed,
+       so its native scrolling + clicks live. */
+    touch-action: manipulation;
   }
   .slot-pop.open { opacity: 1; transform: none; pointer-events: auto; }
   .slot-pop-head {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 10px;
-    position: sticky; top: -12px;
+    position: sticky; top: 0;
     background: var(--surface-1);
     padding-top: 12px; margin-top: -12px;
     z-index: 2;
+    /* v1.00.1: top was -12px — pinned 12px ABOVE the scrollport once
+       the popover scrolled, so overflow clipped the head and the ✕
+       VANISHED on scroll (hit-tests fell through to the scrolled
+       content; the real user lost the close button mid-scroll).
+       top:0 pins flush with the scrollport: the unscrolled bleed
+       (margin-top:-12 over the popover's padding) is unchanged. */
   }
   .slot-pop-title {
     flex: 1;

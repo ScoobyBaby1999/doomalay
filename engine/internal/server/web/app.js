@@ -1503,66 +1503,38 @@
   const dockToggleEl = document.getElementById('dock-toggle');
   const dockStripEl = document.getElementById('dock-strip');
 
-  function isInsideUI(target) {
+  // v1.00.1 — THE POSITIVE LIST (the 6th #sheet-root death, and the
+  // last): the canvas input used to own EVERY touch the UI whitelist
+  // (isInsideUI, v0.10.1→v0.99.6: connect overlay → artifacts/action
+  // sheet → #sheet-root → canvas dock → crop/media-zoom → …) hadn't
+  // claimed — so every NEW body-appended overlay shipped dead-on-
+  // Android until someone remembered to whitelist it (the v0.99.6 slot
+  // picker popover was the sixth). The doctrine flips (panel.js
+  // _wireDuck's own v0.69 pattern): the canvas input owns ONLY what is
+  // actually canvas-surface — #c itself, or #chatbots (the icon
+  // layer; #c2 is pointer-events:none and can never be a target).
+  // Touch events keep firing on the START element for the whole
+  // gesture, so the gate holds touchstart→touchend; any touch that
+  // starts anywhere else (popover, panel, dock, ANY future overlay)
+  // never reaches preventDefault() — canceling touchstart suppresses
+  // EVERY consequential mouse event including the synthetic click
+  // (W3C Touch Events L2 §9), which is exactly how the class killed.
+  // Mouse clicks fire regardless of touchstart preventDefault — which
+  // is why every desktop rig was structurally blind to it (Playwright
+  // #2903's own note: mouse actions generate pointer events, not
+  // legacy touch events). The mouse/wheel gates flip too: same
+  // "what is actually canvas" question (wheel over a popover now
+  // SCROLLS the popover instead of zooming the canvas — the mouse
+  // twin of the same bug, same one-line fix).
+  function onCanvasSurface(target) {
     if (!target) return false;
-    // v0.45 ITEM 1: a closing panel never blocks canvas touches — the
-    // sheet is sliding away; touches must reach the grid immediately.
-    // (Belt-and-suspenders: pointer-events:none on the closing panel
-    // already routes touches past it, but this guarantees it.)
-    if (panel.panelEl.classList.contains('closing')) return false;
-    // ConnectOverlay covers the full screen (inset:0) while open — any
-    // touch during that state is a UI touch. v0.10.1 MISSING THIS CHECK
-    // WAS THE "nothing is interactable, not even the X" BUG: touches in
-    // the overlay fell through to the document handlers, whose
-    // preventDefault() suppressed the synthetic click events the
-    // overlay's buttons need. (Mouse clicks fire regardless of
-    // preventDefault on touchstart — which is why desktop dogfooding
-    // never caught it.)
-    if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) return true;
-    // v0.17: the artifacts drawer/editor overlay + the long-press action
-    // sheet are appended to document.body (NOT inside the chat panel) —
-    // without these checks their buttons were dead on touch for the
-    // exact same reason.
-    var artOverlay = document.getElementById('artifacts-overlay');
-    if (artOverlay && artOverlay.contains(target)) return true;
-    var actionSheet = document.getElementById('msg-action-sheet');
-    if (actionSheet && actionSheet.contains(target)) return true;
-    // v0.34: the crop overlay (uikit.js CropUI) + the fullscreen media zoom
-    // (formatter.js MediaZoom) both append themselves to document.body —
-    // WITHOUT these checks their touches fell through to the canvas pan
-    // handlers (the grid moved behind the cropper!) and the document-level
-    // preventDefault() killed the zoom slider's native touch drag — the
-    // exact #sheet-root class of bug, phone-only (mouse clicks fire
-    // regardless of touchstart preventDefault, so Playwright never saw it).
-    if (target.closest && target.closest('.crop-ui')) return true;
-    var mediaZoom = document.getElementById('media-zoom');
-    if (mediaZoom && mediaZoom.contains(target)) return true;
-    // (v0.26's #sheet-root was NEVER in this list — that omission is why
-    // the sheet's buttons were dead on Android while desktop dogfooding
-    // and Playwright both passed. It is deleted now; the master panel and
-    // the connect overlay are the only two panel types left.)
-    // v0.31.2: the canvas dock joins its gear sibling — without these
-    // checks the strip's buttons die the same death on Android.
-    // v0.85.2: the expando capsule wraps the toggle + strip now — one
-    // contains() covers the whole cluster (toggle/strip/sub).
-    if (dockExpandoEl && dockExpandoEl.contains(target)) return true;
-    if (dockStripEl && dockStripEl.contains(target)) return true;
-    if (dockToggleEl && dockToggleEl.contains(target)) return true;
-    // v0.82.2: the first-run empty-state card — the card body is
-    // pointer-events:none (touches pass through to the canvas), but its
-    // CTA button is interactive and must not be swallowed by the canvas
-    // pan handlers (the same preventDefault death the dock buttons
-    // needed exempting from).
-    if (canvasEmptyEl && canvasEmptyEl.contains(target)) return true;
-    return menuEl.contains(target) ||
-           settingsBtnEl.contains(target) ||
-           panel.panelEl.contains(target) ||
-           panel.scrimEl.contains(target);
+    if (target.id === 'c') return true;              // the canvas itself
+    return !!(target.closest && target.closest('#chatbots')); // the icon layer
   }
 
   // Touch
   document.addEventListener('touchstart', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     if (e.touches.length === 2) {
       e.preventDefault();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
@@ -1587,7 +1559,7 @@
   }, { passive: false });
 
   document.addEventListener('touchmove', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     if (e.touches.length === 2 && pinching) {
       e.preventDefault();
       const d = touchDist(e.touches[0], e.touches[1]);
@@ -1606,7 +1578,7 @@
   }, { passive: false });
 
   document.addEventListener('touchend', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     if (e.touches.length === 0) {
       if (pinching) pinching = false;
       e.preventDefault(); inputEnd();
@@ -1622,7 +1594,7 @@
 
   // Mouse
   document.addEventListener('mousedown', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     e.preventDefault(); inputStart(e.clientX, e.clientY);
   });
   window.addEventListener('mousemove', function (e) { inputMove(e.clientX, e.clientY); });
@@ -1630,13 +1602,13 @@
 
   // Wheel zoom
   document.addEventListener('wheel', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     e.preventDefault();
     zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX, e.clientY);
   }, { passive: false });
 
   document.addEventListener('contextmenu', function (e) {
-    if (isInsideUI(e.target)) return;
+    if (!onCanvasSurface(e.target)) return;
     e.preventDefault();
   });
 
