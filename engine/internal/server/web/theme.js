@@ -670,6 +670,19 @@
       if (tri) want[tv] = tri;
     });
 
+    // v1.04.2 THE ELEVATION — the shadow-ink triplet. The CSS twin lives
+    // in the :root derivation block (--shadow-ink: canvas, 55% into
+    // black); JS derives the triplet from the SAME resolved canvas with
+    // the SAME mix (culori parity — the triplet contract). A canvas
+    // override re-derives it on the very next drag write, so themed
+    // shadows follow live edits like every other triplet.
+    var shCanvas = resolved['--field-canvas'];
+    if (fm && /^#[0-9a-fA-F]{6}$/.test(shCanvas || '')) {
+      var shHex = fm.cssMix(shCanvas, '#000000', 0.55);
+      var shTri = hexTriplet(shHex);
+      if (shTri) want['--shadow-ink-rgb'] = shTri;
+    }
+
     // 1e. THE READABLE-INK FAMILY — on-accent for every accent (user
     // bubbles + the accent windows' labels), veil-ink from the surface
     // luminance (the text-shadow ink).

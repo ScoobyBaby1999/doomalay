@@ -81,6 +81,16 @@
     --text-2: color-mix(in oklab, var(--field-ink), var(--field-surface) 26%);
     --text-3: color-mix(in oklab, var(--field-ink), var(--field-surface) 47%);
     --text-3-dim: color-mix(in oklab, var(--field-ink), var(--field-surface) 61%);
+    /* v1.04.2 THE ELEVATION — the shadow ink: the world (canvas) deepened
+       toward black. Every box/drop/text shadow composes rgba() from the
+       --shadow-ink-rgb triplet instead of a literal rgba(0,0,0,α): a
+       user who themes the canvas gets theme-TINTED shadows (a warm-red
+       canvas casts warm shadows), and light themes read softer ink-gray
+       shadows instead of dead black (the M3 finding). Alpha stays at the
+       consumer — only the COLOR is systemized (exact-alpha parity with
+       the literal era). JS twin: theme.js derives --shadow-ink-rgb from
+       the resolved canvas with the SAME 55% black mix (culori parity). */
+    --shadow-ink: color-mix(in oklab, var(--field-canvas), #000 55%);
   }
   :root {
     /* the -rgb triplet ALIASES (rgba() composition can't split a color):
@@ -94,6 +104,16 @@
     --bg-app-rgb: 10,10,11; --bg-panel-rgb: 16,16,22;
     --text-3-rgb: 113,113,122;
     --border-rgb: 42,42,53;
+    /* v1.04.2: midnight's shadow-ink triplet (canvas #101016, 55% into
+       black — the OKLAB mix lands at rgb(2,2,2); perceptual math, not
+       linear RGB). applyTheme re-derives it per theme from the resolved
+       canvas — this static is the no-JS boot fallback only. */
+    --shadow-ink-rgb: 2,2,2;
+    /* v1.04.2: the inner-highlight chrome constant (the inset 1px
+       white ring on raised/gradient chrome, 4% — the --on-brand
+       precedent: a highlight stays light whatever the theme; a light
+       theme simply renders it near-invisible, as before). */
+    --highlight-inset-rgb: 255,255,255;
     --ok: #34d399;         --ok-rgb: 52,211,153;
     --warn: #fbbf24;       --warn-rgb: 251,191,36;
     --err: #f87171;        --err-rgb: 248,113,113;
