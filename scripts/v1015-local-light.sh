@@ -117,8 +117,13 @@ EVN=$(ev "
 sleep 1
 TEV=$(ev "window.__tev")
 ck "L2a 'doomalay:theme-applied' fires on apply (coalesced)" "$([ "$TEV" -ge 1 ] 2>/dev/null && echo yes)" "$TEV"
-STAMP=$(ev "typeof window.DoomProjection === 'object' && window.DoomProjection.stats.retired === 1 ? 'stub' : 'other'")
-ck "L2b the projection painter is retired (the compat stub)" "$([ "$STAMP" = "stub" ] && echo yes)" "$STAMP"
+# v1.03.6 RE-PIN: the DoomProjection v2 module replaced the v1.01.5
+# compat stub (user point 2: "re-introduce the doom projection system" —
+# the toggleable 2D canvas field projector). The contract: the module
+# exposes the v2 API; DISABLED by default (the local-gradient model).
+STAMP=$(ev "typeof window.DoomProjection === 'object' && typeof window.DoomProjection.setEnabled === 'function' && typeof window.DoomProjection.stats === 'function' ? 'v2' : 'other'")
+ck "L2b the DoomProjection v2 module is loaded (toggleable, off by default)" \
+   "$([ "$STAMP" = "v2" ] && [ "$(ev 'window.DoomProjection.enabled() ? 1 : 0')" = "0" ] && echo yes)" "$STAMP"
 
 # ── L3: the self-colored theme chips ─────────────────────────────
 CHIPS=$(ev "

@@ -1091,6 +1091,21 @@
       slotResetFns[c.suffix] = onReset;
     });
     return section('The Fields · ' + (t.label || 'Theme'),
+      // v1.03.6: THE DOOM PROJECTION SWITCH (user spec: "make the doom
+      // projection a toggleable switch in the colors tab") — one shared
+      // gradient field for every surface + accent element.
+      '<div class="setting-row" style="align-items:center;justify-content:space-between">' +
+        '<label style="min-width:0">Doom projection' +
+          '<span class="hint" style="display:block">one shared gradient field — same-color elements render it together</span></label>' +
+        '<label class="app-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">' +
+          '<input type="checkbox" data-setting-key="doomProjection" data-setting-event="change" ' + (s.doomProjection ? 'checked' : '') +
+          ' style="opacity:0;width:0;height:0;position:absolute">' +
+          '<span class="app-switch-track" style="position:absolute;inset:0;background:' + (s.doomProjection ? 'var(--accent)' : 'var(--surface-3)') +
+          ';border-radius:12px;transition:background 0.15s"></span>' +
+          '<span class="app-switch-thumb" style="position:absolute;top:2px;left:' + (s.doomProjection ? '20px' : '2px') +
+          ';width:20px;height:20px;background:var(--on-accent);border-radius:50%;transition:left 0.15s"></span>' +
+        '</label>' +
+      '</div>' +
       // v1.03.2: 6 field rows — the TEXT STYLE row PROMOTED to its own
       // collapsible section header directly beneath this one (user spec
       // point 3: "move text style… to a collapsible header that expands
