@@ -417,6 +417,9 @@
     registerPage: registerPage,
     listPages: listPages,
     openInPanel: openInPanel,
+    // v1.03.3: the panel the settings rides (the Theme Editor view
+    // pushes onto it — the same master panel the gear opened)
+    panelOf: function () { return panelRef; },
     rerender: rerender,
     wireInputs: wireInputs,
     getState: getState,

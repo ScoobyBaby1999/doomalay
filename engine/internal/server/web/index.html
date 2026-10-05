@@ -1645,6 +1645,115 @@
      anchored (Floating UI), 2 nesting levels total on the Colors tab
      (section → slot row; the editor lives IN the popover, not nested
      in the row). Solid/gradient editing + live preview in place. ══ */
+  /* ══ v1.03.3 THE THEME EDITOR — the reusable color page ══════════
+     The fixed layout (user spec): the header row (name + the tagged
+     pill), the wide colors banner, the two half rows of stops (max 6,
+     the + next to the last), the small shuffle/random pills, and the
+     two columns (type pills + angle | the color column — the wheel
+     lands in v1.03.4). All themed — no hardcoded colors anywhere. */
+  .te-page { padding: 12px; }
+  .te-head { display: flex; gap: 10px; align-items: stretch; margin: 0 0 10px; }
+  .te-name {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;
+    gap: 3px; padding: 10px 14px; min-height: 60px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  }
+  .te-name b { font-size: var(--ui-fs); color: var(--text-1); font-weight: 700; }
+  .te-hint { font-size: var(--ui-micro-fs); color: var(--text-3); line-height: 1.35; }
+  .te-tagged {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+    padding: 8px 12px; min-height: 44px; max-width: 46%;
+    background-color: rgba(var(--accent-rgb), 0.14);
+    background-image: var(--accent-gradient, none);
+    border: 1px solid rgba(var(--accent-rgb), 0.5);
+    color: var(--text-1); border-radius: 12px;
+    font-size: var(--ui-micro-fs); font-weight: 600; font-family: inherit;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .te-tagged:active { filter: brightness(1.12); }
+  .te-banner {
+    height: 72px; border-radius: 14px; border: 1px solid var(--border);
+    background-color: var(--surface-2);
+  }
+  .te-stops-wrap { margin-top: 10px; }
+  .te-stops-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .te-stop {
+    position: relative; height: 50px; min-height: 44px; border-radius: 10px;
+    border: 2px solid transparent; cursor: pointer; padding: 0;
+    -webkit-tap-highlight-color: transparent; font-family: inherit;
+  }
+  .te-stop.sel { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35); }
+  .te-stop[disabled] { cursor: default; }
+  .te-rm {
+    position: absolute; top: -7px; right: -7px; width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-1); border: 1px solid var(--border-strong);
+    color: var(--text-2); border-radius: 50%; font-size: 13px; line-height: 1;
+    cursor: pointer;
+  }
+  .te-add {
+    height: 50px; min-height: 44px; border-radius: 10px;
+    background: transparent; border: 2px dashed var(--border-strong);
+    color: var(--text-3); font-size: 20px; font-weight: 600; font-family: inherit;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .te-tools { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+  .te-tool {
+    width: 36px; height: 32px; display: flex; align-items: center; justify-content: center;
+    background: var(--raised-chrome); border: 1px solid var(--raised-ring);
+    color: var(--text-2); border-radius: 9px; font-size: 14px; font-family: inherit;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .te-tool:active { filter: brightness(1.15); }
+  .te-tool[disabled] { opacity: 0.45; cursor: default; }
+  .te-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .te-col-title {
+    font-size: var(--ui-micro-fs); font-weight: 700; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 6px 2px;
+  }
+  .te-types { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  .te-type {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 9px 6px; min-height: 40px;
+    background: var(--raised-chrome); border: 1px solid var(--raised-ring);
+    color: var(--text-2); border-radius: 10px;
+    font-size: var(--ui-small-fs); font-weight: 600; font-family: inherit;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .te-type.on {
+    background-color: rgba(var(--accent-rgb), 0.16);
+    border-color: rgba(var(--accent-rgb), 0.6); color: var(--text-1);
+  }
+  .te-type.lock { opacity: 0.55; cursor: default; }
+  .te-lock { font-size: 10px; color: var(--text-3); }
+  .te-angle { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .te-angle input[type=range] { flex: 1; accent-color: var(--accent); height: 32px; cursor: pointer; }
+  .te-angle-v {
+    font-size: var(--ui-small-fs); color: var(--text-2); min-width: 38px;
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .te-interim {
+    display: flex; align-items: center; gap: 10px; padding: 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  }
+  .te-interim input[type=color] {
+    width: 56px; height: 44px; min-height: 44px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface-2); padding: 4px; cursor: pointer;
+  }
+  .te-hex { font-size: var(--ui-small-fs); color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .te-note { font-size: var(--ui-micro-fs); color: var(--text-3); margin-top: 8px; line-height: 1.4; }
+  .te-extras { margin-top: 14px; }
+  .te-tag-head { padding: 18px 4px 8px; }
+  .te-tag-title { font-size: var(--ui-fs); font-weight: 700; color: var(--text-1); }
+  .te-tag-sub { font-size: var(--ui-micro-fs); color: var(--text-3); margin-top: 2px; }
+  .te-tag-list { display: flex; flex-direction: column; }
+  .te-tag-row {
+    padding: 12px 4px; border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .te-tag-name { font-size: var(--ui-small-fs); font-weight: 600; color: var(--text-1); }
+  .te-tag-desc { font-size: var(--ui-micro-fs); color: var(--text-3); line-height: 1.4; }
+  @keyframes teRowIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .slot-pop {
     position: fixed;
     left: 0; top: 0;
@@ -5662,6 +5771,7 @@
 <script src="uikit.js"></script>
 <script src="theme.js"></script>
 <script src="appearance.js"></script>
+<script src="themeeditor.js"></script>
 <script src="connectoverlay.js"></script>
 <script src="hfconnect.js"></script>
 <script src="ghconnect.js"></script>

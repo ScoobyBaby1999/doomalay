@@ -155,8 +155,25 @@ FLAT=$(ev "
   return (cs.backgroundImage === 'none' ? 'flat' : 'grad') + '|' + cs.backgroundColor.slice(0, 18);
 })()")
 ck "C2a the slot rows are flat (no gradient window)" "$(echo "$FLAT" | grep -q '^flat|' && echo yes)" "$FLAT"
+# v1.03.3 RE-PIN: the slot row opens the THEME EDITOR view now (the
+# popover retired) — verify the page opens, then back; the editor-box
+# flatness probe rides the Text style section's lazy fmt editor.
 ev "(function(){ var h=document.querySelector('.slot-row-head'); if(h) h.click(); return 'ok'; })()" > /dev/null 2>&1
-sleep 1
+sleep 1.2
+TEOPEN=$(ev "(document.querySelector('.te-page') ? 'page' : 'none')")
+ck "C2b the slot row opens the Theme Editor page (the v1.03.3 picker path)" "$([ "$TEOPEN" = "page" ] && echo yes)" "$TEOPEN"
+ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'ok'; })()" > /dev/null 2>&1; sleep 0.9
+ev "(function(){
+  var hs = document.querySelectorAll('.settings-section h3[data-section-toggle]');
+  for (var i = 0; i < hs.length; i++) { if (/text style/i.test(hs[i].textContent)) { hs[i].click(); return 'ok'; } }
+})()" > /dev/null 2>&1
+sleep 0.9
+ev "(function(){
+  var head = document.querySelector('.text-style-active, [data-color-row] .color-row-head') || document.querySelector('[data-color-row] .color-row-head');
+  if (head) { head.click(); return 'ok'; }
+  return 'none';
+})()" > /dev/null 2>&1
+sleep 0.9
 GRFLAT=$(ev "
 (function(){
   var g = document.querySelector('.gr-editor');
@@ -164,8 +181,11 @@ GRFLAT=$(ev "
   var cs = getComputedStyle(g);
   return cs.backgroundImage === 'none' ? 'flat' : 'grad:' + cs.backgroundImage.slice(0, 40);
 })()")
-ck "C2b the gradient editor box is flat" "$(echo "$GRFLAT" | grep -q '^flat' && echo yes)" "$GRFLAT"
-ev "(function(){ var x=document.querySelector('.slot-pop [data-slot-close]'); if(x) x.click(); return 'ok'; })()" > /dev/null 2>&1; sleep 0.5
+ck "C2b2 the fmt editor box is flat" "$(echo "$GRFLAT" | grep -q '^flat' && echo yes)" "$GRFLAT"
+ev "(function(){
+  var hs = document.querySelectorAll('.settings-section h3[data-section-toggle]');
+  for (var i = 0; i < hs.length; i++) { if (/text style/i.test(hs[i].textContent)) { hs[i].click(); return 'ok'; } }
+})()" > /dev/null 2>&1; sleep 0.6
 
 ev "(function(){ var t=document.querySelector('.settings-nav .tab[data-page=general]'); if(t) t.click(); return 'ok'; })()" > /dev/null 2>&1
 sleep 1.2

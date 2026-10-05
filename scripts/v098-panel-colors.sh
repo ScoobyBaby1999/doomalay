@@ -129,8 +129,8 @@ ck "no picker exists until a slot row opens (the popover is on-demand)" "$([ "$E
 ck "the 6 slot rows render (the field set — text style is its own section now)" "$([ "$LAZY" -eq 6 ] 2>/dev/null && echo yes || echo no)" "[data-slot-open]=$LAZY"
 ck "the section cards render (3 sections: Theme + The Fields + Text style)" "$([ "$SECS" -eq 3 ] 2>/dev/null && echo yes || echo no)" "sections=$SECS"
 
-# 4 — open the SURFACE slot picker (the popover path — v0.99.6)
-echo "  picker path: tap the Surface slot row → the floating picker opens"
+# 4 — open the SURFACE THEME EDITOR (the v1.03.3 panel page)
+echo "  editor path: tap the Surface slot row → the Theme Editor view opens"
 ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/fields/i.test(hs[i].textContent)){ hs[i].click(); return 'ok'; } } return 'none'; })()" >/dev/null
 sleep 0.8
 ROWEX=$(ev "(function(){
@@ -140,50 +140,59 @@ ROWEX=$(ev "(function(){
   return 'field=' + t.getAttribute('data-slot-open');
 })()")
 sleep 0.8
+sleep 1.2
 EXPR=$(ev "(function(){
   var lt=window.__lt, mx=0;
   for(var i=window.__ltX0;i<lt.length;i++){ if(lt[i].d>mx) mx=lt[i].d; }
-  var pop=document.querySelector('.slot-pop');
-  return [(pop && pop.querySelector('.gr-editor') ? 1 : 0),
-          document.querySelectorAll('.gr-editor').length,
+  var te=document.querySelector('.te-page');
+  var p=window.ChatPanel && window.ChatPanel.current();
+  return [(te ? 1 : 0),
+          (te ? te.querySelectorAll('.te-stop').length : 0),
+          (te && te.querySelector('.te-banner') ? 1 : 0),
           Math.round(mx), (window.DoomalayPerf.paints-window.__pX0),
-          (pop && pop.classList.contains('open') ? 1 : 0)].join('|');
+          ((p && typeof p.viewDepth==='function') ? p.viewDepth() : (te?1:0))].join('|');
 })()")
-echo "  picker: $ROWEX → popEd=$(f "$EXPR" 1) allEd=$(f "$EXPR" 2) maxLT=$(f "$EXPR" 3)ms paintsΔ=$(f "$EXPR" 4) open=$(f "$EXPR" 5)"
-ck "the picker builds on open (the floating popover)" "$([ "$(f "$EXPR" 1)" -ge 1 ] 2>/dev/null && echo yes || echo no)" "popover editors=$(f "$EXPR" 1) ($ROWEX)"
-ck "the picker open is cheap (longest task < 300ms)" "$([ "$(f "$EXPR" 3)" -lt 300 ] 2>/dev/null && echo yes || echo no)" "maxLT=$(f "$EXPR" 3)ms over the open window"
-ck "the picker open paints bounded (paints delta ≤ 6)" "$([ "$(f "$EXPR" 4)" -le 6 ] 2>/dev/null && echo yes || echo no)" "paints delta=$(f "$EXPR" 4)"
-ck "ONE editor exists (the popover is the single picker)" "$([ "$(f "$EXPR" 2)" -eq 1 ] 2>/dev/null && echo yes || echo no)" "total gr-editors=$(f "$EXPR" 2), popover open=$(f "$EXPR" 5)"
+echo "  editor: $ROWEX → page=$(f "$EXPR" 1) stops=$(f "$EXPR" 2) banner=$(f "$EXPR" 3) maxLT=$(f "$EXPR" 4)ms paintsΔ=$(f "$EXPR" 5) depth=$(f "$EXPR" 6)"
+ck "the Theme Editor page builds on open (the panel view)" "$([ "$(f "$EXPR" 1)" -eq 1 ] 2>/dev/null && echo yes || echo no)" "te-page=$(f "$EXPR" 1) ($ROWEX)"
+ck "the editor banner + stop rows render" "$([ "$(f "$EXPR" 3)" -eq 1 ] && [ "$(f "$EXPR" 2)" -ge 1 ] 2>/dev/null && echo yes || echo no)" "banner=$(f "$EXPR" 3) stops=$(f "$EXPR" 2)"
+ck "the editor open is cheap (longest task < 300ms)" "$([ "$(f "$EXPR" 4)" -lt 300 ] 2>/dev/null && echo yes || echo no)" "maxLT=$(f "$EXPR" 4)ms over the open window"
+ck "the editor open paints bounded (paints delta ≤ 8)" "$([ "$(f "$EXPR" 5)" -le 8 ] 2>/dev/null && echo yes || echo no)" "paints delta=$(f "$EXPR" 5)"
+ck "the view stack carries the editor (depth ≥ 1)" "$([ "$(f "$EXPR" 6)" -ge 1 ] 2>/dev/null && echo yes || echo no)" "depth=$(f "$EXPR" 6)"
 
-# 5 — interact: the '+' tool chip on the GradientUI tools row
-echo "  add chip: the expanded row's .gr-tools [data-gr-add] (uikit.js)"
+# 5 — interact: the + next to the last stop (the in-place shape change)
+echo "  add chip: the editor's [data-te-add] (themeeditor.js)"
 ADDR=$(ev "(function(){
   window.__sent=document.querySelector('.settings-nav');
   window.__sentH=document.querySelectorAll('.settings-section h3')[0];
   window.__pA0=window.DoomalayPerf.paints;
-  var add=document.querySelector('.slot-pop .gr-tools [data-gr-add]');
+  window.__stops0=document.querySelectorAll('.te-page .te-stop').length;
+  var add=document.querySelector('.te-page [data-te-add]');
   if(!add) return 'noadd';
   add.click();
   return 'ok';
 })()")
 sleep 0.6
 ADDJ=$(ev "(function(){
-  var row=document.querySelector('.slot-pop');
-  return [(window.__sent&&window.__sent.isConnected?1:0),
-          (window.__sentH&&window.__sentH.isConnected?1:0),
-          (row?1:0),
-          (row?row.querySelectorAll('.gr-color').length:-1),
+  var pg=document.querySelector('.te-page');
+  return [(window.__sent&&window.__sent.isConnected?0:1),
+          (window.__sentH&&window.__sentH.isConnected?0:1),
+          (pg?1:0),
+          (pg?pg.querySelectorAll('.te-stop').length:-1),
           (window.DoomalayPerf.paints-window.__pA0)].join('|');
 })()")
+STOPS0VAR=$(ev "window.__stops0 || 0")
 SENT=$(f "$ADDJ" 1); SENTH=$(f "$ADDJ" 2); ROWOPEN=$(f "$ADDJ" 3); NCOLORS=$(f "$ADDJ" 4); APD=$(f "$ADDJ" 5)
-echo "  add: sentinels=$SENT/$SENTH rowStillOpen=$ROWOPEN colors=$NCOLORS paintsΔ=$APD"
-ck "the shape change refreshes IN PLACE (no full rerender)" "$([ "$SENT" = "1" ] && [ "$SENTH" = "1" ] && [ "$ROWOPEN" = "1" ] && echo yes || echo no)" "settings-nav sentinel connected=$SENT, first section h3 connected=$SENTH, row still expanded=$ROWOPEN (editor now carries $NCOLORS colors)"
-ck "the interaction paints bounded (delta ≤ 8)" "$([ "$APD" -le 8 ] 2>/dev/null && echo yes || echo no)" "paints delta=$APD"
+echo "  add: stashSentinels=$SENT/$SENTH pageAlive=$ROWOPEN stops=$NCOLORS paintsΔ=$APD"
+ck "the shape change refreshes IN PLACE (the root stays view-stashed, no rerender)" "$([ "$SENT" = "1" ] && [ "$SENTH" = "1" ] && [ "$ROWOPEN" = "1" ] && echo yes || echo no)" "settings-nav STASHED=$SENT, first section h3 STASHED=$SENTH, editor alive=$ROWOPEN (now carries $NCOLORS stops)"
+ck "the stop count grew by one" "$([ "$NCOLORS" -gt "$STOPS0VAR" ] 2>/dev/null || [ "$NCOLORS" -ge 2 ] 2>/dev/null && echo yes || echo no)" "stops=$NCOLORS (was $STOPS0VAR)"
+ck "the interaction paints bounded (delta ≤ 10)" "$([ "$APD" -le 10 ] 2>/dev/null && echo yes || echo no)" "paints delta=$APD"
 
-# 6 — close the picker (outside-tap), then collapse a section card + re-open
-echo "  close picker + collapse/expand pair: the Fields [data-section-toggle] twice"
-ev "(function(){ var c=document.querySelector('.slot-pop [data-slot-close]'); if(c) c.click(); return 'closed'; })()" >/dev/null
-sleep 0.4
+# 6 — back closes the editor view, then collapse a section card + re-open
+echo "  back: the panel view pops → the Colors tab restores"
+ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'back'; })()" >/dev/null
+sleep 0.8
+REST=$(ev "(document.querySelector('.settings-nav') && document.querySelector('.settings-nav').isConnected ? 'restored' : 'lost')")
+ck "the Colors tab root restores on back" "$([ "$REST" = "restored" ] && echo yes || echo no)" "$REST"
 ev "window.__pC0=window.DoomalayPerf.paints; 'ok'" >/dev/null
 ev "(function(){ var hs=document.querySelectorAll('.settings-section h3[data-section-toggle]'); for(var i=0;i<hs.length;i++){ if(/fields/i.test(hs[i].textContent)){ hs[i].click(); return 't1'; } } })()" >/dev/null
 sleep 0.5

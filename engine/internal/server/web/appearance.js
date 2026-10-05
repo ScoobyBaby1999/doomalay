@@ -949,6 +949,45 @@
     Settings.setState({ themeOverrides: all }); // persists + applies live
   }
 
+  // v1.03.3: seedFieldSpec(c) — the CURRENT spec for a field, read
+  // FRESH from the live state (stored override → the canvas resolution
+  // → the live computed hex). Rendered at row-build time AND re-read at
+  // Theme-Editor-open time — a stored spec that changed since render
+  // (imports, resets, the MCU suggester) can never open stale.
+  function seedFieldSpec(c) {
+    var GG = window.GradientUI;
+    var st = Settings.getState();
+    var cur = st.theme || 'midnight';
+    var ovL = (st.themeOverrides && st.themeOverrides[cur]) || {};
+    var folded = (window.DoomTheme && window.DoomTheme.foldThemeOverrides)
+      ? window.DoomTheme.foldThemeOverrides(ovL) : ovL;
+    var stored = folded[c.field];
+    if (stored) {
+      // the stored override: a gradient spec or a legacy hex — norm
+      // folds either (a COPY: the editor mutates its own live spec)
+      var sp = (GG && GG.norm) ? GG.norm(stored) :
+        { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
+      // v0.99.4: the ink field is SOLID-ONLY — a folded legacy text-1
+      // spec degrades to its first color (banner + editor agree)
+      if (c.solid && sp.colors.length > 1) sp = { colors: [sp.colors[0]], dir: 'auto' };
+      // v0.49: the CANVAS field keeps its stored texture dataURL alive
+      // (norm carries it) — the canvas paints it; CSS twins strip it.
+      return sp;
+    }
+    if (c.canvas && window.DoomTheme && window.DoomTheme.canvasBgSpec) {
+      // the canvas row seeds from the RESOLVED canvas spec (the theme's
+      // grid bg when never customized — what the canvas paints now).
+      var cbRaw = window.DoomTheme.canvasBgSpec(st);
+      return (GG && GG.norm) ? GG.norm(cbRaw) :
+        { colors: [String((cbRaw && cbRaw.colors) || [])[0] || '#0a0a0b'], dir: 'auto' };
+    }
+    // not customized: the field's CURRENT computed hex, as a 1-color
+    // spec (what the editor offers is what the app looks like now)
+    var live = cssVarLive(c.field);
+    var liveHex = /^#[0-9a-fA-F]{6}$/.test(live || '') ? live : '#000000';
+    return { colors: [liveHex], dir: 'auto' };
+  }
+
   function themeCustomizeSection() {
     var s = Settings.getState();
     var cur = s.theme || 'midnight';
@@ -966,31 +1005,9 @@
     fields.forEach(function (c) {
       // '--field-accent-1' → 'tv-accent-1'; the ink row keeps its own pfx
       var pfx = 'tv-' + (c.suffix || String(c.field || '').replace(/^--field-/, ''));
-      var stored = ovFolded[c.field];
-      var spec;
-      if (stored) {
-        // the stored override: a gradient spec or a legacy hex — norm
-        // folds either (a COPY: wire() mutates the editor's live spec)
-        spec = (G && G.norm) ? G.norm(stored) :
-          { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
-        // v0.99.4: the ink field is SOLID-ONLY — a folded legacy text-1
-        // spec degrades to its first color here too (banner + editor agree)
-        if (c.solid && spec.colors.length > 1) spec = { colors: [spec.colors[0]], dir: 'auto' };
-        // v0.49: the CANVAS field keeps its stored texture dataURL alive
-        // (norm carries it) — the canvas paints it; CSS twins strip it.
-      } else if (c.canvas && window.DoomTheme && window.DoomTheme.canvasBgSpec) {
-        // the canvas row seeds from the RESOLVED canvas spec (the theme's
-        // grid bg when never customized — what the canvas paints now).
-        var cbRaw = window.DoomTheme.canvasBgSpec(s);
-        spec = (G && G.norm) ? G.norm(cbRaw) :
-          { colors: [String((cbRaw && cbRaw.colors) || [])[0] || '#0a0a0b'], dir: 'auto' };
-      } else {
-        // not customized: the field's CURRENT computed hex, as a 1-color
-        // spec (what the editor offers is what the app looks like now)
-        var live = cssVarLive(c.field);
-        var liveHex = /^#[0-9a-fA-F]{6}$/.test(live || '') ? live : '#000000';
-        spec = { colors: [liveHex], dir: 'auto' };
-      }
+      // v1.03.3: the seeding lives in seedFieldSpec (render-time here;
+      // click-time fresh inside the slotBuilder)
+      var spec = seedFieldSpec(c);
       // ONLY the canvas field offers the texture picker (bumpmaps —
       // app.js's canvas renderer paints them with a real 'color'
       // composite pass); every other field hides it.
@@ -1052,7 +1069,7 @@
       // floating popover, not nested here)
       rows += slotRow({
         field: c.suffix, label: c.label, hint: c.hint, spec: spec,
-        customized: !!stored
+        customized: !!ovFolded[c.field]
       });
       var thisPfx = pfx, thisSpec = spec, thisOpts = edOpts;
       // v0.99.6: the DOM-field pickers are SLIM (linear/radial + angle +
@@ -1060,65 +1077,68 @@
       // lattice bakes them natively).
       if (!c.canvas && !edOpts.noDir) thisOpts = Object.assign({}, edOpts, { slim: true });
       var tvLive2 = tvLive, tvRebuild2 = tvRebuild;
+      // v1.03.3: THE THEME EDITOR — the slot rows open the reusable
+      // panel page (the user's point 4: "clicking to edit any color
+      // should bring up a new reusable panel page"). The popover path
+      // (v0.99.6) retires; everything the page needs is INJECTED here:
+      // the seeded spec, the write seam (writeThemeVar + the anchor
+      // row's live banner — the element reference survives the view
+      // stack's root stash), and the canvas extras (grid children +
+      // the MCU suggester) as full-width sections.
       slotBuilders[c.suffix] = function (anchorRow) {
-        openSlotPopover(anchorRow, c.label, function (body) {
-          if (c.solid) {
-            // INK: the plain solid input (never a window)
-            var inkHex = thisSpec.colors[0] || '#e0e0e8';
-            body.innerHTML =
-              '<div style="display:flex;align-items:center;gap:10px;padding:6px 2px">' +
-              '<input type="color" value="' + (/^#[0-9a-fA-F]{6}$/.test(inkHex) ? inkHex : '#e0e0e8') + '" ' +
-              'style="width:56px;height:44px;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:4px;cursor:pointer" aria-label="Ink color">' +
-              '<span style="font-size:var(--ui-small-fs);color:var(--text-3)">every text color derives from this one ink — solid only</span>' +
-              '</div>';
-            var inp = body.querySelector('input[type=color]');
-            if (inp) inp.addEventListener('input', function () {
-              writeThemeVar(c.field, inp.value);
-            });
-          } else {
-            // the popover rebuild path: write the spec + swap the
-            // POPOVER's editor in place (never a full rerender — the
-            // panel underneath stays put; the row banner follows live)
-            var spRebuild = function () {
-              writeThemeVar(c.field, thisSpec);
-              var el = body.querySelector('.gr-editor');
-              if (el) el.remove();
-              popoverEditor(body, 'sp-' + c.suffix, thisSpec, thisOpts, tvLive2, spRebuild);
-            };
-            popoverEditor(body, 'sp-' + c.suffix, thisSpec, thisOpts,
-              tvLive2, spRebuild);
-          }
-          // v0.99.6: the CANVAS picker carries the GRID CHILDREN (the
-          // world's lines/dots/origin — Grid Colors folded in here)
-          if (c.canvas) {
+        if (!(window.ThemeEditor && window.ThemeEditor.open)) return;
+        window.ThemeEditor.open({
+          kind: 'field',
+          suffix: c.suffix,
+          label: c.label,
+          hint: c.hint,
+          spec: seedFieldSpec(c),   // v1.03.3: FRESH at click time
+          solid: !!c.solid,
+          canvas: !!c.canvas,
+          row: anchorRow || null,
+          write: function (s) {
+            writeThemeVar(c.field, s);
+            // the anchor row's banner + marker follow LIVE (the element
+            // reference works even while the root DOM is view-stashed)
+            if (anchorRow) {
+              var bEl = anchorRow.querySelector('.slot-row-banner');
+              if (bEl) {
+                var v = (G && G.css) ? G.css(s, { scale: 0.28 }) : s.colors[0];
+                if (v.charAt(0) === '#') { bEl.style.backgroundImage = 'none'; bEl.style.backgroundColor = v; }
+                else { bEl.style.backgroundColor = 'transparent'; bEl.style.backgroundImage = v; }
+              }
+              var nm = anchorRow.querySelector('.slot-row-name');
+              if (nm && !nm.querySelector('.crc-mark')) {
+                nm.insertAdjacentHTML('beforeend', ' <span class="crc-mark">· customized</span>');
+              }
+            }
+          },
+          extras: c.canvas ? function (box) {
+            // the CANVAS editor's full-width sections — the grid
+            // children (the world's lines/dots/origin) + the image→
+            // palette suggester (v1.01.2), carried over from the
+            // popover's picker body.
             var gs = document.createElement('div');
             gs.className = 'slot-pop-grid-sec';
-            // v0.99.6: the three grid children, seeded from the resolved
-            // specs (the same rows Grid Colors carried — expandable in
-            // place inside the picker)
             var specS = window.DoomTheme.effectiveGridSpecs(Settings.getState());
             gs.innerHTML = '<div class="slot-pop-grid-title">grid children</div>' +
               gridColorRow('lineColor', 'Grid Lines', specS.lineColor) +
               gridColorRow('dotColor', 'Dots', specS.dotColor) +
               gridColorRow('originColor', 'Origin Marker', specS.originColor);
-            body.appendChild(gs);
-            // the grid rows keep their collapsed-row wiring (expand/reset)
+            box.appendChild(gs);
             wireColorRows(gs);
             var fr = document.createElement('div');
             fr.className = 'slot-pop-actions';
             fr.innerHTML = '<button type="button" class="slot-pop-btn" data-act="grid-reset">follow theme again</button>';
-            body.appendChild(fr);
+            box.appendChild(fr);
             fr.querySelector('[data-act=grid-reset]').addEventListener('click', function () {
               Settings.setState({
                 bg: '#0a0a0b', lineColor: '#131318',
                 dotColor: '#2e2e3a', originColor: '#4a4a5e'
               });
-              Settings.rerender();
             });
-            // v1.01.2: the image→palette suggester rides the canvas picker
-            // (the "make my theme from this image" home)
-            mcuSuggestSection(body);
-          }
+            mcuSuggestSection(box);
+          } : null
         });
       };
       slotResetFns[c.suffix] = onReset;
