@@ -163,29 +163,48 @@ sleep 1.2
 TEOPEN=$(ev "(document.querySelector('.te-page') ? 'page' : 'none')")
 ck "C2b the slot row opens the Theme Editor page (the v1.03.3 picker path)" "$([ "$TEOPEN" = "page" ] && echo yes)" "$TEOPEN"
 ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'ok'; })()" > /dev/null 2>&1; sleep 0.9
+# v1.03.4: the fmt rows open the THEME EDITOR (no inline expansion) —
+# the editor-box flatness is a STATIC CSS contract now (the .gr-editor
+# rule rides the card); the fmt click still verifies the editor path.
 ev "(function(){
   var hs = document.querySelectorAll('.settings-section h3[data-section-toggle]');
   for (var i = 0; i < hs.length; i++) { if (/text style/i.test(hs[i].textContent)) { hs[i].click(); return 'ok'; } }
 })()" > /dev/null 2>&1
 sleep 0.9
-ev "(function(){
-  var head = document.querySelector('.text-style-active, [data-color-row] .color-row-head') || document.querySelector('[data-color-row] .color-row-head');
+FMTED=$(ev "
+(function(){
+  var head = document.querySelector('[data-color-row] .color-row-head');
   if (head) { head.click(); return 'ok'; }
   return 'none';
-})()" > /dev/null 2>&1
-sleep 0.9
-GRFLAT=$(ev "
-(function(){
-  var g = document.querySelector('.gr-editor');
-  if (!g) return 'no-editor';
-  var cs = getComputedStyle(g);
-  return cs.backgroundImage === 'none' ? 'flat' : 'grad:' + cs.backgroundImage.slice(0, 40);
-})()")
-ck "C2b2 the fmt editor box is flat" "$(echo "$GRFLAT" | grep -q '^flat' && echo yes)" "$GRFLAT"
+})()" >/dev/null 2>&1; sleep 1.3; ev "(document.querySelector('.te-page') ? 'page' : 'none')")
+ck "C2b2 the fmt row opens the Theme Editor (v1.03.4 contract)" "$([ "$FMTED" = "page" ] && echo yes)" "$FMTED"
+ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'ok'; })()" > /dev/null 2>&1
+sleep 0.8
 ev "(function(){
   var hs = document.querySelectorAll('.settings-section h3[data-section-toggle]');
   for (var i = 0; i < hs.length; i++) { if (/text style/i.test(hs[i].textContent)) { hs[i].click(); return 'ok'; } }
-})()" > /dev/null 2>&1; sleep 0.6
+})()" > /dev/null 2>&1; sleep 0.5
+GRFLAT=$(ev "
+(function(){
+  // the .gr-editor rule rides the CARD (a static contract — the inline
+  // editors left the settings page in v1.03.4)
+  for (var s = 0; s < document.styleSheets.length; s++) {
+    var rs; try { rs = document.styleSheets[s].cssRules; } catch (e) { continue; }
+    for (var i = 0; i < rs.length; i++) {
+      if (rs[i].selectorText && rs[i].selectorText.indexOf('.gr-editor') === 0 &&
+          rs[i].style && rs[i].style.backgroundColor) {
+        var bg = rs[i].style.backgroundColor;
+        if (bg.indexOf('var(--card)') >= 0) return 'flat-card';
+      }
+    }
+  }
+  return 'no-rule';
+})()")
+ck "C2b3 the .gr-editor rule rides the card (flat)" "$(echo "$GRFLAT" | grep -q '^flat-card' && echo yes)" "$GRFLAT"
+ev "(function(){
+  var hs = document.querySelectorAll('.settings-section h3[data-section-toggle]');
+  for (var i = 0; i < hs.length; i++) { if (/text style/i.test(hs[i].textContent)) { hs[i].click(); return 'ok'; } }
+})()" > /dev/null 2>&1; sleep 0.5
 
 ev "(function(){ var t=document.querySelector('.settings-nav .tab[data-page=general]'); if(t) t.click(); return 'ok'; })()" > /dev/null 2>&1
 sleep 1.2

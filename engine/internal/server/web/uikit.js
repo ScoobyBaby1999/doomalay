@@ -365,9 +365,21 @@
         case 'diag2':
           layer = 'linear-gradient(315deg, ' + stops + ')';
           break;
-        case 'radial':
-          layer = 'radial-gradient(circle at 50% 35%, ' + stops + ')';
+        case 'radial': {
+          // v1.03.5 THE UNIVERSAL ANGLE — the radial focal ORBITS the
+          // angle ray (0° = top, clockwise — the same convention as the
+          // linear slider). Layerless: a pure position recipe, no minted
+          // pseudo, no transform. No angle → the pinned 50% 35%.
+          if (typeof s.angle === 'number' && isFinite(s.angle)) {
+            var frr = s.angle * Math.PI / 180;
+            var fx = 50 + 35 * Math.sin(frr);
+            var fy = 50 - 35 * Math.cos(frr);
+            layer = 'radial-gradient(circle at ' + fx.toFixed(1) + '% ' + fy.toFixed(1) + '%, ' + stops + ')';
+          } else {
+            layer = 'radial-gradient(circle at 50% 35%, ' + stops + ')';
+          }
           break;
+        }
         case 'swirl': {
           // the closing stop wraps the conic sweep back to the first
           // color; a single color gets a lightened 2nd stop first
@@ -379,14 +391,25 @@
           // v0.54: the spot count follows the palette (4–8), spots cycle
           // the FULL palette, and palettes longer than the table sample
           // by interpolation — every stop lands on the art.
+          // v1.03.5: the angle ROTATES the spot constellation around the
+          // box center (clockwise from north — the slider's convention).
           var k = Math.max(4, Math.min(MESH_SPOTS.length, c.length));
           var parts = [];
           for (var i = 0; i < k; i++) {
             var mcol = (c.length <= MESH_SPOTS.length)
               ? c[i % c.length]
               : paletteAt(c, i / (k - 1));
-            parts.push('radial-gradient(at ' + MESH_SPOTS[i].x + '% ' +
-              MESH_SPOTS[i].y + '%, ' + mcol + ' 0px, transparent ' +
+            // v1.03.5: the angle ROTATES the spot constellation around
+            // the box center (clockwise from north — the slider's
+            // convention). No angle → the pinned legacy positions.
+            var mAt = MESH_SPOTS[i].x + '% ' + MESH_SPOTS[i].y + '%';
+            if (typeof s.angle === 'number' && isFinite(s.angle)) {
+              var mrot = s.angle * Math.PI / 180;
+              var mx = MESH_SPOTS[i].x - 50, my = MESH_SPOTS[i].y - 50;
+              mAt = (50 + (mx * Math.cos(mrot) - my * Math.sin(mrot))).toFixed(1) + '% ' +
+                    (50 + (mx * Math.sin(mrot) + my * Math.cos(mrot))).toFixed(1) + '%';
+            }
+            parts.push('radial-gradient(at ' + mAt + ', ' + mcol + ' 0px, transparent ' +
               MESH_SPOTS[i].f + '%)');
           }
           var base = c.length > 1 ? c[c.length - 1] : darken(c[0], 20);
@@ -410,9 +433,13 @@
         }
         case 'pat-pinstripe': {
           var ps = px(18);
+          // v1.03.5: the angle rotates the stripes (θ=0 keeps the
+          // classic vertical bands — the gradient axis rides 90°+θ;
+          // θ=90 → horizontal).
+          var pAng = 90 + ((typeof s.angle === 'number' && isFinite(s.angle)) ? s.angle : 0);
           if (c.length <= 2) {
             var p2 = c.length > 1 ? c[1] : lighten(c[0], 18);
-            layer = 'repeating-linear-gradient(90deg, transparent 0 ' + ps + 'px, ' +
+            layer = 'repeating-linear-gradient(' + pAng + 'deg, transparent 0 ' + ps + 'px, ' +
               rgba(c[0], 0.35) + ' ' + ps + 'px ' + (ps + 1) + 'px), ' +
               'linear-gradient(160deg, ' + c[0] + ', ' + p2 + ')';
           } else {
@@ -422,7 +449,7 @@
             var stripes = [];
             for (var pi = 1; pi < c.length && pi <= 6; pi++) {
               var poff = ps + (pi - 1) * (ps + 1);
-              stripes.push('repeating-linear-gradient(90deg, transparent 0 ' +
+              stripes.push('repeating-linear-gradient(' + pAng + 'deg, transparent 0 ' +
                 poff + 'px, ' + rgba(c[pi], 0.35) + ' ' + poff + 'px ' +
                 (poff + 1) + 'px)');
             }
@@ -525,7 +552,12 @@
           break;
         }
         default: // 'auto'
-          layer = 'linear-gradient(135deg, ' + stops + ')';
+          // v1.03.5: the angle is CONTINUOUS for the linear family (0° =
+          // to top, clockwise — the slider writes it directly; the
+          // legacy 135° default holds when no angle is stored).
+          layer = 'linear-gradient(' +
+            (typeof s.angle === 'number' && isFinite(s.angle) ? s.angle : 135) +
+            'deg, ' + stops + ')';
       }
       // v0.49.1: single-quoted url layers — css() flows into HTML
       // style="..." attributes (tweaks preview, hub publish), where a

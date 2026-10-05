@@ -135,61 +135,60 @@ async function expandFields(page) {
   const rowCount = await page.$$eval('.slot-row', (els) => els.length);
   ck('T1b the Colors page shows the slot rows', rowCount >= 6, rowCount);
 
-  console.log('── T2 — the popover opens on tap');
+  console.log('── T2 — the Theme Editor opens on tap (v1.03.3+ contract)');
   await page.tap('[data-slot-open="surface"]');
-  await page.waitForSelector('.slot-pop.open', { timeout: 5000 });
-  await sleep(500); // the anchor settle + the open transition
-  ck('T2a .slot-pop.open after tapping the surface row',
-    await page.$eval('.slot-pop', (el) => el.classList.contains('open')));
+  await page.waitForSelector('.te-page', { timeout: 5000 });
+  await sleep(700); // the view mount settle
+  ck('T2a .te-page renders after tapping the surface row', true);
+  const depth = await page.evaluate(() => (window.Settings.panelOf() && window.Settings.panelOf().viewDepth)
+    ? window.Settings.panelOf().viewDepth() : -1);
+  ck('T2b the editor rides the view stack (depth ≥ 1)', depth >= 1, depth);
 
-  console.log('── T3 — THE CLASS-DEATH PROOF (taps INSIDE the popover)');
-  // the click counter rides .slot-pop ITSELF (the singleton): the
-  // editor rebuild replaces the tapped subtree mid-dispatch and a
-  // detached target's bubble dies before document
+  console.log('── T3 — THE CLASS-DEATH PROOF (taps INSIDE the editor page)');
+  // the click counter rides .te-page ITSELF: the stop-grid rebuild
+  // replaces the tapped subtree mid-dispatch and a detached target's
+  // bubble dies before document
   await page.evaluate(() => {
     window.__popClicks = 0;
-    document.querySelector('.slot-pop').addEventListener('click', function () {
+    document.querySelector('.te-page').addEventListener('click', function () {
       window.__popClicks++;
     });
   });
-  const stops0 = await page.$$eval('.slot-pop .gr-color', (els) => els.length);
-  await page.tap('.slot-pop [data-gr-add]');
+  const stops0 = await page.$$eval('.te-page .te-stop', (els) => els.length);
+  await page.tap('[data-te-add]');
   await sleep(450);
-  const stops1 = await page.$$eval('.slot-pop .gr-color', (els) => els.length);
-  ck('T3a a tap on ＋ color adds a gradient stop', stops1 === stops0 + 1, stops0 + '→' + stops1);
+  const stops1 = await page.$$eval('.te-page .te-stop', (els) => els.length);
+  ck('T3a a tap on ＋ adds a gradient stop', stops1 === stops0 + 1, stops0 + '→' + stops1);
   const clicks = await page.evaluate(() => window.__popClicks);
-  ck('T3b the synthetic click FIRED inside the popover', clicks >= 1, clicks);
-  const popTouches = await page.evaluate(() => window.__tsProbe.filter((p) => p.inPop));
-  ck('T3c popover touchstarts are NOT prevented',
-    popTouches.length > 0 && popTouches.every((p) => !p.prevented), popTouches);
+  ck('T3b the synthetic click FIRED inside the editor page', clicks >= 1, clicks);
+  const popTouches = await page.evaluate(() => window.__tsProbe.filter((p) =>
+    p.inPop || (p.onCanvas === false && !p.prevented)));
+  const edTouches = await page.evaluate(() => window.__tsProbe.length);
+  const edPrevented = await page.evaluate(() => window.__tsProbe.filter((p) => p.prevented).length);
+  ck('T3c editor touchstarts are NOT prevented', edTouches > 0 && edPrevented === 0,
+    edTouches + ' touches, ' + edPrevented + ' prevented');
 
-  console.log('── T4 — the ✕ closes on tap');
-  await page.tap('.slot-pop-close');
-  await sleep(350);
-  ck('T4a the popover closed via its ✕',
-    await page.$eval('.slot-pop', (el) => !el.classList.contains('open')));
+  console.log('── T4 — the ‹ back closes the editor (tap)');
+  await page.tap('#panel-view-back');
+  await sleep(600);
+  const stillThere = await page.$$eval('.te-page', (els) => els.length);
+  const rootBack = await page.$$eval('.settings-nav', (els) => els.length);
+  ck('T4a back popped the editor view (the Colors root restored)',
+    stillThere === 0 && rootBack === 1, 'te-pages=' + stillThere + ' nav=' + rootBack);
 
-  console.log('── T5 — an outside-tap closes the popover');
+  console.log('── T5 — the stashed root is POINTER-INERT under the view');
   await page.tap('[data-slot-open="surface"]');
-  await page.waitForSelector('.slot-pop.open', { timeout: 5000 });
-  await sleep(450);
-  // the OUTSIDE tap: the Theme section header (a plain click zone;
-  // the panel HANDLE is a gesture anchor — its touchstart
-  // preventDefault eats its own clicks BY DESIGN, so it can never be
-  // an outside-tap proof)
-  const themeHdr = await page.evaluate(() => {
-    const secs = Array.from(document.querySelectorAll('.settings-section'));
-    const theme = secs.find((s) => !s.querySelector('.slot-row'));
-    const h = theme && theme.querySelector('[data-section-toggle]');
-    if (!h) return null;
-    const r = h.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  });
-  ck('T5-setup the Theme section header was found', !!themeHdr, themeHdr);
-  await page.touchscreen.tap(themeHdr.x, themeHdr.y);
-  await sleep(400);
-  ck('T5a a tap outside (the Theme header) closed it',
-    await page.$eval('.slot-pop', (el) => !el.classList.contains('open')));
+  await page.waitForSelector('.te-page', { timeout: 5000 });
+  await sleep(500);
+  // the rows are view-stashed: unreachable by tap (the old
+  // outside-tap-close concept is dead with the popover — the VIEW
+  // covers the rows; no accidental row interaction is possible)
+  const rowsReachable = await page.evaluate(() =>
+    !!document.querySelector('[data-slot-open="surface"]'));
+  ck('T5a the stashed slot rows are unreachable under the editor view',
+    rowsReachable === false, rowsReachable);
+  await page.tap('#panel-view-back');
+  await sleep(600);
 
   console.log('── T6 — canvas pan still works on touch (the refactor proof)');
   const client = await ctx.newCDPSession(page);
@@ -239,46 +238,46 @@ async function expandFields(page) {
   ck('T6d canvas touchstarts ARE prevented (the pan path engaged)',
     canvasTouches.length > 0 && canvasTouches.every((p) => p.prevented), canvasTouches);
 
-  console.log('── T7 — the popover scrolls under a touch-drag');
+  console.log('── T7 — the editor page scrolls under a touch-drag');
   await page.tap('#settings-btn');
   await page.waitForSelector('.settings-section', { timeout: 10000 });
   await sleep(900);
   ck('T7a the Fields section re-expanded', await expandFields(page));
   await page.tap('[data-slot-open="canvas"]');
-  await page.waitForSelector('.slot-pop.open', { timeout: 5000 });
-  await sleep(500);
+  await page.waitForSelector('.te-page', { timeout: 5000 });
+  await sleep(700);
   const overflow = await page.evaluate(() => {
-    const el = document.querySelector('.slot-pop');
+    const el = document.querySelector('.panel-body');
     return el ? el.scrollHeight - el.clientHeight : -1;
   });
-  ck('T7b the canvas popover overflows at a 650px viewport', overflow > 8, overflow);
-  const popBox = await page.$eval('.slot-pop', (el) => {
+  ck('T7b the canvas editor overflows at a 650px viewport', overflow > 8, overflow);
+  const popBox = await page.$eval('.panel-body', (el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height };
   });
   await cdpDrag(client, popBox.x + popBox.w / 2, popBox.y + popBox.h - 40,
     popBox.x + popBox.w / 2, popBox.y + 60, 10);
-  const scrolled = await page.$eval('.slot-pop', (el) => el.scrollTop);
-  ck('T7c the touch-drag scrolled the popover body', scrolled > 10, scrolled);
+  const scrolled = await page.$eval('.panel-body', (el) => el.scrollTop);
+  ck('T7c the touch-drag scrolled the editor body', scrolled > 10, scrolled);
 
   console.log('── T8 — mouse parity (the click + wheel twins)');
-  await page.tap('.slot-pop-close');
-  await sleep(300);
-  // the CANVAS row: its popover overflows (T7b) — the wheel test
-  // needs scrollable content (the surface editor never overflows)
+  await page.tap('#panel-view-back');
+  await sleep(600);
+  // the CANVAS editor overflows (T7b) — the wheel test needs
+  // scrollable content (the surface editor may not overflow)
   await page.click('[data-slot-open="canvas"]');
-  await page.waitForSelector('.slot-pop.open', { timeout: 5000 });
-  ck('T8a a mouse click still opens the popover', true);
-  const wheelBox = await page.$eval('.slot-pop', (el) => {
+  await page.waitForSelector('.te-page', { timeout: 5000 });
+  ck('T8a a mouse click still opens the editor', true);
+  const wheelBox = await page.$eval('.panel-body', (el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height };
   });
-  const sc0 = await page.$eval('.slot-pop', (el) => el.scrollTop);
+  const sc0 = await page.$eval('.panel-body', (el) => el.scrollTop);
   await page.mouse.move(wheelBox.x + wheelBox.w / 2, wheelBox.y + wheelBox.h / 2);
   await page.mouse.wheel(0, 240);
   await sleep(350);
-  const sc1 = await page.$eval('.slot-pop', (el) => el.scrollTop);
-  ck('T8b the wheel over the popover scrolls IT (not the canvas zoom)', sc1 > sc0, sc0 + '→' + sc1);
+  const sc1 = await page.$eval('.panel-body', (el) => el.scrollTop);
+  ck('T8b the wheel over the editor scrolls IT (not the canvas zoom)', sc1 > sc0, sc0 + '→' + sc1);
 
   console.log('── T9 — zero console errors through the sweep');
   ck('T9a no page/console errors', errs.length === 0, errs.slice(0, 4));

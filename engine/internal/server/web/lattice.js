@@ -206,13 +206,25 @@
     if (dir === 'h') g = gctx.createLinearGradient(0, 0, w, 0);
     else if (dir === 'v') g = gctx.createLinearGradient(0, 0, 0, h);
     else if (dir === 'diag2') g = gctx.createLinearGradient(0, 0, w, h);
-    else if (dir === 'radial') g = gctx.createRadialGradient(w / 2, h * 0.35, 0, w / 2, h * 0.35, half);
+    else if (dir === 'radial') {
+      // v1.03.5: the focal ORBIT (0° = top, clockwise — matches css()).
+      // No angle → the pinned 50% / 35%.
+      var fx = w / 2, fy = h * 0.35;
+      if (typeof angle === 'number' && isFinite(angle)) {
+        var frr = angle * Math.PI / 180;
+        fx = w * (50 + 35 * Math.sin(frr)) / 100;
+        fy = h * (50 - 35 * Math.cos(frr)) / 100;
+      }
+      g = gctx.createRadialGradient(fx, fy, 0, fx, fy, half);
+    }
     else if (dir === 'swirl') {
       if (typeof gctx.createConicGradient === 'function') {
         g = gctx.createConicGradient(240 * Math.PI / 180, w * 0.55, h * 0.45);
       } else return null;
     } else { // 'diag' + 'auto'
-      var ang = (dir === 'auto' || typeof angle !== 'number') ? 135 : angle;
+      // v1.03.5: the angle is CONTINUOUS for both (the old quirk forced
+      // 'auto' to 135 — the universal-angle fix); no angle → 135.
+      var ang = (typeof angle === 'number' && isFinite(angle)) ? angle : 135;
       if (ang === 135) g = gctx.createLinearGradient(0, h, w, 0);
       else {
         var rad = (ang - 135) * Math.PI / 180;
@@ -475,7 +487,20 @@
       var vr = tw / th;
       var dw, dh;
       if (ir > vr) { dh = th; dw = th * ir; } else { dw = tw; dh = tw / ir; }
-      gctx.drawImage(texImg, (tw - dw) / 2, (th - dh) / 2, dw, dh);
+      // v1.03.5: the angle rotates the texture (cover-fit in the rotated
+      // frame with a √2 overdraw so the corners stay covered)
+      var trot = (spec && typeof spec.angle === 'number' && isFinite(spec.angle))
+        ? spec.angle * Math.PI / 180 : 0;
+      if (trot) {
+        var tf = Math.SQRT2;
+        gctx.save();
+        gctx.translate(tw / 2, th / 2);
+        gctx.rotate(trot);
+        gctx.drawImage(texImg, -(dw * tf) / 2, -(dh * tf) / 2, dw * tf, dh * tf);
+        gctx.restore();
+      } else {
+        gctx.drawImage(texImg, (tw - dw) / 2, (th - dh) / 2, dw, dh);
+      }
       gctx.globalCompositeOperation = 'color';
     }
     var c = stops.length ? stops : ['#0a0a0b'];
@@ -492,9 +517,16 @@
       gctx.fillStyle = bgGradientPass([c0, base], 'diag', 160, gctx, tw, th) || base;
       gctx.fillRect(0, 0, tw, th);
       var rmax = Math.max(tw, th);
+      // v1.03.5: the angle rotates the spot constellation (css() parity)
+      var mrot = (spec && typeof spec.angle === 'number' && isFinite(spec.angle))
+        ? spec.angle * Math.PI / 180 : null;
+      var mcos = mrot === null ? 1 : Math.cos(mrot);
+      var msin = mrot === null ? 0 : Math.sin(mrot);
       for (var i = 0; i < meshK; i++) {
         var sp = MESH_SPOTS[i];
-        var sx = tw * sp.x / 100, sy = th * sp.y / 100;
+        var ox = sp.x - 50, oy = sp.y - 50;
+        var sx = tw * (50 + (ox * mcos - oy * msin)) / 100;
+        var sy = th * (50 + (ox * msin + oy * mcos)) / 100;
         var rg = gctx.createRadialGradient(sx, sy, 0, sx, sy, rmax * sp.f / 100);
         rg.addColorStop(0, c[i % c.length]);
         rg.addColorStop(1, 'rgba(0,0,0,0)');
@@ -521,14 +553,23 @@
       var p2 = c1 || shadeHex(c0, 0.18);
       gctx.fillStyle = bgGradientPass([c0, c[c.length - 1]], 'diag', 160, gctx, tw, th) || c0;
       gctx.fillRect(0, 0, tw, th);
+      // v1.03.5: the angle rotates the stripe field (θ=0 keeps the
+      // classic vertical bands — the slider's convention, css() parity)
+      var srot = (spec && typeof spec.angle === 'number' && isFinite(spec.angle))
+        ? spec.angle * Math.PI / 180 : 0;
+      gctx.save();
+      gctx.translate(tw / 2, th / 2);
+      gctx.rotate(srot);
+      var pspan = Math.hypot(tw, th);
       gctx.strokeStyle = rgbaStr(c0, 0.35);
       gctx.lineWidth = 1;
-      for (var ps2 = 9; ps2 < tw; ps2 += 18) {
+      for (var ps2 = -pspan / 2; ps2 < pspan / 2; ps2 += 18) {
         gctx.beginPath();
-        gctx.moveTo(ps2, 0);
-        gctx.lineTo(ps2, th);
+        gctx.moveTo(ps2, -pspan / 2);
+        gctx.lineTo(ps2, pspan / 2);
         gctx.stroke();
       }
+      gctx.restore();
     } else if (dir === 'pat-gingham') {
       var gEven = [], gOdd = [];
       for (var gi = 0; gi < c.length; gi++) (gi % 2 === 0 ? gEven : gOdd).push(c[gi]);
@@ -568,12 +609,22 @@
       }
     } else if (dir === 'pat-checker') {
       var cyc2 = Math.max(2, Math.min(8, c.length));
-      for (var cy2 = 0, row = 0; cy2 < th; cy2 += 32, row++) {
-        for (var cx2 = 0, col = 0; cx2 < tw; cx2 += 32, col++) {
+      // v1.03.5: the angle rotates the checker field (overdraw the
+      // hypotenuse so the rotated corners cover; seamless within the
+      // one-shot canvas — the DOM tile can't rotate, documented).
+      var crot = (spec && typeof spec.angle === 'number' && isFinite(spec.angle))
+        ? spec.angle * Math.PI / 180 : 0;
+      gctx.save();
+      gctx.translate(tw / 2, th / 2);
+      gctx.rotate(crot);
+      var cspan = Math.hypot(tw, th);
+      for (var cy2 = -cspan / 2, row = 0; cy2 < cspan / 2; cy2 += 32, row++) {
+        for (var cx2 = -cspan / 2, col = 0; cx2 < cspan / 2; cx2 += 32, col++) {
           gctx.fillStyle = c[((row + col) % cyc2 + cyc2) % cyc2];
           gctx.fillRect(cx2, cy2, 32, 32);
         }
       }
+      gctx.restore();
     } else {
       paintPlain();
     }

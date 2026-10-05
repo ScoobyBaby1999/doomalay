@@ -262,6 +262,21 @@
     var spec = target.spec;
     var g = G();
     if (g && g.norm) spec = g.norm(spec);
+    // v1.03.5: THE LEGACY DIR NORMALIZATION — the editor speaks the six
+    // families only; stored legacy dirs map to their nearest family
+    // (h/v/diag/diag2 → linear with the carried angle; swirl → radial;
+    // pat-navy → pinstripe; gingham/sunburst → checker). The stored
+    // spec keeps its legacy dir until the first write.
+    var LEGACY_DIR_MAP = { 'h': 'auto', 'v': 'auto', 'diag': 'auto', 'diag2': 'auto',
+                           'swirl': 'radial', 'pat-navy': 'pat-pinstripe',
+                           'pat-gingham': 'pat-checker', 'pat-sunburst': 'pat-checker' };
+    var LEGACY_ANGLE = { 'h': 90, 'v': 180, 'diag2': 315 };
+    if (spec && LEGACY_DIR_MAP[spec.dir]) {
+      var legacyDir = spec.dir;
+      spec = { colors: spec.colors.slice(), dir: LEGACY_DIR_MAP[legacyDir],
+               angle: (typeof spec.angle === 'number') ? spec.angle : LEGACY_ANGLE[legacyDir],
+               tex: spec.tex };
+    }
     // v1.03: the stop cap — 15 → 6. A stored >6 spec trims to its first
     // six on open (with a toast note; the trim persists on first write).
     var trimmed = false;
