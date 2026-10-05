@@ -1124,19 +1124,26 @@
       slotResetFns[c.suffix] = onReset;
     });
     return section('The Fields · ' + (t.label || 'Theme'),
-      // v0.99.6: 6 field rows + the TEXT STYLE row (the fmt family) — the
-      // Canvas row carries the grid children in its picker; the Chat
-      // Colors section collapsed into Text style.
-      rows + textStyleRow() +
+      // v1.03.2: 6 field rows — the TEXT STYLE row PROMOTED to its own
+      // collapsible section header directly beneath this one (user spec
+      // point 3: "move text style… to a collapsible header that expands
+      // the text colors, place the new header as a row under the fields").
+      rows +
       '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button data-action="theme-custom-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset this theme</button>' +
       '</div>'
-    );
+    ) + textStyleSection();
   }
 
-  // ── v0.99.6: the TEXT STYLE slot row (the fmt family, collapsed to ONE
-  // row — the scheme presets + the 5 stops live in its popover) ──────
-  function textStyleRow() {
+  // ── v1.03.2: THE TEXT STYLE SECTION — promoted from the nested 7th
+  // slot row to its own collapsible header under "The Fields" (user
+  // point 3). Expanding reveals the text colors directly: the a1
+  // preview strip + the scheme presets + the 5 fmt stops (in-place
+  // lazy editors — the same machinery the tweaks view uses) + the
+  // reset. Also fixes the v0.99.6 popover regression this replaces:
+  // its fmt rows were built as fmtColorRow(k, spec, 'global') — the
+  // SPEC landed in the LABEL slot ("#22d3ee global" row titles). ────
+  function textStyleSection() {
     var s = Settings.getState();
     var pinned = !!((s.chatScheme && s.chatScheme !== 'teal') ||
       (s.fmtOverrides && Object.keys(s.fmtOverrides).length > 0));
@@ -1150,7 +1157,8 @@
     FMT_SLOTS_ALL.forEach(function (k) {
       fmtSpecsNow[k] = (s.fmtOverrides && s.fmtOverrides[k]) || presets[k] || { colors: ['#38bdf8'] };
     });
-    // the banner: the a1 stop (the title-gradient stop)
+    // the a1 preview strip (the title-gradient stop — the row banner's
+    // successor, now at the head of the expanded body)
     var a1 = fmtSpecsNow.a1;
     var bannerCss;
     if (G && G.css) {
@@ -1159,57 +1167,29 @@
     } else {
       bannerCss = 'background:' + a1.colors[0] + ';';
     }
-    slotBuilders['text-style'] = function (anchorRow) {
-      openSlotPopover(anchorRow, 'Text style', function (body) {
-        // the scheme presets (the fmt defaults per theme)
-        body.innerHTML = '<div class="slot-pop-grid-title">scheme</div>';
-        var sw = schemeSwatches();
-        var wrap = document.createElement('div');
-        wrap.innerHTML = sw;
-        body.appendChild(wrap);
-        wrap.querySelectorAll('[data-scheme]').forEach(function (b) {
-          b.addEventListener('click', function () {
-            // the same write the global chat-scheme action performs
-            Settings.setState({ chatScheme: b.getAttribute('data-scheme'), fmtOverrides: {} });
-            Settings.rerender();
-          });
-        });
-        // the 5 stops (the same fmt machinery the Chat Colors rows used)
-        var sec = document.createElement('div');
-        sec.className = 'slot-pop-grid-sec';
-        var inner = '';
-        FMT_SLOTS_ALL.forEach(function (k) {
-          inner += fmtColorRow(k, fmtSpecsNow[k], 'global');
-        });
-        sec.innerHTML = inner;
-        body.appendChild(sec);
-        // the collapsed fmt rows need BOTH wirings: the toggle/reset
-        // heads (wireColorRows → buildLazyEditor) + the editors
-        wireColorRows(sec);
-        wireFmtEditors(sec);
-        // the collapse-all reset
-        var act = document.createElement('div');
-        act.className = 'slot-pop-actions';
-        act.innerHTML = '<button type="button" class="slot-pop-btn" data-act="reset-fmt">reset chat colors</button>';
-        body.appendChild(act);
-        act.querySelector('[data-act=reset-fmt]').addEventListener('click', function () {
-          Settings.setState({ chatScheme: 'teal', fmtOverrides: {} });
-          Settings.rerender();
-        });
-      });
+    // the 5 stops — the PROPER parameterization (fmtColorRowUI: key,
+    // label, hint, val, customized, scope — the same names the tweaks
+    // view carries; the settings page is the GLOBAL scope '')
+    var FMT_LABELS = {
+      a1: ['Accent 1', 'headings · keywords'],
+      a2: ['Accent 2', 'subheads · code'],
+      a3: ['Accent 3', 'emphasis · links'],
+      bright: ['Bright text', 'bold'],
+      link: ['Links', '']
     };
-    slotResetFns['text-style'] = function () {
-      Settings.setState({ chatScheme: null, fmtOverrides: {} });
-      Settings.rerender();
-    };
-    return '<div class="slot-row">' +
-      '<div class="slot-row-head" data-slot-open="text-style" role="button" tabindex="0" aria-label="edit text style">' +
-        '<span class="slot-row-name">Text style' + (pinned ? ' <span class="crc-mark">· customized</span>' : '') +
-          '<span class="hint">the text track — every text gradient, chat + titles</span></span>' +
-        '<span class="slot-row-banner" style="' + bannerCss + '"></span>' +
-        '<span class="slot-row-arrow">▶</span>' +
-      '</div>' +
-    '</div>';
+    var rows = '';
+    FMT_SLOTS_ALL.forEach(function (k) {
+      rows += fmtColorRowUI(k, FMT_LABELS[k][0], FMT_LABELS[k][1],
+        fmtSpecsNow[k], false, '');
+    });
+    return section('Text style' + (pinned ? ' <span class="crc-mark">· customized</span>' : ''),
+      '<div style="height:10px;border-radius:5px;margin:10px 0 2px;' + bannerCss + '" aria-hidden="true"></div>' +
+      schemeSwatches() +
+      rows +
+      '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button data-action="chat-colors-reset" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-3);padding:12px 14px;min-height:44px;border-radius:10px;font-size:var(--ui-small-fs);font-family:inherit;cursor:pointer">reset chat colors</button>' +
+      '</div>'
+    );
   }
 
   function cssVarLive(name) {

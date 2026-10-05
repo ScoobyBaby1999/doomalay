@@ -126,8 +126,8 @@ ck "the Colors tab mounts LEAN (≤ 450 body nodes)" "$([ "$NODES" -le 450 ] 2>/
 ck "the open stays off the main thread (longest task < 600ms headless 2-CPU)" "$([ "$MAXLT" -lt 600 ] 2>/dev/null && echo yes || echo no)" "maxLT=${MAXLT}ms over ${NLT} longtasks"
 ck "the open paints bounded (DoomalayPerf.paints delta ≤ 10 over the mount second)" "$([ "$PDELTA" -le 10 ] 2>/dev/null && echo yes || echo no)" "paints delta=$PDELTA"
 ck "no picker exists until a slot row opens (the popover is on-demand)" "$([ "$EDN" -eq 0 ] 2>/dev/null && echo yes || echo no)" "gr-editors in popovers=$EDN"
-ck "the 7 slot rows render (the field set + text style)" "$([ "$LAZY" -eq 7 ] 2>/dev/null && echo yes || echo no)" "[data-slot-open]=$LAZY"
-ck "the section cards render (2 sections: Theme + The Fields)" "$([ "$SECS" -eq 2 ] 2>/dev/null && echo yes || echo no)" "sections=$SECS"
+ck "the 6 slot rows render (the field set — text style is its own section now)" "$([ "$LAZY" -eq 6 ] 2>/dev/null && echo yes || echo no)" "[data-slot-open]=$LAZY"
+ck "the section cards render (3 sections: Theme + The Fields + Text style)" "$([ "$SECS" -eq 3 ] 2>/dev/null && echo yes || echo no)" "sections=$SECS"
 
 # 4 — open the SURFACE slot picker (the popover path — v0.99.6)
 echo "  picker path: tap the Surface slot row → the floating picker opens"

@@ -477,24 +477,30 @@ resetRec();
 var html = page.render(settingsStub.getState, settingsStub.setState);
 html = expandLazyEditors(html);   // v0.98: expand ALL color rows before the editor assertions
 has('page token wrapper', html, 'data-appr-render="r');
-// v0.99.6: THE SLOT ROWS (7 pickers — the editors live in the floating
-// popover, built on open; the page mounts banners only)
+// v1.03.2: THE SLOT ROWS (6 pickers — text style promoted to its own
+// collapsible section; the editors live in the floating popover, built
+// on open; the page mounts banners only)
 has('page slot row surface', html, 'data-slot-open="surface"');
 has('page slot row ink', html, 'data-slot-open="ink"');
 has('page slot row canvas', html, 'data-slot-open="canvas"');
 has('page slot row accent1', html, 'data-slot-open="accent-1"');
 has('page slot row accent2', html, 'data-slot-open="accent-2"');
 has('page slot row accent3', html, 'data-slot-open="accent-3"');
-has('page slot row text-style', html, 'data-slot-open="text-style"');
+// the TEXT STYLE SECTION (promoted v1.03.2): its own collapsible header
+// under The Fields, carrying the fmt stops in the body
+has('page text style section header', html, 'Text style</span>');
+lacks('page NO text-style slot row (promoted)', html, 'data-slot-open="text-style"');
 // the old inline-editor era is over at mount time
 lacks('page NO inline surface editor', html, 'id="tv-surface-gr"');
 lacks('page NO inline accent editor', html, 'id="tv-accent-1-gr"');
 lacks('page NO inline ink input', html, 'id="tv-ink-solid"');
-// the Grid Colors + Chat Colors sections folded into the pickers
+// the Grid Colors section folded into the pickers; the FMT STOPS live in
+// the promoted Text style section now (v1.03.2 — data-fmt-slot rows are
+// EXPECTED there; the old ban was for the pre-promotion inline era)
 lacks('page NO grid colors section', html, 'id="gc-originColor-gr"');
-lacks('page NO chat colors section row', html, 'data-fmt-slot="a1"');
-// 7 banners (one per slot row) render at mount
-ok('page 7 slot banners', (html.match(/class="slot-row-banner"/g) || []).length === 7);
+has('page fmt stops ride the Text style section', html, 'data-fmt-slot="a1"');
+// 6 banners (one per field slot row) render at mount
+ok('page 6 slot banners', (html.match(/class="slot-row-banner"/g) || []).length === 6);
 // the stored --accent spec (folded to --field-accent-1) marks the row
 has('page customized marker (stored override)', html, '· customized');
 // the legacy ban list still holds
