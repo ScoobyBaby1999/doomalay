@@ -273,15 +273,17 @@
        background-image: var(--X-gradient, none);
      The rules live AFTER their base rule so the base `background:`
      shorthand (which resets background-image) can never clobber them.
-     v0.56 THE CONTINUOUS FIELD: every BOX twin layer paints with
-     `background-attachment: fixed` — all boxes sharing var X become
-     WINDOWS into one continuous field (viewport-anchored; inside a
-     transformed ancestor — the chat panel, an overlay card — anchored to
-     that box, so each big panel reads as ONE big box and nested boxes
-     never restart the gradient. THE TILING FIX (user spec: "make them
-     act like one big box"). Small elements sample a tiny region — pills
-     stop looking like squeezed banners. NOT applied to text-clip rules
-     (gradient text needs its own local sweep) or per-row previews. */
+     v1.01.5 THE LOCAL LIGHT: every window paints its gradient LOCALLY
+     (background-attachment: scroll — the element's own border-box).
+     The v0.56 continuous-field trick (`background-attachment: fixed`)
+     RETIRED: fixed resolves against the transformed-ancestor's box
+     inside the draggable panels (a second, hidden field — "the panel
+     splits up into two gradients"), and it rides Chromium's slow path
+     (full-region re-rasters on every scroll/drag — the gradient lag).
+     One paint model, compositor-friendly, zero compensation JS —
+     docs/RESEARCH-V102-LOCAL-LIGHT.md. Nested boxes each carry the
+     sweep in their own box (the standard nested-card look); pills
+     paint the full gradient across their small frame. */
 
   canvas {
     display: block;
@@ -530,6 +532,17 @@
   #settings-btn.spinning svg {
     transform: rotate(180deg);
   }
+  /* v1.01.5: THE CANVAS CHROME PILLS follow the surface field (user
+     report: "the pill behind the settings icon on the canvas or the
+     arrow pill that expands and collapses … don't follow gradients" —
+     a color-mix glass can't carry a gradient image; the solid twin
+     painted through instead). While the surface twin is live these
+     windows paint the gradient; the glass fill stays as the solid
+     fallback. LOCAL — one coherent field, zero projection. */
+  [data-s1-grad] #settings-btn,
+  [data-s1-grad] #dock-expando:not(.open) #dock-toggle {
+    background-image: var(--surface-1-gradient, none);
+  }
 
   /* ── v0.31.2: THE CANVAS DOCK ─────────────────────────────────
      v0.85.2 THE DOCK PILL REWORK (user spec: "The arrow icon under the
@@ -580,6 +593,11 @@
     border-color: var(--border);
     padding: 4px 4px 6px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
+  }
+  /* v1.01.5: the OPEN capsule is a surface window too (the gradient
+     paints while the twin is live — the glass fill stays the fallback). */
+  [data-s1-grad] #dock-expando.open {
+    background-image: var(--surface-1-gradient, none);
   }
   #dock-toggle {
     /* static INSIDE the expando now (the expando owns the fixed slot) */
@@ -787,7 +805,6 @@
     color: var(--on-accent, #fff);
     background: var(--accent);
     background-image: var(--accent-gradient, none);
-    background-attachment: fixed;
     border: none;
     border-radius: 999px;
     padding: 11px 20px;
@@ -1761,7 +1778,7 @@
     overflow: visible;
   }
   /* v0.45 ITEM 6: the toggle switch (hide lines / hide dots) */
-  .app-switch input:checked ~ .app-switch-track { background: var(--accent) !important; background-image: var(--accent-gradient, none) !important; background-attachment: fixed !important; }
+  .app-switch input:checked ~ .app-switch-track { background: var(--accent) !important; background-image: var(--accent-gradient, none) !important; }
   .app-switch input:checked ~ .app-switch-thumb { left: 20px !important; }
   .app-switch input:focus-visible ~ .app-switch-track {
     outline: 2px solid var(--accent);
@@ -1859,7 +1876,6 @@
        the tiling bug the user reported). */
     background: var(--accent);
     background-image: var(--accent-gradient, none);
-    background-attachment: fixed;
     color: var(--on-accent, #fff);
     padding: calc(10px * var(--chat-scale)) calc(14px * var(--chat-scale)); border-radius: 14px 14px 4px 14px;
     max-width: 86%;
@@ -2272,7 +2288,7 @@
   }
   /* v0.44 var-twin: the step number chip layers the accent gradient
      over its tint (no-op while the accent is a solid) */
-  .ts-stage-n { background-image: var(--accent-gradient, none); background-attachment: fixed; }
+  .ts-stage-n { background-image: var(--accent-gradient, none); }
   .ts-stage-name { font-size: calc(var(--ui-fs) - 2px); font-weight: 700; color: var(--text-1); }
   .ts-stage-fo { font-size: var(--ui-micro-fs); color: var(--text-3); font-weight: 600; margin-top: 4px; }
   .ts-stage-ins { font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5; margin-top: 6px; }
@@ -2618,7 +2634,7 @@
     animation: cwd-pulse 0.9s ease-in-out infinite;
   }
   /* v0.44 var-twin: the working dots follow the accent gradient */
-  .cwd i { background-image: var(--accent-gradient, none); background-attachment: fixed; }
+  .cwd i { background-image: var(--accent-gradient, none); }
   .cwd i:nth-child(2) { animation-delay: 0.12s; }
   .cwd i:nth-child(3) { animation-delay: 0.24s; }
   .cwd i:nth-child(4) { animation-delay: 0.36s; }
@@ -3361,7 +3377,7 @@
   .pv-btn-primary { background: rgba(var(--accent-rgb),0.16); border-color: rgba(var(--accent-rgb),0.5); color: var(--text-1); }
   /* v0.44 var-twin: the primary action layers the accent gradient over
      its tint (no-op while the accent is a solid) */
-  .pv-btn-primary { background-image: var(--accent-gradient, none); background-attachment: fixed; }
+  .pv-btn-primary { background-image: var(--accent-gradient, none); }
 
   /* ══ v0.27→v0.56 — chat header pills: equal proportions, theme tones ══
      One row of peers: sandbox · model · artifacts · persona · mind —
@@ -3701,31 +3717,25 @@
     font-variant-numeric: tabular-nums; font-weight: 600; flex-shrink: 0;
   }
   .hub-libpill[data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.10);
-    border-color: rgba(var(--accent-2-rgb), 0.5); color: var(--text-1);
+    background: rgba(var(--accent-rgb), 0.10);
+    border-color: rgba(var(--accent-rgb), 0.5); color: var(--text-1);
   }
-  /* v0.63: every lib pill rides a customizable accent (persona=2,
-     template=1, skill=3, script=4, doc=1 — the hidden format, themes
-     ride the default accent-2). */
-  .hub-libpill[data-tone="persona"][data-on="1"] {
-    background: rgba(var(--accent-2-rgb), 0.13);
-    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--text-1);
-  }
-  .hub-libpill[data-tone="template"][data-on="1"] {
+  /* v1.01.5: THE CHECKERED ACCENTS — the lib pills ride the three
+     gradient-capable accents POSITIONALLY (1st pill → A1, 2nd → A2,
+     3rd → A3, 4th → A1… — user spec). The old semantic mapping parked
+     scripts on accent-4, a theme-carried static that never follows the
+     user's gradients. */
+  .hub-libpill[data-tone="acc1"][data-on="1"] {
     background: rgba(var(--accent-rgb), 0.12);
     border-color: rgba(var(--accent-rgb), 0.55); color: var(--text-1);
   }
-  .hub-libpill[data-tone="skill"][data-on="1"] {
+  .hub-libpill[data-tone="acc2"][data-on="1"] {
+    background: rgba(var(--accent-2-rgb), 0.12);
+    border-color: rgba(var(--accent-2-rgb), 0.55); color: var(--text-1);
+  }
+  .hub-libpill[data-tone="acc3"][data-on="1"] {
     background: rgba(var(--accent-3-rgb), 0.12);
-    border-color: rgba(var(--accent-3-rgb), 0.5); color: var(--text-1);
-  }
-  .hub-libpill[data-tone="script"][data-on="1"] {
-    background: rgba(var(--accent-4-rgb), 0.12);
-    border-color: rgba(var(--accent-4-rgb), 0.5); color: var(--text-1);
-  }
-  .hub-libpill[data-tone="doc"][data-on="1"] {
-    background: rgba(var(--accent-rgb), 0.12);
-    border-color: rgba(var(--accent-rgb), 0.5); color: var(--text-1);
+    border-color: rgba(var(--accent-3-rgb), 0.55); color: var(--text-1);
   }
   .hub-libpill-ghost { cursor: default; }
 
@@ -4535,7 +4545,6 @@
      from here. A no-op while accent-2 is a solid. */
   .dx-pill[data-on="1"]:not([data-tone]) {
     background-image: var(--accent-2-gradient, none);
-    background-attachment: fixed;
   }
   .dx-pill--sm { padding: 3px 9px; min-height: 26px;
     font-size: calc(var(--ui-small-fs) - 1.5px); }
@@ -4746,59 +4755,54 @@
   /* inputs share the accent caret so typing feels like the theme */
   input, textarea { caret-color: var(--accent); }
 
-  /* ══ v0.66 THE PROJECTION SYSTEM ═══════════════════════════════════
-     (the user's canvas-per-variable model, made literal — replaces the
+  /* ══ v0.66 THE PROJECTION SYSTEM — v1.01.5 THE LOCAL LIGHT ══════
+     (the user's per-variable model, made literal — replaces the
      v0.45 twin catchers + v0.56 field + v0.57 layer/veil stack)
-     Every customizable variable owns ONE viewport-fitted PROJECTION:
-     theme.js writes the twin --X-gradient, and EVERY consumer paints it
-     with `background-attachment: fixed` — Chromium sizes a fixed
-     background layer to the VIEWPORT, so every object of a variable is
-     a WINDOW into the same screen-fitted field: the pill top-left shows
-     the top-left of accent-1's projection, the bubble lower-right shows
-     that region — one coherent, tweakable image per variable, and
-     NOTHING else over it (no veils, no per-element copies — a 30px pill
-     no longer squeezes the whole gradient: "accent 4 was barely
-     noticeable"). The canvas (--bg-panel) already paints its projection
-     natively in app.js; text gradients sample the same fixed field.
-     The v0.45 !important catchers stay (inline `background:` SHORTHAND
-     still resets background-image; 'none' twins still no-op). The v0.57
-     VEILS are GONE — the ink washes were the "stained white" family of
-     bugs (see the :root note); --veil-ink now feeds only --text-shadow.
+     Every customizable variable owns ONE gradient twin: theme.js
+     writes --X-gradient, and EVERY consumer paints it LOCALLY (the
+     element's own border-box — v1.01.5; the v0.66 fixed-attachment
+     "viewport window" trick retired: it split into a second hidden
+     field inside transformed panels and rode Chromium's slow path —
+     docs/RESEARCH-V102-LOCAL-LIGHT.md).
+     The canvas (--bg-panel) already paints its gradient natively in
+     app.js; text gradients are the fmt track (local by v1.00.2).
+     The v0.45 !important catchers stay (inline `background:`
+     SHORTHAND still resets background-image; 'none' twins still
+     no-op). The v0.57 VEILS are GONE — the ink washes were the
+     "stained white" family of bugs (see the :root note); --veil-ink
+     now feeds only --text-shadow.
      Inline catchers first, then the stylesheet groups. */
   /* — inline catchers — Layer 2 cards: the surface-1 projection window */
   [style*="background: var(--surface-1)"],
   [style*="background:var(--surface-1)"] {
     background-image: var(--surface-1-gradient, none) !important;
-    background-attachment: fixed !important;
   }
   /* — inline catchers — Layer 3 pills/inputs: the surface-2 projection */
   [style*="background: var(--surface-2)"],
   [style*="background:var(--surface-2)"] {
     background-image: var(--surface-2-gradient, none) !important;
-    background-attachment: fixed !important;
   }
   [style*="background: var(--bg-app)"],
-  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--bg-app)"] { background-image: var(--bg-app-gradient, none) !important; }
   [style*="background: var(--accent)"],
-  [style*="background:var(--accent)"] { background-image: var(--accent-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--accent)"] { background-image: var(--accent-gradient, none) !important; }
   [style*="background: var(--accent-2)"],
-  [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--accent-2)"] { background-image: var(--accent-2-gradient, none) !important; }
   [style*="background: var(--accent-3)"],
-  [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--accent-3)"] { background-image: var(--accent-3-gradient, none) !important; }
   [style*="background: var(--accent-4)"],
-  [style*="background:var(--accent-4)"] { background-image: var(--accent-4-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--accent-4)"] { background-image: var(--accent-4-gradient, none) !important; }
   /* v0.57: border-strong backgrounds (chatbot icon tiles, badges) ride the
      border sweep — theme.js derives --border-strong-gradient whenever the
      border is overridden (same family of color → same underlying field). */
   [style*="background: var(--border-strong)"],
-  [style*="background:var(--border-strong)"] { background-image: var(--border-strong-gradient, none) !important; background-attachment: fixed !important; }
+  [style*="background:var(--border-strong)"] { background-image: var(--border-strong-gradient, none) !important; }
 
   /* — Layer 1: the big surfaces. The full field, NO veil (these ARE the
      panel — the canvas's own material) — but the TEXT safety net rides
      here (a user gradient can carry a white stop under the text). */
   #chat-panel, .panel-header, .panel-body {
     background-image: var(--surface-1-gradient, none);
-    background-attachment: fixed;
     text-shadow: var(--text-shadow);
   }
 
@@ -4829,7 +4833,6 @@
                       linear-gradient(var(--surface-1), var(--surface-1));
     background-origin: padding-box, padding-box;
     background-clip: padding-box, padding-box;
-    background-attachment: fixed, fixed;
     text-shadow: var(--text-shadow);
   }
   /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
@@ -5007,18 +5010,15 @@
     color: var(--on-bg-app, var(--text-1));
     text-shadow: none;
   }
-  /* v0.72: the chatbot's METADATA pill — the name rides the OVERLAY
-     field (bg-app) too: it floats over the CANVAS, and its documented
-     base is rgba(--bg-app, 0.85). A live bg-app twin makes it a real
-     window (opaque, readable over any art); a solid bg-app keeps the
-     translucent pill exactly as before.
-     v0.92.1 THE ORBIT REST: scroll-attachment (LOCAL) — the pill is
-     ~90×22px; viewport projection is invisible at that size (the
-     v0.91.3 precedent), and the projected window was the reason every
-     icon motion needed per-frame re-anchoring (RESEARCH-V092). */
+  /* v0.72 → v1.01.5: the chatbot's METADATA name pill — the user spec:
+  "the pill that is beneath the name of the chat icons … the surface
+  colors entire gradient projected" (it showed the first canvas color —
+  the old rgba(--bg-app, 0.85) base + dead twins the field model never
+  writes). It now windows the SURFACE field: the gradient while the
+  twin is live, the translucent bg-app glass while solid. LOCAL
+  (v0.92.1 set the precedent; the whole app joins it in v1.01.5). */
   .chatbot .name {
-    background-image: var(--surface-2-gradient, none), var(--bg-app-gradient, none);
-    background-attachment: scroll, scroll;
+    background-image: var(--surface-1-gradient, none);
   }
   /* v0.72: the sandbox corner badge — its documented base is
      surface-1, so it windows the SURFACE-1 field (not the raised one):
@@ -5027,13 +5027,13 @@
      corner chip cannot show viewport projection). */
   .chatbot .sandbox-badge {
     background-image: var(--surface-1-gradient, none);
-    background-attachment: scroll;
   }
-  /* v0.49: the chat panel + settings pages are SURFACES — their gradient
-     rides --surface-1 (above). The OVERLAY BACKGROUND (--bg-app) paints
-     the overlay screens (the overlay card is painted inline in
-     connectoverlay.js — background:var(--bg-app) — so the [style*] twin
-     rule catches it).
+  /* v0.49 → v1.01.5: the chat panel + settings pages are SURFACES —
+     their gradient rides --surface-1 (above). The overlay screens ride
+     the SURFACE too now (the overlay card paints inline
+     background:var(--surface-1) in connectoverlay.js — the [style*]
+     twin catcher layers the gradient; the old --bg-app base showed
+     "the first color set for canvas", per the user's report).
      v0.56: the collapsible headers + util pills NO LONGER repaint the
      overlay background — nested same-var boxes tiled (user spec:
      "make them act like one big box"). Headers are TRANSPARENT VEILS over
@@ -5074,7 +5074,6 @@
                       linear-gradient(var(--surface-1), var(--surface-1)) !important;
     background-origin: padding-box, padding-box !important;
     background-clip: padding-box, padding-box !important;
-    background-attachment: fixed, fixed !important;
   }
   [style*="solid var(--border)"][style*="background:var(--surface-2)"],
   [style*="solid var(--border)"][style*="background: var(--surface-2)"],
@@ -5132,7 +5131,6 @@
      :active press dims via brightness (no ink wash over the field). */
   .settings-section h3, #chat-header, .pub-head-bar {
     background-image: var(--bg-app-gradient, none);
-    background-attachment: fixed;
     text-shadow: var(--text-shadow);
   }
   .settings-section h3:active { filter: brightness(0.94); }
@@ -5267,7 +5265,6 @@
   [data-a1-grad] .sm-row.on,
   [data-a1-grad] .sm-row.on .sm-auto {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent) !important;
   }
   /* the icons riding those windows flip to the ink too */
@@ -5299,7 +5296,6 @@
   [data-a2-grad] .vw-arch-fmt,
   [data-a2-grad] .ph-scope-pill button[data-on="1"] {
     background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-2) !important;
   }
   /* — Accent 2 GLYPHS. (v1.00.2: local-box, same tier call.) */
@@ -5314,13 +5310,11 @@
      (providers' Paid thumbs ride the inline catchers below). */
   [data-a3-grad] .settings-nav .tab.active[data-page="general"] {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
   [data-a3-grad] .mb-pill[data-on],
   [data-a3-grad] .mb-ufchip {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
   /* — Accent 4 WINDOWS — scripts + sourcehut (hub + workspace inject
@@ -5344,26 +5338,20 @@
      outside it the label keeps its accent color (v0.70's accurate-ink
      contract everywhere). */
 
-  /* the PUBLIC LIBRARY pills (the category picker) — persona + the
-     default ride Accent 2; template/doc (A1), skill (A3), script (A4)
-     carry their own rules below. The :not() chain keeps each tone's
-     pill on ITS OWN accent (a gradiented A2 must never window a
-     template pill through the base rule). */
-  [data-a2-grad] .hub-libpill[data-on="1"]:not([data-tone="template"]):not([data-tone="doc"]):not([data-tone="skill"]):not([data-tone="script"]),
-  [data-a2-grad] .hub-libpill[data-tone="persona"][data-on="1"] {
-    background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
-    color: var(--on-accent-2) !important;
-  }
-  [data-a1-grad] .hub-libpill[data-tone="template"][data-on="1"],
-  [data-a1-grad] .hub-libpill[data-tone="doc"][data-on="1"] {
+  /* the PUBLIC LIBRARY pills (the category picker) — v1.01.5 THE
+     CHECKERED ACCENTS: positional tones (acc1/acc2/acc3 — 1st pill
+     A1, 2nd A2, 3rd A3, 4th back to A1…). Each tone windows ITS OWN
+     accent's gradient; a gradiented A2 never windows an acc1 pill. */
+  [data-a1-grad] .hub-libpill[data-tone="acc1"][data-on="1"] {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent) !important;
   }
-  [data-a3-grad] .hub-libpill[data-tone="skill"][data-on="1"] {
+  [data-a2-grad] .hub-libpill[data-tone="acc2"][data-on="1"] {
+    background-image: var(--accent-2-gradient, none) !important;
+    color: var(--on-accent-2) !important;
+  }
+  [data-a3-grad] .hub-libpill[data-tone="acc3"][data-on="1"] {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
   /* the library CHROME pills — the publish button, the my-xyz filter,
@@ -5376,7 +5364,6 @@
   [data-a2-grad] .hub-root:not([data-tone]) .hub-chatpill--mine.on,
   [data-a2-grad] .hub-root[data-tone=""] .hub-chatpill--mine.on {
     background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-2) !important;
   }
   [data-a1-grad] .hub-root[data-tone="template"] .hub-publish,
@@ -5384,13 +5371,11 @@
   [data-a1-grad] .hub-root[data-tone="template"] .hub-chatpill--mine.on,
   [data-a1-grad] .hub-root[data-tone="doc"] .hub-chatpill--mine.on {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent) !important;
   }
   [data-a3-grad] .hub-root[data-tone="skill"] .hub-publish,
   [data-a3-grad] .hub-root[data-tone="skill"] .hub-chatpill--mine.on {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
 
@@ -5410,7 +5395,6 @@
   [data-a1-grad] .wsx-ico.k-github,
   [data-a1-grad] .wsx-ico.k-device {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent) !important;
   }
   [data-a2-grad] .wsp[data-prov="gitea"] .wsp-pill[data-on="1"],
@@ -5418,7 +5402,6 @@
   [data-a2-grad] .wsp[data-prov="gitea"] .wsp-pub-go,
   [data-a2-grad] .wsx-ico.k-gitea {
     background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-2) !important;
   }
   [data-a3-grad] .wsp[data-prov="gitlab"] .wsp-pill[data-on="1"],
@@ -5426,7 +5409,6 @@
   [data-a3-grad] .wsp[data-prov="gitlab"] .wsp-pub-go,
   [data-a3-grad] .wsx-ico.k-gitlab {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
 
@@ -5441,7 +5423,6 @@
   [data-a1-grad] [style*="background: rgba(var(--accent-rgb)"],
   [data-a1-grad] [style*="background-color: rgba(var(--accent-rgb)"] {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent) !important;
   }
   [data-a2-grad] [style*="background:rgba(var(--accent-2-rgb)"],
@@ -5449,7 +5430,6 @@
   [data-a2-grad] [style*="background: rgba(var(--accent-2-rgb)"],
   [data-a2-grad] [style*="background-color: rgba(var(--accent-2-rgb)"] {
     background-image: var(--accent-2-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-2) !important;
   }
   [data-a3-grad] [style*="background:rgba(var(--accent-3-rgb)"],
@@ -5457,7 +5437,6 @@
   [data-a3-grad] [style*="background: rgba(var(--accent-3-rgb)"],
   [data-a3-grad] [style*="background-color: rgba(var(--accent-3-rgb)"] {
     background-image: var(--accent-3-gradient, none) !important;
-    background-attachment: fixed !important;
     color: var(--on-accent-3) !important;
   }
   /* v0.99.5: THE INLINE GLYPH CATCHERS ARE RETIRED — accent-colored

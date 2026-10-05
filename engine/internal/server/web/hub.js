@@ -1443,14 +1443,26 @@
       '</div>');
   }
 
+  // v1.01.5: THE CHECKERED ACCENTS (user spec: "let's make the public
+  // library pills use all the accents in a checkers pattern (first
+  // icon in the column uses accent 1, second uses 2, third uses 3,
+  // fourth back to one, ext..)"). The pill's tone is POSITIONAL now —
+  // i % 3 → acc1/acc2/acc3 — not semantic: the old mapping parked
+  // scripts on accent-4, a theme-carried static that never follows the
+  // user's gradients ("the public library scripts pill doesn't follow
+  // themes"). The category's data-lib still drives everything else.
+  var CHECKER_TONES = ['acc1', 'acc2', 'acc3'];
   function libsHTML() {
     var c = cur;
     var out = '';
+    var ci = 0;
     c.libraries.forEach(function (lib) {
       var active = lib.type === c.type;
       var label = shortLabel(lib) + 's';
+      var tone = CHECKER_TONES[ci % CHECKER_TONES.length];
+      ci++;
       out += '<button type="button" class="hub-libpill" data-lib="' + escAttr(lib.type) + '"' +
-        ' data-tone="' + escAttr(lib.type) + '"' +
+        ' data-tone="' + tone + '"' +
         (active ? ' data-on="1"' : '') +
         ' title="' + escAttr(lib.desc || '') + '">' +
         '<span class="dx-pill-ico">' + libIcon(lib.type) + '</span>' +

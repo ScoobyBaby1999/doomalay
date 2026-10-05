@@ -253,7 +253,8 @@
             if (panelRef && !panelRef.isOpen() && panelRef.bodyEl &&
                 panelRef.bodyEl.querySelectorAll('*').length > 25) {
               panelRef.wipeBody();
-              if (window.DoomProjection && window.DoomProjection.poke) window.DoomProjection.poke();
+              // v1.01.5: the painter poke retired with the projection —
+              // local windows need no re-anchor after a DOM wipe.
             }
           } catch (e) {}
         }, 450);

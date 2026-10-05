@@ -1528,7 +1528,7 @@
 
   // v0.66 THE PILL PROJECTION — the user's canvas-per-variable model for
   // every pill that rides a theme variable: the pill renders ITS
-  // variable's viewport projection (background-attachment: fixed — the
+  // variable's viewport projection ( — the
   // same screen-fitted field every other object of that variable
   // samples; no per-pill gradient copies, no veils, no ink washes). The
   // rgba tint stays as the fallback while the variable is a solid
@@ -1555,7 +1555,6 @@
     // accent text); the accent rides the wash + ring (the object track).
     return 'background-color:rgba(var(' + rgbVar + '),0.14);' +
       'background-image:var(' + colorVar + '-gradient, none);' +
-      'background-attachment:fixed;' +
       'border:1px solid rgba(var(' + rgbVar + '),0.5);' +
       'color:var(--text-1);' +
       'text-shadow:var(--text-shadow);';
@@ -3531,7 +3530,6 @@
       // as the solid-accent fallback. OFF stays transparent (a quiet rail).
       'background-color:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
       'background-image:' + (active ? 'var(--accent-gradient, none)' : 'none') + ';' +
-      'background-attachment:fixed;' +
       'border-radius:999px;overflow:hidden';
 
     var lab = document.createElement('button');
@@ -3614,7 +3612,6 @@
       'border-left:1px solid rgba(var(--accent-rgb),0.45);' +
       'background-color:rgba(var(--accent-rgb),0.12);' +
       'background-image:var(--accent-gradient, none);' +
-      'background-attachment:fixed;' +
       'color:var(--on-accent);padding:3px 7px 3px 6px;font-size:9.5px;font-weight:600;' +
       'font-family:inherit;cursor:pointer;white-space:nowrap;max-width:88px;overflow:hidden;' +
       'text-overflow:ellipsis;flex-shrink:1;-webkit-tap-highlight-color:transparent';
@@ -3647,7 +3644,6 @@
       // (the same window pattern as the lib pill — one field per var).
       'background-color:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
       'background-image:' + (active ? 'var(--accent-gradient, none)' : 'none') + ';' +
-      'background-attachment:fixed;' +
       'border-radius:999px;overflow:hidden';
 
     var lab = document.createElement('button');

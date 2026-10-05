@@ -182,7 +182,14 @@
         surface1: rv('--surface-1', '#14141a'),
         accent: rv('--accent', '#a78bfa'),
         accent2: rv('--accent-2', '#38bdf8'),
-        borderStrong: rv('--border-strong', '#34344a')
+        borderStrong: rv('--border-strong', '#34344a'),
+        // v1.01.5: the surface's gradient twin, LIVE (applyTheme writes
+        // --surface-1-gradient inline on <html>; not @property-registered,
+        // so getComputedStyle returns the raw css string — 'none' while
+        // the surface is a solid). The name pill paints it (user spec:
+        // "the pill beneath the name of the chat icons… the surface
+        // colors entire gradient projected").
+        surfaceGrad: cssVar('--surface-1-gradient') || 'none'
       };
     }
     return colCache.v;
@@ -286,7 +293,11 @@
       g.fillText(glyph, bx, by + 0.5);
     }
 
-    // the name pill (max-width 80, ellipsis, text-2 on bg-app 0.92)
+    // the name pill (max-width 80, ellipsis, text-2 on the SURFACE —
+    // v1.01.5: the resolved surface (solid OR the live gradient via
+    // paintCSSBackground — the LOCAL model: the pill carries the sweep
+    // in its own box), never the old hardcoded midnight rgba(10,10,11)
+    // "first color of the canvas" the user reported).
     var name = String(icon.name || icon.title || '');
     g.font = '600 12px system-ui, sans-serif';
     var maxW = 76;
@@ -294,8 +305,15 @@
     if (name !== String(icon.name || '') && name.length) name += '…';
     var tw = Math.min(maxW, g.measureText(name).width + 14);
     var nx = cx - tw / 2, ny = DIAM + 4;
-    g.fillStyle = 'rgba(10,10,11,0.92)';
-    roundRect(g, nx, ny, tw, 17, 5); g.fill();
+    var sg = c.surfaceGrad;
+    if (sg && sg !== 'none' && /^linear-gradient\(/.test(sg)) {
+      paintCSSBackground(g, sg, nx, ny, tw, 17);
+    } else {
+      g.globalAlpha = 0.92;
+      g.fillStyle = c.surface1;
+      roundRect(g, nx, ny, tw, 17, 5); g.fill();
+      g.globalAlpha = 1;
+    }
     g.fillStyle = c.text2;
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(name, cx, ny + 9);

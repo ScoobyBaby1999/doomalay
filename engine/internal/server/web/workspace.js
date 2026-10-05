@@ -253,7 +253,7 @@
         'border-radius:10px;color:var(--text-1);padding:10px 12px;font-size:var(--ui-fs);' +
         'font-family:inherit;outline:none}' +
       '.wsx-go{display:block;width:calc(100% - 32px);margin:16px 16px 8px;padding:12px;' +
-        'border-radius:12px;border:none;background:var(--accent-2);color:var(--bg-app);background-image:var(--accent-2-gradient,none);background-attachment:fixed;' +
+        'border-radius:12px;border:none;background:var(--accent-2);color:var(--bg-app);background-image:var(--accent-2-gradient,none);' +
         'font-size:var(--ui-fs);font-weight:700;font-family:inherit;cursor:pointer;' +
         '-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
       '.wsx-go:disabled{opacity:0.5}' +
@@ -355,13 +355,13 @@
       // file viewer / editor pages (v0.49 sweep: raised surfaces, not
       // the canvas var — with the surface-2 gradient twin)
       '.wsv-pre{overflow:auto;margin:0;padding:12px;background:var(--surface-2);' +
-        'background-image:var(--surface-2-gradient,none);background-attachment:fixed;' +
+        'background-image:var(--surface-2-gradient,none);' +
         'color:var(--text-1);font-family:ui-monospace,Menlo,Consolas,monospace;' +
         'font-size:calc(var(--ui-fs) - 2px);line-height:1.5;white-space:pre;' +
         '-webkit-overflow-scrolling:touch}' +
       '.wsv-ta{width:100%;box-sizing:border-box;border:none;outline:none;resize:none;' +
         'min-height:240px;padding:12px;background:var(--surface-2);' +
-        'background-image:var(--surface-2-gradient,none);background-attachment:fixed;color:var(--text-1);' +
+        'background-image:var(--surface-2-gradient,none);color:var(--text-1);' +
         'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(var(--ui-fs) - 2px);' +
         'line-height:1.5;-webkit-overflow-scrolling:touch}';
     document.head.appendChild(s);
@@ -2187,7 +2187,6 @@
     b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;' +
       'background-color:rgba(var(--accent-2-rgb),0.14);' +
       'background-image:var(--accent-2-gradient, none);' +
-      'background-attachment:fixed;' +
       'border:1px solid rgba(var(--accent-2-rgb),0.5);' +
       'color:var(--accent-2);' +
       'text-shadow:var(--text-shadow);' +

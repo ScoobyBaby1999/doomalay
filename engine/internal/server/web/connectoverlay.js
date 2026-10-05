@@ -174,11 +174,13 @@
     cardEl.style.cssText =
       'position:relative;z-index:1;width:100%;max-width:480px;max-height:85vh;' +
       'display:flex;flex-direction:column;overflow:hidden;' +
-      // v0.49: overlay screens follow the OVERLAY BACKGROUND (--bg-app) —
-      // user spec: "surface or overlay background to change the background
-      // of the overlay". The [style*] twin rule in index.html layers the
-      // --bg-app gradient over it.
-      'background:var(--bg-app);border:1px solid var(--surface-2);' +
+      // v1.01.5: overlay screens ride the SURFACE (user spec: "the actual
+      // overlay screen itself… should use surface color aswell" — bg-app
+      // is a canvas-derived SOLID, which read as "the first color set
+      // for canvas"). The [style*="background:var(--surface-1)"] twin
+      // catcher in index.html layers the surface-1 gradient over it —
+      // LOCAL now (v1.01.5), one coherent field, zero compensation.
+      'background:var(--surface-1);border:1px solid var(--surface-2);' +
       'border-radius:16px;box-shadow:0 16px 48px ' +
       'rgba(var(--bg-panel-rgb), 0.5);' +
       'opacity:0;transform:scale(0.95) translateY(10px);' +

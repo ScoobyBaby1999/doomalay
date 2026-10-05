@@ -311,24 +311,40 @@
 
   // v0.30: the swatch grid, PARAMETERIZED — the same builder drives the
   // settings page (global) and any scoped view that reuses it.
+  // v1.01.5: THE SELF-COLORED CHIPS (user spec: "the theme boxes are the
+  // only thing in the app that can have their own colors that don't
+  // follow the user defined gradients but actually reflect the theme
+  // itself. And should not be white rendered boxes"). Every color is a
+  // RAW HEX from the theme model (DoomTheme.themePreview — the static
+  // [data-theme] block + the THEMES accents): card = the theme's own
+  // surface, the strip = its canvas, the dots = its accents, the label
+  // = its own ink. ZERO CSS vars — a live surface gradient or a bright
+  // custom ink can never wash or whiten them.
   function schemeThemeSwatches(current, scope) {
     var themes = (window.DoomTheme && window.DoomTheme.themes) || {};
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:8px 0 4px">';
     Object.keys(themes).forEach(function (id) {
       var t = themes[id];
       var sel = id === current;
+      var p = (window.DoomTheme && window.DoomTheme.themePreview)
+        ? window.DoomTheme.themePreview(id) : null;
+      var surf = (p && p.surface) || '#14141a';
+      var ink = (p && p.ink) || '#e0e0e8';
+      var canv = (p && p.canvas) || '#101016';
+      var acc = (p && p.accents) || [t.accent, t.accent2, t.accent3];
       html += '<button data-action="set-theme" data-theme="' + id + '"' + (scope ? ' data-scope="' + scope + '"' : '') + ' ' +
         'style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;' +
-        'background:var(--surface-2);border:1.5px solid ' + (sel ? 'var(--accent)' : 'var(--border)') + ';' +
-        'border-radius:12px;padding:10px;cursor:pointer;font-family:inherit;color:inherit;' +
-        (sel ? 'box-shadow:0 0 0 2px rgba(var(--accent-rgb),0.25);' : '') + '">' +
-        '<span style="display:flex;width:100%">' +
-          '<i style="flex:1;height:6px;border-radius:3px;background:' + t.accent + ';display:inline-block"></i>' +
-          '<i style="flex:1;height:6px;border-radius:3px;background:' + t.accent2 + ';display:inline-block;margin-left:2px"></i>' +
-          '<i style="flex:1;height:6px;border-radius:3px;background:' + t.accent3 + ';display:inline-block;margin-left:2px"></i>' +
+        'background:' + surf + ';border:1.5px solid ' + (sel ? (acc[0] || t.accent) : 'rgba(255,255,255,0.10)') + ';' +
+        'border-radius:12px;padding:10px;cursor:pointer;font-family:inherit;' +
+        (sel ? 'box-shadow:0 0 0 2px ' + (acc[0] || t.accent) + '40;' : '') + '">' +
+        '<span style="display:flex;width:100%;gap:2px;align-items:center">' +
+          '<i style="flex:1;height:6px;border-radius:3px;background:' + acc[0] + ';display:inline-block"></i>' +
+          '<i style="flex:1;height:6px;border-radius:3px;background:' + acc[1] + ';display:inline-block"></i>' +
+          '<i style="flex:1;height:6px;border-radius:3px;background:' + acc[2] + ';display:inline-block"></i>' +
+          '<i style="width:10px;height:6px;border-radius:3px;background:' + canv + ';display:inline-block;flex-shrink:0"></i>' +
         '</span>' +
-        (t.light ? '<span style="font-size:var(--ui-micro-fs);color:var(--text-3);font-weight:600">light</span>' : '') +
-        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:var(--text-1)">' + t.label + '</span>' +
+        (t.light ? '<span style="font-size:var(--ui-micro-fs);color:' + ink + '99;font-weight:600">light</span>' : '') +
+        '<span style="font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;color:' + ink + '">' + t.label + '</span>' +
         '</button>';
     });
     html += '</div>';
@@ -1353,7 +1369,7 @@
         'font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;font-family:inherit;cursor:pointer;' +
         (connected
           ? 'background:transparent;border:1px solid rgba(var(--accent-2-rgb),0.55);color:var(--accent-2)'
-          : 'background:var(--accent);color:var(--on-accent);border:none;background-image:var(--accent-gradient,none);background-attachment:fixed') +
+          : 'background:var(--accent);color:var(--on-accent);border:none;background-image:var(--accent-gradient,none);') +
         '">' + btnLabel + '</button>' +
       '</div>';
   }

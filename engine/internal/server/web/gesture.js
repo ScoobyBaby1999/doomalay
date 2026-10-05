@@ -150,11 +150,10 @@
     // re-anchors in the browser's own style pass. The old full paint
     // per frame (a getComputedStyle + getBoundingClientRect PER WINDOW
     // per frame) was the panel-glide jank itself.
-    if (window.DoomProjection && window.DoomProjection.motion) {
-      window.DoomProjection.motion();
-    } else if (window.DoomProjection) {
-      window.DoomProjection.poke();
-    }
+    // v1.01.5: the projection motion() call is RETIRED with the painter
+    // — local gradient windows ride the compositor (transform-only
+    // moves re-anchor for free in the browser's own style pass; there is
+    // nothing to compensate anymore).
   }
   function writeVis(y) {
     panelEl.style.setProperty('--panel-vis-h', visForY(y) + 'px');

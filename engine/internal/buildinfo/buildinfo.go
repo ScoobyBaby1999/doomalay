@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.01.0"   // v1.01.0 THE ASSETS WAVE (phase 1+2): the assets vendors (fflate 0.8.3 MIT + maxrects-packer 2.7.3 MIT + material-color-utilities 0.4.0 Apache-2.0 — all browser-verified, zero page errors) + THE IMAGE→PALETTE SUGGESTER (the canvas picker: pick an image → MCU sourceColorFromImage → SchemeContent dark-first → the 6-swatch proposal → apply writes the seven fields; rig 7/7 end-to-end with a real file upload; culori OKLCH stays the one runtime truth — MCU is generation-time only). The field atlas, the 9-slice/icon registry and the .doomtheme v2 zip container carry forward per PLAN-V101.
+var Version = "1.01.5"   // v1.01.5 THE LOCAL LIGHT: background-attachment:fixed RETIRED from the object track (the two-hidden-gradient-fields split + the Chromium slow path — docs/RESEARCH-V102-LOCAL-LIGHT.md), the 1300-line DoomProjection painter DELETED (the browser compositor replaces it), THE THEME EVENT ('doomalay:theme-applied', coalesced — never dispatched before: stale canvas icons), the self-colored theme chips (raw hexes, never white), the checkered library pills (positional accents 1-2-3), the overlay screens + the chat-icon name pills ride the SURFACE, the canvas chrome pills (#settings-btn + dock) follow the surface gradient. Rig: v1015-local-light 15/15 (zero fixed elements, zero longtasks, locked 60fps drags).
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
