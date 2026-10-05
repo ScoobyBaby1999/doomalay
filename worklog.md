@@ -407,3 +407,43 @@ Stage Summary:
 - The user's whole order delivered. The doom projection is the RESTORED system (toggleable in the Colors tab), not the broken canvas.
 - Landmines banked: rebase --ours/--theirs is swapped vs merge (rig-caught); the agent-browser pool wedges need pkill -9 between batches; rig scroll assertions must force real deltas.
 - The v1.05 candidates: the pixiworld pill bridge (the projection for the canvas pills), the root-registry race on fast overlay opens, the L2 layer-count budget on very long transcripts.
+
+---
+Task ID: v1.04.2-.5 + v1.05.0 ship (the discipline wave)
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- v1.04.2 THE ELEVATION TOKENS (455135d7): --shadow-ink = color-mix(in oklab,
+  var(--field-canvas), #000 55%) in the derivation block + the --shadow-ink-rgb
+  triplet (JS twin in applyTheme; the OKLAB mix lands at rgb(2,2,2) — the naive
+  linear-RGB guess was wrong, the rig caught it). v1042 rig 6/6 (CSS≡JS parity
+  via a srgb-forced probe; the live canvas-override → shadow re-tint proof).
+- v1.04.3 THE SHADOW SWEEP (5f554b36): all 37 index.html literals + JS
+  stragglers → rgba(var(--shadow-ink-rgb), α) exact-alpha parity; text-shadows
+  → veil-ink; inset rings → --highlight-inset-rgb; the fmt h1 hairline →
+  --border; hub.js ink-on-art upgraded to WCAG relative luminance +
+  higher-contrast pick. v1043 rig 5/5 (grep gate + the live consumer proof).
+- v1.04.4 THE FALLBACK CANON (2e5abe6f): DoomTheme.FALLBACKS = the one literal
+  map; 12 consumer files re-pointed; settings.js seeds as CANON-TWINs (loads
+  before theme.js — load-order fact); the atoms.js triplet-slot latent bug
+  fixed. LEGACY_GRID exposed as the sentinel owner after the rig caught the
+  reset-path first cut pinning the grid (FALLBACKS.canvas ≠ the sentinel).
+- v1.04.5 THE ENFORCEMENT (7d246e21, rebased onto the parallel v1.04.0-the-restore
+  wave — the fetch/rebase/merge protocol caught their 2 commits mid-flight):
+  v1040-discipline-audit.sh 7 gates (the two rules fail builds now);
+  docs/DISCIPLINE.md (the canonical zones + the surface ledger + the
+  artifacts-sheet decision + the z-ladder); v1045-redteam.sh 11/11 (the
+  human-imitation journey on both theme polarities — paper shadow ink
+  (84,83,81) vs midnight (2,2,2); the purple-canvas shadow hue-follow; the
+  reset-sentinel contract; zero console errors).
+- SHIP v1.05.0-the-discipline: buildinfo 1.05.0 + tag + release (CI APK).
+- Battery: v1040 7/7 · v1042 6/6 · v1043 5/5 · v1045 11/11 · v1031 16/16 ·
+  v098 24/24 · twins 199 · uikit 140 · go green.
+
+Stage Summary:
+- THE TWO STANDING RULES ARE SELF-ENFORCING: no hardcoded chrome colors
+  outside the documented canonical zones (the audit fails on new ones), and
+  every front-facing surface rides the Panel / the Overlay Screen / the
+  documented chrome ladder. Shadow color is a theme product. The next
+  improvement on these axes would be the DTCG namespacing refactor — noted
+  as FUTURE residue; doing it now would be the spaghetti the user capped.
