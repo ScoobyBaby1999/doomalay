@@ -370,3 +370,23 @@ Stage Summary:
 - BOTH WAVES SHIPPED: v1.00.0-the-masks + v1.01.0-the-assets (CI building the APKs).
 - The user's touch bug is FIXED AT THE ROOT and negative-control-proven.
 - NEXT (per PLAN-V101): the field atlas (maxrects, 2048² clamp, MAX_TEXTURE_SIZE query), the 9-slice/icon registry, the .doomtheme v2 zip container + the 8-rung security ladder; then the virtual-core wiring wave; then v1.02 THE LIBRARY.
+
+---
+Task ID: v1.03.0 (the wave ship)
+Agent: Z.ai Code (main orchestrator)
+Task: THE EDITOR & THE PROJECTION — the user's 4-point color system order, shipped as one wave.
+
+Work Log:
+- v1.03.1 THE CARD (60a903d5): the flat --card derivation + the full nested-element reassignment; v1031 16/16 (re-pinned through the wave for the editor path).
+- v1.03.2 THE TEXT STYLE PROMOTION (a9ab6daa): its own collapsible section; the v0.99.6 fmt-label regression fixed; v1032 10/10.
+- v1.03.3 THE THEME EDITOR (2512b1a7): the reusable panel page + the tagged registry + the Overlay list; v1033 15/15.
+- v1.03.4 THE WHEEL (2d3bf77f): the CSS-composed HSV disc + the H/S/V sliders + common/last-used; the fmt entries; the popover retired; v1034 11/11.
+- v1.03.5 THE UNIVERSAL ANGLE (47fed386): linear/radial-orbit/mesh-rotation/pattern-transforms in css() + the canvas rasterizer (the worker shares lattice.js); the legacy dir normalization; v1035 10/10.
+- v1.03.6 THE DOOM PROJECTION v2 (aef26551): the toggleable 2D canvas field projector — the crawl discovery, the override sheet, the once-per-theme field rasters, the 9-arg crop loop; v1036 10/10.
+- SHIP: tag v1.03.0-the-editor + the release (CI: APK + desktop + HF Space all SUCCESS; 4 assets attached). The battery: v1031-v1036 + v098 24/24 + v1015 15/15 (L2b re-pinned: the v2 module replaced the stub BY DESIGN) + v099 5/6/6 + v1000 19/19 (re-pinned to the editor contract) + v1003 5/5 + twins 199 + uikit 140 + go (TestScreenshotRealRender fails on PRISTINE v1.02.0 in this sandbox — the reaper kills its Chromium; environmental, documented).
+- LANDMINES: the browser daemon wedges under battery load (pkill -9 -f agent-browser resets; NEVER let a rig hit the bash timeout mid-command); engines must be script-spawned; the browser session's localStorage outlives the server data dir.
+
+Stage Summary:
+- THE 4-POINT ORDER IS DELIVERED: the card material, the text-style section, the Theme Editor (layout + wheel + types + universal angle + the tagged registry), and the doom projection v2 (the toggleable shared-field projector).
+- The user's ask "render them once not once per element" is literal in the v2: one bitmap per field, one drawImage per consumer.
+- Residue for the next wave: the pixiworld pill field bridge (the pills paint locally — the 56px precedent), the virtual-core catalogue wiring, the DTCG token namespacing, the settings-page/root-registry race (the v1.00.3 leftover).
