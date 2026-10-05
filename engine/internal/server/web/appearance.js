@@ -546,12 +546,15 @@
     }
     // v0.45 ITEM 5: collapsed color row — banner + expand arrow + per-row reset
     var onReset = function () {
-      // v1.04.4: the grid reset seeds ride the canon (CANON-TWIN with
-      // settings.js's parse-time seed — theme.js loads after settings.js).
-      var defaults = { bg: window.DoomTheme.FALLBACKS.canvas,
-        lineColor: window.DoomTheme.FALLBACKS.line,
-        dotColor: window.DoomTheme.FALLBACKS.dot,
-        originColor: window.DoomTheme.FALLBACKS.origin };
+      // v1.04.4: a reset writes the SENTINELS (DoomTheme.LEGACY_GRID —
+      // "equal = never customized" → the theme's palette returns), never
+      // a pinned paint hex. (The first cut used FALLBACKS here — the rig
+      // caught it: that would have pinned the grid to the canvas hex.)
+      var LG = window.DoomTheme.LEGACY_GRID;
+      var defaults = { bg: LG.bg,
+        lineColor: LG.line,
+        dotColor: LG.dot,
+        originColor: LG.origin };
       writeGridKey(key, defaults[key]);
       Settings.rerender();
     };
@@ -1093,9 +1096,10 @@
             fr.innerHTML = '<button type="button" class="slot-pop-btn" data-act="grid-reset">follow theme again</button>';
             box.appendChild(fr);
             fr.querySelector('[data-act=grid-reset]').addEventListener('click', function () {
+              var LG = window.DoomTheme.LEGACY_GRID;
               Settings.setState({
-                bg: window.DoomTheme.FALLBACKS.canvas, lineColor: window.DoomTheme.FALLBACKS.line,
-                dotColor: window.DoomTheme.FALLBACKS.dot, originColor: window.DoomTheme.FALLBACKS.origin
+                bg: LG.bg, lineColor: LG.line,
+                dotColor: LG.dot, originColor: LG.origin
               });
             });
             mcuSuggestSection(box);
@@ -1572,9 +1576,10 @@
       // string through, and ctx.fillStyle='var(--bg-app)' is INVALID on
       // canvas → silently ignored → the grid kept STALE colors that matched
       // neither the theme nor the settings (the reported bug).
+      var LG = window.DoomTheme.LEGACY_GRID;
       Settings.setState({
-        bg: window.DoomTheme.FALLBACKS.canvas, lineColor: window.DoomTheme.FALLBACKS.line,
-        dotColor: window.DoomTheme.FALLBACKS.dot, originColor: window.DoomTheme.FALLBACKS.origin
+        bg: LG.bg, lineColor: LG.line,
+        dotColor: LG.dot, originColor: LG.origin
       });
       // v0.26: re-render — the inputs must show the theme's palette NOW.
       Settings.rerender();

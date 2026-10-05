@@ -188,7 +188,9 @@
         // v1.03.1: the CARD — the flat nested-box material. The name
         // pill + the sandbox badge paint it (they re-tiled the surface
         // gradient in their own rasters before — the user's point 1).
-        card: rv('--card', FB.card)
+        card: rv('--card', FB.card),
+        // v1.04.4: the raster shadow ink (the elevation token, real hex)
+        shadowInk: rv('--shadow-ink', FB.canvas)
       };
     }
     return colCache.v;
@@ -266,10 +268,13 @@
       g.fillStyle = (icon.family !== 'default' && branded && fam.color) ? fam.color : c.surface2;
       g.fillRect(cx - R, cy - R, DIAM, DIAM);
       // the name letter (the DOM twin: 22px/700/text-1 + shadow)
+      // v1.04.4: the raster's text-shadow ink = the themed shadow-ink
+      // (the elevation token; canvas 2D needs the real hex — the DOM
+      // twin paints rgba(var(--shadow-ink-rgb), α) via the stylesheet).
       g.fillStyle = c.text1;
       g.font = '700 22px system-ui, sans-serif';
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 2; g.shadowOffsetY = 1;
+      g.shadowColor = c.shadowInk; g.shadowBlur = 2; g.shadowOffsetY = 1;
       g.fillText((icon.name || icon.title || '?').charAt(0).toUpperCase(), cx, cy + 1);
       g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetY = 0;
     }
@@ -362,8 +367,8 @@
     c.width = 64; c.height = 64;
     var g = c.getContext('2d');
     var rg = g.createRadialGradient(32, 32, 2, 32, 32, 30);
-    rg.addColorStop(0, 'rgba(255,255,255,1)');
-    rg.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+    rg.addColorStop(0, 'rgba(255,255,255,1)'); // CANON: the star glow IS white light (additive sprite; tint rides the sprite)
+    rg.addColorStop(0.25, 'rgba(255,255,255,0.55)'); // CANON: glow falloff
     rg.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = rg;
     g.fillRect(0, 0, 64, 64);

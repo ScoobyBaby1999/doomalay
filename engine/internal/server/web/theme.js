@@ -970,6 +970,13 @@
       apply: applyTheme,
       effectiveGrid: effectiveGrid,
       effectiveGridSpecs: effectiveGridSpecs,
+      // v1.04.4: THE GRID SENTINELS — the legacy hexes that mean "never
+      // customized" (gridSpecFor swaps in the theme's palette when a key
+      // equals its sentinel). The single literal owner: settings.js's
+      // parse-time seed carries CANON-TWIN comments (it loads before
+      // theme.js) and every reset path writes THESE values — a reset
+      // must return the grid to theme-following, never pin a hex.
+      LEGACY_GRID: LEGACY_GRID,
       canvasBgSpec: canvasBgSpec,
       appBgSpec: canvasBgSpec,   // v0.49 alias (old name, same contract)
       onColorFor: onColorFor,
@@ -1006,6 +1013,15 @@
         var rid = THEMES[st.theme] ? st.theme : 'midnight';
         var ov = foldThemeOverrides(
           (st.themeOverrides && st.themeOverrides[rid]) || null);
+        // v1.04.4: the elevation token — the JS twin of the :root
+        // color-mix (the same special case applyTheme's triplet
+        // derivation runs; canvas consumers need the REAL hex).
+        if (name === '--shadow-ink') {
+          if (!FieldMath) return '';
+          var shc = resolvedVar(rid, ov, '--field-canvas');
+          return (/^#[0-9a-fA-F]{6}$/.test(shc || ''))
+            ? (FieldMath.cssMix(shc, '#000000', 0.55) || '') : '';
+        }
         if (DERIVED_MIXES[name]) {
           return resolvedDerived(rid, ov, name);
         }

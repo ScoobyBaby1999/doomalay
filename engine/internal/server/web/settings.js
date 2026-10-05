@@ -33,14 +33,15 @@
     // ── Appearance (grid) — LEGACY default hexes; equal values mean
     //    "never customized" → theme.js swaps in the theme's grid palette.
     //    v1.04.4 CANON-TWIN: these literals MUST equal theme.js's
-    //    DoomTheme.FALLBACKS (canvas/line/dot/origin) — settings.js loads
-    //    BEFORE theme.js so it cannot read the map; the v1040 discipline
-    //    audit cross-checks the twins (drift = fail).
+    //    DoomTheme.LEGACY_GRID (the "never customized" sentinels —
+    //    gridSpecFor swaps in the theme's palette on equality).
+    //    settings.js loads BEFORE theme.js so it cannot read the map;
+    //    the v1040 discipline audit cross-checks the twins (drift = fail).
     gridSize: 1,           // 1× = default (48px), up to 5× = 240px
-    bg: '#0a0a0b',         // CANON-TWIN: FALLBACKS.canvas
-    lineColor: '#131318',  // CANON-TWIN: FALLBACKS.line
-    dotColor: '#2e2e3a',   // CANON-TWIN: FALLBACKS.dot
-    originColor: '#4a4a5e', // CANON-TWIN: FALLBACKS.origin
+    bg: '#0a0a0b',          // CANON-TWIN: LEGACY_GRID.bg
+    lineColor: '#131318',   // CANON-TWIN: LEGACY_GRID.line
+    dotColor: '#2e2e3a',    // CANON-TWIN: LEGACY_GRID.dot
+    originColor: '#4a4a5e', // CANON-TWIN: LEGACY_GRID.origin
     // ── v0.45 ITEM 6: grid quick options (hide / scatter / size / rotate) ──
     hideGridLines: false,   // toggle the connecting grid lines
     hideDots: false,        // toggle the dots
