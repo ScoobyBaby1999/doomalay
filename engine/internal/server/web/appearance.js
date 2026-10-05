@@ -328,13 +328,15 @@
       var sel = id === current;
       var p = (window.DoomTheme && window.DoomTheme.themePreview)
         ? window.DoomTheme.themePreview(id) : null;
-      var surf = (p && p.surface) || '#14141a';
-      var ink = (p && p.ink) || '#e0e0e8';
-      var canv = (p && p.canvas) || '#101016';
+      // v1.04.4: the swatch preview fallbacks ride the canon.
+      var FBV = window.DoomTheme.FALLBACKS;
+      var surf = (p && p.surface) || FBV.surface;
+      var ink = (p && p.ink) || FBV.ink;
+      var canv = (p && p.canvas) || FBV.canvas;
       var acc = (p && p.accents) || [t.accent, t.accent2, t.accent3];
       html += '<button data-action="set-theme" data-theme="' + id + '"' + (scope ? ' data-scope="' + scope + '"' : '') + ' ' +
         'style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;' +
-        'background:' + surf + ';border:1.5px solid ' + (sel ? (acc[0] || t.accent) : 'rgba(255,255,255,0.10)') + ';' +
+        'background:' + surf + ';border:1.5px solid ' + (sel ? (acc[0] || t.accent) : 'rgba(var(--border-strong-rgb, 52,52,74), 0.35)') + ';' +
         'border-radius:12px;padding:10px;cursor:pointer;font-family:inherit;' +
         (sel ? 'box-shadow:0 0 0 2px ' + (acc[0] || t.accent) + '40;' : '') + '">' +
         '<span style="display:flex;width:100%;gap:2px;align-items:center">' +
@@ -376,10 +378,11 @@
   function colorRowCollapsed(opts) {
     var pfx = opts.pfx;
     var label = opts.label;
-    var spec = opts.spec || { colors: ['#000000'], dir: 'auto' };
+    var FBV = window.DoomTheme.FALLBACKS;
+    var spec = opts.spec || { colors: [FBV.canvas], dir: 'auto' };
     var editorHtml = opts.editorHtml || '';
     var onReset = opts.onReset;
-    var colors = (spec && spec.colors) ? spec.colors : ['#000000'];
+    var colors = (spec && spec.colors) ? spec.colors : [FBV.canvas];
     // v0.54: the banner previews the TRUE paint — the exact recipe
     // (mesh / checker / stripes / rays) at a small scale, not the old
     // always-135°-linear strip that made every option look identical.
@@ -435,7 +438,7 @@
     var sch = s.chatScheme || (window.DoomTheme && window.DoomTheme.themes &&
       window.DoomTheme.themes[s.theme] && window.DoomTheme.themes[s.theme].scheme) || 'teal';
     var presets = (window.Formatter && window.Formatter.schemes && window.Formatter.schemes[sch]) || {};
-    var stored = (s.fmtOverrides && s.fmtOverrides[stop]) || presets[stop] || { colors: ['#38bdf8'] };
+    var stored = (s.fmtOverrides && s.fmtOverrides[stop]) || presets[stop] || { colors: [window.DoomTheme.FALLBACKS.fmtA1] };
     var GG = window.GradientUI;
     return (GG && GG.norm) ? GG.norm(stored) :
       { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
@@ -543,8 +546,12 @@
     }
     // v0.45 ITEM 5: collapsed color row — banner + expand arrow + per-row reset
     var onReset = function () {
-      var defaults = { bg: '#0a0a0b', lineColor: '#131318',
-        dotColor: '#2e2e3a', originColor: '#4a4a5e' };
+      // v1.04.4: the grid reset seeds ride the canon (CANON-TWIN with
+      // settings.js's parse-time seed — theme.js loads after settings.js).
+      var defaults = { bg: window.DoomTheme.FALLBACKS.canvas,
+        lineColor: window.DoomTheme.FALLBACKS.line,
+        dotColor: window.DoomTheme.FALLBACKS.dot,
+        originColor: window.DoomTheme.FALLBACKS.origin };
       writeGridKey(key, defaults[key]);
       Settings.rerender();
     };
@@ -611,7 +618,7 @@
     var preset = (window.Formatter && window.Formatter.schemes[s.chatScheme || 'teal']) || {};
     // v0.44: val may be a legacy hex OR a stored gradient spec — the row
     // builder norm()s either into the editor's live spec.
-    var val = ov[key] || preset[key] || '#22d3ee';
+    var val = ov[key] || preset[key] || window.DoomTheme.FALLBACKS.fmtA1;
     return fmtColorRowUI(key, label, hint, val, false, '');
   }
 
@@ -934,7 +941,7 @@
       // grid bg when never customized — what the canvas paints now).
       var cbRaw = window.DoomTheme.canvasBgSpec(st);
       return (GG && GG.norm) ? GG.norm(cbRaw) :
-        { colors: [String((cbRaw && cbRaw.colors) || [])[0] || '#0a0a0b'], dir: 'auto' };
+        { colors: [String((cbRaw && cbRaw.colors) || [])[0] || window.DoomTheme.FALLBACKS.canvas], dir: 'auto' };
     }
     // not customized: the field's CURRENT computed hex, as a 1-color
     // spec (what the editor offers is what the app looks like now)
@@ -1087,8 +1094,8 @@
             box.appendChild(fr);
             fr.querySelector('[data-act=grid-reset]').addEventListener('click', function () {
               Settings.setState({
-                bg: '#0a0a0b', lineColor: '#131318',
-                dotColor: '#2e2e3a', originColor: '#4a4a5e'
+                bg: window.DoomTheme.FALLBACKS.canvas, lineColor: window.DoomTheme.FALLBACKS.line,
+                dotColor: window.DoomTheme.FALLBACKS.dot, originColor: window.DoomTheme.FALLBACKS.origin
               });
             });
             mcuSuggestSection(box);
@@ -1144,7 +1151,7 @@
     var presets = (window.Formatter && window.Formatter.schemes && window.Formatter.schemes[sch]) || {};
     var fmtSpecsNow = {};
     FMT_SLOTS_ALL.forEach(function (k) {
-      fmtSpecsNow[k] = (s.fmtOverrides && s.fmtOverrides[k]) || presets[k] || { colors: ['#38bdf8'] };
+      fmtSpecsNow[k] = (s.fmtOverrides && s.fmtOverrides[k]) || presets[k] || { colors: [window.DoomTheme.FALLBACKS.fmtA1] };
     });
     // the a1 preview strip (the title-gradient stop — the row banner's
     // successor, now at the head of the expanded body)
@@ -1566,8 +1573,8 @@
       // canvas → silently ignored → the grid kept STALE colors that matched
       // neither the theme nor the settings (the reported bug).
       Settings.setState({
-        bg: '#0a0a0b', lineColor: '#131318',
-        dotColor: '#2e2e3a', originColor: '#4a4a5e'
+        bg: window.DoomTheme.FALLBACKS.canvas, lineColor: window.DoomTheme.FALLBACKS.line,
+        dotColor: window.DoomTheme.FALLBACKS.dot, originColor: window.DoomTheme.FALLBACKS.origin
       });
       // v0.26: re-render — the inputs must show the theme's palette NOW.
       Settings.rerender();

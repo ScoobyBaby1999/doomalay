@@ -755,7 +755,7 @@
         out += '<button type="button" data-badge-token="' + field + ':' + tk + '"' +
           (on ? ' data-on="1"' : '') + ' title="var(--' + tk + ')" aria-label="theme token ' + tk + '"' +
           ' style="width:34px;height:34px;border-radius:9px;flex:none;' +
-          'background:var(--' + tk + ');border:2px solid ' + (on ? 'var(--accent)' : 'rgba(var(--border-rgb,60,60,60),0.6)') + ';' +
+          'background:var(--' + tk + ');border:2px solid ' + (on ? 'var(--accent)' : 'rgba(var(--border-rgb),0.6)') + ';' +
           'cursor:pointer"></button>';
       });
       return '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px">' + out + '</div>';

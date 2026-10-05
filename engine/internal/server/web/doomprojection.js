@@ -77,8 +77,8 @@
       var stored = folded[map[key]];
       if (stored) return stored;
       var hex = (DT && DT.resolvedThemeVar) ? DT.resolvedThemeVar(map[key]) : '';
-      return { colors: [/^#[0-9a-fA-F]{6}$/.test(hex || '') ? hex : '#14141a'], dir: 'auto' };
-    } catch (e) { return { colors: ['#14141a'], dir: 'auto' }; }
+      return { colors: [/^#[0-9a-fA-F]{6}$/.test(hex || '') ? hex : window.DoomTheme.FALLBACKS.surface], dir: 'auto' };
+    } catch (e) { return { colors: [window.DoomTheme.FALLBACKS.surface], dir: 'auto' }; }
   }
 
   // ── the field rasterizer (the css-family recipes, painted ONCE) ───

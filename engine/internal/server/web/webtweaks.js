@@ -154,10 +154,10 @@
     // the gradient editor's live spec: the entity's own or a fresh pair
     var gSpec = (icon.gradient && icon.gradient.colors && icon.gradient.colors.length)
       ? icon.gradient
-      : { colors: ['#38bdf8', '#a78bfa'], dir: 'auto' };
+      : { colors: [window.DoomTheme.FALLBACKS.accent2, window.DoomTheme.FALLBACKS.accent], dir: 'auto' };
     var tSpec = (t.tintGrad && t.tintGrad.colors && t.tintGrad.colors.length)
       ? t.tintGrad
-      : { colors: ['#38bdf8', '#a78bfa'], dir: 'auto' };
+      : { colors: [window.DoomTheme.FALLBACKS.accent2, window.DoomTheme.FALLBACKS.accent], dir: 'auto' };
 
     return {
       title: 'browser tweaks · ' + host,
@@ -340,7 +340,7 @@
     var editors = el.querySelectorAll('.wtw-editor');
     if (editors[0]) {
       var gSpec = (icon.gradient && icon.gradient.colors && icon.gradient.colors.length)
-        ? icon.gradient : { colors: ['#38bdf8', '#a78bfa'], dir: 'auto' };
+        ? icon.gradient : { colors: [window.DoomTheme.FALLBACKS.accent2, window.DoomTheme.FALLBACKS.accent], dir: 'auto' };
       G.wire(editors[0], {
         spec: gSpec,
         live: function () {
@@ -351,7 +351,7 @@
     }
     if (editors[1]) {
       var tSpec = (t.tintGrad && t.tintGrad.colors && t.tintGrad.colors.length)
-        ? t.tintGrad : { colors: ['#38bdf8', '#a78bfa'], dir: 'auto' };
+        ? t.tintGrad : { colors: [window.DoomTheme.FALLBACKS.accent2, window.DoomTheme.FALLBACKS.accent], dir: 'auto' };
       G.wire(editors[1], {
         spec: tSpec,
         live: function () {

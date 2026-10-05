@@ -172,21 +172,23 @@
       var rv = (DT && typeof DT.resolvedThemeVar === 'function')
         ? function (n, fb) { return DT.resolvedThemeVar(n) || fb; }
         : function (n, fb) { return cssVar(n) || fb; };
+      // v1.04.4: every fallback rides the canon (theme.js owns the literals).
+      var FB = window.DoomTheme.FALLBACKS;
       colCache.v = {
-        surface2: rv('--surface-2', '#1a1a22'),
-        text1: rv('--text-1', '#e0e0e8'),
-        text2: rv('--text-2', '#a8a8b4'),
-        text3dim: rv('--text-3-dim', '#54545e'),
-        bgApp: rv('--bg-app', '#0a0a0b'),
-        ok: cssVar('--ok') || '#34d399',
-        surface1: rv('--surface-1', '#14141a'),
-        accent: rv('--accent', '#a78bfa'),
-        accent2: rv('--accent-2', '#38bdf8'),
-        borderStrong: rv('--border-strong', '#34344a'),
+        surface2: rv('--surface-2', FB.surface2),
+        text1: rv('--text-1', FB.ink),
+        text2: rv('--text-2', FB.text2),
+        text3dim: rv('--text-3-dim', FB.text3),
+        bgApp: rv('--bg-app', FB.canvas),
+        ok: cssVar('--ok') || FB.ok,
+        surface1: rv('--surface-1', FB.surface),
+        accent: rv('--accent', FB.accent),
+        accent2: rv('--accent-2', FB.accent2),
+        borderStrong: rv('--border-strong', FB.borderStrong),
         // v1.03.1: the CARD — the flat nested-box material. The name
         // pill + the sandbox badge paint it (they re-tiled the surface
         // gradient in their own rasters before — the user's point 1).
-        card: rv('--card', '#23232b')
+        card: rv('--card', FB.card)
       };
     }
     return colCache.v;

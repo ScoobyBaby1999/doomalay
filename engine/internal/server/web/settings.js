@@ -31,12 +31,16 @@
     uiTextSize: 50,             // v0.24: 0–100 (12px–17px) — general UI text
     smallTextSize: 50,          // v0.24: 0–100 (9.5px–15px) — pills, hints, meta
     // ── Appearance (grid) — LEGACY default hexes; equal values mean
-    //    "never customized" → theme.js swaps in the theme's grid palette
+    //    "never customized" → theme.js swaps in the theme's grid palette.
+    //    v1.04.4 CANON-TWIN: these literals MUST equal theme.js's
+    //    DoomTheme.FALLBACKS (canvas/line/dot/origin) — settings.js loads
+    //    BEFORE theme.js so it cannot read the map; the v1040 discipline
+    //    audit cross-checks the twins (drift = fail).
     gridSize: 1,           // 1× = default (48px), up to 5× = 240px
-    bg: '#0a0a0b',
-    lineColor: '#131318',
-    dotColor: '#2e2e3a',
-    originColor: '#4a4a5e',
+    bg: '#0a0a0b',         // CANON-TWIN: FALLBACKS.canvas
+    lineColor: '#131318',  // CANON-TWIN: FALLBACKS.line
+    dotColor: '#2e2e3a',   // CANON-TWIN: FALLBACKS.dot
+    originColor: '#4a4a5e', // CANON-TWIN: FALLBACKS.origin
     // ── v0.45 ITEM 6: grid quick options (hide / scatter / size / rotate) ──
     hideGridLines: false,   // toggle the connecting grid lines
     hideDots: false,        // toggle the dots

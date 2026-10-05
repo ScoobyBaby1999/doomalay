@@ -135,7 +135,11 @@
   }
 
   // ── theme colors (cached — never per-frame getComputedStyle) ────
-  var colCache = { at: 0, accent: '#a78bfa', accent2: '#38bdf8', ring: 'rgba(120,130,140,0.35)', origin: '#4a4a5e' };
+  // v1.04.4: the cache SEEDS ride the fallback canon (midnight values,
+  // theme.js is the single literal owner) — the cache is overwritten by
+  // the resolved vars on the first paint anyway.
+  var FB = function () { return window.DoomTheme.FALLBACKS; };
+  var colCache = { at: 0, accent: null, accent2: null, ring: null, origin: null };
   function cssVar(name) {
     try {
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -156,9 +160,9 @@
     var now = performance.now();
     if (now - colCache.at > 1000) {
       colCache.at = now;
-      var acc = triplet(cssVar('--accent-rgb')) || triplet(cssVar('--accent'));
+      var acc = triplet(cssVar('--accent-rgb')) || triplet(cssVar('--accent')) || triplet(FB().accent);
       if (acc) colCache.accent = acc;
-      var acc2 = triplet(cssVar('--accent-2-rgb')) || triplet(cssVar('--accent-2'));
+      var acc2 = triplet(cssVar('--accent-2-rgb')) || triplet(cssVar('--accent-2')) || triplet(FB().accent2);
       if (acc2) colCache.accent2 = acc2;
       // v0.99.4: --border-strong is a DERIVED color-mix now (its computed
       // token stream is unevaluated) — the resolved hex comes from
@@ -167,7 +171,7 @@
       var bsHex = (DT && typeof DT.resolvedThemeVar === 'function')
         ? DT.resolvedThemeVar('--border-strong') : '';
       var bs = triplet(bsHex);
-      colCache.ring = bs ? ('rgba(' + bs + ',0.35)') : 'rgba(120,130,140,0.35)';
+      colCache.ring = bs ? ('rgba(' + bs + ',0.35)') : ('rgba(' + triplet(FB().borderStrong) + ',0.35)');
       // v0.90.1: THE ORBIT STAR's family — the canvas center marker's
       // color (originColor: the user's setting → the theme's grid.origin
       // — the SAME resolution the lattice's origin dot rides).
@@ -272,7 +276,7 @@
     var list = Array.isArray(icons) ? icons : [];
     if (!list.length) return { chats: 0, stars: 0, shells: 0 };
     var s = scale || 1;
-    var c = colors || { accent: 'a,b,c', accent2: 'd,e,f', ring: 'rgba(120,130,140,0.35)' };
+    var c = colors || { accent: triplet(FB().accent), accent2: triplet(FB().accent2), ring: 'rgba(' + triplet(FB().borderStrong) + ',0.35)' };
     var stats = { chats: 0, stars: 0, shells: 0, backHidden: 0, frontInside: 0 };
     var pad = (SHELL_R[SHELL_R.length - 1] + 24) * s + 30;
     // v0.88: hoisted shell-stroke state (constant for the whole frame —
@@ -527,8 +531,8 @@
     if (!ctx || !dots || !dots.length) return 0;
     var s = scale || 1;
     var c = colors || {};
-    var acc = c.accent || '167,139,250';
-    var origin = (typeof c.origin === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.origin)) ? c.origin : '#4a4a5e';
+    var acc = c.accent || triplet(FB().accent);
+    var origin = (typeof c.origin === 'string' && /^#[0-9a-fA-F]{6}$/.test(c.origin)) ? c.origin : FB().origin;
     var parN = Math.max(0, Math.min(1, par || 0));
     var painted = 0;
     // ── pass 1: THE SPHERES ─────────────────────────────────────

@@ -503,7 +503,7 @@
       }
       gctx.globalCompositeOperation = 'color';
     }
-    var c = stops.length ? stops : ['#0a0a0b'];
+    var c = stops.length ? stops : [window.DoomTheme.FALLBACKS.canvas];
     var c0 = c[0];
     var c1 = c.length > 1 ? c[1] : null;
     var paintPlain = function () {
@@ -793,9 +793,9 @@
     function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
     function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
     var dotSpec = specs && specs.dotColor;
-    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : window.DoomTheme.FALLBACKS.dot;
     var lineSpec = specs && specs.lineColor;
-    var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : window.DoomTheme.FALLBACKS.line;
     var dotSampler = lcSampler(dotSpec, dotFallback);
     var lineSampler = lcSampler(lineSpec, lineFallback);
     var dotRBaseQ = Math.max(0.6, DOT_RADIUS * scaleQ);   // v0.98: proportional (self-similar zoom; legacy keeps the 1.3 clamp)
@@ -1180,9 +1180,9 @@
     var animDots = !!P.animDots;
     var animLines = !!P.animLines;
     var dotSpec = specs && specs.dotColor;
-    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : window.DoomTheme.FALLBACKS.dot;
     var lineSpec2 = specs && specs.lineColor;
-    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : window.DoomTheme.FALLBACKS.line;
     var fpNow = [P.scatterL, P.scatterD, P.sizeVarL, P.sizeVarD, P.rotVarL, P.rotVarD,
       P.biasL, P.biasD, animDots ? 1 : 0, animLines ? 1 : 0,
       P.gridSize, hideLines ? 1 : 0, hideDots ? 1 : 0,
@@ -1421,7 +1421,7 @@
     // ── the origin dot (verbatim) ────────────────────────────────────
     const o = { x: (0 - offsetX) * scale, y: (0 - offsetY) * scale };
     if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
-      gctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e', gctx, W, H);
+      gctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : window.DoomTheme.FALLBACKS.origin, gctx, W, H);
       gctx.beginPath();
       gctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       gctx.fill();
@@ -1499,9 +1499,9 @@
     function warpL(h) { return bExpL === 1 ? h : Math.pow(h, bExpL); }
     function warpD(h) { return bExpD === 1 ? h : Math.pow(h, bExpD); }
     var dotSpec = specs && specs.dotColor;
-    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : '#2e2e3a';
+    var dotFallback = (HEX_RE.test(t.dotColor || '')) ? t.dotColor : window.DoomTheme.FALLBACKS.dot;
     var lineSpec2 = specs && specs.lineColor;
-    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+    var lineFallback2 = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : window.DoomTheme.FALLBACKS.line;
     var fpNow = [scatterL, scatterD, sizeVarL, sizeVarD, rotVarL, rotVarD,
       biasL, biasD, animDots ? 1 : 0, animLines ? 1 : 0,
       scale.toFixed(4), P.gridSize, hideLines ? 1 : 0, hideDots ? 1 : 0,
@@ -1622,7 +1622,7 @@
       var lStartY = lineBands === 1 ? startY : bandStart(offsetY, lPF, scaledGrid);
       var lBandN = 0;
       var lineSpec = specs && specs.lineColor;
-      var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : '#131318';
+      var lineFallback = (HEX_RE.test(t.lineColor || '')) ? t.lineColor : window.DoomTheme.FALLBACKS.line;
       var lineBandStyle = lcPaint(lineSpec, lineFallback, gctx, W, H);
       gctx.strokeStyle = lineBandStyle;
       gctx.lineWidth = 1;
@@ -1986,7 +1986,7 @@
     // ── the origin dot ────────────────────────────────────────────
     const o = { x: (0 - offsetX) * scale, y: (0 - offsetY) * scale };
     if (o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < H + 20) {
-      gctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : '#4a4a5e', gctx, W, H);
+      gctx.fillStyle = lcPaint(specs && specs.originColor, (HEX_RE.test(t.originColor || '')) ? t.originColor : window.DoomTheme.FALLBACKS.origin, gctx, W, H);
       gctx.beginPath();
       gctx.arc(o.x, o.y, ORIGIN_RADIUS * Math.min(scale, 1.5), 0, Math.PI * 2);
       gctx.fill();

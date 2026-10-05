@@ -203,7 +203,7 @@
     return {
       t: t, specs: specs,
       canvasSpec: canvasSpec,
-      bgFallback: (HEX_RE.test(t.bg || '')) ? t.bg : '#0a0a0b',
+      bgFallback: (HEX_RE.test(t.bg || '')) ? t.bg : window.DoomTheme.FALLBACKS.canvas,
       gridSize: (typeof st.gridSize === 'number') ? st.gridSize : 1,
       hideLines: !!st.hideGridLines,
       hideDots: !!st.hideDots,
@@ -306,7 +306,7 @@
       const ay = Math.max(margin, Math.min(H - margin, s.y));
       const angle = Math.atan2(s.y - ay, s.x - ax);
       const fam = (config.families[bot.family] || config.families.default || {});
-      let color = fam.color || '#4a4a5e';
+      let color = fam.color || window.DoomTheme.FALLBACKS.origin;
       if (bot.family === 'default' || !fam.color) {
         if (!bs) bs = borderStrongHex();
         color = bs || color;

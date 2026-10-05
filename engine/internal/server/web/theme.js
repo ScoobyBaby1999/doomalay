@@ -1020,6 +1020,33 @@
         if (ALIAS[name]) return resolvedVar(rid, ov, ALIAS[name]);
         return '';
       },
+
+      // v1.04.4 THE FALLBACK CANON — the ONE literal map for pre-apply /
+      // var-unavailable paints (the canvas boot frame, worker threads,
+      // parse-time constants). Values are byte-identical to the midnight
+      // theme (zero behavior change): the point is that a fallback can
+      // never DRIFT from the system's look again, and the discipline
+      // audit (v1040) cross-checks every CANON-TWIN literal against this
+      // map. Load-order note: settings.js loads BEFORE theme.js (it may
+      // not read this map) — its grid seed literals carry CANON-TWIN
+      // comments instead and the audit pins them.
+      FALLBACKS: {
+        canvas: '#101016',      // --field-canvas
+        ink: '#e0e0e8',         // --field-ink
+        surface: '#14141a',     // --field-surface
+        surface2: '#1a1a22',    // --surface-2 (midnight static)
+        text2: '#a8a8b4',       // --text-2
+        text3: '#54545e',       // --text-3-dim
+        card: '#23232b',        // --card
+        borderStrong: '#34344a',// --border-strong
+        line: '#131318',        // the grid line (settings.js seed twin)
+        dot: '#2e2e3a',         // the grid dot (settings.js seed twin)
+        origin: '#4a4a5e',      // the grid origin marker
+        accent: '#a78bfa',      // --field-accent-1
+        accent2: '#38bdf8',     // --field-accent-2
+        ok: '#34d399',          // --ok
+        fmtA1: '#22d3ee'        // the fmt stop preset default
+      },
       // v1.01.5: themePreview(id) — the theme's OWN field hexes for the
       // quick-switch chip cards (user spec: theme boxes are the ONE
       // surface allowed to show the theme's colors instead of the

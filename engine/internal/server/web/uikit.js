@@ -165,7 +165,14 @@
   // fill), MAX 15. The caller owns the SPEC OBJECT; wire() mutates it
   // in place (colors.splice/push, dir=, angle=, tex=) and calls back.
   var MAX_COLORS = 15;
-  var DEFAULT_COLORS = ['#38bdf8', '#a78bfa'];
+  // v1.04.4: the default gradient pair rides the FALLBACK CANON (accent2
+  // → accent, theme.js owns the literals). The catch literals are the
+  // node-harness twin (the self-tests run without a window) — pinned by
+  // the v1040 discipline audit.
+  var DEFAULT_COLORS = (function () {
+    try { var fb = window.DoomTheme.FALLBACKS; return [fb.accent2, fb.accent]; }
+    catch (e) { return ['#38bdf8', '#a78bfa']; }
+  })();
   var VALID_DIRS = ['auto', 'h', 'v', 'diag', 'diag2', 'radial', 'swirl', 'mesh',
     'pat-navy', 'pat-pinstripe', 'pat-gingham', 'pat-sunburst', 'pat-checker'];
   // 1-color simple dirs are the legacy passthrough: css() hands back
@@ -274,6 +281,8 @@
 
   // v0.54: sample a palette as ONE hex at t∈[0,1] (across all stops).
   function paletteAt(colors, t) {
+    // '#000000' is the sampler's zero-point (veil-ink's own :root
+    // default — the neutral when there is nothing to sample), not chrome.
     if (!colors || !colors.length) return '#000000';
     if (colors.length === 1) return colors[0];
     t = Math.max(0, Math.min(1, t));

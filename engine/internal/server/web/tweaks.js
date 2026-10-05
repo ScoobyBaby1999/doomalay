@@ -111,7 +111,7 @@
     var tov = t.fmtOverrides || {};
     var fmt = {};
     ['a1', 'a2', 'a3', 'bright', 'link'].forEach(function (k) {
-      fmt[k] = tov[k] || gov[k] || preset[k] || '#22d3ee';
+      fmt[k] = tov[k] || gov[k] || preset[k] || window.DoomTheme.FALLBACKS.fmtA1;
     });
     var sizes = {};
     SIZES.forEach(function (d) {
