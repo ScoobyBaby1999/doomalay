@@ -111,7 +111,8 @@ ck "T3a five fmt rows with proper labels" \
 ck "T3b the scheme presets + reset + preview strip render" \
    "$(echo "$BODY" | grep -qE '\"swatches\":[1-9][0-9]*' && echo yes)" "$BODY"
 
-# ── T4: the lazy editor expansion ──────────────────────────────────
+# ── T4: the fmt row opens the THEME EDITOR (v1.03.4 — was the inline
+# lazy expansion; user spec: "clicking to edit any color" opens the page)
 ev "(function(){
   var sec = null;
   var secs = document.querySelectorAll('.settings-section');
@@ -122,13 +123,16 @@ ev "(function(){
   if (head) { head.click(); return 'ok'; }
   return 'no-head';
 })()" > /dev/null
-sleep 0.8
+sleep 1.2
 ED=$(ev "
 (function(){
-  var ed = document.querySelector('[data-color-row] .gr-editor');
-  return ed ? 'editor' : 'none';
+  var te = document.querySelector('.te-page');
+  var name = te && te.querySelector('.te-name b');
+  return te ? ('page:' + (name ? name.textContent : '')) : 'none';
 })()")
-ck "T4 the fmt row expands to a lazy GradientUI editor" "$([ "$ED" = "editor" ] && echo yes)" "$ED"
+ck "T4 the fmt row opens the Theme Editor (Accent 1)" "$(echo "$ED" | grep -q '^page:Accent 1$' && echo yes)" "$ED"
+ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'ok'; })()" > /dev/null
+sleep 0.9
 
 # ── T5: a scheme preset click ─────────────────────────────────────
 SCHEME=$(ev "

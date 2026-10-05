@@ -389,6 +389,13 @@ function stubColorRowDom(pfx) {
       contains: function (c) { return c === 'expanded' && this._expanded; },
       toggle: function (c) { if (c === 'expanded') this._expanded = !this._expanded; }
     },
+    // v1.03.4: wireColorRows reads the fmt attrs (the Theme Editor
+    // interception) — the stub carries them (null = not a fmt row)
+    getAttribute: function (k) {
+      if (k === 'data-fmt-slot') return null;
+      if (k === 'data-fmt-scope') return null;
+      return null;
+    },
     querySelector: function (sel) { return sel === '[data-color-body]' ? body : null; }
   };
   var clicks = [];
@@ -478,7 +485,7 @@ var html = page.render(settingsStub.getState, settingsStub.setState);
 html = expandLazyEditors(html);   // v0.98: expand ALL color rows before the editor assertions
 has('page token wrapper', html, 'data-appr-render="r');
 // v1.03.2: THE SLOT ROWS (6 pickers — text style promoted to its own
-// collapsible section; the editors live in the floating popover, built
+// collapsible section; the editors live in the Theme Editor page, built
 // on open; the page mounts banners only)
 has('page slot row surface', html, 'data-slot-open="surface"');
 has('page slot row ink', html, 'data-slot-open="ink"');

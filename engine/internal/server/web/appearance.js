@@ -419,6 +419,52 @@
   // wireColorRows — click handlers for the collapsed color rows (expand/
   //    collapse + per-row reset). Called once after the settings page
   //    renders (and by tweaks.js on its own root).
+  //    v1.03.4: the GLOBAL fmt rows (scope '') open the THEME EDITOR
+  //    instead of expanding inline (user spec: "clicking to edit any
+  //    color should bring up a new reusable panel page") — the per-chat
+  //    tweaks rows (scope 'chat') keep their inline editors.
+  var FMT_ROW_META = {
+    a1: ['Accent 1', 'headings · keywords'],
+    a2: ['Accent 2', 'subheads · code'],
+    a3: ['Accent 3', 'emphasis · links'],
+    bright: ['Bright text', 'bold'],
+    link: ['Links', 'links in chat bodies']
+  };
+  function seedFmtSpec(stop) {
+    var s = Settings.getState();
+    var sch = s.chatScheme || (window.DoomTheme && window.DoomTheme.themes &&
+      window.DoomTheme.themes[s.theme] && window.DoomTheme.themes[s.theme].scheme) || 'teal';
+    var presets = (window.Formatter && window.Formatter.schemes && window.Formatter.schemes[sch]) || {};
+    var stored = (s.fmtOverrides && s.fmtOverrides[stop]) || presets[stop] || { colors: ['#38bdf8'] };
+    var GG = window.GradientUI;
+    return (GG && GG.norm) ? GG.norm(stored) :
+      { colors: [String((stored && typeof stored === 'object' && stored.colors) ? stored.colors[0] : stored)], dir: 'auto' };
+  }
+  function openFmtEditor(stop, anchorRow) {
+    var meta = FMT_ROW_META[stop] || [stop, ''];
+    if (!(window.ThemeEditor && window.ThemeEditor.open)) return;
+    window.ThemeEditor.open({
+      kind: 'fmt',
+      suffix: stop,
+      label: meta[0],
+      hint: meta[1] + ' — the text gradient track',
+      spec: seedFmtSpec(stop),
+      solid: false, canvas: false,
+      row: anchorRow || null,
+      write: function (sp) {
+        routeFmtWrite(stop, '', sp);
+        if (anchorRow) {
+          var bEl = anchorRow.querySelector('.color-row-banner');
+          if (bEl) {
+            var GG = window.GradientUI;
+            var v = (GG && GG.css) ? GG.css(sp, { scale: 0.28 }) : sp.colors[0];
+            if (v.charAt(0) === '#') { bEl.style.backgroundImage = 'none'; bEl.style.backgroundColor = v; }
+            else { bEl.style.backgroundColor = 'transparent'; bEl.style.backgroundImage = v; }
+          }
+        }
+      }
+    });
+  }
   function wireColorRows(rootEl) {
     if (!rootEl || !rootEl.querySelectorAll) return;
     var heads = rootEl.querySelectorAll('[data-color-toggle]');
@@ -430,6 +476,13 @@
         var pfx = h.getAttribute('data-color-toggle');
         var row = h.closest('.color-row-collapsed');
         if (!row) return;
+        // v1.03.4: the GLOBAL fmt rows open the Theme Editor page
+        var fmtSlot = row.getAttribute('data-fmt-slot');
+        var fmtScope = row.getAttribute('data-fmt-scope') || '';
+        if (fmtSlot && !fmtScope && window.ThemeEditor) {
+          openFmtEditor(fmtSlot, row);
+          return;
+        }
         var wasExpanded = row.classList.contains('expanded');
         row.classList.toggle('expanded');
         if (!wasExpanded) buildLazyEditor(row);   // v0.98 C3: first expand builds
@@ -658,9 +711,6 @@
   // flip/shift-guarded), not nested in the row. One singleton popover
   // element; the content builds per open (the v0.98 lazy pattern, one
   // editor at a time, now floating).
-  var slotPop = null;       // the singleton element
-  var slotPopCleanup = null; // the floating-ui autoUpdate disposer
-
   // ── v1.01.2: THE IMAGE→PALETTE SUGGESTER (MCU, generation-time only)
   // ─────────────────────────────────────────────────────────────────
   // The user picks an image → MCU quantizes+scores the source color →
@@ -763,74 +813,11 @@
     });
   }
 
-  function slotPopover() {
-    if (slotPop) return slotPop;
-    slotPop = document.createElement('div');
-    slotPop.className = 'slot-pop';
-    slotPop.setAttribute('role', 'dialog');
-    slotPop.setAttribute('aria-modal', 'false');
-    document.body.appendChild(slotPop);
-    return slotPop;
-  }
-  function closeSlotPopover() {
-    if (!slotPop || !slotPop.classList.contains('open')) return;
-    slotPop.classList.remove('open');
-    if (slotPopCleanup) { try { slotPopCleanup(); } catch (e) {} slotPopCleanup = null; }
-    // let the close transition finish before the content wipe
-    setTimeout(function () {
-      if (slotPop && !slotPop.classList.contains('open')) slotPop.innerHTML = '';
-    }, 200);
-  }
-  function openSlotPopover(anchorEl, title, buildContent) {
-    var pop = slotPopover();
-    var wasOpen = pop.classList.contains('open');
-    if (slotPopCleanup) { try { slotPopCleanup(); } catch (e) {} slotPopCleanup = null; }
-    pop.innerHTML =
-      '<div class="slot-pop-head">' +
-        '<div class="slot-pop-title">' + title + '</div>' +
-        '<button type="button" class="slot-pop-close" data-slot-close="1" aria-label="close picker">✕</button>' +
-      '</div>' +
-      '<div class="slot-pop-body"></div>';
-    buildContent(pop.querySelector('.slot-pop-body'));
-    pop.querySelector('[data-slot-close]').addEventListener('click', closeSlotPopover);
-    if (!wasOpen) {
-      // mount invisible at the anchor, measure, then animate in
-      pop.style.visibility = 'hidden';
-      pop.classList.add('open');
-    }
-    var FUID = window.FloatingUIDOM;
-    if (FUID && FUID.computePosition) {
-      var update = function () {
-        FUID.computePosition(anchorEl, pop, {
-          placement: 'bottom-start',
-          middleware: [FUID.offset(8), FUID.flip({ padding: 10 }), FUID.shift({ padding: 10 })]
-        }).then(function (_ref) {
-          var x = _ref.x, y = _ref.y;
-          pop.style.left = Math.max(8, Math.min(x, window.innerWidth - 8)) + 'px';
-          pop.style.top = Math.max(8, y) + 'px';
-          if (pop.style.visibility === 'hidden') {
-            pop.style.visibility = '';
-            pop.classList.remove('open');
-            void pop.offsetHeight;   // reflow — the transition lands open
-            pop.classList.add('open');
-          }
-        }).catch(function () {});
-      };
-      update();
-      if (FUID.autoUpdate) slotPopCleanup = FUID.autoUpdate(anchorEl, pop, update);
-    } else {
-      // no floating-ui (defensive): anchor below the row, clamped
-      var r = anchorEl.getBoundingClientRect();
-      pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 392)) + 'px';
-      pop.style.top = Math.min(r.bottom + 8, window.innerHeight - 80) + 'px';
-      if (pop.style.visibility === 'hidden') {
-        pop.style.visibility = '';
-        pop.classList.remove('open');
-        void pop.offsetHeight;
-        pop.classList.add('open');
-      }
-    }
-  }
+  // v1.03.4: THE FLOATING PICKER IS RETIRED — the slot rows and the fmt
+  // stops open the THEME EDITOR page (themeeditor.js). The popover
+  // singleton (slotPopover/closeSlotPopover/openSlotPopover) and
+  // popoverEditor are deleted; wireSlotRows keeps only the row-to-
+  // builder delegation + the reset pills.
   // one delegated listener wires every slot row forever (the panel body
   // re-renders per tab switch; delegation survives it)
   var slotRowsWired = false;
@@ -856,14 +843,9 @@
         if (fn) { e.preventDefault(); e.stopPropagation(); fn(); }
         return;
       }
-      // outside-tap closes the popover (the panel chrome counts as outside)
-      if (slotPop && slotPop.classList.contains('open') &&
-          !(e.target.closest && e.target.closest('.slot-pop'))) {
-        closeSlotPopover();
-      }
     }, true);
   }
-  var slotBuilders = {};   // field → (anchorRow) => opens the popover
+  var slotBuilders = {};   // field → (anchorRow) => opens the Theme Editor
   var slotResetFns = {};   // field → () => clears the override + rerenders
 
   // slotRow(opts) — the 2nd-level row: banner + name + reset + chevron;
@@ -891,40 +873,6 @@
         '<span class="slot-row-arrow">▶</span>' +
       '</div>' +
     '</div>';
-  }
-  // a GradientUI editor wired for popover life (the same spec/write
-  // contract the collapsed rows used; live() applies instantly)
-  function popoverEditor(body, pfx, spec, edOpts, onLive, onRebuild) {
-    var G = window.GradientUI;
-    if (!G || !G.editor || !G.wire) return;
-    body.insertAdjacentHTML('beforeend', G.editor(pfx, spec, edOpts));
-    var el = body.querySelector('#' + pfx + '-gr');
-    if (el) G.wire(el, {
-      spec: spec,
-      live: onLive || function () {},
-      rebuild: onRebuild || function () { onLive && onLive(); }
-    });
-    // the live writes repaint the ROW banner too (the visible affordance)
-    var rowBanner = document.querySelector('[data-slot-open="' + pfx.replace(/^sp-/, '') + '"] .slot-row-banner');
-    if (rowBanner && G && G.css) {
-      var paint = function () {
-        var v = G.css(spec, { scale: 0.28 });
-        if (v.charAt(0) === '#') {
-          rowBanner.style.backgroundImage = 'none';
-          rowBanner.style.backgroundColor = v;
-        } else {
-          rowBanner.style.backgroundImage = v;
-          rowBanner.style.backgroundColor = '';
-        }
-      };
-      var origLive = onLive || function () {};
-      // re-wire with the banner side effect
-      if (el) G.wire(el, {
-        spec: spec,
-        live: function () { origLive(); paint(); },
-        rebuild: function () { origLive(); paint(); }
-      });
-    }
   }
 
   // v0.99.4: field → the LEGACY override keys that fold into it (the
@@ -1076,7 +1024,6 @@
       // stops); ONLY the canvas picker keeps patterns + texture (the
       // lattice bakes them natively).
       if (!c.canvas && !edOpts.noDir) thisOpts = Object.assign({}, edOpts, { slim: true });
-      var tvLive2 = tvLive, tvRebuild2 = tvRebuild;
       // v1.03.3: THE THEME EDITOR — the slot rows open the reusable
       // panel page (the user's point 4: "clicking to edit any color
       // should bring up a new reusable panel page"). The popover path

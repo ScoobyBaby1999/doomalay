@@ -105,6 +105,67 @@
     ['texture', 'tex', true]
   ];
 
+  // ── v1.03.4: THE WHEEL — the color math (culori, already vendored;
+  // research verdict: no maintained MIT wheel lib exists — iro=MPL,
+  // farbtastic=GPL, reinvented=WTFPL) ───────────────────────────────
+  function CULORI() { return (typeof window !== 'undefined' && window.culori) || null; }
+  function hexToHsv(hex) {
+    var c = CULORI();
+    var d = { h: 0, s: 0, v: 1 };
+    if (!c) return d;
+    try {
+      var rgb = c.parse(String(hex || ''));
+      if (!rgb) return d;
+      var hsv = c.converter('hsv')(rgb);
+      if (!hsv) return d;
+      return { h: hsv.h || 0, s: hsv.s || 0, v: (hsv.v == null ? 1 : hsv.v) };
+    } catch (e) { return d; }
+  }
+  function hsvToHex(h, s, v) {
+    var c = CULORI();
+    if (!c) return '#000000';
+    try {
+      return c.formatHex(c.converter('rgb')({ mode: 'hsv', h: h, s: s, v: v })) || '#000000';
+    } catch (e) { return '#000000'; }
+  }
+  var HSV = { h: 0, s: 0, v: 1 };   // the wheel's live state (the SELECTED stop)
+
+  // the curated COMMON COLORS (research-banked: the Open Color dark-
+  // first set + the neutral ramp — 16 swatches)
+  var COMMON = ['#FFFFFF', '#CED4DA', '#868E96', '#495057', '#212529', '#0B0C0E',
+                '#FA5252', '#F08C00', '#FFD43B', '#74B816', '#2F9E44', '#0CA678',
+                '#66D9E8', '#4DABF7', '#5F3DC4', '#B197FC'];
+
+  // the LAST USED (spectrum's canonical pattern: max 7, hex-normalized
+  // dedup, most-recent-first, localStorage-persisted, device-local —
+  // deliberately NOT part of the .doomtheme state)
+  var RECENT_KEY = 'doomalay.recentColors';
+  function loadRecent() {
+    try { var l = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(l) ? l.filter(function (x) { return /^#[0-9a-fA-F]{6}$/.test(x); }).slice(0, 7) : []; }
+    catch (e) { return []; }
+  }
+  function saveRecent(list) {
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 7))); } catch (e) {}
+  }
+  function pushRecents(hexes) {
+    var l = loadRecent();
+    (hexes || []).forEach(function (hx) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(hx)) return;
+      l = l.filter(function (x) { return x.toLowerCase() !== hx.toLowerCase(); });
+      l.unshift(hx.toLowerCase());
+    });
+    saveRecent(l);
+  }
+
+  function swatchHtml(list, attr) {
+    var h = '';
+    (list || []).forEach(function (c) {
+      h += '<button type="button" class="te-sw" style="background:' + c + '" data-te-sw="' + c + '" aria-label="use ' + c + '"></button>';
+    });
+    return h || '<span class="te-sw-empty">—</span>';
+  }
+
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -257,14 +318,27 @@
             '</div>' +
             '<div class="te-right">' +
               '<div class="te-col-title">color</div>' +
-              // v1.03.3: the interim solid editor — v1.03.4 replaces
-              // this column with the hex wheel + slim sliders + the
-              // common/last-used rows.
-              '<div class="te-interim">' +
-                '<input type="color" value="' + (/^#[0-9a-fA-F]{6}$/.test(spec.colors[sel] || '') ? spec.colors[sel] : '#000000') + '" data-te-color aria-label="the selected color">' +
-                '<span class="te-hex" data-te-hex>' + esc(spec.colors[sel] || '') + '</span>' +
+              // v1.03.4: THE WHEEL — the CSS-composed HSV disc (conic hue
+              // × the radial white overlay × the value darkener) + the
+              // handle; the slim H/S/V sliders + the hex readout under
+              // it; the common + last-used rows below (user spec)
+              '<div class="te-wheel" data-te-wheel aria-label="color wheel — drag to pick the hue and saturation">' +
+                '<div class="te-wheel-disc"></div>' +
+                '<div class="te-wheel-white"></div>' +
+                '<div class="te-wheel-val" data-te-wval></div>' +
+                '<div class="te-wheel-handle" data-te-whandle></div>' +
               '</div>' +
-              '<div class="te-note">tap a color box above to select it</div>' +
+              '<div class="te-hex-ro" data-te-hex>' + esc(spec.colors[sel] || '') + '</div>' +
+              '<div class="te-srow"><span class="te-slab">H</span>' +
+                '<input type="range" min="0" max="360" step="1" value="0" data-te-sl="h" aria-label="hue"></div>' +
+              '<div class="te-srow"><span class="te-slab">S</span>' +
+                '<input type="range" min="0" max="100" step="1" value="0" data-te-sl="s" aria-label="saturation"></div>' +
+              '<div class="te-srow"><span class="te-slab">V</span>' +
+                '<input type="range" min="0" max="100" step="1" value="100" data-te-sl="v" aria-label="value"></div>' +
+              '<div class="te-col-title">common</div>' +
+              '<div class="te-swatches" data-te-common>' + swatchHtml(COMMON) + '</div>' +
+              '<div class="te-col-title">last used</div>' +
+              '<div class="te-swatches" data-te-recent>' + swatchHtml(loadRecent()) + '</div>' +
             '</div>' +
           '</div>' +
           (target.extras ? '<div class="te-extras" data-te-extras></div>' : '') +
@@ -295,10 +369,7 @@
         function refreshStops() {
           var sb = stopsBox();
           if (sb) sb.innerHTML = stopsHtml(spec, sel, !solid);
-          var ci = el.querySelector('[data-te-color]');
-          if (ci) ci.value = /^#[0-9a-fA-F]{6}$/.test(spec.colors[sel] || '') ? spec.colors[sel] : '#000000';
-          var hx = el.querySelector('[data-te-hex]');
-          if (hx) hx.textContent = spec.colors[sel] || '';
+          syncWheelFromStop();
           refreshStatic();
         }
         function shape() {
@@ -307,6 +378,90 @@
           target.write(spec);
           refreshStops();
         }
+
+        // ── v1.03.4: THE WHEEL ──────────────────────────────────────
+        // the disc = conic hue × the radial white overlay (s fades toward
+        // the center) × the value darkener (v). The handle rides the
+        // (h, s) polar position. All CSS — GPU-composited, zero rasters.
+        var wheelEl = null, handleEl = null, valEl = null;
+        function wheelEls() {
+          wheelEl = wheelEl || el.querySelector('[data-te-wheel]');
+          handleEl = handleEl || el.querySelector('[data-te-whandle]');
+          valEl = valEl || el.querySelector('[data-te-wval]');
+        }
+        function syncWheelFromStop() {
+          HSV = hexToHsv(spec.colors[sel]);
+          paintWheel();
+        }
+        function paintWheel() {
+          wheelEls();
+          if (handleEl) {
+            var phi = (HSV.h) * Math.PI / 180;   // 0° = top, clockwise
+            var x = 50 + 50 * HSV.s * Math.sin(phi);
+            var y = 50 - 50 * HSV.s * Math.cos(phi);
+            handleEl.style.left = x + '%';
+            handleEl.style.top = y + '%';
+            handleEl.style.background = hsvToHex(HSV.h, HSV.s, 1);
+            handleEl.style.borderColor = (HSV.v > 0.55) ? 'var(--surface-1)' : '#fff';
+          }
+          if (valEl) valEl.style.opacity = String(Math.max(0, Math.min(1, 1 - HSV.v)));
+          var sl = { h: el.querySelector('[data-te-sl=h]'), s: el.querySelector('[data-te-sl=s]'), v: el.querySelector('[data-te-sl=v]') };
+          if (sl.h && document.activeElement !== sl.h) sl.h.value = String(Math.round(HSV.h));
+          if (sl.s && document.activeElement !== sl.s) sl.s.value = String(Math.round(HSV.s * 100));
+          if (sl.v && document.activeElement !== sl.v) sl.v.value = String(Math.round(HSV.v * 100));
+          // the slider tracks (S + V depend on the current h/v)
+          if (sl.s) sl.s.style.background = 'linear-gradient(to right, ' + hsvToHex(HSV.h, 0, HSV.v) + ', ' + hsvToHex(HSV.h, 1, HSV.v) + ')';
+          if (sl.v) sl.v.style.background = 'linear-gradient(to right, #000000, ' + hsvToHex(HSV.h, HSV.s, 1) + ')';
+          var hx = el.querySelector('[data-te-hex]');
+          if (hx) hx.textContent = hsvToHex(HSV.h, HSV.s, HSV.v);
+        }
+        function applyHsv() {
+          var hex = hsvToHex(HSV.h, HSV.s, HSV.v);
+          spec.colors[sel] = hex;
+          var stop = el.querySelector('.te-stop.sel');
+          if (stop) stop.style.background = hex;
+          var b = banner();
+          if (b) {
+            var bc2 = cssOf(spec, { scale: 1 });
+            if (bc2.charAt(0) === '#') { b.style.backgroundImage = 'none'; b.style.backgroundColor = bc2; }
+            else { b.style.backgroundColor = 'transparent'; b.style.backgroundImage = bc2; }
+          }
+          paintWheel();
+          writeLive(spec);
+        }
+        function wheelPointToHsv(ev) {
+          wheelEls();
+          if (!wheelEl) return;
+          var r = wheelEl.getBoundingClientRect();
+          if (!r.width) return;
+          var dx = ev.clientX - (r.left + r.width / 2);
+          var dy = ev.clientY - (r.top + r.height / 2);
+          var rad = Math.sqrt(dx * dx + dy * dy) / (r.width / 2);
+          HSV.s = Math.max(0, Math.min(1, rad));
+          var phi = Math.atan2(dx, -dy) * 180 / Math.PI;   // 0° = top, clockwise
+          if (phi < 0) phi += 360;
+          HSV.h = phi;
+        }
+        (function wireWheel() {
+          wheelEls();
+          if (!wheelEl) return;
+          var dragging = false;
+          wheelEl.addEventListener('pointerdown', function (ev) {
+            dragging = true;
+            try { wheelEl.setPointerCapture(ev.pointerId); } catch (e) {}
+            wheelPointToHsv(ev);
+            applyHsv();
+            ev.preventDefault();
+          });
+          wheelEl.addEventListener('pointermove', function (ev) {
+            if (!dragging) return;
+            wheelPointToHsv(ev);
+            applyHsv();
+          });
+          var up = function () { dragging = false; };
+          wheelEl.addEventListener('pointerup', up);
+          wheelEl.addEventListener('pointercancel', up);
+        })();
 
         // the delegated wiring (one root listener — survives rebuilds)
         el.addEventListener('click', function (ev) {
@@ -403,19 +558,13 @@
         // the live-value controls
         el.addEventListener('input', function (ev) {
           var t = ev.target;
-          if (t.matches('[data-te-color]')) {
-            spec.colors[sel] = t.value;
-            var stop = el.querySelector('.te-stop.sel');
-            if (stop) stop.style.background = t.value;
-            var hx = el.querySelector('[data-te-hex]');
-            if (hx) hx.textContent = t.value;
-            var b = banner();
-            if (b) {
-              var bc2 = cssOf(spec, { scale: 1 });
-              if (bc2.charAt(0) === '#') { b.style.backgroundImage = 'none'; b.style.backgroundColor = bc2; }
-              else { b.style.backgroundColor = 'transparent'; b.style.backgroundImage = bc2; }
-            }
-            writeLive(spec);
+          if (t.matches('[data-te-sl]')) {
+            var dim = t.getAttribute('data-te-sl');
+            var n = parseFloat(t.value) || 0;
+            if (dim === 'h') HSV.h = Math.max(0, Math.min(360, n));
+            else if (dim === 's') HSV.s = Math.max(0, Math.min(1, n / 100));
+            else if (dim === 'v') HSV.v = Math.max(0, Math.min(1, n / 100));
+            applyHsv();
             return;
           }
           if (t.matches('[data-te-angle]')) {
@@ -426,14 +575,51 @@
           }
         });
 
+        // the swatch clicks (common + last used)
+        el.addEventListener('click', function (ev) {
+          var sw = ev.target.closest ? ev.target.closest('[data-te-sw]') : null;
+          if (!sw) return;
+          var c = sw.getAttribute('data-te-sw');
+          if (!/^#[0-9a-fA-F]{6}$/.test(c)) return;
+          spec.colors[sel] = c;
+          var stop = el.querySelector('.te-stop.sel');
+          if (stop) stop.style.background = c;
+          syncWheelFromStop();
+          var b = banner();
+          if (b) {
+            var bc2 = cssOf(spec, { scale: 1 });
+            if (bc2.charAt(0) === '#') { b.style.backgroundImage = 'none'; b.style.backgroundColor = bc2; }
+            else { b.style.backgroundColor = 'transparent'; b.style.backgroundImage = bc2; }
+          }
+          writeLive(spec);
+        });
+
         // the canvas extras (grid children + the MCU suggester) —
         // injected by the caller so the editor owns no canvas logic
         if (target.extras) {
           var ex = el.querySelector('[data-te-extras]');
           if (ex) { try { target.extras(ex); } catch (e) { console.error('te extras', e); } }
         }
+
+        // the initial wheel paint (the selected stop's color)
+        syncWheelFromStop();
       },
-      onClose: function () {}
+      onClose: function () {
+        // v1.03.4: the close-time recents capture — every applied color
+        // becomes a "last used" (the selected stop first in the list)
+        try {
+          var ordered = [];
+          if (spec.colors && spec.colors.length) {
+            var rest = spec.colors.slice();
+            var picked = rest.splice(sel, 1)[0];
+            if (picked) ordered.push(picked);
+            ordered = ordered.concat(rest);
+          }
+          // pushRecents unshifts per hex — pass the reverse so the final
+          // list reads most-recent-first (the selected stop at the head)
+          pushRecents(ordered.reverse());
+        } catch (e) {}
+      }
     };
     panel.pushView(view);
   }

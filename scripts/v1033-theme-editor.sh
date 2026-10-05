@@ -89,12 +89,12 @@ LAYOUT=$(ev "
     tools: te.querySelectorAll('.te-tool').length,
     types: te.querySelectorAll('.te-type').length,
     angle: !!te.querySelector('[data-te-angle]'),
-    color: !!te.querySelector('[data-te-color]'),
+    wheel: !!te.querySelector('[data-te-wheel]'),
     hex: !!te.querySelector('[data-te-hex]')
   });
 })()")
 ck "E2 the fixed layout renders (all 9 zones)" \
-   "$(echo "$LAYOUT" | grep -qE '\"name\":true.*\"tagged\":true.*\"banner\":true.*\"add\":true.*\"tools\":2.*\"types\":6.*\"angle\":true.*\"color\":true' && echo yes)" "$LAYOUT"
+   "$(echo "$LAYOUT" | grep -qE '\"name\":true.*\"tagged\":true.*\"banner\":true.*\"add\":true.*\"tools\":2.*\"types\":6.*\"angle\":true.*\"wheel\":true' && echo yes)" "$LAYOUT"
 DEPTH=$(ev "(window.Settings.panelOf() && window.Settings.panelOf().viewDepth ? window.Settings.panelOf().viewDepth() : 'na')")
 ck "E1 the editor rides the panel view stack (depth ≥ 1)" "$([ "$DEPTH" -ge 1 ] 2>/dev/null && echo yes)" "$DEPTH"
 
