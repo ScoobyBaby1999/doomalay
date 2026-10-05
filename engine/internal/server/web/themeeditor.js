@@ -96,7 +96,7 @@
 
   var MAX_STOPS = 6;   // v1.03: 15 → 6 (user spec: "a more reasonable 5-6")
   var TYPE_OPTIONS = [
-    // [pill label, spec dir, needs canvas-family]
+    // [tile label, spec dir, needs canvas-family]
     ['linear', 'auto', false],
     ['radial', 'radial', false],
     ['mesh', 'mesh', false],
@@ -104,6 +104,24 @@
     ['checker', 'pat-checker', true],
     ['texture', 'tex', true]
   ];
+  // v1.04.1 F2: THE TILE GLYPHS — real inline SVG (stroke=currentColor,
+  // lucide-style geometry), replacing the text-only pills whose locked
+  // state rendered the '⌧' U+2327 glyph (tofu on Android fonts — "the
+  // icons for pinstripe, checkers, and texture have broken icons":
+  // exactly the three canvas-only types that lock on non-canvas fields).
+  var SVG_OPEN = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">';
+  var TYPE_ICONS = {
+    'auto': SVG_OPEN + '<line x1="4" y1="20" x2="20" y2="4"/><line x1="9" y1="21" x2="21" y2="9" opacity="0.45"/></svg>',
+    'radial': SVG_OPEN + '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>',
+    'mesh': SVG_OPEN + '<circle cx="7" cy="8" r="2.2" fill="currentColor" stroke="none"/><circle cx="16.5" cy="6.5" r="2.2" fill="currentColor" stroke="none"/><circle cx="12" cy="15" r="2.2" fill="currentColor" stroke="none"/><circle cx="5.5" cy="17" r="1.6" fill="currentColor" stroke="none" opacity="0.55"/><circle cx="18.5" cy="16" r="1.6" fill="currentColor" stroke="none" opacity="0.55"/></svg>',
+    'pat-pinstripe': SVG_OPEN + '<line x1="5" y1="4" x2="5" y2="20"/><line x1="10" y1="4" x2="10" y2="20"/><line x1="15" y1="4" x2="15" y2="20"/><line x1="20" y1="4" x2="20" y2="20" opacity="0.45"/></svg>',
+    'pat-checker': SVG_OPEN + '<rect x="4" y="4" width="7" height="7" fill="currentColor" stroke="none"/><rect x="13" y="13" width="7" height="7" fill="currentColor" stroke="none"/><rect x="13" y="4" width="7" height="7" opacity="0.35"/><rect x="4" y="13" width="7" height="7" opacity="0.35"/></svg>',
+    'tex': SVG_OPEN + '<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><circle cx="9" cy="9" r="1.6" fill="currentColor" stroke="none"/><path d="M20.5 15.2l-4.6-4.6a1.4 1.4 0 0 0-2 0L4 20.5"/></svg>'
+  };
+  var LOCK_ICON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 
   // ── v1.03.4: THE WHEEL — the color math (culori, already vendored;
   // research verdict: no maintained MIT wheel lib exists — iro=MPL,
@@ -182,14 +200,19 @@
   }
 
   // ── the live write: rAF-coalesced, one write per frame max ────────
+  // v1.04.1 F3: the queue flag is a CLOSURE variable — the old
+  // q._teQueued stamped the flag ON the spec object itself, and the
+  // spec is exactly what writeThemeVar persists into themeOverrides:
+  // every dragged editor left a stray _teQueued:false in the saved
+  // state (data pollution in the .doomtheme exports).
   function makeWriter(write) {
-    var q = null;
+    var queued = false;
     return function (spec) {
-      q = spec;
-      if (q._teQueued) return;
-      q._teQueued = true;
+      if (queued) return;
+      queued = true;
       requestAnimationFrame(function () {
-        if (q) { q._teQueued = false; try { write(q); } catch (e) { /* the caller owns errors */ } }
+        queued = false;
+        try { write(spec); } catch (e) { /* the caller owns errors */ }
       });
     };
   }
@@ -234,19 +257,49 @@
     return h;
   }
 
-  // ── the type pills html ──────────────────────────────────────────
+  // ── the type tiles html ──────────────────────────────────────────
+  // v1.04.1 F2: a DISTINCT family from the app's standard pill set
+  // (user spec: "the type column pills a different style from our set
+  // list of objects — something else from this"): outline tiles, no
+  // chrome fill — the glyph + the label stacked, selected = the accent
+  // ring + tint, locked = the padlock badge (a real SVG — the old ⌧
+  // text glyph was the broken icon). F4: the texture tile SELECTS the
+  // type — it no longer browses (the tex row below owns the import).
   function typesHtml(spec, solid, canvas) {
     var cur = (spec && spec.tex && spec.tex.length > 4) ? 'tex' : (spec.dir || 'auto');
     var h = '';
     TYPE_OPTIONS.forEach(function (o) {
       var locked = solid || (o[2] && !canvas);
       var active = !locked && (o[1] === 'tex' ? (cur === 'tex') : (cur === o[1] && cur !== 'tex'));
-      h += '<button type="button" class="te-type' + (active ? ' on' : '') + (locked ? ' lock' : '') +
+      h += '<button type="button" class="te-tile' + (active ? ' on' : '') + (locked ? ' lock' : '') +
         '" data-te-type="' + o[1] + '"' + (locked ? ' disabled aria-label="' + esc(o[0]) + ' — not available for this variable"' : ' aria-label="' + esc(o[0]) + ' gradient"') + '>' +
-        esc(o[0]) + (locked ? '<span class="te-lock" aria-hidden="true">⌧</span>' : '') +
+        '<span class="te-tile-ico">' + (TYPE_ICONS[o[1]] || '') + '</span>' +
+        '<span class="te-tile-lab">' + esc(o[0]) + '</span>' +
+        (locked ? '<span class="te-tile-lock">' + LOCK_ICON + '</span>' : '') +
         '</button>';
     });
     return h;
+  }
+
+  // v1.04.1 F4: THE TEX ROW — the image import, SEPARATED from the
+  // texture type (user spec: "separate the texture functionality from
+  // the browse an image functionality — maybe we may find it useful
+  // later to do something different when a texture is imported"). The
+  // row only renders for the canvas family (the only tex-capable
+  // fields); when a texture is active it also offers the drop.
+  function texRowHtml(spec, solid, canvas) {
+    if (solid || !canvas) return '';
+    var has = !!(spec && spec.tex && spec.tex.length > 4);
+    return '<div class="te-tex-row"' + (has ? ' data-te-tex="on"' : '') + '>' +
+      '<button type="button" class="te-tex-btn" data-te-tex-import>' +
+        '<span class="te-tile-ico">' + TYPE_ICONS.tex + '</span>' +
+        (has ? 'replace image' : 'import image') +
+      '</button>' +
+      (has ? '<button type="button" class="te-tex-btn" data-te-tex-clear aria-label="drop the texture">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+        'clear' +
+      '</button>' : '') +
+    '</div>';
   }
 
   // ── THE PAGE ─────────────────────────────────────────────────────
@@ -324,6 +377,7 @@
             '<div class="te-left">' +
               '<div class="te-col-title">type</div>' +
               '<div class="te-types" data-te-types>' + typesHtml(spec, solid, !!target.canvas) + '</div>' +
+              '<div data-te-texrow>' + texRowHtml(spec, solid, !!target.canvas) + '</div>' +
               '<div class="te-col-title">angle</div>' +
               '<div class="te-angle">' +
                 '<input type="range" min="0" max="360" step="5" value="' + (spec.angle || 0) + '" data-te-angle ' +
@@ -376,6 +430,8 @@
           }
           var t = typesBox();
           if (t) t.innerHTML = typesHtml(spec, solid, !!target.canvas);
+          var tr = el.querySelector('[data-te-texrow]');
+          if (tr) tr.innerHTML = texRowHtml(spec, solid, !!target.canvas);
           var ang = el.querySelector('[data-te-angle]');
           var angv = el.querySelector('[data-te-angle-v]');
           if (ang && document.activeElement !== ang) ang.value = String(spec.angle || 0);
@@ -392,6 +448,49 @@
           // (the view stays mounted — no scroll jump, no full rerender)
           target.write(spec);
           refreshStops();
+        }
+
+        // v1.04.1 F4: the image import, extracted to its own seam (the
+        // texture TYPE no longer owns the browse — a future import can
+        // do something different with the asset here).
+        function openTexImport() {
+          var fi = document.createElement('input');
+          fi.type = 'file';
+          fi.accept = 'image/*';
+          fi.addEventListener('change', function () {
+            var f = fi.files && fi.files[0];
+            if (!f) return;
+            var rd = new FileReader();
+            rd.onload = function () {
+              spec.tex = String(rd.result || '');
+              shape();   // the tex PRESENCE is the texture mode
+            };
+            rd.readAsDataURL(f);
+          });
+          fi.click();
+        }
+
+        // v1.04.1 F3: the banner's LIVE paint — one direct style write
+        // (no innerHTML, no re-render, no stops/types rebuild). The
+        // SAME shape applyHsv uses; the app-wide write stays rAF-
+        // coalesced through writeLive.
+        function paintBannerLive() {
+          var b = banner();
+          if (!b) return;
+          var bc = cssOf(spec, { scale: 1 });
+          if (bc.charAt(0) === '#') { b.style.backgroundImage = 'none'; b.style.backgroundColor = bc; }
+          else { b.style.backgroundColor = 'transparent'; b.style.backgroundImage = bc; }
+          // the anchor row's banner (the Colors tab behind the editor)
+          // follows too — the element reference survives the stash.
+          if (target.row) {
+            var bEl = target.row.querySelector('.slot-row-banner');
+            if (bEl) {
+              var v = (window.GradientUI && window.GradientUI.css)
+                ? window.GradientUI.css(spec, { scale: 0.28 }) : spec.colors[0];
+              if (v.charAt(0) === '#') { bEl.style.backgroundImage = 'none'; bEl.style.backgroundColor = v; }
+              else { bEl.style.backgroundColor = 'transparent'; bEl.style.backgroundImage = v; }
+            }
+          }
         }
 
         // ── v1.03.4: THE WHEEL ──────────────────────────────────────
@@ -540,27 +639,32 @@
           if (typeB && !typeB.disabled) {
             var d = typeB.getAttribute('data-te-type');
             if (d === 'tex') {
-              // the texture path: a hidden file input reads the dataURL
-              var fi = document.createElement('input');
-              fi.type = 'file';
-              fi.accept = 'image/*';
-              fi.addEventListener('change', function () {
-                var f = fi.files && fi.files[0];
-                if (!f) return;
-                var rd = new FileReader();
-                rd.onload = function () {
-                  spec.tex = String(rd.result || '');
-                  spec.dir = 'auto';
-                  shape();
-                };
-                rd.readAsDataURL(f);
-              });
-              fi.click();
+              // v1.04.1 F4: the texture tile SELECTS the type — it never
+              // browses directly anymore (the tex row owns the import).
+              // The MODE is the tex PRESENCE (norm carries no 'tex' dir —
+              // css() layers the url() under whatever dir is set): with an
+              // image loaded the tile is already active (re-commit); with
+              // none there is nothing to select — the import is the entry.
+              if (spec.tex && spec.tex.length > 4) {
+                shape();
+              } else {
+                openTexImport();
+              }
             } else {
               spec.dir = d;
-              spec.tex = '';
+              spec.tex = '';   // leaving the texture mode drops the layer
               shape();
             }
+            return;
+          }
+          // v1.04.1 F4: THE TEX ROW — the import (browse an image) is a
+          // SEPARATE affordance from the type. A future import may do
+          // something different with the asset (the user's stated
+          // direction); this seam is where it lands.
+          if (t.closest('[data-te-tex-import]')) { openTexImport(); return; }
+          if (t.closest('[data-te-tex-clear]')) {
+            spec.tex = '';   // the mode is the tex presence — drop = linear
+            shape();
             return;
           }
           if (t.closest('[data-te-tagged]')) {
@@ -586,6 +690,13 @@
             spec.angle = parseInt(t.value, 10) || 0;
             var angv = el.querySelector('[data-te-angle-v]');
             if (angv) angv.textContent = spec.angle + '°';
+            // v1.04.1 F3 (user report: "changing the angle slider doesn't
+            // update the banner live in a performant method without
+            // re-rendering the whole panel every change"): the banner
+            // paints DIRECTLY per input event — one style write, zero
+            // innerHTML, zero view rebuilds. The app-wide theme apply
+            // stays rAF-coalesced (one write per frame max) below.
+            paintBannerLive();
             writeLive(spec);
           }
         });

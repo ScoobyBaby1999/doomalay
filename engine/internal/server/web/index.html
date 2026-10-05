@@ -1711,21 +1711,52 @@
     font-size: var(--ui-micro-fs); font-weight: 700; color: var(--text-3);
     text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 6px 2px;
   }
-  .te-types { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
-  .te-type {
-    display: flex; align-items: center; justify-content: center; gap: 5px;
-    padding: 9px 6px; min-height: 40px;
-    background: var(--raised-chrome); border: 1px solid var(--raised-ring);
-    color: var(--text-2); border-radius: 10px;
-    font-size: var(--ui-small-fs); font-weight: 600; font-family: inherit;
+  /* v1.04.1 F2: THE TYPE TILES — a distinct family from the app's
+     standard pill set (user spec: "the type column pills a different
+     style from our set list of objects — something else from this").
+     Outline tiles: transparent chrome, border-only, the SVG glyph
+     over the label; selected = the accent ring + tint; locked = the
+     SVG padlock badge (the old '⌧' text glyph was tofu on Android —
+     the "broken icons"). */
+  .te-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .te-tile {
+    position: relative; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 4px;
+    padding: 10px 4px 8px; min-height: 58px;
+    background: transparent; border: 1px solid var(--border-strong);
+    color: var(--text-3); border-radius: 8px;
+    font-size: var(--ui-micro-fs); font-weight: 600; font-family: inherit;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: border-color .12s ease, color .12s ease;
+  }
+  .te-tile:active { border-color: var(--accent); }
+  .te-tile .te-tile-ico { display: flex; align-items: center; justify-content: center; }
+  .te-tile.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    background-color: rgba(var(--accent-rgb), 0.10);
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.4);
+  }
+  .te-tile.lock { opacity: 0.5; cursor: default; }
+  .te-tile-lock {
+    position: absolute; top: 3px; right: 4px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-3); opacity: 0.9;
+  }
+  /* v1.04.1 F4: THE TEX ROW — the image import, separated from the
+     texture type (the type selects; this row browses). */
+  .te-tex-row { display: flex; gap: 6px; margin-top: 7px; }
+  .te-tex-btn {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 7px 6px; min-height: 34px;
+    background: transparent; border: 1px dashed var(--border-strong);
+    color: var(--text-3); border-radius: 8px;
+    font-size: var(--ui-micro-fs); font-weight: 600; font-family: inherit;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
-  .te-type.on {
-    background-color: rgba(var(--accent-rgb), 0.16);
-    border-color: rgba(var(--accent-rgb), 0.6); color: var(--text-1);
-  }
-  .te-type.lock { opacity: 0.55; cursor: default; }
-  .te-lock { font-size: 10px; color: var(--text-3); }
+  .te-tex-btn:active { color: var(--text-1); border-color: var(--accent); }
+  .te-tex-btn .te-tile-ico svg { width: 14px; height: 14px; }
+  .te-tex-row[data-te-tex="on"] .te-tex-btn:first-child { border-style: solid; color: var(--text-2); }
   .te-angle { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
   .te-angle input[type=range] { flex: 1; accent-color: var(--accent); height: 32px; cursor: pointer; }
   .te-angle-v {

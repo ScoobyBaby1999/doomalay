@@ -201,9 +201,18 @@
   // switch ran the sheet hijack's preventDefault, which killed the
   // synthetic click — the toggle could never be turned off with a sloppy
   // tap. A tap on a toggle is always the toggle's, never the sheet's.
+  // v1.04.1 F1 (user report: "when the user is touch dragging the color
+  // wheel… the panel should not register these touches — I prefer if
+  // the panel where to not even listen to that channel, and only listen
+  // to touches of certain channels"): the Theme Editor's interactive
+  // surfaces join the list — the wheel drag (pointer capture +
+  // touch-action:none) was being eaten by the body hijack's
+  // preventDefault (a >24px drift cancelled the wheel's pointer stream
+  // and started the sheet glide). The touchstart handler below now
+  // doesn't even RECORD a bodyStart for these channels.
   function ownsGesture(target) {
     if (!target || !target.closest) return false;
-    return !!target.closest('input[type="range"], input[type="checkbox"], .app-switch, textarea, .no-sheet-drag');
+    return !!target.closest('input[type="range"], input[type="checkbox"], .app-switch, textarea, .no-sheet-drag, .te-wheel, [data-te-wheel], [data-own-touch]');
   }
 
   function attach(panel, opts) {
@@ -752,6 +761,14 @@
       body.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
         if (track.active) return; // an ANCHOR gesture is already running
+        // v1.04.1 F1: THE CHANNEL GATE — a touch on an element that owns
+        // its gesture (the wheel, the sliders, the switches…) is not even
+        // RECORDED (the user's exact shape: "the panel should not even
+        // listen to that channel"). No bodyStart → the touchmove handler
+        // below is a no-op for the whole gesture → no hijack, no
+        // preventDefault, the owned surface keeps its full pointer
+        // stream. The ducked-peek interaction timer also skips these.
+        if (ownsGesture(e.target)) return;
         if (ducked) resetDuckTimer();   // v0.65.1: touching the peek = interacting
         track.bodyStart = {
           y: e.touches[0].clientY,

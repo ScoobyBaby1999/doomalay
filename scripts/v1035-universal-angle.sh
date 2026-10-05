@@ -132,7 +132,7 @@ ev "(function(){ var t=document.querySelector('[data-slot-open=surface]'); if(t)
 sleep 1.4
 NORM=$(ev "
 (function(){
-  var on = document.querySelector('.te-type.on');
+  var on = document.querySelector('.te-tile.on');
   var ang = document.querySelector('[data-te-angle]');
   return (on ? on.getAttribute('data-te-type') : 'none') + '§' + (ang ? ang.value : 'na');
 })()")

@@ -87,7 +87,7 @@ LAYOUT=$(ev "
     stops: te.querySelectorAll('.te-stop').length,
     add: !!te.querySelector('[data-te-add]'),
     tools: te.querySelectorAll('.te-tool').length,
-    types: te.querySelectorAll('.te-type').length,
+    types: te.querySelectorAll('.te-tile').length,
     angle: !!te.querySelector('[data-te-angle]'),
     wheel: !!te.querySelector('[data-te-wheel]'),
     hex: !!te.querySelector('[data-te-hex]')
@@ -99,7 +99,7 @@ DEPTH=$(ev "(window.Settings.panelOf() && window.Settings.panelOf().viewDepth ? 
 ck "E1 the editor rides the panel view stack (depth ≥ 1)" "$([ "$DEPTH" -ge 1 ] 2>/dev/null && echo yes)" "$DEPTH"
 
 # ── E3: the locks ─────────────────────────────────────────────────
-LOCKS=$(ev "(document.querySelectorAll('.te-page .te-type.lock').length)")
+LOCKS=$(ev "(document.querySelectorAll('.te-page .te-tile.lock').length)")
 ck "E3a surface locks exactly 3 (pinstripe/checker/texture)" "$([ "$LOCKS" = "3" ] 2>/dev/null && echo yes)" "$LOCKS"
 
 # ── E4: the stops ─────────────────────────────────────────────────
@@ -134,7 +134,7 @@ ev "(function(){ var t=document.querySelector('[data-te-type=mesh]'); if(t) t.cl
 sleep 0.6
 TYPE=$(ev "
 (function(){
-  var on = document.querySelector('.te-type.on');
+  var on = document.querySelector('.te-tile.on');
   var s = window.Settings.getState();
   var b = document.querySelector('[data-te-banner]');
   return (on ? on.getAttribute('data-te-type') : 'none') + '|' +
@@ -179,7 +179,7 @@ ck "E8b the anchor row's banner + marker updated (mesh + pinned)" \
 # ── E3b + E7: ink + canvas editors ─────────────────────────────────
 ev "(function(){ var t=document.querySelector('[data-slot-open=ink]'); if(t) t.click(); return 'ok'; })()" >/dev/null
 sleep 1.2
-INK=$(ev "(document.querySelectorAll('.te-page .te-type.lock').length)")
+INK=$(ev "(document.querySelectorAll('.te-page .te-tile.lock').length)")
 ck "E3b ink locks ALL six type pills" "$([ "$INK" = "6" ] 2>/dev/null && echo yes)" "$INK"
 ev "(function(){ var p=window.Settings.panelOf(); if(p&&p.back) p.back(); return 'ok'; })()" >/dev/null
 sleep 0.8
@@ -189,7 +189,7 @@ CANVAS=$(ev "
 (function(){
   var te = document.querySelector('.te-page');
   if (!te) return 'no-page';
-  return (te.querySelectorAll('.te-type.lock').length) + '|' +
+  return (te.querySelectorAll('.te-tile.lock').length) + '|' +
     (te.querySelectorAll('[data-te-extras] [data-color-row]').length) + '|' +
     (te.querySelector('[data-te-extras] input[type=file]') ? 'mcu' : 'nomcu');
 })()")

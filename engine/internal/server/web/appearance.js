@@ -825,6 +825,19 @@
     if (slotRowsWired) return;
     slotRowsWired = true;
     document.addEventListener('click', function (e) {
+      // v1.04.1 F5 (user report: "the reset arrow doesn't work"): the
+      // RESET branch runs FIRST — the reset button lives INSIDE
+      // .slot-row-head (which carries data-slot-open), so the open
+      // branch's closest() matched the PARENT and swallowed the reset
+      // click before it ever reached the reset handler. The v0.45
+      // colorRowCollapsed wiring had this exact guard ("don't toggle
+      // when the reset pill was tapped"); the slot rows never got it.
+      var resetBtn = e.target.closest ? e.target.closest('[data-slot-reset]') : null;
+      if (resetBtn) {
+        var fn = slotResetFns[resetBtn.getAttribute('data-slot-reset')];
+        if (fn) { e.preventDefault(); e.stopPropagation(); fn(); }
+        return;
+      }
       var openBtn = e.target.closest ? e.target.closest('[data-slot-open]') : null;
       if (openBtn) {
         var rowEl = openBtn.closest('.slot-row');
@@ -835,12 +848,6 @@
           e.stopPropagation();
           builder(rowEl);
         }
-        return;
-      }
-      var resetBtn = e.target.closest ? e.target.closest('[data-slot-reset]') : null;
-      if (resetBtn) {
-        var fn = slotResetFns[resetBtn.getAttribute('data-slot-reset')];
-        if (fn) { e.preventDefault(); e.stopPropagation(); fn(); }
         return;
       }
     }, true);

@@ -43,7 +43,12 @@ PASS=0; FAIL=0
 ck() { if [ "$2" = "yes" ]; then PASS=$((PASS+1)); echo "  ✓ $1"; else FAIL=$((FAIL+1)); echo "  ✗ $1  → got: ${3:-?}"; fi; }
 
 if ! curl -s --max-time 2 http://127.0.0.1:$PORT/api/health > /dev/null 2>&1; then
-  bash /tmp/spawn8434.sh
+  pkill -f "doomalay-engine -port $PORT" 2>/dev/null
+  cat > /tmp/spawn$PORT.sh << EOF
+#!/bin/bash
+setsid nohup /tmp/doomalay-engine -port $PORT -bind 0.0.0.0 -data-dir /tmp/doomalay-v1034 -open=false > /tmp/doomalay-v1034.log 2>&1 < /dev/null &
+EOF
+  bash /tmp/spawn$PORT.sh
   for i in $(seq 1 30); do curl -s --max-time 2 http://127.0.0.1:$PORT/api/health > /dev/null 2>&1 && break; sleep 0.5; done
 fi
 echo "engine: $(curl -s --max-time 3 $BASE/api/health)"
