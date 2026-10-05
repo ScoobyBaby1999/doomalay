@@ -1851,20 +1851,40 @@
     }
     if (!paint) paint = 'background:' + idGradient(b.id) + ';';
     if (!ref) ref = idColors(b.id).join(',');
-    var ink = '#fff', shadow = '0 1px 4px rgba(0,0,0,0.55)';
-    // the average luminance across every parseable stop (hex only —
-    // hsl/rgb specs fall back to the light-ink default, same as before)
-    var lum = 0, n = 0;
+    // v1.04.3: ink-on-art is FUNCTIONAL (the ink must contrast with the
+    // USER's card art, not with the theme — the art-ink constant pair is
+    // canonical, like the picker's #fff handle). The MATH upgrades to
+    // WCAG 2 relative luminance + the higher-contrast pick (the old
+    // 0.299/0.587/0.114 NTSC luma on non-linear sRGB with a fixed 168
+    // threshold mis-sorted saturated mid-tones — dark ink on orange reads
+    // 6.5:1 vs white's 2.9:1, the old rule picked white).
+    // The shadows ride the elevation system where they're chrome: the
+    // dark case's shadow ink = --shadow-ink-rgb (the themed shadow), the
+    // light case's glow stays ink-tied (functional, follows the ink).
+    var ink = '#fff', shadow = '0 1px 4px rgba(var(--shadow-ink-rgb),0.55)';
+    var lumSum = 0, n = 0;
+    var relLum = function (hex6) {
+      var lin = function (v) {
+        v /= 255;
+        return (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * lin(parseInt(hex6.slice(0, 2), 16)) +
+             0.7152 * lin(parseInt(hex6.slice(2, 4), 16)) +
+             0.0722 * lin(parseInt(hex6.slice(4, 6), 16));
+    };
     String(ref).split(',').forEach(function (c) {
       var m = /^#([0-9a-f]{6})$/i.exec(String(c).trim());
       if (!m) return;
-      lum += 0.299 * parseInt(m[1].slice(0, 2), 16) +
-             0.587 * parseInt(m[1].slice(2, 4), 16) +
-             0.114 * parseInt(m[1].slice(4, 6), 16);
+      lumSum += relLum(m[1]);
       n++;
     });
-    if (n && lum / n > 168) {
-      ink = 'rgba(10,10,14,0.92)'; shadow = '0 1px 3px rgba(255,255,255,0.35)';
+    if (n) {
+      var artL = lumSum / n;                       // WCAG art luminance
+      var cWhite = 1.05 / (artL + 0.05);           // (L1+0.05)/(L2+0.05)
+      var cDark = (artL + 0.05) / (0.0035 + 0.05); // vs #0a0a0e @0.92
+      if (cDark > cWhite) {
+        ink = 'rgba(10,10,14,0.92)'; shadow = '0 1px 3px rgba(255,255,255,0.35)';
+      }
     }
     return ' style="' + paint + 'color:' + ink + ';text-shadow:' + shadow + '"';
   }

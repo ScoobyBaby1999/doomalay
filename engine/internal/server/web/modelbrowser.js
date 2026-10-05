@@ -160,7 +160,7 @@
       '.mb-logrow [data-select]:hover{background:rgba(var(--text-3-rgb),0.10)}' +
       '[data-hostgrip],[data-grip]{user-select:none;-webkit-user-select:none;transition:background 130ms,color 130ms;border-radius:7px}' +
       '[data-hostgrip]:hover,[data-grip]:hover{background:rgba(var(--text-3-rgb),0.14);color:var(--text-1)}' +
-      '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(0,0,0,0.55);cursor:grabbing}' +
+      '.mb-dragging{position:relative;z-index:40;box-shadow:0 18px 44px rgba(var(--shadow-ink-rgb),0.55);cursor:grabbing}' +
       '.mb-dragging *{pointer-events:none}' +
       'body.mb-noselect,body.mb-noselect *{user-select:none!important;-webkit-user-select:none!important}' +
       // v0.32.1 F/G: interaction polish — pills feel pressable, boxes/rows
@@ -610,7 +610,7 @@
       // the tabs row scrolled away.
       var html =
         '<div id="mb-wrap" style="padding:16px">' +
-        '<div id="mb-top" style="position:sticky;top:0;z-index:40;margin:0 -16px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(0,0,0,0.45)">' +
+        '<div id="mb-top" style="position:sticky;top:0;z-index:40;margin:0 -16px;background:var(--surface-1);border-bottom:1px solid var(--surface-2);box-shadow:0 8px 14px -8px rgba(var(--shadow-ink-rgb),0.45)">' +
         '<div id="mb-head" style="padding:4px 16px 0">' + header() + '</div>' +
         '<div id="mb-sticky" style="padding:10px 16px 8px">' +
         searchBox() +

@@ -385,8 +385,8 @@
     font-size: 22px;
     font-weight: 700;
     color: var(--text-1);
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    text-shadow: 0 1px 2px rgba(var(--veil-ink-rgb), 0.5);
+    box-shadow: 0 4px 12px rgba(var(--shadow-ink-rgb), 0.4);
     overflow: hidden;  /* clip img to circle */
   }
   .chatbot .icon img {
@@ -399,7 +399,7 @@
     font-size: var(--ui-small-fs);
     font-weight: 600;
     color: var(--text-2);
-    background: rgba(var(--bg-app-rgb, 10,10,11), 0.92);
+    background: rgba(var(--bg-app-rgb), 0.92);
     padding: 2px 8px;
     border-radius: 6px;
     /* v0.74: backdrop-filter RETIRED — the user's "remove all these
@@ -427,7 +427,7 @@
     justify-content: center;
     font-size: calc(var(--ui-small-fs) - 1px);
     line-height: 1;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    box-shadow: 0 2px 6px rgba(var(--shadow-ink-rgb), 0.5);
     pointer-events: none;
     z-index: 2;
   }
@@ -483,7 +483,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 6px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    box-shadow: 0 8px 32px rgba(var(--shadow-ink-rgb), 0.6);
     min-width: 160px;
     z-index: 1000;
     transform: translate(-50%, -50%);  /* center on the press point */
@@ -623,7 +623,7 @@
     background: color-mix(in srgb, var(--surface-1) 88%, transparent);
     border-color: var(--border);
     padding: 4px 4px 6px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38);
+    box-shadow: 0 8px 32px rgba(var(--shadow-ink-rgb), 0.38);
   }
   /* v1.01.5: the OPEN capsule is a surface window too (the gradient
      paints while the twin is live — the glass fill stays the fallback). */
@@ -792,7 +792,7 @@
     background: color-mix(in srgb, var(--surface-1) 92%, transparent);
     border: 1px solid var(--border);
     border-radius: 20px;
-    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38);
+    box-shadow: 0 12px 34px rgba(var(--shadow-ink-rgb), 0.38);
     opacity: 0;
     transform: translateY(10px) scale(0.985);
     animation: ce-in 0.42s cubic-bezier(0.32, 0.72, 0, 1) 0.35s forwards;
@@ -876,7 +876,7 @@
     background: var(--surface-1);
     border-top: 1px solid var(--border);
     border-radius: 16px 16px 0 0;
-    box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+    box-shadow: 0 -8px 32px rgba(var(--shadow-ink-rgb), 0.5);
     z-index: 2000;
     display: flex;
     flex-direction: column;
@@ -1399,7 +1399,7 @@
   }
   .chatbot .icon .wt-glyph svg {
     width: 26px; height: 26px;
-    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));
+    filter: drop-shadow(0 1px 2px rgba(var(--shadow-ink-rgb), 0.45));
   }
   /* the panel-header avatar twin (the gradient disc) */
   .wt-avatar {
@@ -1421,9 +1421,9 @@
      hardcoded 74,74,94 — the old default-family canvas hex, a stray from
      the pre-theme era that glowed wrong on every non-midnight theme). */
   @keyframes tap-pulse {
-    0%   { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+    0%   { transform: scale(1);    box-shadow: 0 4px 12px rgba(var(--shadow-ink-rgb), 0.4); }
     40%  { transform: scale(0.82); box-shadow: 0 8px 24px color-mix(in srgb, var(--border-strong) 60%, transparent); }
-    100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+    100% { transform: scale(1);    box-shadow: 0 4px 12px rgba(var(--shadow-ink-rgb), 0.4); }
   }
 
   /* ── Settings UI (inside the panel body) ──────────────────────
@@ -1623,7 +1623,7 @@
     height: 20px;
     border-radius: 7px;
     border: 1px solid var(--border);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(var(--highlight-inset-rgb), 0.04);
   }
   .color-row-reset {
     flex: 0 0 auto;
@@ -1821,7 +1821,10 @@
   }
   .te-wheel-handle {
     position: absolute; width: 18px; height: 18px; border-radius: 50%;
-    border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.35), 0 1px 4px rgba(0,0,0,0.5);
+    /* the #fff border is FUNCTIONAL: the handle must contrast against
+       every hue it rides over (the picker IS the color space) — the
+       shadows around it are chrome and ride the elevation tokens. */
+    border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(var(--shadow-ink-rgb), 0.35), 0 1px 4px rgba(var(--shadow-ink-rgb), 0.5);
     transform: translate(-50%, -50%);
     pointer-events: none;   /* the drag math owns the position */
   }
@@ -1845,7 +1848,7 @@
     -webkit-appearance: none; appearance: none;
     width: 20px; height: 20px; border-radius: 50%;
     background: var(--surface-1); border: 2px solid var(--on-accent, #fff);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    box-shadow: 0 1px 3px rgba(var(--shadow-ink-rgb), 0.4);
   }
   .te-swatches { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
   .te-sw {
@@ -1877,7 +1880,7 @@
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 16px;
-    box-shadow: 0 18px 48px rgba(0,0,0,0.44), 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 18px 48px rgba(var(--shadow-ink-rgb), 0.44), 0 2px 8px rgba(var(--shadow-ink-rgb), 0.3);
     padding: 12px;
     z-index: 2600;
     opacity: 0;
@@ -2184,7 +2187,7 @@
     border-width: 0; overflow: hidden;
     transition: max-height .18s ease, opacity .18s ease, padding .18s ease,
                 margin .18s ease, border-width .18s ease;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+    box-shadow: 0 4px 14px rgba(var(--shadow-ink-rgb), 0.14);
   }
   .chat-find.open {
     max-height: 60px; opacity: 1;
@@ -2244,7 +2247,7 @@
   }
   .err-switch:hover {
     background: var(--surface-3); border-color: var(--accent);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 10px rgba(var(--shadow-ink-rgb), 0.2);
   }
   .err-switch:hover .err-switch-ico { transform: rotate(180deg); }
   .err-switch:active { transform: scale(0.96); }
@@ -2270,7 +2273,7 @@
   .starter-chip:hover {
     background: var(--surface-2); border-color: var(--accent);
     color: var(--text-1); transform: translateY(-1px);
-    box-shadow: 0 3px 12px rgba(0,0,0,0.22);
+    box-shadow: 0 3px 12px rgba(var(--shadow-ink-rgb), 0.22);
   }
   .starter-chip:active { transform: scale(0.96); }
   .starter-chip:focus-visible {
@@ -2291,7 +2294,7 @@
     display: flex; align-items: center; justify-content: center;
     opacity: 0; pointer-events: none; transform: translateY(8px) scale(0.9);
     transition: opacity .18s ease, transform .18s ease, background .14s ease;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+    box-shadow: 0 4px 14px rgba(var(--shadow-ink-rgb), 0.28);
   }
   .chat-jump.show { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
   .chat-jump:hover { background: var(--surface-3); }
@@ -2538,7 +2541,8 @@
     color: var(--fmt-bright); font-weight: 700; margin: 0.7em 0 0.35em;
     line-height: 1.3; letter-spacing: 0.1px;
   }
-  .fmt h1 { font-size: 1.3em; border-bottom: 1px solid rgba(255,255,255,0.09); padding-bottom: 0.25em; }
+  /* v1.04.3: the h1 hairline rides --border (the one-hairline-owner rule). */
+  .fmt h1 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
   .fmt h2 { font-size: 1.18em; color: var(--fmt-a1); }
   .fmt h3 { font-size: 1.08em; color: var(--fmt-a2); }
   .fmt h4 { font-size: 1em; color: var(--fmt-a3); }
@@ -2647,7 +2651,7 @@
     background: rgba(255,0,0,0.85); color: #fff;
     display: flex; align-items: center; justify-content: center;
     font-size: calc(19px * var(--chat-scale)); padding-left: 4px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.55);
+    box-shadow: 0 2px 12px rgba(var(--shadow-ink-rgb), 0.55);
   }
   .fmt-yt:active .fmt-yt-play { background: #f00; }
   .fmt-yt-cap {
@@ -2723,8 +2727,8 @@
   }
   #media-zoom #mz-close, #media-zoom #mz-open {
     position: absolute; top: max(10px, env(safe-area-inset-top));
-    background: rgba(var(--bg-app-rgb, 10,10,11), 0.85); border: 1px solid rgba(255,255,255,0.18);
-    color: #fff; border-radius: 9px; padding: 7px 12px;
+    background: rgba(var(--bg-app-rgb), 0.85); border: 1px solid var(--border-strong);
+    color: var(--text-1); border-radius: 9px; padding: 7px 12px;
     font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -2783,7 +2787,7 @@
   @media (hover: none) { .fmt table tbody tr:hover td { background: transparent; } }
   .fmt th { color: var(--fmt-a2); font-weight: 700; }
   .fmt th, .fmt td { border: 1px solid var(--border); padding: calc(5px * var(--chat-scale)) calc(9px * var(--chat-scale)); text-align: left; }
-  .fmt tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
+  .fmt tr:nth-child(2n) { background: color-mix(in srgb, var(--field-ink) 2%, transparent); }
   .fmt-cursor {
     display: inline-block; width: 7px; height: 1.05em;
     background: var(--fmt-a1); margin-left: 2px; vertical-align: text-bottom;
@@ -3172,7 +3176,7 @@
     display: flex; flex-direction: column;
     transform: translateY(30px); opacity: 0;
     transition: transform 0.24s cubic-bezier(0.32,0.72,0,1), opacity 0.2s;
-    box-shadow: 0 -12px 48px rgba(0,0,0,0.6);
+    box-shadow: 0 -12px 48px rgba(var(--shadow-ink-rgb), 0.6);
   }
   .art-head {
     display: flex; align-items: center; gap: 10px;
@@ -3303,7 +3307,7 @@
     background: var(--surface-1); border-top: 1px solid var(--border);
     border-radius: 16px 16px 0 0; padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px));
     transform: translateY(110%); transition: transform 0.22s cubic-bezier(0.32,0.72,0,1);
-    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+    box-shadow: 0 -10px 40px rgba(var(--shadow-ink-rgb), 0.5);
   }
   .art-sheet.open { transform: translateY(0); }
   .art-sheet-name {
@@ -3359,7 +3363,7 @@
   .vw-arch-n { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 0.5px); flex: 1; }
   .vw-arch-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px; }
   .vw-arch-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; }
-  .vw-arch-row:active { background: rgba(255,255,255,0.04); }
+  .vw-arch-row:active { background: rgba(var(--accent-rgb), 0.08); }
   .vw-arch-ico { font-size: calc(var(--ui-fs) + 1px); width: 22px; text-align: center; flex-shrink: 0; }
   .vw-arch-name { flex: 1; min-width: 0; color: var(--text-1); font-size: calc(var(--ui-small-fs) + 0.5px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
   .vw-arch-size { color: var(--text-3); font-size: calc(var(--ui-small-fs) - 1.5px); flex-shrink: 0; font-variant-numeric: tabular-nums; }
@@ -3439,7 +3443,7 @@
   .cm-s-doomalay .CodeMirror-linenumber { color: var(--text-3-dim); }
   .cm-s-doomalay .CodeMirror-cursor { border-left: 2px solid var(--fmt-a1); }
   .cm-s-doomalay .CodeMirror-selected { background: rgba(var(--accent-2-rgb),0.13); }
-  .cm-s-doomalay .CodeMirror-activeline-background { background: rgba(255,255,255,0.025); }
+  .cm-s-doomalay .CodeMirror-activeline-background { background: color-mix(in srgb, var(--field-ink) 2.5%, transparent); }
   .cm-s-doomalay .cm-keyword { color: var(--fmt-a1); }
   .cm-s-doomalay .cm-atom { color: var(--warn); }
   .cm-s-doomalay .cm-number { color: var(--warn); }
@@ -4021,13 +4025,13 @@
     width: 30px; height: 17px; border-radius: 999px; position: relative;
     background: var(--surface-3); border: 1px solid var(--border);
     transition: background 0.18s ease, border-color 0.18s ease; flex: 0 0 auto;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.18);
+    box-shadow: inset 0 1px 2px rgba(var(--shadow-ink-rgb), 0.18);
   }
   .hub-bundles-dot {
     position: absolute; top: 1.5px; left: 2px; width: 12px; height: 12px;
     border-radius: 50%; background: var(--text-2);
     transition: transform 0.18s ease, background 0.18s ease;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    box-shadow: 0 1px 2px rgba(var(--shadow-ink-rgb), 0.35);
   }
   .hub-bundles.on .hub-bundles-track {
     background: rgba(var(--hub-tone-rgb, var(--accent-2-rgb)), 0.35);
@@ -4063,7 +4067,7 @@
     position: relative; display: flex; flex-direction: column; justify-content: flex-end;
     overflow: hidden; min-height: 148px; padding: 0; border-radius: 14px;
     background: var(--surface-1); border: 1.5px solid var(--border-strong);
-    box-shadow: 0 6px 18px rgba(0,0,0,0.32);
+    box-shadow: 0 6px 18px rgba(var(--shadow-ink-rgb), 0.32);
     cursor: pointer; text-align: left; font-family: inherit;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -4093,7 +4097,7 @@
     flex: 1 1 auto; min-width: 0;
     font-size: calc(var(--ui-fs) + 1px); font-weight: 800; color: var(--text-1); line-height: 1.22;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.45);
+    text-shadow: 0 1px 6px rgba(var(--veil-ink-rgb), 0.45);
   }
   /* v0.58 (pt 6): the inner name span — long names slowly slide across
      (the marquee; marqueeScan measures + paints --slide-d/--slide-t).
@@ -4118,7 +4122,7 @@
     font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.35; font-weight: 500;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
-    text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    text-shadow: 0 1px 4px rgba(var(--veil-ink-rgb), 0.4);
   }
   .hub-card-author {
     font-size: calc(var(--ui-small-fs) - 2px); color: var(--text-3);
@@ -4232,7 +4236,7 @@
     clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 50%, 100% 100%, 0 100%);
     font-size: calc(var(--ui-small-fs) - 1px); font-weight: 800; letter-spacing: 0.02em;
     max-width: 86%; overflow: hidden; white-space: nowrap;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    box-shadow: 0 2px 8px rgba(var(--shadow-ink-rgb), 0.35);
   }
   .hub-bundle-flag b { font-weight: 800; }
   .hub-bundle-flag i {
@@ -4356,7 +4360,7 @@
   .hub-mine-delbar {
     position: sticky; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     z-index: 4; box-shadow: 0 -8px 20px -12px rgba(var(--bg-app-rgb), 0.5),
-      0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
+      0 10px 26px rgba(var(--shadow-ink-rgb), 0.42), 0 2px 6px rgba(var(--shadow-ink-rgb), 0.28);
     border-radius: 16px; margin-top: 10px;
   }
   /* v0.60 pt C.8: THE REPO VIEW — the file preview head + image wrap. */
@@ -4588,7 +4592,7 @@
   .hi-fab {
     width: 62px; height: 62px; border-radius: 50%; background-color: var(--raised-chrome);
     border: 1.5px solid var(--border-strong); color: var(--text-1);
-    cursor: pointer; box-shadow: 0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
+    cursor: pointer; box-shadow: 0 10px 26px rgba(var(--shadow-ink-rgb), 0.42), 0 2px 6px rgba(var(--shadow-ink-rgb), 0.28);
     display: flex; align-items: center; justify-content: center;
     font-family: inherit; touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -4618,7 +4622,7 @@
     flex: 1; display: flex; align-items: center; gap: 8px;
     background-color: var(--raised-chrome); border: 1.5px solid rgba(var(--err-rgb), 0.55);
     border-radius: 18px; padding: 8px 12px;
-    box-shadow: 0 10px 26px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.28);
+    box-shadow: 0 10px 26px rgba(var(--shadow-ink-rgb), 0.42), 0 2px 6px rgba(var(--shadow-ink-rgb), 0.28);
   }
   .hi-delbar-text {
     flex: 1; min-width: 0; font-size: calc(var(--ui-small-fs) - 1px);
@@ -4834,7 +4838,7 @@
   .gr-mini {
     background-color: var(--raised-chrome); border: 1px solid var(--raised-ring); color: var(--text-2);
     border-radius: 9px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.14);
+    box-shadow: 0 1px 2px rgba(var(--shadow-ink-rgb), 0.14);
     padding: 6px 11px; font-size: calc(var(--ui-small-fs) - 1px);
     font-family: inherit; cursor: pointer;
     transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s, box-shadow 0.15s;
@@ -4850,7 +4854,7 @@
   .gr-preview {
     height: 52px; border-radius: 12px;
     border: 1px solid var(--border); flex-shrink: 0;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(var(--highlight-inset-rgb), 0.04);
   }
 
   /* CropUI — the drag-to-crop overlay (full-screen, above the panel) */

@@ -581,7 +581,7 @@
       // panel's transform hijacks position:fixed; see openSendMenu)
       '#send-menu { position:absolute; z-index:2600; width:268px; padding:4px;',
       '  background-color:var(--surface-1); border:1px solid var(--border); border-radius:12px;',
-      '  box-shadow:0 10px 30px rgba(0,0,0,.24);',
+      '  box-shadow:0 10px 30px rgba(var(--shadow-ink-rgb),.24);',
       '  opacity:0; transform:translateY(6px); transition:opacity .14s ease, transform .14s ease; }',
       '#send-menu.open { opacity:1; transform:translateY(0); }',
       '.sm-head { display:flex; align-items:center; justify-content:space-between; gap:8px;',

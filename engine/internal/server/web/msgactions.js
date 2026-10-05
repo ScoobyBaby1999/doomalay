@@ -21,7 +21,7 @@
     sheetEl.style.cssText =
       'position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);' +
       'background:var(--surface-2);border:1px solid var(--border);border-radius:14px;' +
-      'box-shadow:0 12px 40px rgba(0,0,0,0.6);padding:6px;display:none;' +
+      'box-shadow:0 12px 40px rgba(var(--shadow-ink-rgb),0.6);padding:6px;display:none;' +
       'z-index:3500;min-width:180px;opacity:0;transition:opacity .18s, transform .18s;' +
       'font-family:inherit';
     document.body.appendChild(sheetEl);

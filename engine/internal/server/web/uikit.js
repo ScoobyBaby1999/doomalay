@@ -72,7 +72,7 @@
       '.gr-preview-bar{height:40px;border-radius:12px;margin-bottom:10px;',
       'border:1px solid var(--border);background-repeat:no-repeat;',
       'background-size:cover;background-position:center;flex-shrink:0;',
-      'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04)}',
+      'box-shadow:inset 0 0 0 1px rgba(var(--highlight-inset-rgb),0.04)}',
       // shared row wrapper for the v2 control rows
       '.gr-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}',
       '.gr-row-pat{margin-top:6px}',
