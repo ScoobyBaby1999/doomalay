@@ -183,6 +183,18 @@ ok('ink NEVER gets a gradient twin', rec.props['--field-ink-gradient'] === undef
 ok('derived triplet --text-3-rgb present', typeof rec.props['--text-3-rgb'] === 'string');
 ok('derived triplet --surface-2-rgb present', typeof rec.props['--surface-2-rgb'] === 'string');
 ok('derived triplet --bg-app-rgb present', typeof rec.props['--bg-app-rgb'] === 'string');
+// ── v1.03.1 THE CARD — the flat nested-box material ─────────────────
+ok('derived triplet --card-rgb present', typeof rec.props['--card-rgb'] === 'string');
+eq('card triplet = culori parity with the :root mix',
+  rec.props['--card-rgb'],
+  T.hexTriplet(T.fieldMath.cssMix('#14141a', '#feedcc', 0.09)));
+var cardHex = T.fieldMath.cssMix('#14141a', '#e0e0e8', 0.09);
+var s3Hex = T.fieldMath.cssMix('#14141a', '#e0e0e8', 0.11);
+var s2Hex = T.fieldMath.cssMix('#14141a', '#e0e0e8', 0.05);
+ok('card ≠ surface / surface-2 / surface-3 (a distinct material)',
+  cardHex && cardHex !== '#14141a' && cardHex !== s2Hex && cardHex !== s3Hex);
+ok('resolvedDerived --card resolves (pixiworld/JS consumers)',
+  T.resolvedDerived('midnight', null, '--card') === cardHex);
 // the ink override drives the veil/bright gates off the SURFACE (not text)
 ok('veil-ink derived', rec.props['--veil-ink'] === '#000000');
 // FieldMath — the culori CSS-parity core

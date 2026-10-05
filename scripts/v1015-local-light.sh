@@ -17,8 +17,9 @@
 #       static assignment is gone).
 #  (L5) THE OVERLAY SCREEN rides the SURFACE (the card paints the
 #       surface gradient — not the canvas-derived flat).
-#  (L6) THE CHATBOT NAME PILL windows the surface field (DOM twin; the
-#       canvas raster paints the parsed gradient — pixiworld).
+#  (L6) [v1.03.1 re-pin] THE CHATBOT NAME PILL + SANDBOX BADGE ride the
+#       flat CARD glass (the nested tiling kill — was the surface window;
+#       pinned in v1031-card-audit C5).
 #  (L7) PERF: with the gradient live + the Colors tab open, live
 #       gradient edits AND a full panel drag produce ZERO longtasks and
 #       a locked frame budget (the "super laggy" report is dead).
@@ -92,14 +93,18 @@ ck "L1d the settings-gear pill paints the surface gradient" \
 CARDS=$(ev "
 (function(){
   var secs = document.querySelectorAll('.settings-section');
-  var g = 0;
+  var flat = 0, tiled = 0;
   for (var i = 0; i < secs.length; i++) {
-    if (getComputedStyle(secs[i]).backgroundImage.indexOf('linear-gradient') !== -1) g++;
+    var bi = getComputedStyle(secs[i]).backgroundImage;
+    if (bi === 'none') flat++; else tiled++;
   }
-  return g + '/' + secs.length;
+  return flat + '/' + secs.length + '/tiled:' + tiled;
 })()")
-ck "L1e every settings card paints the gradient (one field, one look)" \
-   "$(echo "$CARDS" | grep -q '/0$' && echo no || echo yes)" "$CARDS"
+# v1.03.1 RE-PIN: the settings cards are the FLAT --card now (the nested
+# tiling kill — was "every card paints the gradient"; the user's v1.03
+# point 1). The contract: sections exist, ALL flat, zero tiled.
+ck "L1e the settings cards are FLAT (the card — nested boxes never re-tile the field)" \
+   "$(echo "$CARDS" | grep -qE '^[1-9][0-9]*/[1-9][0-9]*/tiled:0$' && echo yes)" "$CARDS"
 
 # ── L2: the theme event ───────────────────────────────────────────
 EVN=$(ev "

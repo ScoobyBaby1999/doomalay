@@ -58,6 +58,16 @@
     --surface-1: var(--field-surface);
     --surface-2: color-mix(in oklab, var(--field-surface), var(--field-ink) 5%);
     --surface-3: color-mix(in oklab, var(--field-surface), var(--field-ink) 11%);
+    /* v1.03.1 THE CARD — the nested-box material. Cards/bubbles/sections
+       inside the panel used to window the SURFACE field (the 2-layer
+       plate) → every nested box re-tiled the panel's own gradient
+       (user spec: "having the boxes and nested elements within the
+       panel use surface color makes them tile"). The card is a FLAT
+       derived solid — it can never tile, and it reads as a distinct
+       raised material between surface-2 (5%) and surface-3 (11%).
+       The big surfaces (panel, overlay cards, the world) keep the
+       fields; everything nested rides the card. */
+    --card: color-mix(in oklab, var(--field-surface), var(--field-ink) 9%);
     --border: color-mix(in oklab, var(--field-surface), var(--field-ink) 13%);
     --border-strong: color-mix(in oklab, var(--field-surface), var(--field-ink) 24%);
     /* overlays sit between the world and the plate: canvas, slightly plated */
@@ -78,6 +88,7 @@
        applyTheme re-derives EVERY triplet from the resolved fields via
        FieldMath (culori) on every apply, so overrides stay exact too */
     --surface-1-rgb: 20,20,26; --surface-2-rgb: 26,26,34; --surface-3-rgb: 38,38,47;
+    --card-rgb: 35,35,43;
     --accent-rgb: 167,139,250; --accent-2-rgb: 56,189,248; --accent-3-rgb: 244,114,182;
     --accent-4-rgb: 52,211,153;
     --bg-app-rgb: 10,10,11; --bg-panel-rgb: 16,16,22;
@@ -1640,7 +1651,8 @@
     width: min(94vw, 380px);
     max-height: 72vh;
     overflow-y: auto;
-    background: var(--surface-1);
+    /* v1.03.1: the flat CARD (nested picker — was surface-1) */
+    background: var(--card);
     border: 1px solid var(--border);
     border-radius: 16px;
     box-shadow: 0 18px 48px rgba(0,0,0,0.44), 0 2px 8px rgba(0,0,0,0.3);
@@ -1721,7 +1733,7 @@
   }
   /* the slot ROW (the popover's anchor): banner + name + reset + chevron */
   .slot-row {
-    background: var(--surface-1);
+    background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
     margin-bottom: 8px;
@@ -4806,33 +4818,24 @@
     text-shadow: var(--text-shadow);
   }
 
-  /* — Layer 2: cards on surfaces. v0.72 THE PLATE SYSTEM: 3 layers —
-     the surface-1 projection (when the twin is live) over an OPAQUE
-     FLAT PLATE of the same variable, then the border ring. THE LEAK
-     THIS KILLS (user spec: "changing the borders color theme variable
-     seems to leak into surface raised, and colors the entire
-     collapsible pill… the header collapsible pill backgrounds
-     themselves change"): with the old 2-layer rule, a border gradient
-     over a SOLID surface painted the whole card — layer 2 clipped to
-     border-box covered the padding area too (nothing sat over it), so
-     every card wore the full border sweep as its body. The plate
-     ALWAYS covers the padding-box, so the border layer can only ever
-     read in the 1px ring. The plate is a same-stop gradient of the
-     variable itself — byte-identical to the old solid look when no
-     twin is live, invisible under the twin when one is. */
+  /* — Layer 2: cards on surfaces. v1.03.1 THE CARD (user spec: "have
+     the elements inside the panel use something else… create a new card
+     color variable and use that… having the boxes and nested elements
+     within the panel use surface color makes them tile"). The 2-LAYER
+     PLATE + the surface WINDOW die here — every nested card is the
+     FLAT derived --card (it can never re-tile the panel's gradient);
+     the ring stays the derived hairline. History: v0.72's 3-layer
+     plate killed the border-gradient leak; v0.99.5 collapsed it to 2
+     layers; v1.03.1 flattens it — the gradient language now lives on
+     the big surfaces (Layer 1 + the overlay class) and the accent
+     pills, while nested boxes read as raised card material. */
   .settings-section, .hub-card, .pv-row, .msg-assistant, .ts-row,
   .hmsg-card, .starter-chip, .fmt-codecard, .fmt-yt, .fmt-code, .fmt-pre,
   .code-card, .artifact-card, .art-panel, .art-row, .art-ed-body,
   .art-sheet, .cm-s-doomalay.CodeMirror, .hp-sec, #send-menu, .kb-card,
   .cv-section, .mb-more, .wsx-opt {
-    /* v0.99.5: THE 2-LAYER PLATE (window + opaque plate) — the border
-       ring is the DERIVED hairline now (a solid border-color), never a
-       gradient layer: the 3rd background layer + its clip cycling died
-       with the border twin (the v097 overlap-artifact class with it). */
-    background-image: var(--surface-1-gradient, none),
-                      linear-gradient(var(--surface-1), var(--surface-1));
-    background-origin: padding-box, padding-box;
-    background-clip: padding-box, padding-box;
+    background-color: var(--card);
+    background-image: none;
     text-shadow: var(--text-shadow);
   }
   /* v0.79.3: THE GRADIENT-EDITOR BOXES — the expanded color-row dropdown
@@ -4846,22 +4849,19 @@
      the box off the surface-1 card, the border mix carries the ring
      tone. Flat fallbacks for no-color-mix browsers. */
   .gr-editor, .gr-swatches, .gr-tools {
-    background-color: var(--surface-1);  /* the flat fallback */
+    /* v1.03.1: the editor boxes join the CARD family (flat — the
+       nested tiling kill; was a surface-1×surface-2 mix) */
+    background-color: var(--card);
     border-color: var(--border);
-    background-color: color-mix(in oklab, var(--surface-1), var(--surface-2) 26%);
-    border-color: color-mix(in oklab, var(--border), var(--surface-1) 30%);
     text-shadow: var(--text-shadow);
   }
-  /* v0.72: src-wrap / hub-wrap moved OUT of Layer 2 — they are the
-     chat's OVERLAY-CLASS boxes (their documented base is --bg-app, not
-     surface-1), so their window rides the bg-app projection with its
-     own plate + the border ring. Their base border moves to --border
-     (borders follow the border variable — the old --surface-2 divider
-     read as a hairline from the wrong family). */
+  /* v0.72 → v1.03.1: src-wrap / hub-wrap are the chat's overlay-class
+     content boxes — nested in the panel, so they ride the flat CARD
+     now (the bg-app plate re-tiled the canvas field inside the panel;
+     the ring stays the derived hairline). */
   .src-wrap, .hub-wrap {
-    /* v0.99.5: 2-layer (bg-app is DERIVED now — solid; the window layer
-       is the flat plate itself, the ring is the derived hairline) */
-    background-image: linear-gradient(var(--bg-app), var(--bg-app));
+    background-color: var(--card);
+    background-image: none;
     text-shadow: var(--text-shadow);
   }
 
@@ -4946,9 +4946,11 @@
      banners) — with (b) below, their anchors now only re-validate on
      genuine layout changes, never on icon motion. */
   .chatbot .icon, .chatbot .name {
-    /* v0.99.5: 2-layer — surface-2 is DERIVED (never a twin); the ring
-       is the derived hairline's border-color */
-    background-image: linear-gradient(var(--surface-2), var(--surface-2));
+    /* v1.03.1: the icon chrome + the name pill ride the flat CARD
+       (nested elements must not re-tile the surface field — the pill
+       was a local surface-gradient window) */
+    background-color: var(--card);
+    background-image: none;
   }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
@@ -5010,23 +5012,19 @@
     color: var(--on-bg-app, var(--text-1));
     text-shadow: none;
   }
-  /* v0.72 → v1.01.5: the chatbot's METADATA name pill — the user spec:
-  "the pill that is beneath the name of the chat icons … the surface
-  colors entire gradient projected" (it showed the first canvas color —
-  the old rgba(--bg-app, 0.85) base + dead twins the field model never
-  writes). It now windows the SURFACE field: the gradient while the
-  twin is live, the translucent bg-app glass while solid. LOCAL
-  (v0.92.1 set the precedent; the whole app joins it in v1.01.5). */
+  /* v0.72 → v1.03.1: the chatbot's METADATA name pill — the user spec
+  (v1.03 point 1): nested elements stop windowing the SURFACE field
+  (each pill re-tiled the gradient in its own box). Flat card glass
+  now — readable, tile-free, consistent with the DOM-side .name. */
   .chatbot .name {
-    background-image: var(--surface-1-gradient, none);
+    background-color: rgba(var(--card-rgb), 0.92);
+    background-image: none;
   }
-  /* v0.72: the sandbox corner badge — its documented base is
-     surface-1, so it windows the SURFACE-1 field (not the raised one):
-     the badge reads as a cut of the panel behind the icon disc.
-     v0.92.1: scroll-attachment — same orbit-rest reasoning (a ~14px
-     corner chip cannot show viewport projection). */
+  /* v0.72 → v1.03.1: the sandbox corner badge — same card treatment
+     (was a surface window). */
   .chatbot .sandbox-badge {
-    background-image: var(--surface-1-gradient, none);
+    background-color: rgba(var(--card-rgb), 0.92);
+    background-image: none;
   }
   /* v0.49 → v1.01.5: the chat panel + settings pages are SURFACES —
      their gradient rides --surface-1 (above). The overlay screens ride
@@ -5123,14 +5121,13 @@
     color: var(--on-border, var(--text-1));
     text-shadow: none;
   }
-  /* v0.57→v0.66 HEADERS — the bg-app projection window (the v0.49
-     "overlay background = overlay screens · collapsible headers · scrims"
-     semantics: headers SAMPLE the overlay gradient — a window, not a
-     flat tint — so they vary with position like every other window;
-     'none' twins leave the plain solid look). The veil is gone; the
-     :active press dims via brightness (no ink wash over the field). */
+  /* v0.57→v1.03.1 HEADERS — the CARD strip. The old bg-app projection
+     window re-tiled the canvas field in a small strip inside the
+     panel; headers are nested elements → the flat card (distinct,
+     raised, tile-free). The :active press dim stays. */
   .settings-section h3, #chat-header, .pub-head-bar {
-    background-image: var(--bg-app-gradient, none);
+    background-color: var(--card);
+    background-image: none;
     text-shadow: var(--text-shadow);
   }
   .settings-section h3:active { filter: brightness(0.94); }

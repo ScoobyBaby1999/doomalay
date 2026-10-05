@@ -392,6 +392,8 @@
   var DERIVED_MIXES = {
     '--surface-2':   ['--field-surface', '--field-ink', 0.05],
     '--surface-3':   ['--field-surface', '--field-ink', 0.11],
+    /* v1.03.1: the CARD — the nested-box material (flat, tile-free) */
+    '--card':         ['--field-surface', '--field-ink', 0.09],
     '--border':      ['--field-surface', '--field-ink', 0.13],
     '--border-strong': ['--field-surface', '--field-ink', 0.24],
     '--raised-chrome': ['--field-surface', '--field-ink', 0.05],
@@ -405,6 +407,7 @@
     '--surface-1-rgb': '--field-surface',
     '--surface-2-rgb': '--surface-2',
     '--surface-3-rgb': '--surface-3',
+    '--card-rgb': '--card',
     '--bg-panel-rgb': '--field-canvas',
     '--bg-app-rgb': '--bg-app',
     '--text-2-rgb': '--text-2',
@@ -1420,6 +1423,7 @@
       fields: FIELDS,
       hexTriplet: hexTriplet,
       OKX: OKX,
+      resolvedDerived: resolvedDerived,
       gridSpecFor: gridSpecFor,
       effectiveGridSpecs: effectiveGridSpecs,
       effectiveGrid: effectiveGrid,

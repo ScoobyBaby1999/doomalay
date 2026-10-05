@@ -1589,8 +1589,12 @@
   function renderGatelock(type, state, ctx, complete) {
     var steps = type.gatelockSteps(ctx);
     var boxes = '';
+    // v1.03.1: the gatelock boxes ride the flat CARD (user spec point 1 —
+    // the "+model and +sandbox pills… use surface color makes them tile").
+    // Filled = the card plate; empty = translucent card (the not-yet
+    // state) + the dashed hairline. Never the surface field again.
     var boxStyle = function (filled) {
-      return 'flex:1;background:' + (filled ? 'var(--surface-2)' : 'var(--surface-1)') + ';border:2px ' + (filled ? 'solid var(--border-strong)' : 'dashed var(--border)') + ';border-radius:16px;padding:22px 14px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:132px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
+      return 'flex:1;background:' + (filled ? 'var(--card)' : 'rgba(var(--card-rgb),0.45)') + ';border:2px ' + (filled ? 'solid var(--border-strong)' : 'dashed var(--border)') + ';border-radius:16px;padding:22px 14px;text-align:center;cursor:pointer;transition:border-color 0.15s;min-height:132px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
     };
     for (var i = 0; i < steps.length; i++) {
       var s = steps[i];
