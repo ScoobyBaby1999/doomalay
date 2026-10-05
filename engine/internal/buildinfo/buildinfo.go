@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.01.6"   // v1.01.6 THE ICON REGISTRY + ATLAS + 9-SLICE: swappable icon sets as DATA (the Iconify-JSON import format — sanitize ladder: tag/attr whitelist, script bodies drop, url() refs strip; sets persist capped), IconLib renders through the layered lookup (active set > builtin Lucide — zero call-site changes), DoomAtlas.pack (vendored maxrects — one texture, zero overlaps, deterministic; rig-proven), DoomChrome 9-slice (DOM border-image + the radius-safe mask split; the Pixi NineSliceSprite twin), the Settings·General Icon Set section. Rig: v1016-icon-registry 19/19.
+var Version = "1.02.0"   // v1.02.0 THE LIBRARY: the .doomtheme v2 ZIP CONTAINER ships end-to-end — export builds the zip (manifest + iconsets via the vendored fflate; v1 JSON folds on read forever), the reader walks THE SECURITY LADDER (size caps that REJECT bomb-shaped bundles, entry-name normalization, the known-entries whitelist, the v1 manifest contract, icon sets through the registry sanitize ladder, the failed-apply rollback), the base64 bridge carries v2 payloads through the text-safe hub pipeline (publish prefill + download-apply). Rig: v1017-doomtheme-v2 11/11. The checkered icon pills + the registry ride the hub (v1.01.5/6). The virtual-core catalogue wiring stays the next wave (the catalogue is PAGE-capped today).
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

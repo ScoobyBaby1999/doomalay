@@ -122,15 +122,26 @@
     // .doomtheme bundle (theme, gradients, photos, bump maps — everything)
     // lands in the payload textarea, ready to share. The user can still
     // edit the JSON before publishing.
+    // v1.02: the payload is the V2 ZIP — BASE64 for the text-safe hub
+    // pipeline (the reader side's "UEsD…" bridge in lookio.js round-trips
+    // it; the container rig proved the path). The v1 JSON stays the
+    // fallback when fflate is missing.
     if (type === 'theme' && window.LookIO && !prefill.payload) {
       try {
-        prefill.payload = JSON.stringify(window.LookIO.bundle(), null, 2);
+        var _zip = window.LookIO.buildV2(window.LookIO.bundle());
+        if (_zip) {
+          var _bin = '';
+          for (var _i = 0; _i < _zip.length; _i++) _bin += String.fromCharCode(_zip[_i]);
+          prefill.payload = btoa(_bin);
+        } else {
+          prefill.payload = JSON.stringify(window.LookIO.bundle(), null, 2);
+        }
         if (!prefill.name) {
           var th = (window.Settings && window.Settings.getState().theme) || 'my';
           prefill.name = String(th).replace(/-/g, ' ') + ' look';
         }
         if (!prefill.desc) {
-          prefill.desc = 'a full look bundle — theme, colors, gradients, photos and bump maps included';
+          prefill.desc = 'a full look bundle — theme, colors, gradients, photos, bump maps + icon sets included';
         }
       } catch (e) { /* the form just starts empty */ }
     }

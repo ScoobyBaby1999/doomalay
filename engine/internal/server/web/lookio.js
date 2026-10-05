@@ -30,8 +30,14 @@
   'use strict';
 
   var BUNDLE_MAGIC = 'doomalay-look';
-  var BUNDLE_VERSION = 1;
+  // v1.01.7: THE V2 ZIP CONTAINER (PLAN-V101 §v1.01.4) — the export is a
+  // ZIP (manifest.json = the proven v1 bundle payload + iconsets.json =
+  // the icon registry's sets) via the vendored fflate; the v1 JSON folds
+  // on read (both magics + the bare-JSON path stay accepted forever).
+  var BUNDLE_VERSION = 2;
   var MAX_BUNDLE_BYTES = 24 * 1024 * 1024;   // dataURL images add up; 24MB is generous
+  var MAX_ENTRY_BYTES = 8 * 1024 * 1024;     // per zip entry (the bomb cap)
+  var V2_ENTRIES = { 'manifest.json': 1, 'iconsets.json': 1 };  // the whitelist
 
   function nowIso() { return new Date().toISOString(); }
 
@@ -114,7 +120,92 @@
     });
   }
 
-  // ── export (download) ─────────────────────────────────────────────
+  // ── v1.01.7: THE V2 ZIP CONTAINER ───────────────────────────────
+  // iconsetsPayload() — the registry's imported sets + the active pick
+  // (the v2's second entry; absent when no sets are installed).
+  function iconsetsPayload() {
+    try {
+      var raw = localStorage.getItem('doomalay.iconreg.v1');
+      if (!raw) return null;
+      var p = JSON.parse(raw);
+      if (!p || !p.sets || !Object.keys(p.sets).length) return null;
+      return { format: 'doomalay-iconsets', version: 1,
+        active: p.active || '', sets: p.sets };
+    } catch (e) { return null; }
+  }
+
+  // buildV2(b) → Uint8Array (the zip bytes), or null when fflate is
+  // missing (the export falls back to the v1 JSON — never a dead end).
+  function buildV2(b) {
+    var ff = (typeof window !== 'undefined') ? window.fflate : null;
+    if (!ff || !ff.zipSync || !ff.strToU8) return null;
+    var entries = { 'manifest.json': ff.strToU8(JSON.stringify(b)) };
+    var ic = iconsetsPayload();
+    if (ic) entries['iconsets.json'] = ff.strToU8(JSON.stringify(ic));
+    return ff.zipSync(entries, { level: 6 });
+  }
+
+  // unzipV2(bytes) — THE SECURITY LADDER (the untrusted-DATA discipline):
+  //   1. SIZE CAPS — unzip filters by per-entry originalSize (8MB) and a
+  //      running total (24MB): a zip bomb dies in fflate's filter, the
+  //      bytes never inflate;
+  //   2. ENTRY-NAME NORMALIZATION — no '..', no leading '/', no '\\'
+  //      (zip-slip never reaches a path — fflate never touches the fs,
+  //      but the names are rejected before ANY use anyway);
+  //   3. THE KNOWN-ENTRIES WHITELIST — exactly manifest.json +
+  //      iconsets.json; anything else rejects the WHOLE bundle;
+  //   4. THE MANIFEST VALIDATES through the v1 contract (magic,
+  //      version, state shape);
+  //   5. ICON SETS enter through IconReg.importIconify's own sanitize
+  //      ladder (tag/attr whitelists — rig-proven in v1016).
+  function unzipV2(bytes) {
+    var ff = (typeof window !== 'undefined') ? window.fflate : null;
+    if (!ff || !ff.unzipSync) return { ok: false, why: 'the zip reader is unavailable' };
+    var total = 0, overCap = false, unzipped;
+    try {
+      unzipped = ff.unzipSync(bytes, { filter: function (file) {
+        if (file.originalSize > MAX_ENTRY_BYTES) { overCap = true; return false; }
+        total += file.originalSize;
+        return total <= MAX_BUNDLE_BYTES;
+      } });
+    } catch (e) { return { ok: false, why: 'not a readable zip' }; }
+    // a filtered-over entry is a REJECTION, not a silent drop — a bundle
+    // that hides a bomb-sized entry is hostile BY SHAPE (strict > lenient).
+    if (overCap) return { ok: false, why: 'an entry exceeds the 8MB size cap' };
+    if (!unzipped) return { ok: false, why: 'the bundle was rejected (size caps)' };
+    var names = Object.keys(unzipped);
+    if (!names.length) return { ok: false, why: 'the zip carries nothing (size caps?)' };
+    for (var i = 0; i < names.length; i++) {
+      var n = names[i];
+      if (n.indexOf('..') !== -1 || n.charAt(0) === '/' || n.indexOf('\\') !== -1)
+        return { ok: false, why: 'bad entry name: ' + n };
+      if (!V2_ENTRIES[n]) return { ok: false, why: 'unknown entry: ' + n };
+    }
+    if (!unzipped['manifest.json']) return { ok: false, why: 'no manifest.json' };
+    var manifest;
+    try { manifest = JSON.parse(ff.strFromU8(unzipped['manifest.json'])); }
+    catch (e) { return { ok: false, why: 'the manifest is not valid JSON' }; }
+    var v = validateInner(manifest);
+    if (!v.ok) return v;
+    var b = v.bundle;
+    b.container = 'zip';
+    if (unzipped['iconsets.json']) {
+      try {
+        var ic = JSON.parse(ff.strFromU8(unzipped['iconsets.json']));
+        var reg = (typeof window !== 'undefined') ? window.IconReg : null;
+        if (reg && ic && ic.sets && typeof ic.sets === 'object') {
+          Object.keys(ic.sets).forEach(function (k) {
+            var s = ic.sets[k] || {};
+            reg.importIconify({ icons: s.icons || {},
+              width: s.width, height: s.height }, k);
+          });
+          if (ic.active) reg.useSet(ic.active);
+        }
+      } catch (e) { /* icon sets are optional chrome — the look still applies */ }
+    }
+    return { ok: true, bundle: b };
+  }
+
   function stampName(scope) {
     var d = new Date();
     var day = d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);
@@ -123,8 +214,12 @@
   }
 
   function download(obj, scope) {
-    var json = JSON.stringify(obj, null, 2);
-    var blob = new Blob([json], { type: 'application/json' });
+    // v1.01.7: the V2 zip when fflate is present (manifest + iconsets,
+    // application/zip); the v1 JSON fallback otherwise.
+    var zip = buildV2(obj);
+    var blob = zip
+      ? new Blob([zip], { type: 'application/zip' })
+      : new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
@@ -158,6 +253,10 @@
   function validate(text) {
     var b = null;
     try { b = JSON.parse(text); } catch (e) { return { ok: false, why: 'not valid JSON' }; }
+    return validateInner(b);
+  }
+  // validateInner(b) — the object-level contract (the zip path shares it).
+  function validateInner(b) {
     if (!b || typeof b !== 'object') return { ok: false, why: 'not a look bundle' };
     if (b.format !== BUNDLE_MAGIC && b.format !== 'doomalay.settings') {
       return { ok: false, why: 'not a doomalay look (missing the magic field)' };
@@ -170,23 +269,51 @@
   }
 
   function readFile(file) {
+    // v1.01.7: BINARY — read as ArrayBuffer, PK-sniff the zip; the v1
+    // JSON path decodes from the same buffer (one read, no lossy
+    // UTF-8 passes over zip bytes).
     return new Promise(function (resolve, reject) {
       if (!file) { reject(new Error('no file')); return; }
       if (file.size > MAX_BUNDLE_BYTES) { reject(new Error('too large (24MB cap)')); return; }
       var fr = new FileReader();
-      fr.onload = function () { resolve(String(fr.result)); };
+      fr.onload = function () {
+        var buf = new Uint8Array(fr.result);
+        if (buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B) {
+          var v = unzipV2(buf);
+          if (!v.ok) { reject(new Error(v.why)); return; }
+          resolve(v.bundle);
+          return;
+        }
+        var text = '';
+        try { text = new TextDecoder('utf-8', { fatal: false }).decode(buf); }
+        catch (e) { reject(new Error('could not read the file')); return; }
+        var vv = validate(text);
+        if (!vv.ok) { reject(new Error(vv.why)); return; }
+        resolve(vv.bundle);
+      };
       fr.onerror = function () { reject(new Error('could not read the file')); };
-      fr.readAsText(file);
+      fr.readAsArrayBuffer(file);
     });
   }
 
-  // applyBundle — global scope: REPLACE the settings state (the whole
-  // point: the friend's app now looks 1:1 like the sender's). Names
-  // merge-guarded the same way loadState is.
+  // applyGlobal — v1.01.7: THE FAILED-APPLY ROLLBACK — a snapshot goes
+  // back if the apply throws mid-flight (the transactional apply the
+  // security ladder's last rung).
   function applyGlobal(b) {
     var st = JSON.parse(JSON.stringify(b.state));
     if (!Array.isArray(st.names)) delete st.names;
-    window.Settings.setState(st);
+    var before = null;
+    try {
+      before = JSON.parse(JSON.stringify(
+        (window.Settings && window.Settings.getState()) || {}));
+    } catch (e) { before = null; }
+    try {
+      window.Settings.setState(st);
+    } catch (e) {
+      if (before) { try { window.Settings.setState(before); } catch (e2) {} }
+      toast('the bundle failed to apply — your look is unchanged');
+      return;
+    }
     if (window.Settings.rerender) window.Settings.rerender();
   }
 
@@ -270,22 +397,39 @@
 
   function importFile(file) {
     return readFile(file)
-      .then(function (text) { return importText(text); })
+      .then(function (b) { return applyBundleObj(b); })
       .catch(function (e) { toast(e.message || 'the import failed'); return false; });
   }
 
-  // importText(text) — apply a bundle that is ALREADY in hand (the hub's
-  // theme downloads hand the payload straight over; no file picker).
-  // Same validation + scope routing as a picked file.
-  function importText(text) {
-    var v = validate(String(text == null ? '' : text));
-    if (!v.ok) { toast(v.why); return Promise.resolve(false); }
-    var b = v.bundle;
+  // applyBundleObj — the shared tail (both the zip + the JSON paths).
+  function applyBundleObj(b) {
     if (b.scope === 'chat') return applyChat(b);
     applyGlobal(b);
     toast('look imported — your app now wears ' +
       esc((b.state && b.state.theme) || 'the bundle'));
     return Promise.resolve(true);
+  }
+
+  // importText(text) — apply a bundle that is ALREADY in hand (the hub's
+  // theme downloads hand the payload straight over; no file picker).
+  // v1.01.7: the BASE64 ZIP BRIDGE — the hub pipeline is text-safe, so a
+  // v2 zip rides as base64 ("UEsDB…" = PK\x03\x04); plain v1 JSON stays
+  // the fast path.
+  function importText(text) {
+    var t = String(text == null ? '' : text);
+    if (/^UEsD/.test(t)) {
+      try {
+        var bin = atob(t.replace(/[^A-Za-z0-9+/=]/g, ''));
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var vz = unzipV2(bytes);
+        if (!vz.ok) { toast(vz.why); return Promise.resolve(false); }
+        return applyBundleObj(vz.bundle);
+      } catch (e) { toast('the bundle could not be decoded'); return Promise.resolve(false); }
+    }
+    var v = validate(t);
+    if (!v.ok) { toast(v.why); return Promise.resolve(false); }
+    return applyBundleObj(v.bundle);
   }
 
   // pickImport(scopeHint) — the file input flow (accepts .doomtheme +
@@ -316,6 +460,9 @@
     exportChatLook: exportChatLook,
     importFile: importFile,
     importText: importText,
-    pickImport: pickImport
+    pickImport: pickImport,
+    // v1.01.7: the v2 container doors (the rig + the hub bridge).
+    buildV2: buildV2,
+    unzipV2: unzipV2
   };
 })();
