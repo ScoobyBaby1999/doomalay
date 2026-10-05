@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.01.5"   // v1.01.5 THE LOCAL LIGHT: background-attachment:fixed RETIRED from the object track (the two-hidden-gradient-fields split + the Chromium slow path — docs/RESEARCH-V102-LOCAL-LIGHT.md), the 1300-line DoomProjection painter DELETED (the browser compositor replaces it), THE THEME EVENT ('doomalay:theme-applied', coalesced — never dispatched before: stale canvas icons), the self-colored theme chips (raw hexes, never white), the checkered library pills (positional accents 1-2-3), the overlay screens + the chat-icon name pills ride the SURFACE, the canvas chrome pills (#settings-btn + dock) follow the surface gradient. Rig: v1015-local-light 15/15 (zero fixed elements, zero longtasks, locked 60fps drags).
+var Version = "1.01.6"   // v1.01.6 THE ICON REGISTRY + ATLAS + 9-SLICE: swappable icon sets as DATA (the Iconify-JSON import format — sanitize ladder: tag/attr whitelist, script bodies drop, url() refs strip; sets persist capped), IconLib renders through the layered lookup (active set > builtin Lucide — zero call-site changes), DoomAtlas.pack (vendored maxrects — one texture, zero overlaps, deterministic; rig-proven), DoomChrome 9-slice (DOM border-image + the radius-safe mask split; the Pixi NineSliceSprite twin), the Settings·General Icon Set section. Rig: v1016-icon-registry 19/19.
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

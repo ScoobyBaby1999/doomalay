@@ -1340,12 +1340,40 @@
           '<button data-action="import-look" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
           'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤒ Import a theme</button>' +
           '</div>'
+        ) +
+        // v1.01.6: THE ICON REGISTRY — the swappable sets (Iconify JSON
+        // as data; the builtin Lucide stays the base layer).
+        section('Icon Set', '' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+          (function () {
+            var R = window.IconReg; if (!R) return '';
+            var html = '';
+            R.sets().forEach(function (st) {
+              var on = (R.active() || '') === st.id;
+              html += '<button data-action="icon-set-use" data-set="' + st.id + '" style="flex:1 1 110px;min-height:40px;padding:8px 10px;border-radius:10px;' +
+                'font-size:calc(var(--ui-small-fs) - 1px);font-weight:600;font-family:inherit;cursor:pointer;' +
+                (on ? 'background:var(--accent);color:var(--on-accent);border:1px solid transparent;' :
+                     'background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);') +
+                '">' + st.name + ' · ' + st.count + '</button>';
+            });
+            return html;
+          })() +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button data-action="icon-set-import" style="flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);' +
+          'color:var(--text-1);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">⤒ Import icon set (.json)</button>' +
+          (window.IconReg && window.IconReg.active() ?
+            '<button data-action="icon-set-remove" data-set="' + window.IconReg.active() + '" style="flex:0 1 140px;background:transparent;border:1px solid rgba(var(--err-rgb),0.5);' +
+            'color:var(--err);padding:10px 14px;border-radius:8px;font-size:var(--ui-fs);font-family:inherit;cursor:pointer">Remove</button>' : '') +
+          '</div>' +
+          '<p style="font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);margin:8px 0 0;line-height:1.45">' +
+            'Iconify-JSON sets (the offline format — no runtime fetch): every icon in the app follows the active set. Sanitized on import, capped at 512 icons.</p>'
         )
       );
     }
   });
 
-  // ── v0.74: CONNECTED ACCOUNTS hydration + actions ───────────────────
+  // ── v0.74: CONNECTED ACCOUNTS hydration + actions ───────────────
   function acctJSON(url, opts) {
     return fetch(url, opts || {}).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (data) {
@@ -1498,6 +1526,41 @@
     }
     if (d.action === 'import-look') {
       if (window.LookIO) window.LookIO.pickImport();
+      return;
+    }
+    // v1.01.6: THE ICON REGISTRY actions (the swappable sets).
+    if (d.action === 'icon-set-import') {
+      var inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'application/json,.json';
+      inp.onchange = function () {
+        var f = inp.files && inp.files[0];
+        if (!f) return;
+        if (f.size > 4 * 1024 * 1024) { if (window.DoomToast) window.DoomToast.show('icon set too big (4MB cap)', 'err'); return; }
+        var fr = new FileReader();
+        fr.onload = function () {
+          var json;
+          try { json = JSON.parse(String(fr.result)); } catch (e) {
+            if (window.DoomToast) window.DoomToast.show('not valid JSON', 'err'); return; }
+          var r = window.IconReg.importIconify(json, (f.name || 'set').replace(/\.json$/i, ''));
+          if (window.DoomToast) window.DoomToast.show(
+            r.ok ? ('icon set "' + r.name + '" — ' + r.count + ' glyphs') : ('import failed: ' + r.err),
+            r.ok ? 'ok' : 'err');
+          if (r.ok) Settings.rerender();
+        };
+        fr.readAsText(f);
+      };
+      inp.click();
+      return;
+    }
+    if (d.action === 'icon-set-use' && d.data && typeof d.data.set === 'string') {
+      var r2 = window.IconReg.useSet(d.data.set);
+      if (r2.ok) Settings.rerender();
+      return;
+    }
+    if (d.action === 'icon-set-remove' && d.data && d.data.set) {
+      window.IconReg.removeSet(d.data.set);
+      Settings.rerender();
       return;
     }
     // v0.74: the Connected Accounts actions (also reachable via acctAction
