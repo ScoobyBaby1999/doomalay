@@ -390,3 +390,20 @@ Stage Summary:
 - THE 4-POINT ORDER IS DELIVERED: the card material, the text-style section, the Theme Editor (layout + wheel + types + universal angle + the tagged registry), and the doom projection v2 (the toggleable shared-field projector).
 - The user's ask "render them once not once per element" is literal in the v2: one bitmap per field, one drawImage per consumer.
 - Residue for the next wave: the pixiworld pill field bridge (the pills paint locally — the 56px precedent), the virtual-core catalogue wiring, the DTCG token namespacing, the settings-page/root-registry race (the v1.00.3 leftover).
+
+---
+Task ID: v1.04.0 (ship)
+Agent: Z.ai Code (main orchestrator)
+Task: The v1.04 wave — the user's five Theme-Editor fixes + THE RESTORE (the broken canvas doom projection deleted; the pre-v1.01.5 viewport-projection system ported back onto the field twins). The ship record.
+
+Work Log:
+- v1.04.1 THE FIVE FIXES (5d53b786): the wheel touch channel (gesture.js's ownsGesture + THE CHANNEL GATE — the body touchstart doesn't even record owned channels), the type tiles (the distinct outline family + inline SVG glyphs — the ⌧ tofu dead), the live angle banner (direct style writes + the makeWriter spec-pollution fix), the texture/import separation (the type selects; the row browses), the reset arrow (reset-before-open in the delegated handler).
+- v1.04.5 THE RESTORE (d8e84f86): doomprojection.js replaced wholesale — the canvas system deleted, the pre-v1.01.5 painter ported (the transform-proof bake, the batched read/write paint, the L2 compositor layers, the observer family) + THE DOOM SHEET (the toggle's derived fixed-attachment mint with THE GATE MERGE) + THE ALLOW-LIST (the fmt text track + the derived solids never mint) + the full teardown (OFF = the v1.01.5 local light, byte-identical).
+- THE REBASE DANCE: the parallel bot's shadow wave (v1.04.2/3/4: elevation tokens, shadow sweep, fallback canon) landed mid-session — three rebases, one silent wrong resolution (rebase --ours is the BASE branch — the rig caught the canvas stats shape), the restore recovered + re-proven.
+- THE VERDICTS: v1042-the-restore 16/16, v1041 16/16, the full battery green on the FINAL merged tree (v1033/34/35/32/31, v1015, the bot's v1042-elevation 6/6 + v1043-shadow 5/5, v1000 19/19, v098 24/24, twins 199, uikit 140, go server). VLM: the seamless shared field confirmed, zero artifacts.
+- THE SHIP: tag v1.04.0-the-restore — CI all green (the APK + the 3 desktop binaries + the HF Space); the release carries all 4 assets.
+
+Stage Summary:
+- The user's whole order delivered. The doom projection is the RESTORED system (toggleable in the Colors tab), not the broken canvas.
+- Landmines banked: rebase --ours/--theirs is swapped vs merge (rig-caught); the agent-browser pool wedges need pkill -9 between batches; rig scroll assertions must force real deltas.
+- The v1.05 candidates: the pixiworld pill bridge (the projection for the canvas pills), the root-registry race on fast overlay opens, the L2 layer-count budget on very long transcripts.
