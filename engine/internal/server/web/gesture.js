@@ -186,6 +186,59 @@
         window.DoomProjection.enabled()) {
       panelEl.style.setProperty('--panel-vis-h', v);   // the projection's live window var
     }
+    queueFieldSync();
+  }
+
+  // ── v1.08.4 THE SEAMLESS FIELD — the surface field's rest sync ────
+  // (PLAN-V109 §3; the user: "the panels header doesn't sync with the
+  // rest of the gradient sometimes, but repeats it"). The sheet root,
+  // the header and the body render ONE shared gradient at the scale
+  // --panel-field-h, the header/body windows offset by --panel-head-off
+  // / --panel-field-top (index.html Layer-1). The vars are GEOMETRY
+  // facts measured at REST — the sheet's padding-top + the handle +
+  // the header + the rest window height. They ride a CSSOM rule (the
+  // painter's own var-sheet trick): CSSOM mutations bypass the
+  // MutationObserver, so the sync never wakes the projection painter
+  // and never dirties the tracked root's inline style. The sync is
+  // DEBOUNCED behind writeVis — during motion the writes stream every
+  // frame and the timer never fires; when the writes stop (rest), the
+  // vars land once. The field is the panel's MATERIAL: its size freezes
+  // during the stretch and the growing window REVEALS more of it.
+  var fieldTimer = 0, fieldSheetEl = null, fieldRule = null;
+  function fieldVarsRule() {
+    if (fieldRule && fieldSheetEl && fieldSheetEl.isConnected) return fieldRule;
+    try {
+      fieldSheetEl = document.createElement('style');
+      fieldSheetEl.id = 'panel-field-vars';
+      document.head.appendChild(fieldSheetEl);
+      fieldSheetEl.sheet.insertRule('#chat-panel {}', 0);
+      fieldRule = fieldSheetEl.sheet.cssRules[0];
+    } catch (e) { fieldRule = null; }
+    return fieldRule;
+  }
+  function syncFieldVars() {
+    if (!panelEl) return;
+    var r = fieldVarsRule();
+    if (!r) return;
+    try {
+      var cs = window.getComputedStyle(panelEl);
+      var padTop = parseFloat(cs.paddingTop) || 0;
+      var handle = panelEl.querySelector('.handle');
+      var header = panelEl.querySelector('.panel-header');
+      var headOff = padTop + (handle ? handle.offsetHeight : 0);
+      var headerH = header ? header.offsetHeight : 0;
+      var fieldTop = headOff + headerH;
+      var b = visBody();
+      var bodyH = b ? (parseFloat(b.style.height) || b.offsetHeight || 0) : 0;
+      if (!bodyH) return;   // the closed sheet — keep the last rest geometry
+      r.style.setProperty('--panel-head-off', headOff.toFixed(1) + 'px');
+      r.style.setProperty('--panel-field-top', fieldTop.toFixed(1) + 'px');
+      r.style.setProperty('--panel-field-h', (fieldTop + bodyH).toFixed(1) + 'px');
+    } catch (e) {}
+  }
+  function queueFieldSync() {
+    if (fieldTimer) clearTimeout(fieldTimer);
+    fieldTimer = setTimeout(function () { fieldTimer = 0; syncFieldVars(); }, 190);
   }
   function renderY(y) { writeY(y); writeVis(y); }
 

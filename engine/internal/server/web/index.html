@@ -5046,11 +5046,34 @@
 
   /* — Layer 1: the big surfaces. The full field, NO veil (these ARE the
      panel — the canvas's own material) — but the TEXT safety net rides
-     here (a user gradient can carry a white stop under the text). */
-  #chat-panel, .panel-header, .panel-body {
+     here (a user gradient can carry a white stop under the text).
+     v1.08.4 THE SEAMLESS FIELD (user report: "using non doom projection
+     introduces a slight tiling issues with the surface variable as the
+     panels header doesn't sync with the rest of the gradient sometimes,
+     but repeats it"): the old rule painted the SAME local gradient on
+     THREE stacked boxes — each restarting the field at its own box (the
+     header visibly repeated the body's gradient). ONE field now, THREE
+     windows: the sheet root, the header and the body all render the
+     gradient at the SHARED scale --panel-field-h (gesture.js syncs it at
+     rest), the body's window offset by the header's offset
+     (--panel-field-top) — any linear gradient CONTINUES across the seam
+     instead of repeating. Fallback: the vars unset → 100%/0px = the
+     exact v1.08.1 local look, byte for byte. */
+  #chat-panel {
     background-image: var(--surface-1-gradient, none);
+    background-repeat: no-repeat;
+    background-size: 100% var(--panel-field-h, 100%);
+    background-position: 0 0;
     text-shadow: var(--text-shadow);
   }
+  .panel-header, .panel-body {
+    background-image: var(--surface-1-gradient, none);
+    background-repeat: no-repeat;
+    background-size: 100% var(--panel-field-h, 100%);
+    text-shadow: var(--text-shadow);
+  }
+  .panel-header { background-position: 0 calc(-1 * var(--panel-head-off, 0px)); }
+  .panel-body { background-position: 0 calc(-1 * var(--panel-field-top, 0px)); }
 
   /* — Layer 2: cards on surfaces. v1.03.1 THE CARD (user spec: "have
      the elements inside the panel use something else… create a new card

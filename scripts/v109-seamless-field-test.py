@@ -381,48 +381,140 @@ try:
 
         # ══ §C THE SEAMLESS FIELD (v1.08.4) ════════════════════════════
         if "C" in SECTIONS:
-            pg.evaluate("() => { const b = document.getElementById('settings-btn'); if (b) b.click(); }")
-            pg.wait_for_timeout(700)
+            # close §A's dropdown (its pills would eat the stretch drag)
+            pg.evaluate("() => { const r = document.getElementById('chat-header-row'); if (r) r.click(); }")
+            pg.wait_for_timeout(500)
+            # the user reported this with projection OFF — the surface
+            # renders LOCAL in both toggle states (v1.06.1); test OFF.
+            pg.evaluate("() => Settings.setState({ doomProjection: false })")
+            pg.wait_for_timeout(900)
             c = pg.evaluate("""() => {
-              const head = document.querySelector('#chat-panel .panel-header');
-              const body = document.querySelector('#chat-panel .panel-body');
+              const panel = document.getElementById('chat-panel');
+              const head = panel.querySelector('.panel-header');
+              const body = panel.querySelector('.panel-body');
               if (!head || !body) return { found: false };
               const csH = getComputedStyle(head);
               const csB = getComputedStyle(body);
+              const hr = head.getBoundingClientRect();
+              const br = body.getBoundingClientRect();
               return { found: true,
                        hSize: csH.backgroundSize, hPos: csH.backgroundPosition,
                        bSize: csB.backgroundSize, bPos: csB.backgroundPosition,
-                       fieldH: getComputedStyle(document.getElementById('chat-panel'))
-                                 .getPropertyValue('--panel-field-h').trim(),
-                       headH: getComputedStyle(document.getElementById('chat-panel'))
-                                 .getPropertyValue('--panel-header-h').trim() };
+                       headH: Math.round(hr.height * 10) / 10,
+                       fieldH: getComputedStyle(panel).getPropertyValue('--panel-field-h').trim(),
+                       headOff: getComputedStyle(panel).getPropertyValue('--panel-head-off').trim(),
+                       fieldTop: getComputedStyle(panel).getPropertyValue('--panel-field-top').trim() };
             }""")
             results["ledger"]["C"] = c
             if c.get("found"):
-                ok(c["bSize"] == c["hSize"] and "px" in c["bSize"],
+                ok(c["hSize"] == c["bSize"] and c["hSize"].endswith("px"),
                    f"ONE shared field scale (header={c['hSize']} · body={c['bSize']})")
-                ok(c["hPos"].startswith("0px") and "-" in c["bPos"],
-                   f"the body's window is offset by the header ({c['hPos']} / {c['bPos']})")
-                ok(c["fieldH"] != "" and c["fieldH"] != "100%",
+                ok(c["hPos"].startswith("0px") and c["bPos"].startswith("0px") and
+                   "-" in c["hPos"] and "-" in c["bPos"],
+                   f"the windows are offset into the shared field ({c['hPos']} / {c['bPos']})")
+                ok(c["fieldH"] not in ("", "100%"),
                    f"--panel-field-h synced at rest ({c['fieldH']})")
-                # THE SEAM PROBE — the header's bottom row hue must match the
-                # body's top row hue (one continuous gradient, no restart).
-                seam = pg.evaluate("""() => {
-                  const head = document.querySelector('#chat-panel .panel-header');
-                  const body = document.querySelector('#chat-panel .panel-body');
-                  const probe = (el, edge) => {
-                    const cv = document.createElement('canvas');
-                    cv.width = 4; cv.height = 4;
-                    const x = cv.getContext('2d');
-                    x.fillStyle = getComputedStyle(el).backgroundColor;
-                    x.fillRect(0, 0, 4, 4);
-                    return null; // real probe rides the screenshot below
-                  };
-                  return { ready: true };
-                }""")
+                # continuity by construction: fieldTop - headOff == header height
+                try:
+                    ft = float(c["fieldTop"].replace("px", ""))
+                    ho = float(c["headOff"].replace("px", ""))
+                    ok(abs((ft - ho) - c["headH"]) < 2,
+                       f"the body's window starts exactly at the header's bottom (Δ={ft - ho:.1f} vs h={c['headH']})")
+                except Exception:
+                    ok(False, "the field offsets parse as px lengths")
             else:
                 ok(False, "the panel header/body not found")
+            # THE SEAM PROBE — the header's bottom band and the body's top
+            # band must sample the SAME field positions (one continuous
+            # gradient, no restart). Pixel truth via clipped screenshots.
+            hr = pg.evaluate("""() => {
+              const head = document.querySelector('#chat-panel .panel-header');
+              const body = document.querySelector('#chat-panel .panel-body');
+              const h = head.getBoundingClientRect();
+              const b = body.getBoundingClientRect();
+              return { hx: h.x, hy: h.y, hw: h.width, hh: h.height,
+                       bx: b.x, by: b.y, bw: b.width };
+            }""")
+            if hr.get("hw"):
+                seam_h = OUT + "-C-seam-head.png"
+                seam_b = OUT + "-C-seam-body.png"
+                pg.screenshot(path=seam_h, clip={"x": hr["hx"] + hr["hw"] * 0.3,
+                                                 "y": hr["hy"] + hr["hh"] - 9,
+                                                 "width": hr["hw"] * 0.3, "height": 5})
+                pg.screenshot(path=seam_b, clip={"x": hr["bx"] + hr["bw"] * 0.3,
+                                                 "y": hr["by"] + 2,
+                                                 "width": hr["bw"] * 0.3, "height": 5})
+                try:
+                    from PIL import Image
+                    def avg(p):
+                        im = Image.open(p).convert("RGB")
+                        px = list(im.getdata())
+                        n = len(px)
+                        return tuple(sum(c[i] for c in px) / n for i in range(3))
+                    ah, ab = avg(seam_h), avg(seam_b)
+                    d = sum(abs(ah[i] - ab[i]) for i in range(3))
+                    results["ledger"]["C_seam"] = {"header": ah, "body": ab, "delta": d}
+                    ok(d < 42,
+                       f"THE SEAM: header-bottom rgb{tuple(round(v) for v in ah)} ≈ body-top "
+                       f"rgb{tuple(round(v) for v in ab)} (Δ={d:.1f} < 42)")
+                except Exception as ex:
+                    ok(False, f"the seam pixel probe failed: {ex}")
+            # the re-sync mechanism end-to-end: a touch drag settles back to
+            # the same rest (the field must NOT drift), then the vars are
+            # wiped and a rest write (resize) must land them again — the
+            # debounced CSSOM sync firing exactly once at rest.
+            fh0 = c.get("fieldH", "")
+            try:
+                cdp = ctx.new_cdp_session(pg)
+                hd = pg.evaluate("""() => {
+                  const h = document.querySelector('#chat-panel .handle');
+                  const r = h.getBoundingClientRect();
+                  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                }""")
+                cdp.send("Input.dispatchTouchEvent",
+                         {"type": "touchStart", "touchPoints": [{"x": hd["x"], "y": hd["y"]}]})
+                for i in range(1, 13):
+                    cdp.send("Input.dispatchTouchEvent",
+                             {"type": "touchMove", "touchPoints":
+                              [{"x": hd["x"], "y": hd["y"] + 70 * i / 12}]})
+                    time.sleep(0.014)
+                cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+                pg.wait_for_timeout(1100)
+                fh1 = pg.evaluate("""() => getComputedStyle(document.getElementById('chat-panel'))
+                                        .getPropertyValue('--panel-field-h').trim()""")
+                ok(fh1 == fh0 and fh1.endswith("px"),
+                   f"the field holds through a drag + spring ({fh0} → {fh1})")
+                wiped = pg.evaluate("""() => {
+                  const sh = document.getElementById('panel-field-vars');
+                  if (!sh || !sh.sheet || !sh.sheet.cssRules.length) return false;
+                  const st = sh.sheet.cssRules[0].style;
+                  st.removeProperty('--panel-field-h');
+                  st.removeProperty('--panel-field-top');
+                  st.removeProperty('--panel-head-off');
+                  return getComputedStyle(document.getElementById('chat-panel'))
+                           .getPropertyValue('--panel-field-h').trim() === '';
+                }""")
+                ok(wiped, "the synced vars wiped clean")
+                cdp2 = ctx.new_cdp_session(pg)
+                cdp2.send("Input.dispatchTouchEvent",
+                         {"type": "touchStart", "touchPoints": [{"x": hd["x"], "y": hd["y"]}]})
+                for i in range(1, 9):
+                    cdp2.send("Input.dispatchTouchEvent",
+                              {"type": "touchMove", "touchPoints":
+                               [{"x": hd["x"], "y": hd["y"] + 40 * i / 8}]})
+                    time.sleep(0.014)
+                cdp2.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+                pg.wait_for_timeout(1100)
+                fh2 = pg.evaluate("""() => getComputedStyle(document.getElementById('chat-panel'))
+                                        .getPropertyValue('--panel-field-h').trim()""")
+                ok(fh2 == fh0,
+                   f"the rest sync lands the field again ({fh0} → {fh2})")
+            except Exception as ex:
+                ok(False, f"the re-sync probe failed: {ex}")
             pg.screenshot(path=OUT + "-C-seam.png")
+            # back to projection ON for the following sections
+            pg.evaluate("() => Settings.setState({ doomProjection: true })")
+            pg.wait_for_timeout(600)
 
         # ══ §D THE COAST (v1.08.5) ═════════════════════════════════════
         if "D" in SECTIONS:
