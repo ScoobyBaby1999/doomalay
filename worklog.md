@@ -447,3 +447,16 @@ Stage Summary:
   documented chrome ladder. Shadow color is a theme product. The next
   improvement on these axes would be the DTCG namespacing refactor — noted
   as FUTURE residue; doing it now would be the spaghetti the user capped.
+
+---
+Task ID: v1.06.0 ship (completion)
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- v1.05.1 THE GLASS WINDOW: gesture.js writeVis → element-scoped height on .panel-body (the per-frame inherited-var subtree sweep is dead; the var rides only while the projection is enabled). BENCH on the same tree: 12-14x cheaper per frame.
+- v1.05.2 THE STUCK SWITCH: setEnabled commit-first + rollback + self-heal on DOM traces; stage-guarded teardown + registry-independent orphan sweep ([data-proj] + new [data-proj-bake] markers); paint() strips disconnected windows (the view-stack resurrection leak); the vis-var seed at enable.
+- v1.05.3 THE PROOF: scripts/v106-fluid-wave-test.py — 22 checks, both trees. BEFORE: 4 genuine failures (the stuck switch reproduced; the stash leak; the var residue). AFTER: 21/21 (the plan's 22 checks + the CTA count). The look: panel-region delta 0.22%.
+- Pushed 6350a0a2..821a12a3 (3 phase commits); no parallel movement at fetch time.
+
+Stage Summary:
+- The wave ships as v1.06.0-the-fluid-wave (tag next) — the panel glide rides the compositor, the toggle cannot wedge, the projection's toggle-off is registry-independent.
