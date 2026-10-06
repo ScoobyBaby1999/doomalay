@@ -416,7 +416,7 @@
           .then(function (b) { return createImageBitmap(b); })
           .then(function (bm) {
             e.img = bm; e.ready = true;
-            bgCache = { key: '', tile: null };   // the tile must rebuild WITH the texture
+            bgCache.key = ''; bgCache.tile = null; bgCache.quadKey = ''; bgCache.quad = null; bgCache.pat = null;   // the tile+quad must rebuild WITH the texture
             if (onTexReadyCb) onTexReadyCb();
           })
           .catch(function () { e.dead = true; });
@@ -427,7 +427,7 @@
     e.img = img;
     img.onload = function () {
       e.ready = true;
-      bgCache = { key: '', tile: null };   // the tile must rebuild WITH the texture
+      bgCache.key = ''; bgCache.tile = null; bgCache.quadKey = ''; bgCache.quad = null; bgCache.pat = null;   // the tile+quad must rebuild WITH the texture
       if (onTexReadyCb) onTexReadyCb();
     };
     img.onerror = function () { e.dead = true; };
@@ -437,8 +437,18 @@
 
   // ── v0.52 THE PARALLAX BACKGROUND (moved verbatim; P.bgP replaces the
   //    Settings read; mkCanvas replaces document.createElement) ───────
-  var bgCache = { key: '', tile: null };
-  var BG_TILE_MULT = 2;
+  // v1.06.2 THE FILL DIET: the background becomes ONE pattern fill per
+  // frame. The old per-frame loop blitted the tile 4–9× (one
+  // save/translate/scale/restore drawImage per mirror copy — the fattest
+  // single tax in the frame at phone-physical fill). The 2×2 MIRROR QUAD
+  // (the same arrangement the loop drew, baked once into one 2TW×2TH
+  // canvas) turns the whole background into a single GPU-backed repeating
+  // fill — the pattern transform carries the zx stretch, exactly as the
+  // old drawImage scaling did. BG_TILE_MULT 2 → 1.35: the mirror doubles
+  // the repetition period (2×1.35 = 2.7× viewport — still repetition-
+  // invisible) while the quad stays ~11MB at phone aspect.
+  var bgCache = { key: '', tile: null, quadKey: '', quad: null, pat: null, patCtx: null };
+  var BG_TILE_MULT = 1.35;
   function bgTileKey(spec, fallbackHex, tw, th) {
     var s = '';
     try { s = cheapJSON(spec); } catch (e) { s = String(spec); }
@@ -449,35 +459,50 @@
     if (bgCache.key === key && bgCache.tile) return bgCache.tile;
     var off = mkCanvas(tw, th);
     paintBackgroundInto(off.getContext('2d'), spec, fallbackHex, tw, th);
-    bgCache = { key: key, tile: off };
+    bgCache.key = key; bgCache.tile = off;
+    bgCache.quadKey = ''; bgCache.quad = null;   // the quad bakes FROM the tile
     return off;
+  }
+  function bgQuadFor(spec, fallbackHex, TW, TH) {
+    var key = bgTileKey(spec, fallbackHex, TW, TH) + '|q';
+    if (bgCache.quadKey === key && bgCache.quad) return bgCache.quad;
+    var tile = bgTileFor(spec, fallbackHex, TW, TH);
+    var q = mkCanvas(TW * 2, TH * 2);
+    var g = q.getContext('2d');
+    for (var qx = 0; qx < 2; qx++) for (var qy = 0; qy < 2; qy++) {
+      g.save();
+      if (qx) { g.translate(TW * 2, 0); g.scale(-1, 1); }
+      if (qy) { g.translate(0, TH * 2); g.scale(1, -1); }
+      g.drawImage(tile, 0, 0, TW, TH);
+      g.restore();
+    }
+    bgCache.quadKey = key; bgCache.quad = q;
+    bgCache.pat = null;                          // a new quad needs a new pattern
+    return q;
   }
   function paintCanvasBackground(gctx, spec, fallbackHex, W, H, BG_P, scale, offsetX, offsetY) {
     var TW = Math.max(16, Math.round(W * BG_TILE_MULT));
     var TH = Math.max(16, Math.round(H * BG_TILE_MULT));
-    var tile = bgTileFor(spec, fallbackHex, TW, TH);
+    var quad = bgQuadFor(spec, fallbackHex, TW, TH);
     var zx = Math.max(1, 1 + (scale - 1) * BG_P);
     var tw = TW * zx, th = TH * zx;
     var px = ((-offsetX * scale * BG_P) % (2 * tw) + 2 * tw) % (2 * tw);
     var py = ((-offsetY * scale * BG_P) % (2 * th) + 2 * th) % (2 * th);
     bgView = { tw: tw, th: th, zx: zx, px: px, py: py };
-    for (var ix = 0; ; ix++) {
-      var x0 = px - 2 * tw + ix * tw;
-      if (x0 >= W) break;
-      var flipX = (ix % 2 === 1);
-      for (var iy = 0; ; iy++) {
-        var y0 = py - 2 * th + iy * th;
-        if (y0 >= H) break;
-        var flipY = (iy % 2 === 1);
-        gctx.save();
-        gctx.translate(flipX ? x0 + tw : x0, flipY ? y0 + th : y0);
-        gctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-        gctx.drawImage(tile, 0, 0, tw, th);
-        gctx.restore();
-        if (y0 + th >= H) break;
-      }
-      if (x0 + tw >= W) break;
+    // v1.06.2: ONE fill. The quad pattern's user unit = its own pixel; k
+    // maps it onto 2TW×2TH CSS px × zx (the same size the old loop drew),
+    // the translate carries the parallax phase (the same px/py math).
+    if (!bgCache.pat || bgCache.patCtx !== gctx) {
+      bgCache.pat = gctx.createPattern(quad, 'repeat');
+      bgCache.patCtx = gctx;
     }
+    var k = tw / TW;
+    gctx.save();
+    gctx.translate(px, py);
+    gctx.scale(k, k);
+    gctx.fillStyle = bgCache.pat;
+    gctx.fillRect(-px / k, -py / k, W / k, H / k);
+    gctx.restore();
   }
   function paintBackgroundInto(gctx, spec, fallbackHex, tw, th) {
     tw = tw || 512; th = th || 512;
@@ -988,10 +1013,15 @@
       T.heroes.push.apply(T.heroes, heroesHere);
       T.jrMin = Tj.jrMin; T.jrMax = Tj.jrMax;
       // (b) the group tile walk (the chosen fireflies stay live)
+      // v1.06.2 THE OVER-SPLIT DIET: over-tiles (the in-front-of-icons
+      // parallax pop) mint for the TOP band only — the nearest, biggest,
+      // most in-front-worthy layer. Mid-band over members were a subtle
+      // depth cue costing ~8 extra full-viewport fills per frame worst
+      // case; the top band keeps the pop, the budget drops 29 → ~21.
       for (var gi = 0; gi < 2; gi++) {
         var ML = gi === 0 ? MA : MB;
         var TS = ML * spacingQ;
-        var tile = mkTile(ML), overTile = overDotsOn ? mkTile(ML) : null;
+        var tile = mkTile(ML), overTile = (overDotsOn && topBand) ? mkTile(ML) : null;
         var g = tile.g;
         for (var dx = 0; dx < ML; dx++) for (var dy = 0; dy < ML; dy++) {
           var hd = hashCell(dx, dy);
@@ -1058,7 +1088,10 @@
         for (var gi = 0; gi < 2; gi++) {
           var ML = gi === 0 ? MA : MB;
           var TS = ML * spacingQ;
-          var tile = mkTile(ML), overTile = overLinesOn ? mkTile(ML) : null;
+          // v1.06.2 THE OVER-SPLIT DIET (the lines twin): over-tiles mint
+          // for the top band only — the nearest layer keeps the pop.
+          var lTop = (amp > 0) && lband === AMP_BANDS - 1;
+          var tile = mkTile(ML), overTile = (overLinesOn && lTop) ? mkTile(ML) : null;
           var g = tile.g, drew = false;
           // vertical segments: columns tx, rows ty (bands come from the
           // COLUMN hash — hashCell(tx, 2), the legacy vline band twin)
