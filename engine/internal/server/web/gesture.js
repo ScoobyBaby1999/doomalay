@@ -177,14 +177,38 @@
     visBodyEl = panelEl ? panelEl.querySelector('.panel-body') : null;
     return visBodyEl;
   }
-  function writeVis(y) {
+  // v1.10.5 THE MEASURED FIX — the profiler (scripts/v111-perf-probe.py)
+  // convicted the per-frame INHERITED var write: with the projection on,
+  // --panel-vis-h streamed on the panel ROOT every motion frame, and the
+  // receiving subtree re-cascaded per frame (155-163 UpdateLayoutTree
+  // events, 445-524ms of the traced glide window — the DOMINANT glide
+  // cost in both lean and rich themes), and every painted window whose
+  // baked formula calcs the var re-resolved its background-position per
+  // frame — the gradient raster storm (RasterTask 31 events / 34ms lean
+  // → 1029 / 523ms with a many-custom-colors theme — the user's "the
+  // panel itself gets slower the more custom colors it holds… the canvas
+  // itself feels slow to respond"). THE FIX: the layout stays EXACT per
+  // frame (the element-scoped inline height above — unchanged), but the
+  // inherited var lands at most every 500ms during a fresh gesture (the
+  // same 2Hz cadence the projection's breath re-anchors run) and ALWAYS
+  // at the rest writes (force at the spring's snap, the rise's finish and
+  // every instant render — the settle paint reads it one frame later).
+  // The coasted windows ride; the breath/settle paints re-anchor.
+  var visVarLastAt = 0;
+  function writeVis(y, force) {
     var b = visBody();
     if (!b) return;
     var v = visForY(y) + 'px';
     if (b.style.height !== v) b.style.height = v;   // element-scoped — no inherited sweep
     if (window.DoomProjection && window.DoomProjection.enabled &&
         window.DoomProjection.enabled()) {
-      panelEl.style.setProperty('--panel-vis-h', v);   // the projection's live window var
+      var now = performance.now();
+      var gestFresh = !!(window.__doomalayGestureAt &&
+        now - window.__doomalayGestureAt < 200);
+      if (force || !gestFresh || now - visVarLastAt >= 500) {
+        panelEl.style.setProperty('--panel-vis-h', v);   // the projection's live window var
+        visVarLastAt = now;
+      }
     }
     queueFieldSync();
   }
@@ -258,7 +282,8 @@
     if (fieldTimer) clearTimeout(fieldTimer);
     fieldTimer = setTimeout(function () { fieldTimer = 0; syncFieldVars(); }, 190);
   }
-  function renderY(y) { writeY(y); writeVis(y); }
+  // v1.10.5: force rides through — the rest writers pass it on.
+  function renderY(y, force) { writeY(y); writeVis(y, force); }
 
   // chrome = everything above .panel-body inside the sheet + the sheet's
   // own bottom padding (safe area). Measured OUTSIDE the animation loops
@@ -425,7 +450,7 @@
       var fromY = curY;                       // stopAll froze a mid-flight sheet at its visual spot
       panelEl.style.transition = 'none';
       writeY(fromY);
-      if (!freezeVis) writeVis(targetY);      // open: window sized for the LANDING state
+      if (!freezeVis) writeVis(targetY, true);   // open: window sized for the LANDING state — the var forced
       void panelEl.offsetWidth;               // flush — commit the start before arming the curve
       panelEl.style.transition = 'transform ' + RISE_MS + 'ms cubic-bezier(0.32,0.72,0,1)';
       writeY(targetY);
@@ -437,7 +462,7 @@
         if (riseEnd) { panelEl.removeEventListener('transitionend', riseEnd); riseEnd = null; }
         panelEl.style.transition = '';
         writeY(targetY);                      // exact landing — no sub-pixel residue
-        if (!freezeVis) writeVis(targetY);
+        if (!freezeVis) writeVis(targetY, true);
         if (after) after();
       }
       riseEnd = function (e) {
@@ -471,7 +496,7 @@
         x += v * dt;
         if (Math.abs(x) < 1.5 && Math.abs(v) < 40) { // snap the last sub-2px (imperceptible)
           springRaf = 0;
-          renderY(targetY);                    // exact rest — both writes, one frame
+          renderY(targetY, true);               // exact rest — both writes, the var forced
           return;
         }
         renderY(targetY + x);
@@ -498,7 +523,7 @@
       if (animate === false) {
         stopAll();
         panelEl.style.transition = 'none';
-        renderY(targetY);                      // instant, both writes
+        renderY(targetY, true);                // instant, both writes, the var forced
       } else {
         springY(curY, targetY, 0);             // glide to the state's offset
       }
@@ -961,7 +986,7 @@
     // the hidden state. It runs synchronously during attach (script load),
     // before the first frame can show the 100dvh surface.
     panelEl.style.transition = 'none';
-    writeVis(H);        // zero-height window while off-screen
+    writeVis(H, true);        // zero-height window while off-screen — the var forced
     writeY(H);          // fully below the viewport
     applyState((opts && opts.initial) || 'default');
     try { window.__doomalayPanelDuck = false; } catch (e) {}   // v0.65.1: the native channel's guard reads this

@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.10.4"   // v1.10.4 THE NATIVE HAND: the settings sliders return to native (the user reverted the fat custom track); accent-color accepts <color> only, so the doom look rides var(--accent) = the first stop of the accent gradient — the user's own accepted fallback; the app-switch toggles keep the full-spectrum look.
+var Version = "1.10.5"   // v1.10.5 THE MEASURED FIX: the profiler convicted the per-frame inherited --panel-vis-h write (the whole-subtree style recascade + the gradient re-resolve storm that made the panel slower the more custom colors it holds) — the layout stays exact per frame (the element-scoped inline height), the var lands at most every 500ms during motion and always at the rest writes.
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
