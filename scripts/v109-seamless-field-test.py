@@ -279,25 +279,54 @@ try:
               if (btn) btn.click();
             }""")
             pg.wait_for_timeout(900)
-            b = pg.evaluate("""() => {
-              // a settings app-switch (checked) + its track; the sizing
-              // sliders (.app-range) live on the appearance page.
-              const input = document.querySelector('.app-switch input[data-setting-key]');
+            # the appearance page: the doom projection switch (CHECKED —
+            # projection is on) + every settings app-switch
+            pg.evaluate("""() => {
+              const t = document.querySelector('.settings-nav .tab[data-page="appearance"]');
+              if (t) t.click();
+            }""")
+            pg.wait_for_timeout(800)
+            bB = pg.evaluate("""() => {
+              const input = document.querySelector('input[data-setting-key="doomProjection"]');
               const track = input ? input.parentElement.querySelector('.app-switch-track') : null;
-              const range = document.querySelector('input.app-range');
-              const r = {};
-              if (track) {
-                const cs = getComputedStyle(track);
-                r.track = { checked: input.checked,
-                            img: cs.backgroundImage.slice(0, 80),
+              const anySw = document.querySelector('.app-switch input:checked ~ .app-switch-track');
+              const t2 = anySw || track;
+              const r = { stats0: window.DoomProjection.counters.paints };
+              if (t2) {
+                const cs = getComputedStyle(t2);
+                r.track = { checked: !!anySw,
+                            img: cs.backgroundImage.slice(0, 90),
                             att: cs.backgroundAttachment,
                             size: cs.backgroundSize.slice(0, 40),
-                            bake: track.hasAttribute('data-proj-bake'),
-                            layer: track.hasAttribute('data-proj') };
+                            bake: t2.hasAttribute('data-proj-bake'),
+                            layer: t2.hasAttribute('data-proj') };
               }
+              return r;
+            }""")
+            # the doom switch lives on the FIELDS sub-page — navigate in
+            pg.evaluate("""() => {
+              const rows = document.querySelectorAll('[data-section-toggle], .settings-section');
+              for (const s of rows) {
+                if ((s.textContent || '').indexOf('The Fields') !== -1) {
+                  const h = s.matches('[data-section-toggle]') ? s : s.querySelector('[data-section-toggle]') || s;
+                  h.click(); break;
+                }
+              }
+            }""")
+            pg.wait_for_timeout(800)
+            pg.screenshot(path=OUT + "-B-appearance.png")
+            # the sizing page: the .app-range sliders
+            pg.evaluate("""() => {
+              const t = document.querySelector('.settings-nav .tab[data-page="sizing"]');
+              if (t) t.click();
+            }""")
+            pg.wait_for_timeout(800)
+            b2 = pg.evaluate("""() => {
+              const range = document.querySelector('input.app-range');
+              const r = { stats1: window.DoomProjection.stats().paints };
               if (range) {
                 const cs = getComputedStyle(range);
-                r.range = { img: cs.backgroundImage.slice(0, 100),
+                r.range = { img: cs.backgroundImage.slice(0, 120),
                             att: cs.backgroundAttachment,
                             bake: range.hasAttribute('data-proj-bake'),
                             layer: range.hasAttribute('data-proj') };
@@ -305,27 +334,49 @@ try:
               r.stats = window.DoomProjection.stats();
               return r;
             }""")
-            results["ledger"]["B"] = b
-            if "track" in b:
-                t = b["track"]
-                ok(t["att"] == "local",
+            b2 = pg.evaluate("""() => {
+              const range = document.querySelector('input.app-range');
+              const r = { stats1: window.DoomProjection.counters.paints };
+              if (range) {
+                const cs = getComputedStyle(range);
+                r.range = { img: cs.backgroundImage.slice(0, 120),
+                            att: cs.backgroundAttachment,
+                            bake: range.hasAttribute('data-proj-bake'),
+                            layer: range.hasAttribute('data-proj') };
+              }
+              r.stats = window.DoomProjection.stats();
+              return r;
+            }""")
+            bB.update(b2)
+            results["ledger"]["B"] = bB
+            if "track" in bB:
+                t = bB["track"]
+                ok(t["att"].startswith("local"),
                    f"THE GATE WINDOW: the checked track is LOCAL (att={t['att']})")
                 ok("gradient" in t["img"],
-                   f"the checked track carries the full gradient ('{t['img'][:40]}…')")
+                   f"the checked track carries the full gradient ('{t['img'][:44]}…')")
                 ok(not t["bake"] and not t["layer"],
                    f"the painter never baked the track (bake={t['bake']}, layer={t['layer']})")
             else:
-                ok(False, "no app-switch track found on the settings page")
-            if "range" in b:
-                r = b["range"]
-                ok(r["att"] == "local",
+                ok(False, "no checked app-switch track found on the settings page")
+            if "range" in bB:
+                r = bB["range"]
+                ok(r["att"].startswith("local"),
                    f"the slider track is LOCAL under the gate (att={r['att']})")
                 ok("gradient" in r["img"],
-                   f"the slider track windows a field ('{r['img'][:50]}…')")
+                   f"the slider track windows a field ('{r['img'][:56]}…')")
                 ok(not r["bake"] and not r["layer"],
                    "the painter never baked the slider")
             else:
-                ok(False, "no .app-range slider found on the settings page")
+                ok(False, "no .app-range slider found on the sizing page")
+            ok((bB.get("stats") or {}).get("painted", 99) <= 12,
+               f"the settings chrome never joined the painted population (painted={bB.get('stats', {}).get('painted')})")
+            # expose the sliders (the sections collapse) + screenshot
+            pg.evaluate("""() => {
+              const s = document.querySelector('[data-section-toggle]');
+              if (s && !s.classList.contains('expanded')) s.click();
+            }""")
+            pg.wait_for_timeout(600)
             pg.screenshot(path=OUT + "-B-chrome.png")
 
         # ══ §C THE SEAMLESS FIELD (v1.08.4) ════════════════════════════

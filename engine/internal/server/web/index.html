@@ -5214,20 +5214,12 @@
     .tool-pill-progress) {
     background-image: var(--surface-1-gradient, none);
   }
-  /* the doom projection switch's own track — its visuals are INLINE
-     (the render bakes them; wireInputs' live sync keeps them honest),
-     so the unchecked state needs the !important longhand to beat the
-     inline background shorthand; the checked state leaves it to the
-     accent window rule (the :not(:checked) scope keeps both honest). */
-  :where(html[data-doom-proj][data-s1-grad])
-  input[data-setting-key="doomProjection"]:not(:checked) ~ .app-switch-track {
-    background-image: var(--surface-1-gradient, none) !important;
-  }
   /* the settings sliders — a full custom track + thumb under the gate
      (the .te-srow geometry language): the track windows the surface
      field locally, the thumb rides the accent solid + the readable
      ring. Native rendering returns the moment the projection is off
-     or the surface twin is flattened. */
+     or the surface twin is flattened. (v1.08.3 moves the track's FIELD
+     to the gate-led layered window below — the :where geometry stays.) */
   :where(html[data-doom-proj][data-s1-grad]) input.app-range {
     -webkit-appearance: none; appearance: none;
     height: 10px; min-height: 10px; border-radius: 999px;
@@ -5242,6 +5234,46 @@
     background: var(--accent);
     border: 2px solid var(--on-accent, #fff);
     box-shadow: 0 1px 4px rgba(var(--shadow-ink-rgb), 0.45);
+  }
+  /* ══ v1.08.3 THE FULL SPECTRUM — the toggles + sliders ride the field ══
+     (user report: "enable/disable toggles and sliders still don't use doom
+     projection and get painted with only the first color not the full
+     gradient"). THE GATE-WINDOW LAW: a rule that exists only to show a
+     field under the projection gate declares its OWN local attachment —
+     `background-attachment: local !important` beats the DOOM SHEET's
+     minted plain `fixed` (important > normal, any specificity), and the
+     painter's first-encounter probe reads the computed attachment and
+     opts the element out (the v0.92.1 memo path — zero painter cost,
+     zero viewport rasters). The gradient renders AT THE ELEMENT'S OWN
+     BOX — the full field compressed into the control (what the user
+     calls "the full gradient"), never a flat viewport slice.
+     THE LAYERED WINDOW: the surface field first (live surface themes
+     keep the v1.06.3 look), the accent field UNDER it — a flat surface
+     twin lets the accent show through, so the doom look rides the
+     controls in every theme configuration. The unchecked state keeps a
+     surface-3 veil over its accent layer (the quiet chrome read); the
+     checked state wears the full accent field. The gate-led selectors
+     merge under ROOT_GATE_RE (the v1.04.2 law) — the mint stays valid. */
+  [data-s1-grad] .app-switch input:not(:checked) ~ .app-switch-track {
+    background-image: var(--surface-1-gradient, none),
+      linear-gradient(rgba(var(--surface-3-rgb), 0.55), rgba(var(--surface-3-rgb), 0.55)),
+      var(--accent-gradient, none) !important;
+    background-attachment: local !important;
+    background-size: 100% 100% !important;
+    background-position: 0 0 !important;
+  }
+  [data-a1-grad] .app-switch input:checked ~ .app-switch-track {
+    background-image: var(--accent-gradient, none) !important;
+    background-attachment: local !important;
+    background-size: 100% 100% !important;
+    background-position: 0 0 !important;
+  }
+  [data-s1-grad] input.app-range {
+    background-image: var(--surface-1-gradient, none),
+      var(--accent-gradient, none) !important;
+    background-attachment: local !important;
+    background-size: 100% 100% !important;
+    background-position: 0 0 !important;
   }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
