@@ -530,3 +530,55 @@ Stage Summary:
   supersampling is free), cross-faded level swaps (the ≤1.12× sharpness
   delta is invisible), comets during zoom-out extremes only skipping
   twinklers below 10px spacing (density guard).
+Task ID: v1.06.0 CI + release
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- CI on the tag: Build Desktop ✅ · Build Android APK ✅ · Build HF Space ✅.
+- Release live: v1.06.0-the-fluid-wave — app-debug.apk 22.9MB + 3 desktop binaries.
+
+Stage Summary:
+- WAVE SHIPPED. The panel's motion cost is compositor-shaped (12-14x cheaper per frame), the projection toggle cannot wedge, and the proof rig is permanent at scripts/v106-fluid-wave-test.py.
+
+---
+Task ID: v1.07.0 ship (completion)
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- v1.06.1 THE SURFACE EXEMPTION: PROJ_RE drops surface-1 — the panel body
+  + overlay card (the viewport-sized, most-rebaked windows) render their
+  gradients LOCAL in both toggle states; the accents keep projecting.
+- v1.06.2 THE TEXT FIELD: fmt-[a-z0-9]+ joins PROJ_RE + ROOT_GATE_RE
+  merges the [data-fmt-grad~=…] gate — the Blink probe proved fixed +
+  background-clip:text coexist; in-panel text rides the legacy bake.
+- v1.06.3 THE CHROME FOLLOW + THE WHITE PILL + THE LIVE SWITCH:
+  · the white pill ROOT-CAUSED on the rig: the carry branch's
+    unconditional inline image/color strip deleted the metadata pills'
+    OWN tint (the [style*=] catchers lost their match → the UA
+    buttonface gray); the L2 suppression also REPLACES the author's
+    values. THE OWNERSHIP LAW: the painter strips only painter-written
+    props (__projSuppressed); the author's background is SAVED at
+    suppression (restoreAuthorBg) and RESTORED at drop/strip; zero-rect
+    carries take constants only.
+  · the chrome-follow: :where(html[data-doom-proj][data-s1-grad])
+    windows the Layer-3 family + .app-range track/thumb on the surface
+    field LOCALLY (zero painter cost — surface is out of the allow-list).
+  · the live switch: wireInputs syncs the app-switch track/thumb in
+    place — the doom projection pill updates without a settings reopen.
+- v1.06.4 THE SHADOW & THE HIGHLIGHT EXPOSED: --field-shadow /
+  --field-highlight override slots (the Colors tab's Shadow + Highlight
+  rows, seeding from DoomTheme.derivedShadowHex/derivedHighlightHex);
+  applyTheme: override wins, default rides the CSS color-mix/static.
+  The v1045 redteam joined the on-disk doctrine (v1045-mix-serve.py —
+  the stale embedded tree was reading empty tokens; 11/11 after).
+- THE REBASE PROTOCOL caught the parallel canvas-opt wave (their
+  v1.06.1-.3: zoom ladder / fill diet / life wave) mid-ship; rebased
+  amicably — zero file overlap with this wave; the rig re-ran 22/22 on
+  the merged tree.
+
+Stage Summary:
+- THE WAVE SHIPS as v1.07.0-the-selective-field — the projection is
+  selective (surface local, text + accents + chrome in), the painter's
+  hands are owned, the switch is live, the elevation tokens are
+  user-editable. Battery: v107 22/22 · v106 21/21 · v1045 11/11 ·
+  v1040 7/7.
