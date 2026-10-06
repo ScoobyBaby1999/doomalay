@@ -415,6 +415,16 @@
       if (ctx2) ctx2.clearRect(0, 0, W, H);
       paintAtoms();
       paintOrbitStars();   // v0.90.1: the orbit stars ride the cheap frame too
+      // v1.06.3: the cheap frame is lossless — the over furniture + the
+      // movers repaint (the worker path's twin; see gridworker.js)
+      try {
+        var Pl = window.Lattice;
+        if (Pl && ctx2) {
+          var Plive = buildLatticeParams();
+          if (Pl.renderOver) Pl.renderOver(ctx2, W, H, { ox: offsetX, oy: offsetY, scale: scale }, Plive);
+          if (Pl.paintLive) Pl.paintLive(ctx2, W, H, { ox: offsetX, oy: offsetY, scale: scale }, Plive);
+        }
+      } catch (e) {}
       return;
     }
     var stats = Lattice.render(ctx, ctx2, W, H,
@@ -430,6 +440,11 @@
     renderOffScreenArrows();
     paintAtoms();
     paintOrbitStars();   // v0.90.1: the stars on the over-icons layer (they move)
+    // v1.06.3: the movers ride the full frame's #c2 pass (the worker twin)
+    try {
+      if (window.Lattice && window.Lattice.paintLive && ctx2)
+        window.Lattice.paintLive(ctx2, W, H, { ox: offsetX, oy: offsetY, scale: scale }, buildLatticeParams());
+    } catch (e) {}
   }
   function renderGrid() { paintGridFrame(false); }
 
@@ -1054,20 +1069,21 @@
         // worker mode posts {atomsOnly:true}, main mode clears + paints.
         paintGridFrame(true);
       } else {
-        // v0.97 THE AMBIENT CADENCE GATE — when ONLY the ambient lattice
-        // animation moves (no pan, no physics, no camera), the full
-        // lattice frame runs at ≥66ms cadence (~15fps) instead of every
-        // rAF: the one-object lattice is a few pattern fills, but the
-        // over-icons fills + hero fireflies + the worker round-trip still
-        // cost — and a 15fps twinkle READS as calm (the TEMPO slow-down
-        // makes the stepping invisible). Stars/atoms keep their own 60fps
-        // cheap frame between lattice frames. Pans/momentum pin full
-        // cadence exactly as before (v0779's pan proof rides it).
+        // v0.97 THE AMBIENT CADENCE GATE — v1.06.3: 66ms → 33ms (~30fps).
+        // The one-object lattice + the fill diet made full frames cheap;
+        // 15fps twinkle READS as dead (the user's "extremely static"),
+        // 30fps reads calm-but-alive. The movers run at 60fps on the cheap
+        // frame between lattice frames (comets NEED it — 30fps × ~1200px/s
+        // = 40px strobe steps); pans/momentum still pin full cadence
+        // exactly as before (v0779's pan proof).
+        var dbgOO = (window.DoomalayDebug && window.DoomalayDebug.oneObject) || null;
+        var cometsLive = !!(dbgOO && dbgOO.live && dbgOO.live.comets > 0);
         var atomsLive = (window.Atoms && window.Atoms.active(world.entities) &&
                          !(window.World3D && window.World3D.atomsOwned())) ||
+                        cometsLive ||
                         (window.TabGroups && window.TabGroups.active());
         var latticeDue = moving || !ambientGridActive() ||
-                         (now - lastAmbientFull >= 66);
+                         (now - lastAmbientFull >= 33);
         if (latticeDue) {
           renderGrid();
           lastAmbientFull = now;

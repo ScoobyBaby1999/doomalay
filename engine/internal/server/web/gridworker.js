@@ -131,6 +131,16 @@ function paintFrame(m) {
       paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
         m.dots, m.colors || null, performance.now() / 1000, m.par || 0);
     }
+    // v1.06.3: the cheap frame is LOSSLESS — the over furniture (the
+    // tiles + heroes that ride #c2 above the icons) repainted, and the
+    // live layer (comets + twinklers) stepped + painted at 60fps. The
+    // old cheap frame wiped #c2 and never restored it: the icons' front
+    // layer vanished at rest (animDots off) or flickered at full-frame
+    // cadence (animDots on).
+    if (P && gctx2) {
+      try { Lattice.renderOver(gctx2, W, H, m.cam, P); } catch (e) {}
+      try { Lattice.paintLive(gctx2, W, H, m.cam, P); } catch (e) {}
+    }
   } else {
     // v0.88.2: m.cam.dots rides the per-frame payload (the collision
     // dots are world state, like entities — never fingerprint-cached)
@@ -166,6 +176,12 @@ function paintFrame(m) {
     if (m.dots && m.dots.length && gctx2) {
       paintedDots = AtomCore.paintDots(gctx2, W, H, m.cam.ox, m.cam.oy, m.cam.scale,
         m.dots, m.colors || null, performance.now() / 1000, m.par || 0);
+    }
+    // v1.06.3: the movers ride the full frame's #c2 pass too (renderTiled
+    // painted the over furniture; paintLive re-steps + re-paints the movers
+    // after that #c2 clear)
+    if (P && gctx2) {
+      try { Lattice.paintLive(gctx2, W, H, m.cam, P); } catch (e) {}
     }
     fullFrames++;
     // v0.97.1: this frame painted with a STALE tile bake (the rebake

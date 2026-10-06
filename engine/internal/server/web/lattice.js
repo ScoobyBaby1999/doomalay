@@ -707,7 +707,8 @@
   // the rebake lands 150ms after settle. Params churn (slider drags):
   // the same 150ms debounce — the worker bakes, the main thread never
   // pays it. TEMPO = the global slow-down (the user's other ask).
-  var TEMPO = 0.5;
+  var TEMPO = 0.6;   // v1.06.3: 0.5 → 0.6 — a touch livelier (the user's
+                     // "extremely static" + the widened hero tsp spread)
   var TL = { fp: '', tiles: null, pendP: null, pendCam: null, bakeT: 0,
              gen: 0, cellRecords: 0, legacyFails: 0,
              // v1.06.1 THE ZOOM LADDER: per-level tile sets, LRU + byte-capped.
@@ -1004,7 +1005,7 @@
           M: hc.L === 0 ? MA : MB,
           over: !!(overDotsOn && hc.jr > overThreshD),
           col: hcol, glow: hgb ? shadeHex(hgb, 0.42) : null,
-          tsp: 0.5 + hashCell(hc.dx + 21, hc.dy + 21) * 1.8,
+          tsp: 0.4 + hashCell(hc.dx + 21, hc.dy + 21) * 3.4,   // v1.06.3: widened 1.8→3.4 — some fast pulsers
           tph: hashCell(hc.dx + 23, hc.dy + 23) * 6.283,
           ospd: (0.25 + hashCell(hc.dx + 27, hc.dy + 27) * 0.9) * (hashCell(hc.dx + 29, hc.dy + 29) < 0.5 ? -1 : 1),
           orR: spacingQ * (0.06 + 0.08 * hashCell(hc.dx + 31, hc.dy + 31)) });
@@ -1288,6 +1289,317 @@
     gc.restore();
   }
 
+  // ══ v1.06.3 THE LIVE LAYER + THE MODULATION FIELD (PLAN-V107 §3) ═══
+  // The user's ask: "slightly more dynamic, very few points/lines moving
+  // fast, changes way more than now, tiling no longer perceivable."
+  //
+  // (A) THE OVER-LAYER TWIN — renderOverLayer: the v0.84.1 atom-only cheap
+  // frame cleared #c2 but never repainted the over-tiles/over-heroes — with
+  // atoms orbiting at rest the icons' front layer VANISHED (animDots off)
+  // or flickered at full-frame cadence (animDots on). The cheap frame now
+  // repaints exactly what renderTiled puts on #c2 — lossless.
+  //
+  // (B) THE MODULATION FIELD — one extra soft-light pattern fill per full
+  // frame: a 256² value-noise tile (theme-tinted, regenerated per colorway)
+  // repeating at 320 CELLS (≫ any screen at any zoom), riding its own
+  // slightly-slower parallax + a slow drift. The baked lattice repeats at
+  // tile granularity; this field modulates everything underneath at a
+  // period far past perception — the wallpaper read dies — and its drift
+  // gives the whole field a constant, subtle life.
+  //
+  // (C) THE MOVERS — comets (≤3 concurrent, 4-10s apart, ~1.2s crossings
+  // with glowing heads + gradient tails) and twinklers (a hash-selected
+  // ~5% of visible cells, between lattice positions, phase-offset pulsing
+  // — some FAST blinkers). Both paint on #c2 in BOTH frame paths: 60fps
+  // movers on the cheap frame, no strobe. Gated on the user's animate
+  // toggles (both off = the truly static grid the user configured).
+
+  function renderOverLayer(gctx2, W, H, cam, P) {
+    if (!gctx2 || !TL.tiles || !TL.fp) return 0;
+    var T = TL.tiles;
+    var offsetX = cam.ox, offsetY = cam.oy, scale = cam.scale;
+    var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
+    var ps = T.scaleQ ? (scale / T.scaleQ) : 1;
+    var dprSnap = TL_DPR || 1;
+    var animDots = !!P.animDots;
+    var animT = performance.now() / 1000 * TEMPO;
+    var breathA = animDots ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * 1.6))) : 1;
+    var breathB = animDots ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * 1.6 + Math.PI))) : 1;
+    var fills = 0;
+    // (a) the over tiles (the documented twin of renderTiled's loop)
+    for (var li = 0; li < T.list.length; li++) {
+      var bt = T.list[li];
+      if (!bt.over) continue;
+      if (bt.kind === 'lines' && (P.hideLines)) continue;
+      if (bt.kind !== 'lines' && P.hideDots) continue;
+      var bpf = bt.pf;
+      var Tcss = bt.tile.M * spacingNow;
+      var bx = -(offsetX * scale * bpf), by = -(offsetY * scale * bpf);
+      var phx = ((bx % Tcss) + Tcss) % Tcss;
+      var phy = ((by % Tcss) + Tcss) % Tcss;
+      phx = Math.round(phx * dprSnap) / dprSnap;
+      phy = Math.round(phy * dprSnap) / dprSnap;
+      var alpha = bt.kind === 'dotsA' ? breathA : (bt.kind === 'dotsB' ? breathB : 1);
+      tlFill(gctx2, bt.tile, phx, phy, Tcss, alpha, W, H);
+      fills++;
+    }
+    // (b) the over heroes (the documented twin of renderTiled's hero walk)
+    if (!P.hideDots && T.heroes.length) {
+      var HERO_CAP = 40, heroCount = 0;
+      for (var hi = 0; hi < T.heroes.length && heroCount < HERO_CAP; hi++) {
+        var h = T.heroes[hi];
+        if (!h.over) continue;
+        var hbx = -(offsetX * scale * h.pf), hby = -(offsetY * scale * h.pf);
+        var hbT = (h.M || T.MA) * spacingNow;
+        var k0x = Math.floor((-hbx - 120) / hbT), k1x = Math.floor((W - hbx + 120) / hbT);
+        var k0y = Math.floor((-hby - 120) / hbT), k1y = Math.floor((H - hby + 120) / hbT);
+        for (var kx = k0x; kx <= k1x && heroCount < HERO_CAP; kx++) {
+          for (var ky = k0y; ky <= k1y && heroCount < HERO_CAP; ky++) {
+            var gx = (kx * (h.M || T.MA) + h.tx) * spacingNow + h.jx * ps + hbx;
+            var gy = (ky * (h.M || T.MA) + h.ty) * spacingNow + h.jy * ps + hby;
+            var pulse = Math.sin(animT * h.tsp + h.tph);
+            var jr = h.jr * (1 + 0.4 * pulse) * ps;
+            var orA = animT * h.ospd + h.tph;
+            var hx2 = gx + Math.cos(orA) * h.orR * ps;
+            var hy2 = gy + Math.sin(orA) * h.orR * ps;
+            if (hx2 < -20 || hx2 > W + 20 || hy2 < -20 || hy2 > H + 20) continue;
+            var tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
+            gctx2.save();
+            gctx2.globalAlpha = tal;
+            if (h.glow && jr >= 1.6) {
+              var spG = lcGlowSprite(h.glow);
+              var R = jr * 2.6;
+              gctx2.globalAlpha = tal * 0.55;
+              gctx2.drawImage(spG.c, hx2 - R, hy2 - R, R * 2, R * 2);
+              gctx2.globalAlpha = tal;
+            }
+            gctx2.fillStyle = h.glow || h.col;
+            gctx2.beginPath();
+            gctx2.arc(hx2, hy2, Math.max(0.15, jr), 0, Math.PI * 2);
+            gctx2.fill();
+            gctx2.restore();
+            heroCount++; fills++;
+          }
+        }
+      }
+    }
+    return fills;
+  }
+
+  // ── (B) the modulation field ──────────────────────────────────────
+  var MOD_P_CELLS = 320;      // the noise period: 320 cells ≫ any screen
+  var MOD_DRIFT = 2.5;        // slow world drift (px/s at the field's rate)
+  var modState = { key: '', canvas: null, pat: null, patCtx: null };
+  function hexRGB(h) {
+    var m = /^#([0-9a-fA-F]{6})$/.exec(h);
+    if (!m) return [128, 128, 128];
+    var n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function modCanvasFor(tintHex) {
+    if (modState.key === tintHex && modState.canvas) return modState.canvas;
+    var N = 256, G = 8;                     // 256² noise from an 8×8 value grid
+    var c = mkCanvas(N, N), g = c.getContext('2d');
+    var img = g.createImageData(N, N);
+    var grid = [];
+    for (var gy = 0; gy <= G; gy++) {
+      grid[gy] = [];
+      for (var gx = 0; gx <= G; gx++) grid[gy][gx] = hashCell(gx * 31 + 7, gy * 37 + 11);
+    }
+    // the tint: the theme's dot color lifted/darkened, 60% desaturated so
+    // soft-light modulates LUMINANCE with only a whisper of hue (a fully
+    // saturated source would hue-shift the whole lattice)
+    var dr = hexRGB(shadeHex(tintHex, -0.22)), lr = hexRGB(shadeHex(tintHex, 0.22));
+    var sm = (dr[0] + dr[1] + dr[2] + lr[0] + lr[1] + lr[2]) / 6;   // the gray anchor
+    function desat(v, gray) { return Math.round(v * 0.4 + gray * 0.6); }
+    var d0 = [desat(dr[0], sm), desat(dr[1], sm), desat(dr[2], sm)];
+    var l0 = [desat(lr[0], sm), desat(lr[1], sm), desat(lr[2], sm)];
+    for (var y = 0; y < N; y++) {
+      var fy = y / N * G, iy = Math.floor(fy), ty = fy - iy;
+      for (var x = 0; x < N; x++) {
+        var fx = x / N * G, ix = Math.floor(fx), tx = fx - ix;
+        var sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);   // smoothstep
+        var v00 = grid[iy][ix], v10 = grid[iy][ix + 1];
+        var v01 = grid[iy + 1][ix], v11 = grid[iy + 1][ix + 1];
+        var n0 = v00 + (v10 - v00) * sx, n1 = v01 + (v11 - v01) * sx;
+        var v = n0 + (n1 - n0) * sy;
+        var o = (y * N + x) * 4;
+        img.data[o] = Math.round(d0[0] + (l0[0] - d0[0]) * v);
+        img.data[o + 1] = Math.round(d0[1] + (l0[1] - d0[1]) * v);
+        img.data[o + 2] = Math.round(d0[2] + (l0[2] - d0[2]) * v);
+        img.data[o + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    modState = { key: tintHex, canvas: c, pat: null, patCtx: null };
+    return c;
+  }
+  function paintModulation(gctx, W, H, P, cam, animT) {
+    if (!(P.amp > 0)) return false;         // a deliberately flat grid stays flat
+    var tint = (HEX_RE.test(P.t.dotColor || '')) ? P.t.dotColor : window.DoomTheme.FALLBACKS.dot;
+    var c = modCanvasFor(tint);
+    if (!modState.pat || modState.patCtx !== gctx) {
+      modState.pat = gctx.createPattern(c, 'repeat');
+      modState.patCtx = gctx;
+    }
+    var period = MOD_P_CELLS * GRID_BASE * (P.gridSize || 1) * cam.scale;
+    var pf = 0.9;                            // rides slightly behind the grid
+    var k = period / 256;
+    var bx = -(cam.ox * cam.scale * pf) + animT * MOD_DRIFT;
+    var by = -(cam.oy * cam.scale * pf);
+    var px = ((bx % period) + period) % period;
+    var py = ((by % period) + period) % period;
+    gctx.save();
+    gctx.globalCompositeOperation = 'soft-light';
+    gctx.globalAlpha = 0.6;
+    gctx.translate(px, py);
+    gctx.scale(k, k);
+    gctx.fillStyle = modState.pat;
+    gctx.fillRect(-px / k, -py / k, W / k, H / k);
+    gctx.restore();
+    return true;
+  }
+
+  // ── (C) the movers: comets + twinklers ────────────────────────────
+  var comets = [];
+  var cometTotal = 0, cometNextAt = 0, liveLastT = 0;
+  var livePainted = 0;
+  var TWINK_DENSITY = 0.05;
+  function stepComets(nowSec, dt, W, H, cam, P) {
+    // spawn: 4-10s apart while the gate is on, from a screen edge, aimed
+    // across ~1.5 screens at 900-1600 screen px/s
+    if (nowSec >= cometNextAt) {
+      cometNextAt = nowSec + 4 + Math.random() * 6;
+      if (comets.length < 3) {
+        var pf = 1 + (P.amp || 0) * (0.9 + Math.random() * 0.8);
+        var edge = Math.floor(Math.random() * 4);   // 0=L 1=T 2=R 3=B
+        var sx = (edge === 0) ? -30 : (edge === 2 ? W + 30 : Math.random() * W);
+        var sy = (edge === 1) ? -30 : (edge === 3 ? H + 30 : Math.random() * H);
+        var cxw = W / 2 + (Math.random() - 0.5) * W * 0.7;
+        var cyw = H / 2 + (Math.random() - 0.5) * H * 0.7;
+        var dx = cxw - sx, dy = cyw - sy;
+        var dl = Math.hypot(dx, dy) || 1;
+        var spd = 900 + Math.random() * 700;        // screen px/s
+        comets.push({
+          wx: sx / cam.scale + cam.ox * pf, wy: sy / cam.scale + cam.oy * pf,
+          wvx: dx / dl * spd / cam.scale, wvy: dy / dl * spd / cam.scale,
+          pf: pf, ttl: 0.4 + Math.random() * 0.5,
+          len: 90 + Math.random() * 70, r: 1.6 + Math.random() * 1.0,
+          age: 0
+        });
+        cometTotal++;
+      }
+    }
+    for (var i = comets.length - 1; i >= 0; i--) {
+      var c = comets[i];
+      c.wx += c.wvx * dt; c.wy += c.wvy * dt; c.age += dt;
+      var x = (c.wx - cam.ox * c.pf) * cam.scale;
+      var y = (c.wy - cam.oy * c.pf) * cam.scale;
+      if (c.age > c.ttl || (c.age > 0.5 && (x < -250 || x > W + 250 || y < -250 || y > H + 250))) {
+        comets.splice(i, 1);
+      }
+    }
+  }
+  function paintComets(g2, W, H, cam, P) {
+    if (!comets.length) return 0;
+    var tint = (HEX_RE.test(P.t.dotColor || '')) ? P.t.dotColor : window.DoomTheme.FALLBACKS.dot;
+    var headCol = shadeHex(tint, 0.55);
+    var hr = hexRGB(headCol);
+    var n = 0;
+    for (var i = 0; i < comets.length; i++) {
+      var c = comets[i];
+      var x = (c.wx - cam.ox * c.pf) * cam.scale;
+      var y = (c.wy - cam.oy * c.pf) * cam.scale;
+      var vx = c.wvx * cam.scale, vy = c.wvy * cam.scale;
+      var vl = Math.hypot(vx, vy) || 1;
+      var ux = vx / vl, uy = vy / vl;
+      var fade = Math.min(1, c.age / 0.15) * Math.min(1, Math.max(0, (c.ttl - c.age) / 0.25));
+      if (fade <= 0.01) continue;
+      // the tail: a gradient stroke trailing the motion
+      var tx = x - ux * c.len, ty = y - uy * c.len;
+      var lg = g2.createLinearGradient(x, y, tx, ty);
+      lg.addColorStop(0, 'rgba(' + hr[0] + ',' + hr[1] + ',' + hr[2] + ',' + (0.75 * fade).toFixed(3) + ')');
+      lg.addColorStop(1, 'rgba(' + hr[0] + ',' + hr[1] + ',' + hr[2] + ',0)');
+      g2.save();
+      g2.strokeStyle = lg;
+      g2.lineWidth = Math.max(0.8, c.r * 0.8);
+      g2.lineCap = 'round';
+      g2.beginPath();
+      g2.moveTo(x, y);
+      g2.lineTo(tx, ty);
+      g2.stroke();
+      // the head: glow + core
+      var spG = lcGlowSprite(headCol);
+      var R = c.r * 4;
+      g2.globalAlpha = 0.7 * fade;
+      g2.drawImage(spG.c, x - R, y - R, R * 2, R * 2);
+      g2.globalAlpha = fade;
+      g2.fillStyle = headCol;
+      g2.beginPath();
+      g2.arc(x, y, c.r, 0, Math.PI * 2);
+      g2.fill();
+      g2.restore();
+      n++;
+    }
+    return n;
+  }
+  function paintTwinklers(g2, W, H, cam, P) {
+    var spacingNow = GRID_BASE * (P.gridSize || 1) * cam.scale;
+    if (spacingNow < 10) return 0;                 // too dense to read at deep zoom-out
+    var pf = 1 + (P.amp || 0) * 0.4;               // mid-depth
+    var bx = -(cam.ox * cam.scale * pf), by = -(cam.oy * cam.scale * pf);
+    var x0 = Math.floor(-bx / spacingNow) - 1, x1 = Math.ceil((W - bx) / spacingNow) + 1;
+    var y0 = Math.floor(-by / spacingNow) - 1, y1 = Math.ceil((H - by) / spacingNow) + 1;
+    if ((x1 - x0) * (y1 - y0) > 16384) return 0;   // hard ceiling (huge viewports)
+    var tint = (HEX_RE.test(P.t.dotColor || '')) ? P.t.dotColor : window.DoomTheme.FALLBACKS.dot;
+    var nowSec = performance.now() / 1000;         // raw time — twinklers skip TEMPO
+    var n = 0;
+    for (var cy = y0; cy <= y1; cy++) {
+      for (var cx = x0; cx <= x1; cx++) {
+        if (hashCell(cx * 7 + 3, cy * 13 + 5) >= TWINK_DENSITY) continue;
+        var jx2 = 0.35 + hashCell(cx + 11, cy + 17) * 0.3;
+        var jy2 = 0.35 + hashCell(cx + 19, cy + 23) * 0.3;
+        var fx = (cx + jx2) * spacingNow + bx;
+        var fy = (cy + jy2) * spacingNow + by;
+        if (fx < -8 || fx > W + 8 || fy < -8 || fy > H + 8) continue;
+        var spd = 0.8 + hashCell(cx + 31, cy + 37) * 2.8;    // some FAST blinkers
+        var ph = hashCell(cx + 41, cy + 43) * 6.283;
+        var a = 0.22 + 0.78 * (0.5 + 0.5 * Math.sin(nowSec * spd + ph));
+        var r = 0.7 + hashCell(cx + 47, cy + 53) * 0.9;
+        g2.globalAlpha = a;
+        g2.fillStyle = tint;
+        g2.beginPath();
+        g2.arc(fx, fy, r, 0, Math.PI * 2);
+        g2.fill();
+        n++;
+      }
+    }
+    g2.globalAlpha = 1;
+    return n;
+  }
+  // paintLive — the movers' entry: stepped by wall time (idempotent per
+  // tick), painted on #c2 in BOTH frame paths (the 60fps cheap frame owns
+  // the smooth motion; the full frame re-paints it after its #c2 clear).
+  function paintLive(gctx2, W, H, cam, P) {
+    var nowSec = performance.now() / 1000;
+    var dt = liveLastT ? Math.max(0, Math.min(0.1, nowSec - liveLastT)) : 0;
+    liveLastT = nowSec;
+    var gate = !!(P && (P.animDots || P.animLines));
+    if (!gate) {
+      comets.length = 0;
+      livePainted = 0;
+      return 0;
+    }
+    stepComets(nowSec, dt, W, H, cam, P);
+    var n = 0;
+    if (gctx2) {
+      n += paintComets(gctx2, W, H, cam, P);
+      n += paintTwinklers(gctx2, W, H, cam, P);
+    }
+    livePainted = n;
+    return n;
+  }
+
   // ══ THE RENDER — the v0.97 dispatcher ══════════════════════════════
   function render(gctx, gctx2, W, H, cam, P) {
     if (ROOT.__doomalayLatticeLegacy) return renderLegacy(gctx, gctx2, W, H, cam, P);
@@ -1511,6 +1823,13 @@
         if (bt.over) dbg.overDots += cov;
       }
     }
+
+    // ── v1.06.3 THE MODULATION FIELD (the tiling kill) ────────────────
+    // One soft-light fill over everything painted so far (bg + base
+    // tiles): a 320-cell-period noise field, far past perception, kills
+    // the wallpaper read of the M-cell tile repetition — and its slow
+    // drift gives the whole canvas a constant, subtle life.
+    if (paintModulation(gctx, W, H, P, cam, animT)) dbg.batches++;
 
     // ── THE HERO FIREFLIES (animDots only — the few real movers) ──────
     // v0.97.1: the band-level weight range (heroes included) feeds the
@@ -2180,6 +2499,11 @@
     ORIGIN_RADIUS: ORIGIN_RADIUS,
     render: render,
     renderLegacy: renderLegacy,     // v0.97: the A/B switch (also the fallback)
+    // v1.06.3: the live layer — the cheap frame repaints the over furniture
+    // (lossless #c2) and the movers (comets + twinklers, 60fps); the full
+    // frame re-paints the movers after its #c2 clear.
+    renderOver: renderOverLayer,
+    paintLive: paintLive,
     setDpr: setDpr,                 // v0.97: the hosts report their DPR (tile bake sharpness)
     onTexReady: function (cb) { onTexReadyCb = cb; },
     // v1.06.1: the hosts wire this like onTexReady — one follow-up frame
@@ -2216,7 +2540,10 @@
         level: TL.tiles ? TL.tiles.q : 0,
         ladder: { sets: TL.sets.size,
                   bytes: Math.round((TL.ladderBytes || 0) / 1048576),
-                  hits: TL.ladderHits, misses: TL.ladderMisses }
+                  hits: TL.ladderHits, misses: TL.ladderMisses },
+        // v1.06.3 THE LIVE LAYER — the rigs' life proof: comets spawned,
+        // movers painted this frame, twinkler/comet counts.
+        live: { comets: comets.length, spawns: cometTotal, painted: livePainted }
       };
     }
   };
