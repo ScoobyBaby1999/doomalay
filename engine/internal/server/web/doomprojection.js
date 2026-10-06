@@ -91,14 +91,18 @@
   // states, and the painter never touches them — no sheet mint, no
   // bake, no layer. (The [data-s1-grad] chrome windows in index.html —
   // the settings gear, the dock capsule — were already LOCAL by design;
-  // they are unchanged.) The fmt text track (--fmt-*-gradient) joins
-  // the allow-list in v1.06.2 THE TEXT FIELD (it was LOCAL BY DESIGN at
-  // v1.00.2 — text clip-windows never projected). The
+  // they are unchanged.) The fmt text track (--fmt-*-gradient) JOINED
+  // the allow-list in v1.06.2 THE TEXT FIELD (the user: "text doesn't
+  // seem to doom project at all either" — it was LOCAL BY DESIGN at
+  // v1.00.2). Text rides the LEGACY inline bake inside the roots (clip:
+  // text fails L2.ok by design — the layer's oversized ::before can't
+  // clip to glyphs) and the native fixed mint outside them (the v107
+  // Blink probe proves fixed + background-clip:text coexist). The
   // surface-2/border-strong/bg-app/accent-4 families remain DERIVED
   // SOLIDS post-v0.99.4 (their catchers reference the vars but the
   // twins are never written — minting them would pollute the sheet for
   // dead rules).
-  var PROJ_RE = /var\(--(?:accent|accent-2|accent-3)-gradient/;
+  var PROJ_RE = /var\(--(?:accent|accent-2|accent-3|fmt-[a-z0-9]+)-gradient/;
   var STYLE_RE = PROJ_RE;
 
   var SEL = null;             // the compiled projection selector
@@ -920,14 +924,17 @@
   // inline bake must WIN on baked elements (inline beats any author
   // rule), and the html[attr] prefix out-specifies every base rule it
   // derives from.
-  // THE GATE MERGE (v1.04.2, rig-caught): the GATES set their attrs on
+  //   · THE GATE MERGE (v1.04.2, rig-caught): the GATES set their attrs on
   // <html> — a prefixed `html[data-doom-proj] [data-s1-grad] #x` NEVER
   // matches (the [data-s1-grad] would have to be a DESCENDANT of
   // html; it IS html). Root-gate-led selectors MERGE into the prefix:
   // `html[data-doom-proj][data-s1-grad] #x`. The [style*=] catchers
   // and every other leading compound take the space prefix (their
   // compounds live on the consumers, not the root).
-  var ROOT_GATE_RE = /^\[(data-s1-grad|data-a1-grad|data-a2-grad|data-a3-grad)\]/;
+  //   · v1.06.2: the fmt text rules are gate-led too ([data-fmt-grad~=…]
+  // on :root, formatter.js) — the same merge law covers them, value
+  // forms and all.
+  var ROOT_GATE_RE = /^\[(data-fmt-grad[^\]]*|data-s1-grad|data-a1-grad|data-a2-grad|data-a3-grad)\]/;
   function prefixSelector(sel) {
     var m = ROOT_GATE_RE.exec(sel);
     if (m) return 'html[data-doom-proj]' + m[0] + ' ' + sel.slice(m[0].length).trim();
