@@ -277,7 +277,7 @@ func TestHFExchangeCodeRoundTrip(t *testing.T) {
         hfTokenEndpoint = srv.URL + "/oauth/token"
         t.Cleanup(func() { hfTokenEndpoint = old })
 
-        tok, err := hfExchangeCode("c0de", "verifier-verifier", "http://127.0.0.1:8080/api/hf/oauth/callback")
+        tok, _, err := hfExchangeCode("c0de", "verifier-verifier", "http://127.0.0.1:8080/api/hf/oauth/callback")
         if err != nil {
                 t.Fatalf("hfExchangeCode: %v", err)
         }
@@ -287,7 +287,7 @@ func TestHFExchangeCodeRoundTrip(t *testing.T) {
 
         // an error body must surface, not silently pass
         hfTokenEndpoint = srv.URL + "/definitely-not-a-path"
-        if _, err := hfExchangeCode("c0de", "v", "r"); err == nil {
+        if _, _, err := hfExchangeCode("c0de", "v", "r"); err == nil {
                 t.Fatal("exchange against a dead path must fail")
         }
 }
@@ -599,13 +599,20 @@ func TestHFDeviceFlowRoundTrip(t *testing.T) {
                 t.Fatalf("device poll carried client_secret %q — the grant must be secretless", sawSecret)
         }
 
-        // 4. the token landed in the vault, same shape as the redirect flow
+        // 4. the token landed in the vault, same shape as the redirect flow.
+        // v1.10.4 TOKEN HONESTY: the extra is now the JSON account shape
+        // ({"user","kind","expires_at"}) — the bare-username legacy extra
+        // belonged to the expires_in-discarding era (D2).
         tok, extra, err := s.vault.Get(hub.TokenEnvVar)
         if err != nil || tok != "hf_oauth_dev1" {
                 t.Fatalf("vault %s = %q (err %v), want hf_oauth_dev1", hub.TokenEnvVar, tok, err)
         }
-        if extra != "devhug" {
-                t.Fatalf("vault extra = %q, want devhug", extra)
+        meta := hub.TokenMetaFromExtra(extra)
+        if meta.User != "devhug" || meta.Kind != "oauth" {
+                t.Fatalf("vault extra = %q → %+v, want user devhug kind oauth", extra, meta)
+        }
+        if meta.ExpiresAt != 0 && meta.ExpiresAt < time.Now().Unix() {
+                t.Fatalf("expires_at %d is in the past", meta.ExpiresAt)
         }
 }
 

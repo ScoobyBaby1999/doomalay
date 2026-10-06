@@ -146,6 +146,16 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
         // seeded (their bots have no harness doc).
         if sess.Sandbox == "hf" {
                 s.seedHarnessArtifact(sess.ID)
+                // v1.10.5 THE PM BADGE (D5): PrivateMode models route to the
+                // LOCAL bridge on the device — an HF chat with a PM model
+                // NEVER touches the sandbox, and nothing ever said so. Say
+                // so, persistently, at create time (the Phase-1 notice class).
+                if strings.EqualFold(strings.TrimSpace(sess.Provider), "privatemodeai") ||
+                        strings.HasPrefix(strings.TrimSpace(sess.Model), "privatemodeai/") {
+                        s.persistNoticeOnly(sess.ID,
+                                "This model runs on PrivateMode's local bridge on your device — it never reaches the HF sandbox, so bash/Linux sandbox tools are unavailable in this chat. Switch to another provider (NVIDIA, OpenRouter, Mistral…) for sandbox work.",
+                                "pm-local")
+                }
         }
         writeJSON(w, 201, sess)
 }
@@ -182,6 +192,9 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 404, "not found")
                 return
         }
+        // v1.10.5: the PM-state BEFORE this PATCH applies (the mid-session
+        // switch-to-PM notice fires on the TRANSITION only).
+        wasPM := isPM(sess)
         // Title update respects manually_renamed unless override_manual is true.
         if title, ok := req["title"].(string); ok {
                 override, _ := req["override_manual"].(bool)
@@ -327,7 +340,23 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 500, "update: "+err.Error())
                 return
         }
+        // v1.10.5 THE PM BADGE, mid-session switch (D5): the model/provider
+        // just became PrivateMode on an HF chat — the local-bridge fact
+        // must surface NOW (persist + live-forward if a WS is open). Fires
+        // only on the TRANSITION (a stale re-PATCH of the same PM model
+        // must not stack notices).
+        if sess.Sandbox == "hf" && isPM(sess) && !wasPM {
+                s.emitNotice(pipeFor(id), id,
+                        "This model now runs on PrivateMode's local bridge on your device — it never reaches the HF sandbox, so bash/Linux sandbox tools are unavailable while it's active. Switch to another provider (NVIDIA, OpenRouter, Mistral…) for sandbox work.",
+                        "pm-local")
+        }
         writeJSON(w, 200, sess)
+}
+
+// isPM — the session's model/provider is PrivateMode (the local bridge).
+func isPM(sess *store.Session) bool {
+        return strings.EqualFold(strings.TrimSpace(sess.Provider), "privatemodeai") ||
+                strings.HasPrefix(strings.TrimSpace(sess.Model), "privatemodeai/")
 }
 
 // handleSessionsDelete is DELETE /api/sessions/{id} — remove a session + its events.

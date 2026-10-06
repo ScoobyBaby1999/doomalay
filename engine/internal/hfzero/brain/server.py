@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agent import run_turn  # noqa: E402
 import reqenv  # noqa: E402  — v0.72: per-request BYOK (X-Env-* as values, never global env writes)
 import redact  # noqa: E402  — v0.75: in-flight redaction at every error sink
+import provider_health  # noqa: E402  — v1.10.2: the black-hole pre-flight guard
 
 # v0.43 — stranded-coroutine watchdog (KEEP): every strands run_async loop
 # registers itself here; a global thread dumps any task still pending after
@@ -941,6 +942,30 @@ async def chat(request: Request):
     # rejected" vs "the community key is unavailable" instead of a bare
     # 401 the user can't act on.
     key_source = "user" if req_env.get(env_var) else "shared"
+
+    # v1.10.2 THE BLACK-HOLE GUARD (brain side, D1): pre-flight the
+    # provider's reachability from THIS sandbox before the first model
+    # call — a stalling provider (live-observed: NVIDIA from HF egress,
+    # 2026-10-06) would otherwise sit silent for the per-call 86400s
+    # timeout while the heartbeats say "still working". The probe is
+    # 15s, cached (ok 10 min / stall 30 min), only on Spaces, and NEVER
+    # cancels a running turn (the v0.80.1 no-kill directive holds). A
+    # stall streams ONE honest error event — no day-long hang, no tokens.
+    _probe_provider = prov_name if prov_name else provider
+    _stall_msg = provider_health.check(_probe_provider, base_url, api_key, litellm_model)
+    if _stall_msg:
+        async def _stall_stream():
+            yield "data: " + json.dumps({
+                "type": "error", "error": "provider_stalled",
+                "message": redact.redact(_stall_msg),
+                "provider": _probe_provider, "model": model,
+                "key_source": key_source, "env_var": env_var,
+            }) + "\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            _stall_stream(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     async def event_stream():
         try:

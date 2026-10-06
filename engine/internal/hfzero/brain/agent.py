@@ -25,6 +25,8 @@ emits) + forwards to the PWA via WebSocket.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import queue as _queue
 import json
 import os
@@ -398,11 +400,21 @@ async def _run_strands_agent(
         }
         if litellm_base:
             client_args["base_url"] = litellm_base
+        # v1.10.6 THE ROUTER PARALLEL-TOOLS GUARD (live-found in the
+        # phase-6 battery): HF's inference router 400s when an assistant
+        # message carries MULTIPLE tool_use blocks ("Failed to deserialize
+        # … ChatCompletionRequestAssistantMessageContent") — a model that
+        # fires parallel tool calls kills its own round 2. Sequential tool
+        # calls (the single-tool B1 turn) work fine. Force one-at-a-time
+        # for router-served models.
+        _extra_params = _build_effort_body(model, effort)
+        if "router.huggingface.co" in (litellm_base or ""):
+            _extra_params.setdefault("parallel_tool_calls", False)
         llm = BrainLiteLLMModel(
             model_id=litellm_id,
             client_args=client_args,
             stream=True,
-            additional_request_params=_build_effort_body(model, effort),
+            additional_request_params=_extra_params,
         )
 
         # Build the conversation manager (V0: per_turn=True for context management).
@@ -422,10 +434,22 @@ async def _run_strands_agent(
         _exclude = []
         if not template_auto:
             _exclude.append("dtemplate")
+        # v1.10.3 THE EXPLICIT ENV HAND-OFF: the request's X-Env values ride
+        # the ToolContext as a PLAIN DICT — contextvars do not reliably cross
+        # the executor/strands tool-call boundary (live-found in the phase-6
+        # battery: dt_hf's _get_token saw {} even with copy_context()).
+        # Explicit data flow beats context magic: deterministic, testable,
+        # per-turn safe (no process-global races on shared spaces).
+        try:
+            import reqenv as _reqenv
+            _turn_req_env = dict(_reqenv.get_request_env() or {})
+        except Exception:
+            _turn_req_env = {}
         tools = _build_tools(workspace, web_search, session_id=session_id,
                              callback=callback, model=model,
                              llm_info=(litellm_id, litellm_base or "", api_key),
-                             workspaces=workspaces, exclude=_exclude)
+                             workspaces=workspaces, exclude=_exclude,
+                             req_env=_turn_req_env)
 
         # V0 FIX: fresh Agent per turn. Never reuse.
         # v0.38 MEMORY: the agent is pre-seeded with the conversation
@@ -461,7 +485,17 @@ async def _run_strands_agent(
         # pushes onto a thread-safe queue and this coroutine PUMPS it live
         # while the agent works (50ms poll; drains to empty after done).
         loop = asyncio.get_event_loop()
-        fut = loop.run_in_executor(None, agent, messages[-1]["content"])
+        # v1.10.3 THE CONTEXT HAND-OFF (live-found in the phase-6 battery):
+        # run_in_executor does NOT propagate contextvars — every tool call
+        # in the agent's thread saw reqenv.get_request_env() == {} and
+        # dt_hf's _get_token answered "HF_TOKEN not set" even though the
+        # engine had shipped X-Env-DOOMALAY_HF_TOKEN with the turn (BYOK on
+        # every space was affected, not just this one). copy_context()
+        # carries the request's ContextVars (reqenv's env + keyed set) into
+        # the executor thread so tool-time key resolution works.
+        _turn_ctx = contextvars.copy_context()
+        _turn_call = functools.partial(agent, messages[-1]["content"])
+        fut = loop.run_in_executor(None, _turn_ctx.run, _turn_call)
 
         # v0.80.1 — NO KILL WATCHDOG (user directive: "remove any timer that
         # canceles an output or reply — models should be able to keep going
@@ -917,7 +951,8 @@ def _build_tools(workspace: str, web_search: bool,
                  model: str = "",
                  llm_info: "tuple[str, str, str] | None" = None,
                  workspaces: list = None, template_auto: bool = False,
-                 skills_auto: bool = False, exclude: list = None) -> list:
+                 skills_auto: bool = False, exclude: list = None,
+                 req_env: dict = None) -> list:
     """Build the full tool suite for the Strands agent.
 
     Tools ported from the old c-branch:
@@ -1321,6 +1356,8 @@ def _build_tools(workspace: str, web_search: bool,
             emit=_dt_progress,
             spawn=_dt_spawn,
             workspaces=list(workspaces) if workspaces else [],
+            # v1.10.3: the request's X-Env values, explicit and per-turn.
+            req_env=dict(req_env or {}),
         )
         dt_tools = dt_registry.load_doomalay_tools(ctx, exclude=exclude)
         if dt_tools:

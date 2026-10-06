@@ -1350,7 +1350,7 @@
           var miN = parseInt(mi, 10);
           if (isNaN(miN) || miN < 0 || miN >= state.messages.length) return;
           var victim = state.messages[miN];
-          if (!victim || (victim.role !== 'user' && victim.role !== 'assistant' && victim.role !== 'error')) return;
+          if (!victim || (victim.role !== 'user' && victim.role !== 'assistant' && victim.role !== 'error' && victim.role !== 'notice')) return;
           state.messages.splice(miN, 1);
           if (victim.ei) emitHideEvents(state, [victim.ei]);
           rebuildTranscript(msgContainer, state);
@@ -4855,6 +4855,31 @@
         // stacking throwaway progress pills into the message list.
         setActivity(bodyEl, state, ev.message || ev.text);
       }
+    } else if (type === 'notice') {
+      // v1.10.1 THE HONEST TURN: persistent system notices — live AND
+      // replayed (they're persisted chat_events like errors). The replayed
+      // shape dumps {message, code} as JSON in ev.text — lift it back out
+      // exactly like the error replay parser does. A notice NEVER parks the
+      // queue or flips isStreaming off: it can arrive mid-turn (the HF
+      // fallback fires before the direct stream continues).
+      var nsrc = ev;
+      if (typeof ev.text === 'string' && ev.text.charAt(0) === '{' && !ev.message) {
+        try {
+          var np = JSON.parse(ev.text);
+          if (np && np.message) {
+            nsrc = {};
+            for (var nk in ev) nsrc[nk] = ev[nk];
+            for (var npk in np) { if (np[npk] !== undefined && np[npk] !== null) nsrc[npk] = np[npk]; }
+          }
+        } catch (e3) {}
+      }
+      var ntext = String(nsrc.message || nsrc.text || '');
+      if (ntext) {
+        var nmsg = { role: 'notice', text: ntext, ts: evTsMs(ev) };
+        if (ev.i) nmsg.ei = ev.i;
+        state.messages.push(nmsg);
+        appendMessage(msgContainer, scrollEl, nmsg, bodyEl, state._icon, state);
+      }
     } else if (type === 'error') {
       // v0.40.1 REPLAY FIX: live error events carry parsed fields
       // (message/provider/model/suggest), but REPLAYED ones (the store's
@@ -5249,6 +5274,12 @@
       }
       return '<div class="msg-bubble msg-error" data-msg-role="error"' + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div>' + sugHtml + '</div>';
+    } else if (msg.role === 'notice') {
+      // v1.10.1: the persistent system-notice bubble (styled in index.html
+      // via the themed --notice token). Plain text only — notices are
+      // engine-written, never model markdown.
+      return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + miAttr + '>' +
+        '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'thinking') {
       // v0.38: per-chat thinkOpen pref drives the default (msg.open wins
       // only when explicitly set — the delegated toggle handler).

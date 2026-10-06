@@ -6,10 +6,12 @@ import (
         "fmt"
         "log"
         "net/http"
+        "os"
         "sort"
         "strconv"
         "strings"
         "sync"
+        "sync/atomic"
         "time"
 
         "github.com/gorilla/websocket"
@@ -1124,9 +1126,17 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         if rb := s.remoteBrainFor(sess); rb != nil {
                 s.streamFromRemoteBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal, rb)
         } else if sess.Sandbox == "hf" {
+                // v1.10.1: PERSISTENT notice (the old transient progress
+                // event vanished at turn end — the user never learned the
+                // sandbox wasn't used). A short progress line still feeds
+                // the live activity indicator mid-turn.
+                s.emitNotice(pipe, sessionID,
+                        "HF sandbox not configured — this turn (and every turn until you connect one) runs on the device's direct pipeline: no Linux sandbox, no bash, no installs. "+
+                                "Fix: Hub → Hugging Face → sign in, then Sandbox → Hugging Face → create your free sandbox (or use the shared one).",
+                        "hf-unconfigured")
                 if b, jerr := json.Marshal(map[string]any{
                         "type": "progress", "session_id": sessionID,
-                        "message": "HF sandbox not configured (connect Hugging Face in the Hub panel, or pick a space via Sandbox → Hugging Face) — running this turn on the direct pipeline",
+                        "message": "HF sandbox not configured — running this turn on the direct pipeline",
                 }); jerr == nil {
                         _ = pipe.send(b)
                 }
@@ -1391,9 +1401,43 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
                 }
         }
 
-        events, errs, err := rb.Chat(ctx, brainReq, turnEnv)
+        // v1.10.2 THE NO-FIRST-BYTE GUARD (D1 — the NVIDIA black-hole):
+        // a space running an OLD brain can sit in a provider call that
+        // NEVER answers (live-observed: 125s+ of "still working" heartbeats
+        // with zero LLM events and a per-call timeout of ONE DAY), while
+        // the engine faithfully forwards the heartbeats forever. The guard:
+        // if NO LLM-ish event (anything but progress/status/notice) arrives
+        // within DOOMALAY_HF_STALL_KILL seconds (default 600 — comfortably
+        // above the shared space's legitimate 2-6 min silent first call;
+        // 0 disables), cancel the SPACE call only (a child context — the
+        // turn itself survives) and run the direct fallback with an honest
+        // persistent notice. This does NOT violate the v0.80.1 no-kill
+        // directive: nothing has ever arrived, so there is no output to
+        // cancel — and once ANY LLM evidence lands the guard disarms for
+        // the rest of the turn (slow-but-alive turns keep going forever,
+        // exactly as the user mandated). The Stop button remains the
+        // manual override at any time.
+        spaceCtx, cancelSpace := context.WithCancel(ctx)
+        defer cancelSpace()
+        events, errs, err := rb.Chat(spaceCtx, brainReq, turnEnv)
         if err != nil {
                 rb.MarkUnhealthy()
+                // v1.10.1 THE HONEST TURN: the fallback is a PERSISTENT
+                // notice now — the D3 finding was this exact path: ONE
+                // transient progress line, then the turn completed on the
+                // direct pipeline (no bash) and the user never knew. The
+                // notice names the cause + the fix; the code routes the
+                // UI (reconnect vs wake vs generic).
+                code := "hf-fallback"
+                fix := "retry in a moment (the space may be waking), or check the space from the Hub panel"
+                if strings.Contains(err.Error(), "401") {
+                        code = "hf-auth"
+                        fix = "reconnect Hugging Face (Hub → Hugging Face) — the sign-in token may have expired — or re-create/re-pin the space"
+                }
+                s.emitNotice(pipe, sessionID,
+                        "HF sandbox unreachable — this turn ran on the device's direct pipeline (no Linux sandbox, no bash). Cause: "+err.Error()+
+                                ". Fix: "+fix+".",
+                        code)
                 if b, jerr := json.Marshal(map[string]any{
                         "type": "progress", "session_id": sessionID,
                         "message": "HF sandbox unreachable (" + err.Error() + ") — running this turn on the engine's direct pipeline",
@@ -1406,7 +1450,101 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
                 s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
                 return
         }
-        s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
+        guarded, guardFired := guardFirstByte(events, stallKillSeconds(), cancelSpace)
+        s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, guarded), errs, terminal)
+        if guardFired() {
+                // The space call was cancelled by the guard — the honest
+                // notice already streamed (persisted by forwardEvents);
+                // mark the space unhealthy (a fresh probe on the next turn
+                // revives it) and answer on the direct pipeline.
+                rb.MarkUnhealthy()
+                s.emitNotice(pipe, sessionID,
+                        "The HF sandbox never answered — no model output for the whole guard window. This turn is running on the device's direct pipeline (no Linux sandbox, no bash). "+
+                                "The space's provider connection may be stalling (observed with NVIDIA from HF egress); switch provider for sandbox work or retry in a while.",
+                        "hf-stall")
+                tplID, _ := brainReq["template_id"].(string)
+                tplBrief, _ := brainReq["template_brief"].(string)
+                bundManifest, _ := brainReq["bundle_manifest"].(string)
+                s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
+        }
+}
+
+// stallKillSeconds parses DOOMALAY_HF_STALL_KILL (seconds; default 600 =
+// 10 min; 0 = guard disabled — the pure v0.80.1 mode).
+func stallKillSeconds() int {
+        if v := os.Getenv("DOOMALAY_HF_STALL_KILL"); v != "" {
+                if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+                        return n
+                }
+        }
+        return 600
+}
+
+// isLLMEvidence — anything the brain streams that proves the model call is
+// ALIVE. Progress heartbeats + status frames + notices are excluded (the
+// black-hole signature is exactly: heartbeats forever, nothing else).
+func isLLMEvidence(ev map[string]any) bool {
+        switch ev["type"] {
+        case "progress", "status", "notice":
+                return false
+        }
+        return true
+}
+
+// guardFirstByte wraps a brain event stream with the no-first-byte
+// watchdog. onFire (when non-nil) is called the instant the guard fires —
+// streamFromRemoteBrain passes the space-call's cancel there so the SSE
+// reader goroutine exits and its errs channel closes BEFORE forwardEvents
+// blocks on it (the blocking <-errs drain at the end of forwardEvents —
+// a deferred-only cancel would deadlock exactly there). The returned
+// fired func tells (after the channel closed) whether the guard killed
+// the stream. The synthetic notice rides the stream itself so
+// forwardEvents persists it like any other.
+func guardFirstByte(events <-chan map[string]any, killAfterSec int, onFire func()) (<-chan map[string]any, func() bool) {
+        out := make(chan map[string]any)
+        var fired atomic.Bool
+        go func() {
+                defer close(out)
+                if killAfterSec <= 0 {
+                        for ev := range events {
+                                out <- ev
+                        }
+                        return
+                }
+                timer := time.NewTimer(time.Duration(killAfterSec) * time.Second)
+                defer timer.Stop()
+                for {
+                        select {
+                        case ev, ok := <-events:
+                                if !ok {
+                                        return
+                                }
+                                out <- ev
+                                if isLLMEvidence(ev) {
+                                        // First LLM evidence — the space is
+                                        // ALIVE. Disarm: pass the rest
+                                        // through untouched (no timer; slow
+                                        // multi-minute rounds keep going).
+                                        for ev2 := range events {
+                                                out <- ev2
+                                        }
+                                        return
+                                }
+                        case <-timer.C:
+                                fired.Store(true)
+                                if onFire != nil {
+                                        onFire() // cancel the space call NOW (see the doc comment)
+                                }
+                                out <- map[string]any{
+                                        "type":    "notice",
+                                        "message": "HF sandbox stall guard: no model output for " + strconv.Itoa(killAfterSec) + "s — cancelling the sandbox call and falling back to the direct pipeline…",
+                                        "code":    "hf-stall",
+                                }
+                                return
+                        }
+                }
+        }()
+        return out, func() bool { return fired.Load() }
 }
 
 // streamFromBrain proxies the chat turn through the Python brain (full
@@ -1945,6 +2083,23 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                                         content += " " + summary
                                 }
                         }
+                case "notice":
+                        // v1.10.1: stream-injected notices (the Phase-2
+                        // watchdog, brain-side notices) persist their
+                        // {message, code} payload exactly like errors.
+                        nEv := map[string]any{}
+                        for _, k := range []string{"message", "code"} {
+                                if v, ok := ev[k]; ok && v != nil {
+                                        nEv[k] = v
+                                }
+                        }
+                        if len(nEv) == 0 {
+                                if t, ok := ev["text"].(string); ok {
+                                        content = t
+                                }
+                        } else if b, err := json.Marshal(nEv); err == nil {
+                                content = string(b)
+                        }
                 case "error":
                         // v0.13: error events carry "message" (human text) +
                         // "error" (code) — persist the human-readable one.
@@ -2098,6 +2253,18 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
                 if json.Unmarshal([]byte(content), &ids) == nil {
                         out["ids"] = ids
                 }
+        case "notice":
+                // v1.10.1 THE HONEST TURN: notices persist {message, code}
+                // (like errors) — the wire shape mirrors error's so the
+                // replay parser can lift the fields back out.
+                var nobj map[string]any
+                if json.Unmarshal([]byte(content), &nobj) == nil && len(nobj) > 0 {
+                        for k, v := range nobj {
+                                out[k] = v
+                        }
+                } else {
+                        out["message"] = content
+                }
         case "error":
                 // v0.14: error content is usually a JSON object
                 // {"error":"code","message":"human text"} — parse it so the
@@ -2136,6 +2303,26 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
         }
         b, _ := json.Marshal(out)
         _ = pipe.send(b)
+}
+
+// emitNotice (v1.10.1 THE HONEST TURN) — persist + forward a system notice.
+// The D3 root cause: sandbox degradation was announced as a TRANSIENT
+// progress event (ephemeral by design — never persisted, gone at turn end,
+// invisible on replay), so an HF-chat turn that silently fell back to the
+// direct pipeline left the user believing bash had run. Notices are
+// PERSISTED first-class events: they render as a permanent amber system
+// bubble, survive reloads, and never park the send queue (unlike errors).
+// code routes the UI styling/deep-links: "hf-fallback", "hf-unconfigured",
+// "hf-auth", "hf-stall", "pm-local".
+func (s *Server) emitNotice(pipe *chatPipe, sessionID, message, code string) {
+        payload, _ := json.Marshal(map[string]string{"message": message, "code": code})
+        s.emit(pipe, sessionID, "notice", string(payload), "")
+}
+
+// persistNoticeOnly — the no-pipe twin (session-create time notices: the
+// WS may not exist yet; the replay carries them).
+func (s *Server) persistNoticeOnly(sessionID, message, code string) {
+        s.emitNotice(nil, sessionID, message, code)
 }
 
 // bundleManifestText (v0.72) — composes THE ATTACHED BUNDLE manifest block

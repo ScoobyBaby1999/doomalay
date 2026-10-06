@@ -155,7 +155,10 @@
             'font-size:13px;font-weight:600;font-family:inherit;cursor:pointer">connect with token</button>' +
           '<div style="margin-top:10px;text-align:center">' +
             '<a id="hfc-gettoken" href="#" style="font-size:12px;color:var(--accent-2);text-decoration:none">' +
-              'get token ↗</a></div>' +
+              'get token ↗</a>' +
+            '<div style="font-size:11px;color:var(--text-3);margin-top:6px;line-height:1.5">' +
+              'a <b style="color:var(--text-2)">fine-grained token</b> (scopes: read + write repos, ' +
+              'write spaces) never expires — no 8h reconnects.</div></div>' +
         '</div>' +
         '<div id="hfc-err" style="margin-top:12px;font-size:12px;color:var(--err);min-height:16px"></div>' +
       '</div>';
@@ -164,12 +167,34 @@
   function paintState(el, acct) {
     if (!el) return;
     if (acct && acct.connected) {
-      el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;' +
-        'border-radius:10px;background:rgba(var(--ok-rgb),0.12);border:1px solid rgba(var(--ok-rgb),0.35)">' +
-        '<span style="color:var(--ok);font-weight:700;font-size:14px">✓</span>' +
-        '<span style="color:var(--ok);font-size:13px;font-weight:600">connected as ' +
-        (acct.user || 'unknown') +
-        (acct.auth === 'oauth' ? '' : ' · token') + '</span></div>';
+      // v1.10.4 TOKEN HONESTY (D2): OAuth sign-ins last 8h with NO refresh —
+      // show the countdown, flip amber under 2h, and render the reconnect
+      // card the moment it lapses (or whoami refuses it). Pasted tokens
+      // (fine-grained PATs) have no expiry line at all.
+      var exp = acct.auth === 'oauth' && acct.expires_at;
+      var hrs = acct.expires_in_hours || 0;
+      var soonish = exp && hrs > 0 && hrs < 2;
+      if (acct.expired) {
+        el.innerHTML = '<div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;' +
+          'border-radius:10px;background:rgba(var(--notice-rgb,var(--warn-rgb)),0.12);border:1px solid rgba(var(--notice-rgb,var(--warn-rgb)),0.4)">' +
+          '<span style="color:var(--notice,var(--warn));font-weight:700;font-size:14px">⏱</span>' +
+          '<span style="color:var(--notice,var(--warn));font-size:13px;font-weight:600;line-height:1.5">' +
+          'sign-in expired' + (acct.user ? ' — ' + acct.user : '') +
+          '<span style="display:block;font-weight:500;font-size:12px;margin-top:2px">HF sign-ins last 8h with no refresh — press Reconnect, or paste a fine-grained token below (it never expires).</span></span></div>';
+      } else {
+        var toneName = soonish ? 'notice,var(--warn)' : 'ok';
+        var toneRGB = soonish ? 'notice-rgb,var(--warn-rgb)' : 'ok-rgb';
+        el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;' +
+          'border-radius:10px;background:rgba(var(--' + toneRGB + '),0.12);border:1px solid rgba(var(--' + toneRGB + '),0.35)">' +
+          '<span style="color:var(--' + toneName + ');font-weight:700;font-size:14px">✓</span>' +
+          '<span style="color:var(--' + toneName + ');font-size:13px;font-weight:600">connected as ' +
+          (acct.user || 'unknown') +
+          (acct.auth === 'oauth' ? '' : ' · token') +
+          (soonish ? ' · expires in ~' + (hrs < 1 ? Math.max(1, Math.round(hrs * 60)) + 'm' : Math.round(hrs) + 'h') : '') + '</span></div>';
+      }
+      // expired → the primary button becomes the reconnect button
+      var btn = (el.parentNode || document).querySelector && (el.parentNode.querySelector('#hfc-oauth') || document.getElementById('hfc-oauth'));
+      if (btn) btn.textContent = acct.expired ? 'Reconnect Hugging Face' : 'Connect Hugging Face';
     } else {
       el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;' +
         'border-radius:10px;background:rgba(var(--warn-rgb),0.10);border:1px solid rgba(var(--warn-rgb),0.3)">' +

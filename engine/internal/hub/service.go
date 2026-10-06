@@ -160,6 +160,11 @@ func (s *Service) Token() string {
 
 // Username returns the connected account name (vault extra — survives
 // restarts without a whoami round-trip; "" when disconnected).
+// v1.10.4 TOKEN HONESTY: the extra is now one of two shapes — the legacy
+// bare username (token-paste path, fine-grained PATs) or JSON
+// {"user","kind","expires_at"} (OAuth path — 8h expiry, no refresh).
+// Both parse; the JSON shape falls back to the bare string on any parse
+// hiccup (never worse than the old behavior).
 func (s *Service) Username() string {
         if s.vault == nil {
                 return ""
@@ -168,7 +173,47 @@ func (s *Service) Username() string {
         if err != nil {
                 return ""
         }
-        return extra
+        return TokenMetaFromExtra(extra).User
+}
+
+// TokenMeta is the parsed vault-extra shape for the connected HF token.
+type TokenMeta struct {
+        User      string // the verified username ("" when disconnected)
+        Kind      string // "oauth" (short-lived) | "token" (pasted PAT) | ""
+        ExpiresAt int64  // unix seconds; 0 = no known expiry
+}
+
+// TokenMeta returns the parsed token metadata for the connected account.
+func (s *Service) TokenMeta() TokenMeta {
+        if s.vault == nil {
+                return TokenMeta{}
+        }
+        _, extra, err := s.vault.Get(TokenEnvVar)
+        if err != nil {
+                return TokenMeta{}
+        }
+        return TokenMetaFromExtra(extra)
+}
+
+// TokenMetaFromExtra parses either extra shape. Bare string → {User: s}.
+// JSON → {User, Kind, ExpiresAt}; a corrupt JSON blob that still looks
+// like a name degrades to the bare shape.
+func TokenMetaFromExtra(extra string) TokenMeta {
+        extra = strings.TrimSpace(extra)
+        if extra == "" {
+                return TokenMeta{}
+        }
+        if strings.HasPrefix(extra, "{") {
+                var m struct {
+                        User      string `json:"user"`
+                        Kind      string `json:"kind"`
+                        ExpiresAt int64  `json:"expires_at"`
+                }
+                if err := json.Unmarshal([]byte(extra), &m); err == nil {
+                        return TokenMeta{User: m.User, Kind: m.Kind, ExpiresAt: m.ExpiresAt}
+                }
+        }
+        return TokenMeta{User: extra}
 }
 
 // Connect verifies a token via whoami and stores it (username as the vault

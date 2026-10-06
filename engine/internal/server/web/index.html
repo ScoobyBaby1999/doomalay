@@ -2137,6 +2137,22 @@
     border-radius: 8px; border: 1px solid rgba(var(--err-rgb),0.2);
     max-width: 90%;
   }
+  /* v1.10.1 THE HONEST TURN — persistent system notices (the HF fallback
+     honesty wave). Amber-adjacent via the themed --notice token (rides the
+     pill-tone system; no hardcoded colors), centered like errors but
+     visually distinct: a notice explains WHAT HAPPENED + HOW TO FIX and
+     never parks the send queue. The leading glyph marks it system-owned. */
+  .msg-notice {
+    align-self: center; color: var(--notice); font-size: calc(var(--chat-fs) - 3px);
+    padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale));
+    background: rgba(var(--notice-rgb, 251,146,60), 0.1);
+    border-radius: 8px; border: 1px solid rgba(var(--notice-rgb, 251,146,60), 0.28);
+    max-width: 90%;
+  }
+  .msg-notice::before {
+    content: 'ⓘ '; opacity: 0.8; font-weight: 600;
+    -webkit-user-select: none; user-select: none;
+  }
 
   /* ── v0.37 MESSAGE PRESENCE — rows, time chips, day dividers ──
      User/assistant bubbles ride inside a .msg-row (flex column) so the

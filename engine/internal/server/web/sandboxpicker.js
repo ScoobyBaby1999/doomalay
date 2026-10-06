@@ -188,6 +188,49 @@
     });
   }
 
+  // ── v1.10.5 THE GUIDED FIRST-RUN STRIP ─────────────────────────────
+  // The "help unaware users" mandate: someone who just landed on the HF
+  // overlay has no mental model of the 3-step setup. The strip names the
+  // steps, shows live state, and the unfilled step is the one to do next.
+  // Themed tokens only; compact; disappears naturally once everything ✓s.
+  function stepsStripHTML(acct) {
+    var done = function (n, label, sub) {
+      return '<div class="hf-step hf-step-done">' +
+        '<span class="hf-step-num">✓</span>' +
+        '<span class="hf-step-txt">' + label +
+        (sub ? '<span class="hf-step-sub">' + esc(sub) + '</span>' : '') + '</span></div>';
+    };
+    var todo = function (n, label, sub) {
+      return '<div class="hf-step">' +
+        '<span class="hf-step-num">' + n + '</span>' +
+        '<span class="hf-step-txt">' + label +
+        (sub ? '<span class="hf-step-sub">' + sub + '</span>' : '') + '</span></div>';
+    };
+    var s1 = acct.connected
+      ? done('1', 'connect HF', acct.user || '')
+      : todo('1', 'connect HF', 'sign in — free');
+    var s2 = '<div class="hf-step" id="hf-step-space">' +
+      '<span class="hf-step-num">2</span>' +
+      '<span class="hf-step-txt">get a sandbox' +
+      '<span class="hf-step-sub">create free below · or the shared one</span></span></div>';
+    var s3 = done('3', 'chat', 'bash · python · node');
+    return '<div class="hf-steps" id="hf-steps">' + s1 +
+      '<span class="hf-step-arrow">→</span>' + s2 +
+      '<span class="hf-step-arrow">→</span>' + s3 + '</div>';
+  }
+
+  // markStepSpace — step 2 flips ✓ once the user owns at least one space.
+  function markStepSpace(spaces) {
+    var el = document.getElementById('hf-step-space');
+    if (!el) return;
+    if (spaces && spaces.length) {
+      el.className = 'hf-step hf-step-done';
+      el.innerHTML = '<span class="hf-step-num">✓</span>' +
+        '<span class="hf-step-txt">get a sandbox' +
+        '<span class="hf-step-sub">' + spaces.length + ' space' + (spaces.length > 1 ? 's' : '') + ' — tap one above</span></span>';
+    }
+  }
+
   function renderHFSpaces(acct, onPick) {
     var html =
       '<div style="padding:20px 16px 0">' +
@@ -197,6 +240,8 @@
       '</div>' +
       '<p style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);margin:0 0 12px;line-height:1.45">' +
         'Your personal ZeroGPU Linux sandboxes — pick one to run this chat on.</p>' +
+      // v1.10.5: the guided strip — connect → sandbox → chat, live states.
+      stepsStripHTML(acct) +
       '<div id="hf-spaces-list" style="max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:2px">' +
         '<div style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)">loading your spaces…</div>' +
       '</div>' +
@@ -243,6 +288,7 @@
     if (!listEl) return;
     getJSON('/api/hf/spaces?all=1').then(function (data) {
       if (!window.ConnectOverlay.isOpen() || !document.getElementById('hf-spaces-list')) return;
+      markStepSpace(data.spaces || []);
       var rows = (data.spaces || []).map(function (sp) {
         return '<div class="hf-space-row" data-repo="' + esc(sp.repo) + '" data-managed="' + (sp.managed ? '1' : '') + '">' +
           '<span class="hf-space-name">' + esc(sp.repo) + '</span>' +
@@ -528,6 +574,19 @@
         'border-radius:999px;font-size:calc(var(--ui-small-fs) - 2px);font-weight:700;border:1px solid}' +
       '.hf-mini-ok{color:var(--ok);border-color:rgba(var(--ok-rgb),0.45);background:rgba(var(--ok-rgb),0.10)}' +
       '.hf-mini-no{color:var(--warn);border-color:rgba(var(--warn-rgb),0.45);background:rgba(var(--warn-rgb),0.10)}' +
+      // v1.10.5 THE GUIDED FIRST-RUN STRIP — connect -> sandbox -> chat
+      '.hf-steps{display:flex;align-items:stretch;gap:6px;margin:0 0 12px;flex-wrap:wrap}' +
+      '.hf-step{flex:1;min-width:96px;display:flex;align-items:center;gap:8px;padding:8px 10px;' +
+        'border-radius:11px;border:1px solid var(--border);background:var(--surface-1)}' +
+      '.hf-step-done{border-color:rgba(var(--ok-rgb),0.4);background:rgba(var(--ok-rgb),0.07)}' +
+      '.hf-step-num{flex-shrink:0;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;' +
+        'justify-content:center;font-size:11px;font-weight:800;color:var(--text-3);' +
+        'border:1.5px solid var(--border-strong);font-family:inherit}' +
+      '.hf-step-done .hf-step-num{color:var(--on-accent,var(--bg-app));background:var(--ok);border-color:var(--ok)}' +
+      '.hf-step-txt{display:flex;flex-direction:column;min-width:0;font-size:calc(var(--ui-small-fs) - 2px);' +
+        'font-weight:700;color:var(--text-2);line-height:1.25}' +
+      '.hf-step-sub{font-size:10px;font-weight:500;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.hf-step-arrow{align-self:center;color:var(--text-3-dim);font-size:12px;flex-shrink:0}' +
       // the HF card description (small text, formatted — user spec)
       '.hf-desc{margin-top:6px;font-size:calc(var(--ui-small-fs) - 2px);line-height:1.5;' +
         'color:var(--text-3);display:block}' +

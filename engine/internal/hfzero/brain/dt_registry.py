@@ -89,6 +89,14 @@ class ToolContext:
     # tools call the engine REST, like dt_artifact does). Empty in tests
     # and workspace-less chats — tools degrade to actionable messages.
     workspaces: list = field(default_factory=list)
+    # v1.10.3 THE EXPLICIT ENV HAND-OFF: this request's X-Env values (BYOK
+    # keys + the user's HF tokens), set by the chat path. Tools that need
+    # a credential (dt_hf's _get_token) read this INSTEAD of the reqenv
+    # ContextVar — contextvars do not reliably cross the executor/strands
+    # tool-call boundary (live-found in the phase-6 battery: _get_token
+    # answered "HF_TOKEN not set" with BYOK keys on the wire). Plain dict,
+    # per-turn, no process-global state.
+    req_env: dict = field(default_factory=dict)
     # Resolved at call time so a missing memory_layer never breaks imports.
     _memory: Any = None
 

@@ -88,6 +88,10 @@ NO_TOKEN_HINT = "(set HF_TOKEN or HUGGINGFACE_TOKEN in the app environment)"
 HELP_TEXT = """hf — Hugging Face community-library publishing from chat (doomalay)
 
 Actions:
+  self                            → THIS sandbox's identity + resources
+                                    (SPACE_ID, memory, disk, cpus, uptime —
+                                    no token needed; on a Space, an EMPTY repo
+                                    on any space_* action targets ITSELF)
   whoami                          → HF username + token status (nothing else)
   list [repo_type, limit]         → your datasets/models/spaces (id, modified, private)
   publish [path, repo, repo_type, private, commit_message]
@@ -116,7 +120,7 @@ Notes:
   * state: workspace/.doomalay/hf/ (publishes.jsonl + last_publish.json).
 """
 
-SHORT_HELP = ("Actions: whoami, list, publish, publish_text, dataset_card, "
+SHORT_HELP = ("Actions: self, whoami, list, publish, publish_text, dataset_card, "
               "exists, buckets, bucket_create, space_create, space_commit, "
               "help — call action='help' for the cheat-sheet.")
 
@@ -984,6 +988,89 @@ def _norm_repo(repo: str) -> str:
     return r
 
 
+def _default_repo(repo: str) -> str:
+    """v1.10.3 THE SPACE KNOWS ITSELF (D4): an EMPTY repo on a space_*
+    action means "the Space I am running in" — HF sets SPACE_ID in every
+    Space container, so the user never has to type the repo id to see
+    THEIR OWN sandbox's logs/files/restart. Outside a Space (local brain),
+    the empty shape behaves exactly as before (the action's own
+    missing-repo message).
+    """
+    r = _norm_repo(repo)
+    if r:
+        return r
+    return os.environ.get("SPACE_ID", "").strip()
+
+
+def _act_self() -> str:
+    """v1.10.3: the space's self-portrait — identity, hardware, disk,
+    memory, toolchain, uptime. No token, no network: pure local facts
+    (/proc + shutil + os.environ), so it answers even when HF auth is
+    down. This is the "the space knows everything about itself + its free
+    memory and disk" mandate made literal."""
+    import platform
+    import subprocess
+
+    lines = []
+    sid = os.environ.get("SPACE_ID", "").strip()
+    lines.append("space: " + (sid or "(not running inside a Space — local brain)"))
+    if sid:
+        lines.append("url: https://huggingface.co/spaces/" + sid)
+        author = os.environ.get("SPACE_AUTHOR_NAME", "").strip()
+        if author:
+            lines.append("author: " + author)
+    lines.append(f"host: {platform.system()} {platform.release()} "
+                 f"({platform.machine()}) · python {platform.python_version()}")
+    lines.append(f"cpus: {os.cpu_count() or '?'}")
+
+    # memory — /proc/meminfo is the container-honest source on Linux
+    try:
+        mem = {}
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for ln in f:
+                k, _, v = ln.partition(":")
+                mem[k.strip()] = v.strip()
+        tot = int(mem.get("MemTotal", "0").split()[0]) // 1024
+        avail = int(mem.get("MemAvailable", "0").split()[0]) // 1024
+        if tot:
+            lines.append(f"memory: {avail} MB available of {tot} MB total")
+    except Exception:
+        pass
+
+    # disk — /data is the persistent volume when present; / is the root fs
+    for label, path in (("disk /data (persistent, survives sleeps)", "/data"),
+                        ("disk / (ephemeral container)", "/")):
+        try:
+            du = shutil.disk_usage(path)
+            lines.append(f"{label}: {du.free // (1024**3)} GB free of {du.total // (1024**3)} GB")
+        except Exception:
+            pass
+
+    # uptime
+    try:
+        with open("/proc/uptime", encoding="utf-8") as f:
+            up_s = float(f.read().split()[0])
+            lines.append(f"uptime: {int(up_s // 3600)}h{int((up_s % 3600) // 60)}m")
+    except Exception:
+        pass
+
+    # toolchain versions (best-effort, never fatal)
+    for name, cmd in (("node", ("node", "--version")), ("git", ("git", "--version"))):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            v = (out.stdout or "").strip().splitlines()[0] if (out.stdout or "").strip() else ""
+            if v:
+                lines.append(f"{name}: {v}")
+        except Exception:
+            pass
+
+    cwd = os.getcwd()
+    lines.append(f"cwd: {cwd}")
+    lines.append("note: /data survives sleeps but NOT factory resets; pip/npm/apt "
+                 "installs vanish on restart — reinstall what you need. See HARNESS.md.")
+    return "\n".join(lines)
+
+
 def _slugify_name(text: str) -> str:
     """Repo-name-safe slug (lowercase, [a-z0-9-])."""
     txt = unicodedata.normalize("NFKD", str(text or "")).encode(
@@ -1052,7 +1139,7 @@ def _act_space(api_factory, env, repo: str) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     if not repo:
         return "space: missing ? repo=user/name"
     st, raw = _hf_rest("GET", f"/api/spaces/{repo}", token)
@@ -1180,7 +1267,7 @@ def _act_space_commit(api_factory, env, repo: str, files_json: str,
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_commit")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     if not repo:
         return "space_commit: missing ? repo=user/name"
     try:
@@ -1219,7 +1306,7 @@ def _act_space_files(api_factory, env, repo: str) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_files")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     st, raw = _hf_rest("GET", f"/api/spaces/{repo}/tree/main", token)
     if st != 200:
         return _redact(f"space_files failed (HTTP {st}): {raw[:300]}", [token])
@@ -1236,7 +1323,7 @@ def _act_space_read(api_factory, env, repo: str, path: str) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_read")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     path = (path or "").strip().lstrip("/")
     if not path:
         return "space_read: missing path"
@@ -1252,7 +1339,7 @@ def _act_space_restart(api_factory, env, repo: str, factory: bool) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_restart")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     fac = "true" if factory else "false"
     st, raw = _hf_rest("POST", f"/api/spaces/{repo}/restart?factory={fac}",
                        token, body={}, timeout=60)
@@ -1267,7 +1354,7 @@ def _act_space_pause(api_factory, env, repo: str) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_pause")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     st, raw = _hf_rest("POST", f"/api/spaces/{repo}/pause", token, body={},
                        timeout=60)
     if st not in (200, 201, 202):
@@ -1280,7 +1367,7 @@ def _act_space_secret(api_factory, env, repo: str, key: str, value: str) -> str:
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_secret")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     key = (key or "").strip()
     if not key:
         return "space_secret: missing key (values are write-only — set only)"
@@ -1297,7 +1384,7 @@ def _act_space_logs(api_factory, env, repo: str, log_type: str,
     token = _get_token(env)
     if not token:
         return _no_token_msg("space_logs")
-    repo = _norm_repo(repo)
+    repo = _default_repo(repo)
     lt = "build" if str(log_type).lower() == "build" else "run"
     n = max(10, min(int(tail or 100), 500))
     st, raw = _hf_rest("GET", f"/api/spaces/{repo}/logs/{lt}?tail={n}",
@@ -1318,7 +1405,8 @@ def run_action(action, *, workspace=None, state_dir=None, log=None,
                private=False, commit_message: str = "", summary: str = "",
                limit: int = 20, upload=False, files_json: str = "",
                key: str = "", value: str = "", tail: int = 100,
-               factory=False, sdk: str = "static") -> str:
+               factory=False, sdk: str = "static",
+               log_type: str = "run") -> str:
     """Route an action. NEVER raises — every failure is an actionable string.
 
     api_factory/env are the two injection seams that keep this unit-testable
@@ -1329,6 +1417,8 @@ def run_action(action, *, workspace=None, state_dir=None, log=None,
     try:
         if action == "help":
             return HELP_TEXT
+        if action == "self":
+            return _act_self()
         if action == "whoami":
             return _act_whoami(api_factory, env)
         if action == "list":
@@ -1408,6 +1498,11 @@ def build(ctx) -> list:
         except Exception:
             _state = None                             # state optional — degrade
         _log_fn = getattr(ctx, "log", None)
+        # v1.10.3 THE EXPLICIT ENV HAND-OFF: the request's X-Env values
+        # (BYOK keys + the user's HF tokens), threaded explicitly by the
+        # chat path — the reqenv ContextVar does not cross the strands
+        # tool-call boundary (live-found, phase-6 battery).
+        _req_env = dict(getattr(ctx, "req_env", None) or {})
 
         @strands_tool_decorator(name="hf", description=(
             "The Hugging Face toolkit — publish chat results, workspace files, "
@@ -1418,6 +1513,9 @@ def build(ctx) -> list:
             "(Space / Dataset / Model / Storage bucket), manage their Space, "
             "or check their repos. YOU ARE AUTHORIZED to create repos with "
             "the connected token once the user asks — say what you made. "
+            "v1.10.3: you run INSIDE a Space — action='self' reports your own "
+            "identity/memory/disk/uptime, and every space_* action with an "
+            "EMPTY repo targets the Space you are running in (SPACE_ID). "
             "Library actions: whoami, list, publish, publish_text, "
             "dataset_card, exists. Bucket actions: buckets (list), "
             "bucket_create (S3-like storage — large mutable files). Space "
@@ -1434,11 +1532,11 @@ def build(ctx) -> list:
                 summary: str = "", limit: int = 20, upload: bool = False,
                 files_json: str = "", key: str = "", value: str = "",
                 tail: int = 100, factory: bool = False,
-                sdk: str = "static") -> str:
+                sdk: str = "static", log_type: str = "run") -> str:
             """Publish to the Hugging Face library + manage Spaces.
-            action: whoami | list | publish | publish_text | dataset_card | exists | buckets | bucket_create | spaces | space | space_create | space_commit | space_files | space_read | space_restart | space_pause | space_secret | space_logs | help
+            action: self | whoami | list | publish | publish_text | dataset_card | exists | buckets | bucket_create | spaces | space | space_create | space_commit | space_files | space_read | space_restart | space_pause | space_secret | space_logs | help
             path: workspace-relative file/dir/glob (publish) OR the file path inside a Space (space_read)
-            repo: HF repo id; default <username>/doomalay-<slug>
+            repo: HF repo id; EMPTY on space_* actions = the Space you run in (SPACE_ID); otherwise default <username>/doomalay-<slug>
             name: file name for publish_text (slugged, extension kept)
             content: the text to publish (publish_text)
             repo_type: dataset | model | space (default dataset)
@@ -1450,16 +1548,18 @@ def build(ctx) -> list:
             files_json: space_commit — JSON list [{"path": "...", "content": "..."}]
             key / value: space_secret — the secret name + its value (write-only)
             tail: space_logs — how many lines (default 100)
+            log_type: space_logs — build | run (default run)
             factory: space_restart — rebuild the container from scratch
             sdk: space_create — gradio | static | docker (default static — free on every account)
             """
             return run_action(action, workspace=_ws, state_dir=_state, log=_log_fn,
+                              env=_req_env,
                               path=path, repo=repo, name=name, content=content,
                               repo_type=repo_type, private=private,
                               commit_message=commit_message, summary=summary,
                               limit=limit, upload=upload, files_json=files_json,
                               key=key, value=value, tail=factory and 100 or tail,
-                              factory=factory, sdk=sdk)
+                              factory=factory, sdk=sdk, log_type=log_type)
 
         return [hf]
     except Exception:
