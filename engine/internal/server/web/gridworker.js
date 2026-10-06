@@ -108,6 +108,12 @@ function applyDpr() {
 
 function paintFrame(m) {
   if (!gctx) return;
+  // v1.09.3 THE STILL HAND — the hosts report the zoom-gesture state per
+  // frame; while held, the tile ladder never arms a bake mid-gesture
+  // (the stretch rides; one bake lands at settle).
+  if (m.zg !== undefined && globalThis.Lattice && globalThis.Lattice.setZoomHold) {
+    try { globalThis.Lattice.setZoomHold(!!m.zg); } catch (eZ) {}
+  }
   if (m.P !== undefined) { P = m.P; Pf = m.pf || ''; }
   // v0.88: the entity-clone omission — clone set arrives only on change
   if (m.entities !== undefined && m.entities !== null) { E = m.entities; entsMsgs++; }

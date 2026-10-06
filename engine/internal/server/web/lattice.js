@@ -1220,6 +1220,26 @@
   //     still wanted, the swap — and the host gets one repaint-wanted ping
   //     (the v0.97.1 follow-up frame, minus the storm: this fires ONCE per
   //     (params, level) per session, not per zoom-tick).
+  // v1.09.3 THE STILL HAND — the zoom-gesture hold. While a pinch/wheel
+  // gesture is live (the hosts report it per frame), a ladder mismatch
+  // keeps the STRETCHED current set and the bake timer is never armed: a
+  // mid-gesture bake runs synchronously in the worker (the same thread
+  // that paints the frames) and the set swap uploads the new tile bitmaps
+  // mid-pinch — the hitch at every ~1.25× level crossing. The stretch is
+  // EXACT by world-proportionality (the v0.98 law) — the gesture renders
+  // pure parallax, nothing recomputes ("if everythin is already pre-baked,
+  // the entire canvas, then zoomin should just be the parralax movements")
+  // — and the first un-held frame arms the debounce, so ONE bake lands
+  // ~150ms after settle with the existing repaint-wanted → post-bake
+  // plumbing. (The map-library contract: Leaflet re-renders grid layers at
+  // gesture end, not per frame.)
+  var Z_HOLD = false;
+  function setZoomHold(v) {
+    Z_HOLD = !!v;
+    // nothing to do on release: the pending fingerprint (refreshed every
+    // held frame) arms the bake on the NEXT render's tlBakeTiles call.
+  }
+
   function tlBakeTiles(P, cam, W, H) {
     var cur = tlCurrentFp(P, cam, W, H);
     var fp = cur.fp;
@@ -1234,6 +1254,15 @@
       return cached;
     }
     TL.ladderMisses++;
+    if (Z_HOLD && TL.tiles) {
+      // THE HOLD — an unseen level mid-gesture: record the pending bake
+      // payload WITHOUT arming the timer; the current set keeps rendering
+      // stretched (exact geometry, transient sharpness cost only). The
+      // release frame re-enters here (fp still mismatched) and arms
+      // normally.
+      TL.pendP = P; TL.pendFp = fp; TL.pendQ = cur.q; TL.pendRef = cur.refKey;
+      return TL.tiles;
+    }
     if (!TL.tiles) {
       // boot parity: the FIRST set paints synchronously (the old first
       // frame cost exactly this once) — every later set is async.
@@ -2516,6 +2545,12 @@
     // frame sat on the bitmap forever once the ambient loop rested —
     // the mesh→plain parity catch).
     rebakePending: function () { return !!TL.bakeT; },
+    // v1.09.3 THE STILL HAND — the hosts report the zoom-gesture state per
+    // frame (worker mode via the frame message's zg field, main mode
+    // direct). While held, ladder bakes never arm (the stretch rides;
+    // one bake lands at settle).
+    setZoomHold: setZoomHold,
+    zoomHold: function () { return Z_HOLD; },
     lastStats: function () { return lastStats; },
     IN_WORKER: IN_WORKER,
     cheapJSON: cheapJSON,       // v0.88: the spec digests (app.js's gates)
@@ -2528,6 +2563,7 @@
         heroes: TL.tiles ? TL.tiles.heroes.length : 0,
         bakeGen: TL.gen,
         pending: !!TL.bakeT,
+        zoomHold: Z_HOLD,   // v1.09.3: the still-hand state (the rig proof)
         legacyFails: TL.legacyFails,
         legacy: !!ROOT.__doomalayLatticeLegacy,
         lastError: TL.lastError || null,

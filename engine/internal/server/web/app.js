@@ -382,6 +382,7 @@
         t: 'frame',
         cam: { ox: offsetX, oy: offsetY, scale: scale },
         par: par01,   // v0.90.2: the Amplify parallax rides the frame (the nebula's lit limb)
+        zg: zoomHold() ? 1 : 0,   // v1.09.3: the still hand — hold ladder bakes mid-gesture
         dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : [],
         atomsOnly: !!atomsOnly,
         arrows: atomsOnly ? [] : computeArrows(),
@@ -427,6 +428,8 @@
       } catch (e) {}
       return;
     }
+    // v1.09.3: main mode — the still hand rides the direct export
+    try { if (window.Lattice && window.Lattice.setZoomHold) window.Lattice.setZoomHold(zoomHold()); } catch (eZ) {}
     var stats = Lattice.render(ctx, ctx2, W, H,
       { ox: offsetX, oy: offsetY, scale: scale,
         dots: (window.TabGroups && window.TabGroups.active()) ? window.TabGroups.dotsFor() : null },
@@ -1514,6 +1517,26 @@
   let pinchStartOffsetX = 0, pinchStartOffsetY = 0;
   let pinchCenter = { x: 0, y: 0 };
 
+  // v1.09.3 THE STILL HAND — the zoom-gesture state the painter holds its
+  // ladder bakes on (lattice.js setZoomHold). A pinch holds while the two
+  // fingers are down; a wheel burst holds for 200ms after its last event.
+  // The mid-gesture stretch is exact by world-proportionality — the
+  // gesture recomputes NOTHING (the user: "zoomin should just be the
+  // parralax movements which should be nothin computation wise") — and
+  // the RELEASE frame arms the settle bake, so the gesture end always
+  // schedules one more frame.
+  let lastWheelAt = -1e9, wheelSettleT = 0;
+  function zoomHold() {
+    return pinching || (performance.now() - lastWheelAt < 200);
+  }
+  function zoomReleaseFrame() {
+    if (wheelSettleT) clearTimeout(wheelSettleT);
+    wheelSettleT = setTimeout(function () {
+      wheelSettleT = 0;
+      scheduleUpdate();   // the settle frame — zg=false, the bake arms
+    }, 220);
+  }
+
   function touchDist(t1, t2) {
     const dx = t1.clientX - t2.clientX;
     const dy = t1.clientY - t2.clientY;
@@ -1603,15 +1626,25 @@
   document.addEventListener('touchend', function (e) {
     if (!onCanvasSurface(e.target)) return;
     if (e.touches.length === 0) {
-      if (pinching) pinching = false;
+      if (pinching) {
+        pinching = false;
+        scheduleUpdate();   // v1.09.3: the release frame — zg=false arms the settle bake
+      }
       e.preventDefault(); inputEnd();
     } else if (e.touches.length === 1 && pinching) {
       pinching = false; inputState = 'IDLE'; velX = 0; velY = 0;
+      // v1.09.3: the two→one transition IS the zoom's release for real
+      // fingers (and CDP lifts them one at a time) — this frame carries
+      // zg=false and arms the settle bake.
+      scheduleUpdate();
     }
   }, { passive: false });
 
   document.addEventListener('touchcancel', function () {
-    if (pinching) pinching = false;
+    if (pinching) {
+      pinching = false;
+      scheduleUpdate();   // v1.09.3: the release frame arms the settle bake
+    }
     if (inputState !== 'IDLE') inputEnd();
   });
 
@@ -1627,7 +1660,9 @@
   document.addEventListener('wheel', function (e) {
     if (!onCanvasSurface(e.target)) return;
     e.preventDefault();
+    lastWheelAt = performance.now();   // v1.09.3: the wheel burst holds the ladder
     zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX, e.clientY);
+    zoomReleaseFrame();
   }, { passive: false });
 
   document.addEventListener('contextmenu', function (e) {
