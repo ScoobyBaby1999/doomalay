@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.10.2"   // v1.10.2 THE HONEST SKY: the amplifier retires its three mis-features (the amp-only hero fireflies that tiled, the static glow brighter than the amp-0 grid, the over-icons split that painted big stars over the icons) and keeps the honest feature — the same dots/lines at per-depth parallax; comets gate on scatter > 40 and run x10 rarer (180-440s, first 60-160s).
+var Version = "1.10.3"   // v1.10.3 THE TRUE DEPTH: the amplifier gains ZOOM parallax — each depth band's drawn period scales by S^((pf-1)*kZ), near planes grow faster on zoom-in, world-true at scale 1 and at amp 0; pattern-matrix math only (zero new elements, zero new fills, the STILL HAND contract holds).
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release

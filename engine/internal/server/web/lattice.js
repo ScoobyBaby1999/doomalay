@@ -1819,6 +1819,18 @@
       if (!gc) continue;
       var bpf = bt.pf;
       var Tcss = bt.tile.M * spacingNow;   // v0.98: the layer's own period
+      // v1.10.3 THE TRUE DEPTH — per-band ZOOM parallax. The pan parallax
+      // (bx = -(ox·scale·pf)) always had depth; zoom scaled every band
+      // identically, so zooming read flat. Each band's drawn period now
+      // scales by S^((pf−1)·kZ): near planes (pf > 1) grow faster on
+      // zoom-in, far planes slower — the planes DIVERGE under zoom the
+      // way the user asked ("amplify the parallax effect while zooming
+      // in/out and moving the canvas around"). World-true at scale 1 and
+      // at amp 0 (pf = 1 → exponent 0); pattern-matrix math only — the
+      // user's own "nothin computation wise"; zero new elements, zero
+      // new fills, no bake involvement (the STILL HAND contract holds).
+      var zAdj = Math.pow(Math.max(scale, 0.05), (bpf - 1) * 0.6);
+      Tcss *= zAdj;
       var bx = -(offsetX * scale * bpf), by = -(offsetY * scale * bpf);
       var phx = ((bx % Tcss) + Tcss) % Tcss;
       var phy = ((by % Tcss) + Tcss) % Tcss;
@@ -1929,6 +1941,10 @@
       weight: { jrMin: dbg.jrMin === Infinity ? 0 : dbg.jrMin, jrMax: dbg.jrMax,
         wMin: dbg.wMin === Infinity ? 0 : dbg.wMin, wMax: dbg.wMax,
         effFracD: effFracD, effFracL: effFracL },
+      // v1.10.3: the top band's zoom-depth factor (the rig's proof —
+      // 1 at amp 0 or scale 1; > 1 zoomed in with the amplifier up)
+      zoomAdj: (amp > 0) ? Math.pow(Math.max(scale, 0.05), (bandPF(AMP_BANDS - 1) - 1) * 0.6) : 1,
+      zoomScale: scale,
       overIcons: { on: !!(overDotsOn || overLinesOn),
         dots: dbg.overDots, lines: dbg.overLines,
         threshD: overDotsOn ? overThreshD : null,
