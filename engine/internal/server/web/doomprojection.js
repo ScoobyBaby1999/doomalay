@@ -118,8 +118,10 @@
   var memoEpoch = 0;
   var writeEpoch = 0;
   var paintStamp = 0;
+  var lastPaintAt = 0;   // v1.10.1 THE BREATH — the clock behind the 2Hz re-anchor
+  var BREATH_MS = 500;   // the user: "update like twice a second to look smooth but be performant"
   var trackedScrollers = [];
-  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0, yielded: 0, coasts: 0, deferred: 0 };
+  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0, yielded: 0, coasts: 0, deferred: 0, breaths: 0 };
   var on = false;
   var obs = null, gatesObs = null;
 
@@ -987,23 +989,39 @@
     // window the observer's gate uses).
     var gestFresh = !!(window.__doomalayGestureAt &&
       performance.now() - window.__doomalayGestureAt < 200);
+    // v1.10.1 THE BREATH — while a motion window is open the field used to
+    // freeze COMPLETELY until the settle (one re-anchor at rest). The user:
+    // "it updates one time after the panel is at rest. It should update like
+    // twice a second to look smooth but be performant." So a full re-anchor
+    // paint is ALLOWED mid-motion at most every BREATH_MS: it un-coasts,
+    // re-anchors every window to the live geometry, re-syncs the vars, and
+    // the next motion() edge re-coasts. The drift error drops from "the
+    // whole glide" to "≤500ms of motion"; the cost is bounded at 2 paints/s
+    // during motion instead of the per-frame storm the coast replaced.
+    var breathDue = performance.now() - lastPaintAt >= BREATH_MS;
     if (dirty || movingLayout > 0) {
-      if (movingRoot > 0 && gestFresh) {
+      if (movingRoot > 0 && gestFresh && !breathDue) {
         // THE DEFER — a full paint while the motion window is open would
         // un-coast every window mid-glide (the var-form re-anchor re-arms
         // the per-frame glyph rasters the coast just disconnected). The
         // dirty/movingLayout state stays PENDING; the paint lands one
         // frame after the window closes (the settle: un-coast +
-        // re-anchor + the trailing vars sync). A real content change
-        // during a ≤300ms glide waits that long — invisible.
+        // re-anchor + the trailing vars sync) — or at the next breath.
         stats.deferred++;   // v1.09.1 instrument: mid-glide paints held
       } else {
         paint();
+        lastPaintAt = performance.now();
         dirty = false;
         if (movingLayout > 0) movingLayout--;
       }
     } else if (movingRoot > 0) {
-      motionTick();
+      if ((coasting || gestFresh) && breathDue) {
+        paint();           // THE BREATH — the mid-motion re-anchor
+        lastPaintAt = performance.now();
+        stats.breaths++;   // v1.10.1 instrument: the 2Hz mid-motion re-anchors
+      } else {
+        motionTick();
+      }
     }
     if (movingRoot > 0) movingRoot--;
     // settle: when a motion window closes, one final full paint
@@ -1018,6 +1036,7 @@
         if (!gestRetry) gestRetry = setTimeout(gestRetryFn, 240);
       } else {
         paint();
+        lastPaintAt = performance.now();
       }
     }
     if (dirty || movingRoot > 0 || movingLayout > 0) schedule();
@@ -1032,6 +1051,8 @@
       mark();   // the gesture truly ended — the ONE settle paint
     }
   }
+  // v1.10.1: every paint path stamps the breath clock (the counters above
+  // cover run(); mark()'s direct paints land through run() as well).
   function mark() { dirty = true; schedule(); }
   // v1.08.5 THE COAST — the motion-window edge disconnects every painted
   // LEGACY window from the per-frame root vars: its background-position
