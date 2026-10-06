@@ -476,6 +476,13 @@
           ctx2 = canvas2 ? canvas2.getContext('2d') : null;
           Painter.mode = 'main';
           try { window.DoomalayPerf.painter = 'main'; } catch (e) {}
+          // v1.06.1: main mode — an async ladder bake landing between frames
+          // must request its own follow-up frame (the worker path rides the
+          // repaint-wanted reply instead)
+          try {
+            if (window.Lattice && window.Lattice.onBakeReady)
+              window.Lattice.onBakeReady(schedulePostBakeFrame);
+          } catch (e2) {}
         }
         Painter.pending = false;
         resolve();

@@ -259,6 +259,13 @@
     { x: 92, y: 58, f: 48 }, { x: 8, y: 45, f: 52 }
   ];
   var bgView = { tw: 0, th: 0, zx: 1, px: 0, py: 0 };  // the live parallax camera (sampler feed)
+  // v1.06.1 THE ZOOM LADDER: bakes sample through a FIXED reference window
+  // (viewport-sized at scale 1, no parallax phase) instead of the live bgView —
+  // a cell's color becomes a pure function of its world position: rebake-
+  // stable, zoom-stable. (The live fold made colors reshuffle at every rebake
+  // AND forced the zoom-continuous bgKey into the bake fingerprint — the two
+  // halves of the zoom-in rebake storm + the color snap.)
+  var bakeViewRef = null;
   function makePatternSampler(spec, fallbackHex) {
     var stops = validStopsOf(spec);
     if (stops.length < 2) return null;
@@ -353,10 +360,11 @@
     }
 
     return function (sx, sy) {
-      var tw = bgView.tw || 1024, th = bgView.th || 1024, zx = bgView.zx || 1;
+      var V = bakeViewRef || bgView;   // v1.06.1: the reference window when baking
+      var tw = V.tw || 1024, th = V.th || 1024, zx = V.zx || 1;
       var tw2 = 2 * tw, th2 = 2 * th;
-      var bx = ((sx - bgView.px) % tw2 + tw2) % tw2;
-      var by = ((sy - bgView.py) % th2 + th2) % th2;
+      var bx = ((sx - V.px) % tw2 + tw2) % tw2;
+      var by = ((sy - V.py) % th2 + th2) % th2;
       if (bx > tw) bx = tw2 - bx;
       if (by > th) by = th2 - by;
       var lx = bx / zx, ly = by / zx;
@@ -395,6 +403,7 @@
   // posts tex-ready; the main thread sends the next frame).
   var texCache = {};
   var onTexReadyCb = null;
+  var onBakeReadyCb = null;   // v1.06.1: a ladder bake landed — the host repaints once
   function texImageFor(url) {
     if (!url || typeof url !== 'string') return null;
     var e = texCache[url];
@@ -675,7 +684,15 @@
   // pays it. TEMPO = the global slow-down (the user's other ask).
   var TEMPO = 0.5;
   var TL = { fp: '', tiles: null, pendP: null, pendCam: null, bakeT: 0,
-             gen: 0, cellRecords: 0, legacyFails: 0 };
+             gen: 0, cellRecords: 0, legacyFails: 0,
+             // v1.06.1 THE ZOOM LADDER: per-level tile sets, LRU + byte-capped.
+             // A zoom into a SEEN level = instant pattern swap (zero bakes);
+             // an unseen level bakes ASYNC at its canonical scale — never
+             // inside a frame. The current set keeps rendering stretched
+             // (geometry exact by world-proportionality, ≤1.12× soft raster).
+             sets: new Map(), ladderBytes: 0, LADDER_CAP: 128 * 1024 * 1024,
+             wantFp: '', pendFp: '', pendQ: 0, pendRef: '',
+             ladderHits: 0, ladderMisses: 0, lastBakeMs: 0 };
 
   // v0.98 THE PARITY PERIOD-INTERLEAVE (the tiling kill) + THE ZOOM FIX.
   // ZOOM: the tile pair no longer derives from the zoom — it comes from
@@ -694,24 +711,35 @@
   // period now; with animDots off both layers draw at alpha 1). Lines
   // interleave the same way: verticals by column parity, horizontals
   // by row parity.
-  var TL_PAIRS = [[10, 16], [8, 14], [6, 10], [4, 6]];
-  var TL_BUDGET = 96 * 1024 * 1024;   // was 40MB — the pair needs the room
+  var TL_PAIRS = [[10, 16], [8, 14], [6, 10], [4, 6]];  
+  // v1.06.1: 96MB → 32MB — the budget sized ONE resident set at FULL device
+  // raster; the ladder keeps several (LRU-capped at TL.LADDER_CAP), so each
+  // set slims. Rref phone ≈ 1.56 (78% of pixel-perfect — dots/lines are
+  // 1-2px antialiased shapes, forgiving; heroes/over-icons draw live at full
+  // res regardless). The on-screen sharpness s·dpr/Rref is level-INDEPENDENT,
+  // so this is one uniform, mild softening — not a zoom-dependent one.
+  var TL_BUDGET = 32 * 1024 * 1024;
   function tlLcm(a, b) { var g = a, t = b; while (t) { var x = g % t; g = t; t = x; } return (a / g) * b; }
   function tlRasterQ(r) {
     if (!(r > 0.01)) r = 0.01;
     return Math.max(0, Math.round(Math.log(r) / Math.log(1.25)));
   }
 
-  function tlFingerprint(P, rq, pair, bgKey) {
+  function tlFingerprint(P, rq, pair, refKey) {
     var cj = cheapJSON;
     return [P.scatterL, P.scatterD, P.sizeVarL, P.sizeVarD, P.rotVarL, P.rotVarD,
       P.biasL, P.biasD, P.animDots ? 1 : 0, P.animLines ? 1 : 0, P.gridSize,
       P.hideLines ? 1 : 0, P.hideDots ? 1 : 0, P.amp.toFixed(4),
       P.specs && P.specs.dotColor ? cj(P.specs.dotColor) : '', P.t.dotColor,
       P.specs && P.specs.lineColor ? cj(P.specs.lineColor) : '', P.t.lineColor,
-      cj(P.canvasSpec), P.bgFallback, rq, pair[0], pair[1], bgKey,
+      cj(P.canvasSpec), P.bgFallback, rq, pair[0], pair[1], refKey,
       Math.round(TL_DPR * 10)].join('|');
   }
+  // v1.06.1: refKey = the REFERENCE fold window (2×viewport, resize-only).
+  // NOTHING continuous-with-zoom remains in the fingerprint: `rq` below is the
+  // LEVEL (a 1.25× quantum of scale itself), so a pinch inside one level
+  // changes NOTHING the bake depends on. (The old bgKey carried bgView.zx,
+  // which moves every frame once scale > 1 — the storm's root cause.)
 
   // tlPickPair — the budget ladder at the REFERENCE spacing (scale 1 —
   // zoom-stable by construction). Returns the pair + the reference
@@ -757,29 +785,89 @@
              cells: tlLcm(chosen[0], chosen[1]) };
   }
 
-  // tlCurrentFp — the per-frame gate: pick + effective raster + the
-  // fingerprint (raster-quantized, pair-stamped, bg-view-stamped).
-  function tlCurrentFp(P, cam) {
-    var spacingRef = GRID_BASE * (P.gridSize || 1);
-    var pick = tlPickPair(P, spacingRef);
-    var R = Math.max(0.35, Math.min(TL_DPR, pick.Rref / Math.max(0.05, cam.scale)));
-    var bgKey = Math.round(bgView.tw) + 'x' + Math.round(bgView.th) + '@' + (bgView.zx || 1).toFixed(3);
-    var rq = tlRasterQ(R);
-    return { pick: pick, R: R, rq: rq,
-             fp: tlFingerprint(P, rq, pick.pair, bgKey) };
+  // tlLevelOf — v1.06.1: the level IS the zoom quantum. levelOf(scale) =
+  // round(log(scale)/log(1.25)) → scale ∈ (1.25^(q−0.5), 1.25^(q+0.5)] maps to
+  // level q; the level bakes at scaleQ = 1.25^q so the runtime pattern stretch
+  // ps = scale/scaleQ stays within (0.89, 1.12] BY CONSTRUCTION — a level swap
+  // never pops geometry, only sharpness lands (once, async).
+  function tlLevelOf(scale) {
+    // v1.06.1: the level quantum of scale, FLOORED AT 0 — deliberate: the
+    // whole zoom-OUT range (s < 0.89) rides level 0's set DOWNSCALED (ps<1 =
+    // a supersample — sharp for free), so negative levels would only mint
+    // redundant sets. Zoom-IN (s > 1.118) gets real levels 1..5.
+    return tlRasterQ(scale);
   }
 
-  // tlBake — builds every (band × kind) tile for the current params.
-  // Returns the tile SET record (also stored on TL.tiles).
-  function tlBake(P, cam) {
+  // tlCurrentFp — the per-frame gate: the level for THIS scale + the
+  // zoom-stable fingerprint (level-quantized, pair-stamped, refKey-stamped).
+  function tlCurrentFp(P, cam, W, H) {
+    var spacingRef = GRID_BASE * (P.gridSize || 1);
+    var pick = tlPickPair(P, spacingRef);
+    var q = tlLevelOf(Math.max(0.05, cam.scale));
+    var refKey = (W && H) ? (Math.round(2 * W) + 'x' + Math.round(2 * H)) : '0x0';
+    return { pick: pick, q: q, refKey: refKey,
+             fp: tlFingerprint(P, q, pick.pair, refKey) };
+  }
+
+  // tlBakeCanonical — v1.06.1: builds every (band × kind) tile for ONE
+  // ladder level, at that level's CANONICAL scale (scaleQ = 1.25^q) and raster
+  // (Rref/scaleQ, TL_DPR-clamped). The set is a pure function of (params, q,
+  // refKey): cacheable forever, gesture-independent. Colors sample through
+  // the REFERENCE window (zoom-stable). Returns the set (cached in TL.sets;
+  // the CALLER decides whether it becomes the current set).
+  function tlSetBytes(T) {
+    var b = 0;
+    for (var i = 0; i < T.list.length; i++) b += T.list[i].tile.D * T.list[i].tile.D * 4;
+    T.bytes = b;
+    return b;
+  }
+  function tlEvict(keepFp) {
+    while (TL.ladderBytes > TL.LADDER_CAP && TL.sets.size > 1) {
+      var victim = null;
+      TL.sets.forEach(function (v, k) {
+        if (!victim && k !== keepFp && k !== TL.fp) victim = k;
+      });
+      if (!victim) break;
+      var vt = TL.sets.get(victim);
+      TL.ladderBytes -= (vt && vt.bytes) || 0;
+      TL.sets.delete(victim);
+    }
+  }
+  function tlBakeCanonical(P, q, refKey) {
     var tb0 = performance.now();
-    var scaleQ = cam.scale;
+    var spacingRef = GRID_BASE * (P.gridSize || 1);
+    var pick = tlPickPair(P, spacingRef);
+    var scaleQ = Math.pow(1.25, q);
+    var R = Math.max(0.35, Math.min(TL_DPR, pick.Rref / scaleQ));
+    var fp = tlFingerprint(P, q, pick.pair, refKey);
+    var had = TL.sets.get(fp);
+    if (had) return had;                     // the ladder hit (already baked)
+    var prevViewRef = bakeViewRef;
+    var rk = String(refKey || '0x0').split('x');
+    bakeViewRef = { tw: parseFloat(rk[0]) || 1024, th: parseFloat(rk[1]) || 1024,
+                    zx: 1, px: 0, py: 0 };
+    var T = null;
+    try {
+      T = tlBakeWalk(P, q, pick, scaleQ, R, fp, spacingRef);
+    } finally {
+      bakeViewRef = prevViewRef;             // NEVER leak the reference window
+    }
+    T.bakeMs = performance.now() - tb0;
+    TL.lastBakeMs = T.bakeMs;
+    tlSetBytes(T);
+    TL.sets.set(fp, T);
+    TL.ladderBytes += T.bytes || 0;
+    tlEvict(fp);
+    TL.gen = T.gen;
+    return T;
+  }
+
+  // tlBakeWalk — the tile walk itself (the pre-v1.06.1 tlBake body, with
+  // scaleQ/R/fp passed in canonically instead of derived from the live cam).
+  function tlBakeWalk(P, q, pick, scaleQ, R, fp, spacingRef) {
     var t = P.t, specs = P.specs;
-    var spacingQ = GRID_BASE * (P.gridSize || 1) * scaleQ;
-    var cur = tlCurrentFp(P, cam);
-    var pick = cur.pick, R = cur.R, rq = cur.rq, fp = cur.fp;
+    var spacingQ = spacingRef * scaleQ;
     var MA = pick.pair[0], MB = pick.pair[1];
-    if (TL.fp === fp && TL.tiles) return TL.tiles;
 
     var amp = P.amp;
     var scatterPxL = P.scatterL * 0.6, scatterPxD = P.scatterD * 0.6;
@@ -810,7 +898,7 @@
     function depthT(h, sizeFrac) { return sizeFrac > 0.02 ? h : 0.5; }
     function bandOf(tt) { var k = Math.floor(tt * AMP_BANDS); return k < 0 ? 0 : (k >= AMP_BANDS ? AMP_BANDS - 1 : k); }
 
-    var T = { fp: fp, M: MA, MA: MA, MB: MB, cells: pick.cells, R: R,
+    var T = { fp: fp, M: MA, MA: MA, MB: MB, cells: pick.cells, R: R, q: q,
               scaleQ: scaleQ, spacingQ: spacingQ, list: [],
               heroes: [], cellRecords: 0, gen: ++TL.gen, bakeMs: 0 };
 
@@ -827,11 +915,13 @@
     }
     function foldSample(sampler, a, b, jx, jy) {
       if (!sampler) return null;
-      // v0.98: the identity window — the mirror fold made every tile's
-      // color field symmetric (a recognizable repetition signature). A
-      // dot/segment is a discrete object: its color needs no seam
+      // v1.06.1: sample at the REFERENCE world position (spacingRef + the
+      // reference-scaled jitter) — the color is a function of the world cell,
+      // never of the bake scale (jx/jy arrive ×scaleQ; sc divides it back).
+      // A dot/segment is a discrete object: its color needs no seam
       // guarantee, just a window into the field.
-      return sampler(a * spacingQ + jx, b * spacingQ + jy);
+      var sc = spacingRef / spacingQ;
+      return sampler(a * spacingRef + jx * sc, b * spacingRef + jy * sc);
     }
     // drawWrapped — the seamless-tile primitive: an item crossing an edge
     // is drawn AGAIN shifted by ±tileSize (complete coverage, and no
@@ -1080,50 +1170,70 @@
       }
     }
 
-    T.bakeMs = performance.now() - tb0;
-    TL.fp = fp;
-    TL.tiles = T;
+    T.bakeMs = 0;                              // v1.06.1: set by tlBakeCanonical
     TL.cellRecords = T.cellRecords;   // v0.97.1: the instrument read TL, not T
     return T;
   }
 
-  // tlBakeTiles — the entry: returns the current set, baking synchronously
-  // on FIRST use (boot parity: the old first frame cost exactly this once)
-  // and debouncing REPLACEMENT bakes 150ms (slider drags, pinch settles —
-  // the interim frames render with the current tiles).
-  function tlBakeTiles(P, cam) {
-    if (TL.tiles && TL.fp) {
-      var fp = tlCurrentFp(P, cam).fp;
-      if (fp !== TL.fp) {
-        // v0.97.1 FIX — the trailing debounce must NOT re-arm itself every
-        // frame (the ambient frames kept resetting the 150ms clock, so a
-        // rebake NEVER fired and the app rendered the stale tile set
-        // forever — the classic self-arming debounce bug, caught by the
-        // v097 rig's mesh worst case). The clock starts at the FIRST
-        // mismatch; later frames only refresh the payload (bake whatever
-        // is newest when it fires; convergence re-arms if still stale).
-        TL.pendP = P; TL.pendCam = { ox: cam.ox, oy: cam.oy, scale: cam.scale };
-        if (!TL.bakeT) {
-          TL.bakeT = setTimeout(function () {
-            TL.bakeT = 0;
-            var p = TL.pendP, c = TL.pendCam;
-            TL.pendP = null; TL.pendCam = null;
-            if (p && c) {
-              try { tlBake(p, c); }
-              catch (e) {
-                // v0.97.1: a worker-side bake throw is INVISIBLE (the boot
-                // onerror is a settled no-op) — stash it for the instrument
-                TL.bakeError = String(e && e.message || e);
-                try { if (typeof console !== 'undefined') console.warn('doomalay: tile rebake failed:', TL.bakeError); } catch (e2) {}
-              }
-            }
-          }, 150);
-        }
-        return TL.tiles;
-      }
-      return TL.tiles;
+  // tlBakeTiles — v1.06.1 THE ZOOM LADDER ENTRY. The fingerprint is
+  // zoom-STABLE (level-quantized), so:
+  //   · fp unchanged (pinch inside a level, pan, ambient) → zero work;
+  //   · fp = a SEEN level → instant pattern swap (LRU promote, no bake);
+  //   · fp = an UNSEEN level → the current set keeps rendering STRETCHED
+  //     (geometry exact — world-proportional; raster ≤1.12× soft) while the
+  //     150ms debounce bakes the wanted level at its CANONICAL scale —
+  //     ASYNC, never inside this frame. When it lands: cache insert +, if
+  //     still wanted, the swap — and the host gets one repaint-wanted ping
+  //     (the v0.97.1 follow-up frame, minus the storm: this fires ONCE per
+  //     (params, level) per session, not per zoom-tick).
+  function tlBakeTiles(P, cam, W, H) {
+    var cur = tlCurrentFp(P, cam, W, H);
+    var fp = cur.fp;
+    TL.wantFp = fp;
+    if (TL.tiles && TL.fp === fp) return TL.tiles;      // the common case: nothing due
+    var cached = TL.sets.get(fp);
+    if (cached) {
+      // LRU promote (Map preserves insertion order — delete+set = refresh)
+      TL.sets.delete(fp); TL.sets.set(fp, cached);
+      TL.fp = fp; TL.tiles = cached; TL.cellRecords = cached.cellRecords;
+      TL.ladderHits++;
+      return cached;
     }
-    return tlBake(P, cam);
+    TL.ladderMisses++;
+    if (!TL.tiles) {
+      // boot parity: the FIRST set paints synchronously (the old first
+      // frame cost exactly this once) — every later set is async.
+      var T0 = tlBakeCanonical(P, cur.q, cur.refKey);
+      TL.fp = fp; TL.tiles = T0; TL.cellRecords = T0.cellRecords;
+      return T0;
+    }
+    TL.pendP = P; TL.pendFp = fp; TL.pendQ = cur.q; TL.pendRef = cur.refKey;
+    if (!TL.bakeT) {
+      // v0.97.1 FIX kept: the clock starts at the FIRST mismatch; later
+      // frames only refresh the payload (a self-re-arming debounce never
+      // fires — the v097 mesh catch).
+      TL.bakeT = setTimeout(function () {
+        TL.bakeT = 0;
+        var p = TL.pendP, fpw = TL.pendFp, qw = TL.pendQ, rw = TL.pendRef;
+        TL.pendP = null; TL.pendFp = null;
+        if (p && fpw) {
+          try {
+            var T = tlBakeCanonical(p, qw, rw);
+            if (TL.wantFp === fpw && TL.tiles !== T) {
+              TL.fp = fpw; TL.tiles = T; TL.cellRecords = T.cellRecords;
+            }
+            if (onBakeReadyCb) { try { onBakeReadyCb(); } catch (e3) {} }
+          }
+          catch (e) {
+            // a worker-side bake throw is INVISIBLE (the boot onerror is a
+            // settled no-op) — stash it for the instrument
+            TL.bakeError = String(e && e.message || e);
+            try { if (typeof console !== 'undefined') console.warn('doomalay: tile rebake failed:', TL.bakeError); } catch (e2) {}
+          }
+        }
+      }, 150);
+    }
+    return TL.tiles;
   }
 
   // tlFill — THE one-object draw: one pattern fill paints an entire band.
@@ -1319,7 +1429,7 @@
     }
 
     // ── THE ONE-OBJECT TILES ──────────────────────────────────────────
-    var T = tlBakeTiles(P, cam);
+    var T = tlBakeTiles(P, cam, W, H);
     var ps = T.scaleQ ? (scale / T.scaleQ) : 1;
     var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
     var dprSnap = TL_DPR || 1;
@@ -2039,6 +2149,10 @@
     renderLegacy: renderLegacy,     // v0.97: the A/B switch (also the fallback)
     setDpr: setDpr,                 // v0.97: the hosts report their DPR (tile bake sharpness)
     onTexReady: function (cb) { onTexReadyCb = cb; },
+    // v1.06.1: the hosts wire this like onTexReady — one follow-up frame
+    // after an async ladder bake lands (the fresh set swaps in + repaints;
+    // without it a resting canvas would keep the stretched set on screen).
+    onBakeReady: function (cb) { onBakeReadyCb = cb; },
     // v0.97.1: the hosts ask after every frame — a pending debounced rebake
     // means THIS frame rendered stale tiles; the host schedules ONE
     // follow-up frame to land the fresh bake (without it, the last stale
@@ -2060,7 +2174,16 @@
         legacyFails: TL.legacyFails,
         legacy: !!ROOT.__doomalayLatticeLegacy,
         lastError: TL.lastError || null,
-        bakeError: TL.bakeError || null
+        bakeError: TL.bakeError || null,
+        // v1.06.1 THE ZOOM LADDER — the storm proof: hits = instant level
+        // swaps (zero bakes), misses = first visits (the ONLY bakes),
+        // bytes = the LRU-capped ladder footprint, tileMs = the last bake.
+        tileMs: Math.round((TL.lastBakeMs || 0) * 10) / 10,
+        raster: TL.tiles ? Math.round((TL.tiles.R || 1) * 100) / 100 : 0,
+        level: TL.tiles ? TL.tiles.q : 0,
+        ladder: { sets: TL.sets.size,
+                  bytes: Math.round((TL.ladderBytes || 0) / 1048576),
+                  hits: TL.ladderHits, misses: TL.ladderMisses }
       };
     }
   };

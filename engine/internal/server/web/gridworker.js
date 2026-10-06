@@ -208,4 +208,12 @@ if (Lattice) {
   Lattice.onTexReady(function () {
     try { self.postMessage({ t: 'tex-ready' }); } catch (e) {}
   });
+  // v1.06.1: an async LADDER bake landed (the zoom level's tile set is
+  // cached + swapped) — ask main for the one follow-up frame that paints
+  // it (a resting canvas would otherwise keep the stretched set on screen)
+  if (Lattice.onBakeReady) {
+    Lattice.onBakeReady(function () {
+      try { self.postMessage({ t: 'repaint-wanted' }); } catch (e) {}
+    });
+  }
 }
