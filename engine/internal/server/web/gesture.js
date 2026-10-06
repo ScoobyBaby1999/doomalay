@@ -155,8 +155,37 @@
     // moves re-anchor for free in the browser's own style pass; there is
     // nothing to compensate anymore).
   }
+  // v1.05.1 THE GLASS WINDOW — the visible window's size lands as an
+  // ELEMENT-SCOPED style write on .panel-body (style recalc for ONE
+  // element; layout dirties only the scroller box + its sticky/bottom-
+  // anchored children). The OLD write — the unregistered + inherited
+  // --panel-vis-h custom property on the panel ROOT — marked the whole
+  // #chat-panel subtree (handle + header + the full transcript DOM) for
+  // style recalc EVERY motion frame before the same layout ran (the
+  // measured slide lag: the drag loop + both springs all pay it; the
+  // web.dev/@property invalidation model — unregistered inherited var
+  // changes sweep the receiving subtree — and the pure-web-bottom-sheet
+  // write-up's "never animate height on a large DOM per frame" both name
+  // exactly this). The VAR still rides — but ONLY when the doom
+  // projection is enabled: its L2 window transforms + the bottom-anchored
+  // window formulas consume it LIVE per frame (the projection's own
+  // opt-in tax, unchanged). Projection OFF (the default): zero var
+  // writes, zero subtree sweeps — the glide rides the compositor.
+  var visBodyEl = null;
+  function visBody() {
+    if (visBodyEl && visBodyEl.isConnected) return visBodyEl;
+    visBodyEl = panelEl ? panelEl.querySelector('.panel-body') : null;
+    return visBodyEl;
+  }
   function writeVis(y) {
-    panelEl.style.setProperty('--panel-vis-h', visForY(y) + 'px');
+    var b = visBody();
+    if (!b) return;
+    var v = visForY(y) + 'px';
+    if (b.style.height !== v) b.style.height = v;   // element-scoped — no inherited sweep
+    if (window.DoomProjection && window.DoomProjection.enabled &&
+        window.DoomProjection.enabled()) {
+      panelEl.style.setProperty('--panel-vis-h', v);   // the projection's live window var
+    }
   }
   function renderY(y) { writeY(y); writeVis(y); }
 

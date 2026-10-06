@@ -863,9 +863,14 @@
      sheet surface always reaches from its top edge PAST the physical
      screen bottom, so a background gap is geometrically impossible
      during drags and snap springs. The visible content window
-     (.panel-body) is sized by the --panel-vis-h custom property that
-     gesture.js writes per frame (innerHeight − Y − chrome). Still has
-     the drag handle at the top; still closes via scrim tap or fling. */
+     (.panel-body) is sized by gesture.js per frame (innerHeight − Y −
+     chrome) — v1.05.1 THE GLASS WINDOW: as an ELEMENT-SCOPED inline
+     height on .panel-body (one element's style recalc), not the old
+     inherited --panel-vis-h var on this root (a whole-subtree recalc
+     per motion frame — the slide lag). The var survives ONLY while the
+     doom projection is enabled (its window formulas consume it live).
+     Still has the drag handle at the top; still closes via scrim tap
+     or fling. */
   #chat-panel {
     position: fixed;
     left: 0; right: 0;
@@ -1037,12 +1042,15 @@
     letter-spacing: 0.2px;
   }
   #chat-panel .panel-body {
-    /* v0.42 ALWAYS-TALL: the VISIBLE height (written per frame by
-       gesture.js as --panel-vis-h = innerHeight − Y − chrome) instead of
-       flex:1 — the sheet box itself is a permanent 100dvh, only the
-       visible window is content-sized. Everything else unchanged: this
-       stays THE scroller every view renders into; sticky composers and
-       every view's scrollport ride the window bottom (== screen bottom). */
+    /* v0.42 ALWAYS-TALL: the VISIBLE height — written per frame by
+       gesture.js (innerHeight − Y − chrome). v1.05.1 THE GLASS WINDOW:
+       the write is an ELEMENT-SCOPED inline height (below); the
+       var(--panel-vis-h, 62dvh) fallback covers the pre-JS frames and
+       the doom projection's live window (gesture re-writes the var on
+       this root only while the projection is enabled). Everything else
+       unchanged: this stays THE scroller every view renders into;
+       sticky composers and every view's scrollport ride the window
+       bottom (== screen bottom). */
     /* v0.88.1: relative — THE DECK (the tab keep-alive's persistent
        iframe host, .wt-deck inset:0) anchors to this body; the rect
        sync rides the same per-frame truth the scroller does */
