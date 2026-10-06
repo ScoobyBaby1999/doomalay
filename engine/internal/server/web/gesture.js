@@ -233,7 +233,25 @@
       if (!bodyH) return;   // the closed sheet — keep the last rest geometry
       r.style.setProperty('--panel-head-off', headOff.toFixed(1) + 'px');
       r.style.setProperty('--panel-field-top', fieldTop.toFixed(1) + 'px');
-      r.style.setProperty('--panel-field-h', (fieldTop + bodyH).toFixed(1) + 'px');
+      // v1.09.2 THE FULLSCREEN FIELD — the user: the surface "does not fill
+      // the panel as if it where fully docked in the full scree position,
+      // instead, it tries recalculates to fit whatever position the panel
+      // is docked at ... causin the ink color below it to leak .. we can
+      // just project as a full screen panel if it makes it easier".
+      // The field's scale becomes the FULL-DOCK extent — fieldTop plus the
+      // window height at y=0 (visForY(0) = H - chromeH) — a per-open
+      // geometry CONSTANT: docking anywhere REVEALS a sub-window of the
+      // one fullscreen field instead of re-fitting it per dock (the
+      // gradient stops never move), and the no-repeat image extent is ≥
+      // every possible window, so the band below it (the ink leak) is
+      // geometrically impossible — stale sync or not. The performant
+      // shape the user asked for: per-dock re-syncs die (the vars only
+      // move when the chrome/viewport facts do) and the field never
+      // re-rasters per dock.
+      var chromeFull = chromeH || ((parseFloat(cs.paddingBottom) || 0) +
+        (parseFloat(cs.borderTopWidth) || 0) + headOff + headerH);
+      var fieldH = fieldTop + Math.max(0, H - chromeFull);
+      r.style.setProperty('--panel-field-h', fieldH.toFixed(1) + 'px');
     } catch (e) {}
   }
   function queueFieldSync() {
