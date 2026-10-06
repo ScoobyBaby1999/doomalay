@@ -663,11 +663,21 @@
         var yB = flatBy, yCalc = fmtCalcY(flatBy);
         if (visForm) {
           // compensate: runtime = var(--proj-ty) + (flatB + V0) - var(--panel-vis-h)
+          // v1.05.1: V0's source — gesture.js (THE GLASS WINDOW) now writes
+          // the --panel-vis-h var on the root ONLY while the projection is
+          // enabled (the element-scoped body height replaced the per-frame
+          // var write for everyone else). Enabling mid-session therefore
+          // reads an UNSET var (0) — fall back to the body's inline height,
+          // which gesture.js writes at every rest AND motion frame (at rest
+          // the two are identical: the rest window height).
           var v0 = R.visH0;
           if (v0 === undefined) {
             var hv = '';
             try { hv = getComputedStyle(R.el).getPropertyValue('--panel-vis-h'); } catch (herr) {}
             v0 = parseFloat(hv) || 0;
+            if (!v0 && R.bodyEl) {
+              try { v0 = parseFloat(R.bodyEl.style.height) || 0; } catch (bherr) {}
+            }
             R.visH0 = v0;
           }
           yB = flatBy + v0;
@@ -718,6 +728,7 @@
               it.el.style.backgroundAttachment = 'scroll';
               it.el.style.removeProperty('background-image');
               it.el.style.removeProperty('background-color');
+              try { it.el.setAttribute('data-proj-bake', '1'); } catch (eB1) {}   // v1.05.2: the teardown sweep's marker
               it.el.__projPos = cpos;
               it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
             }
@@ -743,10 +754,11 @@
       }
       if (layered) {
         // clear any legacy inline bake this element carried
-        if (it.el.__projPos !== undefined) {
+        if (it.el.__projPos !== undefined || it.el.hasAttribute('data-proj-bake')) {
           it.el.style.removeProperty('background-position');
           it.el.style.removeProperty('background-size');
           it.el.style.removeProperty('background-attachment');
+          try { it.el.removeAttribute('data-proj-bake'); } catch (eB2) {}   // v1.05.2: layered now — the legacy marker is dead
           it.el.__projPos = undefined;
           it.el.__projWriteEpoch = wep;
         }
@@ -761,22 +773,40 @@
         }
         if (it.el.style.backgroundSize !== size) it.el.style.backgroundSize = size;
         if (it.el.style.backgroundAttachment !== 'scroll') it.el.style.backgroundAttachment = 'scroll';
+        try { it.el.setAttribute('data-proj-bake', '1'); } catch (eB3) {}   // v1.05.2: the teardown sweep's marker
         it.el.__projWriteEpoch = wep;
       }
       it.el.__projCarry = false;
       keep.push(it.el);
     }
     // clear every previously-painted element that lost its anchor this
-    // pass — it left the transformed scopes or was removed from the
-    // DOM (offscreen elements are CARRIED, never stripped). The CSS
-    // state owns the dropped ones again.
+    // pass — it left the transformed scopes or was removed from the DOM
+    // (offscreen elements are CARRIED, never stripped). The CSS state
+    // owns the dropped ones again.
+    // v1.05.2: DISCONNECTED elements are STRIPPED, not skipped — the
+    // Panel's view-stack stash/restore (panel.js) detaches + re-attaches
+    // the root DOM; a baked element resurrected OUTSIDE the painted
+    // registry was never re-anchored again ("doesn't update as it
+    // should") and was invisible to teardown (it SURVIVED the toggle
+    // off). Stripping at detach time means the restore comes back clean
+    // and the next paint re-bakes it.
     for (var p = 0; p < painted.length; p++) {
       var el2 = painted[p];
-      if (!el2.isConnected || keep.indexOf(el2) !== -1) continue;
+      if (keep.indexOf(el2) !== -1) continue;
+      if (!el2.isConnected) {
+        // leaving the DOM — strip everything so a later re-attachment
+        // carries no painter state
+        if (el2.__projL2) L2.drop(el2);
+        else stripInlineBake(el2);
+        el2.__projPainted = false;
+        el2.__projPos = null;
+        el2.__projScOwner = undefined;
+        el2.__projAbsBot = undefined;
+        el2.__projCarry = false;
+        continue;
+      }
       if (L2.drop(el2)) continue;
-      el2.style.removeProperty('background-position');
-      el2.style.removeProperty('background-size');
-      el2.style.removeProperty('background-attachment');
+      stripInlineBake(el2);
       el2.__projPainted = false;
       el2.__projPos = null;
       el2.__projScOwner = undefined;
@@ -1106,6 +1136,7 @@
         el.style.removeProperty('background-image');
         el.style.removeProperty('background-color');
         el.style.backgroundPosition = pos;
+        try { el.setAttribute('data-proj-bake', '1'); } catch (eB4) {}   // v1.05.2: the sweep's marker
         el.__projPos = pos;
         el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
       }
@@ -1165,6 +1196,7 @@
       }
       if (el.style.backgroundSize !== size) el.style.backgroundSize = size;
       if (el.style.backgroundAttachment !== 'scroll') el.style.backgroundAttachment = 'scroll';
+      try { el.setAttribute('data-proj-bake', '1'); } catch (eB5) {}   // v1.05.2: the sweep's marker
       el.__projWriteEpoch = wep;
       el.__projR = R;
       n++;
@@ -1203,42 +1235,81 @@
   }
 
   // ── THE TEARDOWN — the toggle-off restores the local light ─────
+  // v1.05.2: STAGE-GUARDED (each stage try/caught — one failure can no
+  // longer stop the stages after it and leave a half-torn world) and
+  // REGISTRY-INDEPENDENT at the end (the orphan sweep): bakes that left
+  // the `painted` registry — the Panel's view-stack stash/restore
+  // DETACHES and RE-ATTACHES root DOM (panel.js), resurrecting windows
+  // outside every list — die with the toggle too. L2 layers are found
+  // by their [data-proj] attributes; legacy inline bakes by the
+  // [data-proj-bake] marker minted at bake time.
+  function stripInlineBake(el) {
+    try {
+      el.style.removeProperty('background-position');
+      el.style.removeProperty('background-size');
+      el.style.removeProperty('background-attachment');
+      el.style.removeProperty('background-image');
+      el.style.removeProperty('background-color');
+      el.removeAttribute('data-proj-bake');
+    } catch (e) {}
+  }
   function teardown() {
-    // the baked windows: strip every painter write (inline bakes +
-    // L2 rules + the flags)
-    for (var p = 0; p < painted.length; p++) {
-      var el = painted[p];
-      if (!el || !el.isConnected) continue;
-      if (L2.drop(el)) {
+    // stage 1 — the painted registry's windows
+    try {
+      for (var p = 0; p < painted.length; p++) {
+        var el = painted[p];
+        if (!el) continue;
+        if (el.__projL2) {
+          L2.drop(el);
+        } else {
+          stripInlineBake(el);
+        }
         el.__projPainted = false;
-      } else {
-        el.style.removeProperty('background-position');
-        el.style.removeProperty('background-size');
-        el.style.removeProperty('background-attachment');
-        el.style.removeProperty('background-image');   // a stale INLINE suppression (belt + braces)
-        el.style.removeProperty('background-color');
-        el.__projPainted = false;
+        el.__projPos = null;
+        el.__projScOwner = undefined;
+        el.__projAbsBot = undefined;
+        el.__projCarry = false;
+        el.__projL2ok = undefined;
+        el.__projWriteEpoch = ++writeEpoch;   // the teardown's own writes are painter-owned
       }
-      el.__projPos = null;
-      el.__projScOwner = undefined;
-      el.__projAbsBot = undefined;
-      el.__projCarry = false;
-      el.__projL2ok = undefined;
-      el.__projWriteEpoch = ++writeEpoch;   // the teardown's own writes are painter-owned
-    }
+    } catch (eS1) {}
     painted = [];
-    L2.dropAll();
-    // the roots: drop the attributes + the var rules
-    for (var r = 0; r < rootReg.length; r++) {
-      try { rootReg[r].el.removeAttribute('data-proj-root'); } catch (e) {}
-      rootReg[r].el.__projTracked = false;
-    }
+    // stage 2 — every remaining L2 layer + the layer sheet
+    try {
+      var strays = document.querySelectorAll('[data-proj]');
+      for (var si = 0; si < strays.length; si++) {
+        var sEl = strays[si];
+        try { L2.drop(sEl); } catch (eD) {}
+        sEl.__projPainted = false;
+        sEl.__projL2ok = undefined;
+      }
+    } catch (eS2) {}
+    try { L2.dropAll(); } catch (eS3) {}
+    // stage 3 — any legacy inline bake orphaned outside the registry
+    try {
+      var bakes = document.querySelectorAll('[data-proj-bake]');
+      for (var bi = 0; bi < bakes.length; bi++) stripInlineBake(bakes[bi]);
+    } catch (eS4) {}
+    // stage 4 — the roots: drop the attributes + the var rules
+    try {
+      for (var r = 0; r < rootReg.length; r++) {
+        try { rootReg[r].el.removeAttribute('data-proj-root'); } catch (eR) {}
+        rootReg[r].el.__projTracked = false;
+      }
+    } catch (eS5) {}
     rootReg = [];
-    if (varSheet && varSheet.parentNode) varSheet.parentNode.removeChild(varSheet);
+    // stage 5 — our sheets
+    try { if (varSheet && varSheet.parentNode) varSheet.parentNode.removeChild(varSheet); } catch (eS6) {}
     varSheet = null;
     scrollRules = [];
     trackedScrollers = [];
-    dropDoomSheet();
+    try { dropDoomSheet(); } catch (eS7) {}
+    // stage 6 — the vis-var residue (gesture.js re-seeds it when the
+    // projection returns; the height rule rides the body's inline style)
+    try {
+      var pEl = document.getElementById('chat-panel');
+      if (pEl) pEl.style.removeProperty('--panel-vis-h');
+    } catch (eS8) {}
     SEL = null; POS_SEL = null;
     dirty = false; movingRoot = 0; movingLayout = 0;
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
@@ -1247,25 +1318,76 @@
     if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = 0; }
   }
 
+  // ── v1.05.1 support: the vis-var SEED ────────────────────────────
+  // gesture.js (THE GLASS WINDOW) writes --panel-vis-h on the root only
+  // while the projection is enabled — the element-scoped body height
+  // replaced the per-frame var write for everyone else. Enabling
+  // mid-session therefore starts from an UNSET var, and every bottom-
+  // anchored window's math (runtime = --proj-ty + flatB + V0 − var)
+  // needs var ≡ V0 to cancel. Seed it from the body's inline height —
+  // gesture.js's own rest write, IDENTICAL at rest — so the very first
+  // bake is anchored; gesture.js overwrites it live during motion.
+  // V0 and the var now move in lockstep (V0 = the rest value, the var =
+  // the live value; at rest they are the same number by construction).
+  function seedVisVar() {
+    try {
+      var p = document.getElementById('chat-panel');
+      var b = p && p.querySelector('.panel-body');
+      var h = (b && parseFloat(b.style.height)) || 0;
+      if (h > 0) p.style.setProperty('--panel-vis-h', h + 'px');
+    } catch (e) {}
+  }
+
   // ── enable / disable ─────────────────────────────────────────────
+  // v1.05.2 THE STUCK SWITCH — the old state machine wedged: the enable
+  // path set the attribute + minted the sheet + wired observers BEFORE
+  // `on = true`, so any throw between them left the VISUALS on with the
+  // module believing OFF — and the OFF tap then hit the `want === on`
+  // early-return FOREVER ("sometimes does not toggle back off"). And a
+  // throw inside teardown() stopped it mid-strip, leaving a half-torn
+  // world behind. The new contract:
+  //   · COMMIT FIRST — `on` flips before the risky work; a thrown enable
+  //     ROLLS BACK (attr off, observers off, teardown) so no half-applied
+  //     state survives a single call;
+  //   · THE DISABLE PATH NEVER EARLY-RETURNS on DOM traces — if the
+  //     attr, the sheets, the observer or the painted set exist, teardown
+  //     runs EVEN WHEN `on` already says false (the self-heal);
+  //   · teardown() is stage-guarded internally (each stage try/caught)
+  //     and always completes the remaining stages.
+  function domTraces() {
+    return document.documentElement.hasAttribute('data-doom-proj') ||
+      painted.length > 0 || obs !== null ||
+      !!(varSheet && varSheet.isConnected) ||
+      !!(doomSheet && doomSheet.isConnected);
+  }
   function setEnabled(v) {
     var want = !!v;
-    if (want === on) return on;
-    try {
-      if (want) {
+    if (want === on && !domTraces()) return on;
+    if (want) {
+      on = true;                       // COMMIT FIRST — every guard below stays coherent
+      try {
         document.documentElement.setAttribute('data-doom-proj', 'on');
+        seedVisVar();
         mintDoomSheet();
         SEL = null; POS_SEL = null; memoEpoch++;
-        wireObservers();
+        if (!obs) wireObservers();
         paint();   // the synchronous first bake (the split-flash window is one frame at most)
-        on = true;
-      } else {
+      } catch (e) {
+        console.error('doom projection', e);
+        // ROLLBACK — never leave the visuals on with a wedged switch
+        try {
+          document.documentElement.removeAttribute('data-doom-proj');
+          unwireObservers();
+          teardown();
+        } catch (e2) {}
         on = false;
-        document.documentElement.removeAttribute('data-doom-proj');
-        unwireObservers();
-        teardown();
       }
-    } catch (e) { console.error('doom projection', e); }
+      return on;
+    }
+    on = false;
+    try { document.documentElement.removeAttribute('data-doom-proj'); } catch (e0) {}
+    try { unwireObservers(); } catch (e1) {}
+    try { teardown(); } catch (e2) { console.error('doom projection teardown', e2); }
     return on;
   }
 
