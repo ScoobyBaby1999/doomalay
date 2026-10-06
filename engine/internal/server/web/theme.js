@@ -356,6 +356,12 @@
     '--accent-2': '--field-accent-2',
     '--accent-3': '--field-accent-3'
   };
+  // The v1.06.4 fallback canon twins (pinned by the FALLBACKS map below
+  // — the ONE literal rule: these constants feed both the map and the
+  // derived-hex helpers, so they can never drift apart).
+  var FALLBACK_SHADOW = '#020202';
+  var FALLBACK_HIGHLIGHT = '#ffffff';
+
   var FIELDS = [
     { field: '--field-surface', label: 'Surface', suffix: 'surface',
       hint: 'the plate — panels · cards · bubbles' },
@@ -368,7 +374,19 @@
     { field: '--field-accent-2', label: 'Accent 2', suffix: 'accent-2',
       hint: 'the adjacent accent' },
     { field: '--field-accent-3', label: 'Accent 3', suffix: 'accent-3',
-      hint: 'the third accent' }
+      hint: 'the third accent' },
+    /* v1.06.4 THE SHADOW & THE HIGHLIGHT — the two v1.04.2 tokens the
+       user remembered but couldn't edit ("they are not exposed to the
+       settings screen and we can't edit them in the theme"). Solid
+       fields (the ink row's plain color editor): the shadow rides every
+       box/drop/text shadow's rgba() triplet, the highlight is the inner
+       1px ring on raised chrome. Unset = the derived defaults (the
+       canvas-55% mix / the constant white) — the rows seed from the
+       LIVE derived values so the editor opens on what the app shows. */
+    { field: '--field-shadow', label: 'Shadow', suffix: 'shadow', solid: true,
+      hint: 'the elevation ink — box · drop · text shadows' },
+    { field: '--field-highlight', label: 'Highlight', suffix: 'highlight', solid: true,
+      hint: 'the inner ring that compliments the surface' }
   ];
   // The GRADIENT-TWIN ALIASES: gradient twins belong to FIELDS (only a
   // field can hold a gradient), but the consumer-facing var names (the
@@ -676,11 +694,42 @@
     // the SAME mix (culori parity — the triplet contract). A canvas
     // override re-derives it on the very next drag write, so themed
     // shadows follow live edits like every other triplet.
-    var shCanvas = resolved['--field-canvas'];
-    if (fm && /^#[0-9a-fA-F]{6}$/.test(shCanvas || '')) {
-      var shHex = fm.cssMix(shCanvas, '#000000', 0.55);
-      var shTri = hexTriplet(shHex);
-      if (shTri) want['--shadow-ink-rgb'] = shTri;
+    // v1.06.4: an OVERRIDE wins (--field-shadow — the Colors tab's
+    // Shadow row): the hex lands on --shadow-ink AND its triplet; the
+    // default path writes only the triplet (the CSS color-mix
+    // self-updates from --field-canvas live — never fight it inline).
+    var shOv = overrides['--field-shadow'];
+    var shHexOv = '';
+    if (shOv) {
+      var shTw = deriveTwins(shOv);
+      if (shTw && /^#[0-9a-fA-F]{6}$/.test(shTw.solid || '')) shHexOv = shTw.solid;
+    }
+    if (shHexOv) {
+      want['--shadow-ink'] = shHexOv;
+      var shTriOv = hexTriplet(shHexOv);
+      if (shTriOv) want['--shadow-ink-rgb'] = shTriOv;
+    } else {
+      var shCanvas = resolved['--field-canvas'];
+      if (fm && /^#[0-9a-fA-F]{6}$/.test(shCanvas || '')) {
+        var shHex = fm.cssMix(shCanvas, '#000000', 0.55);
+        var shTri = hexTriplet(shHex);
+        if (shTri) want['--shadow-ink-rgb'] = shTri;
+      }
+    }
+
+    // v1.06.4 THE HIGHLIGHT — the inner-ring constant the user called
+    // "another color to compliment the surface". Override wins
+    // (--field-highlight); the default stays the :root static
+    // (255,255,255 — the --on-brand precedent: a highlight stays
+    // light whatever the theme).
+    var hlOv = overrides['--field-highlight'];
+    if (hlOv) {
+      var hlTw = deriveTwins(hlOv);
+      if (hlTw && /^#[0-9a-fA-F]{6}$/.test(hlTw.solid || '')) {
+        want['--highlight-inset'] = hlTw.solid;
+        var hlTri = hexTriplet(hlTw.solid);
+        if (hlTri) want['--highlight-inset-rgb'] = hlTri;
+      }
     }
 
     // 1e. THE READABLE-INK FAMILY — on-accent for every accent (user
@@ -1061,7 +1110,36 @@
         accent: '#a78bfa',      // --field-accent-1
         accent2: '#38bdf8',     // --field-accent-2
         ok: '#34d399',          // --ok
-        fmtA1: '#22d3ee'        // the fmt stop preset default
+        fmtA1: '#22d3ee',       // the fmt stop preset default
+        shadow: FALLBACK_SHADOW,      // --shadow-ink (the canvas-55% mix, midnight)
+        highlight: FALLBACK_HIGHLIGHT // --highlight-inset (the --on-brand precedent)
+      },
+      // v1.06.4: the derived shadow/highlight hexes — what the Colors
+      // tab's Shadow/Highlight rows SEED when the user never customized
+      // them (the editor opens on what the app shows now, not on a
+      // dead #000000). Override-aware by construction.
+      derivedShadowHex: function (s) {
+        var id = (s && THEMES[s.theme]) ? s.theme : 'midnight';
+        var o = foldThemeOverrides((s && s.themeOverrides && s.themeOverrides[id]) || null);
+        if (o['--field-shadow']) {
+          var tw = deriveTwins(o['--field-shadow']);
+          if (tw && /^#[0-9a-fA-F]{6}$/.test(tw.solid || '')) return tw.solid;
+        }
+        var canvas = resolvedVar(id, o, '--field-canvas');
+        if (FieldMath && /^#[0-9a-fA-F]{6}$/.test(canvas || '')) {
+          var m = FieldMath.cssMix(canvas, '#000000', 0.55);
+          if (m) return m;
+        }
+        return FALLBACK_SHADOW;
+      },
+      derivedHighlightHex: function (s) {
+        var id2 = (s && THEMES[s.theme]) ? s.theme : 'midnight';
+        var o2 = foldThemeOverrides((s && s.themeOverrides && s.themeOverrides[id2]) || null);
+        if (o2['--field-highlight']) {
+          var tw2 = deriveTwins(o2['--field-highlight']);
+          if (tw2 && /^#[0-9a-fA-F]{6}$/.test(tw2.solid || '')) return tw2.solid;
+        }
+        return FALLBACK_HIGHLIGHT;
       },
       // v1.01.5: themePreview(id) — the theme's OWN field hexes for the
       // quick-switch chip cards (user spec: theme boxes are the ONE

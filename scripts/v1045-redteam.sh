@@ -40,9 +40,18 @@ try:
 except Exception: print(s, end='')"; }
 
 rm -rf $DATA; mkdir -p $DATA
-$ENG -open=false -port=$PORT -data-dir=$DATA >/tmp/v1045-eng.log 2>&1 &
+# v1.07 CALIBRATION — THE ON-DISK DOCTRINE: the engine binary EMBEDDS the
+# web tree at build time (a stale binary tests stale UI — the exact trap
+# this rig just hit: U4-U7 read empty tokens off a v1.04-era embed while
+# the fresh tree was green). The v106/v107 rigs already serve the web dir
+# FROM DISK and proxy /api to the engine; this rig joins them.
+ENGGUN=$PORT
+ENGPORT=$((PORT + 1))
+$ENG -open=false -port=$ENGPORT -data-dir=$DATA >/tmp/v1045-eng.log 2>&1 &
 ENGPID=$!
-cleanup(){ kill $ENGPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
+python3 scripts/v1045-mix-serve.py "$PORT" "$ENGPORT" "engine/internal/server/web" >/tmp/v1045-mix.log 2>&1 &
+MIXPID=$!
+cleanup(){ kill $ENGPID $MIXPID 2>/dev/null; agent-browser close >/dev/null 2>&1; }
 trap cleanup EXIT
 for i in $(seq 1 80); do curl -s $BASE/api/health >/dev/null 2>&1 && break; sleep 0.25; done
 curl -s $BASE/api/health >/dev/null 2>&1 && echo "engine up" || { echo "BOOT FAIL"; exit 1; }

@@ -496,6 +496,19 @@ try:
         }""")
         pg.wait_for_timeout(500)
         results["ledger"]["D"] = {"set": d, "reset": d_reset}
+        # THE EXPOSURE — the user's literal ask: the two rows must exist
+        # in the settings screen's Fields section (we're still on the
+        # appearance page after §C2).
+        rows_d = pg.evaluate("""() => {
+          const names = Array.from(document.querySelectorAll('.slot-row-name'))
+            .map((n) => (n.textContent || '').trim());
+          return { shadow: names.some((t) => /shadow/i.test(t)),
+                   highlight: names.some((t) => /highlight/i.test(t)),
+                   count: names.length };
+        }""")
+        ok(rows_d["shadow"] and rows_d["highlight"],
+           f"THE EXPOSURE: Shadow + Highlight rows render in the Fields section "
+           f"(shadow={rows_d['shadow']}, highlight={rows_d['highlight']}, rows={rows_d['count']})")
         ok(d["ink"] != "" and d["ink"] != d_reset["ink"],
            f"THE SHADOW: the override lands on the triplet ({d['ink']} → reset {d_reset['ink']})")
         ok(d["hl"] != "" and d["hl"] != d_reset["hl"],

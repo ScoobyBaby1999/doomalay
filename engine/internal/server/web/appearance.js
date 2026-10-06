@@ -946,6 +946,15 @@
       return (GG && GG.norm) ? GG.norm(cbRaw) :
         { colors: [String((cbRaw && cbRaw.colors) || [])[0] || window.DoomTheme.FALLBACKS.canvas], dir: 'auto' };
     }
+    // v1.06.4: the SHADOW + HIGHLIGHT rows seed from the DERIVED values
+    // (the canvas-55% mix / the constant white) — the editor opens on
+    // what the app shows now, never a dead #000000.
+    if (c.field === '--field-shadow' && window.DoomTheme.derivedShadowHex) {
+      return { colors: [window.DoomTheme.derivedShadowHex(st) || '#020202'], dir: 'auto' };
+    }
+    if (c.field === '--field-highlight' && window.DoomTheme.derivedHighlightHex) {
+      return { colors: [window.DoomTheme.derivedHighlightHex(st) || '#ffffff'], dir: 'auto' };
+    }
     // not customized: the field's CURRENT computed hex, as a 1-color
     // spec (what the editor offers is what the app looks like now)
     var live = cssVarLive(c.field);

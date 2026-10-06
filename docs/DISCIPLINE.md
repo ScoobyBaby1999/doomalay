@@ -17,6 +17,14 @@
   the canvas needs a real hex → `DoomTheme.resolvedThemeVar('--shadow-ink')`.
   Alpha stays at the consumer. `--highlight-inset-rgb` = the inset white
   ring constant (--on-brand precedent).
+- **v1.06.4 THE EXPOSURE**: both elevation tokens are now USER-EDITABLE —
+  the `--field-shadow` / `--field-highlight` override slots (the Colors
+  tab's Shadow + Highlight rows, solid fields like ink). An override wins
+  (the hex lands on `--shadow-ink` / `--highlight-inset` + their
+  triplets); unset = the derived defaults (the CSS color-mix / the
+  :root static — never fought inline). The rows seed from the LIVE
+  derived values (`DoomTheme.derivedShadowHex/derivedHighlightHex`) —
+  the editor opens on what the app shows.
 - **v1.04.4 THE CANON**: `DoomTheme.FALLBACKS` — the ONE literal map for
   pre-apply / var-unavailable paints. `DoomTheme.LEGACY_GRID` — the grid
   sentinels ("equal = never customized" → the theme's palette returns).
