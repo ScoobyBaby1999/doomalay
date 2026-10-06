@@ -661,3 +661,66 @@ Stage Summary:
   during motion. Next session: sideload the APK, re-judge the flicker +
   the toggle/slider look + the header seam + the panel glide with
   projection ON.
+
+---
+Task ID: v1.10.0 ship (THE WEIGHTLESS WAVE)
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- THE WEIGHTLESS WAVE (PLAN-V110-THE-WEIGHTLESS-WAVE.md) — the user's
+  four v1.09.0 post-ship reports, four phase commits:
+- v1.09.1 THE DRIFT COAST: the anchor glide's remaining cost = the
+  per-frame inherited-var invalidation sweeps (the --proj-tx/--proj-ty
+  CSSOM rule writes per root per frame), the shrinking slide's scroller
+  clamp firing scrollRebake per frame, and ANY mid-glide paint un-coasting
+  the text back to var form (re-arming the per-frame glyph rasters). The
+  coast generalized to the WHOLE field: motionTick returns while coasting
+  (the L2 transforms hold their rest compensation — everything rides
+  rigidly, the text coast's own drift contract), scrollRebake gates on
+  coasting, coastText covers every LEGACY window (text incl. the vis form
+  + the non-L2 fallbacks; one cached matrix read per root per edge), the
+  setVars same-value guard, and run() defers full paints while a motion
+  window is open + the gesture stamp is fresh (the settle lands one frame
+  after the window closes; its trailing motionTick re-syncs the vars).
+- v1.09.2 THE FULLSCREEN FIELD: --panel-field-h = the FULL-DOCK extent
+  (fieldTop + visForY(0)) instead of the current dock's bodyH — docking
+  anywhere REVEALS a sub-window of the one fullscreen field; the no-repeat
+  extent is >= every window, so the ink leak is geometrically impossible;
+  per-dock re-syncs die (the performant shape the user prescribed).
+- v1.09.3 THE STILL HAND: the zoom ladder's bake never arms mid-gesture —
+  the hosts report the zoom-gesture state per frame (zg: pinch active or
+  a wheel burst within 200ms), the worker holds, the stretched current set
+  renders (exact by world-proportionality), and the RELEASE frame (the
+  two->one-finger transition — the rig caught that CDP and real fingers
+  lift one at a time; the touches===0 branch never saw pinching true)
+  arms the debounce — ONE bake ~150ms after settle.
+- v1.09.4 THE RARE SKY: comets 4-10s -> 18-44s (cap 3 -> 2, first spawn
+  6-16s), three size/distance classes (FAR 60% thin dim fast background /
+  MID 30% / NEAR 10% thick bright slow foreground) with the tail width,
+  head glow and the parallax factor spread per class; lastComet rides the
+  debug blob (the instrument). Zero new color literals (the gate holds).
+- THE RIG: scripts/v110-weightless-wave-test.py (permanent) — §A the drift
+  coast (frozen vars per frame pair, single-step settle paints, the defer
+  counter, the settle re-anchor) · §B the fullscreen field (dock-independent
+  scale, the extent covers every window, the header shares the scale) ·
+  §C the still hand (bakeGen frozen mid-gesture for pinch AND wheel, one
+  settle bake each) · §D the rare sky (first spawn >= 5s, <= 3 in 46s, the
+  class bounds). The v110-zoom-probe.py caught the release-frame miss.
+- Battery on the shipped tree: v110 rig 22/22 (NEW) · v109 30/30 · v106
+  21/21 · v1045 11/11 · v1040 7/7 · uikit 140 · twins 198/199 (the
+  pre-existing page-6-slot-banners baseline failure, documented).
+  v107-canvas-proof: 13/15 on the STALE embedded binary (07:27 build; no
+  go toolchain in this sandbox to re-embed the current tree — the rig
+  hits the engine port directly, unlike the on-disk v106/v109/v110 rigs).
+  Its two fails (rest-cadence FPS under load, theme-flip sampling) are on
+  that stale snapshot; its zoom-storm contract is SUPERSEDED by the v110
+  §C proof on the disk tree (bakeGen frozen mid-gesture is strictly
+  stronger than "no frame pays a bake").
+
+Stage Summary:
+- THE WAVE SHIPS as v1.10.0-the-weightless-wave. The glide is compositor
+  work + one layout write, the surface field is one fullscreen material
+  that docks reveal instead of re-fit, the zoom gesture recomputes nothing
+  and lands one sharp bake at settle, and the sky is quiet and varied.
+  Next session: sideload the APK, re-judge the glide with projected text,
+  the field at every dock, the pinch feel, and the star cadence.
