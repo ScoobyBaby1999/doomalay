@@ -1336,8 +1336,10 @@
   // period far past perception — the wallpaper read dies — and its drift
   // gives the whole field a constant, subtle life.
   //
-  // (C) THE MOVERS — comets (≤3 concurrent, 4-10s apart, ~1.2s crossings
-  // with glowing heads + gradient tails) and twinklers (a hash-selected
+  // (C) THE MOVERS — comets (v1.09.4 THE RARE SKY: ≤2 concurrent, ~18-44s
+  // apart, three size/distance classes — far thin streaks hugging the
+  // background depth, mid rides, and rare slow near fireballs — see
+  // stepComets) and twinklers (a hash-selected
   // ~5% of visible cells, between lattice positions, phase-offset pulsing
   // — some FAST blinkers). Both paint on #c2 in BOTH frame paths: 60fps
   // movers on the cheap frame, no strobe. Gated on the user's animate
@@ -1492,15 +1494,51 @@
   // ── (C) the movers: comets + twinklers ────────────────────────────
   var comets = [];
   var cometTotal = 0, cometNextAt = 0, liveLastT = 0;
+  var lastComet = null;   // v1.09.4: the last spawn's class/shape (the instrument)
   var livePainted = 0;
   var TWINK_DENSITY = 0.05;
   function stepComets(nowSec, dt, W, H, cam, P) {
-    // spawn: 4-10s apart while the gate is on, from a screen edge, aimed
-    // across ~1.5 screens at 900-1600 screen px/s
+    // v1.09.4 THE RARE SKY — the user: "we have too much shootin stars, and
+    // all of them come at the same size as distance, we want shootin stars
+    // to be much, much rarer, comin at different shapes or distances".
+    //   · CADENCE: 4-10s → 18-44s between spawns (cap 3 → 2 concurrent);
+    //     the first spawn of a session waits 6-16s.
+    //   · CLASSES: a weighted draw picks FAR (60%) / MID (30%) / NEAR
+    //     (10%) — the far streaks are thin, dim and fast hugging the
+    //     background depth; the near fireballs are thick, bright and slow
+    //     in the foreground. The parallax factor pf (the depth the
+    //     camera actually sees) spreads per class, so "different
+    //     distances" is a visible parallax read, not just a number.
+    var amp = (P.amp || 0);
+    if (!cometNextAt) cometNextAt = nowSec + 6 + Math.random() * 10;
     if (nowSec >= cometNextAt) {
-      cometNextAt = nowSec + 4 + Math.random() * 6;
-      if (comets.length < 3) {
-        var pf = 1 + (P.amp || 0) * (0.9 + Math.random() * 0.8);
+      cometNextAt = nowSec + 18 + Math.random() * 26;
+      if (comets.length < 2) {
+        var roll = Math.random();
+        var cls = roll < 0.6 ? 0 : (roll < 0.9 ? 1 : 2);   // far / mid / near
+        var pf, r, len, spd, ttl, tw, glowA;
+        if (cls === 0) {          // FAR — a thin fast streak, background depth
+          pf = 1 + amp * (0.15 + Math.random() * 0.45);
+          r = 0.7 + Math.random() * 0.4;
+          len = 45 + Math.random() * 45;
+          spd = 1300 + Math.random() * 600;
+          ttl = 0.35 + Math.random() * 0.25;
+          tw = 0.55; glowA = 0.45;
+        } else if (cls === 1) {   // MID — the classic ride
+          pf = 1 + amp * (0.6 + Math.random() * 0.6);
+          r = 1.4 + Math.random() * 0.6;
+          len = 110 + Math.random() * 60;
+          spd = 800 + Math.random() * 400;
+          ttl = 0.5 + Math.random() * 0.3;
+          tw = 0.75; glowA = 0.65;
+        } else {                  // NEAR — a rare slow fireball, foreground depth
+          pf = 1 + amp * (1.2 + Math.random() * 0.9);
+          r = 2.4 + Math.random() * 1.2;
+          len = 220 + Math.random() * 120;
+          spd = 500 + Math.random() * 350;
+          ttl = 0.7 + Math.random() * 0.4;
+          tw = 0.95; glowA = 0.85;
+        }
         var edge = Math.floor(Math.random() * 4);   // 0=L 1=T 2=R 3=B
         var sx = (edge === 0) ? -30 : (edge === 2 ? W + 30 : Math.random() * W);
         var sy = (edge === 1) ? -30 : (edge === 3 ? H + 30 : Math.random() * H);
@@ -1508,15 +1546,16 @@
         var cyw = H / 2 + (Math.random() - 0.5) * H * 0.7;
         var dx = cxw - sx, dy = cyw - sy;
         var dl = Math.hypot(dx, dy) || 1;
-        var spd = 900 + Math.random() * 700;        // screen px/s
         comets.push({
           wx: sx / cam.scale + cam.ox * pf, wy: sy / cam.scale + cam.oy * pf,
           wvx: dx / dl * spd / cam.scale, wvy: dy / dl * spd / cam.scale,
-          pf: pf, ttl: 0.4 + Math.random() * 0.5,
-          len: 90 + Math.random() * 70, r: 1.6 + Math.random() * 1.0,
+          pf: pf, ttl: ttl,
+          len: len, r: r, tw: tw, glowA: glowA, cls: cls,
           age: 0
         });
         cometTotal++;
+        lastComet = { cls: cls, r: Math.round(r * 100) / 100,
+                      len: Math.round(len), spd: Math.round(spd) };
       }
     }
     for (var i = comets.length - 1; i >= 0; i--) {
@@ -1551,16 +1590,17 @@
       lg.addColorStop(1, 'rgba(' + hr[0] + ',' + hr[1] + ',' + hr[2] + ',0)');
       g2.save();
       g2.strokeStyle = lg;
-      g2.lineWidth = Math.max(0.8, c.r * 0.8);
+      g2.lineWidth = Math.max(0.5, c.r * (c.tw || 0.8));
       g2.lineCap = 'round';
       g2.beginPath();
       g2.moveTo(x, y);
       g2.lineTo(tx, ty);
       g2.stroke();
-      // the head: glow + core
+      // the head: glow + core (the glow strength rides the class — the
+      // far streaks barely glow, the near fireballs blaze)
       var spG = lcGlowSprite(headCol);
       var R = c.r * 4;
-      g2.globalAlpha = 0.7 * fade;
+      g2.globalAlpha = (c.glowA || 0.7) * fade;
       g2.drawImage(spG.c, x - R, y - R, R * 2, R * 2);
       g2.globalAlpha = fade;
       g2.fillStyle = headCol;
@@ -2579,7 +2619,10 @@
                   hits: TL.ladderHits, misses: TL.ladderMisses },
         // v1.06.3 THE LIVE LAYER — the rigs' life proof: comets spawned,
         // movers painted this frame, twinkler/comet counts.
-        live: { comets: comets.length, spawns: cometTotal, painted: livePainted }
+        // v1.09.4: lastComet = the last spawn's class/shape (the rare-sky
+        // instrument: cadence + the size/distance spread, asserted live).
+        live: { comets: comets.length, spawns: cometTotal, painted: livePainted,
+                lastComet: lastComet }
       };
     }
   };
