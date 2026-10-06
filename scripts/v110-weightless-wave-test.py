@@ -346,12 +346,16 @@ try:
             ok(ares["checked"] >= 60 and ares["frozenViolations"] == 0,
                f"the root vars FROZE mid-glide ({ares['checked']} frame pairs checked, "
                f"{ares['frozenViolations']} violations)")
-            ok(ares["writes"] <= max(30, paintedN * 1.5),
+            # v1.10.1 THE BREATH updated the contract: the user asked for
+            # mid-motion re-anchors ("update like twice a second") — the
+            # anchor writes now scale with the breath paints too, and the
+            # paint bumps include the breaths (still single-step, no storms).
+            ok(ares["writes"] <= max(30, paintedN * 2.5),
                f"the transcript wrote {ares['writes']} anchor writes across TWO glides "
-               f"(once-per-edge coasts + the settles; painted={paintedN})")
+               f"(once-per-edge coasts + the settles + the 2Hz breaths; painted={paintedN})")
             single_step = all(b["to"] == b["from"] + 1 for b in ares["paintBumps"])
-            ok(len(ares["paintBumps"]) <= 6 and single_step,
-               f"the paints land one at a time, at settles ({len(ares['paintBumps'])} single-step "
+            ok(len(ares["paintBumps"]) <= 16 and single_step,
+               f"the paints land one at a time, at settles+breaths ({len(ares['paintBumps'])} single-step "
                f"bumps over two drag+glide cycles — no mid-glide storms; the defer held {ares['defers']})")
             ok(ares["defers"] >= 1,
                f"the mid-glide paint defer engaged ({ares['defers']} held)")
@@ -550,16 +554,31 @@ try:
             results["ledger"]["D"] = dres
             ok(dres["firstSpawnAt"] is None or dres["firstSpawnAt"] >= 5000,
                f"the sky starts quiet (first spawn at {dres['firstSpawnAt']}ms; the old cadence fired by 4s)")
-            ok(dres["totalSpawns"] <= 3,
-               f"the cadence is rare ({dres['totalSpawns']} spawns in 46s; the old law averaged ~7)")
-            ok(dres["totalSpawns"] >= 1,
-               f"the sky is not dead ({dres['totalSpawns']} spawns observed)")
-            ok(len(dres["classes"]) >= 1 and all(c in (0, 1, 2) for c in dres["classes"]),
-               f"the spawns carry the class instrument (classes={dres['classes']})")
-            shape_ok = all(0.6 <= s["r"] <= 3.7 and 40 <= s["len"] <= 350 and 450 <= s["spd"] <= 1950
-                           for s in dres["shapes"])
-            ok(shape_ok and len(dres["shapes"]) >= 1,
-               f"the shapes ride the new class bounds ({dres['shapes'][:2]})")
+            # v1.10.2 updated the contract: the user asked "x10 more rare"
+            # (180-440s between spawns) AND a scatter gate ("only when the
+            # scatter of dots or grid lines is >0.4"). Zero spawns in a 46s
+            # window is now the CORRECT read; the gate + the armed schedule
+            # ride the live instrument instead of live class samples.
+            ok(dres["totalSpawns"] == 0,
+               f"the cadence is x10 rare ({dres['totalSpawns']} spawns in 46s; zero is the new law)")
+            gate = pg.evaluate("() => { const oo = (window.DoomalayDebug || {}).oneObject || {}; return (oo.live || {}).cometGate; }")
+            ok(gate is False,
+               f"the scatter gate holds the sky shut with scatter unset (gate {gate})")
+            pg.evaluate("() => Settings.setState({ dotScatter: 80 })")
+            gate2 = None
+            for _ in range(10):
+                pg.wait_for_timeout(500)
+                gate2 = pg.evaluate("() => { const oo = (window.DoomalayDebug || {}).oneObject || {}; return (oo.live || {}).cometGate; }")
+                if gate2 is True:
+                    break
+            nxt = pg.evaluate("() => { const oo = (window.DoomalayDebug || {}).oneObject || {}; return (oo.live || {}).cometNextIn; }")
+            # the boot schedule arms the FIRST spawn at 60-160s (x10 of the
+            # old 6-16s); by §D time part of it has elapsed, so what is left
+            # is 0-165s. The 180-440s SUBSEQUENT cadence rides the spawn
+            # reset (the v111 rig asserts the armed window at boot).
+            ok(gate2 is True and nxt is not None and 0 <= nxt <= 165,
+               f"the gate opens at scatter 80 with the boot schedule intact "
+               f"(gate {gate2}, first spawn in {nxt}s; the boot window is 60-160s)")
             pg.screenshot(path=OUT + "-D-sky.png")
 
         pg.screenshot(path=OUT + "-final.png")

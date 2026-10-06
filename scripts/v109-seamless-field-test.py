@@ -361,10 +361,16 @@ try:
                 ok(False, "no checked app-switch track found on the settings page")
             if "range" in bB:
                 r = bB["range"]
-                ok(r["att"].startswith("local"),
-                   f"the slider track is LOCAL under the gate (att={r['att']})")
-                ok("gradient" in r["img"],
-                   f"the slider track windows a field ('{r['img'][:56]}…')")
+                # v1.10.4 THE NATIVE HAND updated the contract: the user
+                # reverted the slider look ("narrow, clean" native; accent-
+                # color is <color>-only, so the first gradient stop is the
+                # doom look the user accepted). The slider now renders
+                # NATIVE under the gate: no local field window, no layered
+                # background, and the painter never bakes it.
+                ok(not r["att"].startswith("local"),
+                   f"the slider renders NATIVE under the gate (att={r['att']})")
+                ok(r["img"] == "none",
+                   f"the slider carries no field ('{r['img'][:56]}…')")
                 ok(not r["bake"] and not r["layer"],
                    "the painter never baked the slider")
             else:
@@ -692,9 +698,11 @@ try:
                        maxTask: lt.length ? Math.max.apply(null, lt) : 0 };
             }""")
             results["ledger"]["D_motion"] = mres
-            ok(mres["writes"] <= (counts.get("painted") or 130) * 1.5,
+            # v1.10.1 THE BREATH: mid-motion re-anchors (2Hz) join the
+            # once-per-edge coast + the settle — the write bound widens.
+            ok(mres["writes"] <= (counts.get("painted") or 130) * 2.5,
                f"the motion coast: {mres['writes']} transcript anchor writes across a full drag "
-               f"(the once-per-motion-edge batch + the settle)")
+               f"(the once-per-motion-edge batch + the settle + the 2Hz breaths)")
             ok(mres["maxTask"] < 150,
                f"no extreme long task during the drag (max={mres['maxTask']}ms, tasks={mres['longTasks'][:8]})")
             pg.screenshot(path=OUT + "-D-coast.png")

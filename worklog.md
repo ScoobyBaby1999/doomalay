@@ -724,3 +724,76 @@ Stage Summary:
   and lands one sharp bake at settle, and the sky is quiet and varied.
   Next session: sideload the APK, re-judge the glide with projected text,
   the field at every dock, the pinch feel, and the star cadence.
+
+---
+Task ID: v1.12.0 (THE BREATHING FIELD)
+Agent: Super Z (main orchestrator)
+
+Task: The user's four v1.10.0 post-ship reports — (1) the projection
+updates once at rest (should be ~2Hz) + "the panel itself gets slower
+the more custom colors it holds… the canvas itself feels slow to
+respond", (2) revert the sliders (narrow, clean; the gradient or the
+first color), (3) comets only when scatter > 0.4 and x10 rarer, (4)
+amplify parallax must reuse the existing dots/lines (no new brighter
+stars, nothing over the icons) and amplify the parallax while zooming
+AND panning.
+
+Work Log:
+- THE PROFILER first (the user: "I don't know why"): v111-perf-probe.py
+  — two theme configs (LEAN default vs RICH many-custom-colors), real
+  CDP input, raw-websocket devtools.timeline traces (playwright filters
+  the Tracing domain — the honest timeline needed a second, direct CDP
+  connection). Findings: the glide's dominant cost is style recalc
+  (UpdateLayoutTree 445-524ms/window) driven by the per-frame inherited
+  --panel-vis-h write, plus a gradient raster storm in rich themes
+  (RasterTask 31 -> 1029 events) — the per-frame var re-resolve of
+  every painted window whose formula calcs the var. JS measured
+  near-idle (the user's own exoneration of doom projection's JS).
+  Canvas pan/zoom measured clean.
+- v1.10.1 THE BREATH: run() allows a full re-anchor paint every 500ms
+  while a motion window is open (the user's exact cadence); the coast
+  still freezes between breaths; the settle lands exact.
+- v1.10.2 THE HONEST SKY: decoded the amplifier's three mis-features on
+  the tree — the amp-only hero fireflies (tiled, bright, over icons),
+  the static glow (brighter than the amp-0 grid), the over-icons split
+  (sizeVar >= 80 over icons). All retired; the band split (the same
+  dots/lines at per-depth parallax) stays. Comets: the scatter > 40
+  gate (the user's 0.4 on the app's 0-100 sliders) + x10 cadence
+  (180-440s, first 60-160s).
+- v1.10.3 THE TRUE DEPTH: per-band zoom parallax — each band's drawn
+  period scales by S^((pf-1)*kZ): the planes diverge under zoom,
+  world-true at scale 1 and amp 0; pattern-matrix math only.
+- v1.10.4 THE NATIVE HAND: the slider gate rules retired; native
+  rendering returns; accent-color = var(--accent) = the first gradient
+  stop (research: accent-color is <color> only — the user's accepted
+  fallback). Toggles keep the full spectrum.
+- v1.10.5 THE MEASURED FIX: the inherited var lands at most every 500ms
+  during motion and always at the rest writes; the layout stays exact
+  per frame (the element-scoped inline height). Measured: UpdateLayout
+  Tree 445.7 -> 71.1ms (lean) / 524.5 -> 110.3ms (rich).
+- THE RIG: scripts/v111-breathing-field-test.py (20 checks — the breath,
+  the coast between breaths, the honest sky, the comet gate, the zoom
+  depth incl. byte-flat-at-zoom, the native hand, the var throttle).
+  The pinch needed a corridor-checked center + a quiet-canvas gate (a
+  CDP simultaneous lift and an icon under a finger both eat gestures —
+  the chase is documented in the rig).
+- Battery on the shipped tree: v111 20/20 (NEW, permanent) · v110 22/22
+  (§A writes/bumps + §D cadence asserts updated to the breath + x10
+  contracts, documented) · v109 30/30 (§B slider + §D_motion asserts
+  updated to the native-hand + breath contracts, documented) · v106
+  21/21 · v1045 11/11 · v1040 7/7 · uikit 140 · twins 198/199 (the
+  documented pre-existing page-6 baseline failure).
+- SCOPE BOUNDARY (the spaghetti line): the remaining rich-theme glide
+  raster storm is inherent to fixed-attachment gradients on elements a
+  resizing panel repaints — layer-promoting every painted window would
+  trade main-thread paint for N viewport-sized GPU layers on a weak
+  device (memory + swap); documented, not built.
+
+Stage Summary:
+- WAVE SHIPS as v1.12.0-the-breathing-field (the parallel bot's HF TRUTH WAVE took v1.11.0 mid-flight; the rebase-before-push protocol merged amicably — no file overlap beyond the buildinfo version chain). The projection breathes at
+  2Hz mid-motion, the amplifier keeps only the honest parallax (plus
+  zoom depth), the sky obeys the scatter gate at x10 rarity, the
+  sliders are native again, and the measured recascade storm is gone.
+  Next session: the user sideloads the APK and re-judges the glide feel
+  with many custom colors, the amplifier look, the comet rarity, and
+  the native sliders.

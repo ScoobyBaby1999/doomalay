@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.10.5"   // v1.10.5 THE MEASURED FIX: the profiler convicted the per-frame inherited --panel-vis-h write (the whole-subtree style recascade + the gradient re-resolve storm that made the panel slower the more custom colors it holds) — the layout stays exact per frame (the element-scoped inline height), the var lands at most every 500ms during motion and always at the rest writes.
+var Version = "1.12.0"   // v1.12.0 THE BREATHING FIELD: the doom projection re-anchors mid-motion at 2Hz (THE BREATH), the amplifier keeps only the honest per-depth parallax and retires the amp-only fireflies/glow/over-icons split (THE HONEST SKY), gains per-band zoom parallax (THE TRUE DEPTH), the sliders return to native with accent-color = the gradient's first stop (THE NATIVE HAND), and the profiler-convicted per-frame inherited --panel-vis-h recascade is throttled to the same 2Hz (THE MEASURED FIX: UpdateLayoutTree 445-524ms -> 71-110ms per traced glide window). Battery: v111 rig 20/20 · v110 22/22 · v109 30/30 · v106 21/21 · v1045 11/11 · v1040 7/7 · uikit 140. [prior: 1.11.0 THE HF TRUTH WAVE: the honest turn, the black-hole guard, the space knows itself, token honesty, the guided first-run. [prior: 1.10.0 THE WEIGHTLESS WAVE: the drift coast, the fullscreen field, the still hand, the rare sky.]]
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
