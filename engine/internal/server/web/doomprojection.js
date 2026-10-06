@@ -116,8 +116,9 @@
   var dirty = false, movingRoot = 0, movingLayout = 0, rafId = 0;
   var memoEpoch = 0;
   var writeEpoch = 0;
+  var paintStamp = 0;
   var trackedScrollers = [];
-  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0 };
+  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0, yielded: 0 };
   var on = false;
   var obs = null, gatesObs = null;
 
@@ -387,6 +388,11 @@
             el.__projWriteEpoch = writeEpoch;
             L.base.style.removeProperty('background-image');
             el.style.removeProperty('background-image');
+            // v1.08.2: the COLOR lifts too — the [style*=] catchers key on
+            // the author's background-color spelling; without the lift the
+            // reads below would evaluate a catcher-less element (the
+            // ownership test would misread every suppressed window).
+            el.style.removeProperty('background-color');
             lift = true;
           } catch (e0) {}
         }
@@ -400,6 +406,7 @@
           clip: cs.backgroundClip,
           shadow: cs.boxShadow,
           clipPath: cs.clipPath,
+          attachment: cs.backgroundAttachment,
           ovfX: cs.overflowX,
           bt: parseFloat(cs.borderTopWidth) || 0,
           br: parseFloat(cs.borderRightWidth) || 0,
@@ -409,6 +416,7 @@
         if (lift) {
           L.base.style.setProperty('background-image', 'none', 'important');
           el.style.setProperty('background-image', 'none', 'important');
+          el.style.setProperty('background-color', 'transparent', 'important');
         }
         return out;
       } catch (e) {
@@ -416,6 +424,7 @@
           if (lift && L && L.base) {
             L.base.style.setProperty('background-image', 'none', 'important');
             el.style.setProperty('background-image', 'none', 'important');
+            el.style.setProperty('background-color', 'transparent', 'important');
           }
         } catch (e1) {}
         return null;
@@ -607,25 +616,25 @@
     stats.paints++;
     for (var rr = 0; rr < rootReg.length; rr++) rootReg[rr].bRect = undefined;
     // ── READ PHASE (batched — no writes between reads) ────────
+    // v1.08.2 THE STEADY HAND: the per-element body is a closure — the
+    // qSA sweep AND the steady-hand pass (below) feed the same pipeline.
+    var stamp = ++paintStamp;
     var reads = [];
-    for (var ri = 0; ri < rootReg.length; ri++) {
-      var R = rootReg[ri];
-      var els;
-      try { els = R.el.querySelectorAll(SEL); } catch (e) { SEL = null; POS_SEL = null; return; }
-      var M = readMatrix(R.el);
-      for (var i = 0; i < els.length; i++) {
-        var el = els[i];
+    var readOne = function (el, R, M, st) {
+      if (!el || el.__projStamp === st) return;
+      el.__projStamp = st;
+      {
         if (!el.__projPainted) {
           // memoized-solid skip — no getComputedStyle for the (majority)
           // solid twins on every paint; the epoch clears the memo on
           // repaint/theme swaps.
-          if (el.__projNoneEpoch === epoch) continue;
+          if (el.__projNoneEpoch === epoch) return;
           // ONE computed read, BOTH properties (the old two-call probe
           // forced two style flushes per element per first-encounter
           // paint — the panel-open long tasks).
           var pcs = getComputedStyle(el);
           var img = pcs.backgroundImage;
-          if (!img || img === 'none') { el.__projNoneEpoch = epoch; continue; }
+          if (!img || img === 'none') { el.__projNoneEpoch = epoch; return; }
           // v0.92.1: the projection model is FIXED-ATTACHMENT windows
           // only. An element whose computed attachment carries no
           // 'fixed' opted out (a local gradient). Memoized with the
@@ -635,7 +644,7 @@
           // !important gates) or an existing layer is NOT an opt-out —
           // a dropped-then-returning window must re-enter the set.
           if (pcs.backgroundAttachment.indexOf('fixed') === -1 &&
-              !el.__projL2 && el.__projPos == null) { el.__projNoneEpoch = epoch; continue; }
+              !el.__projL2 && el.__projPos == null) { el.__projNoneEpoch = epoch; return; }
           el.__projPainted = true;
         }
         var r = el.getBoundingClientRect();
@@ -652,7 +661,7 @@
             zero: (r.width < 1 && r.height < 1),   // v1.06.3: display:none — constants only
             bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
             by: M.translateOnly ? (-r.top + M.ty) : -r.top });
-          continue;
+          return;
         }
         // bake FLAT (the current viewport position) — the scroll path
         // re-bakes constants incrementally (scrollRebake) on scroll
@@ -743,7 +752,23 @@
         // resolves 'none' at any stable snapshot LEAVES the painted set.
         if (_snap && (!_snap.image || _snap.image === 'none')) {
           el.__projPainted = false;
-          continue;
+          return;
+        }
+        // v1.08.2 THE OWNERSHIP TEST — a suppressed element the CSS has
+        // claimed LOCALLY (the §2 gate windows' attachment:local — the
+        // snapshot's lift makes the catcher visible again so the computed
+        // attachment is the truth) yields: the layer drops (the author's
+        // values came back with it) and the first-encounter probe
+        // memoizes the local look on the next paint. Legacy bakes are
+        // untouched — their inline scroll IS the bake.
+        if (_snap && el.__projSuppressed && _snap.attachment &&
+            _snap.attachment.indexOf('fixed') === -1) {
+          L2.drop(el);
+          el.__projPainted = false;
+          el.__projPos = null;
+          el.__projCarry = false;
+          stats.yielded++;
+          return;
         }
         var _okv = _snap ? L2.ok(el, _snap) : 0;
         reads.push({ el: el, R: R,
@@ -754,6 +779,31 @@
           snap: _snap, okv: _okv });
         el.__projR = R;
       }
+    };
+    for (var ri = 0; ri < rootReg.length; ri++) {
+      var R = rootReg[ri];
+      var els;
+      try { els = R.el.querySelectorAll(SEL); } catch (e) { SEL = null; POS_SEL = null; return; }
+      var M = readMatrix(R.el);
+      for (var i = 0; i < els.length; i++) readOne(els[i], R, M, stamp);
+    }
+    // v1.08.2 THE STEADY HAND — the second read source: suppressed windows
+    // the qSA sweep can no longer see (the L2 suppression rewrote the
+    // inline background-color, BREAKING the [style*=] catcher that matched
+    // the element into SEL). Without this pass: paint N bakes+suppresses →
+    // paint N+1 drops (no match → the author values restore) → paint N+2
+    // re-bakes — the projected↔local oscillation the user reports as pills
+    // "switching to non doom projection randomly for a bit". A suppressed
+    // element is a painter asset: it re-enters the read list regardless of
+    // the live attribute match; it leaves only via the ownership test
+    // (CSS claimed it locally) or the drop loop (DOM/geometry loss).
+    for (var ps = 0; ps < painted.length; ps++) {
+      var pEl = painted[ps];
+      if (!pEl || !pEl.isConnected || !pEl.__projSuppressed) continue;
+      if (pEl.__projStamp === stamp) continue;
+      var pR = pEl.__projR;
+      if (!pR || rootReg.indexOf(pR) === -1) continue;
+      readOne(pEl, pR, readMatrix(pR.el), stamp);
     }
     // ── WRITE PHASE (only what changed — a no-op bake writes
     //    nothing, fires no MutationObserver, settles at once) ──
