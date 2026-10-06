@@ -114,6 +114,7 @@
   var rootSet = null;
   var nextKey = 0;
   var dirty = false, movingRoot = 0, movingLayout = 0, rafId = 0;
+  var coasting = false;
   var memoEpoch = 0;
   var writeEpoch = 0;
   var paintStamp = 0;
@@ -607,6 +608,8 @@
 
   // ══ THE PAINT — the batched read/write phases ═══════════════════
   function paint() {
+    coasting = false;   // v1.08.5: the settle un-coasts (the read phase
+                        // re-anchors every coasted text window)
     if (!SEL) collect();
     if (!SEL) return;
     syncRoots();
@@ -655,6 +658,17 @@
           // (content-visibility un-rendering shifts far-offscreen rows
           // silently; arithmetic-from-rot was the misplaced-gradient
           // flash reborn).
+          // v1.08.5 THE COAST — the carry path is where the transcript's
+          // offscreen text lives: the clip flag MUST be decided HERE (the
+          // rig caught the storm — un-flagged carries took the var-form
+          // true-up write on every paint). One cheap computed read, once
+          // per element; the flag sticks from then on.
+          if (el.__projClip === undefined) {
+            try {
+              var csc = getComputedStyle(el);
+              el.__projClip = ((csc.webkitBackgroundClip || csc.backgroundClip) === 'text') ? 1 : 0;
+            } catch (eC) { el.__projClip = 0; }
+          }
           el.__projR = R;
           el.__projCarry = true;
           reads.push({ el: el, R: R, carry: true,
@@ -771,6 +785,18 @@
           return;
         }
         var _okv = _snap ? L2.ok(el, _snap) : 0;
+        // v1.08.5 THE COAST — text windows (background-clip:text) ride the
+        // LEGACY inline bake, and they are the population the scroll/motion
+        // re-anchor writes traverse. Flagged here (the snapshot's clip),
+        // consumed by scrollRebake (skip) and coastText (the motion
+        // disconnect). THE FLAG STICKS: on steady paints the snapshot is
+        // memoized away (null) — resetting there would un-flag every text
+        // window one paint after its first bake (the rig caught exactly
+        // that: clip=0 write storms). visForm text (the bottom-anchored
+        // input zone) stays var-carried — its --panel-vis-h term must
+        // keep compensating.
+        if (_snap) el.__projClip = (_snap.clip === 'text') ? 1 : 0;
+        if (_snap) el.__projVisForm = visForm ? 1 : 0;
         reads.push({ el: el, R: R,
           bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
           by: yB,
@@ -820,13 +846,17 @@
           it.el.__projBy = it.by;
           if (it.el.__projL2 && L2.rebake(it.el)) {
             /* layered carry — constants trued, rule patched */
-          } else if (!it.zero) {
+          } else if (!it.zero && !it.el.__projClip) {
             // v1.06.3: a ZERO-RECT element (display:none — the header
             // pills' closed dropdown) takes the constants only: a bake
             // here anchored nothing visible AND its unconditional
             // image/color strip deleted the element's OWN inline paint
             // (the white-pill root cause). Real-rect carries (scrolled-
             // offscreen windows) keep the full true-up write.
+            // v1.08.5 THE COAST: text carries skip the true-up — their
+            // constants go stale by design (they coast with the content);
+            // landing on-screen routes them through bakeNewcomers (a
+            // fresh, correct anchor at first sight).
             var cpos = fmtCalc('--proj-tx', it.bx) + ' ' + fmtCalcY(it.by);
             if (it.el.__projPos !== cpos || !it.el.style.backgroundSize) {
               it.el.style.backgroundPosition = cpos;
@@ -970,7 +1000,38 @@
     }
   }
   function mark() { dirty = true; schedule(); }
-  function motion() { movingRoot = 3; schedule(); stats.motions++; }
+  // v1.08.5 THE COAST — the motion-window edge disconnects every painted
+  // text window from the per-frame root vars: their background-position
+  // is rewritten ONCE to the currently-resolved constant, so the per-frame
+  // --proj-tx/--proj-ty writes stop touching them (no style recalc, no
+  // viewport-sized glyph re-raster per frame — the measured cost of
+  // projected text during the panel glide). The gradient then rides the
+  // content rigidly (a bounded drift from the viewport field — invisible
+  // on a smooth gradient), and the settle paint re-anchors everything.
+  // RESEARCH: the layout-thrashing literature (read/write interleaving
+  // forces synchronous layout) and Chrome's own Android scroll work both
+  // point the same way — per-frame main-thread writes defeat the
+  // compositor; no OSS 'gradient text' library changes the math (they all
+  // ship background-clip:text). docs/RESEARCH-V109-TEXT-AND-PANEL-PERF.md.
+  function coastText() {
+    if (coasting) return;
+    coasting = true;
+    var wep = ++writeEpoch;
+    for (var i = 0; i < painted.length; i++) {
+      var el = painted[i];
+      if (!el.__projClip || el.__projVisForm || !el.__projPos || !el.isConnected) continue;
+      var R = el.__projR;
+      if (!R) continue;
+      var M = readMatrix(R.el);
+      var px = (el.__projBx || 0) - (M.translateOnly ? M.tx : 0);
+      var py = (el.__projBy || 0) - (M.translateOnly ? M.ty : 0);
+      var pos = num(px) + 'px ' + num(py) + 'px';
+      el.style.backgroundPosition = pos;
+      el.__projPos = pos;              // the coasted constant — the settle
+      el.__projWriteEpoch = wep;       // paint's diff-check rewrites the var form
+    }
+  }
+  function motion() { coastText(); movingRoot = 3; schedule(); stats.motions++; }
   // the LAYOUT window: any transition on a property that can move
   // element boxes repaints per frame while it animates; cosmetic
   // transitions only mark once.
@@ -1237,6 +1298,12 @@
       var el = painted[i];
       if (!el.isConnected || !sc.contains(el)) continue;
       if (el.__projBy === undefined || el.__projCarry === true) { fresh.push(el); continue; }
+      // v1.08.5 THE COAST — baked text windows ride the content: zero
+      // per-scroll-event re-anchor writes (the write storm that made
+      // projected text 'extreme lag'). Newcomers still take the targeted
+      // on-the-spot bake above (a correct anchor at first sight); the
+      // settle paint re-anchors everything.
+      if (el.__projClip) continue;
       // sticky/fixed descendants DON'T move with the scroll content
       var pos_ = el.__projPosType;
       if (pos_ === undefined) {
@@ -1286,6 +1353,7 @@
       el.__projBx = bx; el.__projBy = by;
       var snapN = (el.__projL2ok === 0) ? null :
         ((el.__projL2 && el.__projL2Epoch === memoEpoch) ? null : L2.snapshot(el));
+      if (snapN) el.__projClip = (snapN.clip === 'text') ? 1 : 0;
       if (el.__projL2 && el.__projL2Epoch === memoEpoch) {
         L2.rebake(el);
         el.__projR = R;
@@ -1441,7 +1509,7 @@
       if (pEl) pEl.style.removeProperty('--panel-vis-h');
     } catch (eS8) {}
     SEL = null; POS_SEL = null;
-    dirty = false; movingRoot = 0; movingLayout = 0;
+    dirty = false; movingRoot = 0; movingLayout = 0; coasting = false;
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     if (gestRetry) { clearTimeout(gestRetry); gestRetry = 0; }
     if (settleTimer) { clearTimeout(settleTimer); settleTimer = 0; }

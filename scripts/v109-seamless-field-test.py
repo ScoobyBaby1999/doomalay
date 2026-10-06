@@ -378,6 +378,17 @@ try:
             }""")
             pg.wait_for_timeout(600)
             pg.screenshot(path=OUT + "-B-chrome.png")
+            # CLOSE settings the way a user does: the settings REPLACES the
+            # panel root (panel.open, not a view stack) — the dock's new-chat
+            # re-render restores the chat root (debug-proven: it works even
+            # with the panel still open).
+            for _ in range(3):
+                if pg.evaluate("() => !!document.getElementById('chat-scroll')"):
+                    break
+                open_chat_via_dock()
+                pg.wait_for_timeout(600)
+            ok(pg.evaluate("() => !!document.getElementById('chat-scroll')"),
+               "the chat view is back (dock reopen)")
 
         # ══ §C THE SEAMLESS FIELD (v1.08.4) ════════════════════════════
         if "C" in SECTIONS:
@@ -518,7 +529,19 @@ try:
 
         # ══ §D THE COAST (v1.08.5) ═════════════════════════════════════
         if "D" in SECTIONS:
+            # the fmt slots carry gradients (the v107 §B pattern) — without
+            # them the fmt twins resolve 'none' and no text window exists
+            pg.evaluate("""() => {
+              const s = Settings.getState();
+              Settings.setState({ fmtOverrides: Object.assign({}, s.fmtOverrides, {
+                a1: { colors: ['#e945c3', '#7b2ff7', '#f9d423'], dir: 'auto' },
+                bright: { colors: ['#f9d423', '#ffffff'], dir: 'auto' }
+              }) });
+            }""")
+            pg.wait_for_timeout(700)
             # a long fmt transcript: text windows with live gradient clips
+            if not pg.evaluate("() => !!document.getElementById('chat-scroll')"):
+                ok(False, "the chat scroller is missing — §D needs the chat view")
             seeded = pg.evaluate("""() => {
               const sc = document.querySelector('#chat-scroll');
               if (!sc) return 0;
@@ -536,20 +559,58 @@ try:
             pg.wait_for_timeout(900)
             ok(seeded >= 60, f"fmt transcript seeded ({seeded} blocks)")
 
+            diag = pg.evaluate("""() => {
+              const out = { samples: [], scrollChildren: 0 };
+              const sc = document.getElementById('chat-scroll');
+              out.scrollChildren = sc ? sc.querySelectorAll('.fmt h2, .fmt strong').length : 0;
+              const els = sc ? sc.querySelectorAll('.fmt h2, .fmt strong') : [];
+              for (let i = 0; i < Math.min(6, els.length); i++) {
+                const el = els[i];
+                const cs = getComputedStyle(el);
+                out.samples.push({
+                  tag: el.tagName, i,
+                  clipFlag: el.__projClip === undefined ? 'undef' : el.__projClip,
+                  compClip: cs.webkitBackgroundClip || cs.backgroundClip,
+                  l2ok: el.__projL2ok === undefined ? 'undef' : el.__projL2ok,
+                  painted: !!el.__projPainted,
+                  pos: (el.style.backgroundPosition || '').slice(0, 30)
+                });
+              }
+              return out;
+            }""")
+            results["ledger"]["D_diag"] = diag
+            print("  [diag]", diag["scrollChildren"], diag["samples"][:3])
+
             counts = pg.evaluate("""() => {
               // THE WRITE COUNTER — every style-attribute mutation carrying
               // a background-position on a painted text element, observed
               // across a scripted scroll of the transcript.
               window.__v109writes = 0;
+              window.__v109who = {};
               const sc = document.getElementById('chat-scroll');
               const mo = new MutationObserver((muts) => {
                 for (const m of muts) {
                   if (m.type !== 'attributes' || m.attributeName !== 'style') continue;
                   const t = m.target;
-                  if (t.__projClip && (t.style.backgroundPosition || '').indexOf('var(') !== -1) {
-                    window.__v109writes++;
-                  } else if (!t.__projClip && (t.getAttribute('style') || '').indexOf('background-position') !== -1) {
-                    window.__v109writes++;
+                  const pos = t.style.backgroundPosition || '';
+                  if (pos.indexOf('background') !== -1 || t.getAttribute('style').indexOf('background-position') === -1) {
+                    if (t.getAttribute('style').indexOf('background-position') === -1) continue;
+                  }
+                  window.__v109writes++;
+                  const k = (t.className || t.tagName) + '|clip=' + (t.__projClip ? 1 : 0) +
+                            '|var=' + (pos.indexOf('var(') !== -1 ? 1 : 0);
+                  window.__v109who[k] = (window.__v109who[k] || 0) + 1;
+                  if (!window.__v109writers) window.__v109writers = [];
+                  if (window.__v109writers.length < 4 && t.__projClip !== 1) {
+                    window.__v109writers.push({
+                      tag: t.tagName, cls: (t.className || '').slice(0, 30),
+                      clipFlag: t.__projClip === undefined ? 'undef' : t.__projClip,
+                      painted: !!t.__projPainted, carry: !!t.__projCarry,
+                      l2ok: t.__projL2ok === undefined ? 'undef' : t.__projL2ok,
+                      connected: t.isConnected,
+                      pos: pos.slice(0, 40),
+                      compClip: (getComputedStyle(t).webkitBackgroundClip || getComputedStyle(t).backgroundClip)
+                    });
                   }
                 }
               });
@@ -564,15 +625,78 @@ try:
               });
               return step().then(() => {
                 const w = window.__v109writes;
+                const who = window.__v109who;
                 window.__v109mo.disconnect();
-                return { writes: w, painted: window.DoomProjection.stats().painted };
+                return { writes: w, who, writers: (window.__v109writers || []).slice(0, 4), painted: window.DoomProjection.stats().painted };
               });
             }""")
             results["ledger"]["D"] = counts
             ok(counts and counts.get("painted", 0) > 30,
                f"the text population is baked ({counts and counts.get('painted')})")
-            ok(counts and counts.get("writes", 999) <= 4,
-               f"THE COAST: {counts and counts.get('writes')} anchor writes across the scroll (was ~one per text per event)")
+            # THE COAST bar: each text window may write at most its FIRST-SIGHT
+            # bake (a correct anchor the moment it enters the viewport) plus
+            # the settle re-anchors — never the per-scroll-event storm
+            # (pre-coast measured: ~11 writes per element across 14 steps).
+            storm = counts and counts.get("writes", 999) > counts.get("painted", 0) * 2.0
+            ok(not storm,
+               f"THE COAST: {counts and counts.get('writes')} anchor writes across the scroll "
+               f"for {counts and counts.get('painted')} painted (the pre-coast storm was ~1400)")
+            noclip0 = not any(k.endswith("|clip=0") and v > counts["painted"] * 0.2
+                              for k, v in (counts.get("who") or {}).items())
+            ok(noclip0, "no un-flagged text windows in the write ledger")
+
+            # ── the MOTION leg: a real panel drag with the projected
+            # transcript — the coast batch lands ONCE at the motion edge,
+            # the drag frames write NOTHING, the settle re-anchors.
+            motion = pg.evaluate("""() => new Promise(res => {
+              const sc = document.getElementById('chat-scroll');
+              window.__v109mwrites = 0;
+              const mo = new MutationObserver((muts) => {
+                for (const m of muts) {
+                  if (m.type !== 'attributes' || m.attributeName !== 'style') continue;
+                  const t = m.target;
+                  if ((t.getAttribute('style') || '').indexOf('background-position') !== -1 &&
+                      sc.contains(t)) window.__v109mwrites++;
+                }
+              });
+              mo.observe(sc, { attributes: true, attributeFilter: ['style'], subtree: true });
+              const longTasks = [];
+              try {
+                new PerformanceObserver((l) => {
+                  for (const e of l.getEntries()) longTasks.push(Math.round(e.duration));
+                }).observe({ entryTypes: ['longtask'] });
+              } catch (e) {}
+              window.__v109mo2 = mo;
+              window.__v109lt = longTasks;
+              res('armed');
+            })""")
+            cdp3 = ctx.new_cdp_session(pg)
+            hd3 = pg.evaluate("""() => {
+              const h = document.querySelector('#chat-panel .handle');
+              const r = h.getBoundingClientRect();
+              return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }""")
+            cdp3.send("Input.dispatchTouchEvent",
+                     {"type": "touchStart", "touchPoints": [{"x": hd3["x"], "y": hd3["y"]}]})
+            for i in range(1, 17):
+                cdp3.send("Input.dispatchTouchEvent",
+                          {"type": "touchMove", "touchPoints":
+                           [{"x": hd3["x"], "y": hd3["y"] + 90 * i / 16}]})
+                time.sleep(0.016)
+            cdp3.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+            pg.wait_for_timeout(1300)
+            mres = pg.evaluate("""() => {
+              const w = window.__v109mwrites, lt = (window.__v109lt || []).slice();
+              if (window.__v109mo2) window.__v109mo2.disconnect();
+              return { writes: w, longTasks: lt,
+                       maxTask: lt.length ? Math.max.apply(null, lt) : 0 };
+            }""")
+            results["ledger"]["D_motion"] = mres
+            ok(mres["writes"] <= (counts.get("painted") or 130) * 1.5,
+               f"the motion coast: {mres['writes']} transcript anchor writes across a full drag "
+               f"(the once-per-motion-edge batch + the settle)")
+            ok(mres["maxTask"] < 150,
+               f"no extreme long task during the drag (max={mres['maxTask']}ms, tasks={mres['longTasks'][:8]})")
             pg.screenshot(path=OUT + "-D-coast.png")
 
         pg.screenshot(path=OUT + "-final.png")
