@@ -460,3 +460,73 @@ Work Log:
 
 Stage Summary:
 - The wave ships as v1.06.0-the-fluid-wave (tag next) — the panel glide rides the compositor, the toggle cannot wedge, the projection's toggle-off is registry-independent.
+
+---
+Task ID: v107-wave
+Agent: Super Z (main)
+Task: THE CANVAS OPT WAVE (PLAN-V107) — the user's three asks: (1) the grid
+still not 60fps + visible tiling, bake everything not moving (O(k)); (2)
+below ~30% zoom (up close) the grid over-calculates and snaps — fix
+thoroughly, ideally predetermined paths; (3) restore life — more dynamic,
+very few points/lines moving fast, tiling no longer perceivable.
+
+Work Log:
+- REBASE: local tree was f4a8353a + the unpushed v0971 wave — the parallel
+  bot landed v0.98.1 (= the same issues 1-3 scope) plus v0.99-v1.06.0 (the
+  FIELD color system, the editor, the restore, the discipline, the fluid
+  wave). Hard reset to origin/main c2d1ff1f; nothing of mine was lost.
+- MEASURED the worst-case doom grid live (headless 412×915): 29 tile fills
+  per full frame, 15fps at rest (the v0.97 ambient cadence gate), 6
+  rebakes inside one pinch sweep (pending=true mid-gesture), VLM-confirmed
+  tiling period ~1.5-2 screens. Root causes code-proven: bgKey (bgView.zx)
+  churns the bake fingerprint EVERY FRAME once scale>1; colors sample
+  through the LIVE bgView fold at bake scale (the color snap); the cheap
+  frame wiped #c2 without repainting the over layer (the icons' front
+  layer vanished/flickered at rest).
+- RESEARCH: RESEARCH-V084's standing verdict holds (canvas2d + worker +
+  createPattern; Pixi owns the conditional world layer; no second WebGL
+  context for the grid). MDN CanvasPattern.setTransform; multires LOD
+  ladders (mipmaps/krpano analog); game-art repetition wisdom (period ≥
+  2-4× viewport or break with a second scale).
+- v1.06.1 THE ZOOM LADDER (a82d094d): reference-space color sampling
+  (zoom-stable), bgKey OUT of the fingerprint, canonical level bakes
+  (level = 1.25× quantum of scale; set = pure function of params+level),
+  LRU byte-capped ladder cache (TL_BUDGET 96→32MB per set, cap 128MB),
+  async-only bakes (onBakeReady → repaint-wanted), levels floored at 0
+  (zoom-out rides level 0 supersampled), ladder instruments. Storm dead:
+  full 6× sweep = 4 async bakes (was 6+ synchronous), fast fling = 1,
+  pan = 0, warm revisits = instant.
+- v1.06.2 THE FILL DIET (bb73c29c): the bg mirror-quad (2×2 flipped
+  arrangement baked once → ONE pattern fill; BG_TILE_MULT 2→1.35) +
+  over-tiles for the top band only (29→21 fills; the v0812 contract
+  verified live: dots+lines still route at amp≥50).
+- v1.06.3 THE LIFE WAVE (bb1c4bd2): renderOverLayer (the cheap frame is
+  lossless for #c2 — the vanish/flicker fix), the modulation field (256²
+  theme-tinted value noise, soft-light, 320-cell period, 0.9× parallax +
+  2.5px/s drift — the tiling kill), comets (≤3, 4-10s apart, glowing
+  heads + gradient tails), twinklers (~5% of cells, some fast blinkers),
+  cadence 66→33ms, TEMPO 0.6, hero pulse spread 1.8→3.4, cometsLive rides
+  the 60fps cheap-frame gate. VLM: organic large-scale variation, no
+  tiling read, premium maintained.
+- v1.06.4 THE PROOF: scripts/v107-canvas-proof.sh 15/15 (storm dead, budget
+  holds, grid alive, theme owns everything, zero errors). Battery: v1040
+  7/7, v0899 12/12, v0852 14/14 (RIG REPAIRED — the camera-pan assert was
+  proven PRE-EXISTING-failing on the untouched v1.06.0 tree; the rig's
+  document-level synthetic mousedown is correctly rejected by
+  onCanvasSurface; the repair targets #c like a real finger), v0831 13/13,
+  v0812 7/7, v0901 15/15, twins 199, uikit 140, go test green.
+
+Stage Summary:
+- THE THREE ASKS ANSWERED: (1) 29→21 fills + one-fill bg + async-only
+  bakes — the 60fps path is structural; (2) deep zoom = predetermined
+  level swaps (a seen level is ZERO work; unseen = one async bake, ever)
+  — no snap (geometry exact through swaps; sharpness-only landings);
+  (3) the field modulates (soft-light, 320-cell period), comets fly,
+  twinklers blink (some fast), the breath runs 2× faster at 30fps ambient
+  — tiling no longer perceivable (VLM-verified).
+- The wave completes at v1.07.0 (the left dot moves). CI builds the APK.
+- NOT done (deliberate, anti-spaghetti): band merging (AMP_BANDS stays 5 —
+  the parallax depth reads), negative zoom-out levels (level 0
+  supersampling is free), cross-faded level swaps (the ≤1.12× sharpness
+  delta is invisible), comets during zoom-out extremes only skipping
+  twinklers below 10px spacing (density guard).

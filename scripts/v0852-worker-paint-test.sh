@@ -86,12 +86,17 @@ sleep 1.2
 PB=$(ev "(window.DoomalayPerf||{}).paints||0")
 ck "ambient frames climb (paints $PA → $PB)" "$([ "$PB" -gt "$PA" ] && echo yes || echo no)" "$PA → $PB"
 CAM0=$(ev "JSON.stringify((window.DoomalayDebug||{}).camera||{})")
-# a synthetic drag: the app pans via document mousedown → window mousemove
-# (movement flips inputState PENDING → PAN before the 500ms long-press)
+# a synthetic drag: the app pans via a CANVAS-SURFACE mousedown -> window
+# mousemove. v1.06.4 RIG REPAIR: the mousedown must target #c (the
+# real-user pan surface) — the old document-level dispatch had
+# target=document, which onCanvasSurface() correctly REJECTS (proven
+# pre-existing-failing on the untouched v1.06.0 tree; the app's guard is
+# right, the rig's synthesis was stale).
 agent-browser eval "(function(){
-  function md(x,y){document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
+  var c=document.getElementById('c');
+  function md(x,y){c.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
   function mm(x,y){window.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
-  function mu(x,y){document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
+  function mu(x,y){window.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y}));}
   md(400,300); mm(340,300); mm(290,302); mm(250,300); mm(242,300); mu(242,300);
   return 'dragged'})()" >/dev/null 2>&1
 # the gentle last move (8px) keeps the release velocity small — momentum
