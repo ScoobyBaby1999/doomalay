@@ -211,7 +211,8 @@ try:
           overrides[s.theme] = Object.assign({}, overrides[s.theme], {
             '--field-surface': { colors: ['#10101c', '#2a1a4a', '#0e6b6b'], dir: 'auto' },
             '--field-accent-1': { colors: ['#e945c3', '#7b2ff7', '#f9d423'], dir: 'auto' },
-            '--field-accent-2': { colors: ['#22d3ee', '#0ea5e9', '#7c3aed'], dir: 'auto' }
+            '--field-accent-2': { colors: ['#22d3ee', '#0ea5e9', '#7c3aed'], dir: 'auto' },
+            '--field-accent-3': { colors: ['#f472b6', '#c084fc', '#fb7185'], dir: 'auto' }
           });
           Settings.setState({ themeOverrides: overrides });
           const cs = getComputedStyle(document.documentElement);
@@ -319,21 +320,68 @@ try:
           return Array.from(row.querySelectorAll('button')).map((el) => {
             const cs = getComputedStyle(el);
             const layer = el.hasAttribute('data-proj');
-            let layerImg = '';
-            if (layer) {
-              const lr = document.querySelector('style[id="proj-layer-styles"]');
-              if (lr && el.__projL2) layerImg = 'layer-live';
+            // the LAYER path: the base is suppressed BY DESIGN (transparent
+            // + none) and the ::before layer paints the tint + gradient —
+            // read the layer's live declarations, not the base's.
+            let limg = '', lcolor = '';
+            if (layer && el.__projL2 && el.__projL2.br) {
+              limg = (el.__projL2.br.style.backgroundImage || '').slice(0, 44);
+              lcolor = el.__projL2.br.style.backgroundColor || '';
             }
             return { id: el.id, img: cs.backgroundImage.slice(0, 44),
               color: cs.backgroundColor, att: cs.backgroundAttachment,
-              ink: cs.color, bake: el.getAttribute('data-proj-bake'), layer };
+              ink: cs.color, bake: el.getAttribute('data-proj-bake'),
+              layer, limg, lcolor,
+              ownTint: (function (s) {
+                // cssText serializes with a space — the catchers match
+                // both spellings; so does this probe. While a pill RIDES
+                // its layer the suppression legitimately holds the
+                // property — the author's values must then be SAVED.
+                return s.indexOf('background-color:rgba(var(') !== -1 ||
+                       s.indexOf('background-color: rgba(var(') !== -1 ||
+                       !!(el.__projAuthorBg && el.__projAuthorBg.color);
+              })(el.getAttribute('style') || '') };
           });
         }""")
         results["ledger"]["C1"] = pills
         ok(len(pills) >= 3, f"the metadata pills are in the DOM ({len(pills)})")
-        white = [q["id"] for q in pills
-                 if (q["img"] == "none" or "gradient" not in q["img"]) and not q["layer"]]
-        ok(not white, f"no pill paints flat under projection (flat: {white})")
+        # the white-pill signature: the UA buttonface gray (rgb(239,239,239))
+        # or a flat transparent fill — the strip killed the pill's own tint
+        # + gradient twin and the catchers lost their [style*=] match.
+        # Layered pills are healthy when the LAYER carries the gradient;
+        # unlayered ones when their own computed image/color does. The
+        # ownership invariant: every pill keeps its OWN inline tint.
+        white = []
+        for q in pills:
+            if q["layer"]:
+                if "gradient" not in q["limg"]:
+                    white.append(q["id"] + " [layer-no-image]")
+            elif (q["color"] in ("rgb(239, 239, 239)", "rgba(0, 0, 0, 0)") or
+                    ("gradient" not in q["img"])):
+                white.append(q["id"] + " [flat]")
+        stripped = [q["id"] for q in pills if not q["ownTint"]]
+        ok(not white, f"no pill paints flat/white under projection (flat: {white})")
+        ok(not stripped, f"THE OWNERSHIP LAW: every riding pill has its tint live or SAVED (stripped: {stripped})")
+        # THE RESTORE PROOF — the same elements, no re-render: toggle the
+        # projection OFF (the teardown's drops) and the pills' OWN inline
+        # tint must come BACK (restoreAuthorBg), then ON again below.
+        pg.evaluate("() => Settings.setState({ doomProjection: false })")
+        pg.wait_for_timeout(700)
+        rback = pg.evaluate("""() => {
+          const row = document.getElementById('pill-row');
+          if (!row) return [];
+          return Array.from(row.querySelectorAll('button')).map((el) => {
+            const s = el.getAttribute('style') || '';
+            return { id: el.id,
+              tint: s.indexOf('background-color:rgba(var(') !== -1 ||
+                    s.indexOf('background-color: rgba(var(') !== -1,
+              layer: el.hasAttribute('data-proj') };
+          });
+        }""")
+        lost = [q["id"] for q in rback if not q["tint"] or q["layer"]]
+        ok(not lost, f"THE RESTORE PROOF: the pills' own tint came back after the toggle-off (lost: {lost})")
+        pg.evaluate("() => Settings.setState({ doomProjection: true })")
+        pg.wait_for_timeout(600)
         pg.screenshot(path=OUT + "-C1-pills.png")
 
         # ── §C2 THE LIVE SWITCH (v1.06.3) ──────────────────────────────
@@ -453,9 +501,29 @@ try:
         ok(d["hl"] != "" and d["hl"] != d_reset["hl"],
            f"THE HIGHLIGHT: the override lands on the triplet ({d['hl']} → reset {d_reset['hl']})")
 
-        # ── leave clean ─────────────────────────────────────────────────
+        # ── leave clean + THE RESTORE PROOF — toggle off, re-read the
+        # pills: the teardown's drops must hand the pills their OWN tint
+        # back (restoreAuthorBg), byte-equal to the builder's spelling ──
+        open_chat_via_dock()
         pg.evaluate("() => Settings.setState({ doomProjection: false })")
-        pg.wait_for_timeout(400)
+        pg.wait_for_timeout(700)
+        open_chat_via_dock()
+        pg.evaluate("() => { const ch = document.getElementById('header-chevron'); if (ch) ch.click(); }")
+        pg.wait_for_timeout(700)
+        restored = pg.evaluate("""() => {
+          const row = document.getElementById('pill-row');
+          if (!row) return [];
+          return Array.from(row.querySelectorAll('button')).map((el) => {
+            const s = el.getAttribute('style') || '';
+            return { id: el.id,
+              tint: s.indexOf('background-color:rgba(var(') !== -1 ||
+                    s.indexOf('background-color: rgba(var(') !== -1 };
+          });
+        }""")
+        lost = [q["id"] for q in restored if not q["tint"]]
+        ok(not lost, f"THE RESTORE PROOF: the pills' own tint survived a full toggle cycle (lost: {lost})")
+        pg.evaluate("() => Settings.setState({ doomProjection: false })")
+        pg.wait_for_timeout(300)
         b.close()
 except Exception as e:
     print("RIG ERROR:", str(e)[:300])

@@ -346,6 +346,20 @@
         const patch = {};
         patch[key] = val;
         apply(patch);
+        // v1.06.3: THE LIVE SWITCH — the app-switch visuals are inline
+        // styles baked at render; a state flip used to leave the pill
+        // stale until the page re-rendered (the user: "the doom
+        // projection pill toggle still doesn't update to off … we have
+        // to close and open the settings again"). Sync the sibling
+        // track + thumb from the checkbox IN PLACE, generic for every
+        // app-switch this machinery wires.
+        if (el.type === 'checkbox') {
+          const wrap = el.closest('.app-switch') || el.parentElement;
+          const track = wrap && wrap.querySelector('.app-switch-track');
+          const thumb = wrap && wrap.querySelector('.app-switch-thumb');
+          if (track) track.style.background = el.checked ? 'var(--accent)' : 'var(--surface-3)';
+          if (thumb) thumb.style.left = el.checked ? '20px' : '2px';
+        }
         // Live-update the range display next to the slider.
         const display = rootEl.querySelector('[data-range-display="' + key + '"]');
         if (display) {

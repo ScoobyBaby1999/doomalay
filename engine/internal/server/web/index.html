@@ -5186,6 +5186,63 @@
     background-color: var(--card);
     background-image: none;
   }
+  /* ══ v1.06.3 THE CHROME FOLLOW — Layer-3 rides the doom look ══════
+     (user report: "sliders, on/off toggle pills, and the very tiny
+     round opaque pills (the libraries circular filter pills or bundle
+     icons) don't follow doom projection"). Under the projection gate
+     the family windows the SURFACE field LOCALLY — the v0.92.1 scale
+     precedent (viewport projection is invisible below ~56px; the
+     chatbot disc went local for it) — and since v1.06.1 the surface
+     var is OUT of the projection allow-list, so these rules NEVER
+     enter the painter, NEVER mint fixed, NEVER raster viewport-sized:
+     zero painter cost (the v0.91.2 objection does not apply). The
+     :where() wrappers zero the specificity — every state rule (the
+     libpill data-on tints, the checked switch's accent window) wins
+     over the plain window exactly as before; the image LAYERS over
+     each element's own solid (background-image ≠ background-color).
+     OFF state: byte-identical. */
+  :where(html[data-doom-proj][data-s1-grad]) :where(
+    input[type=text], input[type=password], input[type=email],
+    input[type=number], textarea, select, .app-switch-track,
+    .ts-chip, .art-rename-input, .art-sheet-input, .art-toast,
+    .hub-searchico, .hub-libpill, .hub-bunch-sec-n, .hub-bunch-chip,
+    .hub-nav, .hp-icocell, .hi-fab, .hp-color, .hp-mini, .hp-pick,
+    .dx-pill, .gr-color, .gr-mini, .crop-btn, .hp-focus-btn,
+    .tw-iconcell, .chat-find-chip, .sm-ghost, #chat-send-more, .gr-dir,
+    .cv-input, .cv-chip, .cv-badge, .cv-count-chip, .wsx-input, .wsx-act,
+    .wsc-brsel, .pv-btn, #pe-name, #ph-key, .ph-key, .ph-val,
+    .tool-pill-progress) {
+    background-image: var(--surface-1-gradient, none);
+  }
+  /* the doom projection switch's own track — its visuals are INLINE
+     (the render bakes them; wireInputs' live sync keeps them honest),
+     so the unchecked state needs the !important longhand to beat the
+     inline background shorthand; the checked state leaves it to the
+     accent window rule (the :not(:checked) scope keeps both honest). */
+  :where(html[data-doom-proj][data-s1-grad])
+  input[data-setting-key="doomProjection"]:not(:checked) ~ .app-switch-track {
+    background-image: var(--surface-1-gradient, none) !important;
+  }
+  /* the settings sliders — a full custom track + thumb under the gate
+     (the .te-srow geometry language): the track windows the surface
+     field locally, the thumb rides the accent solid + the readable
+     ring. Native rendering returns the moment the projection is off
+     or the surface twin is flattened. */
+  :where(html[data-doom-proj][data-s1-grad]) input.app-range {
+    -webkit-appearance: none; appearance: none;
+    height: 10px; min-height: 10px; border-radius: 999px;
+    padding: 0; outline: none;
+    background-color: var(--raised-chrome);
+    background-image: var(--surface-1-gradient, none);
+    border: 1px solid var(--raised-ring);
+  }
+  :where(html[data-doom-proj][data-s1-grad]) input.app-range::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--on-accent, #fff);
+    box-shadow: 0 1px 4px rgba(var(--shadow-ink-rgb), 0.45);
+  }
   /* ══ v0.74 BRIGHT-SURFACE INK (the settings colors wave) ══════════
      User report: "Surface raised … any color that is bright looks
      horrible." A bright surface-2 makes every Layer-3 pill a bright

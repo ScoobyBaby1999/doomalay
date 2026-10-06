@@ -392,6 +392,25 @@ try:
         # back to the chat the way a user does — the dock's new-chat pill
         # (always viewport-center; the settings page replaced the root)
         open_chat_via_dock()
+        # v1.06.1 CALIBRATION: the surface exemption removed the instant
+        # whole-body bake population — the pre-exemption check rode the
+        # .panel-body bake of a FRESH chat (dock-new-chat spawns one).
+        # The meaningful assertion now is the accent field: seed a few
+        # real bubbles (the v0.57 .msg-user windows) and count those.
+        pg.wait_for_timeout(500)
+        pg.evaluate("""() => {
+          const sc = document.querySelector('#chat-scroll') || document.querySelector('.panel-body');
+          if (!sc) return;
+          for (let i = 0; i < 6; i++) {
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (i % 2 ? 'msg-row-user' : 'msg-row-assistant');
+            const bub = document.createElement('div');
+            bub.className = 'msg-bubble ' + (i % 2 ? 'msg-user' : 'msg-assistant');
+            bub.textContent = 'v106 recalibration seed ' + i;
+            row.appendChild(bub); sc.appendChild(row);
+          }
+        }""")
+        pg.wait_for_timeout(900)
         chat_on = pg.evaluate("""() => ({
           painted: window.DoomProjection.stats().painted,
           windows: document.querySelectorAll('#chat-panel [data-proj]').length,

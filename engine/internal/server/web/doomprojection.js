@@ -121,6 +121,26 @@
   var on = false;
   var obs = null, gatesObs = null;
 
+  // v1.06.3 THE AUTHOR'S HANDS BACK — the L2 suppression REPLACES the
+  // element's own inline background (an inline style holds ONE value per
+  // property): the metadata pills' tint + gradient twin were overwritten
+  // at bake time, so no amount of drop-time cleanup could bring them
+  // back — the pill baked white forever after. Saving the author's
+  // values when the suppression lands and restoring them on drop/strip
+  // keeps the pill's self-paint alive through every bake cycle (the
+  // [style*=] catchers re-match; the white pill cannot return).
+  function restoreAuthorBg(el) {
+    var a = el.__projAuthorBg;
+    if (!a) return;
+    try {
+      if (a.image) el.style.setProperty('background-image', a.image, a.ip || '');
+      else el.style.removeProperty('background-image');
+      if (a.color) el.style.setProperty('background-color', a.color, a.cp || '');
+      else el.style.removeProperty('background-color');
+    } catch (e) {}
+    el.__projAuthorBg = null;
+  }
+
   // ── the root registry: keys + one CSSOM rule per root ──────────
   // The vars are written through CSSOM (styleEl.sheet rules), NOT
   // inline on the root: CSSOM mutations bypass the MutationObserver,
@@ -434,8 +454,18 @@
           // The element's inline style + !important beats EVERY selector
           // at any specificity. Cleared on drop().
           try {
+            // v1.06.3: SAVE the author's own inline values FIRST — the
+            // suppression REPLACES them (one value per property); the
+            // drop/strip path restores them (restoreAuthorBg).
+            el.__projAuthorBg = {
+              image: el.style.getPropertyValue('background-image'),
+              ip: el.style.getPropertyPriority('background-image'),
+              color: el.style.getPropertyValue('background-color'),
+              cp: el.style.getPropertyPriority('background-color')
+            };
             el.style.setProperty('background-image', 'none', 'important');
             el.style.setProperty('background-color', 'transparent', 'important');
+            el.__projSuppressed = true;   // v1.06.3: painter-written — the strip's proof
             el.__projWriteEpoch = writeEpoch;   // painter-owned — the observer skips it
           } catch (e3) {}
           // paint containment — the oversized pseudo would otherwise
@@ -508,10 +538,12 @@
         el.removeAttribute('data-proj');
       } catch (e) {}
       // clear the INLINE suppression — the CSS state owns the element
-      // again (byte-identical to the no-gradient look)
+      // again (byte-identical to the no-gradient look). The suppression
+      // is PAINTER-WRITTEN (flagged) and the AUTHOR'S OWN values come
+      // back with it (restoreAuthorBg — the white-pill law).
       try {
-        el.style.removeProperty('background-image');
-        el.style.removeProperty('background-color');
+        restoreAuthorBg(el);
+        el.__projSuppressed = false;
         el.__projWriteEpoch = writeEpoch;   // painter-owned removal
       } catch (e4) {}
       el.__projL2 = undefined;
@@ -617,6 +649,7 @@
           el.__projR = R;
           el.__projCarry = true;
           reads.push({ el: el, R: R, carry: true,
+            zero: (r.width < 1 && r.height < 1),   // v1.06.3: display:none — constants only
             bx: M.translateOnly ? (-r.left + M.tx) : -r.left,
             by: M.translateOnly ? (-r.top + M.ty) : -r.top });
           continue;
@@ -737,14 +770,22 @@
           it.el.__projBy = it.by;
           if (it.el.__projL2 && L2.rebake(it.el)) {
             /* layered carry — constants trued, rule patched */
-          } else {
+          } else if (!it.zero) {
+            // v1.06.3: a ZERO-RECT element (display:none — the header
+            // pills' closed dropdown) takes the constants only: a bake
+            // here anchored nothing visible AND its unconditional
+            // image/color strip deleted the element's OWN inline paint
+            // (the white-pill root cause). Real-rect carries (scrolled-
+            // offscreen windows) keep the full true-up write.
             var cpos = fmtCalc('--proj-tx', it.bx) + ' ' + fmtCalcY(it.by);
             if (it.el.__projPos !== cpos || !it.el.style.backgroundSize) {
               it.el.style.backgroundPosition = cpos;
               it.el.style.backgroundSize = size;
               it.el.style.backgroundAttachment = 'scroll';
-              it.el.style.removeProperty('background-image');
-              it.el.style.removeProperty('background-color');
+              if (it.el.__projSuppressed) {
+                restoreAuthorBg(it.el);   // v1.06.3: the author's values come back
+                it.el.__projSuppressed = false;
+              }
               try { it.el.setAttribute('data-proj-bake', '1'); } catch (eB1) {}   // v1.05.2: the teardown sweep's marker
               it.el.__projPos = cpos;
               it.el.__projWriteEpoch = wep;   // painter-owned — the observer skips it
@@ -781,9 +822,14 @@
         }
       } else {
         // the legacy fallthrough — clear any stale INLINE suppression
-        // first (it would blank the element's own gradient).
-        it.el.style.removeProperty('background-image');
-        it.el.style.removeProperty('background-color');
+        // first (it would blank the element's own gradient). v1.06.3:
+        // the removal is PAINTER-SCOPED — only the L2-written
+        // suppression comes off; the element's own inline background
+        // (the pills' tint) is never the painter's to remove.
+        if (it.el.__projSuppressed) {
+          restoreAuthorBg(it.el);   // v1.06.3: the author's values come back
+          it.el.__projSuppressed = false;
+        }
         if (it.el.__projPos !== it.pos) {
           it.el.style.backgroundPosition = it.pos;
           it.el.__projPos = it.pos;
@@ -1153,8 +1199,10 @@
       if (el.__projL2 && L2.rebake(el)) continue;
       var pos = fmtCalc('--proj-tx', el.__projBx) + ' ' + fmtCalcY(el.__projBy);
       if (el.__projPos !== pos) {
-        el.style.removeProperty('background-image');
-        el.style.removeProperty('background-color');
+        if (el.__projSuppressed) {   // v1.06.3: painter-scoped (the white-pill law)
+          restoreAuthorBg(el);       // the author's values come back
+          el.__projSuppressed = false;
+        }
         el.style.backgroundPosition = pos;
         try { el.setAttribute('data-proj-bake', '1'); } catch (eB4) {}   // v1.05.2: the sweep's marker
         el.__projPos = pos;
@@ -1207,8 +1255,10 @@
         continue;
       }
       var pos = fmtCalc('--proj-tx', bx) + ' ' + fmtCalcY(by);
-      el.style.removeProperty('background-image');
-      el.style.removeProperty('background-color');
+      if (el.__projSuppressed) {   // v1.06.3: painter-scoped (the white-pill law)
+        restoreAuthorBg(el);       // the author's values come back
+        el.__projSuppressed = false;
+      }
       if (el.__projPos !== pos) {
         el.style.backgroundPosition = pos;
         el.__projPos = pos;
@@ -1268,8 +1318,18 @@
       el.style.removeProperty('background-position');
       el.style.removeProperty('background-size');
       el.style.removeProperty('background-attachment');
-      el.style.removeProperty('background-image');
-      el.style.removeProperty('background-color');
+      // v1.06.3 THE PAINTER'S OWN HANDS ONLY — the painter removes what
+      // THE PAINTER wrote. The L2 suppression (image/color none
+      // !important) is painter-written and flagged (__projSuppressed);
+      // an element's OWN inline background (the metadata pills' tint +
+      // gradient twin — the [style*=] catchers match its exact spelling)
+      // is NOT: the unconditional strip deleted it, the catchers never
+      // matched again, and every header pill painted the UA's bare
+      // buttonface gray (the white-pill report — rig-reproduced).
+      if (el.__projSuppressed) {
+        restoreAuthorBg(el);   // v1.06.3: the author's own values come back
+        el.__projSuppressed = false;
+      }
       el.removeAttribute('data-proj-bake');
     } catch (e) {}
   }
