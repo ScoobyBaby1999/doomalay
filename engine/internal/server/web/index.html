@@ -5253,28 +5253,20 @@
     .tool-pill-progress) {
     background-image: var(--surface-1-gradient, none);
   }
-  /* the settings sliders — a full custom track + thumb under the gate
-     (the .te-srow geometry language): the track windows the surface
-     field locally, the thumb rides the accent solid + the readable
-     ring. Native rendering returns the moment the projection is off
-     or the surface twin is flattened. (v1.08.3 moves the track's FIELD
-     to the gate-led layered window below — the :where geometry stays.) */
-  :where(html[data-doom-proj][data-s1-grad]) input.app-range {
-    -webkit-appearance: none; appearance: none;
-    height: 10px; min-height: 10px; border-radius: 999px;
-    padding: 0; outline: none;
-    background-color: var(--raised-chrome);
-    background-image: var(--surface-1-gradient, none);
-    border: 1px solid var(--raised-ring);
-  }
-  :where(html[data-doom-proj][data-s1-grad]) input.app-range::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 20px; height: 20px; border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid var(--on-accent, #fff);
-    box-shadow: 0 1px 4px rgba(var(--shadow-ink-rgb), 0.45);
-  }
-  /* ══ v1.08.3 THE FULL SPECTRUM — the toggles + sliders ride the field ══
+  /* ══ v1.10.4 THE NATIVE HAND — the sliders return to native ════════
+     (the user: "revert the sliders for doom projection… let's make the
+     sliders like how they where (narrow, clean) and have them follow the
+     doom projected gradient, if we can't do that then the first color of
+     that gradient is better then what we have now"). Research confirms
+     accent-color accepts <color> ONLY — a native slider cannot wear a
+     gradient — so the user's own fallback is the design: native
+     geometry, accent-color: var(--accent) (= the first stop of the
+     accent gradient under gradient themes; a solid under solid themes).
+     The v1.06.3 custom track/thumb rules and the v1.08.3 full-spectrum
+     layered rule for input.app-range are RETIRED (the app-switch
+     toggles keep their full-spectrum look — the user endorsed it).
+     OFF state: byte-identical, as before. */
+  /* ══ v1.08.3 THE FULL SPECTRUM — the toggles ride the field ════════
      (user report: "enable/disable toggles and sliders still don't use doom
      projection and get painted with only the first color not the full
      gradient"). THE GATE-WINDOW LAW: a rule that exists only to show a
@@ -5292,7 +5284,9 @@
      controls in every theme configuration. The unchecked state keeps a
      surface-3 veil over its accent layer (the quiet chrome read); the
      checked state wears the full accent field. The gate-led selectors
-     merge under ROOT_GATE_RE (the v1.04.2 law) — the mint stays valid. */
+     merge under ROOT_GATE_RE (the v1.04.2 law) — the mint stays valid.
+     v1.10.4: the input.app-range member of this family is RETIRED
+     (the native hand) — the app-switch track stays. */
   [data-s1-grad] .app-switch input:not(:checked) ~ .app-switch-track {
     background-image: var(--surface-1-gradient, none),
       linear-gradient(rgba(var(--surface-3-rgb), 0.55), rgba(var(--surface-3-rgb), 0.55)),
@@ -5303,13 +5297,6 @@
   }
   [data-a1-grad] .app-switch input:checked ~ .app-switch-track {
     background-image: var(--accent-gradient, none) !important;
-    background-attachment: local !important;
-    background-size: 100% 100% !important;
-    background-position: 0 0 !important;
-  }
-  [data-s1-grad] input.app-range {
-    background-image: var(--surface-1-gradient, none),
-      var(--accent-gradient, none) !important;
     background-attachment: local !important;
     background-size: 100% 100% !important;
     background-position: 0 0 !important;

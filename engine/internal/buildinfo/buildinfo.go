@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the engine version string (overridable via -ldflags).
-var Version = "1.10.3"   // v1.10.3 THE TRUE DEPTH: the amplifier gains ZOOM parallax — each depth band's drawn period scales by S^((pf-1)*kZ), near planes grow faster on zoom-in, world-true at scale 1 and at amp 0; pattern-matrix math only (zero new elements, zero new fills, the STILL HAND contract holds).
+var Version = "1.10.4"   // v1.10.4 THE NATIVE HAND: the settings sliders return to native (the user reverted the fat custom track); accent-color accepts <color> only, so the doom look rides var(--accent) = the first stop of the accent gradient — the user's own accepted fallback; the app-switch toggles keep the full-spectrum look.
 
 // Dev reports whether this is a DEV build (v0.48 task 5): local builds
 // (default Version carries "-dev") or an explicit DOOMALAY_DEV=1. Release
