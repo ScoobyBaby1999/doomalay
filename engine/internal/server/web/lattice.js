@@ -785,8 +785,8 @@
     function bandOf(tt) { var k = Math.floor(tt * 5); return k < 0 ? 0 : (k >= 5 ? 4 : k); }
     var dotKinds = P.hideDots ? 0 : 2;
     var lineKinds = (P.hideLines || !segMode) ? 0 : 2;
-    var overDotKinds = (overDotsOn && !P.hideDots) ? 2 : 0;
-    var overLineKinds = (overLinesOn && segMode && !P.hideLines) ? 2 : 0;
+    var overDotKinds = 0;   // v1.10.2: the over split is retired
+    var overLineKinds = 0;
     var chosen = TL_PAIRS[TL_PAIRS.length - 1], chosenR = 0, chosenSlots = 0;
     for (var pi = 0; pi < TL_PAIRS.length; pi++) {
       var MA = TL_PAIRS[pi][0], MB = TL_PAIRS[pi][1];
@@ -916,8 +916,10 @@
     var AMP_BANDS = 5;
     var animDots = !!P.animDots, animLines = !!P.animLines;
     var segMode = effFracL > 0 || animLines;
-    var overDotsOn = !!(amp >= 0.5 && effFracD > 0.02);
-    var overLinesOn = !!(amp >= 0.5 && effFracL > 0.02);
+    // v1.10.2 THE HONEST SKY — the full rationale lives with the dot walk
+    // below; tl;dr: heroes, glow and the over-icons split are RETIRED.
+    var overDotsOn = false;
+    var overLinesOn = false;
     var overThreshD = 0.7 * dotRBaseQ * (1 + effFracD);
     var overThreshL = 0.7 * (1 + effFracL);
     function bandPF(k) { return 1 + amp * (0.25 + 0.75 * (-0.85 + 1.5 * (k / (AMP_BANDS - 1)))); }
@@ -926,7 +928,8 @@
 
     var T = { fp: fp, M: MA, MA: MA, MB: MB, cells: pick.cells, R: R, q: q,
               scaleQ: scaleQ, spacingQ: spacingQ, list: [],
-              heroes: [], cellRecords: 0, gen: ++TL.gen, bakeMs: 0 };
+              heroes: [], cellRecords: 0, gen: ++TL.gen, bakeMs: 0,
+              jrMin: Infinity, jrMax: 0 };
 
     // mkTile(ML) — the tile for ONE parity layer at M = ML cells/side,
     // rasterized at the budget-capped R (device px per CSS px).
@@ -962,57 +965,27 @@
         for (var j = 0; j < ys.length; j++) draw(xs[i], ys[j]);
     }
 
-    // ── THE DOT WALK (per band, per group) ────────────────────────────
-    // v0.97.1: the firefly budget — at high variation EVERY top-band dot
-    // clears the 1.6× glow bar; without a per-tile budget the whole band
-    // minted as heroes and the runtime cap (40) VANISHED the rest (the
-    // v097 rig's band-4-zero catch). The biggest HERO_PER_TILE per tile
-    // animate live; the remainder bake static (with their glow).
-    var HERO_PER_TILE = 5;
+    // v1.10.2 THE HONEST SKY — the amplifier's three mis-features are
+    // retired, per the user's spec: "amplify parallax uses the existing
+    // dots and stars, and moves them in a parallax sort of fashion… No
+    // need to introduce more brighter stars, just use the current stars
+    // and lines".
+    //   · THE HERO FIREFLIES minted ONLY when amp > 0 (the topBand gate),
+    //     up to 40 live glowing movers repeating at the tile period —
+    //     "it introduces many of them and they look tiled". GONE.
+    //   · THE STATIC GLOW (halo sprite + shadeHex-lifted cores) on the
+    //     top-band big dots — "large bright stars, brighter than any star
+    //     in the entire grid when amplify parallax is off". GONE.
+    //   · THE OVER-ICONS SPLIT (overDotsOn = amp >= 0.5 && effFrac >
+    //     0.02) baked the biggest dots/lines into over-tiles painted on
+    //     #c2 — "stars… that have a size of >= 80 max size variation
+    //     appear to render over icons". GONE — all paint UNDER icons.
+    // The BAND SPLIT stays: the same dots/lines at per-depth parallax
+    // factors — "moves them in a parallax sort of fashion" — and the
+    // visible population is now byte-identical to amp = 0's.
     for (var band = 0; band < (amp > 0 ? AMP_BANDS : 1); band++) {
-      var topBand = (amp > 0) && band === AMP_BANDS - 1;
-      // (a) the hero pre-pass: candidates, then the biggest few win
-      var heroCands = [], Tj = { jrMin: Infinity, jrMax: 0 };
-      for (var gi = 0; gi < 2; gi++) {
-        var Mh = gi === 0 ? MA : MB;
-        for (var px = 0; px < Mh; px++) for (var py = 0; py < Mh; py++) {
-          if (((px + py) & 1) !== gi) continue;
-          var phd2 = warpD(hashCell(px + 7, py + 7));
-          if (amp > 0 && bandOf(depthT(phd2, effFracD)) !== band) continue;
-          // the weight ratio rides the UNFLOORED radius (the legacy twin —
-          // v0831 pins jrMin <= 0.05: the raw spread goes negative before
-          // the draw-side 0.15 floor)
-          var praw = (1 + effFracD * (phd2 - 0.5) * 2);
-          if (praw < Tj.jrMin) Tj.jrMin = praw;
-          if (praw > Tj.jrMax) Tj.jrMax = praw;
-          // v0.97.1: the hero candidate bar rides the FLOORED radius (the
-          // draw's own size — a negative raw spread must not mint heroes)
-          var pjr = Math.max(0.15, dotRBaseQ * praw);
-          if (animDots && topBand && pjr >= dotRBaseQ * 1.6)
-            heroCands.push({ dx: px, dy: py, jr: pjr, L: gi });
-        }
-      }
-      heroCands.sort(function (a, b) { return b.jr - a.jr; });
-      var heroSet = {}, heroesHere = [];
-      for (var hci = 0; hci < heroCands.length && hci < HERO_PER_TILE * 2; hci++) {
-        var hc = heroCands[hci];
-        heroSet[hc.L + ':' + hc.dx + ',' + hc.dy] = 1;
-        var hjx = scatterPxD * (hashCell(hc.dx, hc.dy) - 0.5) * 2 * scaleQ;
-        var hjy = scatterPxD * (hashCell(hc.dx + 3, hc.dy + 5) - 0.5) * 2 * scaleQ;
-        var hcol = foldSample(dotSampler, hc.dx, hc.dy, hjx, hjy) || dotFallback;
-        var hgb = (HEX_RE.test(hcol)) ? hcol : null;
-        heroesHere.push({ tx: hc.dx, ty: hc.dy, jx: hjx, jy: hjy, jr: hc.jr,
-          M: hc.L === 0 ? MA : MB,
-          over: !!(overDotsOn && hc.jr > overThreshD),
-          col: hcol, glow: hgb ? shadeHex(hgb, 0.42) : null,
-          tsp: 0.4 + hashCell(hc.dx + 21, hc.dy + 21) * 3.4,   // v1.06.3: widened 1.8→3.4 — some fast pulsers
-          tph: hashCell(hc.dx + 23, hc.dy + 23) * 6.283,
-          ospd: (0.25 + hashCell(hc.dx + 27, hc.dy + 27) * 0.9) * (hashCell(hc.dx + 29, hc.dy + 29) < 0.5 ? -1 : 1),
-          orR: spacingQ * (0.06 + 0.08 * hashCell(hc.dx + 31, hc.dy + 31)) });
-      }
-      for (var hh = 0; hh < heroesHere.length; hh++) heroesHere[hh].pf = (amp > 0) ? bandPF(band) : 1;
-      T.heroes.push.apply(T.heroes, heroesHere);
-      T.jrMin = Tj.jrMin; T.jrMax = Tj.jrMax;
+      // (the hero pre-pass is retired with the fireflies; the jrMin/jrMax
+      // instrument now rides the static walk below)
       // (b) the group tile walk (the chosen fireflies stay live)
       // v1.06.2 THE OVER-SPLIT DIET: over-tiles (the in-front-of-icons
       // parallax pop) mint for the TOP band only — the nearest, biggest,
@@ -1022,7 +995,7 @@
       for (var gi = 0; gi < 2; gi++) {
         var ML = gi === 0 ? MA : MB;
         var TS = ML * spacingQ;
-        var tile = mkTile(ML), overTile = (overDotsOn && topBand) ? mkTile(ML) : null;
+        var tile = mkTile(ML);
         var g = tile.g;
         for (var dx = 0; dx < ML; dx++) for (var dy = 0; dy < ML; dy++) {
           var hd = hashCell(dx, dy);
@@ -1031,53 +1004,28 @@
           // (the band filter only exists when there are 5 bands)
           if (amp > 0 && bandOf(depthT(hd2, effFracD)) !== band) continue;
           if (((dx + dy) & 1) !== gi) continue;
-          if (heroSet[gi + ':' + dx + ',' + dy]) continue;      // the live fireflies
           var jrB = dotRBaseQ * (1 + effFracD * (hd2 - 0.5) * 2);
           var jx = scatterPxD * (hd - 0.5) * 2 * scaleQ;
           var jy = scatterPxD * (hashCell(dx + 3, dy + 5) - 0.5) * 2 * scaleQ;
-          var isOver = overDotsOn && jrB > overThreshD;
-          var tgt = isOver ? overTile : tile;
-          if (!tgt) continue;
-          var gg = tgt.g;
+          var gg = g;
           var rr = Math.max(0.15, jrB);
           var colD2 = foldSample(dotSampler, dx, dy, jx, jy) || dotFallback;
           var cxp = dx * spacingQ + jx, cyp = dy * spacingQ + jy;
-          var ext = rr + ((topBand && jrB >= dotRBaseQ * 1.6) ? jrB * 2.6 : 0);
+          var ext = rr;
           var styleD = colD2;
-          // the static glow: halo sprite + lifted core color, per-dot —
-          // baked for every glow-class dot that did NOT win a firefly slot
-          if (topBand && jrB >= dotRBaseQ * 1.6) {
-            var gbase = (HEX_RE.test(colD2)) ? colD2 : null;
-            var glowFill = gbase ? shadeHex(gbase, 0.42) : null;
-            if (glowFill) {
-              if (jrB >= 1.6) {
-                var spG = lcGlowSprite(glowFill);
-                var Rg = jrB * 2.6;   // v0.98: renamed — 'R' is the bake raster now
-                drawWrapped(gg, TS, { l: -Rg, r: Rg, t: -Rg, b: Rg }, cxp, cyp, function (wx, wy) {
-                  gg.globalAlpha = 0.55;
-                  gg.drawImage(spG.c, wx - Rg, wy - Rg, Rg * 2, Rg * 2);
-                  gg.globalAlpha = 1;
-                });
-              }
-              tgt.glowN++;
-              if (tgt.glowCols.indexOf(glowFill) < 0) tgt.glowCols.push(glowFill);
-              styleD = glowFill;
-            }
-          }
           var fillStyle = styleD;
           drawWrapped(gg, TS, { l: -ext, r: ext, t: -ext, b: ext }, cxp, cyp, function (wx, wy) {
             gg.fillStyle = fillStyle;
             gg.beginPath(); gg.arc(wx, wy, rr, 0, Math.PI * 2); gg.fill();
           });
-          tgt.n++;
-          if (rr < dotRBaseQ * 0.9) tgt.small++; else if (rr > dotRBaseQ * 1.1) tgt.big++;
+          tile.n++;
+          if (rr < dotRBaseQ * 0.9) tile.small++; else if (rr > dotRBaseQ * 1.1) tile.big++;
         }
         // push ONLY the tiles with content (an empty transparent tile
         // would still cost a full-screen GPU fill for nothing)
         var pf = (amp > 0) ? bandPF(band) : 1;
         if (tile.n > 0) T.list.push({ kind: gi === 0 ? 'dotsA' : 'dotsB', band: band, pf: pf, over: false, tile: tile });
-        if (overTile && overTile.n > 0) T.list.push({ kind: gi === 0 ? 'dotsA' : 'dotsB', band: band, pf: pf, over: true, tile: overTile });
-        T.cellRecords += tile.n + (overTile ? overTile.n : 0);
+        T.cellRecords += tile.n;
       }
     }
 
@@ -1495,6 +1443,7 @@
   var comets = [];
   var cometTotal = 0, cometNextAt = 0, liveLastT = 0;
   var lastComet = null;   // v1.09.4: the last spawn's class/shape (the instrument)
+  var cometGateOn = null; // v1.10.2: the scatter gate state (the instrument)
   var livePainted = 0;
   var TWINK_DENSITY = 0.05;
   function stepComets(nowSec, dt, W, H, cam, P) {
@@ -1509,10 +1458,18 @@
     //     in the foreground. The parallax factor pf (the depth the
     //     camera actually sees) spreads per class, so "different
     //     distances" is a visible parallax read, not just a number.
+    // v1.10.2 — the user: "let's make sure they only happen when the
+    // scatter of dots or grid lines is >0.4, either or. And let's make it
+    // x10 more rare." The gate is the app's own 0-100 scatter sliders
+    // (0.4 = 40): comets belong to a LIVING sky, not a tidy one. The
+    // cadence runs 180-440s between spawns (the first wait 60-160s) —
+    // a shooting star is now an event, not wallpaper.
     var amp = (P.amp || 0);
-    if (!cometNextAt) cometNextAt = nowSec + 6 + Math.random() * 10;
-    if (nowSec >= cometNextAt) {
-      cometNextAt = nowSec + 18 + Math.random() * 26;
+    var cometGate = !!(P && ((P.scatterD || 0) > 40 || (P.scatterL || 0) > 40));
+    cometGateOn = cometGate;
+    if (!cometNextAt) cometNextAt = nowSec + 60 + Math.random() * 100;
+    if (cometGate && nowSec >= cometNextAt) {
+      cometNextAt = nowSec + 180 + Math.random() * 260;
       if (comets.length < 2) {
         var roll = Math.random();
         var cls = roll < 0.6 ? 0 : (roll < 0.9 ? 1 : 2);   // far / mid / near
@@ -1724,8 +1681,8 @@
       glow: 0, glowCols: [], overDots: 0, overLines: 0 };
     var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
     var segMode = effFracL > 0 || animLines;
-    var overDotsOn = !!(gctx2 && amp >= 0.5 && effFracD > 0.02);
-    var overLinesOn = !!(gctx2 && amp >= 0.5 && effFracL > 0.02);
+    var overDotsOn = false;   // v1.10.2 THE HONEST SKY
+    var overLinesOn = false;   // v1.10.2 THE HONEST SKY
     var overThreshD = 0.7 * dotRBase * (1 + effFracD);
     var overThreshL = 0.7 * (1 + effFracL);
     var AMP_BANDS = 5;
@@ -2111,8 +2068,8 @@
     var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
 
     // ── v0.81.2 THE OVER-ICONS LAYER ────────────────────────────
-    var overDotsOn = !!(gctx2 && amp >= 0.5 && effFracD > 0.02);
-    var overLinesOn = !!(gctx2 && amp >= 0.5 && effFracL > 0.02);
+    var overDotsOn = false;   // v1.10.2 THE HONEST SKY
+    var overLinesOn = false;   // v1.10.2 THE HONEST SKY
     var overThreshD = 0.7 * dotRBase * (1 + effFracD);
     var overThreshL = 0.7 * (1 + effFracL);
     var dbgOverDots = 0, dbgOverLines = 0;
@@ -2431,7 +2388,7 @@
           // colors now glow in their own per-dot colors (the v0.83.3
           // spec-scope glowFill silently killed the glow on gradient specs
           // and flattened it to stops[0] on patterns).
-          var isGlowCand = dotBands > 1 && db === AMP_BANDS - 1 && jr >= dotRBase * 1.6;
+    var isGlowCand = false;   // v1.10.2 THE HONEST SKY — no glow stars
           var glowFill = undefined;
           if (isGlowCand) {
             glowFill = LC.dotG.get(dkey);          // undefined | hex | false
@@ -2621,8 +2578,12 @@
         // movers painted this frame, twinkler/comet counts.
         // v1.09.4: lastComet = the last spawn's class/shape (the rare-sky
         // instrument: cadence + the size/distance spread, asserted live).
+        // v1.10.2: cometGate (the scatter gate) + cometNextIn (the seconds
+        // until the next scheduled spawn) ride the instrument too.
         live: { comets: comets.length, spawns: cometTotal, painted: livePainted,
-                lastComet: lastComet }
+                lastComet: lastComet,
+                cometGate: cometGateOn,
+                cometNextIn: cometNextAt ? Math.max(0, Math.round(cometNextAt - performance.now() / 1000)) : null }
       };
     }
   };
