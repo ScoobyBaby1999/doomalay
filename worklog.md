@@ -582,3 +582,26 @@ Stage Summary:
   hands are owned, the switch is live, the elevation tokens are
   user-editable. Battery: v107 22/22 · v106 21/21 · v1045 11/11 ·
   v1040 7/7.
+
+---
+Task ID: v1.08.1 CI + release
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- THE SHIP RACE, twice over: the rebase protocol caught the parallel
+  canvas-opt wave mid-ship (their v1.06.1-.3 phases, then their
+  v1.07.0-the-canvas-opt-wave ship) — rebased amicably both times (the
+  only conflicts: buildinfo's Version line + the shared worklog). The
+  ledger shifted: this wave ships as v1.08.1.
+- v1.08.0's APK CI died in the stamp step: MINOR "08" is an invalid
+  OCTAL literal in bash $(( )) (05/06/07 silently worked). v1.08.1
+  fixes the workflow with 10# forcing.
+- A stale v1.07.0-the-selective-field tag + release (created by the
+  first partially-rejected push) was deleted on the remote.
+- CI on v1.08.1: Build Android APK ✅ · Build Desktop ✅ · Build HF
+  Space ✅. Release live: app-debug.apk 22.9MB + 3 desktop binaries.
+
+Stage Summary:
+- WAVE SHIPPED. Battery on the shipped tree: v107 rig 22/22 · v106
+  fluid 21/21 · v1045 redteam 11/11 (on-disk doctrine) · v1040
+  discipline 7/7.
