@@ -78,14 +78,27 @@
   // its rules carry the accent windows — the mint MUST cover them (the
   // gates' re-derive calls DoomProjection.repaint() on its own).
   var OWN_SHEET_IDS = { 'doom-proj-vars': 1, 'proj-layer-styles': 1, 'doom-proj-override': 1 };
-  // the projection gradient families — THE ALLOW-LIST (v1.04.2):
-  // surface-1 + the three accents are the projected FIELDS. The fmt
-  // text track (--fmt-*-gradient) is LOCAL BY DESIGN (v1.00.2 — text
-  // clip-windows never project); surface-2/border-strong/bg-app/
-  // accent-4 are DERIVED SOLIDS post-v0.99.4 (their catchers reference
-  // the vars but the twins are never written — minting them would
-  // pollute the sheet for dead rules).
-  var PROJ_RE = /var\(--(?:surface-1|accent|accent-2|accent-3)-gradient/;
+  // the projection gradient families — THE ALLOW-LIST (v1.06.1 THE
+  // SURFACE EXEMPTION): the three accents are the projected FIELDS —
+  // the surface is NOT (the user's call, v1.06.0 post-ship: "let's have
+  // everything doom project but the surface as that variable
+  // specifically causes a lot of lag"). The surface-1 windows were the
+  // projection's biggest + most-rebaked population: the panel body and
+  // the overlay card are viewport-sized fields whose fixed attachment
+  // (mobile's expensive leg — the v107 research) re-rasters on every
+  // scroll/motion true-up. Out of the allow-list they render their
+  // gradients LOCAL (the v1.01.5 local-light look) in both toggle
+  // states, and the painter never touches them — no sheet mint, no
+  // bake, no layer. (The [data-s1-grad] chrome windows in index.html —
+  // the settings gear, the dock capsule — were already LOCAL by design;
+  // they are unchanged.) The fmt text track (--fmt-*-gradient) joins
+  // the allow-list in v1.06.2 THE TEXT FIELD (it was LOCAL BY DESIGN at
+  // v1.00.2 — text clip-windows never projected). The
+  // surface-2/border-strong/bg-app/accent-4 families remain DERIVED
+  // SOLIDS post-v0.99.4 (their catchers reference the vars but the
+  // twins are never written — minting them would pollute the sheet for
+  // dead rules).
+  var PROJ_RE = /var\(--(?:accent|accent-2|accent-3)-gradient/;
   var STYLE_RE = PROJ_RE;
 
   var SEL = null;             // the compiled projection selector
