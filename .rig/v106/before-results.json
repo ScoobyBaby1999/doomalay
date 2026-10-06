@@ -1,0 +1,24 @@
+{
+  "label": "before",
+  "perf": {
+    "proj-off": {
+      "frames": 525,
+      "med": 16.69999999999891,
+      "p95": 16.700000000000728,
+      "dropped": 0,
+      "longtasks": 0
+    },
+    "proj-on": {
+      "frames": 650,
+      "med": 16.69999999999891,
+      "p95": 16.700000000000728,
+      "dropped": 0,
+      "longtasks": 0
+    },
+    "write-bench": {
+      "varWriteMs": 0.387,
+      "heightWriteMs": 0.027
+    }
+  },
+  "checks": []
+}

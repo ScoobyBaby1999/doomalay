@@ -1,0 +1,24 @@
+{
+  "label": "after",
+  "perf": {
+    "proj-off": {
+      "frames": 526,
+      "med": 16.69999999999891,
+      "p95": 16.700000000000728,
+      "dropped": 0,
+      "longtasks": 0
+    },
+    "proj-on": {
+      "frames": 653,
+      "med": 16.69999999999891,
+      "p95": 16.799999999999272,
+      "dropped": 1,
+      "longtasks": 0
+    },
+    "write-bench": {
+      "varWriteMs": 0.327,
+      "heightWriteMs": 0.026
+    }
+  },
+  "checks": []
+}
