@@ -294,6 +294,17 @@ try:
         inner = pg.evaluate("""() => {
           const h = document.querySelector('#chat-scroll .fmt h2');
           if (!h) return null;
+          // v1.08.5 THE COAST: a below-the-fold text window carries NO bake
+          // until first sight (the carry true-up skip) — bring it into the
+          // viewport the way a reader does; bakeNewcomers anchors it there.
+          h.scrollIntoView({ block: 'center' });
+          return 'scrolled';
+        }""")
+        if inner == "scrolled":
+            pg.wait_for_timeout(700)
+        inner = pg.evaluate("""() => {
+          const h = document.querySelector('#chat-scroll .fmt h2');
+          if (!h) return null;
           const cs = getComputedStyle(h);
           return { pos: h.style.backgroundPosition || '', att: cs.backgroundAttachment,
             clip: cs.webkitBackgroundClip || cs.backgroundClip,
@@ -303,7 +314,7 @@ try:
         ok(blink["att"] == "fixed" and "text" in (blink["clip"] or ""),
            f"BLINK PROBE: fixed + clip:text coexist outside roots (att={blink['att']}, clip={blink['clip']})")
         ok(inner and inner["baked"] and "text" in (inner["clip"] or ""),
-           f"the in-panel fmt h2 rides the painter bake with its clip (baked={inner and inner['baked']}, clip={inner and inner['clip']})")
+           f"the in-panel fmt h2 rides the painter bake with its clip after first sight (baked={inner and inner['baked']}, clip={inner and inner['clip']})")
         pg.screenshot(path=OUT + "-B-textfield.png")
 
         # ── §C1 THE WHITE PILL (v1.06.3 — the ledger + the strict proxy) ──

@@ -605,3 +605,59 @@ Stage Summary:
 - WAVE SHIPPED. Battery on the shipped tree: v107 rig 22/22 · v106
   fluid 21/21 · v1045 redteam 11/11 (on-disk doctrine) · v1040
   discipline 7/7.
+
+---
+Task ID: v1.09.0 ship (completion)
+Agent: Super Z (main orchestrator)
+
+Work Log:
+- THE SEAMLESS FIELD wave (PLAN-V109-THE-SEAMLESS-FIELD.md) — the user's
+  four reports + two research asks, four phase commits:
+- v1.08.2 THE STEADY HAND: the pill oscillation root-caused on the rig
+  (painted-series [1,7,1,7,1,7]) — the L2 suppression rewrote the inline
+  background-color, BREAKING the [data-aN-grad] [style*="background-color:
+  rgba(var(--accent-N-rgb)"] catcher that matched the pills into SEL; the
+  next paint dropped them, the restore re-spelled them, the paint after
+  re-baked — the projected↔local flicker. Fix: the READ phase's per-element
+  body is a shared closure; suppressed windows re-enter it (a painter asset,
+  not a stranger) + THE OWNERSHIP TEST (the snapshot lifts the color too +
+  carries the computed attachment; a suppressed element the CSS claimed
+  locally yields: stats.yielded).
+- v1.08.3 THE FULL SPECTRUM: the settings toggles + sliders wear the FULL
+  gradient at box scale. THE GATE-WINDOW LAW: gate-led rules declare
+  attachment:local !important — the minted plain fixed can never out-rank
+  it and the painter's first-encounter probe opts the element out (zero
+  painter cost). Checked tracks = the accent field; unchecked = the LAYERED
+  window (surface live → surface; surface flat → the accent shows through
+  a surface-3 veil); sliders = the same layered window. The doom-switch
+  rule generalizes; the thumb stays solid (the pseudo-strip leak — refused).
+- v1.08.4 THE SEAMLESS FIELD: the Layer-1 rule painted the SAME local
+  gradient on THREE stacked boxes (header restart = the tiling report).
+  ONE field, THREE windows: shared --panel-field-h scale, the header/body
+  windows offset by --panel-head-off/--panel-field-top; gesture.js syncs
+  at rest through a CSSOM rule (#panel-field-vars — observer-invisible),
+  debounced behind writeVis; the closed sheet keeps its last geometry;
+  fallback = the exact v1.08.1 look.
+- v1.08.5 THE COAST: the text lag root = the legacy bake's per-event
+  writes (scrollRebake: ~1400 writes / 14 scroll steps / 129 windows —
+  rig-measured) + the per-frame var recalc/raster during the drag. Text
+  windows now COAST (flagged at decision time INCLUDING the carry path —
+  the rig caught two storm shapes: the reset-on-steady-paint flag and the
+  un-flagged carries); scrollRebake skips them; first sight still bakes
+  once; the motion edge performs ONE batched disconnect; paint() un-coasts.
+  RESEARCH: no OSS library changes the math (they all ship clip:text) —
+  docs/RESEARCH-V109-TEXT-AND-PANEL-PERF.md.
+- Battery on the shipped tree: v109 rig 30/30 (NEW, permanent) · v107
+  22/22 (the fmt-h2 check updated for the coast contract: first-sight
+  bake) · v106 21/21 · v1045 11/11 · v1040 7/7 · uikit 140. The twins
+  suite: 198/199 — the "page 6 slot banners" assertion FAILS ON THE
+  UNTOUCHED v1.08.1 BASELINE TOO (proven pre-existing, out of scope).
+  go test rides CI (no go toolchain in this sandbox).
+
+Stage Summary:
+- THE WAVE SHIPS as v1.09.0-the-seamless-field. The projection's pills
+  hold one steady bake, the toggles/sliders show the full gradient, the
+  header continues the body's field, and projected text costs nothing
+  during motion. Next session: sideload the APK, re-judge the flicker +
+  the toggle/slider look + the header seam + the panel glide with
+  projection ON.
