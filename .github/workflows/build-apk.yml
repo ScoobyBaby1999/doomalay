@@ -53,7 +53,11 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"
-            CODE=$(( MAJOR*10000 + MINOR*100 + PATCH ))
+            # v1.08.1 FIX: a MINOR like "08" is an INVALID OCTAL literal in
+            # $(( )) — the v1.08.0 tag died here with 'value too great for
+            # base' (05/06/07 silently worked because they ARE valid octal).
+            # 10# forces base-10 on every component.
+            CODE=$(( 10#${MAJOR} * 10000 + 10#${MINOR} * 100 + 10#${PATCH} ))
             sed -i -E "s/versionCode( =)? [0-9]+/versionCode = ${CODE}/" app/build.gradle.kts
             sed -i -E "s/versionName( =)? \"[^\"]*\"/versionName = \"${TAG#v}\"/" app/build.gradle.kts
             echo "APK stamped: ${TAG#v} (${CODE})"
