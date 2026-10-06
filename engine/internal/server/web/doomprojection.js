@@ -119,7 +119,7 @@
   var writeEpoch = 0;
   var paintStamp = 0;
   var trackedScrollers = [];
-  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0, yielded: 0 };
+  var stats = { paints: 0, motions: 0, rebakes: 0, baked: 0, yielded: 0, coasts: 0, deferred: 0 };
   var on = false;
   var obs = null, gatesObs = null;
 
@@ -228,15 +228,33 @@
 
   function setVars(R, x, y) {
     if (!R.rule) return;
+    // v1.09.1 THE DRIFT COAST — same-value guard: a no-op var write still
+    // sweeps the root's inheritance subtree for computed styles (the
+    // glide's measured tax). Only real deltas cross the CSSOM.
+    var xs = x + 'px', ys = y + 'px';
+    if (R.__tx === xs && R.__ty === ys) return;
+    R.__tx = xs; R.__ty = ys;
     try {
-      R.rule.style.setProperty('--proj-tx', x + 'px');
-      R.rule.style.setProperty('--proj-ty', y + 'px');
+      R.rule.style.setProperty('--proj-tx', xs);
+      R.rule.style.setProperty('--proj-ty', ys);
     } catch (e) {}
   }
 
   // motionTick — the CHEAP path: one CSSOM var write per root + the
   // tracked scrollers' silent-anchoring true-up (v0.78.3c).
   function motionTick() {
+    // v1.09.1 THE DRIFT COAST — while the motion window coasts, the root
+    // vars FREEZE: the L2 transforms hold their last (rest) compensation,
+    // so every window rides the content rigidly — the exact drift
+    // contract the text coast shipped ("a bounded drift from the viewport
+    // field, invisible on a smooth gradient"). The per-frame var writes
+    // were the glide's remaining whole-subtree style-recalc sweep (two
+    // inheritance walks per frame with --panel-vis-h). The settle paint
+    // un-coasts and its trailing motionTick() lands the vars current
+    // (the line-959 contract) — the geometry is never stranded. The
+    // per-root computed matrix reads skip with the writes (nothing
+    // consumes them frozen; the settle re-reads at rest).
+    if (coasting) return;
     for (var i = 0; i < rootReg.length; i++) {
       var R = rootReg[i];
       var M = readMatrix(R.el);
@@ -965,10 +983,25 @@
   function run() {
     rafId = 0;
     var hadRoot = movingRoot > 0;
+    // v1.09.1 THE DRIFT COAST — the gesture-fresh probe (the same 200ms
+    // window the observer's gate uses).
+    var gestFresh = !!(window.__doomalayGestureAt &&
+      performance.now() - window.__doomalayGestureAt < 200);
     if (dirty || movingLayout > 0) {
-      paint();
-      dirty = false;
-      if (movingLayout > 0) movingLayout--;
+      if (movingRoot > 0 && gestFresh) {
+        // THE DEFER — a full paint while the motion window is open would
+        // un-coast every window mid-glide (the var-form re-anchor re-arms
+        // the per-frame glyph rasters the coast just disconnected). The
+        // dirty/movingLayout state stays PENDING; the paint lands one
+        // frame after the window closes (the settle: un-coast +
+        // re-anchor + the trailing vars sync). A real content change
+        // during a ≤300ms glide waits that long — invisible.
+        stats.deferred++;   // v1.09.1 instrument: mid-glide paints held
+      } else {
+        paint();
+        dirty = false;
+        if (movingLayout > 0) movingLayout--;
+      }
     } else if (movingRoot > 0) {
       motionTick();
     }
@@ -1001,13 +1034,19 @@
   }
   function mark() { dirty = true; schedule(); }
   // v1.08.5 THE COAST — the motion-window edge disconnects every painted
-  // text window from the per-frame root vars: their background-position
+  // LEGACY window from the per-frame root vars: its background-position
   // is rewritten ONCE to the currently-resolved constant, so the per-frame
-  // --proj-tx/--proj-ty writes stop touching them (no style recalc, no
+  // --proj-tx/--proj-ty writes stop touching it (no style recalc, no
   // viewport-sized glyph re-raster per frame — the measured cost of
   // projected text during the panel glide). The gradient then rides the
   // content rigidly (a bounded drift from the viewport field — invisible
   // on a smooth gradient), and the settle paint re-anchors everything.
+  // v1.09.1 THE DRIFT COAST — the coast covers EVERY legacy window now
+  // (text incl. the bottom-anchored vis form, and the rare non-L2
+  // fallback population): with the root vars frozen (motionTick's coast
+  // gate), the L2 transforms hold their rest compensation by themselves —
+  // nothing to rewrite there — and constants make the legacy leg immune
+  // to any residual var wobble. One write per window at the motion edge.
   // RESEARCH: the layout-thrashing literature (read/write interleaving
   // forces synchronous layout) and Chrome's own Android scroll work both
   // point the same way — per-frame main-thread writes defeat the
@@ -1016,13 +1055,24 @@
   function coastText() {
     if (coasting) return;
     coasting = true;
+    stats.coasts++;   // v1.09.1 instrument: the motion-edge disconnects
     var wep = ++writeEpoch;
+    var matrixCache = null;   // one computed read per root per coast edge
     for (var i = 0; i < painted.length; i++) {
       var el = painted[i];
-      if (!el.__projClip || el.__projVisForm || !el.__projPos || !el.isConnected) continue;
+      // v1.09.1 THE DRIFT COAST — every LEGACY window coasts (text incl.
+      // the vis form + the non-L2 fallbacks): the constant rewrite makes
+      // the inline bake immune to any var wobble while the motion window
+      // is open. L2 layers are skipped — their transform compensation
+      // freezes WITH the root vars (motionTick's coast gate); nothing to
+      // rewrite there.
+      if (el.__projL2 || !el.__projPos || !el.isConnected) continue;
       var R = el.__projR;
       if (!R) continue;
-      var M = readMatrix(R.el);
+      if (!matrixCache || matrixCache.el !== R.el) {
+        matrixCache = { el: R.el, M: readMatrix(R.el) };
+      }
+      var M = matrixCache.M;
       var px = (el.__projBx || 0) - (M.translateOnly ? M.tx : 0);
       var py = (el.__projBy || 0) - (M.translateOnly ? M.ty : 0);
       var pos = num(px) + 'px ' + num(py) + 'px';
@@ -1289,6 +1339,12 @@
   // ── the scroll path (v0.78.3c): an INCREMENTAL re-bake ──────────
   function scrollRebake(sc, dS) {
     if (!painted.length || !dS) return;
+    // v1.09.1 THE DRIFT COAST — during a motion window the anchors go
+    // stale BY DESIGN (everything rides rigidly; the settle true-ups).
+    // The shrinking slide's scroller clamp fired this per frame — one
+    // write per painted window per frame mid-glide. Skipped while
+    // coasting; the settle re-anchors.
+    if (coasting) return;
     var wep = ++writeEpoch;
     // NEWCOMERS — carried elements that were never baked on-screen.
     // Scrolling them into view raw was the full-gradient-in-a-pill
@@ -1613,6 +1669,10 @@
   window.DoomProjection = {
     setEnabled: function (v) { return setEnabled(v); },
     enabled: function () { return on; },
+    // v1.09.1 THE DRIFT COAST — the motion window's coast state (the rigs'
+    // glide proof reads it per frame; writeVis-style consumers may gate on
+    // it later).
+    isCoasting: function () { return coasting; },
     repaint: function () {
       if (!on) return;
       SEL = null; POS_SEL = null; memoEpoch++;
