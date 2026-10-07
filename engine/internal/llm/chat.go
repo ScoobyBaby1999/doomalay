@@ -44,6 +44,11 @@ type ChatRequest struct {
         APIKey       string    `json:"-"`
         BaseURL      string    `json:"-"`
         AuthStyle    string    `json:"-"` // "" (bearer) or "anthropic"
+        // v1.13.2 THE BUS: the chat session id (observer trace
+        // attribution — every mcpbus event carries it) and the honest
+        // tools-off degrade flag (providers that 400 tools).
+        SessionID     string `json:"-"`
+        ToolsDisabled bool   `json:"-"`
         // v0.21: SWARM FANOUT DELEGATE (the HF space's panel delegate, ported).
         // Set by the server (it owns the vault); the ReAct loop exposes it to
         // the model as the `delegate` ACTION — one prompt, up to 3 other
@@ -229,15 +234,25 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // zip_create failure class). Providers that 400 tools
                         // fall back to the ACTION protocol inside.
                         runNativeToolsTurn(ctx, ch, errs, req)
-                case req.WebSearch && req.Provider != "":
+                case !actionFallbackEnabled() && req.Provider != "" && req.AuthStyle != "anthropic":
+                        // v1.13.2 THE HANDOFF (PLAN-V113 §2): EVERY OpenAI-
+                        // compatible provider attempts the native loop now —
+                        // the manifest comes from the mcpbus, the model calls
+                        // tools structurally, and a provider that 400s tools
+                        // is blacklisted and degrades honestly (one clean
+                        // tool-less rerun). The ACTION text protocol is no
+                        // longer the default for anyone (kill-switch:
+                        // DOOMALAY_ACTION_FALLBACK=1 restores it for the
+                        // transition wave; v1.13.3 deletes it).
+                        runNativeToolsTurn(ctx, ch, errs, req)
+                case req.WebSearch && req.Provider != "" && actionFallbackEnabled():
                         runWebSearchTurn(ctx, ch, errs, req)
                 default:
-                        // v0.20: PLAIN turns run the unified ReAct tool loop too —
-                        // the local tool set (calculator/time/uuid/hash/json/
-                        // base64/random/url/regex/text_stats) is ALWAYS armed.
-                        // It costs nothing when the model just answers, and it
-                        // makes every quick chat dramatically more capable
-                        // (the first big HF-space port: zero-setup tools).
+                        // v0.20: the unified ReAct tool loop — now only the
+                        // kill-switch ACTION path (the transition wave) or the
+                        // anthropic-wire providers (their native tool format
+                        // is a future wave; the text protocol answers them
+                        // until then).
                         runWebSearchTurn(ctx, ch, errs, req)
                 }
         }()

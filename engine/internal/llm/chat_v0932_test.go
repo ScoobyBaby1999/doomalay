@@ -60,20 +60,30 @@ func (e *strErr) Error() string { return e.s }
 
 func isTransientNetErrorString(s string) bool { return isTransientNetErr(&strErr{s}) }
 
-// TestV932_PanicInTurnRecovers — a panic inside the turn pipeline (injected
-// via the WorkspaceToolFn seam the native tool path calls) must NOT kill
-// the process: one honest error chunk + a terminal status, channels closed,
-// engine alive. (The user's "gets killed by engine restart" report was this
-// class: the producer goroutine had no recover().)
+// TestV932_PanicInTurnRecovers — a panic inside a TOOL (injected via the
+// WorkspaceToolFn seam) must NOT kill the process. v1.13.2 THE HANDOFF
+// changed the contract for the BETTER: the mcpbus contains handler panics
+// at the tool level (one honest tool-error observation the model can
+// self-correct from) — the turn now COMPLETES instead of dying, the
+// channels close, the engine lives. (The old turn-level guard in
+// llm.Chat remains as defense-in-depth for panics OUTSIDE the bus.)
 func TestV932_PanicInTurnRecovers(t *testing.T) {
         // mistral rides the NATIVE tool_calls path (nativeToolProviders) — the
-        // user's exact provider + failure surface.
+        // user's exact provider + failure surface. The mock answers the
+        // poisoned workspace call once, then streams the final answer.
+        calls := 0
         srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 w.Header().Set("Content-Type", "text/event-stream")
                 w.WriteHeader(200)
                 fl := w.(http.Flusher)
-                _, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"workspace","arguments":"{\"action\":\"list\"}"}}]}}]}` + "\n\n"))
-                _, _ = w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"))
+                calls++
+                if calls == 1 {
+                        _, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"workspace","arguments":"{\"action\":\"list\"}"}}]}}]}` + "\n\n"))
+                        _, _ = w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"))
+                } else {
+                        _, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"recovered — the tool failed but I am fine"}}]}` + "\n\n"))
+                        _, _ = w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}` + "\n\n"))
+                }
                 _, _ = w.Write([]byte("data: [DONE]\n\n"))
                 fl.Flush()
         }))
@@ -90,8 +100,8 @@ func TestV932_PanicInTurnRecovers(t *testing.T) {
         }
         ch, errs := Chat(context.Background(), req)
 
-        var sawPanicChunk, sawErrorStatus bool
-        var msg string
+        var sawToolError, sawFinalAnswer, sawIdle bool
+        var toolErr string
         deadline := time.After(15 * time.Second)
 collect:
         for {
@@ -100,25 +110,28 @@ collect:
                         if !ok {
                                 break collect
                         }
-                        if c.Type == "error" && c.Error == "panic" {
-                                sawPanicChunk = true
-                                msg = c.Message
+                        if c.Type == "tool_result" && c.Name == "workspace" && strings.Contains(c.Text, "failed internally") {
+                                sawToolError = true
+                                toolErr = c.Text
                         }
-                        if c.Type == "status" && c.State == "error" {
-                                sawErrorStatus = true
+                        if c.Type == "assistant_delta" && strings.Contains(c.Text, "recovered") {
+                                sawFinalAnswer = true
+                        }
+                        if c.Type == "status" && c.State == "idle" {
+                                sawIdle = true
                         }
                 case e, ok := <-errs:
                         _ = e
                         _ = ok
                 case <-deadline:
-                        t.Fatal("channels never closed — the guard's close() did not run")
+                        t.Fatal("channels never closed — the turn never completed")
                 }
         }
-        if !sawPanicChunk || !sawErrorStatus {
-                t.Fatalf("guard did not emit the honest pair: panicChunk=%v errorStatus=%v", sawPanicChunk, sawErrorStatus)
+        if !sawToolError || !sawFinalAnswer || !sawIdle {
+                t.Fatalf("the contained-panic contract: toolError=%v finalAnswer=%v idle=%v (toolErr=%q)", sawToolError, sawFinalAnswer, sawIdle, toolErr)
         }
-        if !strings.Contains(msg, "engine recovered") {
-                t.Fatalf("the panic message must be honest, got %q", msg)
+        if !strings.Contains(toolErr, "engine recovered") {
+                t.Fatalf("the panic message must be honest, got %q", toolErr)
         }
         // reaching here means the TEST PROCESS survived the panic — the same
         // guarantee the engine needs on device.

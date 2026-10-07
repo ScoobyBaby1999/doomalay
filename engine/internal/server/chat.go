@@ -1691,6 +1691,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         req := llm.ChatRequest{
                 Model:        llmModel,
                 Provider:     provider,
+                SessionID:    sessionID, // v1.13.2: mcpbus observer trace attribution
                 Messages:     full,
                 Effort:       sess.Effort,
                 WebSearch:    sess.WebSearch || true, // v0.45 ITEM 2: default-on (pill removed)

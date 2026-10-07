@@ -11,9 +11,9 @@ package mcpbus
 
 // ToolStart fires immediately before a tool executes.
 type ToolStart struct {
-        SessionID string
-        Name      string
-        Summary   string // short arg summary — the pill text (the old per-category logic, ported)
+	SessionID string
+	Name      string
+	Summary   string // short arg summary — the pill text (the old per-category logic, ported)
 }
 
 // ToolEnd fires immediately after a tool returns (success or error).
@@ -21,28 +21,28 @@ type ToolStart struct {
 // the tool_use pill and the tool_result text — the exact ordering the
 // old executeAction produced.
 type ToolEnd struct {
-        SessionID  string
-        Name       string
-        Text       string // the full observation (OBSERVATION prefix stripped)
-        IsError    bool
-        Artifact   string  // the saved artifact's file name (file tools), "" otherwise
-        Sources    []Source
-        DurationMS int64
+	SessionID  string
+	Name       string
+	Text       string // the full observation (OBSERVATION prefix stripped)
+	IsError    bool
+	Artifact   string // the saved artifact's file name (file tools), "" otherwise
+	Sources    []Source
+	DurationMS int64
 }
 
 // Progress fires mid-execution for long tools (the ephemeral status
 // lines — "consulting other models…", "building bundle.zip · 12.4 KB…").
 type Progress struct {
-        SessionID string
-        Text      string
+	SessionID string
+	Text      string
 }
 
 // Observer receives tool-call lifecycle events. Implementations must
 // be safe for concurrent use (turns run concurrently).
 type Observer interface {
-        OnToolStart(e ToolStart)
-        OnToolEnd(e ToolEnd)
-        OnProgress(e Progress)
+	OnToolStart(e ToolStart)
+	OnToolEnd(e ToolEnd)
+	OnProgress(e Progress)
 }
 
 // event markers for Bus.fire's single dispatcher.
@@ -53,25 +53,25 @@ func (Progress) event()  {}
 // ObserverFuncs adapts plain functions into an Observer (nil funcs are
 // skipped) — the lightweight way the OTel bot or tests can tap the bus.
 type ObserverFuncs struct {
-        Start func(e ToolStart)
-        End   func(e ToolEnd)
-        Prog  func(e Progress)
+	Start func(e ToolStart)
+	End   func(e ToolEnd)
+	Prog  func(e Progress)
 }
 
 func (o ObserverFuncs) OnToolStart(e ToolStart) {
-        if o.Start != nil {
-                o.Start(e)
-        }
+	if o.Start != nil {
+		o.Start(e)
+	}
 }
 
 func (o ObserverFuncs) OnToolEnd(e ToolEnd) {
-        if o.End != nil {
-                o.End(e)
-        }
+	if o.End != nil {
+		o.End(e)
+	}
 }
 
 func (o ObserverFuncs) OnProgress(e Progress) {
-        if o.Prog != nil {
-                o.Prog(e)
-        }
+	if o.Prog != nil {
+		o.Prog(e)
+	}
 }
