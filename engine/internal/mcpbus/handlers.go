@@ -63,7 +63,14 @@ func handlerFor(d *Def) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		t := TurnFromContext(ctx)
 		if t == nil {
-			return mcp.NewToolResultError("error: this tool call reached the bus without a session turn"), nil
+			// v1.13.4: an external /mcp consumer (no chat turn) gets the
+			// session-less fallback Turn — local + web tools run exactly
+			// like the PM bridge's /api/tools/* contract; session-scoped
+			// tools refuse honestly.
+			t = fallbackTurn()
+			if t == nil {
+				return mcp.NewToolResultError("error: this tool call reached the bus without a session turn"), nil
+			}
 		}
 		argJSON := argsJSON(req)
 		switch {

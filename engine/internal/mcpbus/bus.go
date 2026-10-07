@@ -33,12 +33,15 @@ type Bus struct {
 	hooks     *server.Hooks
 	mu        sync.RWMutex
 	observers []Observer
+	// v1.13.4 THE CHAIN: attached external servers' proxied tools.
+	external      map[string]*extTool
+	externalSpecs []map[string]any
 }
 
 // New builds the bus: the MCP server with every Def registered, plus
 // the initialized in-process client.
 func New() (*Bus, error) {
-	b := &Bus{hooks: &server.Hooks{}}
+	b := &Bus{hooks: &server.Hooks{}, external: map[string]*extTool{}}
 	b.srv = server.NewMCPServer("doomalay-tools", busVersion,
 		server.WithToolCapabilities(false),
 		// v1.13.2 THE CONTAINED PANIC: a panicking tool handler becomes a
@@ -116,7 +119,14 @@ type Gates struct {
 // spoken this shape in production), built from the same Defs that
 // register the MCP tools. One source of truth, two projections.
 func (b *Bus) Specs(g Gates) []map[string]any {
-	return SpecsFor(g)
+	out := SpecsFor(g)
+	b.mu.RLock()
+	ext := b.externalSpecs
+	b.mu.RUnlock()
+	if len(ext) > 0 {
+		out = append(out[:len(out):len(out)], ext...)
+	}
+	return out
 }
 
 // SpecsFor builds the OpenAI-style tools[] manifest from the Defs — a
@@ -212,7 +222,10 @@ type Result struct {
 // artifacts drain back here.
 func (b *Bus) CallTool(ctx context.Context, t *Turn, name string, args json.RawMessage) Result {
 	if t == nil {
-		t = &Turn{}
+		t = fallbackTurn()
+		if t == nil {
+			t = &Turn{}
+		}
 	}
 	if len(args) == 0 || !json.Valid(args) {
 		args = json.RawMessage("{}")
@@ -275,6 +288,11 @@ func (b *Bus) CallTool(ctx context.Context, t *Turn, name string, args json.RawM
 // the always-on set) — the teaching text for hallucinated calls.
 func (b *Bus) armedToolList(t *Turn) string {
 	var names []string
+	b.mu.RLock()
+	for name := range b.external {
+		names = append(names, name)
+	}
+	b.mu.RUnlock()
 	for i := range defs {
 		d := &defs[i]
 		switch d.Gate {

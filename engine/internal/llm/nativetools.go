@@ -153,7 +153,14 @@ type wireToolCall struct {
 func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
         ch <- ChatChunk{Type: "status", State: "running"}
 
+        // v1.13.4 THE CHAIN: the merged registry (internal Defs + every
+        // attached external MCP server's namespaced tools — the 100+ tools
+        // horizon) when the bus is up; the pure function serves the
+        // degraded path.
         specs := mcpbus.SpecsFor(mcpGates(req))
+        if bus := mcpBus(); bus != nil {
+                specs = bus.Specs(mcpGates(req))
+        }
         if req.ToolsDisabled {
                 specs = nil
         }

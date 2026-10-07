@@ -105,6 +105,22 @@ func (t *Turn) Progress(text string) {
 	}
 }
 
+// fallbackTurnFn builds the session-less Turn external consumers get
+// (/mcp callers with no chat turn). Registered by the llm package at
+// init (it owns the runners); nil = external callers get honest
+// refusals.
+var fallbackTurnFn func() *Turn
+
+// SetFallbackTurn registers the session-less external-consumer Turn.
+func SetFallbackTurn(fn func() *Turn) { fallbackTurnFn = fn }
+
+func fallbackTurn() *Turn {
+	if fallbackTurnFn != nil {
+		return fallbackTurnFn()
+	}
+	return nil
+}
+
 // TurnFromContext extracts the Turn the bus injected for this call.
 func TurnFromContext(ctx context.Context) *Turn {
 	if ctx == nil {

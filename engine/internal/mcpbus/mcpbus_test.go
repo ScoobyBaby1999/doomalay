@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // newTestBus builds a bus with a recording observer.
@@ -414,5 +419,105 @@ func TestHandlerPanicBecomesToolError(t *testing.T) {
 	}
 	if len(rec.ends) != 2 {
 		t.Fatalf("both calls should report ToolEnd, got %d", len(rec.ends))
+	}
+}
+
+// ── THE CHAIN: external servers, namespacing, scale (v1.13.4) ────────
+
+// startExternalServer spins a REAL MCP server over streamable HTTP with
+// n dummy tools (forcing cursor pagination at 50/page).
+func startExternalServer(t *testing.T, n int) (url string) {
+	t.Helper()
+	srv := server.NewMCPServer("scale-test", "1.0.0",
+		server.WithToolCapabilities(false),
+		server.WithPaginationLimit(50),
+	)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("tool_%d", i)
+		srv.AddTool(mcp.NewTool(name,
+			mcp.WithDescription(fmt.Sprintf("Scale test tool #%d.", i)),
+			mcp.WithString("x", mcp.Description("an argument")),
+		), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			x, _ := req.GetArguments()["x"].(string)
+			return mcp.NewToolResultText(fmt.Sprintf("%s ran on the external server (x=%q)", req.Params.Name, x)), nil
+		})
+	}
+	hs := server.NewStreamableHTTPServer(srv, server.WithStateLess(true))
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", hs)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts.URL + "/mcp"
+}
+
+func TestChain100ExternalTools(t *testing.T) {
+	b, _ := newTestBus(t)
+	url := startExternalServer(t, 100)
+
+	if err := b.Attach(context.Background(), ServerConfig{Name: "scale", URL: url, TimeoutMS: 5000}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if got := b.ExternalTools(); got != 100 {
+		t.Fatalf("want 100 attached tools, got %d", got)
+	}
+	// the manifest crosses the 100+ horizon: 20 always-on internal + 100
+	specs := b.Specs(Gates{})
+	if len(specs) != 120 {
+		t.Fatalf("want 120 specs (20 internal + 100 chained), got %d", len(specs))
+	}
+	// every external spec has a real JSON Schema
+	for _, s := range specs[20:] {
+		fn, _ := s["function"].(map[string]any)
+		if fn == nil || !strings.HasPrefix(fn["name"].(string), "scale_tool_") {
+			t.Fatalf("external spec shape wrong: %v", s)
+		}
+		params, _ := fn["parameters"].(json.RawMessage)
+		if len(params) == 0 || !json.Valid(params) {
+			t.Fatalf("external spec parameters must be valid JSON, got %s", params)
+		}
+	}
+
+	// a call routes through the bus → proxy → external server
+	res := b.CallTool(context.Background(), fakeTurn("sess-scale"), "scale_tool_42", args(t, map[string]any{"x": "hello"}))
+	if res.IsError {
+		t.Fatalf("external call failed: %s", res.Text)
+	}
+	if !strings.Contains(res.Text, "tool_42 ran on the external server") || !strings.Contains(res.Text, `x="hello"`) {
+		t.Fatalf("external call text, got %q", res.Text)
+	}
+
+	// the observers see the external call exactly like an internal one
+	rec := &recorder{}
+	b.AddObserver(rec)
+	b.CallTool(context.Background(), fakeTurn("sess-scale"), "scale_tool_7", args(t, map[string]any{}))
+	if len(rec.starts) != 1 || rec.starts[0].Name != "scale_tool_7" || rec.starts[0].SessionID != "sess-scale" {
+		t.Fatalf("observer did not see the external call: %+v", rec.starts)
+	}
+
+	// tools/list serves the merged registry through the protocol
+	tools, err := b.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(tools) != 128 {
+		t.Fatalf("protocol tools/list should serve 128 (28 internal + 100 chained), got %d", len(tools))
+	}
+}
+
+func TestChainBadConfigRefuses(t *testing.T) {
+	b, _ := newTestBus(t)
+	if err := b.Attach(context.Background(), ServerConfig{Name: ""}); err == nil {
+		t.Fatal("nameless attach must refuse")
+	}
+	if err := b.Attach(context.Background(), ServerConfig{Name: "x"}); err == nil {
+		t.Fatal("transportless attach must refuse")
+	}
+	if err := b.Attach(context.Background(), ServerConfig{Name: "dead", URL: "http://127.0.0.1:1/mcp", TimeoutMS: 500}); err == nil {
+		t.Fatal("unreachable attach must report the failure")
+	}
+	// the bus keeps serving after a failed attach
+	res := b.CallTool(context.Background(), fakeTurn("s"), "calculator", args(t, map[string]any{"expr": "2+2"}))
+	if res.Text != "4" {
+		t.Fatalf("bus should survive a failed attach, got %q", res.Text)
 	}
 }

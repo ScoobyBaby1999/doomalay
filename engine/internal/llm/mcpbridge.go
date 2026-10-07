@@ -140,3 +140,33 @@ func fromBusSources(sources []mcpbus.Source) []SearchResult {
 	}
 	return out
 }
+
+// init registers the session-less fallback Turn external /mcp consumers
+// get (v1.13.4 THE CHAIN): local + web tools run exactly like the PM
+// bridge's /api/tools/* contract (no session, no keys beyond the live
+// ladder); session-scoped tools (persona/hublib/skills/workspace/
+// delegate, templates) refuse honestly.
+func init() {
+	mcpbus.SetFallbackTurn(func() *mcpbus.Turn {
+		return &mcpbus.Turn{
+			SessionID: "external",
+			RunLocal: func(ctx context.Context, name, argJSON string, sink mcpbus.ArtifactSink) string {
+				return RunLocalTool(name, argJSON, sink)
+			},
+			Search: func(ctx context.Context, query string) (string, []mcpbus.Source, error) {
+				results, err := WebSearch(ctx, query, 5, "")
+				if err != nil {
+					return "", nil, err
+				}
+				obs := FormatSearchResults(results)
+				if obs == "" {
+					obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
+				}
+				return obs, toBusSources(results), nil
+			},
+			Fetch: func(ctx context.Context, url string) (string, error) {
+				return WebFetch(ctx, url, 12000)
+			},
+		}
+	})
+}

@@ -17,12 +17,16 @@ import (
         "strconv"
         "strings"
         "sync"
+        "time"
+
+        mcpgo "github.com/mark3labs/mcp-go/server"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 
@@ -139,6 +143,28 @@ func (s *Server) healInterruptedTurns() {
 
 // routes registers every API endpoint + the embedded PWA.
 func (s *Server) routes() {
+        // v1.13.4 THE CHAIN: the mcpbus serves EXTERNAL consumers at /mcp
+        // (stateless streamable HTTP — the same JSON-RPC tools/list +
+        // tools/call the engine itself speaks) and chains the configured
+        // external MCP servers (stdio on desktop, HTTP everywhere; the
+        // config lives in <data-dir>/mcp_servers.json or
+        // DOOMALAY_MCP_SERVERS). External callers get the global tool set;
+        // session-scoped tools honestly refuse without a session turn.
+        if bus, err := mcpbus.Default(); err != nil {
+                log.Printf("mcpbus unavailable — /mcp not mounted, no external chain: %v", err)
+        } else {
+                httpSrv := mcpgo.NewStreamableHTTPServer(bus.Server(), mcpgo.WithStateLess(true))
+                s.mux.Handle("/mcp", httpSrv)
+                go func() {
+                        for _, cfg := range mcpbus.LoadServerConfigs(s.cfg.DataDir) {
+                                ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                                if err := bus.Attach(ctx, cfg); err != nil {
+                                        log.Printf("mcpbus: chain attach %q failed: %v", cfg.Name, err)
+                                }
+                                cancel()
+                        }
+                }()
+        }
         // API endpoints (one per resource).
         s.mux.HandleFunc("GET /api/health", s.handleHealth)
         s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
