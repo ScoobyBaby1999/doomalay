@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -110,26 +109,6 @@ func TestRunLocalTool(t *testing.T) {
 }
 
 // TestParseActionAnyTool verifies the generalized ACTION regex.
-func TestParseActionAnyTool(t *testing.T) {
-	for _, c := range []struct {
-		in   string
-		tool string
-		ok   bool
-	}{
-		{"ACTION: calculator {\"expr\": \"1+1\"}", "calculator", true},
-		{"ACTION: web_search {\"query\": \"cats\"}", "web_search", true},
-		{"ACTION: time_now {}", "time_now", true},
-		{"ACTION: uuid", "uuid", true},
-		{"Let me compute.\nACTION: calculator {\"expr\":\"2\"}", "calculator", true},
-		{"Just a normal answer.", "", false},
-	} {
-		action, _, ok := parseAction(c.in)
-		if ok != c.ok || (ok && action != c.tool) {
-			t.Errorf("parseAction(%q) = (%q,%v), want (%q,%v)", c.in, action, ok, c.tool, c.ok)
-		}
-	}
-}
-
 // ── v0.22 file tools ─────────────────────────────────────────────────────
 
 // memSink collects saved artifacts in memory (tests the sink contract).
@@ -297,47 +276,9 @@ func TestXlsxCreate(t *testing.T) {
 	}
 }
 
-// TestParseActionPreamble: prose-prefixed ACTION lines must parse (the
-// "chain gets interrupted" root cause — v0.22).
-func TestParseActionPreamble(t *testing.T) {
-	cases := []struct {
-		in   string
-		tool string
-		arg  string
-	}{
-		{"I'm going to run a long toolchain demo, hitting all the local tools.\n\nACTION: time_now {\"tz\": \"UTC\"}", "time_now", `{"tz":"UTC"}`},
-		{"**Step 1/12** Get the time.\nACTION: time_now{\"tz\":\"UTC\"}", "time_now", `{"tz":"UTC"}`},
-		{"Sure.\nACTION: calculator {\"expr\": \"2+2\"}\n", "calculator", `{"expr":"2+2"}`},
-		{"ACTION: web_search cat diapers", "web_search", `{"query":"cat diapers"}`},
-		{"first\nACTION: uuid {\"count\":1}\nlater text ignored", "uuid", `{"count":1}`},
-	}
-	for _, c := range cases {
-		action, arg, ok := parseAction(c.in)
-		if !ok || action != c.tool {
-			t.Errorf("parseAction(%q) = (%q,%v), want (%q,true)", c.in, action, ok, c.tool)
-			continue
-		}
-		var got, want map[string]any
-		_ = json.Unmarshal([]byte(arg), &got)
-		_ = json.Unmarshal([]byte(c.arg), &want)
-		if fmt.Sprint(got) != fmt.Sprint(want) {
-			t.Errorf("parseAction(%q) arg = %v, want %v", c.in, got, want)
-		}
-	}
-}
-
-// TestBalancedJSON: brace/quote balance for pretty-printed extension.
-func TestBalancedJSON(t *testing.T) {
-	if balancedJSON(`{"a": 1`) {
-		t.Error("unbalanced object reported balanced")
-	}
-	if !balancedJSON(`{"a": 1}`) {
-		t.Error("balanced object reported unbalanced")
-	}
-	if balancedJSON(`{"a": "x`) {
-		t.Error("open string reported balanced")
-	}
-}
+// (v1.13.3 THE GUT: TestParseActionPreamble + TestBalancedJSON died with
+// the ACTION parser — brace-balancing for pretty-printed multi-line
+// ACTIONs is a solved problem the native tool_calls wire never had.)
 
 // TestArchiveToolsMultiFormat (v0.23): archive_create/archive_extract work
 // for every packable format through the SAME tool entry the model uses,

@@ -107,7 +107,7 @@ func TestSkillsBootstrapGate(t *testing.T) {
         text, _ := out["result"].(string)
         if !strings.Contains(text, "SUPERPOWERS — THE SKILL DISCIPLINE") ||
                 !strings.Contains(text, "Load a skill before any work") ||
-                !strings.Contains(text, "ACTION: skills") {
+                !strings.Contains(text, "the skills tool with") {
                 t.Fatalf("bootstrap text wrong: %.200s", text)
         }
 

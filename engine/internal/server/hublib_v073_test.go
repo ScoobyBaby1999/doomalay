@@ -89,7 +89,7 @@ func TestV073PersonaDownloadTeachesArming(t *testing.T) {
         }
         for _, want := range []string{
                 "DOWNLOADED — Noir Detective (persona)",
-                `persona_set {"from": "Noir Detective", "activate": true}`,
+                `the persona_set tool with {"from": "Noir Detective", "activate": true}`,
                 "You are a hard-boiled investigator",
         } {
                 if !strings.Contains(res, want) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"os"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 )
@@ -21,15 +20,6 @@ import (
 // fallbacks"): if the MCP protocol layer itself fails, the turn
 // stickily degrades to the direct in-process dispatch (executeAction —
 // the native fallback) for the rest of the turn.
-
-// actionFallbackEnabled is the one-wave ACTION kill-switch: set
-// DOOMALAY_ACTION_FALLBACK=1 to restore the ACTION-era routing (non-
-// native providers and tools-rejecting providers fall back to the text
-// protocol). It exists for the v1.13.2 transition wave only — v1.13.3
-// deletes the grammar and this switch.
-func actionFallbackEnabled() bool {
-	return os.Getenv("DOOMALAY_ACTION_FALLBACK") == "1"
-}
 
 var mcpBusWarned bool
 

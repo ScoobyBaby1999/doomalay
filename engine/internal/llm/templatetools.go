@@ -142,7 +142,7 @@ func runTemplateList(ctx context.Context, req ChatRequest) string {
 		return entries[i].ID < entries[j].ID
 	})
 	var b strings.Builder
-	fmt.Fprintf(&b, "OBSERVATION:\ntemplate library — %d templates (pick one, then ACTION: template_show {\"id\": \"...\"} for its methodology):\n", len(entries))
+	fmt.Fprintf(&b, "OBSERVATION:\ntemplate library — %d templates (pick one, then call template_show with its id for its methodology):\n", len(entries))
 	for _, e := range entries {
 		line := "- " + e.ID + " — " + e.Name
 		if e.TaskType != "" && e.TaskType != e.ID {

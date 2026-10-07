@@ -520,7 +520,7 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
                         }
                         row := s.findDownloadedPersona(from)
                         if row == nil {
-                                return "OBSERVATION:\nerror: no downloaded persona '" + oneLine(from, 60) + "' — ACTION: hublib {\"action\":\"search\",\"type\":\"persona\",\"q\":\"…" + oneLine(from, 30) + "\"} then {\"action\":\"download\",…} lands it first"
+                                return "OBSERVATION:\nerror: no downloaded persona '" + oneLine(from, 60) + "' — the hublib tool with {\"action\":\"search\",\"type\":\"persona\",\"q\":\"…" + oneLine(from, 30) + "\"} then {\"action\":\"download\",…} lands it first"
                         }
                         specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive", Name: row.Item.Name})
                         target = &specs[len(specs)-1]

@@ -260,35 +260,6 @@ func TestParseNvidiaCards(t *testing.T) {
 	}
 }
 
-// TestV816_AliasedRepoNames — canonicalToolName lands every repo-name
-// guess on "workspace" (v0.81.6 THE FULL REPO HAND; the user's live repro
-// watched the model guess "repo_list" and die on "unknown tool").
-func TestV816_AliasedRepoNames(t *testing.T) {
-	for _, guess := range []string{"repo_list", "repo_read", "repo_ls", "repo_tree", "repo_grep",
-		"repository", "repositories", "git", "github", "gitea", "gitlab", "code_repo",
-		"repo_files", "read_repo", "list_repo", "repo_view", "repo_info", "git_repo",
-		"repo_tools", "repose", "workspace_list", "ws"} {
-		if got := canonicalToolName(guess); got != "workspace" {
-			t.Fatalf("alias %q → %q (want workspace)", guess, got)
-		}
-	}
-	// non-repo guesses keep their own mappings (no regressions)
-	for guess, want := range map[string]string{
-		"google": "web_search", "fetch": "web_fetch", "excel": "xlsx_create",
-		"hub":    "hublib",
-	} {
-		if got := canonicalToolName(guess); got != want {
-			t.Fatalf("%q → %q (want %q)", guess, got, want)
-		}
-	}
-	// and workspace is in the fuzzy universe
-	found := false
-	for _, tn := range allCallableTools {
-		if tn == "workspace" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("workspace missing from allCallableTools")
-	}
-}
+// (v1.13.3 THE GUT: TestV816_AliasedRepoNames died with the alias layer —
+// native tool_calls carry exact manifest names; hallucinated names get the
+// honest unknown-tool teaching and self-correct in one round.)

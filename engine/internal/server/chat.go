@@ -506,7 +506,7 @@ const defaultPersonaQuick = "## Identity\n" +
         "When a live fact matters and web search is enabled, search rather than guess. " +
         "When you don't know something, say so.\n\n" +
         "## Tools\n" +
-        "When the app's tool protocol is active, invoke tools ONLY through the protocol's ACTION line format — never as plain text. " +
+        "When tools are offered as functions, invoke them ONLY through real tool calls — never describe a call as plain text. " +
         "Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n" +
         artifactSystemPrompt
 

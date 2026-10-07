@@ -101,6 +101,18 @@ func normalizeProviderName(p string) string {
         return p
 }
 
+// nativeToolsBlacklisted reports whether this provider 400'd a
+// tools-bearing request earlier in this engine's lifetime.
+func nativeToolsBlacklisted(provider string) bool {
+        if provider == "" {
+                return false
+        }
+        nativeToolsMu.Lock()
+        blocked := nativeToolsBlacklist[normalizeProviderName(provider)]
+        nativeToolsMu.Unlock()
+        return blocked
+}
+
 // SupportsNativeTools reports whether this provider's direct-proxy turns
 // should run the native function-calling loop.
 func SupportsNativeTools(provider string) bool {
@@ -143,6 +155,13 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 
         specs := mcpbus.SpecsFor(mcpGates(req))
         if req.ToolsDisabled {
+                specs = nil
+        }
+        // v1.13.3: a provider that already rejected tools once (the runtime
+        // blacklist) never sees the manifest again — no wasted 400 round
+        // trip per turn; the turn simply runs tool-less.
+        if nativeToolsBlacklisted(req.Provider) && len(specs) > 0 {
+                req = stripToolsFromTurn(req)
                 specs = nil
         }
         // THE BUS: one Turn per chat turn; busDegraded flips to direct
@@ -249,13 +268,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         // v1.13.2: the provider 400'd a tools-bearing request —
                         // it is blacklisted (scanSSECollect did it) and the turn
                         // degrades HONESTLY: one clean rerun without tools. The
-                        // ACTION text protocol is no longer the answer (the
-                        // kill-switch keeps it reachable for the transition
-                        // wave only — v1.13.3 deletes it).
-                        if actionFallbackEnabled() {
-                                runWebSearchTurn(ctx, ch, errs, req)
-                                return
-                        }
+                        // ACTION text protocol is gone (v1.13.3 THE GUT).
                         if len(specs) > 0 {
                                 ch <- ChatChunk{Type: "progress", Text: "this provider rejected tool calling — continuing without tools…"}
                                 req = stripToolsFromTurn(req)

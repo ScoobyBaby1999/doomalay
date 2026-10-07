@@ -1,59 +1,55 @@
 package llm
 
-// hublib_v0672_test.go — v0.67.2 THE LIBRARY ON THE DIRECT PATH.
-// Locks in the three mechanical facts the quick-chat library needs:
+// hublib_v0672_test.go — v0.67.2 THE LIBRARY ON THE DIRECT PATH, v1.13.3
+// THE GUT edition. Locks in the mechanical facts the quick-chat library
+// needs:
 //
-//  1. PROTOCOL COMPOSITION: a request with HublibToolFn armed carries
-//     the hublib ACTION protocol in its composed turn system; one
-//     without does not (the model can't call a tool it was never
-//     offered).
-//  2. ALIAS CANONICALIZATION: "library"/"hub"/"browse_library"… map to
-//     the hublib tool (the models' natural names for it), while the
-//     template-specific aliases stay template tools.
-//  3. ACTION ROUTING: "ACTION: hublib {…}" routes the raw argJSON to
-//     the armed Fn, returns its OBSERVATION verbatim, and emits the
-//     tool_use/tool_result chunks (the chat pills).
+//  1. MANIFEST GATING: a request with HublibToolFn armed carries the
+//     hublib tool in the mcpbus manifest; one without does not (the
+//     model can't call a tool it was never offered).
+//  2. ACTION ROUTING: a hublib call routes the raw argJSON to the armed
+//     Fn (the direct-dispatch fallback path), returns its OBSERVATION
+//     verbatim, and emits the tool_use/tool_result chunks (the pills).
+//     (The MCP bus path carries the same contract — mcpbus_test.go.)
+//
+// (v1.13.3: the ALIAS CANONICALIZATION test died with the alias layer —
+// native tool_calls carry exact manifest names; a hallucinated name gets
+// the honest unknown-tool teaching and self-corrects in one round.)
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 )
 
-func TestHublibProtocolComposesWhenArmed(t *testing.T) {
+func TestHublibManifestGatesOnArmed(t *testing.T) {
 	armed := ChatRequest{
 		Provider:     "nvidia",
-		Messages:     []Message{{Role: "user", Content: "hi"}},
+		Messages:     []Message{{Role: "user", Content: "find me a research skill"}},
 		HublibToolFn: func(ctx context.Context, argJSON string) string { return "OBSERVATION:\nok" },
 	}
-	sys := composeTurnSystem(armed)
-	if !strings.Contains(sys, "ACTION: hublib") {
-		t.Fatalf("armed request must carry the hublib ACTION protocol; got system prompt:\n%.400s", sys)
-	}
-	if !strings.Contains(sys, "Be opportunistic") {
-		t.Fatalf("the opportunistic discipline must ride the hublib protocol")
-	}
-
-	unarmed := ChatRequest{
-		Provider: "nvidia",
-		Messages: []Message{{Role: "user", Content: "hi"}},
-	}
-	sys2 := composeTurnSystem(unarmed)
-	if strings.Contains(sys2, "ACTION: hublib") {
-		t.Fatalf("unarmed request must NOT advertise the hublib tool")
-	}
-}
-
-func TestHublibAliasCanonicalization(t *testing.T) {
-	for _, alias := range []string{"library", "hub", "public_hub", "hub_library", "browse_hub", "browse_library", "search_library"} {
-		if got := canonicalToolName(alias); got != "hublib" {
-			t.Fatalf("alias %q must canonicalize to hublib, got %q", alias, got)
+	specs := mcpbus.SpecsFor(mcpGates(armed))
+	found := false
+	for _, s := range specs {
+		fn, _ := s["function"].(map[string]any)
+		if fn != nil && fn["name"] == "hublib" {
+			found = true
+			if !strings.Contains(fn["description"].(string), "PUBLIC HUB") {
+				t.Fatalf("hublib description drifted")
+			}
 		}
 	}
-	// the template-specific aliases stay template tools.
-	for _, alias := range []string{"templates", "list_templates", "template_library"} {
-		if got := canonicalToolName(alias); got != "template_list" {
-			t.Fatalf("template alias %q must stay template_list, got %q", alias, got)
+	if !found {
+		t.Fatalf("armed request must advertise the hublib tool")
+	}
+
+	unarmed := ChatRequest{Provider: "nvidia", Messages: []Message{{Role: "user", Content: "hi"}}}
+	for _, s := range mcpbus.SpecsFor(mcpGates(unarmed)) {
+		fn, _ := s["function"].(map[string]any)
+		if fn != nil && fn["name"] == "hublib" {
+			t.Fatalf("unarmed request must NOT advertise the hublib tool")
 		}
 	}
 }
@@ -69,7 +65,7 @@ func TestHublibActionRoutesToFn(t *testing.T) {
 			return "OBSERVATION:\nHUB SKILLS: - one item"
 		},
 	}
-	// the ACTION runner path used by the ReAct loop.
+	// the direct-dispatch runner (the bus fallback path's executor).
 	obs := executeAction(context.Background(), req, ch, "hublib", `{"action":"search","q":"research"}`, &[]SearchResult{})
 	close(ch)
 	if called != `{"action":"search","q":"research"}` {

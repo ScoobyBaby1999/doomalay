@@ -96,9 +96,8 @@ collect:
 }
 
 func TestV1132_ToolsRejectedDegradesHonestly(t *testing.T) {
-	if actionFallbackEnabled() {
-		t.Skip("kill-switch on — ACTION fallback active, different contract")
-	}
+	// (v1.13.3: the ACTION kill-switch is gone with the grammar — this
+	// contract (the honest tool-less degrade) is now the ONLY behavior.)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")

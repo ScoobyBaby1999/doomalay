@@ -402,20 +402,20 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                 text := "SUPERPOWERS — THE SKILL DISCIPLINE (injected, active):\n\n" +
                         stripFrontmatter(string(body)) +
                         "\n\nHARNESS TOOL MAP (this harness's real tools):\n" +
-                        "- *invoke a skill* → ACTION: skills {\"action\": \"load\", \"skill\": \"<name>\"}\n" +
-                        "- *list/search skills* → ACTION: skills {\"action\": \"list\"} or {\"action\": \"search\", \"q\": \"…\"}\n" +
-                        "- *read a skill's companion files* → ACTION: skills {\"action\": \"files\"/\"read\", \"skill\": \"…\", \"path\": \"…\"}\n" +
-                        "- *list/browse bundles* → ACTION: hublib {\"action\": \"bundles\", \"q\": \"…\"} then {\"action\": \"bundle\", \"id\": \"…\"}\n" +
-                        "- *browse the public hub* → ACTION: hublib {\"action\": \"search\", \"q\": \"…\", \"type\": \"skill|doc|script|template\"}\n" +
-                        "- *download a hub item* → ACTION: hublib {\"action\": \"download\", \"type\": \"…\", \"repo\": \"…\", \"id\": \"…\"}\n" +
-                        "- *download a whole bundle* → ACTION: hublib {\"action\": \"download_bundle\", \"id\": \"…\"}\n" +
-                        "- *dispatch a subagent* → ACTION: delegate {\"prompt\": \"…\"}\n" +
+                        "- *invoke a skill* → the skills tool with {\"action\": \"load\", \"skill\": \"<name>\"}\n" +
+                        "- *list/search skills* → the skills tool with {\"action\": \"list\"} or {\"action\": \"search\", \"q\": \"…\"}\n" +
+                        "- *read a skill's companion files* → the skills tool with {\"action\": \"files\"/\"read\", \"skill\": \"…\", \"path\": \"…\"}\n" +
+                        "- *list/browse bundles* → the hublib tool with {\"action\": \"bundles\", \"q\": \"…\"} then {\"action\": \"bundle\", \"id\": \"…\"}\n" +
+                        "- *browse the public hub* → the hublib tool with {\"action\": \"search\", \"q\": \"…\", \"type\": \"skill|doc|script|template\"}\n" +
+                        "- *download a hub item* → the hublib tool with {\"action\": \"download\", \"type\": \"…\", \"repo\": \"…\", \"id\": \"…\"}\n" +
+                        "- *download a whole bundle* → the hublib tool with {\"action\": \"download_bundle\", \"id\": \"…\"}\n" +
+                        "- *dispatch a subagent* → the delegate tool with {\"prompt\": \"…\"}\n" +
                         "- *create/update todos* → the timemgr equivalents: ACTION: json_tool / text_stats (plain notes)\n" +
                         " — load a skill BEFORE starting any work it covers."
                 return text, ""
         case "list":
                 var b strings.Builder
-                b.WriteString("SKILLS LIBRARY (load one with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}):\n")
+                b.WriteString("SKILLS LIBRARY (load one with the skills tool with {\"action\":\"load\",\"skill\":\"<name>\"}):\n")
                 for i, e := range entries {
                         if i > 40 {
                                 b.WriteString("… (use search for more)\n")
@@ -427,7 +427,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
         case "search":
                 q := strings.ToLower(strings.TrimSpace(get("q")))
                 if q == "" {
-                        return "", "empty query. Usage: ACTION: skills {\"action\": \"search\", \"q\": \"brainstorm\"}"
+                        return "", "empty query. Usage: the skills tool with {\"action\": \"search\", \"q\": \"brainstorm\"}"
                 }
                 type hit struct {
                         e skillsEntry
@@ -456,7 +456,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                 }
                 var b strings.Builder
                 if top == 0 {
-                        b.WriteString("no skill matched " + q + " — ACTION: skills {\"action\":\"list\"} shows everything")
+                        b.WriteString("no skill matched " + q + " — the skills tool with {\"action\":\"list\"} shows everything")
                 } else {
                         b.WriteString("SKILL SEARCH HITS (best first):\n")
                         for i := 0; i < top; i++ {
@@ -471,14 +471,14 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                 ref := get("skill")
                 e := resolveSkill(entries, ref)
                 if e == nil {
-                        return "", "no skill named " + oneLine(ref, 60) + " — ACTION: skills {\"action\":\"list\"} shows the library"
+                        return "", "no skill named " + oneLine(ref, 60) + " — the skills tool with {\"action\":\"list\"} shows the library"
                 }
                 body, err := os.ReadFile(filepath.Join(s.skillsDir(), e.Dir, "SKILL.md"))
                 if err != nil {
                         return "", "read failed: " + err.Error()
                 }
                 text := "SKILL LOADED — " + e.Name + ". Follow this methodology now.\n\n" +
-                        clip(stripFrontmatter(string(body)), skillsLoadMax, "\n…(body clipped — ACTION: skills {\"action\":\"read\",\"skill\":\""+e.Name+"\",\"path\":\"SKILL.md\"} for the tail)")
+                        clip(stripFrontmatter(string(body)), skillsLoadMax, "\n…(body clipped — the skills tool with {\"action\":\"read\",\"skill\":\""+e.Name+"\",\"path\":\"SKILL.md\"} for the tail)")
                 return text, ""
         case "files":
                 e := resolveSkill(entries, get("skill"))
@@ -490,7 +490,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                         return "", "read failed: " + err.Error()
                 }
                 var b strings.Builder
-                b.WriteString("COMPANION FILES of " + e.Name + " (read with ACTION: skills {\"action\":\"read\",\"skill\":\"" + e.Name + "\",\"path\":\"…\"}):\n")
+                b.WriteString("COMPANION FILES of " + e.Name + " (read with the skills tool with {\"action\":\"read\",\"skill\":\"" + e.Name + "\",\"path\":\"…\"}):\n")
                 for _, k := range kids {
                         if k.Name() == "SKILL.md" {
                                 continue
@@ -519,7 +519,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
 }
 
 // runSkillsAction (v0.72) — the DIRECT-PATH skills ACTION runner: the
-// quick chats' "ACTION: skills {…}" lines land here (via
+// quick chats' "the skills tool with {…}" lines land here (via
 // llm.ChatRequest.SkillsToolFn), parse their JSON args, and ride the
 // same skillsDispatch as the PM bridge. Returns OBSERVATION-ready text.
 // The load result's "SKILL LOADED — <name>" head is what the active-bundle
@@ -569,7 +569,7 @@ func (s *Server) handleToolsHublib(w http.ResponseWriter, r *http.Request) {
 // exactly the dt_hublib semantics.
 func (s *Server) hublibDispatch(action string, get func(string) string, session string) (string, string) {
         switch action {
-        case "search", "": // empty action → the search default (bare "ACTION: hublib {}")
+        case "search", "": // empty action → the search default (bare "the hublib tool with {}")
                 typ := get("type")
                 if typ == "" {
                         typ = "skill"
@@ -586,7 +586,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 if n > hublibListMax {
                         n = hublibListMax
                 }
-                b.WriteString("HUB " + strings.ToUpper(typ) + "S (download with ACTION: hublib {\"action\":\"download\",\"type\":\"" + typ + "\",\"repo\":\"…\",\"id\":\"…\"}):\n")
+                b.WriteString("HUB " + strings.ToUpper(typ) + "S (download with the hublib tool with {\"action\":\"download\",\"type\":\"" + typ + "\",\"repo\":\"…\",\"id\":\"…\"}):\n")
                 for i := 0; i < n; i++ {
                         it := items[i]
                         b.WriteString("- " + oneLine(it.Name, 60) +
@@ -648,13 +648,13 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 var useLine string
                 switch typ {
                 case "persona":
-                        useLine = "USE IT: ACTION: persona_set {\"from\": \"" + item.Name + "\", \"activate\": true} imports it into this chat and makes it the active persona (you become it)."
+                        useLine = "USE IT: the persona_set tool with {\"from\": \"" + item.Name + "\", \"activate\": true} imports it into this chat and makes it the active persona (you become it)."
                 case "theme":
                         useLine = "USE: the user applies looks from the hub item page (the whole app repaints); you can describe its design from the payload above."
                 case "template":
                         useLine = "USE IT: follow the methodology in the payload above for the task at hand (say which template you are using)."
                 case "skill":
-                        useLine = "USE IT: ACTION: skills {\"action\":\"load\",\"skill\":\"" + item.Name + "\"} arms it as the methodology to follow."
+                        useLine = "USE IT: the skills tool with {\"action\":\"load\",\"skill\":\"" + item.Name + "\"} arms it as the methodology to follow."
                 case "script":
                         useLine = "USE: read it as reference (repo tooling) — follow its convention when the task matches it; scripts are not executed in the app."
                 case "python":
@@ -663,7 +663,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         useLine = "USE: background reading — consult it when the task touches its subject."
                 }
                 text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. " + useLine + "\nPAYLOAD:\n" +
-                        clip(payload, skillsLoadMax, "\n…(payload clipped — ACTION: hublib {\"action\":\"get\"} re-reads the head)")
+                        clip(payload, skillsLoadMax, "\n…(payload clipped — the hublib tool with {\"action\":\"get\"} re-reads the head)")
                 return clip(text, skillsLoadMax+400), ""
         case "bundles":
                 // v0.72: THE BUNDLE LIST — never gated (browsing changes
@@ -680,7 +680,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         return "", "hub: " + err.Error()
                 }
                 var b strings.Builder
-                b.WriteString("HUB BUNDLES (curated collections — detail one with ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}; download all members with {\"action\":\"download_bundle\",\"id\":\"…\"}):")
+                b.WriteString("HUB BUNDLES (curated collections — detail one with the hublib tool with {\"action\":\"bundle\",\"id\":\"…\"}; download all members with {\"action\":\"download_bundle\",\"id\":\"…\"}):")
                 if q != "" || tag != "" {
                         b.WriteString(" [filtered")
                         if q != "" {
@@ -736,7 +736,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 }
                 id := get("id")
                 if strings.TrimSpace(id) == "" {
-                        return "", "download_bundle needs {\"id\": \"<bundle id>\"} — ACTION: hublib {\"action\":\"bundles\"} lists them"
+                        return "", "download_bundle needs {\"id\": \"<bundle id>\"} — the hublib tool with {\"action\":\"bundles\"} lists them"
                 }
                 groups, err := s.hub.DownloadCollection(id)
                 if err != nil {
@@ -751,7 +751,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         if g.Type == "skill" {
                                 for _, it := range g.Items {
                                         if len(skillHeads) < 3 {
-                                                skillHeads = append(skillHeads, "### "+it.Item.Name+" — "+oneLine(it.Item.Description, 90)+"\n"+clip(stripFrontmatter(it.Payload), 1200, "\n…(head clipped — get the rest via ACTION: hublib {\"action\":\"get\",\"type\":\"skill\",\"repo\":\""+it.Item.Repo+"\",\"id\":\""+it.Item.ID+"\"} or load the installed skill)")+"\n")
+                                                skillHeads = append(skillHeads, "### "+it.Item.Name+" — "+oneLine(it.Item.Description, 90)+"\n"+clip(stripFrontmatter(it.Payload), 1200, "\n…(head clipped — get the rest via the hublib tool with {\"action\":\"get\",\"type\":\"skill\",\"repo\":\""+it.Item.Repo+"\",\"id\":\""+it.Item.ID+"\"} or load the installed skill)")+"\n")
                                         }
                                 }
                         }
@@ -760,12 +760,12 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 b.WriteString("DOWNLOADED BUNDLE — " + SanitizedBundleID(id) + " · " + strconv.Itoa(total) + " items (" + byTypeLine(perType) + ") — every member is now in the user's library (\"Yours\").\n")
                 b.WriteString(superpowersWorkflowBlock(id, true))
                 if len(skillHeads) > 0 {
-                        b.WriteString("\nTHE SKILLS' HEADS (the actionable methodologies — load one with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"} when the work it covers starts):\n")
+                        b.WriteString("\nTHE SKILLS' HEADS (the actionable methodologies — load one with the skills tool with {\"action\":\"load\",\"skill\":\"<name>\"} when the work it covers starts):\n")
                         for _, h := range skillHeads {
                                 b.WriteString(h)
                         }
                 }
-                b.WriteString("\nNEXT: pick the member that fits the actual sub-problem (descriptions state when to use each), LOAD it before starting, follow it to the letter, and say which member you used and why. Never run the whole bundle at a task it was not designed for — browse first (ACTION: hublib {\"action\":\"bundle\",\"id\":\"…\"}), use the smallest fitting member.\n")
+                b.WriteString("\nNEXT: pick the member that fits the actual sub-problem (descriptions state when to use each), LOAD it before starting, follow it to the letter, and say which member you used and why. Never run the whole bundle at a task it was not designed for — browse first (the hublib tool with {\"action\":\"bundle\",\"id\":\"…\"}), use the smallest fitting member.\n")
                 return clip(b.String(), hublibOutMax), ""
         default:
                 return "", "unknown action " + oneLine(action, 30) + ". Valid: search, get, download, bundles, bundle, download_bundle."
@@ -815,7 +815,7 @@ func superpowersWorkflowBlock(bundleID string, compact bool) string {
         if compact {
                 return "\nWORKFLOW (superpowers): brainstorming → writing-plans → subagent-driven-development (fresh subagent per task) or executing-plans (inline) → test-driven-development → requesting-code-review → finishing-a-development-branch. Cross-cutting: systematic-debugging on ANY failure; verification-before-completion BEFORE claiming done. Use the bootstrap (superpowers-using-superpowers) at conversation start; its rule: if there is even a 1% chance a skill applies, load it first — process skills before implementation skills.\n"
         }
-        return "\nWORKFLOW (superpowers): 1. brainstorming (before ANY creative work — it teases out the spec) → 2. writing-plans (once you have requirements; bite-sized tasks) → 3. subagent-driven-development (fresh subagent per task, per-task review) or executing-plans (inline, one final review) → 4. test-driven-development (RED-GREEN-REFACTOR during implementation) → 5. requesting-code-review (between tasks; critical issues block) → 6. finishing-a-development-branch (verify → merge/PR).\nCross-cutting: systematic-debugging the moment anything fails; verification-before-completion before ANY claim of done; dispatching-parallel-agents for 2+ independent tasks; receiving-code-review with rigor (never performative agreement).\nTHE BOOTSTRAP: superpowers-using-superpowers at conversation start — its rule: if there is even a 1% chance a skill applies, you MUST load it BEFORE responding; process skills run before implementation skills; user instructions always outrank the skills.\nSCRIPTS: this bundle's loose scripts are repo-maintainer tools (versioning/lint/packaging) — reference reading, not task methodology. The real helper scripts (task-brief, sdd-workspace, review-package, task-start, task-done) live INSIDE the skills as companion files — read them with ACTION: skills {\"action\":\"files\"/\"read\",\"skill\":\"…\"} when a loaded skill references one; they define what runs when, per skill.\n"
+        return "\nWORKFLOW (superpowers): 1. brainstorming (before ANY creative work — it teases out the spec) → 2. writing-plans (once you have requirements; bite-sized tasks) → 3. subagent-driven-development (fresh subagent per task, per-task review) or executing-plans (inline, one final review) → 4. test-driven-development (RED-GREEN-REFACTOR during implementation) → 5. requesting-code-review (between tasks; critical issues block) → 6. finishing-a-development-branch (verify → merge/PR).\nCross-cutting: systematic-debugging the moment anything fails; verification-before-completion before ANY claim of done; dispatching-parallel-agents for 2+ independent tasks; receiving-code-review with rigor (never performative agreement).\nTHE BOOTSTRAP: superpowers-using-superpowers at conversation start — its rule: if there is even a 1% chance a skill applies, you MUST load it BEFORE responding; process skills run before implementation skills; user instructions always outrank the skills.\nSCRIPTS: this bundle's loose scripts are repo-maintainer tools (versioning/lint/packaging) — reference reading, not task methodology. The real helper scripts (task-brief, sdd-workspace, review-package, task-start, task-done) live INSIDE the skills as companion files — read them with the skills tool with {\"action\":\"files\"/\"read\",\"skill\":\"…\"} when a loaded skill references one; they define what runs when, per skill.\n"
 }
 
 // hublibBundleDetail — v0.72: the `bundle` action body (never gated).
@@ -826,14 +826,14 @@ func superpowersWorkflowBlock(bundleID string, compact bool) string {
 func (s *Server) hublibBundleDetail(rawID string) (string, string) {
         id := SanitizedBundleID(rawID)
         if id == "" {
-                return "", "bundle needs {\"id\": \"<bundle id>\"} — ACTION: hublib {\"action\":\"bundles\"} lists them"
+                return "", "bundle needs {\"id\": \"<bundle id>\"} — the hublib tool with {\"action\":\"bundles\"} lists them"
         }
         groups, err := s.hub.CollectionItems(id)
         if err != nil {
                 return "", "hub: " + err.Error()
         }
         if len(groups) == 0 {
-                return "", "no bundle '" + oneLine(rawID, 40) + "' — " + s.hublibItemFallback(rawID) + " — ACTION: hublib {\"action\":\"bundles\"} lists the curated bundles"
+                return "", "no bundle '" + oneLine(rawID, 40) + "' — " + s.hublibItemFallback(rawID) + " — the hublib tool with {\"action\":\"bundles\"} lists the curated bundles"
         }
         // the downloaded markers (per type) — one hub query per present type.
         dlMark := func(typ, repo, itemID string) string {
@@ -879,9 +879,9 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
                                 plural = strings.ToUpper(g.Type)
                         }
                         b.WriteString("\n" + plural + " (each line's description = when to use it" +
-                                "; download with ACTION: hublib {\"action\":\"download\",\"type\":\"" + g.Type + "\",\"repo\":\"…\",\"id\":\"…\"}):")
+                                "; download with the hublib tool with {\"action\":\"download\",\"type\":\"" + g.Type + "\",\"repo\":\"…\",\"id\":\"…\"}):")
                         if g.Type == "skill" {
-                                b.WriteString(" — or, once downloaded, load the methodology with ACTION: skills {\"action\":\"load\",\"skill\":\"<name>\"}")
+                                b.WriteString(" — or, once downloaded, load the methodology with the skills tool with {\"action\":\"load\",\"skill\":\"<name>\"}")
                         }
                         b.WriteString("\n")
                         for _, it := range g.Items {
@@ -891,7 +891,7 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
                         }
                 }
         }
-        b.WriteString("\nDownload EVERYTHING at once: ACTION: hublib {\"action\":\"download_bundle\",\"id\":\"" + id + "\"} (gated on the chat's library switches).\n")
+        b.WriteString("\nDownload EVERYTHING at once: the hublib tool with {\"action\":\"download_bundle\",\"id\":\"" + id + "\"} (gated on the chat's library switches).\n")
         return clip(b.String(), hublibOutMax), ""
 }
 
@@ -929,7 +929,7 @@ func (s *Server) hublibItemFallback(rawID string) string {
                         for _, it := range items {
                                 nl := strings.ToLower(it.Name)
                                 if nl == v || strings.Contains(nl, v) || strings.Contains(strings.ToLower(it.ID), v) {
-                                        return "but there is a " + typ + " '" + it.Name + "' (repo " + it.Repo + ", id " + it.ID + ") — a one-item bundle: ACTION: hublib {\"action\":\"get\",\"type\":\"" + typ + "\",\"repo\":\"" + it.Repo + "\",\"id\":\"" + it.ID + "\"} for detail, or \"download\" to land it"
+                                        return "but there is a " + typ + " '" + it.Name + "' (repo " + it.Repo + ", id " + it.ID + ") — a one-item bundle: the hublib tool with {\"action\":\"get\",\"type\":\"" + typ + "\",\"repo\":\"" + it.Repo + "\",\"id\":\"" + it.ID + "\"} for detail, or \"download\" to land it"
                                 }
                         }
                 }
@@ -938,7 +938,7 @@ func (s *Server) hublibItemFallback(rawID string) string {
 }
 
 // runHublibAction (v0.67.2) — the DIRECT-PATH library ACTION runner: the
-// quick chats' "ACTION: hublib {…}" lines land here (via
+// quick chats' "the hublib tool with {…}" lines land here (via
 // llm.ChatRequest.HublibToolFn), parse their JSON args, and ride the
 // same hublibDispatch as the PM bridge. Returns OBSERVATION-ready text.
 func (s *Server) runHublibAction(sessionID, argJSON string) string {

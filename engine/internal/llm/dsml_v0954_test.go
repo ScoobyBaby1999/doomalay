@@ -17,7 +17,7 @@ func v0954Feed(t *testing.T, f *dsmlFilter, parts ...string) (visible string, ca
         for _, p := range parts {
                 sb.WriteString(f.feed(p))
         }
-        c, _, vis := f.flush()
+        c, vis := f.flush()
         return sb.String() + vis, append(c, f.take()...)
 }
 
@@ -48,22 +48,8 @@ func TestV0954DSMLSplitAcrossDeltas(t *testing.T) {
         }
 }
 
-// The reinject mode (no tools array — the ReAct consumer): the rescued
-// calls ride the visible stream as ACTION lines.
-func TestV0954DSMLReinjectAsActionLines(t *testing.T) {
-        f := dsmlFilter{reinject: true}
-        visible, _ := v0954Feed(t, &f,
-                "Working.<｜DSML｜calls><｜DSML｜invoke name=\"hash\"><｜DSML｜parameter name=\"text\">abc<｜DSML｜/parameter><｜DSML｜/invoke><｜DSML｜/calls>ok",
-        )
-        // (take() may stock the calls too — scanSSECollect only reads it in
-        // non-reinject mode; the load-bearing contract is the visible stream.)
-        if !strings.Contains(visible, "ACTION: hash ") {
-                t.Fatalf("the ACTION line must ride the visible stream: %q", visible)
-        }
-        if strings.Contains(visible, "DSML") {
-                t.Fatalf("markup leaked: %q", visible)
-        }
-}
+// (v1.13.3 THE GUT: the reinject-mode test died with the ACTION parser —
+// rescued calls feed the native loop's consumer only.)
 
 // An UNTERMINATED block (the stream cut mid-call): flush salvages what's
 // there — the model's intent is visible, not silently lost.

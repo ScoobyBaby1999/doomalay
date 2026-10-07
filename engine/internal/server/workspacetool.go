@@ -9,7 +9,7 @@
 // bridge to the engine REST surface) but the DIRECT path — the quick
 // chats on the APK build, and the brain-down fallback — had NO workspace
 // tool at all. The model could not even SEE the chat's connected repos.
-// This file is the direct path's runner: "ACTION: workspace {…}" lines
+// This file is the direct path's runner: "the workspace tool with {…}" lines
 // (the ReAct ACTION protocol) land here via llm.ChatRequest.
 // WorkspaceToolFn, and execute the SAME forge.Client operations the REST
 // handlers serve (one source of truth — s.wsClient/s.wsToken/refOrWS).
@@ -55,7 +55,7 @@ const wsToolDiffCap = 12000 // v0.81.6: a PR diff needs more room than a file re
 // workspaceVerbs is the canonical verb list (help + unknown-action teach).
 const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
 
-// runWorkspaceAction executes an "ACTION: workspace {json}" call for the
+// runWorkspaceAction executes an "the workspace tool with {json}" call for the
 // direct path (and, since v0.81.6, the PM tool server + the brain's
 // /do REST twin). Returns OBSERVATION-ready text (the ReAct loop feeds
 // it back to the model as the user message).
@@ -294,7 +294,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         out += " (branch created)"
                 }
                 return "OBSERVATION:\n" + out + "\ncommit: " + url +
-                        "\nnext: ACTION: workspace {\"action\":\"pr\",\"ws\":\"" + ws.Name + "\",\"head\":\"" + branch + "\",\"base\":\"" + wsBranchOr(ws, "main") + "\"} opens the pull request."
+                        "\nnext: the workspace tool with {\"action\":\"pr\",\"ws\":\"" + ws.Name + "\",\"head\":\"" + branch + "\",\"base\":\"" + wsBranchOr(ws, "main") + "\"} opens the pull request."
         case "pr":
                 ws := resolveWSToolRef(bound, get("ws"))
                 if ws == nil {
@@ -347,7 +347,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
                 return "OBSERVATION:\nBRANCH CREATED — " + name + " " + url +
-                        "\nnext: ACTION: workspace {\"action\":\"put\",\"ws\":\"" + ws.Name + "\",\"path\":\"file\",\"content\":\"…\",\"branch\":\"" + name + "\"} commits to it, then action \"pr\" opens the pull request."
+                        "\nnext: the workspace tool with {\"action\":\"put\",\"ws\":\"" + ws.Name + "\",\"path\":\"file\",\"content\":\"…\",\"branch\":\"" + name + "\"} commits to it, then action \"pr\" opens the pull request."
         case "issue_create", "issue":
                 ws := resolveWSToolRef(bound, get("ws"))
                 if ws == nil {
@@ -896,7 +896,7 @@ func workspaceHelpText(n int) string {
         var sb strings.Builder
         sb.WriteString("workspace tool — act on this chat's CONNECTED cloud repos (GitHub/Gitea/GitLab/sourcehut).\n")
         fmt.Fprintf(&sb, "%d workspace(s) bound to this chat (action \"list\").\n", n)
-        sb.WriteString(`Actions (one JSON object per ACTION line):
+        sb.WriteString(`Actions (one JSON object of arguments per tool call):
   {"action":"list"}                        the chat's bound workspaces
   {"action":"info","ws":"owner/repo"}      repo card (branches, default)
   {"action":"tree","ws":"…","path":"src"}  full tree at path
