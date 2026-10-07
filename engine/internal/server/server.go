@@ -153,8 +153,22 @@ func (s *Server) routes() {
         if bus, err := mcpbus.Default(); err != nil {
                 log.Printf("mcpbus unavailable — /mcp not mounted, no external chain: %v", err)
         } else {
-                httpSrv := mcpgo.NewStreamableHTTPServer(bus.Server(), mcpgo.WithStateLess(true))
+                // v1.13.5: requests carrying X-Doomalay-Session resolve a
+                // session-bound Turn (the PM bridge's browser loop calls
+                // /mcp with it — session tools, artifact sinks and all).
+                httpSrv := mcpgo.NewStreamableHTTPServer(bus.Server(),
+                        mcpgo.WithStateLess(true),
+                        mcpgo.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+                                if sid := r.Header.Get("X-Doomalay-Session"); sid != "" {
+                                        if t := mcpbus.ResolveSessionTurn(sid); t != nil {
+                                                return mcpbus.ContextWithTurn(ctx, t)
+                                        }
+                                }
+                                return ctx
+                        }),
+                )
                 s.mux.Handle("/mcp", httpSrv)
+                mcpbus.SetSessionTurnResolver(s.sessionMcpTurn)
                 go func() {
                         for _, cfg := range mcpbus.LoadServerConfigs(s.cfg.DataDir) {
                                 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

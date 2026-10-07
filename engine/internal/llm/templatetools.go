@@ -232,3 +232,14 @@ func runTemplateShow(ctx context.Context, req ChatRequest, id string) string {
 	}
 	return clamp(b.String(), templateShowCap)
 }
+
+// RunTemplateListFor and RunTemplateShowFor are the exported template
+// bridges for external consumers (the session-bound mcpbus Turn).
+func RunTemplateListFor(ctx context.Context, brainURL string) string {
+	return runTemplateList(ctx, ChatRequest{BrainURL: brainURL})
+}
+
+// RunTemplateShowFor shows one template's methodology by id.
+func RunTemplateShowFor(ctx context.Context, brainURL, id string) string {
+	return runTemplateShow(ctx, ChatRequest{BrainURL: brainURL}, id)
+}

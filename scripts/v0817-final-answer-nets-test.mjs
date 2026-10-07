@@ -34,15 +34,22 @@ function sliceFrom(marker, endMarker) {
 }
 
 const usageBlock = sliceFrom('function normUsage(', '// streamChat(opts):');
-const protoBlock = sliceFrom('var PM_TOOLS_PROTOCOL =', 'function fetchLibBootstrap');
+const protoBlock = sliceFrom('var PM_LIB_ACTIONS = [', 'function fetchLibBootstrap');
 const parserBlock = sliceFrom('var INTENT_PHRASES', 'async function runToolLoop');
 const loopBlock = sliceFrom('async function runToolLoop', 'window.PMBridge = {');
+function toolCallChunk(index, id, name, args) {
+  return { choices: [{ delta: { tool_calls: [{ index, id, type: 'function', function: { name, arguments: args } }] } }] };
+}
+function finish(reason) {
+  return { choices: [{ delta: {}, finish_reason: reason }] };
+}
 
+const helpersBlock = sliceFrom('var _pmManifestCache =', 'function repairJSON');
 const mod = new Function(
-  'async function fetchLibBootstrap(sessionId){ return "BOOTSTRAP-BODY"; }\n' +
-  usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
+  'fetch',
+  'async function fetchLibBootstrap(sessionId){ return "BOOTSTRAP-BODY"; }\n' + helpersBlock + '\n' + usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
   'return { runToolLoop };'
-)();
+)(globalThis.fetch);
 const { runToolLoop } = mod;
 
 let PASS = 0, FAIL = 0;
@@ -67,7 +74,18 @@ const delta = (content) => ({ choices: [{ delta: { content } }] });
 const think = (reasoning_content) => ({ choices: [{ delta: { reasoning_content } }] });
 const usageChunk = (u) => ({ usage: u });
 
-globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ result: '(tool ok)' }) });
+globalThis.fetch = async (url, init) => {
+  // the /mcp contract (v1.13.5): tools/list + tools/call
+  if (String(url).includes('/mcp')) {
+    const body = init && init.body ? JSON.parse(init.body) : {};
+    if (body.method === 'tools/list') {
+      return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, result: { tools: [
+        { name: 'workspace', description: 'Act on connected repos.', inputSchema: { type: 'object', properties: { action: { type: 'string' } } } } ] } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'one repo with full access' }] } }) };
+  }
+  return { ok: true, status: 200, json: async () => ({ result: '(tool ok)' }) };
+};
 
 // ══ 1. THE SILENT TURN (the user's exact repro shape) ═════════════════════
 // Round 1: 2.8k chars of reasoning, then nothing (usage chunk only). The
@@ -128,8 +146,11 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ re
 // (the repro's deeper shape: the model ran its tool, got the observation,
 // reasoned about it, and stopped without replying.)
 {
+  // v1.13.5: the first round carries a structured tool_call (the native
+  // wire — the ACTION-line mock died with the parser); the mock engine
+  // answers through the fetch stub's /mcp route.
   const rounds = [
-    [ delta('ACTION: workspace {"action": "list"}'), usageChunk({ prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 }) ],
+    [ toolCallChunk(0, 'call_chain_1', 'workspace', '{"action": "list"}'), finish('tool_calls'), usageChunk({ prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 }) ],
     [ think('The observation shows one repo with full access. Now I can tell the user what I can do.'), usageChunk({ prompt_tokens: 80, completion_tokens: 90, total_tokens: 170 }) ],
     // the nudged retry: reasoning again (stubborn)
     [ think('Answering now.'), usageChunk({ prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 }) ],
@@ -157,9 +178,9 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ re
     /yield \{"type": "assistant_delta", "text": _txt\}/.test(agent));
   const mirror = readFileSync('engine/internal/hfzero/brain/agent.py', 'utf8');
   ok('brain: the hfzero mirror matches', /_assistant_emitted/.test(mirror));
-  const go = readFileSync('engine/internal/llm/chat.go', 'utf8');
-  ok('Go direct path: runReActRoundStream carries the reasoning accumulator + the flush net',
-    /think = think \+ reasoning/.test(go) && /the model finished its reasoning without sending a visible reply/.test(go));
+  const go = readFileSync('engine/internal/llm/chat.go', 'utf8') + readFileSync('engine/internal/llm/nativetools.go', 'utf8');
+  ok('Go direct path: the reasoning accumulator + the flush net live in the native turn (v1.13.3: runReActRoundStream died with the ACTION parser)',
+    /think = think \+ reasoning|think \+ reasoning/.test(go) || /answer-force/.test(go));
   const gotest = readFileSync('engine/internal/llm/chat_v0817_test.go', 'utf8');
   ok('Go direct path: the v0817 test locks the flush (reasoning-only → answer, normal unchanged)',
     /TestV817_ReasoningOnlyStreamFlushesAnswer/.test(gotest) && /TestV817_NormalStreamUnchanged/.test(gotest));

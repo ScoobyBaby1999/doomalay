@@ -32,14 +32,15 @@ function sliceFrom(marker, endMarker) {
 }
 
 const usageBlock = sliceFrom('function normUsage(', '// streamChat(opts):');
-const protoBlock = sliceFrom('var PM_TOOLS_PROTOCOL =', 'function fetchLibBootstrap');
+const protoBlock = sliceFrom('var PM_LIB_ACTIONS = [', 'function fetchLibBootstrap');
 const parserBlock = sliceFrom('var INTENT_PHRASES', 'async function runToolLoop');
 const loopBlock = sliceFrom('async function runToolLoop', 'window.PMBridge = {');
+const helpersBlock = sliceFrom('var _pmManifestCache =', 'function repairJSON');
 const mod = new Function(
-  'async function fetchLibBootstrap(sessionId){ return "BOOTSTRAP-BODY"; }\n' +
-  usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
+  'fetch',
+  'async function fetchLibBootstrap(sessionId){ return "BOOTSTRAP-BODY"; }\n' + helpersBlock + '\n' + usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
   'return { runToolLoop };'
-)();
+)(globalThis.fetch);
 const { runToolLoop } = mod;
 
 let PASS = 0, FAIL = 0;
@@ -158,11 +159,10 @@ const chatSrc = readFileSync('engine/internal/llm/chat.go', 'utf8');
 const ntSrc = readFileSync('engine/internal/llm/nativetools.go', 'utf8');
 const brainSrc = readFileSync('engine/internal/hfzero/brain/agent.py', 'utf8');
 
-ok('engine direct: the nudge round sets Effort "off" (the documented disable)',
-   /nudged\.Effort = "off"/.test(chatSrc) && /Reply NOW with your FINAL answer as plain text/.test(chatSrc));
-ok('engine direct: the net note is RETURNED, not emitted (no double-render)',
-   /netNote = "\(the model finished its reasoning without sending a visible reply/.test(chatSrc) &&
-   !/note := "\(the model finished its reasoning/.test(chatSrc));
+ok('engine direct: the nudge round sets Effort "off" (v1.13.3: the ACTION-era runReActRoundWithRetry died; the native loop carries the disable)',
+   /roundReq\.Effort = "off"/.test(ntSrc) && /Reply NOW with your FINAL answer as plain text/.test(ntSrc));
+ok('engine direct: the turn-end net synthesizes the reasoning-tail reply (chat_v0823_test.go locks it live)',
+   /the model finished its reasoning without sending a visible reply/.test(ntSrc));
 
 ok('nativetools (Nvidia): contentSeen + the nudge + the turn-end net exist',
    /contentSeen := false/.test(ntSrc) && /contentSeen = true/.test(ntSrc) &&

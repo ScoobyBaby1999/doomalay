@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
@@ -117,5 +118,57 @@ func TestV1134_MCPEndpointSessionToolsRefuseHonestly(t *testing.T) {
 	}
 	if res["isError"] != true || text == "" {
 		t.Fatalf("session-scoped tool must refuse with an honest tool error, got %q (isError=%v)", text, res["isError"])
+	}
+}
+
+func TestV1135_MCPSessionHeaderArmsSessionTools(t *testing.T) {
+	s := newMCPTestServer(t)
+	// create a session via the API, then call a session tool with the header
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(
+		`{"title":"mcp","model":"m","provider":"p"}`))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != 201 && rec.Code != 200 {
+		t.Fatalf("create session: %d %s", rec.Code, rec.Body.String())
+	}
+	var sess map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &sess)
+	sid, _ := sess["ID"].(string)
+	if sid == "" {
+		t.Fatalf("no session id: %v", sess)
+	}
+
+	raw, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+		"params": map[string]any{"name": "skills", "arguments": map[string]any{"action": "list"}},
+	})
+	hreq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("X-Doomalay-Session", sid)
+	hreq.Host = "127.0.0.1"
+	hrec := httptest.NewRecorder()
+	s.mux.ServeHTTP(hrec, hreq)
+	if hrec.Code != 200 {
+		t.Fatalf("session tools/call status %d: %s", hrec.Code, hrec.Body.String())
+	}
+	var out map[string]any
+	_ = json.Unmarshal(hrec.Body.Bytes(), &out)
+	res, _ := out["result"].(map[string]any)
+	if res == nil {
+		t.Fatalf("missing result: %v", out)
+	}
+	var text string
+	for _, c := range res["content"].([]any) {
+		if tc, ok := c.(map[string]any); ok {
+			text += tc["text"].(string)
+		}
+	}
+	// the session turn ran the REAL skills runner (no skills installed →
+	// the honest empty-library observation, NOT the "not armed" refusal)
+	if res["isError"] == true || strings.Contains(text, "not armed") {
+		t.Fatalf("session-bound call should RUN the tool, got %q", text)
+	}
+	if text == "" {
+		t.Fatalf("expected a real observation, got empty")
 	}
 }

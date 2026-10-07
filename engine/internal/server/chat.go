@@ -19,6 +19,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -2405,4 +2406,63 @@ func bundleManifestText(b map[string]any) string {
                 sb.WriteString("\n")
         }
         return sb.String()
+}
+
+// sessionMcpTurn builds the session-bound mcpbus Turn for EXTERNAL /mcp
+// consumers carrying X-Doomalay-Session (v1.13.5 THE LAST ACTION: the PM
+// bridge's browser loop calls /mcp with the header — session tools,
+// artifact sinks and all, the same closures the direct chat path arms).
+// The runners enforce the per-chat switches themselves (the lib pill
+// gates live inside runSkillsAction/runHublibAction), so the closures
+// arm unconditionally — exactly like the ChatRequest construction above.
+func (s *Server) sessionMcpTurn(sessionID string) *mcpbus.Turn {
+	sess, err := s.db.GetSession(sessionID)
+	if err != nil || sess == nil {
+		return nil
+	}
+	if s.vault == nil {
+		return nil
+	}
+	keys := s.vault.AsEnv()
+	brainURL := ""
+	if s.brain != nil {
+		brainURL = s.brain.URL()
+	}
+	return &mcpbus.Turn{
+		SessionID: sessionID,
+		RunLocal: func(ctx context.Context, name, argJSON string, sink mcpbus.ArtifactSink) string {
+			return llm.RunLocalTool(name, argJSON, sink)
+		},
+		Sink: &sessionArtifactSink{s: s, sessID: sessionID},
+		Search: func(ctx context.Context, query string) (string, []mcpbus.Source, error) {
+			results, err := llm.WebSearch(ctx, query, 5, keys["TAVILY_API_KEY"])
+			if err != nil {
+				return "", nil, err
+			}
+			obs := llm.FormatSearchResults(results)
+			if obs == "" {
+				obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
+			}
+			srcs := make([]mcpbus.Source, len(results))
+			for i, r := range results {
+				srcs[i] = mcpbus.Source{Title: r.Title, URL: r.URL, Snippet: r.Snippet}
+			}
+			return obs, srcs, nil
+		},
+		Fetch: func(ctx context.Context, url string) (string, error) {
+			return llm.WebFetch(ctx, url, 12000)
+		},
+		TemplateAuto: sess.TemplateAuto,
+		TemplateList: func(ctx context.Context) string {
+			return llm.RunTemplateListFor(ctx, brainURL)
+		},
+		TemplateShow: func(ctx context.Context, id string) string {
+			return llm.RunTemplateShowFor(ctx, brainURL, id)
+		},
+		Persona:       func(ctx context.Context, name, argJSON string) string { return s.runPersonaTool(sessionID, name, argJSON) },
+		Hublib:        func(ctx context.Context, argJSON string) string { return s.runHublibAction(sessionID, argJSON) },
+		Skills:        func(ctx context.Context, argJSON string) string { return s.runSkillsAction(sessionID, argJSON) },
+		Workspace:     func(ctx context.Context, argJSON string) string { return s.runWorkspaceAction(ctx, sessionID, argJSON) },
+		Delegate:      func(ctx context.Context, prompt string, models []string) []map[string]any { return s.RunDelegate(ctx, prompt, models, keys) },
+	}
 }

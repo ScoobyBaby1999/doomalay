@@ -38,12 +38,12 @@ const ok = (name, cond, detail) => {
 // ── 1. the prompt no longer names a cap (both twins) ───────────────────────
 ok('PM protocol: the "24 chained calls" phrasing is gone',
    !pmSrc.includes('24 chained calls'), pmSrc.slice(pmSrc.indexOf('RULES'), pmSrc.indexOf('RULES') + 600));
-ok('PM protocol: the no-cap rule rides the protocol',
-   pmSrc.includes('NO fixed cap on chained calls'));
+ok('PM protocol: the no-cap rule rides the loop (v1.13.5: the ACTION protocol text is gone; MAX_ROUNDS carries the contract)',
+   pmSrc.includes('MAX_ROUNDS = 200'));
 ok('engine protocol: the "24 chained calls" phrasing is gone',
    !chatSrc.includes('24 chained calls'));
-ok('engine protocol: the no-cap rule rides the protocol',
-   chatSrc.includes('NO fixed cap on chained calls'));
+ok('engine protocol: the no-cap rule rides the loop (v1.13.3: the ACTION protocol text is gone)',
+   ntSrc.includes('maxRounds = 200'));
 
 // ── 2. the enforced cap is dead ────────────────────────────────────────────
 ok('the round==23 forced-final injection is REMOVED from the ReAct loop',
@@ -52,8 +52,8 @@ ok('the round==23 forced-final injection is REMOVED from the ReAct loop',
 // ── 3. the loop budgets are 200 (every path) ──────────────────────────────
 ok('PM MAX_ROUNDS = 200 (was 40)',
    /var MAX_ROUNDS = 200;/.test(pmSrc));
-ok('engine ReAct loop: 200 rounds (was 64)',
-   /for round := 0; round < 200; round\+\+/.test(chatSrc));
+ok('engine loop: 200 rounds (v1.13.3: the ReAct loop is gone; the native loop carries the cap)',
+   /for round := 0; round < maxRounds; round\+\+/.test(ntSrc) || /round < 200/.test(ntSrc));
 ok('nativetools maxRounds = 200 (was 64)',
    /const maxRounds = 200/.test(ntSrc));
 
@@ -68,24 +68,38 @@ function sliceFrom(src, marker, endMarker) {
   return src.slice(a, b);
 }
 const usageBlock = sliceFrom(pmSrc, 'function normUsage(', '// streamChat(opts):');
-const protoBlock = sliceFrom(pmSrc, 'var PM_TOOLS_PROTOCOL =', 'function fetchLibBootstrap');
+const protoBlock = sliceFrom(pmSrc, 'var PM_LIB_ACTIONS = [', 'function fetchLibBootstrap');
+const helpersBlock = sliceFrom(pmSrc, 'var _pmManifestCache =', 'function repairJSON');
 const parserBlock = sliceFrom(pmSrc, 'var INTENT_PHRASES', 'async function runToolLoop');
 const loopBlock = sliceFrom(pmSrc, 'async function runToolLoop', 'window.PMBridge = {');
 const mod = new Function(
+  'fetch',
   'async function fetchLibBootstrap(sessionId){ return "BOOTSTRAP-BODY"; }\n' +
-  usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
+  helpersBlock + '\n' + usageBlock + '\n' + protoBlock + '\n' + parserBlock + '\n' + loopBlock + '\n' +
   'return { runToolLoop };'
-)();
+)(globalThis.fetch);
 const { runToolLoop } = mod;
 
+// v1.13.5: the chain rides NATIVE tool_calls (the ACTION-line mock died
+// with the parser); the fetch stub answers every /mcp tools/call.
 let calls = 0;
+globalThis.fetch = async (url, init) => {
+  const body = init && init.body ? JSON.parse(init.body) : {};
+  if (body.method === 'tools/list') {
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, result: { tools: [
+      { name: 'time_now', description: 'Current date/time.', inputSchema: { type: 'object', properties: { tz: { type: 'string' } } } } ] } }) };
+  }
+  return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: '2026-10-08 09:00 +00:00' }] } }) };
+};
 const core = {
   streamChatCompletions: async function* (body) {
     calls++;
     if (calls <= 100) {
-      yield { choices: [{ delta: { content: 'ACTION: time_now {}' } }] };
+      yield { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_' + calls, type: 'function', function: { name: 'time_now', arguments: '{}' } }] } }] };
+      yield { choices: [{ delta: {}, finish_reason: 'tool_calls' }] };
     } else {
       yield { choices: [{ delta: { content: 'All 100 steps done — THE FINAL ANSWER.' } }] };
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
     }
     yield { choices: [{ delta: {} }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
   }

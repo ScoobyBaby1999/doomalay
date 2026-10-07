@@ -121,6 +121,32 @@ func fallbackTurn() *Turn {
 	return nil
 }
 
+// sessionTurnResolver builds a session-bound Turn from a session id —
+// registered by the server package (it owns the closures + artifact
+// sinks). External /mcp consumers carrying X-Doomalay-Session get
+// session-scoped tools (the PM bridge's contract).
+var sessionTurnResolver func(sessionID string) *Turn
+
+// SetSessionTurnResolver registers the session-bound Turn builder.
+func SetSessionTurnResolver(fn func(sessionID string) *Turn) { sessionTurnResolver = fn }
+
+// ResolveSessionTurn builds the Turn for one session (nil when unknown).
+func ResolveSessionTurn(sessionID string) *Turn {
+	if sessionTurnResolver == nil || sessionID == "" {
+		return nil
+	}
+	return sessionTurnResolver(sessionID)
+}
+
+// ContextWithTurn injects a Turn into a context (the /mcp HTTP layer
+// uses it for session-header-bound requests).
+func ContextWithTurn(ctx context.Context, t *Turn) context.Context {
+	if t == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, turnKey{}, t)
+}
+
 // TurnFromContext extracts the Turn the bus injected for this call.
 func TurnFromContext(ctx context.Context) *Turn {
 	if ctx == nil {

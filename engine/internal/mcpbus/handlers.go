@@ -94,6 +94,13 @@ func handlerFor(d *Def) server.ToolHandlerFunc {
 			}
 			if len(sources) > 0 {
 				t.sources = append(t.sources, sources...)
+				// v1.13.5: the citations ride the structuredContent too —
+				// external /mcp consumers (the PM browser loop) read them
+				// off the JSON-RPC result for citation rendering.
+				return &mcp.CallToolResult{
+					Content:           []mcp.Content{mcp.NewTextContent(text)},
+					StructuredContent: map[string]any{"sources": sources},
+				}, nil
 			}
 			return mcp.NewToolResultText(text), nil
 
