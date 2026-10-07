@@ -52,3 +52,4 @@ app/tsconfig.tsbuildinfo
 brain/.chat-ws/
 node_modules
 brain/.venv
+engine/bin/
