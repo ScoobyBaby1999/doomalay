@@ -797,3 +797,50 @@ Stage Summary:
   Next session: the user sideloads the APK and re-judges the glide feel
   with many custom colors, the amplifier look, the comet rarity, and
   the native sliders.
+
+---
+Task: v1.13.x-v1.14.0 THE MCP WAVE (PLAN-V113 — the mcp-go conviction)
+Agent: the MCP bot (mark3labs/mcp-go replacement of the ACTION tool system)
+
+Work Log:
+- v1.13.1 THE BUS: the mcpbus lands as pure addition — 28 tool Defs as the
+  single source of truth, the in-process MCP client, Observer hooks, Turn
+  ctx plumbing; CI go 1.23 -> 1.25.5 (mcp-go v1.1.1 requires it).
+- v1.13.2 THE HANDOFF: the chat loop runs the MCP bus as the PRIMARY tool
+  path (BusFailure -> sticky direct-dispatch fallback; tools-rejecting
+  providers blacklist + answer honestly without tools); ChatRequest gains
+  SessionID for trace attribution.
+- v1.13.3 THE GUT: the ACTION text protocol is DELETED (~1,500 lines:
+  parseAction family, glue parsers, alias/Levenshtein layers, the ReAct
+  preamble-hold state machine, DSML reinject, the kill-switch); ~40 server
+  teaching texts rewritten to tool-call phrasing; live verdict 19/19 against
+  the real NVIDIA key (nemotron-3.5-lightning: calculator chain, live
+  web_search, zip_create artifact).
+- v1.13.4 THE CHAIN: external MCP servers attach onto the bus (stdio on
+  desktop, streamable-HTTP everywhere incl. Android) under name_ namespaces
+  with auto-paginated tools/list + raw-schema proxies; /mcp serves external
+  consumers the same registry; config via DOOMALAY_MCP_SERVERS or
+  <dataDir>/mcp_servers.json. Live: engine B chains engine A (56 tools).
+- v1.13.5 THE LAST ACTION: pmsdk.js (the PM E2E browser loop) drops the
+  ACTION grammar for tools[] from /mcp + native tool_calls delta assembly;
+  ground-truth probe proved PM's E2E API passes OpenAI tools[] natively;
+  X-Doomalay-Session resolves session turns for external callers.
+- v1.13.6 THE REDTEAM: the 67-check adversarial rig (deterministic stub
+  personas — nvidia/openrouter scenarios, groq the reject carrier — plus
+  mcpdemo, a standalone 100-tool streamable-HTTP MCP server with
+  boom/hang/boom_panic fault injectors). Two engine bugs convicted, fixed,
+  and pinned: (1) the honesty line's execution side — a cut/malformed call
+  said "NOT executed" then executed anyway with bus-coerced {} (Skip/SkipText
+  now make the fault text the tool's answer: one call_id, one tool message);
+  (2) THE THIRD CARRIER — openrouter turns never reached the bus (plugin-first
+  routing + always-on WebSearch); every tools-capable provider now runs the
+  tool_calls loop first, the OpenRouter web plugin ladders down to the
+  blacklisted/anthropic-wire fallback. Rig 67/67.
+
+Stage Summary:
+- THE MCP WAVE is complete and shipped as v1.14.0-the-mcp-wave. MCP is the
+  tool system end to end: one calling convention, 28 internal tools, any
+  number of external servers (the 100+ tools horizon made real by mcpdemo
+  and /mcp), ACTION dead on every path, honest degrade contracts pinned by
+  the rig. Parallel bots (tiktoken accuracy, OTel hooks/traces) plug into
+  the bus's Observer sockets — no file overlap, no conflicts.
