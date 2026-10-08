@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://www.1keydata.com",
+    "name": "CSS Background-Attachment Property",
+    "snippet": "CSS Tutorial > Background > Background-attachment. The background-attachment property specifies whether a background image stays fixed on the screen . Read more",
+    "host_name": "www.1keydata.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://developer.mozilla.org",
+    "name": "background-attachment CSS property - MDN Web Docs",
+    "snippet": "Die background - attachment CSS -Eigenschaft legt fest, ob die Position eines Hintergrundbildes innerhalb des Viewports fixiert ist oder mit seinem ...",
+    "host_name": "developer.mozilla.org",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://issues.chromium.org",
+    "name": "background-attachment: fixed not working as expected in",
+    "snippet": "However, the image is not covering page margins. We use chrome with puppeteer to generate pdfs and this feature is required to set background images spanning ... Read more",
+    "host_name": "issues.chromium.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://wpt.fyi",
+    "name": "web-platform-tests dashboard",
+    "snippet": "/ css / css - backgrounds / background - attachment - fixed -inside-transform-1.html. For information on the search syntax, view the search documentation. Press <Enter> ... Read more",
+    "host_name": "wpt.fyi",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  }
+]

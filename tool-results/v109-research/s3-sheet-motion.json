@@ -1,0 +1,47 @@
+[
+  {
+    "url": "https://classic.yarnpkg.com",
+    "name": "@material-git/sidenav | Yarn",
+    "snippet": "bottom - sheet : ensure animation event comes from container. e4f7f3498b, fix ... table: Use ResizeObservers instead of dom measurement to reduce layout thrashing ( ... Read more",
+    "host_name": "classic.yarnpkg.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://dokumen.pub",
+    "name": "Speed Metrics Guide: Choosing the Right Metrics to Use",
+    "snippet": "Thrashing can also block the main thread, preventing visitors from being able to interact with the page. As a result, layout thrashing delays TTI and worsens ...",
+    "host_name": "dokumen.pub",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://apps.apple.com",
+    "name": "Neighborly One - App Store - Apple",
+    "snippet": "Optimized marker animations using transform : scale instead of layout changes (width/ height ) to eliminate rendering lag and layout thrashing .",
+    "host_name": "apps.apple.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.greatfrontend.com",
+    "name": "News Feed (e.g. Facebook) | Front End System Design",
+    "snippet": "The payoff is not just fewer DOM nodes; it is also less layout thrashing and more predictable scroll performance in long sessions.",
+    "host_name": "www.greatfrontend.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://gist.github.com",
+    "name": "Prompt 2 · GitHub",
+    "snippet": "sheet /drawer from. Header height animation based on scroll. Performance : Lazy-mount heavy menus; avoid layout thrash ; use will-change: transform .",
+    "host_name": "gist.github.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  }
+]

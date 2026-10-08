@@ -12,12 +12,13 @@ package llm
 // build-time action; a turn NEVER waits on the network for a spec.
 
 import (
-	"bytes"
-	"compress/gzip"
-	_ "embed"
-	"encoding/json"
-	"strings"
-	"sync"
+        "bytes"
+        "compress/gzip"
+        _ "embed"
+        "encoding/json"
+        "log"
+        "strings"
+        "sync"
 )
 
 //go:embed catalog/modelsdev_snapshot.json.gz
@@ -25,47 +26,64 @@ var modelsdevGZ []byte
 
 // DevSpec is one model's documented surface from models.dev.
 type DevSpec struct {
-	Context    int     // limit.context (tokens; 0 = unknown)
-	Output     int     // limit.output (tokens; 0 = unknown)
-	InputCost  float64 // cost.input, USD per 1M tokens (-1 = unknown)
-	OutputCost float64 // cost.output, USD per 1M tokens (-1 = unknown)
-	ToolCall   bool    // documented native tool-call support
-	Reasoning  bool    // documented reasoning support
+        Context    int     `json:"ctx"` // limit.context (tokens; 0 = unknown)
+        Output     int     `json:"out"` // limit.output (tokens; 0 = unknown)
+        InputCost  float64 `json:"i"`   // cost.input, USD per 1M tokens (-1 = unknown)
+        OutputCost float64 `json:"o"`   // cost.output, USD per 1M tokens (-1 = unknown)
+        ToolCall   zeroOne `json:"t"`   // documented native tool-call support
+        Reasoning  zeroOne `json:"r"`   // documented reasoning support
+}
+
+// zeroOne accepts the snapshot's compact 0/1 flags (and true/false, should
+// a future regeneration switch formats).
+type zeroOne bool
+
+func (z *zeroOne) UnmarshalJSON(b []byte) error {
+        s := strings.TrimSpace(string(b))
+        *z = zeroOne(s == "1" || strings.EqualFold(s, "true"))
+        return nil
 }
 
 type modelsdevDB struct {
-	Generated string             `json:"generated"`
-	Source    string             `json:"source"`
-	Models    map[string]DevSpec `json:"models"`
+        Generated string             `json:"generated"`
+        Source    string             `json:"source"`
+        Models    map[string]DevSpec `json:"models"`
 }
 
 type specResult struct {
-	spec  DevSpec
-	known bool
+        spec  DevSpec
+        known bool
 }
 
 var (
-	specOnce   sync.Once
-	specDB     *modelsdevDB
-	specLoaded bool
-	specCache  sync.Map // normalized model string → specResult (negatives cached too)
+        specOnce   sync.Once
+        specDB     *modelsdevDB
+        specLoaded bool
+        specCache  sync.Map // normalized model string → specResult (negatives cached too)
 )
 
 func loadSpecDB() *modelsdevDB {
-	specOnce.Do(func() {
-		zr, err := gzip.NewReader(bytes.NewReader(modelsdevGZ))
-		if err != nil {
-			return
-		}
-		defer zr.Close()
-		var db modelsdevDB
-		if err := json.NewDecoder(zr).Decode(&db); err != nil {
-			return
-		}
-		specDB = &db
-		specLoaded = true
-	})
-	return specDB
+        specOnce.Do(func() {
+                if len(modelsdevGZ) == 0 {
+                        log.Printf("ledger: models.dev snapshot embed is empty — the curated tables stay on duty")
+                        return
+                }
+                zr, err := gzip.NewReader(bytes.NewReader(modelsdevGZ))
+                if err != nil {
+                        log.Printf("ledger: models.dev snapshot gzip: %v — the curated tables stay on duty", err)
+                        return
+                }
+                defer zr.Close()
+                var db modelsdevDB
+                if err := json.NewDecoder(zr).Decode(&db); err != nil {
+                        log.Printf("ledger: models.dev snapshot decode: %v — the curated tables stay on duty", err)
+                        return
+                }
+                specDB = &db
+                specLoaded = true
+                log.Printf("ledger: models.dev snapshot loaded (%d model specs, generated %s)", len(db.Models), db.Generated)
+        })
+        return specDB
 }
 
 // specCandidates lists the lookup keys for an engine model slot, most
@@ -74,21 +92,21 @@ func loadSpecDB() *modelsdevDB {
 // ("nvidia/nvidia/nemotron-3.5-lightning", "openrouter/openai/gpt-4o-mini")
 // — so the candidates drop leading path segments stepwise.
 func specCandidates(model string) []string {
-	m := strings.ToLower(strings.TrimSpace(model))
-	if m == "" {
-		return nil
-	}
-	var cands []string
-	cur := m
-	for {
-		cands = append(cands, cur)
-		i := strings.IndexByte(cur, '/')
-		if i < 0 || i == len(cur)-1 {
-			break
-		}
-		cur = cur[i+1:]
-	}
-	return cands
+        m := strings.ToLower(strings.TrimSpace(model))
+        if m == "" {
+                return nil
+        }
+        var cands []string
+        cur := m
+        for {
+                cands = append(cands, cur)
+                i := strings.IndexByte(cur, '/')
+                if i < 0 || i == len(cur)-1 {
+                        break
+                }
+                cur = cur[i+1:]
+        }
+        return cands
 }
 
 // LookupSpec resolves a model slot against the snapshot: direct candidate
@@ -96,71 +114,71 @@ func specCandidates(model string) []string {
 // candidate — catches host-specific renames behind a bare request).
 // Returns (spec, known).
 func LookupSpec(modelSlot string) (DevSpec, bool) {
-	m := strings.ToLower(strings.TrimSpace(modelSlot))
-	if m == "" {
-		return DevSpec{}, false
-	}
-	if v, ok := specCache.Load(m); ok {
-		r := v.(specResult)
-		return r.spec, r.known
-	}
-	var out DevSpec
-	known := false
-	if db := loadSpecDB(); db != nil {
-		cands := specCandidates(modelSlot)
-		for _, c := range cands {
-			if s, ok := db.Models[c]; ok {
-				out, known = s, true
-				break
-			}
-		}
-		if !known && len(cands) > 0 {
-			bare := cands[len(cands)-1]
-			if len(bare) > 6 { // never suffix-match a tiny fragment
-				for k, s := range db.Models {
-					if strings.HasSuffix(k, "/"+bare) {
-						out, known = s, true
-						break
-					}
-				}
-			}
-		}
-	}
-	specCache.Store(m, specResult{out, known}) // negatives cached: unknowns skip the scan
-	return out, known
+        m := strings.ToLower(strings.TrimSpace(modelSlot))
+        if m == "" {
+                return DevSpec{}, false
+        }
+        if v, ok := specCache.Load(m); ok {
+                r := v.(specResult)
+                return r.spec, r.known
+        }
+        var out DevSpec
+        known := false
+        if db := loadSpecDB(); db != nil {
+                cands := specCandidates(modelSlot)
+                for _, c := range cands {
+                        if s, ok := db.Models[c]; ok {
+                                out, known = s, true
+                                break
+                        }
+                }
+                if !known && len(cands) > 0 {
+                        bare := cands[len(cands)-1]
+                        if len(bare) > 6 { // never suffix-match a tiny fragment
+                                for k, s := range db.Models {
+                                        if strings.HasSuffix(k, "/"+bare) {
+                                                out, known = s, true
+                                                break
+                                        }
+                                }
+                        }
+                }
+        }
+        specCache.Store(m, specResult{out, known}) // negatives cached: unknowns skip the scan
+        return out, known
 }
 
 // SpecContext returns the snapshot's context window for a model slot.
 func SpecContext(modelSlot string) (int, bool) {
-	if s, ok := LookupSpec(modelSlot); ok && s.Context > 0 {
-		return s.Context, true
-	}
-	return 0, false
+        if s, ok := LookupSpec(modelSlot); ok && s.Context > 0 {
+                return s.Context, true
+        }
+        return 0, false
 }
 
 // SpecMaxOutput returns the snapshot's max output tokens for a model slot.
 func SpecMaxOutput(modelSlot string) (int, bool) {
-	if s, ok := LookupSpec(modelSlot); ok && s.Output > 0 {
-		return s.Output, true
-	}
-	return 0, false
+        if s, ok := LookupSpec(modelSlot); ok && s.Output > 0 {
+                return s.Output, true
+        }
+        return 0, false
 }
 
 // SpecPrice returns the snapshot's $/M rates for a model slot.
 func SpecPrice(modelSlot string) (in, out float64, ok bool) {
-	s, known := LookupSpec(modelSlot)
-	if !known || s.InputCost < 0 || s.OutputCost < 0 {
-		return 0, 0, false
-	}
-	return s.InputCost, s.OutputCost, true
+        s, known := LookupSpec(modelSlot)
+        if !known || s.InputCost < 0 || s.OutputCost < 0 {
+                return 0, 0, false
+        }
+        return s.InputCost, s.OutputCost, true
 }
 
 // SpecSupportsTools reports whether the snapshot documents native tool-call
 // support for a model slot (informational — the MCP wave owns routing).
 func SpecSupportsTools(modelSlot string) (bool, bool) {
-	s, known := LookupSpec(modelSlot)
-	if !known {
-		return false, false
-	}
-	return s.ToolCall, true
+        s, known := LookupSpec(modelSlot)
+        if !known {
+                return false, false
+        }
+        return bool(s.ToolCall), true
 }

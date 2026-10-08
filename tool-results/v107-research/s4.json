@@ -1,0 +1,47 @@
+[
+  {
+    "url": "https://ecweb.ecer.com",
+    "name": "Guide to Customizing Range Sliders with Webkit",
+    "snippet": "Sep 25, 2025 — This article delves into the CSS pseudo-element `::- webkit - slider - runnable - track `, which enables developers to customize the appearance of ... Read more",
+    "host_name": "ecweb.ecer.com",
+    "rank": 0,
+    "date": "Sep 25, 2025",
+    "favicon": ""
+  },
+  {
+    "url": "https://uicookies.com",
+    "name": "Basic Range Sliders in CSS, Bootstrap & Tailwind",
+    "snippet": "Sep 25, 2026 — Every slider is a real input type=”range” styled through the ::-webkit-slider-runnable-track, clicking the track, arrow. Real input type=\"range ...",
+    "host_name": "uicookies.com",
+    "rank": 1,
+    "date": "Sep 25, 2026",
+    "favicon": ""
+  },
+  {
+    "url": "https://codeshack.io",
+    "name": "Double Range Slider JS",
+    "snippet": "this double slider . It allows users to select a minimum and maximum value simultaneously, and the track automatically highlights the selected range visually.",
+    "host_name": "codeshack.io",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://developer.mozilla.org",
+    "name": "webkit-slider-runnable-track - CSS - MDN Web Docs - Mozilla",
+    "snippet": "Mar 31, 2026 — El pseudo-elemento CSS ::- webkit - slider - runnable - track representa el trayecto (la ranura sobre la que se desliza el indicador) de un < input > con ... Read more",
+    "host_name": "developer.mozilla.org",
+    "rank": 3,
+    "date": "Mar 31, 2026",
+    "favicon": ""
+  },
+  {
+    "url": "https://svelte.dev",
+    "name": "Color hue range input • Playground",
+    "snippet": "input::-webkit-slider-runnable-track {. height: 10px;. border-radius: 9999px ... background: linear-gradient(. to right,. hsl(0 100% 50%),. hsl(60 100% 50 ... Read more",
+    "host_name": "svelte.dev",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  }
+]

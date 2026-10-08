@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -83,8 +84,13 @@ func TestUsageRealTokens(t *testing.T) {
 	if u.Context.UsedTokens < 45000 {
 		t.Fatalf("context usedTokens = %d, want >= 45000 (real tokens beat the estimate)", u.Context.UsedTokens)
 	}
-	if u.Context.FillPct < 30 {
-		t.Fatalf("fillPct = %d, want >= 30 with a 128k window", u.Context.FillPct)
+	// v1.14.1 THE LEDGER: the window itself is now snapshot-verified —
+	// nemotron-3-super's real window (262144) is larger than the old
+	// curated guess (131072), so a fixed 30% threshold lies. Assert the
+	// fill math against the SAME source the endpoint uses instead.
+	wantFill := u.Context.UsedTokens * 100 / llm.ContextLimitFor("nvidia/nvidia/nemotron-3-super")
+	if u.Context.FillPct != wantFill {
+		t.Fatalf("fillPct = %d, want %d (usedTokens*100/window)", u.Context.FillPct, wantFill)
 	}
 	if !u.Context.CompactEnabled || u.Context.CompactThreshold != 70 {
 		t.Fatalf("default controls wrong: %+v", u.Context)

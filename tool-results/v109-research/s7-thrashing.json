@@ -1,0 +1,56 @@
+[
+  {
+    "url": "https://www.corewebvitals.io",
+    "name": "The Unofficial Chrome Trace Event Manual",
+    "snippet": "a Layout occurring synchronously inside a FunctionCall is forced synchronous layout , and that pairing is how it is detected.",
+    "host_name": "www.corewebvitals.io",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "http://www.zigpoll.com",
+    "name": "Essential Frontend Performance Optimizations to Ensure a",
+    "snippet": "Reduce Layout Thrashing and Reflows to Prevent Jank Frequent forced synchronous layouts degrade responsiveness. Avoid forced synchronous layouts : Limit or ...",
+    "host_name": "www.zigpoll.com",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://levelup.gitconnected.com",
+    "name": "From URL to Pixels: The Complete Frontend Rendering Journey",
+    "snippet": "Aug 22, 2025 — Repeatedly reading ( offsetHeight ) and writing ( style ) in a loop can cause layout thrashing . Avoid reading layout properties right after  ...",
+    "host_name": "levelup.gitconnected.com",
+    "rank": 2,
+    "date": "Aug 22, 2025",
+    "favicon": ""
+  },
+  {
+    "url": "https://x.com",
+    "name": "How modern browsers work - @addyosmani",
+    "snippet": "Jun 20, 2026 — Developers often hear advice about avoiding layout thrashing (like reading layout info in JS right after modifying DOM, which can force ...",
+    "host_name": "x.com",
+    "rank": 3,
+    "date": "Jun 20, 2026",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com",
+    "name": "starman69/mcp-frontend-perf: Interactive demos of",
+    "snippet": "Thrashing - Forced synchronous layouts from read/write interleaving Animation Jank. Excessive Re-renders … while scrolling, and tell me what's causing the  ...",
+    "host_name": "github.com",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://push-based.io",
+    "name": "Mastering Interaction to Next Paint with RxAngular",
+    "snippet": "Mar 20, 2024 — Style recalculation, paint , additional styling work and commit events happening in the next task. ... layout thrashing or jank . Practice. <button ... Read more",
+    "host_name": "push-based.io",
+    "rank": 5,
+    "date": "Mar 20, 2024",
+    "favicon": ""
+  }
+]

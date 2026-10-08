@@ -1,0 +1,56 @@
+[
+  {
+    "url": "https://itamde.com",
+    "name": "CSS Background 2025 : images, gradients, blend | Guide",
+    "snippet": "Les gradients CSS sont des images générées par le navigateur, offrant des dégradés sans fichier externe. Performance et flexibilité maximales. Linear- gradient : ... Read more",
+    "host_name": "itamde.com",
+    "rank": 0,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.tutorjoes.in",
+    "name": "Background Clip Property in CSS",
+    "snippet": "The background-clip property defines how far the background (color or image) should extend within an element . The background is clipped to the foreground text.",
+    "host_name": "www.tutorjoes.in",
+    "rank": 1,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.quackit.com",
+    "name": "Fixed Background (Parallax Style) Hero Template",
+    "snippet": "This pure CSS approach \" fixes \" the background relative to the viewport . As you scroll the page, the section element moves, but its background image stays put. Read more",
+    "host_name": "www.quackit.com",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.facebook.com",
+    "name": "CSS Backdrop-filter With Fixed Position and Containing",
+    "snippet": "Background - attachment \" is a CSS property that can be used to fix a background applied on an element relative to the entire viewport",
+    "host_name": "www.facebook.com",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://developer.mozilla.org",
+    "name": "background-attachment CSS property - MDN Web Docs",
+    "snippet": "Die background - attachment CSS -Eigenschaft legt fest, ob die Position eines Hintergrundbildes innerhalb des Viewports fixiert ist oder mit seinem enthaltenden ... Read more",
+    "host_name": "developer.mozilla.org",
+    "rank": 4,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://forum.freecodecamp.org",
+    "name": "Positioning the background image - Curriculum Help",
+    "snippet": "Dec 9, 2023 — But I assume you want background-attachment: fixed on the body selector . Also, you probably want cover for the background-size so the image ... Read more",
+    "host_name": "forum.freecodecamp.org",
+    "rank": 5,
+    "date": "Dec 9, 2023",
+    "favicon": ""
+  }
+]

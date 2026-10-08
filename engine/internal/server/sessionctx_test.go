@@ -33,11 +33,12 @@ func TestSessionContextPreamble(t *testing.T) {
         s := &Server{db: db}
         out := s.sessionContextPreamble(sess)
 
-        // headline + context window line (deepseek → 131072)
+        // headline + context window line (deepseek-v4.1-flash → the
+        // models.dev snapshot's 327680; the old curated guess was 131072)
         if !strings.HasPrefix(out, "\n\n## Your session (live") {
                 t.Fatalf("missing headline, got %.60s", out)
         }
-        if !strings.Contains(out, "Context window: ~131,072 tokens") {
+        if !strings.Contains(out, "Context window: ~327,680 tokens") {
                 t.Fatalf("missing context window line:\n%s", out)
         }
         // last real usage wins the fill: 1600 > char estimate
@@ -51,8 +52,9 @@ func TestSessionContextPreamble(t *testing.T) {
         if !strings.Contains(out, "≈$") {
                 t.Fatalf("deepseek is priced — expected a cost estimate:\n%s", out)
         }
-        // pricing line (deepseek → $0.27 in / $1.10 out per M)
-        if !strings.Contains(out, "$0.27 in / $1.10 out per 1M tokens") {
+        // pricing line (deepseek-v4.1-flash → snapshot $0.04 in / $0.08
+        // out per 1M; the old curated deepseek guess was 0.27/1.10)
+        if !strings.Contains(out, "$0.04 in / $0.08 out per 1M tokens") {
                 t.Fatalf("missing rate line:\n%s", out)
         }
         // connections (no vault in this server → not connected/not signed in)

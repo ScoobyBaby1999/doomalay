@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://groups.google.com/a/chromium.org/g/chromium-dev/c/Z2_a_fFm19M",
+    "name": "Why Android-WebView project is much slower than",
+    "snippet": "Dec 17, 2013 — The problem now is that I tried the application using Content-Shell apk and it was very fast, but the drawback is that I can't load files ... Read more",
+    "host_name": "groups.google.com",
+    "rank": 0,
+    "date": "Dec 17, 2013",
+    "favicon": ""
+  },
+  {
+    "url": "https://github.com",
+    "name": "Scrolling a WebView within UIKitView doesn't work",
+    "snippet": "Oct 17, 2024 — I've added a webview wrapped in an AndroidView composable inside the bottom sheet, and I'm not able to scroll at all inside the webview .",
+    "host_name": "github.com",
+    "rank": 1,
+    "date": "Oct 17, 2024",
+    "favicon": ""
+  },
+  {
+    "url": "https://issues.chromium.org",
+    "name": "scroll lag on android webview [41303257]",
+    "snippet": "What went wrong? Scroll not fluent in every vertical scrollable webview after Android System Webview update, without the latest update the app works well. Does ... Read more",
+    "host_name": "issues.chromium.org",
+    "rank": 2,
+    "date": "",
+    "favicon": ""
+  },
+  {
+    "url": "https://www.slideshare.net",
+    "name": "Android Chromium Rendering Pipeline | PDF",
+    "snippet": "This document discusses the Android Chromium rendering pipeline. It covers topics like the critical rendering path in browsers, Chromium's multi-process ...",
+    "host_name": "www.slideshare.net",
+    "rank": 3,
+    "date": "",
+    "favicon": ""
+  }
+]
