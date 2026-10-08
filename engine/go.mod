@@ -9,6 +9,7 @@ require (
 	github.com/klauspost/compress v1.20.0
 	github.com/mark3labs/mcp-go v1.1.1
 	github.com/nwaples/rardecode v1.1.3
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/ulikunitz/xz v0.5.16
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.4
@@ -18,6 +19,7 @@ require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
