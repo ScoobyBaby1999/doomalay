@@ -32,8 +32,7 @@
   "signup_url": "https://build.nvidia.com/settings/api-keys",
   "free_tier": true,
   "color": "#76B900",
-  "validate": "chat_probe",
-  "probe_model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+  "validate": "chat_probe"
  },
  "openrouter": {
   "env_var": "OPENROUTER_API_KEY",

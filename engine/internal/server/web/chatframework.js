@@ -120,7 +120,12 @@
           title: st.provider ? providerLabel(st.provider) : '+ Model',
           // v0.30 (user spec): after the model method is selected the sub
           // reads "tap to change" — exactly like its sandbox sibling.
-          sub: st.model ? 'tap to change' : 'tap to connect',
+          // v1.15.1 THE CHOICE: a connected provider with no model yet
+          // points at the model screen (the short pointer the user spec
+          // asked for — the pick is the user's move, never auto).
+          sub: st.model
+            ? 'tap to change'
+            : (st.provider ? 'tap to pick · the model screen' : 'tap to connect'),
           // v0.89.1 (user spec): the +model row carries a weird purple
           // ALIEN face (the 👾 space-invader glyph), not the old robot.
           icon: '👾',

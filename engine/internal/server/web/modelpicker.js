@@ -28,7 +28,7 @@
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
       '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Pick a model source</h2>' +
       '</div>' +
-      '<p style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-3);margin:0 0 20px">Cloud needs an API key; local runs on your device. You can swap the exact model later from the header.</p>' +
+      '<p style="font-size: calc(var(--ui-fs) - 1px);color:var(--text-3);margin:0 0 20px">Cloud needs an API key; local runs on your device. The model itself is your pick — the model screen opens next.</p>' +
       '<div style="display:flex;flex-direction:column;gap:12px">' +
         optionCard('cloud', '☁️', 'Connect Cloud Provider',
           'Use a cloud LLM (OpenCode Zen, PrivateMode, NVIDIA, OpenRouter, …). Requires an API key. Free tiers available.',
@@ -47,31 +47,18 @@
       card.addEventListener('click', function () {
         var type = card.dataset.modelType;
         if (type === 'cloud') {
-          // v0.17 ONE-PRESS CONNECT (user spec): if the user already has
-          // a cloud provider key, pressing this card instantly connects a
-          // (provider, model) and unlocks the chat — no screen dance.
-          // With fewer than 3 providers connected we ALSO pop the
-          // providers GUI as a dismissible reminder (✕ or scrim tap
-          // closes it; the chat is already usable underneath).
-          // Zero keys → the full setup GUI (the original flow).
-          // v0.18: `picked:false` (no usable model found) opens the FULL
-          // setup GUI — the green "chat is ready" reminder would be a lie
-          // while the gatelock is still locked.
-          window.ProvidersScreen.smartConnect(function (provider, modelId) {
-            onPick(provider, modelId);
-          }).then(function (res) {
-            if (!res.connected || !res.picked) {
+          // v1.15.1 THE CHOICE: no silent auto-pick. If the user already
+          // has a cloud provider key, the MODEL SCREEN opens in teach mode
+          // (Ready filter, the banner) and the user PICKS — getting used
+          // to the model screen is the point (user spec). Zero keys → the
+          // full setup GUI (the original flow). The old <3-providers
+          // reminder popup is gone — the model browser IS the screen now.
+          window.ProvidersScreen.smartConnect(onPick).then(function (res) {
+            if (!res.connected) {
               window.ProvidersScreen.open(onPick, { useReplaceContent: true });
-            } else if (res.connected < 3) {
-              window.ProvidersScreen.open(onPick, { useReplaceContent: true, reminder: true });
-            } else {
-              // v0.35.1 FIX: ≥3 connected AND picked = silent one-press
-              // unlock — but nobody closed the picker, so "Pick a model
-              // source" sat over the now-ready chat until the user found
-              // the ✕ (live-repro'd). Close it: the chat IS the next step.
-              window.ConnectOverlay.close();
             }
-            // ≥3 connected AND picked: silent one-press unlock, no GUI
+            // ≥1 connected → smartConnect already opened the model screen
+            // in teach mode; the pick (or ✕) is the user's move.
           });
         } else {
           window.LocalModelsScreen.open(onPick, { useReplaceContent: true });

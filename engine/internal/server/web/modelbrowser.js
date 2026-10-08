@@ -450,6 +450,16 @@
     ensureStyles();
     bindEscOnce();
 
+    // v1.15.1 THE CHOICE — teach mode: the forced-selection flow (one-press
+    // connect, key save, "Use N models", the gatelock) opens the browser
+    // TEACHING: the Ready (key-backed) filter is preset, the teaching
+    // provider's box sorts first + auto-expands, and a SHORT formatted
+    // banner shows the user where the model screen lives (the user spec:
+    // "make it crystal clear how to use it with a very short formatted
+    // text or something that shows them where the model screen is"). A
+    // normal open (the header 👾 pill) carries no teach state — no banner.
+    var teach = opts.teach || null;
+
     // Mutable UI state (persisted where it makes sense).
     var view = (function () {
       var v = lsGet('view', 'providers');
@@ -461,8 +471,19 @@
     var ctxMin = lsGet('ctxMin', 0);
     var pricing = lsGet('pricing', 'all');
     var avail = (lsGet('avail', 'all') === 'available') ? 'available' : 'all'; // v0.34
+    if (teach) {
+      // v1.15.1: teach mode presets the Ready pair — only key-backed
+      // models show (exactly what the user filters for when they go
+      // looking for what actually works).
+      avail = 'available';
+      lsSet('avail', 'available');
+      if (teach.provider) view = 'providers';
+    }
     var providerOrder = lsGet('providerOrder', null);
     var providerExpanded = lsGet('providerExpanded', {});
+    if (teach && teach.provider) {
+      providerExpanded[teach.provider] = true; // auto-expand the teaching provider
+    }
     var hostOrder = lsGet('hostOrder', {});
     var expandedLogical = {};
     var infoOpen = {}; // v0.32.4 F2: transient per-session detail drawers
@@ -598,6 +619,19 @@
     // wrapper: head, bar and expanded pill row pin TOGETHER.
 
     function render() {
+      // v1.15.1 teach banner (THE CHOICE): the short formatted text that
+      // shows the user WHERE the model screen is + what to do. Rendered
+      // only in teach mode (the forced-selection flows); theme vars only.
+      function teachBanner() {
+        if (!teach) return '';
+        return '<div id="mb-teach" style="display:flex;align-items:flex-start;gap:10px;border:1px solid rgba(var(--accent-rgb),0.4);background:rgba(var(--accent-rgb),0.07);border-radius:12px;padding:12px 14px;margin:12px 0 4px">' +
+          '<span style="font-size:18px;line-height:1;color:var(--accent);flex-shrink:0">👾</span>' +
+          '<span style="font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.5;flex:1;min-width:0">' +
+          '<b style="color:var(--text-1)">Pick your model</b> — this is the model screen. ' +
+          'Only models your keys can run are shown. ' +
+          'Reopen it anytime from the <b style="color:var(--text-1)">👾 model pill</b> in your chat\'s header.</span>' +
+          '</div>';
+      }
       // v0.34.1 FIX 1: everything sits in a 16px-padded wrapper — the
       // catalogue no longer rides flush against the overlay's border. The
       // sticky wrapper's -16px negative margins (below) now work CORRECTLY:
@@ -618,6 +652,7 @@
         '</div>' +
         (filtersOpen ? '<div id="mb-filterrow" style="padding:0 16px">' + filterRow() + '</div>' : '') +
         '</div>' +
+        teachBanner() +
         '<div id="mb-list">' + listHTML() + '</div>' +
         footer() +
         '</div>';
@@ -1221,6 +1256,17 @@
           if (ia < 0) ia = 999; if (ib < 0) ib = 999;
           return ia - ib;
         });
+      }
+      // v1.15.1 teach mode: the teaching provider surfaces FIRST (view-time
+      // only — the user's stored drag order is untouched).
+      if (teach && teach.provider) {
+        for (var t = 0; t < groups.length; t++) {
+          if (groups[t].name === teach.provider) {
+            var g = groups.splice(t, 1)[0];
+            groups.unshift(g);
+            break;
+          }
+        }
       }
       return groups;
     }

@@ -549,7 +549,7 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
         var out []string
         seen := map[string]bool{}
         add := func(id string) {
-                if id == "" || seen[id] {
+                if id == "" || seen[id] || len(out) >= probeCandidateCap {
                         return
                 }
                 seen[id] = true
@@ -557,67 +557,29 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
         }
         add(cfg.ProbeModel)
 
-        // v0.16: NVIDIA NIM is account-gated per model ("Function not found
-        // for account") — many catalog models 404 for a given key while a
-        // live-verified set always serves. Insert those right after the
-        // configured probe so a valid key never lands on "unverified".
-        for _, kg := range knownGoodProbes(provider) {
-                add(kg)
-        }
-
-        // Live model list (best-effort; keyless for public lists). Prefer
-        // FREE models — they work on zero-credit accounts.
-        if fetched, err := fetchProviderModels(provider, cfg, apiKey, accountID); err == nil {
+        // v1.15.1 THE CHOICE: the ladder is LIVE-DERIVED — the provider's own
+        // synced roster, FREE models first (they serve on any account), capped
+        // at probeCandidateCap candidates. The old knownGoodProbes hardcoded
+        // lists are gone: lists rot (v1.14.5 caught a deprovisioned flagship
+        // leading three of them), while the live roster IS what the provider
+        // currently serves. Account-gated 404s still walk: the ladder tries the
+        // next candidate, and 5 is enough to get past a gated head without a
+        // hail-mary sweep.
+        if fetched, err := fetchProviderModels(provider, cfg, apiKey, accountID); err == nil && len(fetched) > 0 {
                 for _, m := range fetched {
                         if isFreeProbeModel(provider, m.Label) {
                                 add(m.Label)
                         }
                 }
-                if len(out) == 0 {
-                        add(fetched[0].Label)
-                } else {
-                        add(fetched[0].Label) // any-model fallback last
-                }
+                add(fetched[0].Label) // any-model fallback (last rung)
         }
         return out
 }
 
-// knownGoodProbes — live-verified models that served real chat completions
-// on a fresh NVIDIA key when ~70% of the catalog was account-404.
-// Used by the probe ladder AND by the frontend auto-pick preference list.
-// v1.14.5 test-heal (2026-10-08 live roster check): nemotron-3.5-lightning-
-// 30b-a3b was DEPROVISIONED from NIM (raw probe: instant 502; the roster no
-// longer lists it) — the auto-pick kept landing on it and every fresh chat
-// inherited a dead-then-flaky model (live-observed: a 3.5-minute first-round
-// stall + repeated "no response from Nvidia" waits). The list now leads with
-// nemotron-3-super-120b-a12b (live-proven: full tool chains, 4s turns) and
-// adds llama-3.2-11b (the weak-model chain receipt).
-func knownGoodProbes(provider string) []string {
-        if provider == "nvidia" {
-                return []string{
-                        "nvidia/nemotron-3-super-120b-a12b",
-                        "z-ai/glm-5.3-flash",
-                        "openai/gpt-oss-20b",
-                        "nvidia/nemotron-3-ultra-550b-a55b",
-                        "google/gemma-4-31b-it",
-                        "meta/llama-3.2-11b-vision-instruct",
-                }
-        }
-        // v0.25: OpenCode Zen — the FREE models only. kimi-k2.6 (the old probe
-        // model) is PAID on zen: a keyless-of-payment account gets CreditsError
-        // "No payment method …/billing" — the exact message users mistook for
-        // "my key needs billing enabled". big-pickle + the *-free set serve on
-        // any valid key (with the x-session-id header).
-        if provider == "opencode" {
-                return []string{
-                        "big-pickle",
-                        "nemotron-3.5-lightning-free",
-                        "deepseek-v4-flash-free",
-                        "mimo-v2.5-free",
-                }
-        }
-        return nil
-}
+// probeCandidateCap bounds the chat_probe ladder (v1.15.1): the user's
+// "3-5 available models" — a handful of live-roster candidates, not a
+// full-catalog sweep (each rung is a real completion request).
+const probeCandidateCap = 5
 
 // isFreeProbeModel knows the per-provider free-model rules (probe ladder only).
 func isFreeProbeModel(provider, modelID string) bool {
@@ -741,12 +703,29 @@ func ResolveModel(userModel, userProvider string, keys map[string]string) (model
 // live v2 catalog, so it resolves "auto" to the provider's best concrete
 // model here — before the turn reaches either pipeline.
 
-// knownGoodFamilies ranks model families that reliably chat on any
-// account (mirrors the frontend pickAutoModel's KNOWN_GOOD philosophy;
-// NVIDIA NIM is account-gated per model, so free + popular first).
-var knownGoodFamilies = []string{
-        "glm-5.3-flash", "glm-flash", "glm-5.2", "kimi-k", "deepseek",
-        "qwen", "gpt-oss", "nemotron", "llama", "gemma", "glm",
+// autoModelScore ranks one catalog model for the "auto" pseudo-model
+// resolution (v1.15.1 THE CHOICE): pure CATALOG DATA — free tier, the
+// tools/reasoning capability flags, the context window. The old
+// knownGoodFamilies name list is gone (name heuristics rot exactly like
+// hardcoded ids); these fields are what the model browser ranks by too.
+func autoModelScore(m EnrichedModel) int {
+        score := 0
+        if m.IsFree {
+                score += 500
+        }
+        for _, cap := range m.Capabilities {
+                switch cap {
+                case "tools":
+                        score += 50 // tool-calling drives the MCP bus turns
+                case "reasoning":
+                        score += 30
+                }
+        }
+        // context: +1 per 32k, capped at 40 — a bigger window matters, gently.
+        if m.ContextLength > 0 {
+                score += min(int(m.ContextLength/32000), 40)
+        }
+        return score
 }
 
 // ResolveAutoModel returns the provider's best concrete full id
@@ -771,27 +750,8 @@ func ResolveAutoModel(userModel, userProvider string, keys map[string]string) st
                 }
                 best, bestScore := "", -1
                 for _, m := range g.Models {
-                        id := strings.ToLower(m.ID + " " + m.Family)
-                        score := 0
-                        for i, fam := range knownGoodFamilies {
-                                if strings.Contains(id, fam) {
-                                        score += 100 * (len(knownGoodFamilies) - i)
-                                        break
-                                }
-                        }
-                        if m.IsFree {
-                                score += 500
-                        }
-                        // capability bonus: tools-capable models drive the
-                        // ACTION protocol turns better.
-                        for _, cap := range m.Capabilities {
-                                if cap == "tools" {
-                                        score += 50
-                                        break
-                                }
-                        }
-                        if score > bestScore {
-                                bestScore, best = score, m.ID
+                        if s := autoModelScore(m); s > bestScore {
+                                bestScore, best = s, m.ID
                         }
                 }
                 if best != "" {

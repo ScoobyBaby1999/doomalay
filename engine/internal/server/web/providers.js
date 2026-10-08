@@ -199,24 +199,19 @@
     }
 
     function header() {
-      var reminder = '';
-      if (opts.reminder) {
-        // v0.17 one-press connect reminder mode: the chat is ALREADY
-        // unlocked behind this overlay — this GUI is just a nudge that
-        // more providers can be connected. ✕ or scrim tap dismisses.
-        reminder = '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
-          'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--text-2);line-height:1.5">' +
-          '✓ chat is ready — you can tap ✕ and start talking right now. ' +
-          '<span style="color:var(--text-3)">This screen is just a reminder you can connect more providers.</span></div>';
-      }
+      // v1.15.1: the v0.17 "reminder" mode is deleted — its only caller
+      // (the one-press connect's <3-providers popup) died with the forced
+      // model selection, and its "✓ chat is ready" claim was a lie under
+      // THE CHOICE (no model picked = the gate is still locked).
+      var notice = '';
       // v0.20: the model lists are still syncing in the background —
       // cards are live, model counts arrive in seconds.
       if (isPartial) {
-        reminder += '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
+        notice = '<div style="background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.3);' +
           'border-radius:10px;padding:9px 12px;margin-bottom:12px;font-size: var(--ui-small-fs);color:var(--text-2);line-height:1.5">' +
           '⟳ syncing live model lists — provider cards are ready now, models fill in within seconds.</div>';
       }
-      return reminder + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
+      return notice + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 4px);font-weight:600;color:var(--text-1);margin:0">Cloud Providers</h2>' +
         '<div style="display:flex;align-items:center;gap:8px">' +
         // v0.48 task 5: dev-build-only "use public key" pill (hidden until
@@ -414,28 +409,14 @@
       contentEl.querySelectorAll('[data-use]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var name = btn.dataset.use;
-          // v0.16: use the smart auto-pick (known-good working models for
-          // NVIDIA, free + popular families everywhere else) — NOT the
-          // alphabetically-first model (claude-fable-5, 01-ai/yi-large…).
-          var grouped = {};
-          for (var i = 0; i < catalogModels.length; i++) {
-            var cm = catalogModels[i];
-            if (cm.provider === name) {
-              (grouped[cm.provider] = grouped[cm.provider] || []).push(cm);
-            }
-          }
-          var groups = [];
-          for (var pn in grouped) groups.push({ name: pn, models: grouped[pn] });
-          var pick = pickAutoModel({ groups: groups }, name);
-          var pickId = pick || null;
-          if (!pickId) {
-            for (var j = 0; j < catalogModels.length; j++) {
-              if (catalogModels[j].provider === name) { pickId = catalogModels[j].id; break; }
-            }
-          }
-          if (pickId) {
-            window.ConnectOverlay.close();
-            onPick(name, pickId);
+          // v1.15.1 THE CHOICE: no auto-pick — the model screen opens in
+          // teach mode with this provider first + expanded; the USER picks
+          // (and learns where the screen lives).
+          if (window.ModelBrowser) {
+            window.ModelBrowser.open(onPick, {
+              teach: { provider: name },
+              useReplaceContent: true
+            });
           }
         });
       });
@@ -609,43 +590,20 @@
         providers = (results[1] && results[1].providers) || providers;
         catalogModels = (results[1] && results[1].models) || catalogModels;
         render();
-        // v0.13 FIX: auto-pick whenever the key is NOT explicitly invalid
-        // and the provider has models — "unverified" (engine couldn't reach
-        // the validator, or the provider's models endpoint glitched) must
-        // NOT dead-end the workflow anymore. v0.12 required state === 'valid',
-        // which is why "+ model doesn't update / chatbot doesn't appear".
-        // v0.15: prefer a FREE model for the auto-pick — models[0] is
-        // alphabetical junk (claude-fable-5, 01-ai/yi-large) and often a
-        // PAID model, which 401s/free-tier-exhausts on fresh accounts.
+        // v1.15.1 THE CHOICE: the key saved — the model screen opens in
+        // teach mode (this provider first + expanded, Ready filter, the
+        // banner pointing at the 👾 pill). No auto-pick, no refresh-retry
+        // ladder, no probe_model fallback: the USER picks, the chat
+        // unlocks on their choice. "unverified" states pass too (v0.13's
+        // rationale — an unreachable validator must not dead-end the flow).
         var v = validation[name];
         var notInvalid = !v || v.state !== 'invalid';
-        if (notInvalid && onPick) {
-          var pick = pickAutoModel(results[1], name);
-          if (pick) {
-            // v0.17: NO auto-close — the user spec says the provider GUI
-            // stays open after key validation; only the ✕ or a scrim tap
-            // closes it. The model IS applied (chat unlocks behind the
-            // overlay) so dismissing it lands on a ready chat.
-            onPick(name, pick);
-            flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
-          } else {
-            // Key saved but 0 models synced — force a refresh and retry once.
-            fetch('/api/models?refresh=1').then(function (r) { return r.json(); }).then(function (d2) {
-              var pick2 = pickAutoModel(d2, name);
-              if (pick2) {
-                onPick(name, pick2);
-                flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
-              } else {
-                // Models endpoint down but key accepted — pick the chat-probe
-                // model from the catalog config as a usable default.
-                var cfg2 = (d2 && d2.providers && d2.providers[name]) || null;
-                if (cfg2 && cfg2.probe_model) {
-                  onPick(name, name + '/' + cfg2.probe_model);
-                  flashSavedHint(name, '✓ connected — tap ✕ to start chatting');
-                }
-              }
-            }).catch(function () {});
-          }
+        if (notInvalid && onPick && window.ModelBrowser) {
+          flashSavedHint(name, '✓ connected — pick your model');
+          window.ModelBrowser.open(onPick, {
+            teach: { provider: name },
+            useReplaceContent: true
+          });
         }
       }).catch(function (e) {
         console.error('save key failed', e);
@@ -706,107 +664,8 @@
   // (app.js wires #dock-cloud → ProvidersScreen.open). The screen itself
   // below is untouched.
 
-  // v0.15: best auto-pick model for a provider — a FREE one (works on any
-  // account), scored by family popularity so users land on a capable
-  // default (Kimi/DeepSeek/Qwen/Llama) instead of "01-ai/yi-large".
-  // v0.16: NVIDIA NIM is account-gated per model — ~70% of the catalog
-  // 404s for a fresh key while a live-verified set always serves. Those
-  // rank ABOVE the popularity score so the auto-pick actually chats.
-  function pickAutoModel(catalog, name) {
-    if (!catalog) return null;
-    // v1.14.5 test-heal: nemotron-3.5-lightning-30b-a3b was deprovisioned
-    // from NIM (live roster check 2026-10-08: 502/404) — leading with it made
-    // every one-press connect land on a dead-then-flaky model. The live
-    // flagship (nemotron-3-super-120b-a12b, chain-proven today) leads now.
-    // Kept in sync with the engine's knownGoodProbes (catalog.go).
-    var KNOWN_GOOD = {
-      nvidia: ['nvidia/nemotron-3-super-120b-a12b', 'z-ai/glm-5.3-flash',
-               'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
-               'google/gemma-4-31b-it', 'meta/llama-3.2-11b-vision-instruct'],
-      // v0.25: opencode auto-pick → FREE models only (big-pickle first —
-      // paid zen models 400 CreditsError on keys without a payment method).
-      opencode: ['big-pickle', 'nemotron-3.5-lightning-free',
-                 'deepseek-v4-flash-free', 'mimo-v2.5-free']
-    };
-    var POPULAR = ['kimi-k', 'deepseek', 'qwen', 'llama', 'nemotron', 'gpt', 'claude', 'gemini', 'mistral'];
-    var group = null;
-    var groups = catalog.groups || [];
-    for (var g = 0; g < groups.length; g++) {
-      if (groups[g].name === name) { group = groups[g]; break; }
-    }
-    var candidates = [];
-    if (group && group.models) {
-      for (var i = 0; i < group.models.length; i++) {
-        var m = group.models[i];
-        if (m.isFree) candidates.push(m);
-      }
-      if (!candidates.length) candidates = group.models.slice();
-    }
-    if (!candidates.length) {
-      // Fall back to the flat v0.12 list.
-      var flat = catalog.models || [];
-      for (var f = 0; f < flat.length; f++) {
-        if (flat[f].provider === name) return flat[f].id;
-      }
-      return null;
-    }
-    // v0.16: live-verified working models outrank everything (they are
-    // also genuinely popular families).
-    var inKnownGood = function (id) {
-      var kg = KNOWN_GOOD[name];
-      if (!kg) return -1;
-      for (var k = 0; k < kg.length; k++) {
-        if (id === kg[k] || id === name + '/' + kg[k]) return k;
-      }
-      return -1;
-    };
-    var best = null, bestScore = -1;
-    for (var c = 0; c < candidates.length; c++) {
-      var cm = candidates[c];
-      var rawId = String(cm.rawId || cm.id || '').toLowerCase();
-      var score = 0;
-      var kgIdx = inKnownGood(String(cm.rawId || cm.id || ''));
-      if (kgIdx >= 0) score = 1000 - kgIdx;
-      for (var p = 0; p < POPULAR.length; p++) {
-        if (rawId.indexOf(POPULAR[p]) >= 0) { score += POPULAR.length - p; break; }
-      }
-      if (cm.isFree) score += 100;
-      if (score > bestScore) { bestScore = score; best = cm; }
-    }
-    return best ? (best.id || (name + '/' + (best.rawId || ''))) : null;
-  }
-
-  // ── v0.18: one-press smart connect ─────────────────────────────
-  // "pressing connect cloud provider should be a one button press, it
-  // should use the cloud provider option and unlock the restriction and
-  // start the chat unless the user does not have any cloud providers or
-  // API keys." — finds a connected provider (priority: the 3 the app is
-  // built around), auto-picks its best model, fires onPick. Returns the
-  // number of connected providers so the caller can decide whether to
-  // ALSO show the dismissible reminder GUI.
-  //
-  // v0.18 REDTEAM FIXES (the "nothing happens" / "chatbot doesn't update"
-  // reports):
-  //   1. KEYS FIRST — /api/keys is a local vault read (instant). The old
-  //      Promise.all gated the unlock on /api/models, which on a cold
-  //      engine does a LIVE 11-provider sync (up to 15s per provider on
-  //      congested mobile data) — one-press felt dead the whole time.
-  //   2. The catalog fetch is capped at 2.5s (race-timeout). A late or
-  //      failed sync no longer blocks the unlock.
-  //   3. Verified FALLBACK model ids — pickAutoModel returning null (empty
-  //      sync) used to leave the gatelock stuck while the reminder GUI
-  //      claimed "chat is ready". Now a known-good model is always picked.
-  var FALLBACK_MODELS = {
-    // NOTE: slot convention = 'provider/' + the id the PROVIDER'S API
-    // expects. NVIDIA NIM's API ids carry their own org prefix
-    // ("nvidia/nemotron-…") — the engine strips exactly one "nvidia/"
-    // per turn, so the slot keeps both. (Verified live: bare
-    // "nemotron-…" → NIM 404; org-prefixed → 200.)
-    nvidia: 'nvidia/nvidia/nemotron-3-super-120b-a12b',
-    privatemodeai: 'privatemodeai/kimi-k2.6',
-    opencode: 'opencode/kimi-k2.6'
-  };
-
+  // v1.15.1: withTimeout stays — the boot-time refresh (open()) still
+  // caps its catalog race with it. Only the model-picking use is gone.
   function withTimeout(promise, ms, fallback) {
     return Promise.race([
       promise,
@@ -814,6 +673,28 @@
     ]);
   }
 
+  // v1.15.1 THE CHOICE — the auto-pickers are DEAD. pickAutoModel, its
+  // KNOWN_GOOD table, the POPULAR family list and FALLBACK_MODELS are
+  // deleted: hardcoded model picks rot (v1.14.5 caught a deprovisioned
+  // NVIDIA flagship leading three of them) and they silently picked FOR
+  // the user, who never learned where the model screen lives. Every path
+  // that used to auto-pick now opens the model browser in TEACH MODE
+  // (Ready filter preset + the short banner) — the user picks, the app
+  // teaches. See modelbrowser.js open(onPick, {teach:{provider}}).
+
+  // ── v0.18: one-press smart connect ─────────────────────────────
+  // "pressing connect cloud provider should be a one button press, it
+  // should use the cloud provider option and unlock the restriction and
+  // start the chat unless the user does not have any cloud providers or
+  // API keys." — finds a connected provider (priority: the 3 the app is
+  // built around) and opens the MODEL SCREEN in teach mode; the pick is
+  // the user's move (v1.15.1: the silent auto-pick is gone). Returns the
+  // number of connected providers so the caller can decide whether to
+  // open the full setup GUI instead (zero keys).
+  //
+  // KEYS FIRST (v0.18) — /api/keys is a local vault read (instant); no
+  // catalog fetch happens here at all anymore (the model browser owns
+  // its own catalog + cache), so one-press is as fast as the vault read.
   function smartConnect(onPick) {
     return fetch('/api/keys').then(function (r) { return r.json(); })
       .catch(function () { return {}; })
@@ -825,27 +706,24 @@
             connected.push(keys[env].provider || env);
           }
         }
-        if (!connected.length) return { connected: 0, picked: false };
+        if (!connected.length) return { connected: 0, provider: null };
         var PRIORITY = ['nvidia', 'privatemodeai', 'opencode'];
         var choice = null;
         for (var i = 0; i < PRIORITY.length; i++) {
           if (connected.indexOf(PRIORITY[i]) >= 0) { choice = PRIORITY[i]; break; }
         }
         if (!choice) choice = connected[0];
-
-        var catalogP = fetch('/api/models')
-          .then(function (r) { return r.json(); })
-          .catch(function () { return null; });
-        return withTimeout(catalogP, 2500, null).then(function (catalog) {
-          var model = pickAutoModel(catalog, choice);
-          if (!model && catalog && catalog.providers && catalog.providers[choice]) {
-            var cfg = catalog.providers[choice];
-            if (cfg.probe_model) model = choice + '/' + cfg.probe_model;
-          }
-          if (!model) model = FALLBACK_MODELS[choice] || null;
-          if (model && onPick) onPick(choice, model);
-          return { connected: connected.length, picked: !!model, provider: choice, model: model };
-        });
+        // THE MODEL SCREEN, teaching: the user picks (Ready filter on,
+        // choice provider first + expanded, the banner points at the 👾
+        // pill). The overlay content is REPLACED smoothly (the picker /
+        // provider GUI underneath fades out, the browser fades in).
+        if (onPick && window.ModelBrowser) {
+          window.ModelBrowser.open(onPick, {
+            teach: { provider: choice },
+            useReplaceContent: window.ConnectOverlay.isOpen()
+          });
+        }
+        return { connected: connected.length, provider: choice };
       });
   }
 
@@ -864,5 +742,5 @@
     }
   }
 
-  window.ProvidersScreen = { open: open, smartConnect: smartConnect, pickAutoModel: pickAutoModel };
+  window.ProvidersScreen = { open: open, smartConnect: smartConnect };
 })();
