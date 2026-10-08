@@ -481,6 +481,13 @@ async function runToolLoop(c, opts) {
       // to do here — the messages carry it below.
     }
     messages.push({ role: 'assistant', content: reply || null, tool_calls: wire });
+    // v1.19.3 THE SEQUENTIAL FLOW (PLAN-V119 §3): the segment boundary the
+    // engine paths emit as round_end — the receiver (chatpanel's onReset,
+    // v0.95.2) closes the open narration block so the pills render below a
+    // COMPLETED bubble and the next round's deltas open a NEW one at the
+    // bottom. The old turn glued every round's text into one bubble (the
+    // user's live report). Idempotent: nothing open → nothing happens.
+    opts.onReset && opts.onReset();
     for (var k = 0; k < wire.length; k++) {
       var obs = '(tool error)';
       var name = wire[k].function.name;
@@ -514,10 +521,10 @@ async function runToolLoop(c, opts) {
             allSources.push({ title: out.sources[si].title, url: out.sources[si].url, snippet: out.sources[si].snippet });
           }
         }
-        opts.onTool && opts.onTool({ name: name, result: String(out.text || '').slice(0, 120), sources: out.sources || undefined });
+        opts.onTool && opts.onTool({ name: name, result: String(out.text || ''), sources: out.sources || undefined });
       } catch (e) {
         obs = '(tool error: ' + (e.message || e) + ' — try a different approach or answer from what you have)';
-        opts.onTool && opts.onTool({ name: name, result: String(obs).slice(0, 160) });
+        opts.onTool && opts.onTool({ name: name, result: String(obs) });
       }
       messages.push({ role: 'tool', tool_call_id: wire[k].id, name: name, content: obs });
     }
