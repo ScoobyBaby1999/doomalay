@@ -931,3 +931,55 @@ Stage Summary:
   subscription (with Global region privacy) at opencode.ai for the fresh
   OpenCode key to chat — the key itself is valid and the engine degrades
   honestly meanwhile.
+
+═══ v1.15 THE CHOICE WAVE (2026-10-08) ═══
+
+The user's four fronts, delivered as PLAN-V115 (four phases, ship v1.16.0):
+
+1. v1.15.1 THE CHOICE (baec254f) — the autopickers are dead: no hardcoded
+   model lists anywhere (engine knownGoodProbes deleted → live-derived
+   ladder, free-first, capped at 5; ResolveAutoModel scores pure catalog
+   data; the PWA's KNOWN_GOOD/FALLBACK + the one-press silent pick + the
+   reminder GUI deleted). Every connect flow now FORCES the user's pick
+   through the model screen in TEACH MODE: the Ready (key-backed) filter
+   preset, the teaching provider first + expanded, and the short banner
+   ("Pick your model — this is the model screen. Reopen it anytime from the
+   👾 model pill in your chat's header."). Caught live: modelpicker called
+   smartConnect() with no callback → the screen never opened (fixed+pinned).
+   Live E2E through the real NVIDIA key: card → teach screen → pick →
+   unlocked chat → exact reply.
+
+2. v1.15.2 THE DECOUPLE (9f0bb201) — isolation proven under genuine
+   overlap: scripts/v1152-slow-stub.mjs (slow carrier, per-request markers)
+   + scripts/v1152-decouple-rig.mjs (speaks the PWA's own ChatClient
+   contract). 30/30: parallel streams, busy isolation, abort isolation,
+   socket-kill + server-side turn survival + &since resume, replay
+   reconstruction, the stale-frame guard. Live UI redteam: 3 chatbots
+   (nvidia/groq/openrouter personas) flipped mid-stream — 0 foreign
+   markers; browser panel navigated while a chat streamed; PWA RELOAD
+   MID-TURN — the turn survived, replayed, completed all 40 deltas.
+   Convicted+fixed: the DOOMALAY_BASE_URL override didn't hold for the
+   specialized model fetchers (nvidia/opencode/PM/openrouter) — now the
+   mirror contract is honest.
+
+3. v1.15.3 THE TRIM (820f0df4) — the chat/session files: dead code out
+   (chatpanel's unreachable pre-v0.48 persona duplicate still teaching the
+   DELETED ACTION grammar — actively harmful since v1.13.3; persona.js's
+   ## Tools/## Library rewritten to native tool-call phrasing; the last
+   engine remnant strings healed). Complexity: buildHistory is BOUNDED
+   (ListEventsTail + the hide-only query + a doubling tail walk —
+   O(window) per turn, exactness fallback for mid-delta-run tails);
+   updateMessageEl is an O(1) mi→el cache (was a full-DOM querySelector
+   per 180ms tick); sessionLocks/chatPipes get reapIdleChat (never while
+   a turn runs — the resume-swap invariant, pinned by test).
+
+4. v1.15.4 THE SHELL PLAN (e10b112a) — PLAN-V116-THE-SHELL-WAVE.md: the
+   design for bash/shell/real-Linux in Quick Chat (WS /api/term + creack/pty
+   engine side with the android build-gate, xterm.js in the OVERLAY per the
+   container law with theme-var-fed colors, the jailed one-shot shell MCP
+   tool with blocklist/caps/cooldown, the Termux bridge for local Android)
+   — v1.16.x builds it phase by phase.
+
+Ship v1.16.0: buildinfo carries the wave. Full battery green throughout
+(decouple 30/30 · v1136 67/67 · choice 19/19 · v1153 pins · llm · server ·
+isolation 12 · round-flow · interrupt 65).
