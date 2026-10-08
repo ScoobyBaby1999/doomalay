@@ -1356,7 +1356,9 @@ func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byt
         }
         // v0.25: OpenCode Zen free-tier session id (x-session-id) — without it
         // big-pickle + *-free models 400 with MissingSessionID.
-        for k, v := range providerExtraHeaders(req.Provider, req.APIKey) {
+        // v1.14.6: scoped PER CHAT (req.SessionID) — the per-key id made every
+        // chat on one key share an upstream Zen session (the cross-bot leak).
+        for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
                 httpReq.Header.Set(k, v)
         }
         httpReq.Header.Set("Accept", "text/event-stream")
@@ -1507,7 +1509,8 @@ func authHeaders(req ChatRequest) map[string]string {
         }
         // v0.25: OpenCode Zen — the free-tier models require a session id
         // (x-session-id); paid models ignore it. Harmless to always send.
-        for k, v := range providerExtraHeaders(req.Provider, req.APIKey) {
+        // v1.14.6: per-chat scope (req.SessionID); "" falls back per key.
+        for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
                 h[k] = v
         }
         return h

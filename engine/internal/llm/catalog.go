@@ -513,7 +513,7 @@ func chatProbeResult(provider string, cfg ProviderConfig, apiKey, accountID, pro
         // its free-tier models — probing big-pickle without it always 400s).
         // v0.35: the SLOW client — NVIDIA's free tier queues ~30s before the
         // first byte, and the 9s sync client made every probe time out.
-        status, body, err := httpPostJSONWith(probeSlowHTTP, effectiveBaseURL(provider, cfg, accountID)+"/chat/completions", apiKey, payload, providerExtraHeaders(provider, apiKey))
+        status, body, err := httpPostJSONWith(probeSlowHTTP, effectiveBaseURL(provider, cfg, accountID)+"/chat/completions", apiKey, payload, providerExtraHeaders(provider, apiKey, ""))
         if err != nil {
                 reason := "network: " + err.Error()
                 if strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Timeout") {

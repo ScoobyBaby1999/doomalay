@@ -58,14 +58,53 @@ otel-go (no-op default), GenAI semconv spans (turn → llm call → tool call),
 OTLP/HTTP exporter behind settings, Langfuse v3 self-host documented as the
 first sink. Hooks = span events, riding the MCP wave's Observer chain.
 
-### v1.14.3 — THE SOLID STREAM
-Terminal-state machine generalized over every stream path (the silent-stop
-net leaves the native-only ghetto); reasoning normalization table
-(reasoning_content / reasoning / `<think>`-in-content stripper); the PWA
-sessions.ts append-only fix + WS-replay rig; finish_reason=length honest
-auto-continue (one continuation round, announced, budget-capped).
+### THE SOLID STREAM (planned v1.14.3; lands v1.14.6 — the MCP wave's script
+### commits took v1.14.2/3, THE TRACE took v1.14.4, the E2E heals v1.14.5)
+RE-SCOPED by the user (the three corrections): one bot per convo → per-bot
+isolation is the law; per-chat WebSockets are already the transport (keep
+them); turns may run 24h+ — the continuation ban was on UNKNOWABLE loops,
+not long turns.
 
-### v1.14.4 — THE STEADY HANDS (post-MCP leftovers)
+1. **Per-bot isolation (the user's infrequent leak)** — the user hit tools
+   generating for all bots of one provider across fresh chats. Root cause
+   found in the audit: `opencodeSessionCache` derived x-session-id PER API
+   KEY — every chat on the same key shared one upstream Zen session
+   identity. Fix: scope per chat session id (stable across restarts, unique
+   per bot), per-key fallback only for sessionless paths (probes). Full
+   package-state audit lands with it: config tables stay read-only; any
+   state touched per request must be sharded by session id or mutex-guarded.
+2. **Per-bot terminal-state machine** — one FSM INSTANCE per turn/bot
+   (owned by the turn goroutine, keyed by req.SessionID — no global mutable
+   state): dispatch → open → streaming → tool rounds → terminal verdict.
+   Generalized over every stream path (the silent-stop net leaves the
+   native-only ghetto): a stream that stops without a terminal verdict
+   (stop/length/tool_calls/error) is detected, recorded via the LEDGER's
+   finish_reason plumbing, and healed — never silently done.
+3. **Reasoning normalization table** — reasoning_content (DeepSeek-style) /
+   reasoning (OpenRouter-style) / `<think>`-in-content stripper → one
+   canonical reasoning channel for every provider.
+4. **PWA append-only + the WS-replay rig** — per-chat WS confirmed as the
+   architecture (one socket per session, generation-guarded swap, the turn
+   survives reconnects server-side; workspace grouping stays a UI-stub,
+   NOT transport multiplexing). Gaps to close: reconnects upgrade to
+   `since=<lastSeq>` incremental replay (full replay only on cold open);
+   the derived-messages pipeline becomes incremental (per-event reducers,
+   not eventsToMessages(all) per event — O(n²) melts on 24h turns); the
+   rig proves open → stream → drop → reconnect(since) yields byte-identical
+   state vs the never-disconnected control.
+5. **The honest continuation engine (the user's 24h-turn directive)** —
+   finish_reason=length is PER-COMPLETION physics (the provider's
+   limit.output), not a turn limit; a turn is a chain. When a completion
+   ends on the cap mid-sentence, the engine continues from where it stopped,
+   governed by a PER-CHAT TURN BUDGET (the user's slider: Off / N rounds /
+   Unbounded — default Unbounded; taught to the bot in the session preamble
+   so it knows its own policy). Every continuation is announced in-band
+   (round no. + tokens carried), persisted, traced (the v1.14.4 rings),
+   usage-accumulated live, interruptible by the stop button. A no-token
+   stall is NOT a continuation (the stall-guards keep their job);
+   compaction owns the context window across rounds.
+
+### v1.14.7 — THE STEADY HANDS (post-MCP leftovers; planned v1.14.4, the label went to THE TRACE)
 Tool-result enrichment (the Anthropic effective-tools guidance); the two dead
 tools get real returns or honest removal; native tool_calls stay the ONLY
 path (no fallbacks — done by the MCP wave, verified here).
@@ -78,6 +117,12 @@ The wave record + buildinfo bump + rebase-before-push.
 - The snapshot refresh NEVER blocks a turn (embedded copy serves; refresh is
   a build-time action).
 - The guard NEVER blocks or cancels a turn — it only speaks.
-- No auto-continue loops beyond one round (Phase 3) — runaway continuation
-  is the failure mode, not the feature.
+- Silent continuation is banned; long turns are not. Unbounded continuation
+  (Phase 3, the user's 24h directive) is legal ONLY because it is announced,
+  traced, budgeted per chat, and interruptible — a loop nobody can see is
+  the failure mode; a loop on the timeline is a feature.
+- The per-completion output cap (limit.output) is provider physics — the
+  engine never fakes it away; it chains completions honestly instead.
+- No transport multiplexing: one WebSocket per chat stays (decoupled bots,
+  independent lifecycles); grouping is a UI concern.
 - No usage-endpoint breaking changes: new fields are additive.

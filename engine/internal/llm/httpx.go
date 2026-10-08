@@ -63,7 +63,8 @@ var providerStreamHTTP = &http.Client{
 
 // Package-internal provider quirks live here too.
 
-// opencodeSessionID derives a stable per-key session id for OpenCode Zen.
+// opencodeSessionID derives a stable session id for OpenCode Zen, scoped
+// PER CHAT — not per key (v1.14.6 THE SOLID STREAM, the cross-bot leak fix).
 //
 // v0.25 LIVE-DISCOVERY: zen's FREE models (big-pickle, *-free) reject
 // requests without an `x-session-id` header —
@@ -72,18 +73,25 @@ var providerStreamHTTP = &http.Client{
 //
 // (the upstream "Console" provider gates the free tier on a client session).
 // With ANY session id the free models serve normally (verified live:
-// real completions from big-pickle + nemotron-3.5-lightning-free). Derived
-// from the API key so it is stable across restarts with zero storage —
-// the closest match to how the real OpenCode client identifies a session.
-var opencodeSessionCache sync.Map // apiKey → session id
+// real completions from big-pickle + nemotron-3.5-lightning-free).
+//
+// v0.25 scoped the id to the API KEY — every chat sharing a key shared one
+// upstream session identity, and the user hit exactly that: tools generating
+// for all bots of the same provider across relatively fresh chats (one
+// chat's Zen session context bleeding into the others). The scope is now
+// the CHAT session id — stable across restarts (it is the DB id), unique
+// per bot, shared by nothing. Sessionless callers (the catalog probes,
+// sessionID == "") keep the legacy per-key id: probes are stateless health
+// checks and their identity stability is restart-safe by construction.
+var opencodeSessionCache sync.Map // scope key → session id
 
-func opencodeSessionID(apiKey string) string {
-        if id, ok := opencodeSessionCache.Load(apiKey); ok {
+func opencodeSessionID(scope string) string {
+        if id, ok := opencodeSessionCache.Load(scope); ok {
                 return id.(string)
         }
-        sum := sha256.Sum256([]byte("doomalay-zen-session:" + apiKey))
+        sum := sha256.Sum256([]byte("doomalay-zen-session:" + scope))
         id := "doomalay-" + hex.EncodeToString(sum[:8])
-        opencodeSessionCache.Store(apiKey, id)
+        opencodeSessionCache.Store(scope, id)
         return id
 }
 
@@ -142,16 +150,21 @@ func opencodeGenerateID(prefix string, descending bool, ts int64) string {
 // providerExtraHeaders returns provider-specific request headers beyond
 // auth (v0.35: the full OpenCode CLI identity set — UA, client, project,
 // session and request IDs — on top of the v0.25 x-session-id patch).
-func providerExtraHeaders(provider, apiKey string) map[string]string {
+// sessionID is the chat's id — "" on sessionless paths (probes).
+func providerExtraHeaders(provider, apiKey, sessionID string) map[string]string {
         if provider == "opencode" {
                 now := time.Now().UnixMilli()
+                scope := "key:" + apiKey // sessionless fallback (probes)
+                if sessionID != "" {
+                        scope = "chat:" + sessionID // per-bot identity (v1.14.6)
+                }
                 return map[string]string{
                         "User-Agent":         "opencode/" + opencodeCLIVersion + " ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14",
                         "x-opencode-client":  "cli",
                         "x-opencode-project": "global",
                         "x-opencode-session": opencodeGenerateID("ses", true, now-3000),
                         "x-opencode-request": opencodeGenerateID("msg", false, now),
-                        "x-session-id":       opencodeSessionID(apiKey), // v0.25 legacy — still accepted, kept stable per key
+                        "x-session-id":       opencodeSessionID(scope), // v0.25 legacy — now per-chat scoped
                 }
         }
         return nil
