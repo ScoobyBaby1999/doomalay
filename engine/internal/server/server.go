@@ -29,6 +29,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
@@ -62,6 +63,17 @@ type Server struct {
         remoteMu    sync.RWMutex
         remotes     map[string]*brain.RemoteBrain
         sharedBrain *brain.RemoteBrain
+
+        // v1.17.2 THE BRIDGE: the Termux bridge client (nil when the engine
+        // was not configured with --termux-bridge / DOOMALAY_TERMUX_BRIDGE —
+        // every desktop build; /api/termux/status then answers
+        // {"available":false} honestly). The probe result is cached (TTL
+        // 30s) with in-flight dedup so the setup overlay can poll without
+        // hammering the RUN_COMMAND round-trip.
+        termux       *termuxbridge.Client
+        termuxMu     sync.Mutex
+        termuxCache  termuxProbeCache
+        termuxFlight chan struct{}
 }
 
 // New constructs the server and registers all routes.
@@ -81,6 +93,11 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         }
 
         s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
+        // v1.17.2 THE BRIDGE: the Termux bridge client (nil = not configured;
+        // /api/termux/status answers {"available":false}).
+        if cfg.TermuxBridge != "" {
+                s.termux = termuxbridge.NewClient(cfg.TermuxBridge)
+        }
         // v0.31: the hub service (local store + vault + HF client). Nil-DB
         // safe for the pathological test boot (routes would 500, not panic).
         s.hub = hub.NewService(cfg.Hub.HFBase, db, vault)
@@ -182,6 +199,12 @@ func (s *Server) routes() {
         // API endpoints (one per resource).
         s.mux.HandleFunc("GET /api/health", s.handleHealth)
         s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+        // v1.17.2 THE BRIDGE: the Termux status aggregation + act surface.
+        // Honest when unconfigured (desktop): {"available":false}. The
+        // v1.17.3 setup overlay polls status and fires the open-* intents
+        // through act.
+        s.mux.HandleFunc("GET /api/termux/status", s.handleTermuxStatus)
+        s.mux.HandleFunc("POST /api/termux/act", s.handleTermuxAct)
         // v0.48 (task 5): dev-build-only shared public provider keys.
         s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
         s.mux.HandleFunc("GET /api/models", s.handleModels)

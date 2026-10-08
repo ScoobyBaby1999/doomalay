@@ -30,6 +30,10 @@ func main() {
         bind := flag.String("bind", "", "override bind address (default: 127.0.0.1, or config bind; set to 0.0.0.0 for LAN)")
         dataDir := flag.String("data-dir", "", "override data directory for SQLite + workspaces (default: ~/.local/share/doomalay)")
         openBrowser := flag.Bool("open", false, "open the system browser on start (default: true on desktop, false on Android)")
+        // v1.17.2 THE BRIDGE: the APK's Kotlin TermuxBridgeServer loopback
+        // URL (http://127.0.0.1:<port>/<token>) — EngineService passes it
+        // here; $DOOMALAY_TERMUX_BRIDGE is the alternative source.
+        termuxBridge := flag.String("termux-bridge", "", "Termux bridge base URL (APK builds: the Kotlin loopback server URL; alt: $DOOMALAY_TERMUX_BRIDGE)")
         flag.Parse()
 
         // Pass CLI overrides INTO Load so they're applied BEFORE the MkdirAll
@@ -41,6 +45,7 @@ func main() {
                 Bind:        *bind,
                 DataDir:     *dataDir,
                 OpenBrowser: *openBrowser,
+                TermuxBridge: *termuxBridge,
         })
         if err != nil {
                 log.Fatalf("config: %v", err)

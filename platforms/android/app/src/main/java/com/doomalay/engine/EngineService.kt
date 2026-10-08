@@ -14,6 +14,15 @@ class EngineService : Service() {
     @Volatile private var engineRunning = false
     private var restarts = 0
 
+    // v1.17.2 THE BRIDGE: the Termux loopback server (the Kotlin half of
+    // the RUN_COMMAND contract — PLAN-V117 §v1.17.2). Started once per
+    // service lifetime, BEFORE the engine, so the URL stays stable across
+    // watchdog restarts (the restarted engine gets the same --termux-bridge
+    // URL). Failure is honest and non-fatal: the engine then runs without
+    // the flag and /api/termux/status answers {"available":false}.
+    private var bridgeServer: TermuxBridgeServer? = null
+    private var bridgeUrl: String? = null
+
     override fun onCreate() {
         super.onCreate()
         AppLog.init(this)
@@ -32,6 +41,20 @@ class EngineService : Service() {
             startForeground(1, notification)
         }
         AppLog.log("Foreground service started")
+
+        // v1.17.2 THE BRIDGE: host the Termux bridge loopback server
+        // (127.0.0.1, token-authed) before the engine starts, and hand its
+        // URL to the engine so /api/termux/status can aggregate through it.
+        if (bridgeServer == null) {
+            try {
+                val server = TermuxBridgeServer(this)
+                bridgeUrl = server.start()
+                bridgeServer = server
+            } catch (e: Exception) {
+                AppLog.error("Termux bridge server failed to start (engine runs without it)", e)
+                bridgeUrl = null
+            }
+        }
 
         // v0.15: startEngine() is now guarded — calling onStartCommand twice
         // (app reopen while the service lives) must not double-spawn the
@@ -55,12 +78,20 @@ class EngineService : Service() {
                 val dataDir = filesDir.absolutePath
                 AppLog.log("Data dir: $dataDir")
 
-                val pb = ProcessBuilder(
+                val pbArgs = mutableListOf(
                     binary,
                     "--port", "8080",
                     "--bind", "127.0.0.1",
                     "--data-dir", dataDir
                 )
+                // v1.17.2: the Termux bridge URL when the loopback server
+                // lives — the engine's termuxbridge client +
+                // /api/termux/status aggregation key off it.
+                bridgeUrl?.let { u ->
+                    pbArgs.add("--termux-bridge")
+                    pbArgs.add(u)
+                }
+                val pb = ProcessBuilder(pbArgs)
                 pb.redirectErrorStream(true)
                 engineProcess = pb.start()
                 AppLog.log("Go process started")
@@ -104,6 +135,10 @@ class EngineService : Service() {
         AppLog.log("EngineService.onDestroy")
         serviceStopping = true
         engineProcess?.destroy()
+        // v1.17.2: the Termux bridge loopback server dies with the service.
+        bridgeServer?.stop()
+        bridgeServer = null
+        bridgeUrl = null
         super.onDestroy()
     }
 

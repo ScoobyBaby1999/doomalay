@@ -38,6 +38,13 @@ type Config struct {
 	AllowedOrigins []string `yaml:"allowed_origins"` // CORS + WS origin allowlist (e.g. ["https://doomalay.mydomain.com"])
 	Bind           string   `yaml:"bind"`            // bind address (default: 127.0.0.1 — localhost only; set to 0.0.0.0 for LAN)
 
+	// v1.17.2 THE BRIDGE: the APK's Termux bridge loopback base URL
+	// (http://127.0.0.1:<port>/<token> — EngineService hosts the Kotlin
+	// TermuxBridgeServer and passes it as --termux-bridge). Empty on every
+	// desktop build → /api/termux/status answers {available:false} honestly.
+	// Alternative sources: $DOOMALAY_TERMUX_BRIDGE (tests + power users).
+	TermuxBridge string `yaml:"termux_bridge"`
+
 	// v0.31: the Hub (modular library system). HFBase is the Hugging Face
 	// instance the hub talks to (default https://huggingface.co; override
 	// via DOOMALAY_HUB_HF_BASE — mock-server tests + self-hosted HF later).
@@ -56,10 +63,11 @@ type Hub struct {
 // (~/.local/share/doomalay, which on Android is /sdcard/.local/share/doomalay
 // and is not writable) even when --data-dir was passed on the command line.
 type Overrides struct {
-	Port        int    // --port
-	Bind        string // --bind
-	DataDir     string // --data-dir
-	OpenBrowser bool   // --open (only overrides if true; default CLI value is false)
+	Port         int    // --port
+	Bind         string // --bind
+	DataDir      string // --data-dir
+	OpenBrowser  bool   // --open (only overrides if true; default CLI value is false)
+	TermuxBridge string // --termux-bridge (v1.17.2: the APK loopback bridge URL)
 }
 
 // Load resolves and parses the config, applying CLI overrides BEFORE any
@@ -100,6 +108,12 @@ func Load(path string, ov Overrides) (*Config, error) {
 	if b := os.Getenv("DOOMALAY_HUB_HF_BASE"); b != "" {
 		cfg.Hub.HFBase = b
 	}
+	// v1.17.2: the Termux bridge loopback URL (the alternative to the
+	// --termux-bridge flag — tests point engines at stub bridges, power
+	// users can wire one by hand). Same precedence shape as the hub env.
+	if b := os.Getenv("DOOMALAY_TERMUX_BRIDGE"); b != "" {
+		cfg.TermuxBridge = b
+	}
 
 	// Apply CLI overrides (highest priority, wins over YAML + env).
 	if ov.Port != 0 {
@@ -113,6 +127,9 @@ func Load(path string, ov Overrides) (*Config, error) {
 	}
 	if ov.OpenBrowser {
 		cfg.OpenBrowser = true
+	}
+	if ov.TermuxBridge != "" {
+		cfg.TermuxBridge = ov.TermuxBridge
 	}
 
 	// Defaults for paths. Only applied if still empty after all overrides.
@@ -160,6 +177,12 @@ func Load(path string, ov Overrides) (*Config, error) {
 	}
 	for strings.HasSuffix(cfg.Hub.HFBase, "/") {
 		cfg.Hub.HFBase = cfg.Hub.HFBase[:len(cfg.Hub.HFBase)-1]
+	}
+
+	// v1.17.2: termux bridge base URL trailing-slash hygiene (the client
+	// joins route paths with "/" — same reason as the hub base).
+	for strings.HasSuffix(cfg.TermuxBridge, "/") {
+		cfg.TermuxBridge = cfg.TermuxBridge[:len(cfg.TermuxBridge)-1]
 	}
 
 	// SECURITY: data dir is 0o700 (owner-only). secrets.json + master.key

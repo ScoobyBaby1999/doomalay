@@ -4,6 +4,21 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v1.17.2 THE BRIDGE: the RUN_COMMAND intent contract (PLAN-V117).
+         Termux (F-Droid build only — the Play one is dead at 0.101) requires
+         BOTH apps to declare this permission and the USER to grant it in
+         Settings → Apps → Doomalay → Permissions → Additional permissions.
+         Dangerous-level on purpose: it lets us ask Termux to run a jailed
+         one-shot bash command and get stdout/stderr/exitCode back through
+         a PendingIntent. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- v1.17.2: package visibility (targetSdk ≥ 30). Without this entry
+         PackageManager lookups for com.termux return "not installed" even
+         when it IS installed — the honest-state ladder would lie. -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
 
     <application
         android:label="Doomalay"
