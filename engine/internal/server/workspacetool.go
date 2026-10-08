@@ -89,12 +89,27 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 action = "help"
         }
 
+        // v1.19.2: resolved ONCE — bound rows first, then the public-ref
+        // fallback (read verbs only). Every case below uses toolWS.
+        toolWS := resolveWSToolRef(bound, get("ws"))
+        if toolWS == nil {
+                if pw := publicWorkspaceRef(get("ws")); pw != nil {
+                        if !publicReadVerb(action) {
+                                return "OBSERVATION:\nerror: \"" + pw.Name + "\" is not a connected workspace — public, unbound access is READ-ONLY, and \"" + action + "\" writes to a repo (it needs a token). The user connects one via the chat header's +workspace pill (GitHub/Gitea/GitLab/sourcehut sign-in); private repos need the same connection." + workspaceHelpTail()
+                        }
+                        toolWS = pw
+                } else if verbNeedsWS(action) {
+                        // not a public ref either — the anti-thrash teach
+                        return wsNotFound(bound, get("ws"))
+                }
+        }
+
         switch action {
         case "help":
                 return "OBSERVATION:\n" + workspaceHelpText(len(bound))
         case "list":
                 if len(bound) == 0 {
-                        return "OBSERVATION:\nno cloud workspace is connected to this chat yet. The user connects one from the chat header's +workspace pill (GitHub/Gitea/GitLab/sourcehut URL + sign-in, or any public repo read-only). Use action \"discover\" once one is connected, or answer from context." + workspaceHelpTail()
+                        return "OBSERVATION:\nno cloud workspace is connected to this chat yet. PUBLIC repos still work unbound: {\"action\":\"read\",\"ws\":\"owner/repo\",\"path\":\"README.md\"} (also info/tree/ls/readme/grep/view) — any GitHub owner/repo, or a full forge URL. Private repos and WRITES (put/pr/issues/…) need a real connection: the user connects one from the chat header's +workspace pill." + workspaceHelpTail()
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%d connected workspace(s):\n", len(bound))
@@ -104,14 +119,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 return "OBSERVATION:\n" + sb.String()
         case "info":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 c := s.wsClient(ws)
                 meta, err := c.RepoInfo(ctx, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%s [%s] access=%s\n", ws.Name, ws.Kind, ws.Access)
@@ -129,10 +141,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 fmt.Fprintf(&sb, "url: %s\n", meta.WebURL)
                 return "OBSERVATION:\n" + sb.String()
         case "tree", "ls":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 path := forge.NormalizeTreePath(get("path")) // v0.82.4: "." → "" (the dead-prefix bug)
                 ref := refOrWS(get("ref"), ws)
                 c := s.wsClient(ws)
@@ -146,21 +155,18 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         entries = onlyDirsAndTopLevel(entries, path)
                 }
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\n" + wsTreeText(ws, path, ref, entries, truncated)
         case "read":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 path := forge.NormalizeTreePath(get("path")) // v0.82.4: "./f.go" → "f.go"
                 if path == "" {
                         return "OBSERVATION:\nerror: read needs {\"ws\":…, \"path\":\"the/file\"} — range: head:80 | tail:40 | lines:10-60"
                 }
                 fc, err := s.wsClient(ws).File(ctx, path, refOrWS(get("ref"), ws), get("range"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 if fc.Binary {
                         return "OBSERVATION:\n" + path + " is a binary file (" + fmt.Sprint(fc.Size) + " bytes) — no text to read"
@@ -168,21 +174,15 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 body := fc.Content // v1.19.1: full content — no cap
                 return "OBSERVATION:\n" + path + " (" + fmt.Sprint(fc.Size) + " bytes, blob sha " + fc.SHA + ")\n" + body
         case "readme":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 fc, err := s.wsClient(ws).Readme(ctx, refOrWS(get("ref"), ws), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 body := fc.Content // v1.19.1: full content — no cap
                 return "OBSERVATION:\nREADME of " + ws.Name + ":\n" + body
         case "grep":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 q := get("query")
                 if q == "" {
                         return "OBSERVATION:\nerror: grep needs {\"ws\":…, \"query\":\"text\"}"
@@ -190,7 +190,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = UNLIMITED — the model narrows with a positive limit when it wants speed
                 hits, err := s.wsClient(ws).Search(ctx, q, refOrWS(get("ref"), ws), s.wsToken(ws), limit)
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%d hit(s) for %q in %s:\n", len(hits), q, ws.Name)
@@ -209,10 +209,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 return "OBSERVATION:\n" + sb.String()
         case "view":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 what := get("what")
                 if what == "" {
                         what = get("view") // tolerate the alternate key
@@ -224,10 +221,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = the forge's full default page
                 return "OBSERVATION:\n" + s.wsViewText(ctx, ws, what, state, limit)
         case "put":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — direct file writes need FULL access. The partial path: fork (this tool) → write to the fork → pr. The user can attach a write token via the workspace's ⚙ (POST /api/workspaces/{id}/token)."
                 }
@@ -278,7 +272,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := c.PutFile(ctx, path, branch, message, get("content"), sha, tok)
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 out := "COMMITTED — " + path + " @ " + branch
                 if branchCreated {
@@ -287,10 +281,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 return "OBSERVATION:\n" + out + "\ncommit: " + url +
                         "\nnext: the workspace tool with {\"action\":\"pr\",\"ws\":\"" + ws.Name + "\",\"head\":\"" + branch + "\",\"base\":\"" + wsBranchOr(ws, "main") + "\"} opens the pull request."
         case "pr":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — fork it first (action \"fork\"), connect the fork, then open the PR from the fork branch (head \"owner:branch\" on GitHub)."
                 }
@@ -308,7 +299,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 pr, err := s.wsClient(ws).CreatePullRequest(ctx, title, get("body"), head, base, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nPR OPENED — #" + fmt.Sprint(pr.Number) + " " + pr.Title + " (" + head + " → " + base + ")\nurl: " + pr.URL
         // ── v0.81.6 THE FULL REPO HAND — the missing verbs (user spec:
@@ -319,10 +310,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
         // FULL — the same read → browse / partial → +PR / full → +write
         // contract the v0.76.5 verbs established.
         case "branch", "branch_create":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull && ws.Access != forge.AccessPartial {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — creating a branch needs at least partial access (fork it first at read tier)."
                 }
@@ -335,15 +323,12 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).CreateBranch(ctx, name, get("from"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nBRANCH CREATED — " + name + " " + url +
                         "\nnext: the workspace tool with {\"action\":\"put\",\"ws\":\"" + ws.Name + "\",\"path\":\"file\",\"content\":\"…\",\"branch\":\"" + name + "\"} commits to it, then action \"pr\" opens the pull request."
         case "issue_create", "issue":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — filing issues needs at least partial access."
                 }
@@ -361,14 +346,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 issue, err := s.wsClient(ws).CreateIssue(ctx, title, get("body"), labels, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nISSUE OPENED — #" + fmt.Sprint(issue.Number) + " " + issue.Title + "\nurl: " + issue.URL
         case "issue_comment", "comment":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — commenting needs at least partial access."
                 }
@@ -381,14 +363,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nCOMMENT POSTED — " + url
         case "issue_close", "issue_open", "issue_state":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — changing issue state needs at least partial access."
                 }
@@ -408,14 +387,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).SetIssueState(ctx, n, state, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nISSUE " + strings.ToUpper(state) + " — " + url
         case "pr_diff", "diff":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 n := wsArgInt(args, "number", 0)
                 if n == 0 {
                         n = wsArgInt(args, "pr", 0)
@@ -425,7 +401,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 diff, err := s.wsClient(ws).PRDiff(ctx, n, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 // v1.19.1: the full unified diff — no cap.
                 if strings.TrimSpace(diff) == "" {
@@ -433,10 +409,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 return "OBSERVATION:\nDIFF of PR #" + fmt.Sprint(n) + " in " + ws.Name + ":\n" + diff
         case "pr_comment":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — commenting needs at least partial access."
                 }
@@ -449,14 +422,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nPR COMMENT POSTED — " + url
         case "pr_review", "review":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — submitting reviews needs at least partial access."
                 }
@@ -473,14 +443,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).CreatePRReview(ctx, n, get("body"), event, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nREVIEW SUBMITTED (" + event + ") — " + url
         case "pr_merge", "merge":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — merging is a strong write and needs FULL access."
                 }
@@ -497,14 +464,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 out, err := s.wsClient(ws).MergePullRequest(ctx, n, get("title"), get("message"), method, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nPR MERGED — #" + fmt.Sprint(n) + " " + out
         case "discussion_post", "discuss":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is read-only — posting discussions needs at least partial access (and Discussions enabled on the repo)."
                 }
@@ -514,14 +478,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 out, err := s.wsClient(ws).DiscussionPost(ctx, title, get("body"), get("category"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nDISCUSSION OPENED — " + out
         case "workflow_dispatch", "dispatch":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — dispatching workflows needs FULL access."
                 }
@@ -543,14 +504,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         }
                 }
                 if err := s.wsClient(ws).DispatchWorkflow(ctx, workflow, ref, inputs, s.wsToken(ws)); err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nWORKFLOW DISPATCHED — " + workflow + " @ " + ref + " (check the run with action \"view\" {\"what\":\"runs\"})"
         case "file_delete", "delete":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — deleting files needs FULL access."
                 }
@@ -583,14 +541,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := c.DeleteFile(ctx, path, branch, message, sha, tok)
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nDELETED — " + path + " @ " + branch + "\ncommit: " + url
         case "release_create", "release":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
                         return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — creating releases needs FULL access."
                 }
@@ -600,20 +555,17 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 url, err := s.wsClient(ws).CreateRelease(ctx, tag, get("name"), get("body"), get("target"), s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nRELEASE PUBLISHED — " + tag + "\nurl: " + url
         case "fork":
-                ws := resolveWSToolRef(bound, get("ws"))
-                if ws == nil {
-                        return wsNotFound(bound, get("ws"))
-                }
+                ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if s.wsToken(ws) == "" {
                         return "OBSERVATION:\nerror: forking needs a forge token — the user attaches one via the workspace's ⚙ or the connect flow (GitHub sign-in)"
                 }
                 full, err := s.wsClient(ws).Fork(ctx, s.wsToken(ws))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nFORKED — " + full + "\nthe fork lives in the user's own account: connecting it (the +workspace pill with the fork's URL + write token) gives write access, then action \"pr\" with head \"owner:branch\" opens the PR back to " + ws.Name
         case "create":
@@ -627,7 +579,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 ws, err := s.createWorkspaceRepoTyped(ctx, kind, name, get("description"), get("license"), get("gitignore"), get("hf_type"), get("sdk"), wsArgBool(args, "private"))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 what := ws.Name
                 if ws.Kind == "hf" {
@@ -651,7 +603,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         WebBase: "https://" + hostOfKind(kind), APIBase: apiBaseFor(kind, hostOfKind(kind))}).
                         ListUserRepos(ctx, tok, wsArgInt(args, "limit", 30))
                 if err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
+                        return "OBSERVATION:\nerror: " + err.Error() // discover is account-level — no ws row in scope
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%d repo(s) in the connected %s account:\n", len(repos), kind)
@@ -788,7 +740,11 @@ func (s *Server) sessionCloudWorkspaces(sessionID string) []*store.Workspace {
 func (s *Server) workspaceManifestFor(sessionID string) string {
         bound := s.sessionCloudWorkspaces(sessionID)
         if len(bound) == 0 {
-                return ""
+                // v1.19.2 THE UNBOUND HAND: unbound chats still hold the public
+                // read hand — the model must know it exists BEFORE it falls back
+                // to raw fetching (the user's live repro: the bot burned rounds
+                // hand-rolling fetches the workspace tool does natively).
+                return "PUBLIC REPO ACCESS (no connection needed): the workspace tool reads PUBLIC repos unbound — {\"action\":\"read\",\"ws\":\"owner/repo\",\"path\":\"README.md\"} and info/tree/ls/readme/grep/view, for any GitHub owner/repo or a full forge URL (gitea/gitlab/sourcehut/HF). Prefer this over hand-built fetches. Private repos and writes (put/pr/issues/…) need the user to connect a workspace (the +workspace pill)."
         }
         var sb strings.Builder
         sb.WriteString("CONNECTED CLOUD WORKSPACES (this chat's repos — act on them with the workspace tool):\n")
@@ -829,6 +785,95 @@ func resolveWSToolRef(bound []*store.Workspace, ref string) *store.Workspace {
                 }
         }
         return nil
+}
+
+
+// ── v1.19.2 THE UNBOUND HAND ─────────────────────────────────────────────
+// A `ws` ref that matches no bound row can still be a PUBLIC repo
+// ("owner/repo" shorthand, or any forge URL the Recognize grammar knows).
+// PLAN-V119 §2: the gate moves from "a workspace is BOUND" to "the
+// operation needs a token". Public reads run tokenless (the vault's
+// GitHub token lifts the anonymous rate limit when one exists); every
+// write verb stays gated on a REAL bound workspace, because a token is
+// genuinely required there — the system's gate, not a vestigial one.
+
+// publicReadVerb: the verbs that never need credentials on a public repo.
+func publicReadVerb(action string) bool {
+        switch action {
+        case "info", "tree", "ls", "read", "readme", "grep", "view":
+                return true
+        }
+        return false
+}
+
+// verbNeedsWS: every verb that resolves a workspace row (help, list and
+// discover are account/chat-level and skip the resolution entirely).
+func verbNeedsWS(action string) bool {
+        if publicReadVerb(action) {
+                return true
+        }
+        switch action {
+        case "put", "pr", "fork", "create", "branch", "file_delete",
+                "issue_create", "issue_comment", "issue_close",
+                "pr_diff", "pr_comment", "pr_review", "pr_merge",
+                "discussion_post", "workflow_dispatch", "release_create":
+                return true
+        }
+        return false
+}
+
+// publicWorkspaceRef parses an unbound ref into an ephemeral READ-tier
+// workspace row. nil when the ref is not a repo-ish shape (bare names
+// still mean "my bound repos" and fall through to the teach text).
+func publicWorkspaceRef(ref string) *store.Workspace {
+        ref = strings.TrimSpace(ref)
+        if ref == "" {
+                return nil
+        }
+        var hi forge.HostInfo
+        if strings.Contains(ref, "://") || strings.Contains(ref, ".") {
+                // URL-ish: let the Recognize grammar judge (github.com/o/r,
+                // https://gitlab.com/group/sub/repo, git.sr.ht/~u/r, HF…).
+                parsed, err := forge.Recognize(ref)
+                if err != nil || parsed.Kind == "unknown" || parsed.Kind == "generic" || parsed.Owner == "" || parsed.Repo == "" {
+                        return nil
+                }
+                hi = parsed
+        } else if parts := strings.Split(ref, "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+                hi = forge.HostInfo{Kind: "github", Host: "github.com", WebBase: "https://github.com",
+                        APIBase: "https://api.github.com", Owner: parts[0], Repo: parts[1],
+                        ProjectPath: parts[0] + "/" + parts[1]}
+        } else {
+                return nil
+        }
+        return &store.Workspace{
+                ID: "public:" + hi.Owner + "/" + hi.Repo, Name: hi.Owner + "/" + hi.Repo,
+                Kind: hi.Kind, Host: hi.Host, Owner: hi.Owner, Repo: hi.Repo,
+                RepoURL: hi.WebBase + "/" + hi.ProjectPath,
+                Access:  forge.AccessRead,
+        }
+}
+
+// isPublicRefRow: the ephemeral read-tier row built by publicWorkspaceRef.
+func isPublicRefRow(ws *store.Workspace) bool {
+        return ws != nil && strings.HasPrefix(ws.ID, "public:")
+}
+
+// wsPublicErr annotates tokenless failures with the honest cause (the
+// anti-thrash discipline: never a bare HTTP status).
+func wsPublicErr(ws *store.Workspace, err error) string {
+        msg := err.Error()
+        if !isPublicRefRow(ws) {
+                return msg
+        }
+        low := strings.ToLower(msg)
+        switch {
+        case strings.Contains(low, "http 403") || strings.Contains(low, "rate limit"):
+                return msg + " — GitHub's anonymous API is rate-limited (60 req/h per IP, shared networks burn it fast). The user binding a workspace (the +workspace pill) carries a token that lifts this."
+        case strings.Contains(low, "http 404") || strings.Contains(low, "not found"):
+                return msg + " — a 404 under anonymous access means the repo is PRIVATE, renamed, or deleted; anonymous requests cannot see private repositories. Binding a workspace with a token sees private repos."
+        }
+        return msg
 }
 
 // wsNotFound teaches the model which workspaces DO exist (the anti-thrash

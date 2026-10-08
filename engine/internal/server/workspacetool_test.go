@@ -377,10 +377,21 @@ func TestV765_WsResolutionAndTeach(t *testing.T) {
 	if !strings.Contains(out, "me/fullrepo") {
 		t.Fatalf("id: %q", out)
 	}
-	// no match → lists the actual workspaces (anti-thrash)
-	out = wsRun(s, sid, `{"action":"info","ws":"nope/nope"}`)
+	// no match → lists the actual workspaces (anti-thrash). v1.19.2: a BARE
+	// name that matches nothing stays the teach case — an owner/repo ref is
+	// now a PUBLIC read (pinned right after).
+	out = wsRun(s, sid, `{"action":"info","ws":"nosuchrow"}`)
 	if !strings.Contains(out, "no connected workspace matches") || !strings.Contains(out, "me/fullrepo") {
 		t.Fatalf("no match teach: %q", out)
+	}
+	// v1.19.2 THE UNBOUND HAND: an owner/repo ref that matches no bound row
+	// resolves as a PUBLIC read and actually answers (against the fake).
+	out = wsRun(s, sid, `{"action":"info","ws":"nope/nope"}`)
+	if strings.Contains(out, "no connected workspace matches") {
+		t.Fatalf("v1.19.2: owner/repo refs are public reads now, got the old teach: %q", out)
+	}
+	if !strings.Contains(out, "nope/nope [github] access=read") {
+		t.Fatalf("unbound public info: %q", out)
 	}
 }
 
@@ -391,8 +402,10 @@ func TestV765_ManifestComposition(t *testing.T) {
 		!strings.Contains(m, "access=partial") || !strings.Contains(m, "fork+PR flows") {
 		t.Fatalf("manifest: %q", m)
 	}
-	if s.workspaceManifestFor("nonesuch") != "" {
-		t.Fatalf("manifest for unbound chat should be empty")
+	// v1.19.2: the unbound manifest teaches the PUBLIC read hand.
+	mu := s.workspaceManifestFor("nonesuch")
+	if !strings.Contains(mu, "PUBLIC REPO ACCESS") {
+		t.Fatalf("manifest for unbound chat must teach the public hand, got: %q", mu)
 	}
 }
 

@@ -41,6 +41,10 @@ import (
 // endpoints. Production: https://api.github.com.
 var GitHubAPIBase = "https://api.github.com"
 
+// GitHubRawBase is the raw CDN root (v1.19.2: a test seam like GitHubAPIBase —
+// unit tests point it at the fake so no test touches the real network).
+var GitHubRawBase = "https://raw.githubusercontent.com"
+
 func (c *Client) ghRepoInfo(ctx context.Context, token string) (*RepoMeta, error) {
         var m struct {
                 FullName      string `json:"full_name"`
@@ -164,7 +168,24 @@ func (c *Client) ghDirListing(ctx context.Context, path, ref, token string) ([]T
 }
 
 // ghFile: contents API returns base64 + sha; range slicing engine-side.
+// v1.19.2 THE UNBOUND HAND: a TOKENLESS read (a public repo, no bound
+// workspace) rides raw.githubusercontent.com FIRST — a CDN with no 60 req/h
+// API ceiling, full content, no base64, no 1 MB JSON shape. The contents API
+// stays the fallback (and the sha source when a token makes it affordable).
 func (c *Client) ghFile(ctx context.Context, path, ref, rangeSpec, token string) (*FileContent, error) {
+        if token == "" {
+                ref2 := ref
+                if ref2 == "" {
+                        ref2 = "HEAD"
+                }
+                rawURL := GitHubRawBase + "/" + c.host.Owner + "/" + c.host.Repo +
+                        "/" + url.PathEscape(ref2) + "/" + strings.TrimPrefix(path, "/")
+                if data, rerr := c.do(ctx, "GET", rawURL, "", nil, "text/plain", maxFileBody); rerr == nil {
+                        return buildFileContent(path, "", data, rangeSpec), nil
+                }
+                // raw miss (private repo, odd ref, path casing) → the contents API's
+                // honest error is the answer the model needs.
+        }
         var f struct {
                 Name        string `json:"name"`
                 Path        string `json:"path"`
