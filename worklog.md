@@ -983,3 +983,41 @@ The user's four fronts, delivered as PLAN-V115 (four phases, ship v1.16.0):
 Ship v1.16.0: buildinfo carries the wave. Full battery green throughout
 (decouple 30/30 · v1136 67/67 · choice 19/19 · v1153 pins · llm · server ·
 isolation 12 · round-flow · interrupt 65).
+
+---
+## v1.18.0 — THE TERMUX WAVE (PLAN-V117, shipped 2026-10-08)
+
+The user's directive: Termux comes to the APK first; only quick chat
+exists; the +sandbox becomes a +capabilities overlay (stackable, the
+future library); the setup must be one-click or as close as possible; a
+live delta update system so users download only what changed.
+
+- **v1.17.1 THE PIVOT** — sandboxpicker.js deleted (665 lines incl. the
+  whole HF sub-picker family); capabilities.js born (the capability
+  library on the ConnectOverlay: stackable toggle rows + action rows +
+  the APK-only Termux row); gatelock = model + optional caps; quick by
+  birth (chatbot.js + sessionBody + engine default); chat_sessions.termux
+  column; sessionctx capabilities teaching.
+- **v1.17.2 THE BRIDGE** — RUN_COMMAND manifest permissions + queries;
+  TermuxBridge.kt (intent sender, PendingIntent results, honest ladder);
+  TermuxBridgeServer (token-authed loopback); engine --termux-bridge +
+  termuxbridge client + /api/termux/status (cached probe, honest ladder)
+  + /api/termux/act. APK CI green (Kotlin compiles).
+- **v1.17.3 THE SETUP** — termux/setup.sh (the curl bootstrap); the
+  setup overlay (4 auto-advancing step cards, 3s poll, READY card, Done
+  pop-back); the F-Droid 1002 + the one-liner.
+- **v1.17.4 THE LIVE UPDATE** — internal/ota + otaapi (status/check/
+  download, sha256-verified atomic downloads, ota-first static overlay =
+  restart-free apply); web/ota.js banner; CI manifest generation; the
+  old generate-patch-manifest.py retired.
+- **v1.17.5 THE REDTEAM** — the 108-check rig (fake bridge + fake OTA
+  against the live engine) + agent-browser E2E. Convicted + fixed:
+  quick-by-birth engine gap; renderTypePills undefined (killed the real
+  browser render while source rigs stayed green); pre-session caps lost
+  on reload (icon.caps stash); late pill repaint. The honest gap: the
+  com.termux intent round-trip needs real hardware —
+  docs/TERMUX-DEVICE-TEST.md is the checklist.
+
+The Termux capability is inert by design this wave — workspaces + the
+MCP tool layer (termux_exec + file verbs, jailed to the approved
+workspace) is PLAN-V118, the next wave.
