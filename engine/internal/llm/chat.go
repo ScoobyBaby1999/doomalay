@@ -209,6 +209,12 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
         errs := make(chan error, 1)
 
         go func() {
+                // v1.14.6 THE SOLID STREAM: the per-bot FSM — ONE instance per
+                // turn, riding the ctx; every stream path reports its lifecycle
+                // (open → deltas → wire verdict) and exits through sealTurn.
+                // Declared before the panic-guard defer so the defer's TurnEnd
+                // can report the verdict even for panicked turns.
+                fsm := newTurnFSM(ctx, req)
                 // v0.93.2 THE ENGINE-KILL GUARD: this producer goroutine is
                 // OUTSIDE every server-side recover middleware (it runs on
                 // its own stack, spawned per turn) — a panic anywhere in the
@@ -231,8 +237,14 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // v1.14.4 THE TRACE: the turn's terminal event — the
                         // goroutine returned (clean or panicked). The runners'
                         // Finish events carry the token truth; this closes the
-                        // turn record either way.
-                        obs.EmitS(ctx, obs.TurnEnd, "provider", req.Provider, "model", req.Model, "panicked", panicked)
+                        // turn record either way. v1.14.6: the FSM verdict —
+                        // stop/length/tool_calls/error/aborted/silent-stop/
+                        // empty/no-stream — the terminal-state machine's word,
+                        // sealed by the runner or computed here for the exits
+                        // that never reached one.
+                        v, rounds, fpath, fms := fsm.report()
+                        obs.EmitS(ctx, obs.TurnEnd, "provider", req.Provider, "model", req.Model, "panicked", panicked,
+                                "verdict", v, "rounds", rounds, "path", fpath, "duration_ms", fms)
                         close(ch)
                         close(errs)
                 }()
@@ -242,6 +254,8 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                 // of this turn descends from here. The dispatch PATH label rides
                 // the turn.dispatch event emitted inside each switch case below.
                 ctx = obs.TurnScope(ctx, req.SessionID)
+                // v1.14.6: the FSM rides the turn ctx from here down.
+                ctx = withFSM(ctx, fsm)
                 tctx, turnSpan := obs.StartTurnSpan(ctx, req.SessionID, req.Provider, req.Model, "pending")
                 ctx = tctx
                 defer turnSpan.End()
@@ -262,9 +276,11 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                 switch {
                 case req.DeepResearch && req.Provider != "":
                         obs.EmitS(ctx, obs.Dispatch, "path", "deep_research", "provider", req.Provider, "model", req.Model)
+                        fsm.dispatched("deep_research")
                         runDeepResearch(ctx, ch, errs, req)
                 case req.Provider != "" && req.AuthStyle != "anthropic" && !nativeToolsBlacklisted(req.Provider):
                         obs.EmitS(ctx, obs.Dispatch, "path", "native_tools", "provider", req.Provider, "model", req.Model, "reason", "tools-capable provider")
+                        fsm.dispatched("native_tools")
                         // v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
                         // v1.13.3 THE GUT + v1.13.6 THE THIRD CARRIER: EVERY
                         // OpenAI-compatible provider — openrouter INCLUDED —
@@ -283,6 +299,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         runNativeToolsTurn(ctx, ch, errs, req)
                 case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
                         obs.EmitS(ctx, obs.Dispatch, "path", "web_plugin", "provider", req.Provider, "model", req.Model, "reason", "provider-side web grounding")
+                        fsm.dispatched("web_plugin")
                         // v1.13.6: OpenRouter's provider-side search is now the
                         // FALLBACK (blacklisted or anthropic-wire turns) —
                         // provider-side web grounding without tools instead of
@@ -292,6 +309,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // a BLACKLISTED provider without the plugin: the loop
                         // skips tools upfront (v1.13.4 — no wasted 400s per
                         // turn) and answers honestly.
+                        fsm.dispatched("native_tools")
                         runNativeToolsTurn(ctx, ch, errs, req)
                 default:
                         // v0.20's unified ReAct tool loop is gone (v1.13.3 THE
@@ -300,6 +318,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // requests (runWebSearchTurn's Path A fires only for
                         // the plugin case routed above).
                         obs.EmitS(ctx, obs.Dispatch, "path", "plain", "provider", req.Provider, "model", req.Model, "reason", "anthropic-wire or provider-less")
+                        fsm.dispatched("plain")
                         runWebSearchTurn(ctx, ch, errs, req)
                 }
         }()
@@ -313,11 +332,30 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
         ch <- ChatChunk{Type: "status", State: "running"}
         final, err := streamCompletion(ctx, req, ch, nil)
         if err != nil {
+                sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
                 errs <- err
                 return
         }
-        _ = final
+        // v1.14.6 THE SILENT-STOP NET (the plain path — the net leaves the
+        // native-only ghetto): a clean 200 with ZERO deltas and no wire
+        // verdict is the "empty" class. Nothing was rendered, so ONE
+        // announced retry can never double-stream — the generalized
+        // answer-force net. "silent-stop" (deltas then no verdict) is NOT
+        // retried: content is already on screen; it is recorded honestly
+        // instead.
+        if v := sealTurn(ctx, ch, nil, final); v == "empty" {
+                obs.EmitS(ctx, obs.Notice, "where", "turnfsm", "verdict", v, "text", "plain turn ended empty — one retry armed")
+                ch <- ChatChunk{Type: "progress", Text: "the stream ended without a token — retrying once…"}
+                final, err = streamCompletion(ctx, req, ch, nil)
+                if err != nil {
+                        sealTurn(ctx, ch, err, nil)
+                        emitTurnError(ch, err)
+                        errs <- err
+                        return
+                }
+                sealTurn(ctx, ch, nil, final)
+        }
         ch <- ChatChunk{Type: "status", State: "idle", Usage: final}
 }
 
@@ -1149,6 +1187,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // request survives).
         RecordProviderSuccess(req.Provider)
         obs.EmitS(ctx, obs.StreamOpen, "model", req.Model, "provider", req.Provider, "status", 200)
+        fsmOpened(ctx) // v1.14.6: the FSM saw the 200
 
         // v0.19: no-data watchdog — v0.80.1: DISARMED. idleWaitFor returns 0
         // (no kill timer is armed — the user directive: no timer may cancel
@@ -1208,6 +1247,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 if !firstTok {
                                         firstTok = true
                                         obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "tool_call")
+                                        fsmStreamed(ctx) // v1.14.6: real wire traffic
                                 }
                                 pos, ok := callIdx[tc.Index]
                                 if !ok {
@@ -1247,6 +1287,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 if !firstTok {
                                         firstTok = true
                                         obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "delta")
+                                        fsmStreamed(ctx) // v1.14.6: real wire traffic
                                 }
                                 // v1.14.4 THE TRACE: reasoning + content deltas
                                 // under the DOOM_TRACE_DELTAS gate (0 = counts
@@ -1290,6 +1331,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 usage.FinishReason = lastFinishReason
                 usage.OutputCut = lastFinishReason == "length"
         }
+        fsmWire(ctx, usage) // v1.14.6: the per-completion wire verdict feeds the FSM
         // v0.95.4 END-OF-STREAM: flush the DSML filter (salvage an
         // unterminated block — the finish_reason=length class — release held
         // partial openers, deliver rescued calls to the right consumer) and
@@ -1541,13 +1583,15 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 msgs[0].Content = templateBriefBlock(req.TemplateID, req.TemplateBrief) + "\n" + msgs[0].Content
                                 aReq.Messages = msgs
                         }
-                        _, err := streamCompletion(ctx, aReq, ch, native)
+                        u, err := streamCompletion(ctx, aReq, ch, native)
                         if err != nil {
+                                sealTurn(ctx, ch, err, nil)
                                 emitTurnError(ch, err)
                                 errs <- err
                                 return
                         }
-                        ch <- ChatChunk{Type: "status", State: "idle"}
+                        sealTurn(ctx, ch, nil, u)
+                        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
                         return
                 }
         }
@@ -1556,13 +1600,15 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         // Chat sends OpenRouter web turns here; anything else landing on
         // this branch still gets an honest streamed answer, just no
         // provider-side search).
-        _, err := streamCompletion(ctx, req, ch, nil)
+        u, err := streamCompletion(ctx, req, ch, nil)
         if err != nil {
+                sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
                 errs <- err
                 return
         }
-        ch <- ChatChunk{Type: "status", State: "idle"}
+        sealTurn(ctx, ch, nil, u)
+        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
 }
 
 // executeAction runs ONE parsed tool call and returns its observation
@@ -2111,6 +2157,7 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         results, err := WebSearch(ctx, question, 8, req.TavilyKey)
         if err != nil {
                 ch <- ChatChunk{Type: "error", Error: "web_search", Message: err.Error()}
+                sealTurn(ctx, ch, err, nil)
                 ch <- ChatChunk{Type: "status", State: "error"}
                 return
         }
@@ -2163,13 +2210,15 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         synthReq := req
         synthReq.SystemPrompt = "You are a meticulous research analyst. Write a thorough, well-structured answer with inline citations like [1], [2] referring to the numbered sources. If sources conflict, say so. End with a short 'Sources' list. Never fabricate facts or URLs."
         synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
-        _, err = streamCompletion(ctx, synthReq, ch, nil)
+        u, err := streamCompletion(ctx, synthReq, ch, nil)
         if err != nil {
+                sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
                 errs <- err
                 return
         }
-        ch <- ChatChunk{Type: "status", State: "idle"}
+        sealTurn(ctx, ch, nil, u)
+        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
 }
 
 // pageRead is one fetched page for the research pipeline.

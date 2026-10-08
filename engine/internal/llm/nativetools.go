@@ -242,6 +242,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 // start event, outcomes on the end event below.
                 obs.EmitS(ctx, obs.RoundStart, "round", round, "model", roundReq.Model,
                         "provider", roundReq.Provider, "messages", len(history), "tools", len(specs))
+                fsmFrom(ctx).roundStart(round) // v1.14.6: the FSM counts the round
                 if nudged {
                         // v0.82.3: the answer-force rounds run with thinking
                         // DISABLED (Effort "off" → BuildEffortBodyFor emits the
@@ -293,11 +294,13 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 runNativeToolsTurn(ctx, ch, errs, req)
                                 return
                         }
+                        sealTurn(ctx, ch, errToolsRejected, nil)
                         emitTurnError(ch, fmt.Errorf("provider rejected tools"))
                         errs <- errToolsRejected
                         return
                 }
                 if err != nil {
+                        sealTurn(ctx, ch, err, nil)
                         emitTurnError(ch, err)
                         errs <- err
                         return
@@ -330,6 +333,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 if len(allSources) > 0 {
                                         ch <- ChatChunk{Type: "sources", Sources: allSources}
                                 }
+                                sealTurn(ctx, ch, nil, totalUsage)
                                 ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
                                 return
                         }
@@ -488,6 +492,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 if len(allSources) > 0 {
                         ch <- ChatChunk{Type: "sources", Sources: allSources}
                 }
+                sealTurn(ctx, ch, nil, totalUsage)
                 ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
                 return
         }
@@ -498,6 +503,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         finalReq.Messages = history
         final, err := streamCompletion(ctx, finalReq, ch, nil)
         if err != nil {
+                sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
                 errs <- err
                 return
@@ -506,6 +512,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         if len(allSources) > 0 {
                 ch <- ChatChunk{Type: "sources", Sources: allSources}
         }
+        sealTurn(ctx, ch, nil, totalUsage)
         ch <- ChatChunk{Type: "status", State: "idle", Usage: totalUsage}
 }
 
