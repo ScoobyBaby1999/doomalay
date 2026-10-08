@@ -270,7 +270,8 @@ func (c *Client) gtIssues(ctx context.Context, state, token string, limit int) (
         for _, r := range rows {
                 out = append(out, Issue{Number: r.Number, Title: r.Title, State: r.State,
                         Author: r.User.Login, UpdatedAt: r.UpdatedAt, IsPR: r.PullRequest != nil,
-                        Body: clip(r.Body, 400), URL: r.HTMLURL})
+                        Body: r.Body, URL: r.HTMLURL, // v1.19.1: full body
+                })
         }
         return out, nil
 }
@@ -325,7 +326,8 @@ func (c *Client) gtReleases(ctx context.Context, token string, limit int) ([]Rel
         out := make([]Release, 0, len(rows))
         for _, r := range rows {
                 out = append(out, Release{Tag: r.TagName, Name: r.Name, PublishedAt: r.PublishedAt,
-                        Notes: clip(r.Body, 600), URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease})
+                        Notes: r.Body, URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease, // v1.19.1: full notes
+                })
         }
         return out, nil
 }

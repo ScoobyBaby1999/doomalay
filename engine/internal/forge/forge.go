@@ -60,11 +60,15 @@ const forgeUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KH
 
 // Body caps — generous for real repos, tight enough to bound memory.
 const (
-        maxTreeBody  = 16 << 20  // recursive trees can be multi-MB JSON
-        maxFileBody  = 4 << 20   // single file content
-        maxListBody  = 2 << 20   // issues/pulls/releases/commits lists
-        maxProbeBody = 64 << 10  // version/info probes
-        maxDiffBody  = 128 << 10 // v0.81.6: a PR's raw unified diff (the code-review read)
+        // v1.19.1 THE WHOLE TRUTH: these are transport OOM guards, not content
+        // caps — sized to what the upstreams themselves serve (GitHub raw
+        // serves files to 100 MB; recursive trees to 7 MB JSON; the diff of a
+        // mega-PR can be megabytes). Nothing user-visible truncates below them.
+        maxTreeBody  = 64 << 20
+        maxFileBody  = 100 << 20
+        maxListBody  = 32 << 20
+        maxProbeBody = 256 << 10
+        maxDiffBody  = 16 << 20
 )
 
 // Access levels (user spec: "a difference between read only, partial

@@ -62,7 +62,7 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
                         return obs, toBusSources(results), nil
                 },
                 Fetch: func(ctx context.Context, url string) (string, error) {
-                        return WebFetch(ctx, url, 12000)
+                        return WebFetch(ctx, url) // v1.19.1: full content — no cap
                 },
                 TemplateAuto:  req.TemplateAuto,
                 TemplateList:  func(ctx context.Context) string { return runTemplateList(ctx, req) },
@@ -85,7 +85,7 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
 // whether the turn should degrade to direct dispatch (bus failure).
 func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) (observation string, degraded bool) {
         summary := mcpbus.DefaultSummary(action, argJSON)
-        ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
+        ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
         res := bus.CallTool(ctx, turn, action, json.RawMessage(argJSON))
         if res.BusFailure {
                 // The MCP protocol layer itself failed: serve the honest error
@@ -98,7 +98,7 @@ func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan
                 *allSources = append(*allSources, srcs...)
                 ch <- ChatChunk{Type: "sources", Sources: srcs}
         }
-        resChunk := ChatChunk{Type: "tool_result", Text: clamp(res.Text, 600), Name: action}
+        resChunk := ChatChunk{Type: "tool_result", Text: res.Text, Name: action}
         if res.Artifact != "" {
                 resChunk.Artifact = map[string]any{"name": res.Artifact}
         }
@@ -170,7 +170,7 @@ func init() {
                                 return obs, toBusSources(results), nil
                         },
                         Fetch: func(ctx context.Context, url string) (string, error) {
-                                return WebFetch(ctx, url, 12000)
+                                return WebFetch(ctx, url) // v1.19.1: full content — no cap
                         },
                 }
         })

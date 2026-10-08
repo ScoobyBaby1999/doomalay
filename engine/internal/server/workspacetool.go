@@ -48,9 +48,10 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-const wsToolListCap = 60    // rows shown before the "+N more" fold (the brain twin's cap)
-const wsToolBodyCap = 6000  // dt_spec rule 9: model-facing text ≤ ~6000 chars
-const wsToolDiffCap = 12000 // v0.81.6: a PR diff needs more room than a file read (code review context)
+// v1.19.1 THE WHOLE TRUTH: the model-facing caps are DEAD (PLAN-V119 §v1.19.1).
+// wsToolBodyCap/wsToolListCap/wsToolDiffCap truncated reads, listings and diffs —
+// every verb now returns the FULL text. The only honest size boundary is the
+// forge's own `truncated` signal (upstream physics), never a local cut.
 
 // workspaceVerbs is the canonical verb list (help + unknown-action teach).
 const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
@@ -164,10 +165,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if fc.Binary {
                         return "OBSERVATION:\n" + path + " is a binary file (" + fmt.Sprint(fc.Size) + " bytes) — no text to read"
                 }
-                body := fc.Content
-                if len(body) > wsToolBodyCap {
-                        body = body[:wsToolBodyCap] + "\n… (truncated at " + fmt.Sprint(wsToolBodyCap) + " chars — use range lines:A-B for a slice)"
-                }
+                body := fc.Content // v1.19.1: full content — no cap
                 return "OBSERVATION:\n" + path + " (" + fmt.Sprint(fc.Size) + " bytes, blob sha " + fc.SHA + ")\n" + body
         case "readme":
                 ws := resolveWSToolRef(bound, get("ws"))
@@ -178,10 +176,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if err != nil {
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
-                body := fc.Content
-                if len(body) > wsToolBodyCap {
-                        body = body[:wsToolBodyCap] + "\n… (truncated)"
-                }
+                body := fc.Content // v1.19.1: full content — no cap
                 return "OBSERVATION:\nREADME of " + ws.Name + ":\n" + body
         case "grep":
                 ws := resolveWSToolRef(bound, get("ws"))
@@ -192,18 +187,14 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if q == "" {
                         return "OBSERVATION:\nerror: grep needs {\"ws\":…, \"query\":\"text\"}"
                 }
-                limit := wsArgInt(args, "limit", 30)
+                limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = UNLIMITED — the model narrows with a positive limit when it wants speed
                 hits, err := s.wsClient(ws).Search(ctx, q, refOrWS(get("ref"), ws), s.wsToken(ws), limit)
                 if err != nil {
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%d hit(s) for %q in %s:\n", len(hits), q, ws.Name)
-                for i, h := range hits {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more (narrow the query or raise limit)\n", len(hits)-i)
-                                break
-                        }
+                for _, h := range hits {
                         // v0.82.4: an unresolved line (Line 0 — the file
                         // couldn't be fetched for line resolution) renders as
                         // the bare path, never the bogus "path:0".
@@ -214,7 +205,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         if h.Snippet != "" {
                                 line += "  " + strings.TrimSpace(h.Snippet)
                         }
-                        sb.WriteString(wsClip(line, 160) + "\n")
+                        sb.WriteString(line + "\n")
                 }
                 return "OBSERVATION:\n" + sb.String()
         case "view":
@@ -230,7 +221,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if state == "" {
                         state = "open"
                 }
-                limit := wsArgInt(args, "limit", 20)
+                limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = the forge's full default page
                 return "OBSERVATION:\n" + s.wsViewText(ctx, ws, what, state, limit)
         case "put":
                 ws := resolveWSToolRef(bound, get("ws"))
@@ -436,9 +427,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if err != nil {
                         return "OBSERVATION:\nerror: " + err.Error()
                 }
-                if len(diff) > wsToolDiffCap {
-                        diff = diff[:wsToolDiffCap] + "\n… (diff truncated at " + fmt.Sprint(wsToolDiffCap) + " chars — review the rest with read on the touched files)"
-                }
+                // v1.19.1: the full unified diff — no cap.
                 if strings.TrimSpace(diff) == "" {
                         return "OBSERVATION:\nPR #" + fmt.Sprint(n) + " has an empty diff (no changes)."
                 }
@@ -666,12 +655,8 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 var sb strings.Builder
                 fmt.Fprintf(&sb, "%d repo(s) in the connected %s account:\n", len(repos), kind)
-                for i, m := range repos {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(repos)-i)
-                                break
-                        }
-                        fmt.Fprintf(&sb, "- %s — %s\n", m.FullName, wsClip(m.Description, 80))
+                for _, m := range repos {
+                        fmt.Fprintf(&sb, "- %s — %s\n", m.FullName, m.Description)
                 }
                 return "OBSERVATION:\n" + sb.String()
         }
@@ -690,16 +675,12 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d issue(s) in %s (state=%s):\n", len(rows), ws.Name, state)
-                for i, it := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
+                for _, it := range rows {
                         tag := "issue"
                         if it.IsPR {
                                 tag = "PR"
                         }
-                        fmt.Fprintf(&sb, "- #%d [%s] %s (%s, by %s)\n", it.Number, tag, wsClip(it.Title, 90), it.State, it.Author)
+                        fmt.Fprintf(&sb, "- #%d [%s] %s (%s, by %s)\n", it.Number, tag, it.Title, it.State, it.Author)
                 }
         case "pulls", "prs":
                 rows, err := c.Pulls(ctx, state, tok, limit)
@@ -707,12 +688,8 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d pull request(s) in %s (state=%s):\n", len(rows), ws.Name, state)
-                for i, p := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
-                        fmt.Fprintf(&sb, "- #%d %s (%s, %s → base, by %s)\n", p.Number, wsClip(p.Title, 90), p.State, p.Branch, p.Author)
+                for _, p := range rows {
+                        fmt.Fprintf(&sb, "- #%d %s (%s, %s → base, by %s)\n", p.Number, p.Title, p.State, p.Branch, p.Author)
                 }
         case "commits", "history":
                 rows, err := c.Commits(ctx, "", refOrWS("", ws), tok, limit)
@@ -720,16 +697,12 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "last %d commit(s) in %s:\n", len(rows), ws.Name)
-                for i, cm := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
+                for _, cm := range rows {
                         sha := cm.SHA
                         if len(sha) > 9 {
                                 sha = sha[:9]
                         }
-                        fmt.Fprintf(&sb, "- %s %s (%s, %s)\n", sha, wsClip(cm.Message, 90), cm.Author, cm.Date)
+                        fmt.Fprintf(&sb, "- %s %s (%s, %s)\n", sha, cm.Message, cm.Author, cm.Date)
                 }
         case "branches":
                 rows, err := c.Branches(ctx, tok)
@@ -737,13 +710,9 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d branch(es) in %s:\n", len(rows), ws.Name)
-                for i, b := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
+                for bi, b := range rows {
                         mark := ""
-                        if b == wsBranchOr(ws, "\x00") || (ws.Branch == "" && i == 0) {
+                        if b == wsBranchOr(ws, "\x00") || (ws.Branch == "" && bi == 0) {
                                 mark = "  (tracked)"
                         }
                         sb.WriteString("- " + b + mark + "\n")
@@ -754,12 +723,8 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d release(s) in %s:\n", len(rows), ws.Name)
-                for i, rel := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
-                        fmt.Fprintf(&sb, "- %s — %s (%s)\n", rel.Tag, wsClip(rel.Name, 70), rel.PublishedAt)
+                for _, rel := range rows {
+                        fmt.Fprintf(&sb, "- %s — %s (%s)\n", rel.Tag, rel.Name, rel.PublishedAt)
                 }
         case "workflows":
                 rows, err := c.Workflows(ctx, tok)
@@ -767,11 +732,7 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d workflow(s) in %s:\n", len(rows), ws.Name)
-                for i, wf := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
+                for _, wf := range rows {
                         fmt.Fprintf(&sb, "- %s (%s, %s)\n", wf.Name, wf.State, wf.Path)
                 }
         case "runs":
@@ -780,11 +741,7 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "last %d Actions run(s) in %s:\n", len(rows), ws.Name)
-                for i, run := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
+                for _, run := range rows {
                         fmt.Fprintf(&sb, "- %s: %s (%s, %s, %s)\n", run.Name, run.Conclusion, run.Status, run.Branch, run.StartedAt)
                 }
         case "discussions":
@@ -793,12 +750,8 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                         return "error: " + err.Error()
                 }
                 fmt.Fprintf(&sb, "%d discussion(s) in %s:\n", len(rows), ws.Name)
-                for i, d := range rows {
-                        if i >= wsToolListCap {
-                                fmt.Fprintf(&sb, "… +%d more\n", len(rows)-i)
-                                break
-                        }
-                        fmt.Fprintf(&sb, "- %s (%s, %s)\n", wsClip(d.Title, 90), d.Author, d.UpdatedAt)
+                for _, d := range rows {
+                        fmt.Fprintf(&sb, "- %s (%s, %s)\n", d.Title, d.Author, d.UpdatedAt)
                 }
         default:
                 return "error: unknown view \"" + what + "\" (issues|pulls|commits|branches|releases|workflows|runs|discussions)"
@@ -949,11 +902,7 @@ func wsTreeText(ws *store.Workspace, path, ref string, entries []forge.TreeEntry
                 sb.WriteString(" (truncated — narrow the path)")
         }
         sb.WriteString(":\n")
-        for i, e := range entries {
-                if i >= wsToolListCap {
-                        fmt.Fprintf(&sb, "… +%d more\n", len(entries)-i)
-                        break
-                }
+        for _, e := range entries {
                 if e.Type == "tree" {
                         fmt.Fprintf(&sb, "- %s/ (dir)\n", e.Path)
                 } else {
@@ -994,13 +943,6 @@ func wsBranchOr(ws *store.Workspace, def string) string {
         return def
 }
 
-func wsClip(s string, n int) string {
-        s = strings.TrimSpace(s)
-        if len(s) > n {
-                return s[:n] + "…"
-        }
-        return s
-}
 
 func wsArgInt(args map[string]any, k string, def int) int {
         if v, ok := args[k].(float64); ok && v > 0 && v < 500 {

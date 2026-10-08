@@ -310,7 +310,8 @@ func (c *Client) ghIssues(ctx context.Context, state, token string, limit int) (
         for _, r := range rows {
                 out = append(out, Issue{Number: r.Number, Title: r.Title, State: r.State,
                         Author: r.User.Login, UpdatedAt: r.UpdatedAt, IsPR: r.PullRequest != nil,
-                        Body: clip(r.Body, 400), URL: r.HTMLURL})
+                        Body: r.Body, URL: r.HTMLURL, // v1.19.1: full body
+                })
         }
         return out, nil
 }
@@ -364,7 +365,8 @@ func (c *Client) ghReleases(ctx context.Context, token string, limit int) ([]Rel
         out := make([]Release, 0, len(rows))
         for _, r := range rows {
                 out = append(out, Release{Tag: r.TagName, Name: r.Name, PublishedAt: r.PublishedAt,
-                        Notes: clip(r.Body, 600), URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease})
+                        Notes: r.Body, URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease, // v1.19.1: full notes
+                })
         }
         return out, nil
 }
@@ -508,7 +510,7 @@ func (c *Client) ghSearch(ctx context.Context, query, ref, token string, limit i
         for _, it := range v.Items {
                 snip := ""
                 if len(it.TextMatches) > 0 {
-                        snip = clip(strings.Join(strings.Fields(it.TextMatches[0].Fragment), " "), 160)
+                        snip = strings.Join(strings.Fields(it.TextMatches[0].Fragment), " ") // v1.19.1: full fragment
                 }
                 out = append(out, SearchHit{Path: it.Path, Snippet: snip})
         }
@@ -531,7 +533,7 @@ func (c *Client) ghSearch(ctx context.Context, query, ref, token string, limit i
                                         if strings.Contains(strings.ToLower(ln), qLower) {
                                                 mu.Lock()
                                                 out[idx].Line = li + 1
-                                                out[idx].Snippet = clip(strings.TrimSpace(ln), 200)
+                                                out[idx].Snippet = strings.TrimSpace(ln) // v1.19.1: the full matched line
                                                 mu.Unlock()
                                                 return
                                         }

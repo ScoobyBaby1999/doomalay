@@ -49,7 +49,7 @@ func TestWebFetchSSRF(t *testing.T) {
 		"http://10.0.0.1/",
 		"file:///etc/passwd",
 	} {
-		if _, err := WebFetch(ctx, u, 100); err == nil {
+		if _, err := WebFetch(ctx, u); err == nil {
 			t.Errorf("SSRF guard failed for %q", u)
 		}
 	}

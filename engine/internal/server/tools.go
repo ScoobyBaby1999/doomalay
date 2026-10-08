@@ -200,13 +200,10 @@ func (s *Server) handleToolsWebFetch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "missing url")
 		return
 	}
-	maxChars := 8000
-	if v := r.URL.Query().Get("max"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 50000 {
-			maxChars = n
-		}
-	}
-	text, err := llm.WebFetch(r.Context(), rawURL, maxChars)
+	// v1.19.1 THE WHOLE TRUTH: the ?max= parameter is dead (it was accepted
+	// only up to 50000 anyway). The endpoint returns the FULL fetched content —
+	// PLAN-V119: "the fetcher shouldn't truncate a thing."
+	text, err := llm.WebFetch(r.Context(), rawURL)
 	if err != nil {
 		writeError(w, 502, "fetch: "+err.Error())
 		return

@@ -215,7 +215,8 @@ func (c *Client) glIssues(ctx context.Context, state, token string, limit int) (
         for _, r := range rows {
                 out = append(out, Issue{Number: r.IID, Title: r.Title, State: r.State,
                         Author: r.Author.Username, UpdatedAt: r.UpdatedAt,
-                        Body: clip(r.Description, 400), URL: r.WebURL})
+                        Body: r.Description, URL: r.WebURL, // v1.19.1: full body
+                })
         }
         return out, nil
 }
@@ -271,8 +272,8 @@ func (c *Client) glReleases(ctx context.Context, token string, limit int) ([]Rel
         out := make([]Release, 0, len(rows))
         for _, r := range rows {
                 out = append(out, Release{Tag: r.TagName, Name: r.Name, PublishedAt: r.ReleasedAt,
-                        Notes: clip(r.Description, 600), URL: r.Commit.WebURL,
-                        Assets: len(r.Assets.Links)})
+                        Notes: r.Description, URL: r.Commit.WebURL, Assets: len(r.Assets.Links), // v1.19.1: full notes
+                })
         }
         return out, nil
 }

@@ -45,7 +45,7 @@ var textishExts = map[string]bool{
 }
 
 const (
-	grepMaxFile    = 512 << 10 // skip blobs > 512KB (lockfiles, generated)
+	grepMaxFile    = 8 << 20  // v1.19.1: the size GUARD (generated/lockfile blobs) — 8 MB; skipped files are counted and reported, never silently dropped
 	grepBatchWidth = 8         // concurrent fetches per batch (politeness)
 )
 
@@ -58,11 +58,21 @@ type GrepResult struct {
 	// Remaining: unscanned candidate paths (JSON-joined); pass back via
 	// GrepResume to continue. "" when Complete.
 	Remaining string `json:"remaining"`
+	// v1.19.1: blobs the size guard skipped (generated/lockfile class) —
+	// reported, never silently dropped.
+	Skipped int `json:"skipped,omitempty"`
 }
 
 // Grep scans the repo for a case-insensitive literal query.
 func Grep(ctx context.Context, c *Client, query, ref, token string, limit int) ([]SearchHit, error) {
-	limit = clampLimit(limit, 50)
+	// v1.19.1: limit <= 0 = UNLIMITED — the scan runs until candidates are
+	// exhausted (the resume cursor still carries unscanned leftovers for
+	// any caller that wants to page it). A positive limit stays a narrowing
+	// hint. clampLimit would force 50 on 0 — exactly the silent cap this
+	// wave removes.
+	if limit <= 0 {
+		limit = 1 << 30
+	}
 	res, err := grepScan(ctx, c, query, ref, token, limit, nil)
 	if err != nil {
 		return nil, err
@@ -72,7 +82,9 @@ func Grep(ctx context.Context, c *Client, query, ref, token string, limit int) (
 
 // GrepResume continues a previous scan from its remaining-candidate list.
 func GrepResume(ctx context.Context, c *Client, query, ref, token string, limit int, remaining string) (*GrepResult, error) {
-	limit = clampLimit(limit, 50)
+	if limit <= 0 { // v1.19.1: 0 = unlimited
+		limit = 1 << 30
+	}
 	var cand []string
 	if remaining != "" {
 		cand = strings.Split(remaining, "\n")
@@ -87,6 +99,7 @@ func grepScan(ctx context.Context, c *Client, query, ref, token string, limit in
 	q := strings.ToLower(query)
 
 	var candidates []string
+	var oversized int // v1.19.1: blobs the size guard skipped — reported, never silent
 	if len(prefetched) > 0 {
 		candidates = prefetched
 	} else {
@@ -95,7 +108,11 @@ func grepScan(ctx context.Context, c *Client, query, ref, token string, limit in
 			return nil, err
 		}
 		for _, e := range entries {
-			if e.Type != "blob" || e.Size > grepMaxFile {
+			if e.Type != "blob" {
+				continue
+			}
+			if e.Size > grepMaxFile {
+				oversized++ // v1.19.1: counted, reported — never a silent drop
 				continue
 			}
 			if !textishExts[strings.ToLower(filepath.Ext(e.Path))] {
@@ -139,7 +156,7 @@ func grepScan(ctx context.Context, c *Client, query, ref, token string, limit in
 				for i, ln := range lines {
 					if strings.Contains(strings.ToLower(ln), q) {
 						hits = append(hits, SearchHit{Path: path, Line: i + 1,
-							Snippet: clip(strings.TrimSpace(ln), 200)})
+							Snippet: strings.TrimSpace(ln)}) // v1.19.1: the full matched line
 						break // first hit per file — the path is the address
 					}
 				}
@@ -168,6 +185,7 @@ func grepScan(ctx context.Context, c *Client, query, ref, token string, limit in
 	return &GrepResult{
 		Hits:     hits,
 		Scanned:  scanned,
+		Skipped:  oversized,
 		Complete: complete,
 		Remaining: func() string {
 			if complete {

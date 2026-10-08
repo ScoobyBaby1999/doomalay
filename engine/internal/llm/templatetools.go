@@ -43,8 +43,8 @@ var templateHTTP = &http.Client{
 }
 
 const (
-	templateListCap = 2500 // compact index cap (chars)
-	templateShowCap = 5000 // one template's full rendering cap (chars)
+// v1.19.1: templateListCap/templateShowCap are DEAD — the library index and
+// every template's full methodology render whole (PLAN-V119 §v1.19.1).
 )
 
 // templateBriefBlock wraps a resolved template brief as the system-prompt
@@ -159,7 +159,7 @@ func runTemplateList(ctx context.Context, req ChatRequest) string {
 		}
 		b.WriteString(line + "\n")
 	}
-	return clamp(b.String(), templateListCap)
+	return b.String() // v1.19.1: the full index
 }
 
 // runTemplateShow implements ACTION template_show {"id"}: one template's
@@ -230,7 +230,7 @@ func runTemplateShow(ctx context.Context, req ChatRequest, id string) string {
 	} else {
 		b.WriteString("(no stages and no markdown body — this template only carries metadata)\n")
 	}
-	return clamp(b.String(), templateShowCap)
+	return b.String() // v1.19.1: the full methodology
 }
 
 // RunTemplateListFor and RunTemplateShowFor are the exported template

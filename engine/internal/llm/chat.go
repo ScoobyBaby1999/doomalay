@@ -145,7 +145,8 @@ type ChatChunk struct {
         Error    string         `json:"error,omitempty"`
         Message  string         `json:"message,omitempty"`
         Name     string         `json:"name,omitempty"`     // tool name (tool_use)
-        Summary  string         `json:"summary,omitempty"`  // tool arg summary (tool_use)
+        Summary  string         `json:"summary,omitempty"`  // tool arg summary (tool_use — the collapsed pill's short label)
+        Args     string         `json:"args,omitempty"`     // v1.19.1: the RAW tool argument JSON, unclamped (the viewer's "query under the tool name")
         Sources  []SearchResult `json:"sources,omitempty"`  // web sources (sources event)
         Artifact map[string]any `json:"artifact,omitempty"` // v0.22: file tool result (name/id/size) — the UI renders a download card
 }
@@ -1664,13 +1665,13 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 summary = v
                         }
                 }
-                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
+                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
                 if req.PersonaToolFn != nil {
                         observation = req.PersonaToolFn(ctx, action, argJSON)
                 } else {
                         observation = "OBSERVATION:\nerror: persona tools need a live session on this server"
                 }
-                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: action}
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: action}
                 return observation
         }
         if action == "hublib" && req.HublibToolFn != nil {
@@ -1689,9 +1690,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 }
                         }
                 }
-                ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary}
+                ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary, Args: argJSON}
                 observation = req.HublibToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "hublib"}
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "hublib"}
                 return observation
         }
         if action == "skills" && req.SkillsToolFn != nil {
@@ -1711,9 +1712,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 }
                         }
                 }
-                ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary}
+                ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary, Args: argJSON}
                 observation = req.SkillsToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "skills"}
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "skills"}
                 return observation
         }
         if action == "workspace" && req.WorkspaceToolFn != nil {
@@ -1731,9 +1732,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 }
                         }
                 }
-                ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary}
+                ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary, Args: argJSON}
                 observation = req.WorkspaceToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(observation, "OBSERVATION:\n"), 600), Name: "workspace"}
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "workspace"}
                 return observation
         }
         if action == "delegate" && req.DelegateFn != nil {
@@ -1748,19 +1749,19 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                         observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
                 } else {
                         ch <- ChatChunk{Type: "progress", Text: "consulting other models…"}
-                        ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80)}
+                        ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80), Args: argJSON}
                         outs := req.DelegateFn(ctx, args.Prompt, args.Models)
                         b, _ := json.Marshal(outs)
                         observation = "OBSERVATION:\n" + string(b)
-                        ch <- ChatChunk{Type: "tool_result", Text: clamp(string(b), 600), Name: "delegate"}
+                        ch <- ChatChunk{Type: "tool_result", Text: string(b), Name: "delegate"}
                 }
         } else if IsLocalTool(action) {
                 // v0.20: local tools — pure Go, zero latency, zero setup.
                 summary := mcpbus.DefaultSummary(action, argJSON)
-                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary}
+                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
                 observation = RunLocalTool(action, argJSON, req.ArtifactSink)
                 obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
-                res := ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: action}
+                res := ChatChunk{Type: "tool_result", Text: obs, Name: action}
                 // v0.22: file tools report the saved artifact so the UI
                 // can render a real download card right after the pill.
                 if strings.Contains(obs, "Saved as artifact ") {
@@ -1791,7 +1792,7 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                         ch <- ChatChunk{Type: "tool_use", Name: "template_list", Summary: "browse the template library"}
                         obs := runTemplateList(ctx, req)
                         observation = obs
-                        ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(obs, "OBSERVATION:\n"), 600), Name: "template_list"}
+                        ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_list"}
                 case "template_show":
                         if !req.TemplateAuto {
                                 observation = "OBSERVATION:\nerror: the template library is disabled for this chat (the template pill is off). Ask the user to enable the template pill, or answer without it."
@@ -1805,10 +1806,10 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 observation = "OBSERVATION:\nerror: template_show needs {\"id\": \"...\"} — get ids from template_list"
                                 return observation
                         }
-                        ch <- ChatChunk{Type: "tool_use", Name: "template_show", Summary: clamp(args.ID, 80)}
+                        ch <- ChatChunk{Type: "tool_use", Name: "template_show", Summary: clamp(args.ID, 80), Args: argJSON}
                         obs := runTemplateShow(ctx, req, args.ID)
                         observation = obs
-                        ch <- ChatChunk{Type: "tool_result", Text: clamp(strings.TrimPrefix(obs, "OBSERVATION:\n"), 600), Name: "template_show"}
+                        ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_show"}
                 case "web_search":
                         var args struct {
                                 Query string `json:"query"`
@@ -1818,7 +1819,7 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 observation = "OBSERVATION:\nerror: empty query"
                                 return observation
                         }
-                        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query}
+                        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query, Args: argJSON}
                         results, err := WebSearch(ctx, args.Query, 5, req.TavilyKey)
                         if err != nil {
                                 observation = "OBSERVATION:\nsearch error: " + err.Error()
@@ -1835,7 +1836,7 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
                         }
                         observation = "OBSERVATION:\n" + obs
-                        ch <- ChatChunk{Type: "tool_result", Text: clamp(obs, 600), Name: "web_search"}
+                        ch <- ChatChunk{Type: "tool_result", Text: obs, Name: "web_search"}
                 case "web_fetch":
                         var args struct {
                                 URL string `json:"url"`
@@ -1846,13 +1847,13 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 return observation
                         }
                         ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
-                        text, err := WebFetch(ctx, args.URL, 12000)
+                        text, err := WebFetch(ctx, args.URL) // v1.19.1: full content — no cap
                         if err != nil {
                                 observation = "OBSERVATION:\nfetch error: " + err.Error()
                                 return observation
                         }
                         observation = "OBSERVATION:\n" + text
-                        ch <- ChatChunk{Type: "tool_result", Text: clamp(text, 600), Name: "web_fetch"}
+                        ch <- ChatChunk{Type: "tool_result", Text: text, Name: "web_fetch"}
                 default:
                         observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string {
                                 if req.HublibToolFn != nil {
@@ -2175,8 +2176,8 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         // is fully traceable in the transcript, exactly like the GLM/nemotron
         // web-search chains the user praised.
         emitPill := func(name, summary, result string) {
-                ch <- ChatChunk{Type: "tool_use", Name: name, Summary: clamp(summary, 80)}
-                ch <- ChatChunk{Type: "tool_result", Name: name, Text: clamp(result, 600)}
+                ch <- ChatChunk{Type: "tool_use", Name: name, Summary: clamp(summary, 80), Args: summary}
+                ch <- ChatChunk{Type: "tool_result", Name: name, Text: result}
         }
 
         // 1. Initial search.
@@ -2203,7 +2204,7 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         pages := readTopPages(ctx, results, 5)
         for _, pr := range pages {
                 if pr.idx >= 0 && pr.idx < len(results) {
-                        emitPill("web_fetch", results[pr.idx].URL, clamp(pr.text, 600))
+                        emitPill("web_fetch", results[pr.idx].URL, pr.text)
                 }
         }
 
@@ -2266,7 +2267,7 @@ func readTopPages(ctx context.Context, results []SearchResult, n int) []pageRead
                 wg.Add(1)
                 go func(i int, u string) {
                         defer wg.Done()
-                        text, err := WebFetch(ctx, u, 9000)
+                        text, err := WebFetch(ctx, u) // v1.19.1: full page reads
                         if err != nil {
                                 return
                         }
@@ -2288,9 +2289,28 @@ func buildResearchPrompt(question string, results []SearchResult, pages []pageRe
         b.WriteString("QUESTION: " + question + "\n\nSEARCH RESULTS:\n")
         b.WriteString(FormatSearchResults(results))
         if len(pages) > 0 {
-                b.WriteString("\n\nPAGE EXCERPTS:\n")
+                // v1.19.1 THE WHOLE TRUTH: page texts ride the prompt in FULL —
+                // no silent per-page cut. The only boundary is the assembly
+                // budget (the model's window is finite physics); when the
+                // budget selects, the note says exactly what shipped and the
+                // full texts still live in the tool-result events (pills/viewer).
+                const pageBudget = 200 << 10 // 200 KB of prompt assembly
+                used := 0
+                shipped, skipped := 0, 0
+                var sb strings.Builder
                 for _, p := range pages {
-                        fmt.Fprintf(&b, "--- [page %d] ---\n%s\n\n", p.idx+1, clamp(p.text, 4000))
+                        if used+len(p.text) > pageBudget && shipped > 0 {
+                                skipped++
+                                continue
+                        }
+                        used += len(p.text)
+                        shipped++
+                        fmt.Fprintf(&sb, "--- [page %d] ---\n%s\n\n", p.idx+1, p.text)
+                }
+                b.WriteString("\n\nPAGE EXCERPTS:\n")
+                b.WriteString(sb.String())
+                if skipped > 0 {
+                        fmt.Fprintf(&b, "(%d of %d fetched pages ride this prompt within the %d KB assembly budget — the rest were skipped by size, never silently trimmed; their full text is in the transcript's tool results)\n\n", shipped, shipped+skipped, pageBudget>>10)
                 }
         }
         if planning {

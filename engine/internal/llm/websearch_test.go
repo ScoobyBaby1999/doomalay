@@ -177,16 +177,16 @@ func TestFormatHFSpace(t *testing.T) {
 	}
 }
 
-func TestClampMaybe(t *testing.T) {
+// v1.19.1 THE WHOLE TRUTH: clampMaybe is DEAD — structured-fetch output is
+// never truncated. The pin flips: a fetcher that trims is the bug.
+func TestNoStructuredFetchTruncation(t *testing.T) {
 	s := strings.Repeat("x", 300)
-	if got := clampMaybe(s, 100); len(got) != 100+len("\n…[truncated]") {
-		t.Errorf("clampMaybe length = %d", len(got))
+	if got := htmlToText(s); len(got) != len(s) {
+		t.Errorf("htmlToText truncated plain text: %d -> %d", len(s), len(got))
 	}
-	if got := clampMaybe("short", 100); got != "short" {
-		t.Errorf("clampMaybe mangled short string: %q", got)
-	}
-	if got := clampMaybe(s, 0); len(got) != len(s) {
-		t.Errorf("maxChars<=0 should mean no cap, got %d", len(got))
+	big := "<p>" + strings.Repeat("y", 500_000) + "</p>"
+	if got := htmlToText(big); len(got) < 500_000 {
+		t.Errorf("htmlToText cut large content: %d bytes out", len(got))
 	}
 }
 

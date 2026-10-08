@@ -92,17 +92,17 @@ func RunLocalTool(name, argJSON string, sink ArtifactSink) string {
         text := func(k string) string {
                 // accept "text" or "input"
                 if v, ok := args["text"].(string); ok {
-                        return clampRunes(v, 200_000)
+                        return v // v1.19.1: full input — no cap
                 }
                 if v, ok := args["input"].(string); ok {
-                        return clampRunes(v, 200_000)
+                        return v // v1.19.1: full input — no cap
                 }
                 return ""
         }
 
         switch name {
         case "calculator":
-                return "OBSERVATION:\n" + calcEval(clampRunes(str("expr", ""), 1000))
+                return "OBSERVATION:\n" + calcEval(str("expr", "")) // v1.19.1: unguarded input — bad expressions fail honestly
         case "time_now":
                 return "OBSERVATION:\n" + toolTimeNow(str("tz", "UTC"))
         case "uuid":
@@ -188,7 +188,7 @@ func RunLocalTool(name, argJSON string, sink ArtifactSink) string {
                 }
                 return "OBSERVATION:\n" + url.QueryEscape(in)
         case "regex_extract":
-                pattern := clampRunes(str("pattern", ""), 512)
+                pattern := str("pattern", "") // v1.19.1: full pattern
                 in := text("text")
                 group := int(num("group", 0))
                 if pattern == "" {
@@ -213,7 +213,7 @@ func RunLocalTool(name, argJSON string, sink ArtifactSink) string {
                                 fmt.Fprintf(&b, "[%d] (group not matched)\n", i+1)
                                 continue
                         }
-                        fmt.Fprintf(&b, "[%d] %s\n", i+1, clampRunes(in[lo:hi], 400))
+                        fmt.Fprintf(&b, "[%d] %s\n", i+1, in[lo:hi]) // v1.19.1: full matches — no 400-char cut
                 }
                 return "OBSERVATION:\n" + strings.TrimRight(b.String(), "\n") + fmt.Sprintf("\n(%d matches)", len(idx))
         default:

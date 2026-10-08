@@ -611,6 +611,13 @@ def _clip(text: object, limit: int = MAX_EVENT_CHARS) -> str:
     return s if len(s) <= limit else s[:limit] + f"\n… [truncated {len(s) - limit} chars]"
 
 
+def _as_text(x: object) -> str:
+    # v1.19.1 THE WHOLE TRUTH (PLAN-V119 §v1.19.1): content-bearing events are
+    # NEVER truncated — tool results and thinking stream whole. (The pill
+    # LABEL summaries keep their short _clip shapes; this is for the payload.)
+    return x if isinstance(x, str) else json.dumps(x, ensure_ascii=False, default=str)
+
+
 class CapacityError(RuntimeError):
     """Raised when MAX_SESSIONS concurrent sessions already exist."""
 
@@ -804,7 +811,7 @@ class ClaudeAdapter(BaseAdapter):
                     if isinstance(block, sdk.TextBlock):
                         emit({"type": "assistant", "text": block.text})
                     elif thinking_cls is not None and isinstance(block, thinking_cls):
-                        emit({"type": "thinking", "text": _clip(block.thinking)})
+                        emit({"type": "thinking", "text": _as_text(block.thinking)})
                     elif isinstance(block, sdk.ToolUseBlock):
                         emit({"type": "tool_use", "name": block.name,
                               "summary": _summarize_tool_input(block.name, block.input)})
@@ -812,7 +819,7 @@ class ClaudeAdapter(BaseAdapter):
                 content = msg.content if isinstance(msg.content, list) else []
                 for block in content:
                     if isinstance(block, sdk.ToolResultBlock):
-                        emit({"type": "tool_result", "text": _clip(block.content),
+                        emit({"type": "tool_result", "text": _as_text(block.content),
                               "is_error": bool(getattr(block, "is_error", False))})
             elif isinstance(msg, sdk.ResultMessage):
                 emit({"type": "status", "state": "idle",
@@ -1973,7 +1980,7 @@ class StrandsAdapter(BaseAdapter):
                     for c in (tr.get("content") or []):
                         if isinstance(c, dict) and "text" in c:
                             parts.append(c["text"])
-                    emit({"type": "tool_result", "text": _clip("\n".join(parts) or tr),
+                    emit({"type": "tool_result", "text": _as_text("\n".join(parts) or tr),
                           "is_error": tr.get("status") == "error"})
                 elif "reasoningContent" in block:
                     # Skip if the streaming callback already captured thinking.
@@ -1986,7 +1993,7 @@ class StrandsAdapter(BaseAdapter):
                     txt = (rc.get("reasoningText") or {}).get("text") if isinstance(
                         rc.get("reasoningText"), dict) else rc.get("reasoningText")
                     if txt:
-                        emit({"type": "thinking", "text": _clip(txt)})
+                        emit({"type": "thinking", "text": _as_text(txt)})
                 elif "text" in block and role == "assistant":
                     if block["text"].strip():
                         # ISSUE-2 (RESPONSIVE-FIX): if the streaming callback

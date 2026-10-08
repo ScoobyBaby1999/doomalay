@@ -1902,6 +1902,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                         if chunk.Name != "" {
                                 ev["name"] = chunk.Name
                                 ev["summary"] = chunk.Summary
+                                // v1.19.1: the RAW tool arguments ride the event
+                                // (the full-view pill overlay renders the query).
+                                if chunk.Args != "" {
+                                        ev["args"] = chunk.Args
+                                }
                         }
                         // v0.22: file-tool results carry the saved artifact for the UI card
                         if chunk.Artifact != nil {
@@ -2209,6 +2214,9 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         }
                         if v, ok := ev["summary"].(string); ok && v != "" {
                                 toolEv["summary"] = v
+                        }
+                        if v, ok := ev["args"].(string); ok && v != "" {
+                                toolEv["args"] = v
                         }
                         if v, ok := ev["text"].(string); ok && v != "" {
                                 toolEv["text"] = v
@@ -2593,7 +2601,7 @@ func (s *Server) sessionMcpTurn(sessionID string) *mcpbus.Turn {
                         return obs, srcs, nil
                 },
                 Fetch: func(ctx context.Context, url string) (string, error) {
-                        return llm.WebFetch(ctx, url, 12000)
+                        return llm.WebFetch(ctx, url) // v1.19.1: full page reads
                 },
                 TemplateAuto: sess.TemplateAuto,
                 TemplateList: func(ctx context.Context) string {
