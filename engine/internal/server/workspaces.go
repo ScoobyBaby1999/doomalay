@@ -742,6 +742,13 @@ func (s *Server) tokenForTarget(ws *store.Workspace, _ *forge.Client) string {
 }
 
 func (s *Server) handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
+        // v1.20.2 THE LOCAL HAND: termux rows answer the SAME route through
+        // termuxfs.go's jailed cat — the PWA's device-storage file twin rides
+        // it (cloud/device rows fall through to the forge path untouched).
+        if tw := s.termuxWSFor(r); tw != nil {
+                s.termuxWSFile(w, r, tw)
+                return
+        }
         ws, c, ok := s.wsTarget(w, r)
         if !ok {
                 return
@@ -957,6 +964,13 @@ func (s *Server) handleWorkspaceView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWorkspacePutFile(w http.ResponseWriter, r *http.Request) {
         ws := s.loadWS(w, r)
         if ws == nil {
+                return
+        }
+        // v1.20.2 THE LOCAL HAND: the EXTRA_STDIN write law for termux rows —
+        // bash -c 'cat > "$1"' _ <path> with the content as the bridge's
+        // RUN_COMMAND_STDIN (termuxfs.go). Cloud rows fall through untouched.
+        if ws.Kind == "termux" {
+                s.termuxWSFile(w, r, ws)
                 return
         }
         if ws.Access == forge.AccessRead {
@@ -2257,11 +2271,17 @@ var deviceNameRe = regexp.MustCompile(`[^a-z0-9_-]+`)
 // handleWorkspaceDevice — register a device-storage workspace. The PWA owns
 // the FileSystemHandle (IndexedDB, keyed by the returned id); the engine
 // tracks the row so it lists globally and binds per chatbot.
+// v1.20.2 THE LOCAL HAND: a termux_path (the APK's Termux browser pick —
+// window.showDirectoryPicker does not exist in the Android WebView) saves
+// the row as Kind "termux" instead: every read/write rides the bridge
+// through termuxfs.go's jailed verbs. The non-termux flow below stays
+// byte-identical for desktop.
 func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
         var req struct {
-                Name      string `json:"name"`
-                Path      string `json:"path"` // display path (informational)
-                SessionID string `json:"session_id"`
+                Name       string `json:"name"`
+                Path       string `json:"path"`        // display path (informational)
+                TermuxPath string `json:"termux_path"` // v1.20.2: a resolved Termux-side absolute path
+                SessionID  string `json:"session_id"`
         }
         if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
                 writeError(w, 400, "invalid JSON: "+err.Error())
@@ -2281,6 +2301,35 @@ func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
         slug = strings.Trim(slug, "-")
         if slug == "" {
                 slug = "device"
+        }
+        if tp := strings.TrimSpace(req.TermuxPath); tp != "" {
+                // The path is a RESOLVED absolute path from /api/termux/fs; the fs
+                // verbs re-jail every I/O — here only a clearly-bad shape is
+                // refused so junk never lands in the store.
+                if !termuxResolvedOK(tp) {
+                        writeError(w, 400, "termux_path must be an absolute path under /storage/emulated/0/ or the Termux home")
+                        return
+                }
+                meta, _ := json.Marshal(map[string]any{
+                        "termux": true, "termux_path": tp, "display_path": tp,
+                })
+                ws := &store.Workspace{
+                        Kind: "termux", Host: "device", Owner: "this device",
+                        Repo: slug, Name: req.Name, Access: forge.AccessFull,
+                        Meta: string(meta),
+                }
+                if err := s.db.CreateWorkspace(ws); err != nil {
+                        writeError(w, 500, "store: "+err.Error())
+                        return
+                }
+                if req.SessionID != "" {
+                        if err := s.db.BindWorkspace(req.SessionID, ws.ID); err != nil {
+                                writeError(w, 500, "store: "+err.Error())
+                                return
+                        }
+                }
+                s.wsJSON(w, 200, ws, map[string]any{"termux": true})
+                return
         }
         meta, _ := json.Marshal(map[string]any{
                 "device": true, "display_path": strings.TrimSpace(req.Path),
