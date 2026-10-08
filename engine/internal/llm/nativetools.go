@@ -129,9 +129,15 @@ func SupportsNativeTools(provider string) bool {
 }
 
 // wireToolCall is the OpenAI wire shape for an assistant tool_calls entry.
+// v1.13.6: Skip/SkipText carry the honesty-line verdict for a call whose
+// arguments arrived CUT OFF or malformed — the fault text IS the tool's
+// answer (one role:"tool" message per call_id, never a second contradictory
+// execution of a call we already told the model was NOT executed).
 type wireToolCall struct {
         ID       string `json:"id"`
         Type     string `json:"type"`
+        Skip     bool   `json:"-"` // do not execute — the fault text answers instead
+        SkipText string `json:"-"`
         Function struct {
                 Name      string `json:"name"`
                 Arguments string `json:"arguments"`
@@ -343,10 +349,16 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 // token cap ate the tail) must NOT execute — the old
                                 // repair silently closed the string and the tool ran
                                 // with HALF the content. Tell the model to re-send.
+                                // v1.13.6: the wire entry carries Skip+SkipText so
+                                // the execution loop NEVER runs this call (the old
+                                // code executed it anyway with bus-coerced "{}",
+                                // emitting a SECOND contradictory tool_result for
+                                // the same call_id — caught by the v1.13.6 rig).
                                 if _, cut := repairJSONReport(args); cut {
+                                        fault := "error: your " + c.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call — or split the work into smaller calls."
                                         ch <- ChatChunk{Type: "tool_use", Name: c.Name, Summary: "(arguments cut off)"}
-                                        ch <- ChatChunk{Type: "tool_result", Text: "error: your " + c.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call — or split the work into smaller calls.", Name: c.Name}
-                                        wire = append(wire, wireToolCall{ID: c.ID, Type: "function"})
+                                        ch <- ChatChunk{Type: "tool_result", Text: fault, Name: c.Name}
+                                        wire = append(wire, wireToolCall{ID: c.ID, Type: "function", Skip: true, SkipText: fault})
                                         wire[len(wire)-1].Function.Name = c.Name
                                         wire[len(wire)-1].Function.Arguments = "{}"
                                         continue
@@ -358,9 +370,11 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                         args = fixed
                                 } else {
                                         // unrecoverable — tell the model via the tool result
+                                        // (v1.13.6: Skip carries the verdict — no execution)
+                                        fault := "error: arguments arrived malformed — re-emit the call"
                                         ch <- ChatChunk{Type: "tool_use", Name: c.Name, Summary: "(malformed arguments)"}
-                                        ch <- ChatChunk{Type: "tool_result", Text: "error: arguments arrived malformed — re-emit the call", Name: c.Name}
-                                        wire = append(wire, wireToolCall{ID: c.ID, Type: "function"})
+                                        ch <- ChatChunk{Type: "tool_result", Text: fault, Name: c.Name}
+                                        wire = append(wire, wireToolCall{ID: c.ID, Type: "function", Skip: true, SkipText: fault})
                                         wire[len(wire)-1].Function.Name = c.Name
                                         wire[len(wire)-1].Function.Arguments = args
                                         continue
@@ -378,6 +392,19 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 // execute + append role:"tool" results
                 for _, c := range wire {
                         var observation string
+                        // v1.13.6 THE HONESTY LINE, execution side: a Skipped
+                        // call's fault text IS the tool's answer — the call was
+                        // never executed, so no bus dispatch, no cache write, no
+                        // second contradictory result for this call_id.
+                        if c.Skip {
+                                history = append(history, Message{
+                                        Role:       "tool",
+                                        ToolCallID: c.ID,
+                                        Name:       c.Function.Name,
+                                        Content:    clamp(strings.TrimPrefix(c.SkipText, "OBSERVATION:\n"), 24000),
+                                })
+                                continue
+                        }
                         dedupKey := c.Function.Name + "\x00" + c.Function.Arguments
                         if cached, seen := seenCalls[dedupKey]; seen {
                                 // v0.95.4 THE REPEAT-CALL CACHE (the nativetools

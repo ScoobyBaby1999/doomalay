@@ -29,7 +29,7 @@ import (
         "sync/atomic"
         "time"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 )
 
 // ChatRequest is the input to a direct LLM call.
@@ -224,28 +224,40 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                 switch {
                 case req.DeepResearch && req.Provider != "":
                         runDeepResearch(ctx, ch, errs, req)
+                case req.Provider != "" && req.AuthStyle != "anthropic" && !nativeToolsBlacklisted(req.Provider):
+                        // v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
+                        // v1.13.3 THE GUT + v1.13.6 THE THIRD CARRIER: EVERY
+                        // OpenAI-compatible provider — openrouter INCLUDED —
+                        // runs the structured tool_calls loop against the
+                        // mcpbus. The v1.13.6 rig's S12 finding: the old
+                        // plugin-first ordering + the always-on WebSearch flag
+                        // meant openrouter turns NEVER reached the bus (a
+                        // single plugin round, zero of the 100+ tools); now
+                        // the bus's web_search tool grounds web questions in
+                        // the loop, and a provider that 400s tools is
+                        // blacklisted once and ladders DOWN to the plugin
+                        // path below (openrouter keeps provider-side web
+                        // grounding without tools) or the tool-less loop.
+                        // Anthropic-wire providers (their native tool format
+                        // is a future wave) fall to the plain paths below.
+                        runNativeToolsTurn(ctx, ch, errs, req)
                 case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
-                        // v0.38: OpenRouter's provider-side search keeps its
-                        // one-round native path (Path A) — no client loop needed.
+                        // v1.13.6: OpenRouter's provider-side search is now the
+                        // FALLBACK (blacklisted or anthropic-wire turns) —
+                        // provider-side web grounding without tools instead of
+                        // a tools dead end.
                         runWebSearchTurn(ctx, ch, errs, req)
                 case req.Provider != "" && req.AuthStyle != "anthropic":
-                        // v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
-                        // v1.13.3 THE GUT: EVERY OpenAI-compatible provider runs
-                        // the structured tool_calls loop against the mcpbus —
-                        // the model can't hand-write malformed ACTION JSON (the
-                        // zip_create failure class), and the ACTION text
-                        // protocol is DELETED. A provider that 400s tools is
-                        // blacklisted once and every later turn runs tool-less
-                        // cleanly (no wasted round-trip). Anthropic-wire
-                        // providers (their native tool format is a future
-                        // wave) fall to the plain streaming path below.
+                        // a BLACKLISTED provider without the plugin: the loop
+                        // skips tools upfront (v1.13.4 — no wasted 400s per
+                        // turn) and answers honestly.
                         runNativeToolsTurn(ctx, ch, errs, req)
                 default:
                         // v0.20's unified ReAct tool loop is gone (v1.13.3 THE
                         // GUT); what remains here is the plain streaming path
                         // for anthropic-wire providers and provider-less
                         // requests (runWebSearchTurn's Path A fires only for
-                        // the OpenRouter native-search case routed above).
+                        // the plugin case routed above).
                         runWebSearchTurn(ctx, ch, errs, req)
                 }
         }()
