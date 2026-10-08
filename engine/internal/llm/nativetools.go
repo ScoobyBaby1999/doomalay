@@ -30,6 +30,7 @@ import (
         "sync"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
 
 // nativeCall is one complete assembled tool call (arguments accumulated
@@ -237,6 +238,10 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         for round := 0; round < maxRounds; round++ {
                 roundReq := req
                 roundReq.Messages = history
+                // v1.14.4 THE TRACE: the round boundary — inputs on the
+                // start event, outcomes on the end event below.
+                obs.EmitS(ctx, obs.RoundStart, "round", round, "model", roundReq.Model,
+                        "provider", roundReq.Provider, "messages", len(history), "tools", len(specs))
                 if nudged {
                         // v0.82.3: the answer-force rounds run with thinking
                         // DISABLED (Effort "off" → BuildEffortBodyFor emits the
@@ -298,6 +303,11 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         return
                 }
                 totalUsage = mergeUsage(totalUsage, usage)
+                // v1.14.4 THE TRACE: the round's outcome (calls + tokens).
+                if usage != nil {
+                        obs.EmitS(ctx, obs.RoundEnd, "round", round, "calls", len(calls),
+                                "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens)
+                }
                 if len(calls) == 0 {
                         // v0.82.3 THE ANSWER-FORCE NET: a silent round (no calls,
                         // no visible content this whole turn) is NOT a final
@@ -306,6 +316,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         // either produces the real reply or falls through.
                         if !contentSeen && !nudged {
                                 nudged = true
+                                obs.EmitS(ctx, obs.Notice, "round", round, "text", "reasoning ended without a reply — nudge round armed (thinking off)")
                                 ch <- ChatChunk{Type: "progress", Text: "reasoning ended without a reply — asking again with thinking off…"}
                                 history = append(history,
                                         Message{Role: "assistant", Content: "(the previous reply contained reasoning but no visible answer)"},
@@ -356,6 +367,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 // the same call_id — caught by the v1.13.6 rig).
                                 if _, cut := repairJSONReport(args); cut {
                                         fault := "error: your " + c.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call — or split the work into smaller calls."
+                                        obs.EmitS(ctx, obs.ToolFault, "round", round, "name", c.Name, "call_id", c.ID, "fault", "arguments cut mid-JSON")
                                         ch <- ChatChunk{Type: "tool_use", Name: c.Name, Summary: "(arguments cut off)"}
                                         ch <- ChatChunk{Type: "tool_result", Text: fault, Name: c.Name}
                                         wire = append(wire, wireToolCall{ID: c.ID, Type: "function", Skip: true, SkipText: fault})
@@ -397,6 +409,12 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         // never executed, so no bus dispatch, no cache write, no
                         // second contradictory result for this call_id.
                         if c.Skip {
+                                // v1.14.4 THE TRACE: the skipped call is on the
+                                // timeline (start+end, fault text head) — the
+                                // honesty line is observable end to end.
+                                obs.EmitS(ctx, obs.ToolStart, "round", round, "name", c.Function.Name, "summary", "(call skipped — arguments unusable)")
+                                obs.EmitS(ctx, obs.ToolEnd, "round", round, "name", c.Function.Name,
+                                        "skipped", true, "obs_bytes", len(c.SkipText))
                                 history = append(history, Message{
                                         Role:       "tool",
                                         ToolCallID: c.ID,
@@ -410,26 +428,42 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 // v0.95.4 THE REPEAT-CALL CACHE (the nativetools
                                 // twin): an exact repeat serves the cached
                                 // observation — no re-execution, no wasted round.
+                                obs.EmitS(ctx, obs.ToolStart, "round", round, "name", c.Function.Name, "summary", "(identical repeat — cached result)")
+                                obs.EmitS(ctx, obs.ToolEnd, "round", round, "name", c.Function.Name, "cached", true, "obs_bytes", len(cached))
                                 ch <- ChatChunk{Type: "tool_use", Name: c.Function.Name, Summary: "(identical repeat — cached result)"}
                                 observation = "OBSERVATION:\n(identical " + c.Function.Name + " call already executed this turn — same result)\n" + cached
                         } else if bus != nil && !busDegraded {
                                 var degraded bool
                                 observation, degraded = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                // v1.14.4 THE TRACE: bus calls trace through the
+                                // bus Observer (spans + events, obs.AttachBus);
+                                // only the DEGRADE verdict is unique to this site.
                                 if degraded {
                                         busDegraded = true
+                                        obs.EmitS(ctx, obs.ErrorEv, "round", round, "where", "mcpbus", "degraded", true, "name", c.Function.Name)
                                 }
                                 seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
                         } else {
+                                // v1.14.4 THE TRACE: the direct dispatch — no bus
+                                // Observer fires here, so the span + events are
+                                // manual (same session-keyed registry as the bus).
+                                tsp, hasSpan := obs.StartSessionToolSpan(req.SessionID, c.Function.Name, c.ID)
+                                obs.EmitS(ctx, obs.ToolStart, "round", round, "name", c.Function.Name, "summary", "(direct dispatch — bus unavailable)")
                                 observation = executeAction(ctx, req, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                obs.EmitS(ctx, obs.ToolEnd, "round", round, "name", c.Function.Name, "direct", true, "obs_bytes", len(observation))
+                                if hasSpan {
+                                        tsp.End(strings.HasPrefix(observation, "OBSERVATION:\n(error"), len(observation))
+                                }
                                 seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
                         }
                         // strip the protocol prefix — the wire tool message is plain content
-                        obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
+                        // (v1.14.4: renamed obs→obsText — the obs PACKAGE lives here now)
+                        obsText := strings.TrimPrefix(observation, "OBSERVATION:\n")
                         history = append(history, Message{
                                 Role:       "tool",
                                 ToolCallID: c.ID,
                                 Name:       c.Function.Name,
-                                Content:    clamp(obs, 24000),
+                                Content:    clamp(obsText, 24000),
                         })
                 }
         }

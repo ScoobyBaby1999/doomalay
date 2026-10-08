@@ -220,6 +220,11 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
         s.mux.HandleFunc("GET /api/usage", s.handleUsageGlobal)
 
+        // v1.14.4 THE TRACE: the no-OTel debug surface (the in-memory
+        // per-session event rings; POST-less GET, DELETE clears).
+        s.mux.HandleFunc("GET /api/debug/trace", s.handleDebugTrace)
+        s.mux.HandleFunc("GET /api/debug/trace/{id}", s.handleDebugTraceSession)
+        s.mux.HandleFunc("DELETE /api/debug/trace", s.handleDebugTraceClear)
         // v0.29: the GLOBAL custom placeholders (every chatbot recognizes
         // them; scope switch lives in the personas → placeholders view).
         s.mux.HandleFunc("GET /api/placeholders", s.handlePlaceholdersGet)

@@ -19,6 +19,7 @@ import (
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/server"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -46,6 +47,22 @@ func main() {
         }
 
         log.Printf("doomalay engine starting (port %d, mode=%s)", cfg.Port, cfg.Mode)
+
+        // v1.14.4 THE TRACE: OTel setup BEFORE anything that traces. No
+        // OTEL_EXPORTER_OTLP_ENDPOINT → a no-op (the engine never phones
+        // home); with one → traces + metrics export OTLP/HTTP (Langfuse
+        // v3 first — docs/TRACE.md). Flush on the way out.
+        obsShutdown, obsErr := obs.Setup(context.Background())
+        if obsErr != nil {
+                log.Printf("trace: export disabled (%v)", obsErr)
+        } else if obs.Configured().Endpoint != "" {
+                log.Printf("trace: OTLP/HTTP export on → %s (service=%s)", obs.Configured().Endpoint, obs.Configured().ServiceName)
+        }
+        defer func() {
+                flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+                defer flushCancel()
+                _ = obsShutdown(flushCtx)
+        }()
 
         // Open the SQLite store (pure-Go driver, no CGO).
         db, err := store.Open(cfg.DataDir)

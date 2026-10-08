@@ -30,6 +30,7 @@ import (
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
 
 // ChatRequest is the input to a direct LLM call.
@@ -216,15 +217,36 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                 // 'gets killed by engine restart' report). The guard turns
                 // a would-be crash into one honest error chunk + a terminal
                 // status; the engine lives, the next turn works.
+                panicked := false
                 defer func() {
                         if rec := recover(); rec != nil {
+                                panicked = true
                                 log.Printf("PANIC recovered in llm.Chat (%s · %s): %v", providerLabel(req.Provider), modelShort(req.Model), rec)
+                                // v1.14.4 THE TRACE: the panic lands on the timeline too —
+                                // a killed turn leaves a body, not a hole.
+                                obs.EmitS(ctx, obs.ErrorEv, "where", "llm.Chat", "panic", fmt.Sprint(rec))
                                 ch <- ChatChunk{Type: "error", Error: "panic", Message: "internal error — the turn was cancelled but the engine recovered; try again"}
                                 ch <- ChatChunk{Type: "status", State: "error"}
                         }
+                        // v1.14.4 THE TRACE: the turn's terminal event — the
+                        // goroutine returned (clean or panicked). The runners'
+                        // Finish events carry the token truth; this closes the
+                        // turn record either way.
+                        obs.EmitS(ctx, obs.TurnEnd, "provider", req.Provider, "model", req.Model, "panicked", panicked)
                         close(ch)
                         close(errs)
                 }()
+
+                // v1.14.4 THE TRACE: the turn scope (session + monotonic turn
+                // number) and the `turn` root span — every span, event and delta
+                // of this turn descends from here. The dispatch PATH label rides
+                // the turn.dispatch event emitted inside each switch case below.
+                ctx = obs.TurnScope(ctx, req.SessionID)
+                tctx, turnSpan := obs.StartTurnSpan(ctx, req.SessionID, req.Provider, req.Model, "pending")
+                ctx = tctx
+                defer turnSpan.End()
+                obs.EmitS(ctx, obs.TurnStart, "provider", req.Provider, "model", req.Model,
+                        "messages", len(req.Messages), "web_search", req.WebSearch, "deep_research", req.DeepResearch)
 
                 // v1.14.1 THE LEDGER — the 92% CONTEXT GUARD: before the
                 // turn spends a single provider token, count the assembled
@@ -239,8 +261,10 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
 
                 switch {
                 case req.DeepResearch && req.Provider != "":
+                        obs.EmitS(ctx, obs.Dispatch, "path", "deep_research", "provider", req.Provider, "model", req.Model)
                         runDeepResearch(ctx, ch, errs, req)
                 case req.Provider != "" && req.AuthStyle != "anthropic" && !nativeToolsBlacklisted(req.Provider):
+                        obs.EmitS(ctx, obs.Dispatch, "path", "native_tools", "provider", req.Provider, "model", req.Model, "reason", "tools-capable provider")
                         // v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
                         // v1.13.3 THE GUT + v1.13.6 THE THIRD CARRIER: EVERY
                         // OpenAI-compatible provider — openrouter INCLUDED —
@@ -258,6 +282,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // is a future wave) fall to the plain paths below.
                         runNativeToolsTurn(ctx, ch, errs, req)
                 case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
+                        obs.EmitS(ctx, obs.Dispatch, "path", "web_plugin", "provider", req.Provider, "model", req.Model, "reason", "provider-side web grounding")
                         // v1.13.6: OpenRouter's provider-side search is now the
                         // FALLBACK (blacklisted or anthropic-wire turns) —
                         // provider-side web grounding without tools instead of
@@ -274,6 +299,7 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         // for anthropic-wire providers and provider-less
                         // requests (runWebSearchTurn's Path A fires only for
                         // the plugin case routed above).
+                        obs.EmitS(ctx, obs.Dispatch, "path", "plain", "provider", req.Provider, "model", req.Model, "reason", "anthropic-wire or provider-less")
                         runWebSearchTurn(ctx, ch, errs, req)
                 }
         }()
@@ -331,6 +357,10 @@ func emitContextGuard(ctx context.Context, ch chan<- ChatChunk, req ChatRequest)
         if pct < ctxGuardPct {
                 return
         }
+        // v1.14.4 THE TRACE: the guard verdict lands on the timeline (the
+        // visible notice below already replays via status events — this is
+        // for the observability sink).
+        obs.EmitS(ctx, obs.Guard, "model", req.Model, "used", used, "limit", limit, "pct", pct)
         select {
         case ch <- ChatChunk{
                 Type: "progress",
@@ -351,6 +381,17 @@ func humanCount(n int) string {
         default:
                 return fmt.Sprintf("%d", n)
         }
+}
+
+// deltaHead (v1.14.4 THE TRACE) clips a string to its head runes for the
+// trace events — DOOM_TRACE_DELTAS=1 records a 64-rune head per delta,
+// the request-body head is 4096 runes, level 2 records everything raw.
+func deltaHead(s string, n int) string {
+        r := []rune(s)
+        if len(r) <= n {
+                return s
+        }
+        return string(r[:n]) + "…"
 }
 
 // friendlyStreamError humanizes the raw transport/stream error.
@@ -884,6 +925,41 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 effortKeys = nil
         }
 
+        // v1.14.4 THE TRACE: the GenAI client span for THIS upstream
+        // completion — `chat <model>` (semconv span-name convention),
+        // parented to the turn span. The deferred block carries the
+        // response-side semconv attrs (finish reasons, token usage, delta
+        // tallies) on EVERY exit path — early error returns included — so
+        // a failed call still leaves a complete waterfall entry, and it
+        // feeds the two GenAI histograms. `usage` is hoisted ABOVE the
+        // span so the defer can read it (it used to be declared at the
+        // scanner; the re-assignment below is a fresh struct either way).
+        usage := &Usage{}
+        var nReason, nContent, nToolDelta int
+        firstTok := false
+        maxTok := 0
+        if n, ok := body["max_tokens"].(int); ok {
+                maxTok = n
+        }
+        bodyHead := ""
+        if obs.TraceBodies() {
+                bodyHead = deltaHead(string(bodyBytes), 4096)
+        }
+        ctx, chatSpan := obs.StartChatSpan(ctx, req.SessionID, req.Provider, req.Model, maxTok, bodyHead)
+        chatStart := time.Now()
+        defer func() {
+                obs.EmitS(ctx, obs.Finish, "model", req.Model, "provider", req.Provider,
+                        "finish_reason", usage.FinishReason, "output_cut", usage.OutputCut,
+                        "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
+                        "total_tokens", usage.TotalTokens,
+                        "reasoning_deltas", nReason, "content_deltas", nContent, "tool_call_deltas", nToolDelta,
+                        "duration_ms", int(time.Since(chatStart).Milliseconds()))
+                chatSpan.End(usage.FinishReason, usage.OutputCut,
+                        usage.InputTokens, usage.OutputTokens,
+                        fmt.Sprintf("reasoning=%d content=%d tool_call=%d", nReason, nContent, nToolDelta))
+                obs.RecordChatMetrics(req.Provider, req.Model, time.Since(chatStart), usage.InputTokens, usage.OutputTokens)
+        }()
+
         // v0.39 PACING (P8-FULL, socreate scheduler.py:338-361): reserve the
         // provider's rpm slot — reserve-under-lock, sleep outside — so
         // concurrent turns (parallel chats) stagger instead of bursting
@@ -901,6 +977,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 }
         }
 
+        obs.EmitS(ctx, obs.Request, "model", req.Model, "provider", req.Provider, "url", url, "attempt", 1, "body_bytes", len(bodyBytes))
         resp, reqErr := doPostSSE(ctx, req, url, bodyBytes, ch)
         if resp == nil {
                 return nil, nil, fmt.Errorf("request failed: %w", reqErr)
@@ -942,6 +1019,8 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         note = fmt.Sprintf("%s is overloaded (503) — retrying in %ds (attempt %d of 3)",
                                 providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
                 }
+                obs.EmitS(ctx, obs.Retry, "model", req.Model, "provider", req.Provider,
+                        "status", resp.StatusCode, "attempt", attempt+1, "wait_ms", int(wait.Milliseconds()))
                 select {
                 case ch <- ChatChunk{Type: "progress", Text: note}:
                 default: // never block the stream on UI notices
@@ -969,6 +1048,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 req.FallbackTried = true
                                 note := fmt.Sprintf("%s no longer hosts %s — switching to %s (same model)",
                                         providerLabel(req.Provider), modelShort(req.Model), providerLabel(altProv))
+                                obs.EmitS(ctx, obs.Fallback, "model", am, "provider", altProv, "from_provider", req.Provider)
                                 select {
                                 case ch <- ChatChunk{Type: "progress", Text: note}:
                                 default:
@@ -994,10 +1074,12 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         // the ACTION text protocol.
                         if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
                                 blacklistNativeTools(req.Provider)
+                                obs.EmitS(ctx, obs.ToolsRejected, "provider", req.Provider, "model", req.Model, "status", 400)
                                 return nil, nil, errToolsRejected
                         }
                         if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
                                 blacklistEffort(req.Provider, req.Model)
+                                obs.EmitS(ctx, obs.Strip, "what", "effort", "provider", req.Provider, "model", req.Model)
                                 for _, k := range effortKeys {
                                         delete(body, k)
                                 }
@@ -1025,6 +1107,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 // it to this provider again (the effortKeys
                                 // pattern; the server's own default returns).
                                 if len(bodyKeys) > 0 && resp.StatusCode == 400 && mentionsMaxTokens(string(bts)) {
+                                        obs.EmitS(ctx, obs.Strip, "what", "max_tokens", "provider", req.Provider, "model", req.Model)
                                         for _, k := range bodyKeys {
                                                 delete(body, k)
                                         }
@@ -1065,6 +1148,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // socreate race guard — an ACTIVE 429 cooldown recorded by a sibling
         // request survives).
         RecordProviderSuccess(req.Provider)
+        obs.EmitS(ctx, obs.StreamOpen, "model", req.Model, "provider", req.Provider, "status", 200)
 
         // v0.19: no-data watchdog — v0.80.1: DISARMED. idleWaitFor returns 0
         // (no kill timer is armed — the user directive: no timer may cancel
@@ -1094,7 +1178,6 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // observed payload class (images/audio clips) while still capping
         // runaway hosts.
         scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-        usage := &Usage{}
         var calls []nativeCall
         callIdx := map[int]int{} // delta index → position in calls
         for scanner.Scan() {
@@ -1121,6 +1204,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         // first carries id+name, later ones only arguments.
                         for _, tc := range choice.Delta.ToolCalls {
                                 wd.markDelta()
+                                nToolDelta++
+                                if !firstTok {
+                                        firstTok = true
+                                        obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "tool_call")
+                                }
                                 pos, ok := callIdx[tc.Index]
                                 if !ok {
                                         pos = len(calls)
@@ -1134,6 +1222,14 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                         calls[pos].Name = tc.Function.Name
                                 }
                                 calls[pos].Arguments += tc.Function.Arguments
+                                // v1.14.4 THE TRACE: every tool_call argument
+                                // fragment (the assembled call is judged at
+                                // execution time — this is the wire truth).
+                                if obs.DeltaTrace() >= 1 {
+                                        obs.EmitS(ctx, obs.ToolCallDelta, "index", tc.Index,
+                                                "name", calls[pos].Name, "args_len", len(calls[pos].Arguments),
+                                                "chunk", tc.Function.Arguments)
+                                }
                         }
                         // v0.95.4 THE DSML FILTER: deepseek-family models
                         // stream their native tool markup (<｜DSML｜calls>…)
@@ -1148,6 +1244,30 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
                                 wd.markDelta() // v0.24: real token — wait-notices go quiet
                                 visible := dsml.feed(choice.Delta.Content)
+                                if !firstTok {
+                                        firstTok = true
+                                        obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "delta")
+                                }
+                                // v1.14.4 THE TRACE: reasoning + content deltas
+                                // under the DOOM_TRACE_DELTAS gate (0 = counts
+                                // only, 1 = 64-rune head, 2 = full text). The
+                                // tallies ride the finish event at every gate.
+                                if r := choice.Delta.Reasoning + choice.Delta.ReasoningOR; r != "" {
+                                        nReason++
+                                        if obs.DeltaTrace() >= 2 {
+                                                obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "text", r)
+                                        } else if obs.DeltaTrace() == 1 {
+                                                obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "head", deltaHead(r, 64))
+                                        }
+                                }
+                                if visible != "" {
+                                        nContent++
+                                        if obs.DeltaTrace() >= 2 {
+                                                obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "text", visible)
+                                        } else if obs.DeltaTrace() == 1 {
+                                                obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "head", deltaHead(visible, 64))
+                                        }
+                                }
                                 if onDelta != nil {
                                         // v0.93.1: merge the two reasoning field
                                         // conventions (reasoning_content · reasoning);
@@ -1189,6 +1309,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 }
         }
         if err := scanner.Err(); err != nil {
+                // v1.14.4 THE TRACE: the transport verdict — timeout, oversize
+                // line, or mid-stream failure all land here before the
+                // caller's policy (retry / honest error) picks up.
+                obs.EmitS(ctx, obs.ErrorEv, "where", "stream", "model", req.Model,
+                        "error", err.Error(), "timed_out", wd.timedOut.Load())
                 if wd.timedOut.Load() {
                         ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
                         return usage, calls, nil

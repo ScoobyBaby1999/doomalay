@@ -19,7 +19,8 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -1368,6 +1369,13 @@ func (s *Server) remoteBrainFor(sess *store.Session) *brain.RemoteBrain {
 // degrades to the direct pipeline with a visible explanation (the quick-chat
 // guarantee: the message still gets answered).
 func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool, rb *brain.RemoteBrain) {
+        // v1.14.4 THE TRACE: same turn record as the brain path — the
+        // remote sandbox's internal provider calls stay opaque (they run
+        // in the space's own process); what lands here is the boundary.
+        ctx = obs.TurnScope(ctx, sessionID)
+        model, _ := brainReq["model"].(string)
+        obs.EmitS(ctx, obs.TurnStart, "provider", "remote_brain", "model", model)
+        defer obs.EmitS(ctx, obs.TurnEnd, "provider", "remote_brain", "model", model)
         // The remote sandbox scopes workspaces itself (sanitized session_id →
         // /data|/tmp/doomalay-workspaces/<id>) — never send device paths.
         delete(brainReq, "workspace")
@@ -1551,6 +1559,13 @@ func guardFirstByte(events <-chan map[string]any, killAfterSec int, onFire func(
 // streamFromBrain proxies the chat turn through the Python brain (full
 // agent: Strands, tools, panel, templates). Used when the brain is available.
 func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool) {
+        // v1.14.4 THE TRACE: the brain path gets the same turn record the
+        // direct path gets (llm.Chat stamps its own when it takes over on
+        // failover — two turns for one user message is the honest shape).
+        ctx = obs.TurnScope(ctx, sessionID)
+        model, _ := brainReq["model"].(string)
+        obs.EmitS(ctx, obs.TurnStart, "provider", "brain", "model", model)
+        defer obs.EmitS(ctx, obs.TurnEnd, "provider", "brain", "model", model)
         events, errs, err := s.brain.Chat(ctx, brainReq)
         if err != nil {
                 // v0.44.1 BRAIN FAILOVER (W5 redteam fix): the brain died mid-run
@@ -2423,53 +2438,53 @@ func bundleManifestText(b map[string]any) string {
 // gates live inside runSkillsAction/runHublibAction), so the closures
 // arm unconditionally — exactly like the ChatRequest construction above.
 func (s *Server) sessionMcpTurn(sessionID string) *mcpbus.Turn {
-	sess, err := s.db.GetSession(sessionID)
-	if err != nil || sess == nil {
-		return nil
-	}
-	if s.vault == nil {
-		return nil
-	}
-	keys := s.vault.AsEnv()
-	brainURL := ""
-	if s.brain != nil {
-		brainURL = s.brain.URL()
-	}
-	return &mcpbus.Turn{
-		SessionID: sessionID,
-		RunLocal: func(ctx context.Context, name, argJSON string, sink mcpbus.ArtifactSink) string {
-			return llm.RunLocalTool(name, argJSON, sink)
-		},
-		Sink: &sessionArtifactSink{s: s, sessID: sessionID},
-		Search: func(ctx context.Context, query string) (string, []mcpbus.Source, error) {
-			results, err := llm.WebSearch(ctx, query, 5, keys["TAVILY_API_KEY"])
-			if err != nil {
-				return "", nil, err
-			}
-			obs := llm.FormatSearchResults(results)
-			if obs == "" {
-				obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
-			}
-			srcs := make([]mcpbus.Source, len(results))
-			for i, r := range results {
-				srcs[i] = mcpbus.Source{Title: r.Title, URL: r.URL, Snippet: r.Snippet}
-			}
-			return obs, srcs, nil
-		},
-		Fetch: func(ctx context.Context, url string) (string, error) {
-			return llm.WebFetch(ctx, url, 12000)
-		},
-		TemplateAuto: sess.TemplateAuto,
-		TemplateList: func(ctx context.Context) string {
-			return llm.RunTemplateListFor(ctx, brainURL)
-		},
-		TemplateShow: func(ctx context.Context, id string) string {
-			return llm.RunTemplateShowFor(ctx, brainURL, id)
-		},
-		Persona:       func(ctx context.Context, name, argJSON string) string { return s.runPersonaTool(sessionID, name, argJSON) },
-		Hublib:        func(ctx context.Context, argJSON string) string { return s.runHublibAction(sessionID, argJSON) },
-		Skills:        func(ctx context.Context, argJSON string) string { return s.runSkillsAction(sessionID, argJSON) },
-		Workspace:     func(ctx context.Context, argJSON string) string { return s.runWorkspaceAction(ctx, sessionID, argJSON) },
-		Delegate:      func(ctx context.Context, prompt string, models []string) []map[string]any { return s.RunDelegate(ctx, prompt, models, keys) },
-	}
+        sess, err := s.db.GetSession(sessionID)
+        if err != nil || sess == nil {
+                return nil
+        }
+        if s.vault == nil {
+                return nil
+        }
+        keys := s.vault.AsEnv()
+        brainURL := ""
+        if s.brain != nil {
+                brainURL = s.brain.URL()
+        }
+        return &mcpbus.Turn{
+                SessionID: sessionID,
+                RunLocal: func(ctx context.Context, name, argJSON string, sink mcpbus.ArtifactSink) string {
+                        return llm.RunLocalTool(name, argJSON, sink)
+                },
+                Sink: &sessionArtifactSink{s: s, sessID: sessionID},
+                Search: func(ctx context.Context, query string) (string, []mcpbus.Source, error) {
+                        results, err := llm.WebSearch(ctx, query, 5, keys["TAVILY_API_KEY"])
+                        if err != nil {
+                                return "", nil, err
+                        }
+                        obs := llm.FormatSearchResults(results)
+                        if obs == "" {
+                                obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
+                        }
+                        srcs := make([]mcpbus.Source, len(results))
+                        for i, r := range results {
+                                srcs[i] = mcpbus.Source{Title: r.Title, URL: r.URL, Snippet: r.Snippet}
+                        }
+                        return obs, srcs, nil
+                },
+                Fetch: func(ctx context.Context, url string) (string, error) {
+                        return llm.WebFetch(ctx, url, 12000)
+                },
+                TemplateAuto: sess.TemplateAuto,
+                TemplateList: func(ctx context.Context) string {
+                        return llm.RunTemplateListFor(ctx, brainURL)
+                },
+                TemplateShow: func(ctx context.Context, id string) string {
+                        return llm.RunTemplateShowFor(ctx, brainURL, id)
+                },
+                Persona:       func(ctx context.Context, name, argJSON string) string { return s.runPersonaTool(sessionID, name, argJSON) },
+                Hublib:        func(ctx context.Context, argJSON string) string { return s.runHublibAction(sessionID, argJSON) },
+                Skills:        func(ctx context.Context, argJSON string) string { return s.runSkillsAction(sessionID, argJSON) },
+                Workspace:     func(ctx context.Context, argJSON string) string { return s.runWorkspaceAction(ctx, sessionID, argJSON) },
+                Delegate:      func(ctx context.Context, prompt string, models []string) []map[string]any { return s.RunDelegate(ctx, prompt, models, keys) },
+        }
 }
