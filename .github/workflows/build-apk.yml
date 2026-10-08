@@ -79,11 +79,23 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
+      - name: Generate OTA patch manifest (v1.17.4 THE LIVE UPDATE)
+        run: |
+          # Hash the web tree the engine EMBEDS in the .so built above —
+          # the same bytes the APK carries, so the engine's live-stack
+          # diff (embedded vs manifest) is honest. Uploaded next to the
+          # APK; the engine's default manifest URL is this release's
+          # "latest" asset (per-file deltas resolve to the raw tree at
+          # the tag — see docs/OTA.md).
+          python3 scripts/generate-ota-manifest.py "${GITHUB_REF_NAME}" patch-manifest.json
+
       - name: Upload to Releases
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          files: |
+            platforms/android/app/build/outputs/apk/debug/app-debug.apk
+            patch-manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload artifact (non-fatal — quota is capped; releases carry the binaries)

@@ -45,6 +45,18 @@ type Config struct {
 	// Alternative sources: $DOOMALAY_TERMUX_BRIDGE (tests + power users).
 	TermuxBridge string `yaml:"termux_bridge"`
 
+	// v1.17.4 THE LIVE UPDATE: the delta OTA manifest URL (default: the
+	// GitHub release "latest" asset — redirects resolve to the newest
+	// tag). Alternative source: $DOOMALAY_OTA_URL (tests point engines at
+	// stub manifests; power users can pin an offline mirror). No CLI flag —
+	// env + yaml only (the same precedence shape as the hub env knob).
+	OTAURL string `yaml:"ota_url"`
+
+	// v1.17.4: $DOOMALAY_OTA_DISABLE=1 — the OTA kill switch: /api/ota/*
+	// answers {enabled:false, state:"disabled"} and ZERO network happens
+	// (no background refresher, no manifest fetch).
+	OTADisable bool `yaml:"ota_disable"`
+
 	// v0.31: the Hub (modular library system). HFBase is the Hugging Face
 	// instance the hub talks to (default https://huggingface.co; override
 	// via DOOMALAY_HUB_HF_BASE — mock-server tests + self-hosted HF later).
@@ -114,6 +126,15 @@ func Load(path string, ov Overrides) (*Config, error) {
 	if b := os.Getenv("DOOMALAY_TERMUX_BRIDGE"); b != "" {
 		cfg.TermuxBridge = b
 	}
+	// v1.17.4 THE LIVE UPDATE: the OTA manifest URL + the kill switch
+	// (tests point engines at stub manifests; DOOMALAY_OTA_DISABLE=1 is
+	// the honest off state — zero network, state "disabled").
+	if b := os.Getenv("DOOMALAY_OTA_URL"); b != "" {
+		cfg.OTAURL = b
+	}
+	if os.Getenv("DOOMALAY_OTA_DISABLE") == "1" {
+		cfg.OTADisable = true
+	}
 
 	// Apply CLI overrides (highest priority, wins over YAML + env).
 	if ov.Port != 0 {
@@ -177,6 +198,14 @@ func Load(path string, ov Overrides) (*Config, error) {
 	}
 	for strings.HasSuffix(cfg.Hub.HFBase, "/") {
 		cfg.Hub.HFBase = cfg.Hub.HFBase[:len(cfg.Hub.HFBase)-1]
+	}
+
+	// v1.17.4 THE LIVE UPDATE: the default manifest URL rides the
+	// GitHub release "latest" asset (302 → the newest tag's
+	// patch-manifest.json; per-file downloads resolve to the raw
+	// tree at the manifest's ref — see engine/internal/ota.FileURL).
+	if cfg.OTAURL == "" {
+		cfg.OTAURL = "https://github.com/ScoobyBaby1999/doomalay/releases/latest/download/patch-manifest.json"
 	}
 
 	// v1.17.2: termux bridge base URL trailing-slash hygiene (the client

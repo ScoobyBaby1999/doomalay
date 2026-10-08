@@ -74,6 +74,14 @@ type Server struct {
         termuxMu     sync.Mutex
         termuxCache  termuxProbeCache
         termuxFlight chan struct{}
+
+        // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
+        // — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then
+        // answers {enabled:false, state:"disabled"} honestly, zero network).
+        // Holds the mutex-guarded manifest cache; the background refresher
+        // (boot + every 5 min) runs on its own goroutine — failures cache as
+        // the honest "unreachable" state, never a silent failure.
+        ota *otaManager
 }
 
 // New constructs the server and registers all routes.
@@ -97,6 +105,13 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         // /api/termux/status answers {"available":false}).
         if cfg.TermuxBridge != "" {
                 s.termux = termuxbridge.NewClient(cfg.TermuxBridge)
+        }
+        // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil = disabled via
+        // DOOMALAY_OTA_DISABLE or no URL). The background refresher starts
+        // on its own goroutine — boot is never blocked on a manifest fetch.
+        s.ota = newOtaManager(cfg)
+        if s.ota != nil {
+                go s.otaBackground()
         }
         // v0.31: the hub service (local store + vault + HF client). Nil-DB
         // safe for the pathological test boot (routes would 500, not panic).
@@ -447,6 +462,16 @@ func (s *Server) routes() {
         // the forge generic-git adapter needs the clone root wired once
         forge.SetGenericCloneDir(filepath.Join(s.cfg.DataDir, "workspaces"))
 
+        // ── v1.17.4 THE LIVE UPDATE: the delta OTA endpoints. ──
+        // (Registered in its OWN block, separate from the v1.17.2 termux
+        // routes near the top of routes() — the parallel-wave merge stays
+        // clean. GET status serves the cached manifest + live-computed
+        // plan; POST check forces a manifest refetch; POST download
+        // executes the plan under the ota-first static overlay below.)
+        s.mux.HandleFunc("GET /api/ota/status", s.handleOtaStatus)
+        s.mux.HandleFunc("POST /api/ota/check", s.handleOtaCheck)
+        s.mux.HandleFunc("POST /api/ota/download", s.handleOtaDownload)
+
         // Embedded PWA (serves web/dist at /).
         // v0.88.2: THE STALE-CACHE FIX — the SPA's scripts served with NO
         // cache headers get heuristic-cached by the browser across
@@ -457,7 +482,13 @@ func (s *Server) routes() {
         // local + cheap); the big vendored blobs keep their own
         // long-lived rules.
         distFS, _ := fs.Sub(webFS, "web")
-        s.mux.Handle("/", noCacheFS{http.FileServer(http.FS(distFS))})
+        // v1.17.4 THE LIVE UPDATE: THE APPLY MECHANISM — the ota-first
+        // overlay. A downloaded patch at <dataDir>/ota/<web-relative-path>
+        // wins over the embedded bytes, so a pure web-asset patch goes LIVE
+        // WITHOUT an engine restart (the PWA's post-download reload fetches
+        // the new bytes through this handler). Path traversal is guarded:
+        // only clean relative paths under web/ resolve to a disk file.
+        s.mux.Handle("/", noCacheFS{s.otaOverlay(http.FileServer(http.FS(distFS)))})
 
         // v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
         // Content-Encoding: gzip so the WebView decompresses transparently —
