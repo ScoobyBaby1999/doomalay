@@ -149,11 +149,16 @@ type ChatChunk struct {
         Artifact map[string]any `json:"artifact,omitempty"` // v0.22: file tool result (name/id/size) — the UI renders a download card
 }
 
-// Usage is the token usage from the final chunk.
+// Usage is the token usage from the final chunk. v1.14.1 THE LEDGER:
+// carries the provider's terminal verdict so the numbers are honest —
+// finish_reason is WHY the stream ended (stop / tool_calls / length),
+// output_cut flags the length class (the mid-file truncation shape).
 type Usage struct {
-        InputTokens  int `json:"input_tokens"`
-        OutputTokens int `json:"output_tokens"`
-        TotalTokens  int `json:"total_tokens"`
+        InputTokens  int    `json:"input_tokens"`
+        OutputTokens int    `json:"output_tokens"`
+        TotalTokens  int    `json:"total_tokens"`
+        FinishReason string `json:"finish_reason,omitempty"`
+        OutputCut    bool   `json:"output_cut,omitempty"`
 }
 
 // openAIChunk is the raw SSE chunk from an OpenAI-compatible provider.
@@ -221,6 +226,17 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
                         close(errs)
                 }()
 
+                // v1.14.1 THE LEDGER — the 92% CONTEXT GUARD: before the
+                // turn spends a single provider token, count the assembled
+                // request with the real BPE and compare it against the
+                // model's documented window. Past 92%, say so — with the
+                // actual numbers — before the provider answers with a
+                // silent truncation, a failed tool round, or an error
+                // body the user can't parse. Informational ONLY: the turn
+                // proceeds either way (compaction owns the actual
+                // shrinking; this guard makes the invisible visible).
+                emitContextGuard(ctx, ch, req)
+
                 switch {
                 case req.DeepResearch && req.Provider != "":
                         runDeepResearch(ctx, ch, errs, req)
@@ -286,6 +302,55 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
 func emitTurnError(ch chan<- ChatChunk, err error) {
         ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
         ch <- ChatChunk{Type: "status", State: "error"}
+}
+
+// ctxGuardPct is the context guard's arm point: a request estimated past
+// this share of the model's documented window speaks up before dispatch.
+const ctxGuardPct = 92
+
+// emitContextGuard — v1.14.1 THE LEDGER: the 92% pre-dispatch notice. Real
+// BPE count of the assembled request (system + history + tool-call wire
+// frames) vs the snapshot's documented window. Never blocks, never cancels,
+// never fires twice: one progress chunk with the numbers, so the replay
+// carries the same honesty the live turn saw. Skips when the window is
+// unknown (heuristic limit only — no invented urgency) or the request is
+// empty.
+func emitContextGuard(ctx context.Context, ch chan<- ChatChunk, req ChatRequest) {
+        if ctx.Err() != nil || len(req.Messages) == 0 {
+                return
+        }
+        limit, specKnown := SpecContext(req.Model)
+        if !specKnown {
+                return // heuristic window ≠ honest denominator
+        }
+        used := countMessagesTokens(req.Messages, req.SystemPrompt)
+        if used <= 0 {
+                return
+        }
+        pct := used * 100 / limit
+        if pct < ctxGuardPct {
+                return
+        }
+        select {
+        case ch <- ChatChunk{
+                Type: "progress",
+                Text: fmt.Sprintf("context guard: this turn is ~%s tokens of %s's %s-token window (%d%% full) — compaction or a fresh chat is due; long turns may be truncated or refused by the provider",
+                        humanCount(used), modelShort(req.Model), humanCount(limit), pct),
+        }:
+        default: // never block the stream on a notice
+        }
+}
+
+// humanCount renders a token count as "12.3k" / "1.2M" for notices.
+func humanCount(n int) string {
+        switch {
+        case n >= 1_000_000:
+                return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+        case n >= 1_000:
+                return fmt.Sprintf("%.1fk", float64(n)/1_000)
+        default:
+                return fmt.Sprintf("%d", n)
+        }
 }
 
 // friendlyStreamError humanizes the raw transport/stream error.
@@ -780,6 +845,15 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         var bodyKeys []string
         if _, exists := body["max_tokens"]; !exists {
                 if floor, known := providerMaxTokensFloor(req.Provider); known {
+                        // v1.14.1 THE LEDGER: the value is now the MODEL's
+                        // documented output cap (models.dev snapshot) when
+                        // known — the flat 16384 crossed fingers that every
+                        // NIM model tolerated it; the spec says exactly what
+                        // this model allows. The 400-strip retry below stays
+                        // as the safety net for stale snapshots.
+                        if specOut, ok := SpecMaxOutput(req.Model); ok && specOut > 0 {
+                                floor = specOut
+                        }
                         body["max_tokens"] = floor
                         bodyKeys = append(bodyKeys, "max_tokens")
                 }
@@ -1006,6 +1080,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // stream so it persists, replays, and the user knows to say
         // "continue" (the silent .MD-artifact cutoff class).
         hitLength := false
+        var lastFinishReason string // v1.14.1 THE LEDGER: last terminal verdict on the wire
         defer wd.Close()
         stopNotices := waitNotices(ch, wd, req.Model, req.Provider)
         defer stopNotices()
@@ -1038,6 +1113,9 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 for _, choice := range chunk.Choices {
                         if choice.FinishReason == "length" {
                                 hitLength = true
+                        }
+                        if choice.FinishReason != "" {
+                                lastFinishReason = choice.FinishReason
                         }
                         // v0.38: assemble streamed tool-call fragments — the
                         // first carries id+name, later ones only arguments.
@@ -1082,6 +1160,15 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         usage.InputTokens = chunk.Usage.PromptTokens
                         usage.OutputTokens = chunk.Usage.CompletionTokens
                 }
+        }
+        // v1.14.1 THE LEDGER: the terminal verdict — the LAST non-empty
+        // finish_reason on the wire (this is ONE completion; earlier
+        // chunks never carry one). "length" also flags output_cut so the
+        // status event, the usage ledger, and the UI all name the cutoff
+        // class.
+        if lastFinishReason != "" {
+                usage.FinishReason = lastFinishReason
+                usage.OutputCut = lastFinishReason == "length"
         }
         // v0.95.4 END-OF-STREAM: flush the DSML filter (salvage an
         // unterminated block — the finish_reason=length class — release held
@@ -1664,7 +1751,14 @@ func mergeUsage(a, b *Usage) *Usage {
         if a == nil {
                 return b
         }
-        return &Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens}
+        // v1.14.1 THE LEDGER: the terminal state rides the LAST round — the
+        // turn ended however the final completion ended, not the first.
+        return &Usage{
+                InputTokens:  a.InputTokens + b.InputTokens,
+                OutputTokens: a.OutputTokens + b.OutputTokens,
+                FinishReason: b.FinishReason,
+                OutputCut:    b.OutputCut,
+        }
 }
 
 // (v1.13.3 THE GUT: parseAction/parseActions/actionRe died with the
