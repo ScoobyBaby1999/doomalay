@@ -177,18 +177,28 @@ func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID st
         // v0.91.7: the DOOMALAY_BASE_URL_<PROVIDER> power-feature override
         // holds for the FETCH path too (effectiveBaseURL) — a mirror serving
         // chat must serve its model list (the mistral e2e rig's find).
+        // v1.15.2 THE DECOUPLE (rig-convicted honesty gap): the claim now
+        // HOLDS for the specialized fetchers too — nvidia/opencode/PM take
+        // the resolved base, and openrouter (whose view is the reasoning
+        // REGISTRY, a global public catalog a mirror can't serve) falls
+        // back to the plain OpenAI-compatible /models fetch when overridden.
+        override := ""
         if v := os.Getenv("DOOMALAY_BASE_URL_" + strings.ToUpper(name)); v != "" {
-                cfg.BaseURL = strings.TrimSuffix(v, "/")
+                override = strings.TrimSuffix(v, "/")
+                cfg.BaseURL = override
         }
         switch name {
         case "openrouter":
+                if override != "" {
+                        return fetchOpenAICompatible(name, cfg, apiKey)
+                }
                 return fetchOpenRouterModels(apiKey)
         case "nvidia":
-                return fetchNvidiaModels(apiKey)
+                return fetchNvidiaModels(apiKey, override)
         case "opencode":
-                return fetchOpenCodeModels(apiKey)
+                return fetchOpenCodeModels(apiKey, override)
         case "privatemodeai":
-                return fetchPrivateModeModels(apiKey)
+                return fetchPrivateModeModels(apiKey, override)
         case "cloudflare":
                 return fetchCloudflareModels(apiKey, accountID)
         case "github":
@@ -280,8 +290,14 @@ func fetchOpenRouterModels(apiKey string) []fetchedModel {
 // scrape is unavailable (AWS WAF intermittently challenges non-browser
 // clients) the DEFAULT IS FREE — never guess "paid" (the v0.14
 // owned_by=="nvidia" heuristic wrongly listed Kimi K3 as paid).
-func fetchNvidiaModels(apiKey string) []fetchedModel {
-        body, err := httpGetJSON("https://integrate.api.nvidia.com/v1/models", apiKey)
+func fetchNvidiaModels(apiKey, overrideBase string) []fetchedModel {
+        // v1.15.2: the override wins (the mirror contract); no override →
+        // the real NIM endpoint.
+        base := "https://integrate.api.nvidia.com/v1"
+        if overrideBase != "" {
+                base = strings.TrimSuffix(overrideBase, "/")
+        }
+        body, err := httpGetJSON(base+"/models", apiKey)
         if err != nil {
                 return nil
         }
@@ -416,8 +432,12 @@ func nvidiaSlugMatch(apiSlug string, freeSet, all map[string]bool) (isFree, foun
 // fetchOpenCodeModels — GET https://opencode.ai/zen/v1/models (public).
 // Free: "big-pickle" (verified) or "-free" suffix, EXCEPT the known paid
 // exceptions (minimax-m3-free, qwen3.6-plus-free — paid on Zen despite the name).
-func fetchOpenCodeModels(apiKey string) []fetchedModel {
-        body, err := httpGetJSON("https://opencode.ai/zen/v1/models", apiKey)
+func fetchOpenCodeModels(apiKey, overrideBase string) []fetchedModel {
+        base := "https://opencode.ai/zen/v1"
+        if overrideBase != "" {
+                base = strings.TrimSuffix(overrideBase, "/")
+        }
+        body, err := httpGetJSON(base+"/models", apiKey)
         if err != nil {
                 return nil
         }
@@ -448,7 +468,6 @@ func fetchOpenCodeModels(apiKey string) []fetchedModel {
 // privateModeModelsURL is a package var so unit tests can serve the PM
 // model list from an httptest server (no network in tests).
 var privateModeModelsURL = "https://api.privatemode.ai/v1/models"
-
 // fetchPrivateModeModels — GET https://api.privatemode.ai/v1/models (Bearer).
 // v0.42 (research 3-c + live 2026-06): the shape changed — entries now carry
 // a tasks[] array ("generate" = chat, "transcribe" = whisper, "embed" =
@@ -459,11 +478,17 @@ var privateModeModelsURL = "https://api.privatemode.ai/v1/models"
 // group and the new ids never matched the static catalog — part of the
 // disappearing-effort-toggle bug. Now: keep CHAT models only (tasks contains
 // "generate"); entries without tasks[] pass through (older shape).
-func fetchPrivateModeModels(apiKey string) []fetchedModel {
+func fetchPrivateModeModels(apiKey, overrideBase string) []fetchedModel {
         if apiKey == "" {
                 return nil
         }
-        body, err := httpGetJSON(privateModeModelsURL, apiKey)
+        url := privateModeModelsURL
+        if overrideBase != "" {
+                // v1.15.2: the mirror contract — an overridden base serves
+                // the list too (tests keep the package-var override path).
+                url = strings.TrimSuffix(overrideBase, "/") + "/models"
+        }
+        body, err := httpGetJSON(url, apiKey)
         if err != nil {
                 return nil
         }

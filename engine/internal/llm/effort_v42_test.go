@@ -390,10 +390,10 @@ func TestFetchPrivateModeModelsChatOnlyV42(t *testing.T) {
         t.Cleanup(func() { privateModeModelsURL = prev })
 
         // No key → nil (PM requires auth).
-        if fetchPrivateModeModels("") != nil {
+        if fetchPrivateModeModels("", "") != nil {
                 t.Error("empty key must return nil")
         }
-        models := fetchPrivateModeModels("test-key")
+        models := fetchPrivateModeModels("test-key", "")
         if models == nil {
                 t.Fatal("keyed fetch failed")
         }
@@ -422,7 +422,7 @@ func TestFetchPrivateModeModelsChatOnlyV42(t *testing.T) {
         }))
         t.Cleanup(srv2.Close)
         privateModeModelsURL = srv2.URL
-        legacy := fetchPrivateModeModels("k")
+        legacy := fetchPrivateModeModels("k", "")
         if len(legacy) != 1 || legacy[0].RawID != "legacy-kimi" || legacy[0].ContextLength != 256000 {
                 t.Errorf("legacy no-tasks shape should pass through, got %+v", legacy)
         }
