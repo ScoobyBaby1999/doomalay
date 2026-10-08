@@ -399,6 +399,14 @@
   function wireReady(inst) {
     var done = document.getElementById('tsx-btn-done');
     if (done) done.addEventListener('click', function () {
+      // v1.17.5 redteam fix: Done pops back to the CAPABILITY LIBRARY the
+      // setup page was pushed over (PLAN-V117 §v1.17.3 "Exit → back to
+      // the capability library") — the user's next move is stacking the
+      // now-ready capability, one row away. A cold-open (nothing beneath
+      // this page) closes the overlay as before. The popped page's own
+      // teardown rides the interval's liveness watch (popPage fires no
+      // onClose) → onExit → the row's forced re-probe.
+      if (window.ConnectOverlay.popPage && window.ConnectOverlay.popPage()) return;
       window.ConnectOverlay.close();
     });
   }

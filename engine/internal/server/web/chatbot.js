@@ -306,6 +306,20 @@
       base.model = this.model;
       base.provider = this.provider;
       base.sessionId = this.sessionId || ''; // v0.15: survive restarts
+      // v1.17.5 THE REDTEAM: the pre-session capability stack survives
+      // reloads — caps stacked before the first send (the capabilities
+      // library's whole flow: the user stacks at the gatelock stage,
+      // before any model/turn) ride the icon in localStorage until the
+      // engine session lands and takes over as the truth (persistCaps
+      // stashes them; sessionBody carries them at creation).
+      base.caps = this.caps ? {
+        termux: !!this.caps.termux,
+        deepResearch: !!this.caps.deepResearch,
+        webSearch: this.caps.webSearch !== false,
+        libAuto: !!this.caps.libAuto,
+        skillsAuto: !!this.caps.skillsAuto,
+        templateAuto: !!this.caps.templateAuto
+      } : null;
       return base;
     }
 
@@ -327,6 +341,8 @@
         provider: data.provider || '',
         sessionId: data.sessionId || ''
       });
+      // v1.17.5: restore the pre-session capability stash (see serialize).
+      icon.caps = (data.caps && typeof data.caps === 'object') ? data.caps : null;
       return icon;
     }
   }

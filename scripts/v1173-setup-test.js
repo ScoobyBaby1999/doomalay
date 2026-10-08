@@ -128,6 +128,12 @@ console.log('v1.17.3 THE SETUP pins — termuxsetup.js:');
   ok(tsx.indexOf('not available on this build/device') >= 0, 'the honest unavailable card string');
   ok(tsx.indexOf('Get Termux') >= 0 && tsx.indexOf('Open Termux') >= 0 && tsx.indexOf('Open settings') >= 0,
     'the three action buttons (fdroid / termux / permission settings)');
+  // v1.17.5 redteam fix pin: the READY card's Done pops back to the
+  // capability library (PLAN-V117 §v1.17.3 "Exit → back to the capability
+  // library") — close() only when there is nothing beneath to pop to.
+  ok(tsx.indexOf('window.ConnectOverlay.popPage && window.ConnectOverlay.popPage()') >= 0 &&
+     tsx.indexOf('window.ConnectOverlay.close()') >= 0,
+    'the READY card Done: popPage back to the library, close only at the root');
   ok(tsx.indexOf('open_fdroid') >= 0 && tsx.indexOf('open_termux') >= 0 &&
      tsx.indexOf('open_permission_settings') >= 0, 'the three legal act whats');
 

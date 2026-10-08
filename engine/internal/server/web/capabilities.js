@@ -314,8 +314,19 @@
   // ── the Termux status probe (APK only — lazily, only when visible) ───
   // force=true rides ?refresh=1 (the post-setup re-probe: the engine's
   // probe cache must not hold the stale not-ready answer).
+  // v1.17.5 redteam seam (the ONE sanctioned dev/test hook): the APK gate
+  // also accepts a ?apk=1 URL param so a desktop browser E2E can exercise
+  // the row — the row still requires /api/termux/status available:true,
+  // so without a live bridge nothing renders.
+  function apkGate() {
+    if (window.__doomalayKotlin) return true;
+    try {
+      return /[?&]apk=1(?![a-z0-9])/i.test(String((window.location && window.location.search) || ''));
+    } catch (e) { return false; }
+  }
+
   function probeTermux(ctx, extras, force) {
-    if (!window.__doomalayKotlin) return;   // the APK marker — desktop never asks
+    if (!apkGate()) return;   // the APK marker — desktop never asks
     getJSON('/api/termux/status' + (force ? '?refresh=1' : '')).then(function (status) {
       var ts = termuxRowState(status, ctx.state);
       // failed probe / {available:false} → NO row at all (desktop honesty)

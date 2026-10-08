@@ -262,8 +262,12 @@
         // v1.17.1 THE PIVOT: web search is ON by birth (the v0.45 default-on
         // made real as a capability — the capabilities library's toggle
         // flips it); a session that explicitly carries false restores OFF.
-        webSearch: (sessionData && (sessionData.WebSearch === false || sessionData.web_search === false)) ? false : true,
-        deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
+        // v1.17.5: a pre-session icon stash (stacked before the first send)
+        // is honored until the engine session lands.
+        webSearch: (sessionData && (sessionData.WebSearch === false || sessionData.web_search === false)) ? false :
+                   ((icon && icon.caps && icon.caps.webSearch === false) ? false : true),
+        deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)) ||
+                      !!(icon && icon.caps && icon.caps.deepResearch),
         // v0.77.6: the lib pill defaults ON — ONE SETTING with the ✦ tweaks
         // Bot Library switch (whose absent = enabled default it mirrors;
         // the user's enabled-in-tweaks / disabled-in-new-chats mismatch).
@@ -277,7 +281,10 @@
         // v1.17.1 THE PIVOT: the Termux capability (the capabilities
         // library's gated toggle stacks it; inert this wave — the tools
         // arrive with the Termux bridge phases).
-        termux: !!(sessionData && (sessionData.Termux || sessionData.termux)),
+        // v1.17.5: the pre-session icon stash survives reloads (see
+        // persistCaps).
+        termux: !!(sessionData && (sessionData.Termux || sessionData.termux)) ||
+                !!(icon && icon.caps && icon.caps.termux),
         persona: (sessionData && (sessionData.Persona || sessionData.persona)) || '',
         // v0.26: multi-persona + placeholders + the chat's name ({name}).
         personas: null,
@@ -1514,6 +1521,30 @@
     return [null, '--accent', '--accent-rgb'];
   }
 
+  // v1.17.5: renderTypePills — the type's pills (model/caps/termux),
+  // extracted from wireHeader so the session restore can repaint them
+  // LATE (state.termux arrives after the header painted — the ⌨ pill
+  // would otherwise appear only on the NEXT full render).
+  function renderTypePills(pillRow, type, ctx) {
+    pillRow.innerHTML = '';
+    var pills = type.pills(ctx);
+    for (var i = 0; i < pills.length; i++) {
+      (function (p) {
+        var tone = pillToneFor(p.id);
+        var b = document.createElement('button');
+        b.id = p.id;
+        b.textContent = p.label;
+        b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
+          projPillStyle(tone[1], tone[2]) +
+          'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
+          'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
+          'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        b.addEventListener('click', function (e) { e.stopPropagation(); p.onTap(); });
+        pillRow.appendChild(b);
+      })(pills[i]);
+    }
+  }
+
   // v0.66 THE PILL PROJECTION — the user's canvas-per-variable model for
   // every pill that rides a theme variable: the pill renders ITS
   // variable's viewport projection ( — the
@@ -1635,24 +1666,13 @@
     wireHeaderMeters(bodyEl, icon, state, ctx);
 
     // The type's pills (change method of chat / model anytime).
+    // v1.17.5: extracted into renderTypePills so the session restore can
+    // repaint them LATE (the ⌨ Termux pill rides state.termux, which the
+    // engine session restores after the header painted — the v0.76.5
+    // workspace-badge repaint precedent).
     if (pillRow) {
-      pillRow.innerHTML = '';
-      var pills = type.pills(ctx);
-      for (var i = 0; i < pills.length; i++) {
-        (function (p) {
-          var tone = pillToneFor(p.id);
-          var b = document.createElement('button');
-          b.id = p.id;
-          b.textContent = p.label;
-          b.style.cssText = 'display:flex;align-items:center;gap:5px;flex-shrink:0;min-width:0;max-width:46%;' +
-            projPillStyle(tone[1], tone[2]) +
-            'padding:5px 10px;border-radius:999px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
-            'touch-action:manipulation;-webkit-tap-highlight-color:transparent;line-height:1.2;' +
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-          b.addEventListener('click', function (e) { e.stopPropagation(); p.onTap(); });
-          pillRow.appendChild(b);
-        })(pills[i]);
-      }
+      renderTypePills(pillRow, type, ctx);
+      state._renderTypePills = function () { renderTypePills(pillRow, type, ctx); };
 
       // v0.17: THE ARTIFACT DRAWER PILL (per user spec: in the collapsible
       // header dropdown). Badge shows this chat's artifact count.
@@ -3932,6 +3952,21 @@
 
   function persistCaps(state, icon) {
     if (!state.sessionId) {
+      // v1.17.5 THE REDTEAM: the stack survives the reload — caps ride
+      // the icon (localStorage) until the engine session lands;
+      // sessionBody carries them at creation, then the session is the
+      // truth (the restore path's sessionData wins over icon.caps).
+      if (icon) {
+        icon.caps = {
+          termux: !!state.termux,
+          deepResearch: !!state.deepResearch,
+          webSearch: state.webSearch !== false,
+          libAuto: !!state.libAuto,
+          skillsAuto: !!state.skillsAuto,
+          templateAuto: !!state.templateAuto
+        };
+        if (typeof icon.save === 'function') icon.save();
+      }
       updateSession(icon, state, {});
       return;
     }
@@ -4208,6 +4243,13 @@
           try { state.placeholders = JSON.parse(data.Placeholders) || {}; } catch (e) {}
         }
         state.chatName = data.Title || state.chatName;
+        // v1.17.5: the LATE PILL REPAINT — state.termux (and any other
+        // late-arriving cap) restores after the header painted; repaint
+        // the type's pills so the ⌨ Termux pill appears now (the v0.76.5
+        // workspace-badge repaint precedent).
+        if (typeof state._renderTypePills === 'function') {
+          try { state._renderTypePills(); } catch (e) { /* repaint is cosmetic */ }
+        }
         cb();
       } else {
         ensureSession(icon, state, cb);

@@ -220,3 +220,59 @@ func TestTermuxMigrationOnOldDB(t *testing.T) {
                 t.Fatal("migrated Termux = true — want off (the default)")
         }
 }
+
+// TestQuickByBirth v1.17.5 THE REDTEAM: a session created with the
+// sandbox field omitted must land as "quick" (PLAN-V117 §v1.17.1 — new
+// chats are quick by birth; the rig convicted the engine storing "" for
+// API clients that omit the field the PWA always sends).
+func TestQuickByBirth(t *testing.T) {
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := New(&config.Config{DataDir: dir}, db, nil)
+
+        req := httptest.NewRequest("POST", "/api/sessions",
+                strings.NewReader(`{"id":"quickbirth","title":"no sandbox sent"}`))
+        rec := httptest.NewRecorder()
+        s.mux.ServeHTTP(rec, req)
+        if rec.Code != 201 {
+                t.Fatalf("create HTTP %d: %s", rec.Code, rec.Body.String())
+        }
+
+        get := httptest.NewRequest("GET", "/api/sessions/quickbirth", nil)
+        rec2 := httptest.NewRecorder()
+        s.mux.ServeHTTP(rec2, get)
+        if rec2.Code != 200 {
+                t.Fatalf("get HTTP %d: %s", rec2.Code, rec2.Body.String())
+        }
+        var sess struct {
+                Sandbox string `json:"Sandbox"`
+        }
+        if err := json.Unmarshal(rec2.Body.Bytes(), &sess); err != nil {
+                t.Fatalf("json: %v", err)
+        }
+        if sess.Sandbox != "quick" {
+                t.Fatalf("omitted sandbox = %q — want \"quick\" (quick by birth)", sess.Sandbox)
+        }
+
+        // legacy values still pass untouched (hf chats are born hf)
+        reqHF := httptest.NewRequest("POST", "/api/sessions",
+                strings.NewReader(`{"id":"hfbirth","sandbox":"hf"}`))
+        rec3 := httptest.NewRecorder()
+        s.mux.ServeHTTP(rec3, reqHF)
+        if rec3.Code != 201 {
+                t.Fatalf("hf create HTTP %d: %s", rec3.Code, rec3.Body.String())
+        }
+        stored, err := s.db.GetSession("hfbirth")
+        if err != nil || stored == nil {
+                t.Fatalf("store get: %v", err)
+        }
+        if stored.Sandbox != "hf" {
+                t.Fatalf("explicit sandbox hf = %q — must pass untouched", stored.Sandbox)
+        }
+}

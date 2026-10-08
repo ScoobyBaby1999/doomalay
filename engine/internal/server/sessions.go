@@ -79,6 +79,13 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
         if req.Title == "" {
                 req.Title = "New Chat"
         }
+        // v1.17.5 THE REDTEAM honesty completion: new chats are quick by
+        // birth (PLAN-V117 §v1.17.1) — the PWA always sends sandbox:"quick",
+        // but an API client that omits it must not get a sandbox-less
+        // ("") session. Legacy hf/terminal/device values pass untouched.
+        if req.Sandbox == "" {
+                req.Sandbox = "quick"
+        }
         if req.Effort == "" {
                 req.Effort = "med"
         }
