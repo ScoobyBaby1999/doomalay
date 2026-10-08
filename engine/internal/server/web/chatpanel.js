@@ -4731,7 +4731,16 @@
       // v0.68: hublib downloads land here too ("DOWNLOADED — name (typ)"
       // engine-side, "downloaded 'name' — …" brain-side).
       bundleHint(bodyEl, state, pay2);
-      var trMsg = { role: 'tool', text: pay2.summary || pay2.name || '', result: true, payload: pay2, ts: evTsMs(ev) };
+      // v1.19.4 THE FULL VIEW: the result pill's collapsed label carries the
+      // tool name + an honest short head of the result (the old label was
+      // empty for every engine result — the pill rendered as a naked arrow).
+      var trLbl = pay2.summary || '';
+      if (!trLbl && pay2.name) {
+        var rt = String(pay2.text || '').replace(/\s+/g, ' ').trim();
+        trLbl = pay2.name + (rt ? ' · ' + (rt.length > 42 ? rt.slice(0, 42) + '…' : rt) : '');
+      }
+      if (!trLbl) trLbl = 'result';
+      var trMsg = { role: 'tool', text: trLbl, result: true, payload: pay2, ts: evTsMs(ev) };
       if (ev.i) trMsg.ei = ev.i;
       state.messages.push(trMsg);
       appendMessage(msgContainer, scrollEl, trMsg, bodyEl, state._icon, state);
@@ -5350,6 +5359,10 @@
           '<span class="tool-pill-ico">' + (msg.result ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
           '<span class="tool-pill-text">' + esc(msg.text) + '</span>' +
           (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +
+          // v1.19.4 THE FULL VIEW: the redirect control (the same ↗
+          // affordance the panel's external-open uses) opens the
+          // full-result overlay — the user reads exactly what the bot read.
+          (hasDetail ? '<span class="tool-pill-open" role="button" aria-label="Open full result" title="Full view">↗</span>' : '') +
         '</div>';
       var detail = '';
       if (expanded) {
@@ -5453,6 +5466,104 @@
         }).join('') + '</span></div>';
     }
     return html || '<div class="tool-pill-row">' + esc(JSON.stringify(p).slice(0, 600)) + '</div>';
+  }
+
+  // ── v1.19.4 THE FULL VIEW ─────────────────────────────────────────
+  // The full-result overlay: tool name on top, the query under it, the
+  // COMPLETE result paged and scrollable — the user reads exactly what
+  // the bot read (the inline pill detail stays a 2 KB glance; this is
+  // the whole thing). Opens in the ConnectOverlay (the overlay screen
+  // law — one of the two ratified containers). Every color rides the
+  // theme tokens; nothing hardcoded.
+  var TV_PAGE_CHARS = 24000;
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function openToolFullView(st, mi) {
+    var msg = st.messages[mi];
+    if (!msg || !msg.payload) return;
+    var pay = msg.payload;
+    var name = pay.name || 'tool';
+    var query = pay.args || pay.query || '';
+    // The result event carries no args — borrow from the matching
+    // tool_use half (the nearest same-name use above this pill).
+    if (!query) {
+      for (var i = mi - 1; i >= 0; i--) {
+        var m = st.messages[i];
+        if (m.role !== 'tool') continue;
+        if (m.result) break;
+        var p2 = m.payload || {};
+        if ((p2.name || '') === name && (p2.args || p2.query || p2.summary)) {
+          query = p2.args || p2.query || p2.summary;
+          break;
+        }
+      }
+    }
+    if (!query) query = pay.summary || '';
+    var text = String(pay.text || pay.result || '');
+    var pages = Math.max(1, Math.ceil(text.length / TV_PAGE_CHARS));
+    var uid = 'tv' + Date.now();
+
+    function qHtml(q) {
+      if (!q) return '';
+      var pretty = q;
+      if (typeof q === 'string' && q.charAt(0) === '{') {
+        try { pretty = JSON.stringify(JSON.parse(q), null, 2); } catch (e) {}
+      }
+      return '<div class="tv-row"><span class="tv-k">query</span>' +
+        '<pre class="tv-q">' + esc(String(pretty)) + '</pre></div>';
+    }
+    function pageHtml(pi) {
+      var slice = pages > 1 ? text.slice(pi * TV_PAGE_CHARS, (pi + 1) * TV_PAGE_CHARS) : text;
+      return '<div class="tv-result" id="' + uid + '-res"></div>' +
+        '<div class="tv-pager"' + (pages > 1 ? '' : ' hidden') + '>' +
+          '<button class="tv-pg-btn" id="' + uid + '-prev"' + (pi <= 0 ? ' disabled' : '') + '>‹</button>' +
+          '<span class="tv-pg-info">page ' + (pi + 1) + ' / ' + pages + ' · ' +
+            fmtBytes(text.length) + '</span>' +
+          '<button class="tv-pg-btn" id="' + uid + '-next"' + (pi >= pages - 1 ? ' disabled' : '') + '>›</button>' +
+        '</div>';
+    }
+    var html =
+      '<div class="tool-fullview">' +
+        '<div class="tv-head"><span class="tv-ico">⌕</span>' +
+          '<span class="tv-name">' + esc(name) + '</span>' +
+          '<button class="tv-copy" id="' + uid + '-copy">copy</button></div>' +
+        qHtml(query) +
+        '<div id="' + uid + '-page">' + pageHtml(0) + '</div>' +
+      '</div>';
+    var ov = window.ConnectOverlay;
+    if (!ov || !ov.open) return;
+    ov.open(html);
+    // mount the active page through the Formatter (markdown → code cards)
+    function mountPage(pi) {
+      var host = document.getElementById(uid + '-page');
+      if (!host) return;
+      host.innerHTML = pageHtml(pi);
+      var res = document.getElementById(uid + '-res');
+      if (res) {
+        var slice = pages > 1 ? text.slice(pi * TV_PAGE_CHARS, (pi + 1) * TV_PAGE_CHARS) : text;
+        if (window.Formatter && window.Formatter.renderInto) {
+          res.classList.add('fmt');
+          try { window.Formatter.renderInto(res, slice); }
+          catch (e) { res.textContent = slice; }
+        } else {
+          res.textContent = slice;
+        }
+      }
+      var prev = document.getElementById(uid + '-prev');
+      var next = document.getElementById(uid + '-next');
+      if (prev) prev.onclick = function () { if (pi > 0) mountPage(pi - 1); };
+      if (next) next.onclick = function () { if (pi < pages - 1) mountPage(pi + 1); };
+    }
+    mountPage(0);
+    var cp = document.getElementById(uid + '-copy');
+    if (cp) cp.onclick = function () {
+      var done = function () { cp.textContent = 'copied'; setTimeout(function () { cp.textContent = 'copy'; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
+      else done();
+    };
   }
 
   // ── DOM: mount a message + run the Formatter into its bubble ────
@@ -6295,6 +6406,25 @@
     var pill = e.target.closest && e.target.closest('.tool-pill');
     if (!pill) return;
     if (e.target.closest('a')) return; // links inside detail work normally
+    // v1.19.4: the ↗ redirect opens the FULL-RESULT OVERLAY (the overlay
+    // screen law) instead of toggling the inline detail.
+    if (e.target.closest('.tool-pill-open')) {
+      var ctx2 = currentCtx && currentCtx.state;
+      var container2 = pill.closest('#chat-messages');
+      if (ctx2 && container2) {
+        var pills2 = Array.prototype.slice.call(container2.querySelectorAll('.tool-pill'));
+        var idx2 = pills2.indexOf(pill);
+        var msgIdx2 = -1, seen2 = 0;
+        for (var i2 = 0; i2 < ctx2.messages.length; i2++) {
+          if (ctx2.messages[i2].role === 'tool') {
+            if (seen2 === idx2) { msgIdx2 = i2; break; }
+            seen2++;
+          }
+        }
+        if (msgIdx2 >= 0) openToolFullView(ctx2, msgIdx2);
+      }
+      return;
+    }
     var hasChev = pill.querySelector('.tool-pill-chev');
     if (!hasChev) return;
     var container = pill.closest('#chat-messages');

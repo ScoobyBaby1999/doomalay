@@ -3014,6 +3014,71 @@
     padding: 1px 0;
   }
 
+  /* ── v1.19.4 THE FULL VIEW: the pill's ↗ redirect + the result overlay ──
+     Every token themed: the control rides --text-3/--accent-2, the overlay
+     surfaces ride --surface-1/-2, borders --border, ink --text-1/-2/-3. */
+  .tool-pill-open {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: calc(18px * var(--chat-scale)); height: calc(18px * var(--chat-scale));
+    margin-left: calc(4px * var(--chat-scale));
+    border-radius: 50%;
+    color: var(--text-3); background: transparent;
+    font-size: calc(11px * var(--chat-scale)); line-height: 1;
+    cursor: pointer; transition: color .15s ease, background .15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tool-pill-open:hover { color: var(--accent-2); background: rgba(var(--accent-2-rgb), 0.14); }
+  .tool-pill[data-expanded="1"] .tool-pill-open:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.14); }
+  .tool-fullview { display: flex; flex-direction: column; gap: 10px; }
+  .tv-head {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .tv-ico {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 8px;
+    color: var(--on-accent-2); background: rgba(var(--accent-2-rgb), 0.16);
+    font-size: 13px;
+  }
+  .tv-name { font-weight: 650; font-size: 14px; color: var(--text-1); flex: 1; overflow-wrap: anywhere; }
+  .tv-copy {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+    border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .tv-copy:hover { color: var(--text-1); border-color: var(--border-strong); }
+  .tv-row { display: flex; flex-direction: column; gap: 4px; }
+  .tv-k {
+    font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .tv-q {
+    margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    color: var(--text-2); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; max-height: 120px; overflow: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .tv-result {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 12px;
+    max-height: min(52vh, 480px); overflow-y: auto;
+    font-size: 13px; color: var(--text-1);
+    overflow-wrap: anywhere;
+  }
+  .tv-result pre, .tv-result code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .tv-pager {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    padding-top: 2px;
+  }
+  .tv-pg-btn {
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+    font-size: 15px; cursor: pointer;
+  }
+  .tv-pg-btn:disabled { opacity: 0.35; cursor: default; }
+  .tv-pg-btn:not(:disabled):hover { color: var(--text-1); border-color: var(--border-strong); }
+  .tv-pg-info { font-size: 12px; color: var(--text-3); }
+
   /* ── sources cards (tappable, pretty) — v0.34 chat-scaled; v0.38 COLLAPSIBLE ── */
   .src-wrap {
     align-self: stretch; max-width: 95%;
