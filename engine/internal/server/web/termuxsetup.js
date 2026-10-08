@@ -1,0 +1,534 @@
+// termuxsetup.js — v1.17.3 THE SETUP: the Termux first turn, user-visible.
+//
+// THE SETUP PAGE rides the reusable ConnectOverlay (THE CONTAINER LAW —
+// one of the two legal surfaces; opened ON TOP of the capability library
+// via pushPage, so the Android back gesture pops back to the library and
+// the ⌨ Termux row re-probes into its ready state).
+//
+// THE HONESTY NOTE (rendered at the top): Termux's own security model
+// forces exactly three user taps — install, one pasted command, one
+// permission. Everything else (detection, probing, state transitions)
+// is automatic. The four step rows auto-advance by polling the v1.17.2
+// endpoints (NO new HTTP paths):
+//
+//   ① Install Termux   done when status.installed    → POST act open_fdroid
+//   ② Bootstrap once   done when status.bridge_ok    → Copy + act open_termux
+//   ③ Allow commands   done when status.permission   → act open_permission_settings
+//   ④ Verify           done when status.ready        → auto (poll w/ refresh)
+//
+// The poll: GET /api/termux/status every 3s while the page is mounted;
+// ?refresh=1 on the first fetch, after each action, and while the verify
+// stage is the live one (steps ①–③ done). last_error renders as a small
+// muted diagnostic under the step that owns it (honest states law — a
+// dead bridge or a denied dialog is a VISIBLE state, never silence).
+//
+// TEARDOWN (no leaks): one interval per open — each tick fetches while
+// the ladder is live, and watches the page's own mount (the interval is
+// the only thing that catches the back-pop to the library, which fires
+// no onClose). The overlay's close path fires the page's onClose; either
+// path kills the interval exactly once and calls opts.onExit (the
+// capability library re-probes its row through it).
+//
+// Theme vars only, everywhere (chips ride --accent/--on-accent/--surface-*/
+// --text-* — zero hardcoded colors). ES5-ish, IIFE, window.X module.
+//
+// Exposes: window.TermuxSetup { open, _stepStates }
+
+(function () {
+  'use strict';
+
+  // ── constants ────────────────────────────────────────────────────────
+  var BOOTSTRAP_CMD =
+    'curl -fsSL https://raw.githubusercontent.com/ScoobyBaby1999/doomalay/main/termux/setup.sh | bash';
+  var GH_RELEASES_URL = 'https://github.com/termux/termux-app/releases';
+  var POLL_MS = 3000;
+
+  // ── small helpers (the repo idioms) ──────────────────────────────────
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function toast(msg) {
+    if (window.DoomToast) { window.DoomToast(msg); return; }
+    if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast(msg);
+  }
+
+  function getJSON(url) {
+    return fetch(url).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        return data;
+      });
+    });
+  }
+
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        return data;
+      });
+    });
+  }
+
+  // the PWA's external-link pattern (hfconnect.js's token-link idiom):
+  // the InAppBrowser panel on capable builds, a tab everywhere else.
+  function openExternal(url) {
+    if (window.InAppBrowser && window.InAppBrowser.open) {
+      try { window.InAppBrowser.open(url); return; } catch (e) { /* fall through */ }
+    }
+    try { window.open(url, '_blank'); } catch (e2) {}
+  }
+
+  // copy — the repo's own helper first (formatter.js carries the
+  // execCommand fallback), a tiny local twin otherwise.
+  function copyText(text, done) {
+    if (window.Formatter && window.Formatter.copyText) {
+      try { window.Formatter.copyText(text, done); return; } catch (e) { /* fall through */ }
+    }
+    var fell = function () { if (done) { try { done(); } catch (e3) {} } };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(fell, fell);
+        return;
+      }
+    } catch (e4) {}
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e5) {}
+    fell();
+  }
+
+  // ── THE LADDER (pure — the node rig tests this) ─────────────────────
+  // _stepStates(status) → {
+  //   unavailable: available !== true   (desktop / bridge gone → the
+  //                                    honest "not available" card)
+  //   ready: !!status.ready,
+  //   steps: [ { key, done, active, error } × 4 ]
+  // }
+  // done: install←installed · bootstrap←bridge_ok · permission←permission
+  // · verify←ready. active = the FIRST not-done step (the user's current
+  // focus). error: last_error lands under the active step (that's where
+  // the user is stuck); when the bridge itself answered but the ladder is
+  // short, the owning step gets its own honest note (storage / props).
+  function _stepStates(status) {
+    status = status || {};
+    var steps = [
+      { key: 'install',    done: !!status.installed },
+      { key: 'bootstrap',  done: !!status.bridge_ok },
+      { key: 'permission', done: !!status.permission },
+      { key: 'verify',     done: !!status.ready }
+    ];
+    var firstPending = -1, i;
+    for (i = 0; i < steps.length; i++) {
+      if (!steps[i].done) { firstPending = i; break; }
+    }
+    for (i = 0; i < steps.length; i++) {
+      steps[i].active = (i === firstPending);
+      steps[i].error = '';
+    }
+    var le = status.last_error ? String(status.last_error) : '';
+    if (le) {
+      if (firstPending >= 0) steps[firstPending].error = le;
+    } else if (status.bridge_ok === true && !status.ready) {
+      // the probe round-trip WORKED — its marker values are the truth
+      if (status.storage_ok === false) {
+        steps[3].error = 'storage not granted yet — re-run the bootstrap command (the dialog appears again)';
+      }
+      if (status.props_ok === false) {
+        steps[1].error = 'allow-external-apps is still off — re-run the bootstrap command';
+      }
+    }
+    return { unavailable: status.available !== true, ready: !!status.ready, steps: steps };
+  }
+
+  // ── markup (theme vars only — the capabilities.js row idioms) ────────
+  function stepRow(key, ico, name, sub, extraMid, buttonsHTML) {
+    return '<div class="tsx-row" id="tsx-row-' + key + '" role="listitem">' +
+      '<span class="tsx-ico">' + ico + '</span>' +
+      '<span class="tsx-mid">' +
+        '<span class="tsx-name">' + esc(name) + '</span>' +
+        '<span class="tsx-desc">' + esc(sub) + '</span>' +
+        (extraMid || '') +
+        '<span class="tsx-err" id="tsx-err-' + key + '"></span>' +
+      '</span>' +
+      '<span class="tsx-chip wait" id="tsx-chip-' + key + '" title="not checked yet">…</span>' +
+      (buttonsHTML ? '<span class="tsx-btns">' + buttonsHTML + '</span>' : '') +
+    '</div>';
+  }
+
+  function pageHTML() {
+    var gh = '<a class="tsx-link" id="tsx-gh-link" href="' + GH_RELEASES_URL +
+      '" target="_blank" rel="noopener">or GitHub releases</a>';
+    var fdroid = '<button class="tsx-btn" id="tsx-btn-fdroid" type="button" ' +
+      'aria-label="open F-Droid to install Termux">Get Termux</button>';
+    var cmd = '<div class="tsx-cmd" id="tsx-cmd" aria-label="the bootstrap command — long-press to select">' +
+      esc(BOOTSTRAP_CMD) + '</div>';
+    var copy = '<button class="tsx-btn ghost" id="tsx-btn-copy" type="button" ' +
+      'aria-label="copy the bootstrap command">Copy</button>';
+    var openTx = '<button class="tsx-btn" id="tsx-btn-termux" type="button" ' +
+      'aria-label="open the Termux app">Open Termux</button>';
+    var settings = '<button class="tsx-btn" id="tsx-btn-settings" type="button" ' +
+      'aria-label="open the permission settings screen">Open settings</button>';
+    return '<div class="tsx-page" id="tsx-page">' +
+      '<div class="tsx-head">' +
+        '<span class="tsx-title">⌨ Termux setup</span>' +
+        '<span class="tsx-sub">a real Linux shell for your chats</span>' +
+      '</div>' +
+      '<div class="tsx-note">Termux\'s own security needs three taps from you — ' +
+        'install, one pasted command, one permission. Everything else here is automatic.</div>' +
+      '<div class="tsx-status-line" id="tsx-status-line">checking this device…</div>' +
+      '<div class="tsx-steps" role="list">' +
+        stepRow('install', '①', 'Install Termux', 'the real terminal app, from F-Droid',
+          gh, fdroid) +
+        stepRow('bootstrap', '②', 'Bootstrap once', 'paste one command in Termux',
+          cmd, copy + openTx) +
+        stepRow('permission', '③', 'Allow commands', 'grant Doomalay permission to run Termux commands',
+          '', settings) +
+        stepRow('verify', '④', 'Verify', 'checks storage + the command bridge',
+          '', '') +
+      '</div>' +
+      '<div class="tsx-foot">states refresh live while this is open — leave it open while you work in Termux</div>' +
+    '</div>';
+  }
+
+  function unavailableHTML() {
+    return '<div class="tsx-page" id="tsx-page">' +
+      '<div class="tsx-head">' +
+        '<span class="tsx-title">⌨ Termux setup</span>' +
+        '<span class="tsx-sub">a real Linux shell for your chats</span>' +
+      '</div>' +
+      '<div class="tsx-off" role="status">' +
+        '<span class="tsx-off-title">⌨ Termux is not available on this build/device</span>' +
+        '<span class="tsx-off-sub">the command bridge is not reachable — the Termux ' +
+          'capability rides the Android APK. Close this and use the chat as normal.</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function readyHTML() {
+    return '<div class="tsx-ready" id="tsx-ready">' +
+      '<div class="tsx-ready-card" role="status">' +
+        '<span class="tsx-ready-title">⌨ Termux is ready</span>' +
+        '<span class="tsx-ready-sub">a real Linux shell — stack ⌨ Termux on this chat ' +
+          'from the capabilities library</span>' +
+        '<button class="tsx-btn tsx-btn-done" id="tsx-btn-done" type="button" ' +
+          'aria-label="close the setup screen">Done</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ── the live instance ────────────────────────────────────────────────
+  // One instance at a time (open() kills any previous). The instance's
+  // interval both polls AND watches its own mount (the no-leak guarantee:
+  // every teardown path — close, back-pop, supersede — kills it exactly
+  // once and fires opts.onExit).
+  var current = null;
+
+  function kill(inst) {
+    if (!inst || inst.dead) return;
+    inst.dead = true;
+    if (inst.poll) { clearInterval(inst.poll); inst.poll = null; }
+    if (current === inst) current = null;
+    var cb = inst.opts && inst.opts.onExit;
+    if (cb) { try { cb(inst.last); } catch (e) { console.error(e); } }
+  }
+
+  function alive(inst) {
+    if (!inst || inst.dead) return false;
+    // my page still mounted? (ladder, unavailable card, or ready card)
+    if (!document.getElementById('tsx-page') && !document.getElementById('tsx-ready')) return false;
+    return true;
+  }
+
+  function tick(inst) {
+    if (!inst || inst.dead) return;
+    if (!alive(inst)) { kill(inst); return; }        // back-popped / replaced
+    if (inst.halted || inst.ready) return;           // terminal pages: watch only
+    if (!window.ConnectOverlay.isOpen()) return;     // mid-close grace — onClose owns it
+    fetchStatus(inst, shouldForce(inst));
+  }
+
+  // ?refresh=1 on the first fetch, after each action, and while the verify
+  // stage is the live one (the auto-verification re-probes).
+  function shouldForce(inst) {
+    if (inst.forceNext) { inst.forceNext = false; return true; }
+    if (!inst.last) return true;
+    var s = _stepStates(inst.last);
+    return !s.ready && s.steps[0].done && s.steps[1].done && s.steps[2].done;
+  }
+
+  function setStatusLine(text) {
+    var el = document.getElementById('tsx-status-line');
+    if (el) el.textContent = text || '';
+  }
+
+  function fetchStatus(inst, force) {
+    if (!inst || inst.dead || inst.halted || inst.ready) return;
+    getJSON('/api/termux/status' + (force ? '?refresh=1' : '')).then(function (status) {
+      if (inst.dead || !window.ConnectOverlay.isOpen()) return;
+      if (!status || status.available !== true) {
+        // desktop / bridge gone — the honest unavailable card replaces the ladder
+        inst.halted = true;
+        window.ConnectOverlay.replaceContent(unavailableHTML(), {
+          onClose: function () { kill(inst); }
+        });
+        return;
+      }
+      inst.last = status;
+      applyStatus(inst, status);
+    }).catch(function (err) {
+      if (inst.dead) return;
+      // honest transient diagnostic — the poll keeps trying
+      setStatusLine('status check failed — ' +
+        (err && err.message ? err.message : 'unknown error') + ' · retrying…');
+    });
+  }
+
+  function applyStatus(inst, status) {
+    var s = _stepStates(status);
+    if (s.ready && !inst.ready) {
+      inst.ready = true;
+      if (!window.ConnectOverlay.isOpen()) return;
+      window.ConnectOverlay.replaceContent(readyHTML(), {
+        onSwap: function () { wireReady(inst); },
+        onClose: function () { kill(inst); }
+      });
+      return;
+    }
+    if (!window.ConnectOverlay.isOpen()) return;
+    for (var i = 0; i < s.steps.length; i++) paintStep(s.steps[i]);
+    setStatusLine('');
+  }
+
+  // chip + button + diagnostic repaint (in place — the page never rebuilds)
+  function paintStep(step) {
+    var row = document.getElementById('tsx-row-' + step.key);
+    if (row) {
+      // the active row carries the accent border (the user's focus)
+      row.className = 'tsx-row' + (step.active && !step.done ? ' now' : '');
+    }
+    var chip = document.getElementById('tsx-chip-' + step.key);
+    if (chip) {
+      chip.className = 'tsx-chip ' + (step.done ? 'done' : (step.active ? 'now' : 'wait'));
+      chip.textContent = step.done ? '✓' : (step.active ? 'now' : '—');
+      chip.title = step.done ? 'done' : (step.active ? 'this is the current step' : 'waiting on an earlier step');
+    }
+    var err = document.getElementById('tsx-err-' + step.key);
+    if (err) err.textContent = step.error || '';
+    // action buttons disable once their step is done (honest "nothing
+    // left to do here"); Copy stays a utility (always enabled).
+    var btnMap = { install: 'tsx-btn-fdroid', bootstrap: 'tsx-btn-termux',
+                   permission: 'tsx-btn-settings', verify: null };
+    var id = btnMap[step.key];
+    if (id) {
+      var btn = document.getElementById(id);
+      if (btn) btn.disabled = step.done;
+    }
+  }
+
+  // ── actions (the v1.17.2 endpoints — zero new HTTP paths) ────────────
+  function act(inst, what, failMsg) {
+    postJSON('/api/termux/act', { what: what }).then(function (d) {
+      if (inst.dead) return;
+      if (!d || d.ok !== true) { toast(failMsg); return; }   // honest: the intent did not fire
+      inst.forceNext = true;                                 // after each action → refresh
+      fetchStatus(inst, true);
+    }).catch(function (err) {
+      if (inst.dead) return;
+      toast(failMsg + (err && err.message ? ' — ' + err.message : ''));
+    });
+  }
+
+  // ── wiring (onSwap contract — right after the DOM lands) ────────────
+  function wire(inst) {
+    var by = function (id) { return document.getElementById(id); };
+    var fdroid = by('tsx-btn-fdroid');
+    if (fdroid) fdroid.addEventListener('click', function () {
+      act(inst, 'open_fdroid', 'could not open F-Droid');
+    });
+    var gh = by('tsx-gh-link');
+    if (gh) gh.addEventListener('click', function (e) {
+      e.preventDefault();
+      openExternal(GH_RELEASES_URL);
+    });
+    var copy = by('tsx-btn-copy');
+    if (copy) copy.addEventListener('click', function () {
+      var btn = copy;
+      var done = function () {
+        btn.textContent = 'copied ✓';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1400);
+      };
+      copyText(BOOTSTRAP_CMD, done);
+    });
+    var openTx = by('tsx-btn-termux');
+    if (openTx) openTx.addEventListener('click', function () {
+      act(inst, 'open_termux', 'could not open Termux — is it installed?');
+    });
+    var settings = by('tsx-btn-settings');
+    if (settings) settings.addEventListener('click', function () {
+      act(inst, 'open_permission_settings', 'could not open the permission settings');
+    });
+    var cmd = by('tsx-cmd');
+    if (cmd) cmd.addEventListener('click', function () {
+      // one tap selects the whole command (selectable by design)
+      try {
+        var rng = document.createRange();
+        rng.selectNodeContents(cmd);
+        var sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(rng); }
+      } catch (e) { /* selection is a nicety, not a promise */ }
+    });
+    // the first fetch may have landed BEFORE this DOM did (the pushPage
+    // fade is 150ms; a local status is faster) — repaint from it now.
+    if (inst.last) applyStatus(inst, inst.last);
+  }
+
+  function wireReady(inst) {
+    var done = document.getElementById('tsx-btn-done');
+    if (done) done.addEventListener('click', function () {
+      window.ConnectOverlay.close();
+    });
+  }
+
+  // ── open(ctx, opts) — THE SETUP page on the ConnectOverlay ──────────
+  // ctx: the chatpanel context (the same shape the capability library
+  // holds). opts.onExit(lastStatus) fires exactly once when the page dies
+  // (close / back-pop / supersede) — the library re-probes its row.
+  function open(ctx, opts) {
+    opts = opts || {};
+    if (current) kill(current);              // supersede any live instance
+    ensureStyles();
+    var inst = {
+      ctx: ctx, opts: opts,
+      last: null, dead: false, halted: false, ready: false, forceNext: false,
+      poll: null
+    };
+    current = inst;
+    var pageOpts = {
+      onSwap: function () { wire(inst); },
+      onClose: function () { kill(inst); }
+    };
+    if (window.ConnectOverlay.isOpen()) {
+      // nested OVER the capability library — back pops back to it
+      window.ConnectOverlay.pushPage(pageHTML(), pageOpts);
+    } else {
+      window.ConnectOverlay.open(pageHTML(), pageOpts);
+    }
+    fetchStatus(inst, true);                 // the first fetch refreshes
+    inst.poll = setInterval(function () { tick(inst); }, POLL_MS);
+  }
+
+  // ── styles (injected once — theme vars only, the cap-row idioms) ────
+  function ensureStyles() {
+    if (typeof document === 'undefined' || !document.getElementById || !document.head) return;
+    if (document.getElementById('tsx-v1173-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'tsx-v1173-styles';
+    s.textContent =
+      '.tsx-page{font-size:var(--ui-fs);color:var(--text-1);padding-bottom:8px}' +
+      // the header keeps the top-right 44px clear of the static ✕
+      '.tsx-head{display:flex;flex-direction:column;gap:2px;padding:16px 48px 10px 16px;' +
+        'border-bottom:1px solid var(--surface-2)}' +
+      '.tsx-title{font-size:calc(var(--ui-fs) + 1px);font-weight:700;color:var(--text-1)}' +
+      '.tsx-sub{font-size:var(--ui-small-fs);color:var(--text-3)}' +
+      // THE HONESTY NOTE — small + muted
+      '.tsx-note{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3-dim);' +
+        'padding:10px 16px 0;line-height:1.5}' +
+      '.tsx-status-line{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
+        'padding:4px 16px 2px;min-height:14px;overflow-wrap:break-word}' +
+      // the compact scrollable step list (the cap-list idiom)
+      '.tsx-steps{max-height:56vh;overflow-y:auto;-webkit-overflow-scrolling:touch;' +
+        'touch-action:pan-y;padding:8px 10px 4px;scrollbar-width:thin;' +
+        'scrollbar-color:var(--border-strong) transparent}' +
+      '.tsx-steps::-webkit-scrollbar{width:5px}' +
+      '.tsx-steps::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}' +
+      '.tsx-steps::-webkit-scrollbar-track{background:transparent}' +
+      // the step rows (compact — the capability library aesthetic)
+      '.tsx-row{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 10px;' +
+        'margin-bottom:6px;border-radius:12px;border:1px solid var(--surface-2);' +
+        'background:var(--surface-1);transition:border-color 0.15s}' +
+      '.tsx-row.now{border-color:rgba(var(--accent-rgb),0.55)}' +
+      '.tsx-ico{flex-shrink:0;width:26px;height:26px;border-radius:8px;display:flex;' +
+        'align-items:center;justify-content:center;font-size:13px;' +
+        'background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.25)}' +
+      '.tsx-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}' +
+      '.tsx-name{font-weight:600;font-size:var(--ui-small-fs);color:var(--text-1)}' +
+      '.tsx-desc{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)}' +
+      // the muted honest diagnostic line under a step
+      '.tsx-err{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
+        'line-height:1.4;overflow-wrap:break-word}' +
+      // the tiny external text link (the repo's link idiom)
+      '.tsx-link{font-size:calc(var(--ui-small-fs) - 2px);color:var(--accent);' +
+        'text-decoration:underline;cursor:pointer;align-self:flex-start;' +
+        'margin-top:1px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      // the one-liner — selectable, copyable, wraps on small screens
+      '.tsx-cmd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-1);' +
+        'background:var(--surface-2);border:1px solid var(--border);border-radius:8px;' +
+        'padding:6px 8px;margin-top:3px;word-break:break-all;white-space:normal;' +
+        'user-select:text;-webkit-user-select:text;cursor:pointer;overflow-wrap:anywhere}' +
+      // the state chip — done rides the accent family, now is SOLID accent
+      // (on-accent), wait stays muted (the theme-var chip law)
+      '.tsx-chip{flex-shrink:0;font-size:calc(var(--ui-small-fs) - 2px);' +
+        'font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid;' +
+        'min-width:14px;text-align:center}' +
+      '.tsx-chip.done{color:var(--accent);border-color:rgba(var(--accent-rgb),0.45);' +
+        'background:rgba(var(--accent-rgb),0.15)}' +
+      '.tsx-chip.now{color:var(--on-accent);border-color:var(--accent);background:var(--accent)}' +
+      '.tsx-chip.wait{color:var(--text-3);border-color:var(--border);background:var(--surface-2)}' +
+      // the action buttons
+      '.tsx-btns{flex-shrink:0;display:flex;flex-direction:column;gap:4px}' +
+      '.tsx-btn{font-family:inherit;font-size:calc(var(--ui-small-fs) - 1px);' +
+        'font-weight:700;padding:7px 12px;border-radius:999px;cursor:pointer;' +
+        'color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.45);' +
+        'background:rgba(var(--accent-rgb),0.12);-webkit-tap-highlight-color:transparent;' +
+        'touch-action:manipulation;transition:opacity 0.15s}' +
+      '.tsx-btn.ghost{color:var(--text-2);border-color:var(--border);background:var(--surface-1)}' +
+      '.tsx-btn:disabled{color:var(--text-3);border-color:var(--border);' +
+        'background:var(--surface-2);cursor:default;opacity:0.7}' +
+      '.tsx-foot{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
+        'padding:2px 16px 10px;text-align:center}' +
+      // the honest unavailable card (defensive — the row shouldn't open here)
+      '.tsx-off{display:flex;flex-direction:column;gap:6px;margin:14px 16px;' +
+        'padding:20px 16px;border-radius:14px;border:1px solid var(--border);' +
+        'background:var(--surface-2);text-align:center}' +
+      '.tsx-off-title{font-weight:700;font-size:var(--ui-small-fs);color:var(--text-1)}' +
+      '.tsx-off-sub{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3);line-height:1.5}' +
+      // the final READY card — accent border + accent text
+      '.tsx-ready{display:flex;padding:24px 16px}' +
+      '.tsx-ready-card{flex:1;display:flex;flex-direction:column;gap:8px;align-items:center;' +
+        'text-align:center;padding:26px 16px;border-radius:14px;' +
+        'border:1px solid rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.08)}' +
+      '.tsx-ready-title{font-weight:700;font-size:calc(var(--ui-fs) + 1px);color:var(--accent)}' +
+      '.tsx-ready-sub{font-size:var(--ui-small-fs);color:var(--text-3);line-height:1.5}' +
+      '.tsx-btn-done{margin-top:6px;padding:9px 22px;color:var(--on-accent);' +
+        'background:var(--accent);border:1px solid var(--accent)}';
+    document.head.appendChild(s);
+  }
+  if (typeof document !== 'undefined' && document.getElementById && document.head) {
+    ensureStyles();
+  }
+
+  if (typeof window !== 'undefined') {
+    window.TermuxSetup = { open: open, _stepStates: _stepStates };
+  }
+
+  // v1.17.3: the node test path (scripts/v1173-setup-test.js) — the pure
+  // ladder computation, exported the same way capabilities.js does.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { _stepStates: _stepStates, BOOTSTRAP_CMD: BOOTSTRAP_CMD };
+  }
+})();

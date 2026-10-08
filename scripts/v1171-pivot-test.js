@@ -137,11 +137,13 @@ console.log('v1.17.1 THE PIVOT pins:');
   var ready = C.termuxRowState({ available: true, ready: true }, { termux: false });
   ok(ready && ready.ready === true && ready.on === false, 'termux: ready reports the toggle armed-able');
 
-  // the row shape: unready → muted "not set up" chip; ready → accent
+  // the row shape: unready → the tappable "set up…" hint chip (v1.17.3
+  // rewire — was the muted "not set up" chip + a toast); ready → accent
   // "ready" chip; stacked → the stacked sub line.
   var rowsU = C.rowsFor({}, { termux: { available: true, ready: false } });
   var tu = rowsU.filter(function (r) { return r.key === 'termux'; })[0];
-  ok(tu && C.chipFor(tu).text === 'not set up' && C.chipFor(tu).cls === 'off', 'termux: unready row carries the muted "not set up" chip');
+  ok(tu && C.chipFor(tu).text === 'set up…' && C.chipFor(tu).cls === 'setup',
+    'termux: unready row carries the tappable "set up…" hint chip (the v1.17.3 rewire)');
   var rowsR = C.rowsFor({}, { termux: { available: true, ready: true } });
   var tr = rowsR.filter(function (r) { return r.key === 'termux'; })[0];
   ok(tr && C.chipFor(tr).text === 'ready' && C.chipFor(tr).cls === 'on' && tr.sub === 'tap to stack on this chat',

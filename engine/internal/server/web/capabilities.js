@@ -28,11 +28,11 @@
 //   ⌨ Termux — APK builds only (window.__doomalayKotlin present):
 //     GET /api/termux/status — a failed fetch or {available:false}
 //     renders NO row at all (desktop honesty). When available: the chip
-//     reads the setup state (ready → accent; otherwise a muted
-//     "not set up"), the toggle only arms when ready, and tapping an
-//     unready row toasts "Termux needs setup first". The setup flow
-//     itself is phase v1.17.3 — this wave carries only the state display
-//     + the gated toggle (the capability is inert by default).
+//     reads the setup state (ready → accent; otherwise a tappable
+//     "set up…" hint — v1.17.3 wired the row to THE SETUP page), the
+//     toggle only arms when ready, and tapping an unready row opens
+//     window.TermuxSetup (the three-tap ladder overlay). The capability
+//     is inert by default until the device is ready.
 //
 // Theme vars only, everywhere (the ON chip rides the accent family; the
 // OFF chip the surface/text-3 muted family — zero hardcoded colors).
@@ -105,8 +105,8 @@
         key: 'termux', icon: '⌨', name: 'Termux', kind: 'termux',
         on: !!st.termux, ready: !!ts.ready,
         sub: st.termux ? 'stacked on this chat · tap to remove'
-          : (ts.ready ? 'tap to stack on this chat' : 'setup needed · arrives next update'),
-        chip: { cls: ts.ready ? 'on' : 'off', text: ts.ready ? 'ready' : 'not set up' }
+          : (ts.ready ? 'tap to stack on this chat' : 'three taps to a real Linux shell'),
+        chip: { cls: ts.ready ? 'on' : 'setup', text: ts.ready ? 'ready' : 'set up…' }
       });
     }
     return rows;
@@ -233,17 +233,35 @@
     }
   }
 
-  // Termux: the gated toggle — setup state first (v1.17.3 owns the flow).
+  // Termux: ready → the gated toggle stacks the capability onto the
+  // chat (session.termux, the existing PATCH machinery); unready →
+  // THE SETUP page (v1.17.3's window.TermuxSetup, nested on this
+  // overlay — the Android back gesture pops back to the library, and
+  // the row re-probes into its ready state through onExit).
   function onTermuxTap(ctx, extras) {
     var st = ctx.state;
     var ts = termuxRowState(extras.termux, st);
     if (!ts || !ts.ready) {
-      toast('Termux needs setup first');
+      openTermuxSetup(ctx, extras);
       return;
     }
     st.termux = !st.termux;
     persist(ctx);
     repaintTermuxRow(ctx, extras);
+  }
+
+  // openTermuxSetup — the v1.17.3 setup overlay (the "set up…" chip and
+  // the unready row both land here). onExit fires when the setup page
+  // dies (close / back-pop) → force a fresh status probe so the row
+  // flips to its ready state the moment the bridge confirms it.
+  function openTermuxSetup(ctx, extras) {
+    if (window.TermuxSetup && window.TermuxSetup.open) {
+      window.TermuxSetup.open(ctx, {
+        onExit: function () { probeTermux(ctx, extras, true); }
+      });
+    } else {
+      toast('Termux needs setup first');
+    }
   }
 
   // ── chip/sub repaint (optimistic, in place — the page never rebuilds) ─
@@ -294,9 +312,11 @@
   }
 
   // ── the Termux status probe (APK only — lazily, only when visible) ───
-  function probeTermux(ctx, extras) {
+  // force=true rides ?refresh=1 (the post-setup re-probe: the engine's
+  // probe cache must not hold the stale not-ready answer).
+  function probeTermux(ctx, extras, force) {
     if (!window.__doomalayKotlin) return;   // the APK marker — desktop never asks
-    getJSON('/api/termux/status').then(function (status) {
+    getJSON('/api/termux/status' + (force ? '?refresh=1' : '')).then(function (status) {
       var ts = termuxRowState(status, ctx.state);
       // failed probe / {available:false} → NO row at all (desktop honesty)
       if (!ts) return;
@@ -391,6 +411,10 @@
         'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '.cap-chip.on{color:var(--accent);border-color:rgba(var(--accent-rgb),0.45);' +
         'background:rgba(var(--accent-rgb),0.15)}' +
+      // v1.17.3: the unready Termux chip is a tappable "set up…" hint —
+      // a lighter accent tint (actionable, not yet achieved)
+      '.cap-chip.setup{color:var(--accent);border-color:rgba(var(--accent-rgb),0.35);' +
+        'background:rgba(var(--accent-rgb),0.08)}' +
       '.cap-chip.off{color:var(--text-3);border-color:var(--border);background:var(--surface-2)}' +
       '.cap-foot{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
         'padding:2px 16px 10px;text-align:center}';
