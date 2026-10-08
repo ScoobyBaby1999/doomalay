@@ -133,6 +133,16 @@ const BRIDGE_LADDER = {
     // silently refused, no PendingIntent result → the Kotlin timeout.
     probe: { ok: false, timeout: true, send_error: null, stdout: '', stderr: '', exit_code: -1, err: 0 }
   },
+  // v1.20.1 THE QUIET GATE: the setup script's checkin landed — the bridge
+  // /status carries the checkin ladder (bootstrap_done, the URL, the
+  // script's own two step outcomes, the timestamp); props/storage are ON
+  // (the script set them); the permission grant is still the user's tap.
+  bootstrapped: {
+    status: { installed: true, version_code: 1002, version_name: '0.118.3', permission: false,
+      checkin_url: `http://127.0.0.1:${BRIDGE_PORT}/rt-checkin-token-0123456789abcdef/checkin`,
+      bootstrap_done: true, checkin_at: 1717000000, checkin_storage: true, checkin_props: true },
+    probe: { ok: true, timeout: false, send_error: null, stdout: PROBE_MARKERS, stderr: '', exit_code: 0, err: 0 }
+  },
   no_permission: {
     status: { installed: true, version_code: 1002, version_name: '0.118.3', permission: false },
     // Props set + bootstrap ran, but the RUN_COMMAND permission is not
@@ -512,6 +522,7 @@ async function s2() {
   const rungs = [
     ['not_installed', { installed: false, permission: false, bridge_ok: true, storage_ok: false, props_ok: false, ready: false }],
     ['installed',     { installed: true, permission: false, bridge_ok: true, storage_ok: false, props_ok: false, ready: false }],
+    ['bootstrapped',  { installed: true, permission: false, bridge_ok: true, storage_ok: true, props_ok: true, ready: false }],
     ['no_permission', { installed: true, permission: false, bridge_ok: true, storage_ok: false, props_ok: false, ready: false }],
     ['bridge_ok',     { installed: true, permission: false, bridge_ok: true, storage_ok: true, props_ok: true, ready: false }],
     ['ready',         { installed: true, permission: true, bridge_ok: true, storage_ok: true, props_ok: true, ready: true }]
@@ -530,6 +541,22 @@ async function s2() {
     ok(d.props_ok === want.props_ok, label + 'props_ok=' + want.props_ok, d.props_ok);
     ok(d.ready === want.ready, label + 'ready=' + want.ready + (state === 'ready' ? ' (ONLY here)' : ''), d.ready);
     ok(typeof d.checked_at === 'number' && d.checked_at > 0, label + 'checked_at present');
+    // v1.20.1: the new status fields are always present + typed (forced
+    // probes are never suppressed)
+    ok(typeof d.checkin_url === 'string', label + 'checkin_url present (string)');
+    ok(typeof d.bootstrap_done === 'boolean', label + 'bootstrap_done present (bool)');
+    ok(typeof d.checkin_storage === 'boolean' && typeof d.checkin_props === 'boolean',
+      label + 'checkin_storage/checkin_props present (bools)');
+    ok(d.probe_suppressed === false, label + 'probe_suppressed:false (a forced probe is never suppressed)', d.probe_suppressed);
+    if (state === 'bootstrapped') {
+      ok(d.checkin_url === `http://127.0.0.1:${BRIDGE_PORT}/rt-checkin-token-0123456789abcdef/checkin` &&
+         d.bootstrap_done === true && d.checkin_at === 1717000000 &&
+         d.checkin_storage === true && d.checkin_props === true,
+        'bootstrapped: the whole checkin ladder passes through', JSON.stringify(d));
+    } else {
+      ok(d.checkin_url === '' && d.bootstrap_done === false && d.checkin_storage === false && d.checkin_props === false,
+        label + 'no checkin yet → the honest empty/false state (old-flow)');
+    }
     if (state === 'installed') {
       ok(d.version_code === 1002 && d.version_name === '0.118.3', 'installed: version_code/version_name round-trip', d.version_code + '/' + d.version_name);
     }
@@ -595,6 +622,43 @@ async function s2() {
     'slow bridge: last_error says timeout', slow.data && slow.data.last_error);
   await flipBridge('ready');
   await termuxStatus('?refresh=1');
+
+  // v1.20.1 THE QUIET GATE — the suppression semantics, live: props
+  // honestly off + no checkin + cache filled → the TTL expiry serves the
+  // STALE cache (ZERO new RUN_COMMANDs — each probe while
+  // allow-external-apps is unset forces a Termux notification, the exact
+  // spam the user reported). One real TTL wait (30s) — the only honest
+  // way to watch a TTL expire from the outside. (Every flip resets the
+  // stub's probe counter, so each phase counts its own probes.)
+  await flipBridge('installed');
+  await termuxStatus('?refresh=1');                 // fill the cache: props off
+  const g0 = await bridgeProbeHits();
+  await sleep(31000);                                // let the 30s TTL expire
+  const g1 = await termuxStatus();                   // plain poll — must NOT probe
+  ok(g1.status === 200, 'quiet gate: the suppressed poll stays HTTP 200', g1.status);
+  ok(g1.data && g1.data.probe_suppressed === true, 'quiet gate: probe_suppressed:true (a VISIBLE state, never silence)', g1.text);
+  ok(/probe paused/i.test((g1.data && g1.data.last_error) || ''),
+    'quiet gate: last_error says the probe is paused (honest)', g1.data && g1.data.last_error);
+  ok((await bridgeProbeHits()) === g0,
+    'quiet gate: TTL expiry with props off + no checkin → ZERO new RUN_COMMANDs (the spam is dead)');
+  const g2 = await termuxStatus();                   // TTL still expired, still quiet
+  ok(g2.data && g2.data.probe_suppressed === true && (await bridgeProbeHits()) === g0,
+    'quiet gate: repeated plain polls stay quiet (no loop, no drift)');
+
+  // the checkin opens the gate: bootstrap_done → the auto-probe resumes
+  // (the TTL is still expired — suppression never refreshes it)
+  await flipBridge('bootstrapped');
+  const g3 = await termuxStatus();
+  ok((await bridgeProbeHits()) === 1,
+    'the checkin (bootstrap_done) reopens the auto-probe — exactly one probe');
+  ok(g3.data && g3.data.probe_suppressed === false && g3.data.bootstrap_done === true,
+    'the reopened gate clears the flag + passes the checkin through', g3.text);
+
+  // ?refresh=1 still forces while the gate holds — an explicit user
+  // action (the "check now" escape hatch): one probe, never a loop
+  await flipBridge('installed');
+  await termuxStatus('?refresh=1');
+  ok((await bridgeProbeHits()) === 1, '?refresh=1 forces one probe even while suppressed (explicit user action)');
 }
 
 // ── S3 — THE ACT PASSTHROUGH ───────────────────────────────────────────

@@ -96,7 +96,9 @@ object TermuxBridge {
 
     // The RUN_COMMAND round-trip outcome. delivered + sendError + timeout
     // describe OUR side; err/errmsg describe Termux's side; stdout/stderr/
-    // exitCode are the command's own result.
+    // exitCode are the command's own result. v1.20.1: stdoutOriginalLength/
+    // stderrOriginalLength carry Termux's true pre-truncation sizes (-1 =
+    // not reported) — the honest truncation data phase .3 reports.
     data class CommandResult(
         val delivered: Boolean,        // the result broadcast arrived
         val timeout: Boolean,          // our timeout fired first (no result ever came)
@@ -105,7 +107,9 @@ object TermuxBridge {
         val exitCode: Int = -1,        // bash's exit code (-1 = unknown)
         val err: Int = 0,              // Termux-side error code (non-zero = Termux refused/failed)
         val errmsg: String? = null,    // Termux-side error message
-        val sendError: String? = null  // OUR-side send failure (not installed / no permission / SecurityException / …)
+        val sendError: String? = null, // OUR-side send failure (not installed / no permission / SecurityException / …)
+        val stdoutOriginalLength: Long = -1L, // Termux's true stdout size (-1 = absent)
+        val stderrOriginalLength: Long = -1L  // Termux's true stderr size (-1 = absent)
     )
 
     // The parsed probe outcome (CommandResult + the stdout markers read).
@@ -119,7 +123,9 @@ object TermuxBridge {
         val err: Int,
         val errmsg: String?,
         val timeout: Boolean,
-        val sendError: String?
+        val sendError: String?,
+        val stdoutOriginalLength: Long = -1L, // v1.20.1 passthrough (see CommandResult)
+        val stderrOriginalLength: Long = -1L
     )
 
     // ── The honest-state ladder ─────────────────────────────────────────
@@ -318,7 +324,9 @@ object TermuxBridge {
                     err = r.err,
                     errmsg = r.errmsg,
                     timeout = r.timeout,
-                    sendError = r.sendError
+                    sendError = r.sendError,
+                    stdoutOriginalLength = r.stdoutOriginalLength,
+                    stderrOriginalLength = r.stderrOriginalLength
                 )
             )
         }
@@ -341,7 +349,9 @@ object TermuxBridge {
             stderr = b.getString("stderr"),
             exitCode = readInt(b, "exitCode", -1),
             err = readInt(b, "err", 0),
-            errmsg = b.getString("errmsg")
+            errmsg = b.getString("errmsg"),
+            stdoutOriginalLength = readLong(b, "stdout_original_length"),
+            stderrOriginalLength = readLong(b, "stderr_original_length")
         )
     }
 
@@ -349,6 +359,16 @@ object TermuxBridge {
         b.getInt(key, def)
     } catch (_: Exception) {
         def
+    }
+
+    // v1.20.1: the original-length extras ride the Bundle as Long or Int
+    // depending on the Termux build — read defensively, never crash, -1
+    // when the key is absent (the honest "not reported").
+    private fun readLong(b: Bundle, key: String): Long = try {
+        val v: Any? = b.get(key)
+        if (v is Number) v.toLong() else -1L
+    } catch (_: Exception) {
+        -1L
     }
 }
 
@@ -362,14 +382,43 @@ object TermuxBridge {
 // probe never blocks a status poll; one bad request never kills the accept
 // loop (each handler is guarded). JSON via org.json. `start()` returns the
 // full base URL the engine receives as --termux-bridge.
+//
+// v1.20.1 THE QUIET GATE: a SECOND random token (checkinToken) adds exactly
+// one route — GET /<checkinToken>/checkin?storage=0|1&props=0|1 — the setup
+// script curls it when it finishes (zero RUN_COMMANDs, zero Termux
+// notifications). Everything else under the checkin token answers 403
+// exactly like a wrong token; /run, /probe, /act still require the MAIN
+// token only.
 class TermuxBridgeServer(private val ctx: Context) {
 
     // The per-boot random token: same-UID loopback only, but the token makes
     // other-UID guesses useless too (127.0.0.1 on Android IS per-UID, so
     // this is defense in depth, not the boundary).
     private val token: String = UUID.randomUUID().toString()
+
+    // v1.20.1 THE QUIET GATE: the checkin token — a SECOND random UUID whose
+    // single route lets the setup script report "the bootstrap finished"
+    // over plain HTTP. It can never unlock /run, /probe, or /act: a
+    // checkin-token request anywhere else answers 403 like a wrong token.
+    // Worst case a checkin-token holder marks the bootstrap done — an honest
+    // failed probe, never command execution.
+    private val checkinToken: String = UUID.randomUUID().toString()
+
+    // The checkin ladder (v1.20.1): written by the checkin route on ITS
+    // worker thread, read by /status on another — the lock keeps the group
+    // consistent, the @Volatile keeps single-field reads honest. checkin_at
+    // is 0 until the first checkin lands (the honest "never").
+    private val checkinLock = Any()
+    @Volatile private var bootstrapDone = false
+    @Volatile private var checkinAt = 0L
+    @Volatile private var checkinStorage = false
+    @Volatile private var checkinProps = false
+
     private var serverSocket: ServerSocket? = null
     @Volatile private var running = false
+    // The bound port, captured at start() — statusJson builds the checkin
+    // URL from it (the server knows its own port).
+    @Volatile private var localPort = 0
 
     fun start(): String {
         check(serverSocket == null && !running) { "TermuxBridgeServer already started" }
@@ -384,6 +433,7 @@ class TermuxBridgeServer(private val ctx: Context) {
         }
         if (sock == null) throw IOException("no free loopback port in 8081..8090")
         serverSocket = sock
+        localPort = sock.localPort
         running = true
         Thread {
             acceptLoop(sock)
@@ -452,8 +502,22 @@ class TermuxBridgeServer(private val ctx: Context) {
             return
         }
 
-        // Token check FIRST: the path must be /<token>/<route>.
+        // Token check FIRST: the path must be /<token>/<route>. The v1.20.1
+        // checkin token is an alternate prefix that unlocks EXACTLY one
+        // route (GET /checkin) — every other path under it answers 403 like
+        // a wrong token, so a checkin-token holder can never run, probe,
+        // or act.
         val prefix = "/$token"
+        val checkinPrefix = "/$checkinToken"
+        if (req.path == checkinPrefix || req.path.startsWith("$checkinPrefix/")) {
+            val checkinRoute = req.path.removePrefix(checkinPrefix)
+            if (req.method == "GET" && (checkinRoute == "/checkin" || checkinRoute.startsWith("/checkin?"))) {
+                handleCheckin(out, req.path)
+            } else {
+                writeResponse(out, 403, errJson("forbidden"))
+            }
+            return
+        }
         if (!req.path.startsWith("$prefix/") && req.path != prefix) {
             writeResponse(out, 403, errJson("forbidden"))
             return
@@ -482,13 +546,54 @@ class TermuxBridgeServer(private val ctx: Context) {
     }
 
     // GET /status — the honest-state ladder, straight from PackageManager.
+    // v1.20.1: the checkin ladder rides along (read under the lock — the
+    // checkin route writes from its own worker thread); every pre-v1.20.1
+    // field keeps its exact shape.
     private fun statusJson(): String {
         val o = JSONObject()
         o.put("installed", TermuxBridge.isInstalled(ctx))
         o.put("version_code", TermuxBridge.versionCode(ctx))
         o.put("version_name", TermuxBridge.versionName(ctx) ?: JSONObject.NULL)
         o.put("permission", TermuxBridge.isPermissionGranted(ctx))
+        synchronized(checkinLock) {
+            o.put("checkin_url", "http://127.0.0.1:$localPort/$checkinToken/checkin")
+            o.put("bootstrap_done", bootstrapDone)
+            o.put("checkin_at", checkinAt)
+            o.put("checkin_storage", checkinStorage)
+            o.put("checkin_props", checkinProps)
+        }
         return o.toString()
+    }
+
+    // GET /<checkinToken>/checkin?storage=0|1&props=0|1 — THE QUIET GATE's
+    // arrival proof. The setup script curls this at its very end: zero
+    // RUN_COMMANDs, zero Termux notifications. The params carry the
+    // script's own honest step outcomes (missing or malformed = false —
+    // parsed defensively, a broken query must never crash the bridge).
+    private fun handleCheckin(out: OutputStream, path: String) {
+        var storage = false
+        var props = false
+        try {
+            val q = path.substringAfter('?', "")
+            for (pair in q.split('&')) {
+                if (pair.isEmpty()) continue
+                val eq = pair.indexOf('=')
+                if (eq <= 0) continue
+                val name = pair.substring(0, eq)
+                val value = pair.substring(eq + 1)
+                if (name == "storage" && value == "1") storage = true
+                if (name == "props" && value == "1") props = true
+            }
+        } catch (_: Exception) {
+            // malformed query — flags stay false, the checkin still lands
+        }
+        synchronized(checkinLock) {
+            bootstrapDone = true
+            checkinAt = System.currentTimeMillis()
+            checkinStorage = storage
+            checkinProps = props
+        }
+        writeResponse(out, 200, """{"ok":true}""")
     }
 
     // POST /probe — the RUN_COMMAND round-trip; this handler thread
@@ -503,7 +608,7 @@ class TermuxBridgeServer(private val ctx: Context) {
         // probe's internal timeout (15s) guarantees a callback; +5s slack.
         val delivered = try { latch.await(20, TimeUnit.SECONDS) } catch (_: InterruptedException) { false }
         val json = synchronized(holder) { holder[0] }
-            ?: """{"ok":false,"storage_ok":false,"props_ok":false,"stdout":"","stderr":"","exit_code":-1,"err":-1,"errmsg":"bridge probe never delivered a result","timeout":true}"""
+            ?: """{"ok":false,"storage_ok":false,"props_ok":false,"stdout":"","stderr":"","exit_code":-1,"err":-1,"errmsg":"bridge probe never delivered a result","timeout":true,"stdout_original_length":-1,"stderr_original_length":-1}"""
         if (!delivered) AppLog.error("TermuxBridgeServer: probe latch timed out (honest fallback served)", null)
         writeResponse(out, 200, json)
     }
@@ -520,6 +625,11 @@ class TermuxBridgeServer(private val ctx: Context) {
         o.put("errmsg", r.errmsg ?: JSONObject.NULL)
         o.put("timeout", r.timeout)
         o.put("send_error", r.sendError ?: JSONObject.NULL)
+        // v1.20.1: Termux's true pre-truncation sizes (-1 = not reported) —
+        // data plumbing for the honest-truncation phase .3, harmless when
+        // unused.
+        o.put("stdout_original_length", r.stdoutOriginalLength)
+        o.put("stderr_original_length", r.stderrOriginalLength)
         return o.toString()
     }
 
@@ -556,7 +666,7 @@ class TermuxBridgeServer(private val ctx: Context) {
         // runCommand's internal timeout guarantees a callback; +5s slack.
         try { latch.await(timeoutMs + 5000, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
         val json = synchronized(holder) { holder[0] }
-            ?: """{"ok":false,"stdout":"","stderr":"","exit_code":-1,"err":-1,"errmsg":"bridge run never delivered a result","timeout":true}"""
+            ?: """{"ok":false,"stdout":"","stderr":"","exit_code":-1,"err":-1,"errmsg":"bridge run never delivered a result","timeout":true,"stdout_original_length":-1,"stderr_original_length":-1}"""
         writeResponse(out, 200, json)
     }
 
@@ -572,6 +682,9 @@ class TermuxBridgeServer(private val ctx: Context) {
         o.put("errmsg", r.errmsg ?: JSONObject.NULL)
         o.put("timeout", r.timeout)
         o.put("send_error", r.sendError ?: JSONObject.NULL)
+        // v1.20.1: same honest-truncation passthrough as the probe.
+        o.put("stdout_original_length", r.stdoutOriginalLength)
+        o.put("stderr_original_length", r.stderrOriginalLength)
         return o.toString()
     }
 

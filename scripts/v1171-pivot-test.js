@@ -48,7 +48,7 @@ console.log('v1.17.1 THE PIVOT pins:');
   ok(cf.indexOf('Two steps') < 0, 'chatframework: the two-steps intro is gone');
   ok(/isFulfilled\(state\)\s*\{\s*return !!state\.model;\s*\}/.test(cf), 'chatframework: isFulfilled is model-only');
   ok(cf.indexOf("id: 'pill-caps'") >= 0, 'chatframework: the capabilities pill (pill-sandbox\'s heir)');
-  ok(cf.indexOf("id: 'pill-termux'") >= 0, 'chatframework: the accent Termux pill when stacked');
+  ok(cf.indexOf("id: 'pill-termux'") < 0, 'v1.20.1: the ⌨ Termux pill is DEAD (chat metadata noise — the capability rides the library row)');
   ok(cf.indexOf('window.SandboxLabel') >= 0 && cf.indexOf('SANDBOX_LABELS') >= 0, 'chatframework: legacy SandboxLabel + label maps kept for existing hf/terminal/device sessions');
 
   var cp = src('chatpanel.js');
@@ -58,7 +58,7 @@ console.log('v1.17.1 THE PIVOT pins:');
   ok(cp.indexOf('termux: !!state.termux') >= 0, 'chatpanel: persistCaps PATCHes termux');
   ok(/web_search:\s*state\.webSearch\s*!==\s*false/.test(cp), 'chatpanel: the web_search capability rides turns with the real state (no hardcode)');
   ok(cp.indexOf('web_search: true') < 0, 'chatpanel: the v0.45 web_search:true hardcode is gone');
-  ok(cp.indexOf('[/^pill-caps/') >= 0 && cp.indexOf('[/^pill-termux/') >= 0, 'chatpanel: PILL_TONES carries the caps + termux (accent) entries');
+  ok(cp.indexOf('[/^pill-caps/') >= 0 && cp.indexOf('[/^pill-termux/') < 0, 'chatpanel: PILL_TONES carries the caps entry — the termux tone died with the pill (v1.20.1)');
   ok(cp.indexOf('[/^pill-sandbox/') < 0, 'chatpanel: the pill-sandbox tone entry is gone');
 
   var cb = src('chatbot.js');
@@ -184,17 +184,19 @@ console.log('v1.17.1 THE PIVOT pins:');
   ok(type.isFulfilled({ sandbox: 'quick' }) === false, 'isFulfilled: sandbox alone no longer opens the gate');
   ok(type.gatelockIntro({}) === 'One step and the chat opens below.', 'gatelockIntro: the one-step line');
 
-  // the pills: caps (the sandbox pill's heir) + model + accent Termux when stacked
+  // the pills: caps (the sandbox pill's heir) + model. v1.20.1 THE QUIET
+  // GATE: the ⌨ Termux pill died — stacking the capability never mints
+  // chat-metadata noise again (the library row carries the state).
   var pills = type.pills({ state: { provider: 'nvidia', termux: false } });
   ok(pills.length === 2 && pills[0].id === 'pill-caps' && pills[1].id === 'pill-model',
     'pills: caps + model, no termux pill when unstacked');
   var pillsT = type.pills({ state: { provider: 'nvidia', termux: true } });
-  ok(pillsT.length === 3 && pillsT[2].id === 'pill-termux' && pillsT[2].label === '⌨ Termux',
-    'pills: the ⌨ Termux pill joins when the capability is stacked');
+  ok(pillsT.length === 2 && pillsT[1].id === 'pill-model' &&
+     pillsT.every(function (p) { return p.id !== 'pill-termux'; }),
+    'v1.20.1: the ⌨ Termux pill does NOT join even when the capability is stacked');
   opened.length = 0;
   pillsT[0].onTap();
-  pillsT[2].onTap();
-  ok(opened.length === 2, 'pills: both the caps pill and the termux pill open the capability library');
+  ok(opened.length === 1, 'pills: the caps pill still opens the capability library');
 
   // the termux session field rides extraSessionFields
   ok(type.extraSessionFields({ termux: true }).termux === true &&
