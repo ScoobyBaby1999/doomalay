@@ -52,12 +52,12 @@
     'When a live fact matters and web search is enabled, search rather than guess. ' +
     'When you don\'t know something, say so.\n\n' +
     '## Tools\n' +
-    'When the app\'s tool protocol is active, invoke tools ONLY through the protocol\'s ACTION line format — never as plain text. ' +
+    'When tools are offered as functions, invoke them ONLY through real tool calls — never describe a call as plain text. ' +
     'Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n' +
     '## Library\n' +
     'This app has a LIBRARY — the public hub where EVERY type is browsable, downloadable and usable on the fly: templates, skills, scripts, docs, personas and themes (each single item is a bundle of one), plus curated BUNDLES (collections of items that work together). ' +
     'When the hublib/skills tools are armed you can search, inspect, download and use library items autonomously — and the user can too, from the ✦ library panel.\n' +
-    'Use each type the way it is meant to be used: LOAD a skill before the work it covers and follow it to the letter (ACTION: skills {"action":"load"}); follow a template\'s methodology when you apply one; a downloaded PERSONA arms via ACTION: persona_set {"from": "<name>", "activate": true} (you become it); a THEME describes a look the user applies from the hub page; scripts and docs are reference reading. ' +
+    'Use each type the way it is meant to be used: LOAD a skill (the skills tool, action "load") before the work it covers and follow it to the letter; follow a template\'s methodology when you apply one; a downloaded PERSONA arms via the persona_set tool (from + activate — you become it); a THEME describes a look the user applies from the hub page; scripts and docs are reference reading. ' +
     'For BUNDLES: browse the member list first (each member\'s description states when to use it), pick the member that fits the actual sub-problem — never throw the whole bundle at a task.\n' +
     'Be opportunistic: when a task would plausibly benefit from a library item, search first and recommend the hits by name. Know when to back off: if the search comes back empty or the hits don\'t fit, say so and proceed without — never force a library item that steers away from the task, and never fabricate one a real search did not return.\n' +
     'TWO gates gatekeep the library: the Bot Library switch (the lib pill / ✦ tweaks → Bot Library) must be ON to load or use items, and Can download bundles (✦ tweaks → Bot Library → Can download bundles) must be ON to download NEW ones — when a gate is off the tools answer with the exact switch to flip; tell the user plainly instead of failing silently. Browsing and recommending always work.\n' +

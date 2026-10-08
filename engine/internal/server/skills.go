@@ -410,7 +410,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                         "- *download a hub item* → the hublib tool with {\"action\": \"download\", \"type\": \"…\", \"repo\": \"…\", \"id\": \"…\"}\n" +
                         "- *download a whole bundle* → the hublib tool with {\"action\": \"download_bundle\", \"id\": \"…\"}\n" +
                         "- *dispatch a subagent* → the delegate tool with {\"prompt\": \"…\"}\n" +
-                        "- *create/update todos* → the timemgr equivalents: ACTION: json_tool / text_stats (plain notes)\n" +
+                        "- *create/update todos* → the timemgr equivalents: json_tool / text_stats (plain notes)\n" +
                         " — load a skill BEFORE starting any work it covers."
                 return text, ""
         case "list":

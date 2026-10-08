@@ -83,6 +83,66 @@ ORDER BY seq ASC`, sessionID, since)
         return out, rows.Err()
 }
 
+// ListEventsTail returns the LAST `limit` events in seq order (v1.15.3 THE
+// TRIM: the turn history assembly reads a bounded tail instead of the whole
+// log — O(window) per turn, not O(events)). len(out) < limit means the tail
+// reaches the session's head.
+func (db *DB) ListEventsTail(sessionID string, limit int) ([]*Event, error) {
+        if limit <= 0 {
+                return nil, nil
+        }
+        rows, err := db.Query(`
+SELECT id, session_id, seq, event_type, content, tool_use_id, created_at
+FROM chat_events
+WHERE session_id=?
+ORDER BY seq DESC
+LIMIT ?`, sessionID, limit)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        var rev []*Event
+        for rows.Next() {
+                ev := &Event{}
+                if err := rows.Scan(&ev.ID, &ev.SessionID, &ev.Seq, &ev.EventType, &ev.Content, &ev.ToolUseID, &ev.CreatedAt); err != nil {
+                        return nil, err
+                }
+                rev = append(rev, ev)
+        }
+        if err := rows.Err(); err != nil {
+                return nil, err
+        }
+        // reverse → seq ASC
+        for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+                rev[i], rev[j] = rev[j], rev[i]
+        }
+        return rev, nil
+}
+
+// ListEventsByType returns the events of one type in seq order (v1.15.3:
+// the hidden-id set for history assembly is its own tiny query — 'hide'
+// events — instead of hauling the whole log to find them).
+func (db *DB) ListEventsByType(sessionID, eventType string) ([]*Event, error) {
+        rows, err := db.Query(`
+SELECT id, session_id, seq, event_type, content, tool_use_id, created_at
+FROM chat_events
+WHERE session_id=? AND event_type=?
+ORDER BY seq ASC`, sessionID, eventType)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        var out []*Event
+        for rows.Next() {
+                ev := &Event{}
+                if err := rows.Scan(&ev.ID, &ev.SessionID, &ev.Seq, &ev.EventType, &ev.Content, &ev.ToolUseID, &ev.CreatedAt); err != nil {
+                        return nil, err
+                }
+                out = append(out, ev)
+        }
+        return out, rows.Err()
+}
+
 // EventToJSON serializes an Event for the PWA. Matches the wire format
 // the PWA's streamWorker expects.
 // v0.39: seq rides on replayed events — the resume handshake (&since=N)

@@ -718,6 +718,62 @@ func (s *Server) libStateLine(sess *store.Session) string {
         return state
 }
 
+// sessionBusy reports whether the per-session turn lock is held (v1.15.3:
+// the reaper only clears maps for sessions with nothing in flight).
+func sessionBusy(id string) bool {
+        sessionLocksMu.Lock()
+        ch := sessionLocks[id]
+        sessionLocksMu.Unlock()
+        if ch == nil {
+                return false
+        }
+        select {
+        case ch <- struct{}{}: // was free — give the token straight back
+                <-ch
+                return false
+        default:
+                return true
+        }
+}
+
+// reapIdleChat is v1.15.3 THE TRIM's map reaper: sessionLocks and chatPipes
+// grew one entry per session and never shrank — a long-lived engine (the
+// APK runs for weeks) accumulated them forever. The reaper runs when a
+// socket dies AND its session has no turn in flight: the lock chan and the
+// dead pipe leave the maps (pipeFor/lockSession recreate them on demand).
+// NEVER reaped while a turn runs — a running turn holds its pipe reference
+// and a resume must swap into THAT SAME pipe (reaping would orphan the live
+// feed: the resumed socket would bind a fresh pipe while the turn kept
+// writing to the dead one).
+func reapIdleChat(sessionID string, pipe *chatPipe) {
+        if sessionBusy(sessionID) {
+                return // a turn is in flight — its pipe must stay reachable
+        }
+        if pipe != nil {
+                pipe.mu.Lock()
+                dead := pipe.ws == nil
+                pipe.mu.Unlock()
+                if !dead {
+                        return // someone else reconnected first
+                }
+                chatPipesMu.Lock()
+                if chatPipes[sessionID] == pipe {
+                        delete(chatPipes, sessionID)
+                }
+                chatPipesMu.Unlock()
+        }
+        sessionLocksMu.Lock()
+        if ch := sessionLocks[sessionID]; ch != nil {
+                select {
+                case ch <- struct{}{}: // free — prove it, then hand the slot straight back
+                        <-ch
+                        delete(sessionLocks, sessionID)
+                default: // busy — a turn is in flight; leave the lock alone
+                }
+        }
+        sessionLocksMu.Unlock()
+}
+
 // handleChatWS is GET /api/chat?session_id=<id>[&since=<lastSeq>] — the
 // WebSocket chat endpoint.
 //
@@ -800,7 +856,10 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                 _, raw, err := conn.ReadMessage()
                 if err != nil {
                         pipe.clear(conn, gen) // only if still current
-                        return                // PWA disconnected
+                        // v1.15.3: a dead socket with no turn in flight reaps
+                        // the session's map entries (see reapIdleChat).
+                        go reapIdleChat(sessionID, pipe)
+                        return // PWA disconnected
                 }
                 var msg map[string]any
                 if err := json.Unmarshal(raw, &msg); err != nil {
@@ -1928,50 +1987,102 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
 // v0.13 emits one at turn end). Falls back to folding consecutive
 // assistant_delta fragments for sessions created before v0.13. Windowed to
 // the last N messages.
+//
+// v1.15.3 THE TRIM: the assembly is BOUNDED — the hidden-id set comes from
+// its own tiny 'hide' query, and the message walk reads a TAIL (window*3
+// events, doubling until it covers the window or reaches the session's
+// head) instead of the whole log. A turn on a 10k-event session now costs
+// O(window) reads, not O(events). Exactness guard: if a TRUNCATED tail
+// starts mid-delta-run (only possible on pre-v0.13 sessions, whose replies
+// stream as assistant_delta events), the full walk runs instead — the fold
+// must never split one message at a query boundary.
 func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
-        events, err := s.db.ListEvents(sessionID, 0)
-        if err != nil {
+        if s.db == nil {
                 return nil
         }
         // v0.37: 'hide' events name event ids the client masked (edit / delete /
-        // regenerate). Deletes always come AFTER their targets, so one pass
-        // collects the full hidden set before the history walk below.
+        // regenerate). Deletes always come AFTER their targets, so the set is
+        // complete regardless of which events the tail walk reads.
         hidden := map[int64]bool{}
-        for _, ev := range events {
-                if ev.EventType != "hide" || ev.Content == "" {
-                        continue
-                }
-                var ids []int64
-                if json.Unmarshal([]byte(ev.Content), &ids) == nil {
-                        for _, id := range ids {
-                                hidden[id] = true
+        if hideEvents, err := s.db.ListEventsByType(sessionID, "hide"); err == nil {
+                for _, ev := range hideEvents {
+                        if ev.Content == "" {
+                                continue
+                        }
+                        var ids []int64
+                        if json.Unmarshal([]byte(ev.Content), &ids) == nil {
+                                for _, id := range ids {
+                                        hidden[id] = true
+                                }
                         }
                 }
         }
-        var msgs []llm.Message
-        for _, ev := range events {
-                if hidden[ev.ID] {
-                        continue
-                }
-                switch ev.EventType {
-                case "user":
-                        msgs = append(msgs, llm.Message{Role: "user", Content: ev.Content})
-                case "assistant":
-                        msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content})
-                case "assistant_delta":
-                        // Pre-v0.13 sessions: fold consecutive deltas into one message.
-                        last := len(msgs) - 1
-                        if last >= 0 && msgs[last].Role == "assistant" && !msgs[last].FoldedDone {
-                                msgs[last].Content += ev.Content
-                        } else {
-                                msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
+
+        fold := func(events []*store.Event) (msgs []llm.Message) {
+                for _, ev := range events {
+                        if hidden[ev.ID] {
+                                continue
+                        }
+                        switch ev.EventType {
+                        case "user":
+                                msgs = append(msgs, llm.Message{Role: "user", Content: ev.Content})
+                        case "assistant":
+                                msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content})
+                        case "assistant_delta":
+                                // Pre-v0.13 sessions: fold consecutive deltas into one message.
+                                last := len(msgs) - 1
+                                if last >= 0 && msgs[last].Role == "assistant" && !msgs[last].FoldedDone {
+                                        msgs[last].Content += ev.Content
+                                } else {
+                                        msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
+                                }
                         }
                 }
+                return msgs
         }
-        if len(msgs) > window {
-                msgs = msgs[len(msgs)-window:]
+
+        limit := window*3 + 64
+        for {
+                events, err := s.db.ListEventsTail(sessionID, limit)
+                if err != nil {
+                        return nil
+                }
+                reachedHead := len(events) < limit
+                // the exactness guard: a truncated tail that STARTS mid-delta-run
+                // (pre-v0.13 sessions) must fold from the run's head — fall back
+                // to the full walk rather than split a message at the boundary.
+                if !reachedHead && len(events) > 0 && events[0].EventType == "assistant_delta" {
+                        all, ferr := s.db.ListEvents(sessionID, 0)
+                        if ferr != nil {
+                                return nil
+                        }
+                        msgs := fold(all)
+                        if len(msgs) > window {
+                                msgs = msgs[len(msgs)-window:]
+                        }
+                        return msgs
+                }
+                msgs := fold(events)
+                if len(msgs) >= window || reachedHead {
+                        if len(msgs) > window {
+                                msgs = msgs[len(msgs)-window:]
+                        }
+                        return msgs
+                }
+                limit *= 2 // not enough messages yet — widen the tail
+                if limit > 32768 {
+                        // pathological (window set absurdly high) — read it all once
+                        all, ferr := s.db.ListEvents(sessionID, 0)
+                        if ferr != nil {
+                                return nil
+                        }
+                        msgs := fold(all)
+                        if len(msgs) > window {
+                                msgs = msgs[len(msgs)-window:]
+                        }
+                        return msgs
+                }
         }
-        return msgs
 }
 
 // forwardEvents is the shared event-handling loop for both brain and direct
@@ -2407,7 +2518,7 @@ func bundleManifestText(b map[string]any) string {
         sb.WriteString("The user attached this WHOLE bundle instead of one member. For EVERY request:\n")
         sb.WriteString("1. Review the members below against the task BEFORE answering.\n")
         sb.WriteString("2. Decide which member(s) fit the work best — never guess or answer from memory when a member covers it. The descriptions state WHEN each member fires; pick the smallest fitting one, never the whole bundle at once.\n")
-        sb.WriteString("3. LOAD the pick BEFORE starting: call the skills tool with action \"load\" + the skill name, or the hublib tool with action \"download\" + its type/repo/id from the manifest lines — as a native tool call when your tools are offered as functions, or as an `ACTION: <tool> {<json>}` line on text-protocol chats.\n")
+        sb.WriteString("3. LOAD the pick BEFORE starting: call the skills tool with action \"load\" + the skill name, or the hublib tool with action \"download\" + its type/repo/id from the manifest lines — as a native tool call, never described as plain text.\n")
         sb.WriteString("4. Follow the loaded member to the letter, and say briefly WHICH member you used and why.\n")
         if wf := superpowersWorkflowBlock(id, true); wf != "" {
                 sb.WriteString(wf)

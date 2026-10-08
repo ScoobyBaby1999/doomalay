@@ -214,41 +214,26 @@
     openai: 'OpenAI', deepseek: 'DeepSeek'
   };
 
-  // The DEFAULT persona (v0.20): our artifact protocol MERGED with the old
-  // HF space's system-prompt style (direct/concise, explicit model identity,
-  // tool discipline). {model} and {provider} are substituted at composition
-  // time — client-side for PM turns (pmSystemMessage), server-side for
-  // engine turns (chat.go's defaultPersona) — so the persona always knows
-  // exactly which model it currently is, even after mid-convo switches.
-  var DEFAULT_PERSONA =
-    '## Identity\n' +
-    'You are {model} (served via {provider}), chatting inside the Doomalay app on the user\'s own device. ' +
-    'If the user asks which model you are, tell them exactly that — never guess and never claim to be a different model. ' +
-    'This identity updates automatically when the user switches your model mid-conversation; trust it over any prior assumption.\n\n' +
-    '## Style\n' +
-    'Be direct and concise; lead with the outcome, not the process. ' +
-    'Use markdown freely — headings, lists, bold, links and fenced code blocks all render nicely in this app. ' +
-    'When a live fact matters and web search is enabled, search rather than guess. ' +
-    'When you don\'t know something, say so.\n\n' +
-    '## Tools\n' +
-    'When the app\'s tool protocol is active, invoke tools ONLY through the protocol\'s ACTION line format — never as plain text. ' +
-    'Cite search sources inline as [1], [2] matching the result numbering, and never fabricate URLs.\n\n' +
-    '## Artifacts\n' +
+  // v1.15.3 THE TRIM: the pre-v0.48 DEFAULT_PERSONA duplicate is DELETED —
+  // persona.js loads before chatpanel.js in index.html (6043 < 6109), so
+  // window.Persona.defaultPersonaFor / substituteAll ALWAYS exist; the
+  // fallback branches were dead code still teaching the DELETED text-protocol
+  // tool grammar (actively harmful since v1.13.3: models emitted protocol
+  // lines nothing parses). What stays here is the PM artifact-protocol twin —
+  // the explicit constant the engine keeps too (artifactSystemPrompt).
+  var PM_ARTIFACT_PROMPT =
     'You are chatting inside the Doomalay app, which has an artifact system.\n' +
     'When the user asks for a file, document, dataset, or any standalone deliverable — or when you produce a substantial complete artifact-like output — attach it as an ARTIFACT in addition to (or instead of) your normal answer.\n' +
     'Artifact format (a fenced code block whose info string starts with "artifact"):\n' +
     '  ```artifact file=<filename.ext>\n  <the complete file content as plain text>\n  ```\n' +
     'For binary file types (e.g. .docx, .xlsx, .pdf, .zip, images) provide the bytes base64-encoded instead:\n' +
-    '  ```artifact file=<filename> encoding=base64\n  <base64 payload>\n  ```\n' +
+    '  ```artifact file=<filename> encoding=base64\n  <base64 payload>\n  ```\n\n' +
     'Rules:\n' +
     '- Prefer text formats when the user has no strong preference (.md, .txt, .json, .csv, .html, code files, config files).\n' +
     '- Use a real, descriptive filename with the correct extension.\n' +
     '- The artifact block must contain the COMPLETE file, never truncated.\n' +
     '- Keep the spoken answer short and mention the attached file name.\n' +
     '- Regular markdown (headings, lists, bold, links, code blocks) is rendered nicely — use it freely.';
-
-  // The artifact protocol ALONE — appended to custom personas that lack it.
-  var ARTIFACT_PROMPT = DEFAULT_PERSONA.slice(DEFAULT_PERSONA.indexOf('## Artifacts'));
 
   // v0.20: pretty model display name — "privatemodeai/kimi-k2.6" →
   // "kimi-k2.6" (mirrors the engine's prettyModelName).
@@ -257,17 +242,6 @@
     if (!s) return '';
     var i = s.lastIndexOf('/');
     return i >= 0 ? s.slice(i + 1) : s;
-  }
-
-  // v0.20: {model}/{provider} substitution for persona texts (client-side
-  // — PM turns compose the system message here, engine turns in Go).
-  function substituteVars(text, model, provider) {
-    if (!text) return text;
-    var m = prettyModel(model) || 'an AI assistant';
-    var p = String(provider || '').trim() || 'an unknown provider';
-    return String(text)
-      .split('{model}').join(m)
-      .split('{provider}').join(p);
   }
 
   function getOrCreateState(chatId, sessionData, icon) {
@@ -976,6 +950,7 @@
   }
 
   function renderHost(bodyEl, icon, state, panel) {
+    state._miEls = null; // v1.15.3: the DOM wipe below invalidates the mi→el cache
     var type = window.ChatTypes.get(state.sandbox || 'quick');
     // v0.83.4: capture the OUTGOING ctx before the overwrite — bodyEl
     // still holds its formatted DOM until the innerHTML wipe below
@@ -2541,14 +2516,12 @@
     }
     var sys = head + '\n\n';
     if (personaText) {
-      sys += (window.Persona && window.Persona.substituteAll)
-        ? window.Persona.substituteAll(personaText, state.chatName, model, state.provider)
-        : substituteVars(personaText, model, state.provider);
+      sys += window.Persona.substituteAll(personaText, state.chatName, model, state.provider);
     } else {
       // v0.48 task 6: the default persona is mode-aware (quick vs HF)
-      var defPersona = (window.Persona && window.Persona.defaultPersonaFor)
-        ? window.Persona.defaultPersonaFor(state.sandbox)
-        : DEFAULT_PERSONA;
+      // v1.15.3: persona.js ALWAYS provides the mode-aware default (it
+      // loads first in index.html — the dead local duplicate is gone).
+      var defPersona = window.Persona.defaultPersonaFor(state.sandbox);
       // v0.89.3: the HF default carries a {repo} slot (own-space repo or
       // the shared marker) — substituteAll doesn't know it, so it's
       // resolved HERE from the chat's own state (the engine twin's
@@ -2557,9 +2530,7 @@
         defPersona = defPersona.split('{repo}').join(
           state.sandboxRepo ? (' (your Space: ' + state.sandboxRepo + ')') : '');
       }
-      sys += (window.Persona && window.Persona.substituteAll)
-        ? window.Persona.substituteAll(defPersona, state.chatName, model, state.provider)
-        : substituteVars(DEFAULT_PERSONA, model, state.provider);
+      sys += window.Persona.substituteAll(defPersona, state.chatName, model, state.provider);
       // v0.68: the PM default persona rides the LIBRARY discipline block
       // (the engine's libraryPreamble twin) + the metadata block — the
       // PM default now knows the library exists AND every control's
@@ -2568,7 +2539,7 @@
       // connections/bound repos).
       return sys + pmLibraryPreamble(state) + pmMetadataBlock(state) + pmSessionContext(state); // the default persona carries the artifact protocol
     }
-    if (!/artifact/i.test(personaText)) sys += '\n\n' + ARTIFACT_PROMPT;
+    if (!/artifact/i.test(personaText)) sys += '\n\n' + PM_ARTIFACT_PROMPT;
     return sys + pmMetadataBlock(state) + pmSessionContext(state);
   }
 
@@ -5498,7 +5469,22 @@
     if (!container) return;
     var mi = st.messages.indexOf(msg);
     if (mi < 0) return;
-    var wrapper = container.querySelector('[data-mi="' + mi + '"]');
+    // v1.15.3 THE TRIM: the row lookup is O(1) via the per-state mi→element
+    // cache (the throttled streaming render used to querySelector over the
+    // WHOLE transcript DOM every 180ms — O(rows) per tick; the backfill
+    // mounts the full history so rows grow with the chat). The cache is
+    // dropped on every renderHost wipe (renderMessages rebuilds shells);
+    // entries verify isConnected so a detached node can never be reused.
+    var wrapper = (st._miEls && st._miEls[mi] && st._miEls[mi].isConnected)
+      ? st._miEls[mi]
+      : null;
+    if (!wrapper) {
+      wrapper = container.querySelector('[data-mi="' + mi + '"]');
+      if (wrapper) {
+        if (!st._miEls) st._miEls = {};
+        st._miEls[mi] = wrapper;
+      }
+    }
     if (!wrapper) {
       // not mounted yet (rare race) — append it (owner-only path)
       appendMessage(container, null, msg, currentCtx.bodyEl, null, ownerState);
