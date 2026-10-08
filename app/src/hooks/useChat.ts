@@ -33,20 +33,20 @@ export function useChat(sessionId: string | null) {
     const existing = useSessionsStore.getState().sessions.get(sessionId)?._ws;
     if (existing) existing.close();
 
-    const ws = client.chatWS(sessionId);
+    // v1.14.6 THE SOLID STREAM: reconnects are INCREMENTAL — the store's
+    // lastSeq watermark rides the URL, the engine replays only seq > since
+    // (v0.39 resume handshake), the fold continues on top of the surviving
+    // state. Full replay (since=0) happens on a true cold open only.
+    const lastSeq = useSessionsStore.getState().sessions.get(sessionId)?.lastSeq ?? 0;
+    const ws = client.chatWS(sessionId, lastSeq);
     useSessionsStore.getState().setWS(sessionId, ws);
 
     ws.onmessage = (e) => {
       try {
         const ev: ChatEvent = JSON.parse(e.data);
-        // Dedup: if we already have this event (by seq), skip.
-        // (The engine replays since=0 on reconnect; idempotent handler.)
-        const st = useSessionsStore.getState().sessions.get(sessionId);
-        if (st && st.events.some((x) => x.seq === ev.seq)) {
-          return;
-        }
+        // v1.14.6: the O(n) `events.some(...)` dedupe scan is gone — the
+        // store's watermark guard owns idempotence (one choke point, O(1)).
         useSessionsStore.getState().appendEvent(sessionId, ev);
-        useSessionsStore.getState().updateFromEvent(sessionId, ev);
 
         // Reset the watchdog on every event.
         resetWatchdog();

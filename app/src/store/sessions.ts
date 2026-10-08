@@ -1,18 +1,30 @@
 // Per-session chat store. THE V0 FIX: a Map<sessionId, ChatSessionState>
 // instead of the old flat global slice. Each chat has its own messages,
 // model, provider, toggles, isBusy, etc. — fully isolated.
+//
+// v1.14.6 THE SOLID STREAM — the append-only O(k) fold: the store no
+// longer mirrors the engine's event log (the O(n) array copy per event)
+// and no longer re-derives messages per event (the O(n²) fold that melted
+// long turns and every app open's full replay). The ENGINE owns the log;
+// the PWA keeps the derived messages + the replay watermark (lastSeq).
+// Every event folds ONCE, in place, through applyEvent. Events with
+// seq <= lastSeq are skipped — the idempotence guard that makes WS
+// replays (full or since=N) safe to fold at any time.
 
 import { create } from 'zustand';
 import type { ChatEvent, ChatSession, ChatMessage, Usage } from '../types';
-import { eventsToMessages } from '../lib/utils';
+import { applyEvent } from '../lib/utils';
 import { useEngineStore } from './engines';
 
 interface ChatSessionState {
   // Persisted session metadata (from the engine's chat_sessions table).
   session: ChatSession;
-  // Events from the engine (the source of truth — replayed on open).
-  events: ChatEvent[];
-  // Rendered messages (derived from events).
+  // v1.14.6: the replay watermark — every event with seq <= lastSeq has
+  // been folded into messages. Reconnects send since=lastSeq; replayed
+  // tails fold on top; duplicates are dropped here (the single choke
+  // point — no O(n) scans).
+  lastSeq: number;
+  // Rendered messages (folded from events — never re-derived).
   messages: ChatMessage[];
   // Live metadata (updated by status events).
   isBusy: boolean;
@@ -42,7 +54,6 @@ interface SessionsStore {
   setWS: (id: string, ws: WebSocket | null) => void;
   setBusy: (id: string, busy: boolean) => void;
   setError: (id: string, err: string | null) => void;
-  updateFromEvent: (id: string, ev: ChatEvent) => void;
 }
 
 function emptyUsage(): Usage {
@@ -52,7 +63,7 @@ function emptyUsage(): Usage {
 function makeState(session: ChatSession): ChatSessionState {
   return {
     session,
-    events: [],
+    lastSeq: 0,
     messages: [],
     isBusy: false,
     isStreaming: false,
@@ -63,6 +74,18 @@ function makeState(session: ChatSession): ChatSessionState {
     _ws: null,
     _loaded: false,
   };
+}
+
+// foldOne applies one event to a session state WITHOUT a store write:
+// the idempotence guard, the O(k) in-place fold, the watermark. Returns
+// false when the event was already folded (duplicate). The callers decide
+// the write policy (appendEvent writes per live event; loadSessionEvents
+// batches a cold load into ONE write).
+function foldOne(st: ChatSessionState, ev: ChatEvent): boolean {
+  if (ev.seq && ev.seq <= st.lastSeq) return false; // already folded
+  applyEvent(st.messages, ev);
+  if (ev.seq) st.lastSeq = ev.seq;
+  return true;
 }
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
@@ -76,11 +99,14 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   },
 
   loadSessionEvents(id, events) {
+    // v1.14.6: the batch build — the SAME fold the live path uses, so a
+    // cold load and a stream-built state are identical by construction.
+    // ONE store write for the whole batch (the old path never applied
+    // status metadata on a cold load either — preserved).
     const sessions = new Map(get().sessions);
     const st = sessions.get(id);
     if (!st) return;
-    st.events = events;
-    st.messages = eventsToMessages(events);
+    for (const ev of events) foldOne(st, ev);
     st._loaded = true;
     set({ sessions });
   },
@@ -89,8 +115,24 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     const sessions = new Map(get().sessions);
     const st = sessions.get(id);
     if (!st) return;
-    st.events = [...st.events, ev];
-    st.messages = eventsToMessages(st.events);
+    if (!foldOne(st, ev)) return; // duplicate — no write, no render
+    // Live metadata from status events (was updateFromEvent — one fold,
+    // one store write per event now).
+    if (ev.type === 'status') {
+      if (ev.usage) {
+        st.lastUsage = ev.usage;
+        // Cumulative: add this turn's usage to the running total.
+        st.cumulativeUsage = {
+          input_tokens: st.cumulativeUsage.input_tokens + (ev.usage.input_tokens || 0),
+          output_tokens: st.cumulativeUsage.output_tokens + (ev.usage.output_tokens || 0),
+          total_tokens: st.cumulativeUsage.total_tokens + (ev.usage.total_tokens || 0),
+        };
+      }
+      if (ev.state === 'idle' || ev.state === 'error') {
+        st.isBusy = false;
+        st.isStreaming = false;
+      }
+    }
     set({ sessions });
   },
 
@@ -143,29 +185,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     if (!st) return;
     st.error = err;
     if (err) st.isBusy = false;
-    set({ sessions });
-  },
-
-  updateFromEvent(id, ev) {
-    const sessions = new Map(get().sessions);
-    const st = sessions.get(id);
-    if (!st) return;
-    // Update live metadata from status events.
-    if (ev.type === 'status') {
-      if (ev.usage) {
-        st.lastUsage = ev.usage;
-        // Cumulative: add this turn's usage to the running total.
-        st.cumulativeUsage = {
-          input_tokens: st.cumulativeUsage.input_tokens + (ev.usage.input_tokens || 0),
-          output_tokens: st.cumulativeUsage.output_tokens + (ev.usage.output_tokens || 0),
-          total_tokens: st.cumulativeUsage.total_tokens + (ev.usage.total_tokens || 0),
-        };
-      }
-      if (ev.state === 'idle' || ev.state === 'error') {
-        st.isBusy = false;
-        st.isStreaming = false;
-      }
-    }
     set({ sessions });
   },
 }));

@@ -35,7 +35,7 @@ export interface EngineClient {
 
   // Chat WebSocket.
   // Returns the raw WebSocket. The caller (useChat hook) manages the lifecycle.
-  chatWS(sessionId: string): WebSocket;
+  chatWS(sessionId: string, since?: number): WebSocket;
 }
 
 export function makeClient(baseUrl: string, token: string): EngineClient {
@@ -120,9 +120,13 @@ export function makeClient(baseUrl: string, token: string): EngineClient {
       return data.events || [];
     },
 
-    chatWS(sessionId) {
+    // v1.14.6 THE SOLID STREAM: since rides the handshake — 0 = full
+    // replay (cold open), N = only seq > N (the v0.39 resume handshake;
+    // reconnects fold the tail on top of the surviving store state).
+    chatWS(sessionId, since = 0) {
       const wsBase = base.replace(/^http/, 'ws');
-      const url = `${wsBase}/api/chat?session_id=${encodeURIComponent(sessionId)}`;
+      let url = `${wsBase}/api/chat?session_id=${encodeURIComponent(sessionId)}`;
+      if (since > 0) url += `&since=${since}`;
       const ws = new WebSocket(url);
       if (token) {
         // Inject auth via subprotocol (WebSocket doesn't support custom headers

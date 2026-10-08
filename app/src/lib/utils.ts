@@ -41,97 +41,117 @@ export function fmtCost(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+/**
+ * v1.14.6 THE SOLID STREAM — the event fold, single source of truth.
+ *
+ * applyEvent folds ONE event into the messages array IN PLACE — O(k) per
+ * event, no re-derivation. eventsToMessages (the batch build) and the
+ * store's live append (the streaming path) both run through it, so the
+ * cold build and the incremental fold are identical BY CONSTRUCTION —
+ * the replay rig (replay-rig.test.ts) keeps that property pinned.
+ *
+ * The old appendEvent re-derived messages from the FULL event list on
+ * every single event — O(n) per event, O(n²) per turn — and the WS
+ * replay refolded the whole log on every app open. A 24h turn (100k+
+ * events) melted the UI. Now: one in-place fold per event.
+ */
+export function applyEvent(msgs: import('../types').ChatMessage[], ev: { type: string; text?: string; name?: string; summary?: string; tool_use_id?: string; is_error?: boolean; state?: string; error?: string; ts: number; i: number }): void {
+  switch (ev.type) {
+    case 'user':
+      msgs.push({
+        id: `u-${ev.i}`,
+        role: 'user',
+        content: ev.text || '',
+        timestamp: ev.ts,
+      });
+      break;
+    case 'thinking': {
+      // Replace the last streaming thinking bubble, or push a new one.
+      // (The engine persists thinking events as snapshots — SET, not
+      // append. assistant_delta below is the append case.)
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'thinking' && last.isStreaming) {
+        last.content = ev.text || '';
+      } else {
+        msgs.push({
+          id: `t-${ev.i}`,
+          role: 'thinking',
+          content: ev.text || '',
+          isStreaming: true,
+          timestamp: ev.ts,
+        });
+      }
+      break;
+    }
+    case 'assistant_delta': {
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant' && last.isStreaming) {
+        last.content += ev.text || '';
+      } else {
+        msgs.push({
+          id: `a-${ev.i}`,
+          role: 'assistant',
+          content: ev.text || '',
+          isStreaming: true,
+          timestamp: ev.ts,
+        });
+      }
+      break;
+    }
+    case 'tool_use':
+      msgs.push({
+        id: `tu-${ev.i}`,
+        role: 'tool',
+        content: '',
+        toolName: ev.name,
+        toolSummary: ev.summary,
+        toolUseId: ev.tool_use_id,
+        timestamp: ev.ts,
+      });
+      break;
+    case 'tool_result': {
+      // Pair with the matching tool_use by tool_use_id.
+      const useIdx = msgs.findIndex((m) => m.toolUseId === ev.tool_use_id && m.role === 'tool');
+      if (useIdx >= 0) {
+        msgs[useIdx].content = ev.text || '';
+        msgs[useIdx].isError = ev.is_error;
+      } else {
+        msgs.push({
+          id: `tr-${ev.i}`,
+          role: 'tool',
+          content: ev.text || '',
+          toolUseId: ev.tool_use_id,
+          isError: ev.is_error,
+          timestamp: ev.ts,
+        });
+      }
+      break;
+    }
+    case 'status':
+      // Finalize streaming bubbles.
+      if (ev.state === 'idle' || ev.state === 'error') {
+        for (const m of msgs) {
+          if (m.isStreaming) m.isStreaming = false;
+        }
+      }
+      break;
+    case 'error':
+      msgs.push({
+        id: `e-${ev.i}`,
+        role: 'system',
+        content: ev.text || ev.error || 'Unknown error',
+        isError: true,
+        timestamp: ev.ts,
+      });
+      break;
+  }
+}
+
 /** Convert ChatEvent[] → ChatMessage[] (merge assistant_delta chunks). */
 export function eventsToMessages(events: { type: string; text?: string; name?: string; summary?: string; tool_use_id?: string; is_error?: boolean; state?: string; error?: string; ts: number; i: number }[]): import('../types').ChatMessage[] {
   const msgs: import('../types').ChatMessage[] = [];
   for (const ev of events) {
-    switch (ev.type) {
-      case 'user':
-        msgs.push({
-          id: `u-${ev.i}`,
-          role: 'user',
-          content: ev.text || '',
-          timestamp: ev.ts,
-        });
-        break;
-      case 'thinking': {
-        // Replace the last streaming thinking bubble, or push a new one.
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === 'thinking' && last.isStreaming) {
-          last.content = ev.text || '';
-        } else {
-          msgs.push({
-            id: `t-${ev.i}`,
-            role: 'thinking',
-            content: ev.text || '',
-            isStreaming: true,
-            timestamp: ev.ts,
-          });
-        }
-        break;
-      }
-      case 'assistant_delta': {
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === 'assistant' && last.isStreaming) {
-          last.content += ev.text || '';
-        } else {
-          msgs.push({
-            id: `a-${ev.i}`,
-            role: 'assistant',
-            content: ev.text || '',
-            isStreaming: true,
-            timestamp: ev.ts,
-          });
-        }
-        break;
-      }
-      case 'tool_use':
-        msgs.push({
-          id: `tu-${ev.i}`,
-          role: 'tool',
-          content: '',
-          toolName: ev.name,
-          toolSummary: ev.summary,
-          toolUseId: ev.tool_use_id,
-          timestamp: ev.ts,
-        });
-        break;
-      case 'tool_result': {
-        // Pair with the matching tool_use by tool_use_id.
-        const useIdx = msgs.findIndex((m) => m.toolUseId === ev.tool_use_id && m.role === 'tool');
-        if (useIdx >= 0) {
-          msgs[useIdx].content = ev.text || '';
-          msgs[useIdx].isError = ev.is_error;
-        } else {
-          msgs.push({
-            id: `tr-${ev.i}`,
-            role: 'tool',
-            content: ev.text || '',
-            toolUseId: ev.tool_use_id,
-            isError: ev.is_error,
-            timestamp: ev.ts,
-          });
-        }
-        break;
-      }
-      case 'status':
-        // Finalize streaming bubbles.
-        if (ev.state === 'idle' || ev.state === 'error') {
-          for (const m of msgs) {
-            if (m.isStreaming) m.isStreaming = false;
-          }
-        }
-        break;
-      case 'error':
-        msgs.push({
-          id: `e-${ev.i}`,
-          role: 'system',
-          content: ev.text || ev.error || 'Unknown error',
-          isError: true,
-          timestamp: ev.ts,
-        });
-        break;
-    }
+    applyEvent(msgs, ev);
   }
   return msgs;
 }
