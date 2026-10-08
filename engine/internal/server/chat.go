@@ -1005,7 +1005,12 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 "provider":      sess.Provider,
                 "effort":        sess.Effort,
                 "mode":          sess.Mode,
-                "web_search":    sess.WebSearch || true, // v0.45 ITEM 2: default-on (pill removed)
+                // v1.17.1 THE PIVOT: the web_search CAPABILITY — the session
+                // field is the truth now (the PWA's library toggle flips it;
+                // birth default ON via sessionBody). The v0.45 `|| true`
+                // hardcode existed because the pill was removed; the toggle
+                // is back, so the hardcode dies with it.
+                "web_search":    sess.WebSearch,
                 "deep_research": sess.DeepResearch,
                 // v0.52 THE 3 PILLS: the auto-search toggles ride the brain
                 // turn (the brain gates dtemplate/skills + the system-prompt
@@ -1769,7 +1774,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 SessionID:    sessionID, // v1.13.2: mcpbus observer trace attribution
                 Messages:     full,
                 Effort:       sess.Effort,
-                WebSearch:    sess.WebSearch || true, // v0.45 ITEM 2: default-on (pill removed)
+                // v1.17.1 THE PIVOT: the web_search capability — the session
+                // field is the truth (the WS handler stamps the per-message
+                // override onto sess before dispatch; the PWA creates chats
+                // with it ON). The v0.45 `|| true` hardcode dies with the
+                // returned toggle.
+                WebSearch:    sess.WebSearch,
                 DeepResearch: sess.DeepResearch,
                 TavilyKey:    keys["TAVILY_API_KEY"],
                 APIKey:       apiKey,

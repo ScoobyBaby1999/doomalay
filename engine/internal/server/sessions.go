@@ -57,6 +57,10 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 SkillsAuto   bool `json:"skills_auto"`
                 // v0.60 pt C.9: THE LIB PILL — the single gatekeeping toggle.
                 LibAuto bool `json:"lib_auto"`
+                // v1.17.1 THE PIVOT: the Termux capability — the stacked
+                // capability the capabilities library's gated toggle writes
+                // (inert this wave; the bridge arrives v1.17.2).
+                Termux bool `json:"termux"`
                 // v0.46: HF-chat routing (sandbox="hf"): "shared" | "own" + the
                 // own space's "user/name" repo.
                 SandboxMode string `json:"sandbox_mode"`
@@ -128,6 +132,8 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 SkillsAuto:   req.SkillsAuto,
                 // v0.60 pt C.9: the lib pill.
                 LibAuto: req.LibAuto,
+                // v1.17.1 THE PIVOT: the Termux capability.
+                Termux: req.Termux,
                 // v0.46: HF-chat routing.
                 SandboxMode: req.SandboxMode,
                 SandboxRepo: req.SandboxRepo,
@@ -335,6 +341,12 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 sess.SkillsAuto = v
         } else if sess.LibAuto != (sess.TemplateAuto || sess.SkillsAuto) {
                 sess.LibAuto = sess.TemplateAuto || sess.SkillsAuto
+        }
+        // v1.17.1 THE PIVOT: the Termux capability — the capabilities
+        // library's gated toggle PATCHes it (bool→int at the column; the
+        // GET/serialization round-trips it for the reload restore).
+        if v, ok := req["termux"].(bool); ok {
+                sess.Termux = v
         }
         if err := s.db.UpdateSession(sess); err != nil {
                 writeError(w, 500, "update: "+err.Error())

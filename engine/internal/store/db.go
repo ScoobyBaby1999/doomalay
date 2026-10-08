@@ -210,6 +210,12 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // for own spaces; "" for shared).
                 {"chat_sessions", "sandbox_mode", "ALTER TABLE chat_sessions ADD COLUMN sandbox_mode TEXT"},
                 {"chat_sessions", "sandbox_repo", "ALTER TABLE chat_sessions ADD COLUMN sandbox_repo TEXT"},
+                // v1.17.1 THE PIVOT: the Termux capability — the stacked
+                // capability field the capabilities library's gated toggle
+                // writes (termux INTEGER DEFAULT 0, exactly like the
+                // lib_auto/skills_auto siblings). INERT this wave: the
+                // Termux bridge + tools arrive with v1.17.2/v1.18.
+                {"chat_sessions", "termux", "ALTER TABLE chat_sessions ADD COLUMN termux INTEGER DEFAULT 0"},
                 // v0.44: the workspaces wave — the bare v0.17 workspaces
                 // table grows the cloud-repo columns (host kind, owner/repo,
                 // access level, token vault key, default branch, meta JSON).

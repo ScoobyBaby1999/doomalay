@@ -5,11 +5,12 @@
 //
 // TASK 3: the connect panel — one builder, TWO hosts:
 //   • window.HFConnect.openConnectPanel({onDone}) — the reusable ConnectOverlay
-//     page (the sandbox picker's "Connect to HF" button opens this).
+//     page (appearance.js's 🤗 account row + the workspace picker's HF
+//     provider open this — the sandbox picker caller died with v1.17.1).
 //   • window.HFConnect.connectPanelView({onDone}) — the same UI as a master-
 //     panel view; the hub-publish flow pushes it when there is no token, so
 //     "the panel that appears when publishing to the hub with no token" and
-//     the sandbox picker's connect button are THE SAME panel.
+//     the connect rows are THE SAME panel.
 //
 // Layout (user spec, in order):
 //   1. big "Connect Hugging Face" button → the origin-picked flow:
@@ -33,7 +34,8 @@
 // reported: "doesn't sync or update").
 //
 // Keeps (v0.46): openLogs / openLogsFor — the run/build logs viewer with the
-// Wake button (used by the sandbox picker's build-failure "view logs" link).
+// Wake button (legacy: the sandbox picker's build-failure "view logs" link
+// used it; the viewer stays — it serves the workspace picker's HF spaces).
 //
 // Exposes: window.HFConnect = { openConnectPanel, connectPanelView,
 //                               openLogs, openLogsFor, current, account,

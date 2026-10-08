@@ -71,7 +71,7 @@
   }
 
   class ChatIcon extends GridIcon {
-    constructor({ id, name, family, iconIndex, iconCustom, iconRev, x, y, vx = 0, vy = 0, radius = 28, sandbox = '', model = '', provider = '', sessionId = '' }) {
+    constructor({ id, name, family, iconIndex, iconCustom, iconRev, x, y, vx = 0, vy = 0, radius = 28, sandbox = 'quick', model = '', provider = '', sessionId = '' }) {
       super({ id: id || newChatId(), type: 'chat', x, y, radius });
       this.name = name;
       this.family = family;
@@ -80,7 +80,11 @@
       this.iconRev = iconRev || 0;      // its engine rev (cache-bust)
       this.vx = vx;
       this.vy = vy;
-      this.sandbox = sandbox;     // 'quick', 'hf', 'terminal', 'device'
+      // v1.17.1 THE PIVOT: sandbox defaults to 'quick' FROM BIRTH — a new
+      // chat never picks a sandbox (the picker died; capabilities stack
+      // instead). deserialize() still restores each icon's own stored
+      // value (legacy hf/terminal/device chats keep their routing).
+      this.sandbox = sandbox;     // 'quick' (default), 'hf', 'terminal', 'device'
       this.model = model;         // 'openai/gpt-4o', 'ollama/llama3.2:3b', etc.
       this.provider = provider;   // 'openai', 'ollama', etc.
       this.sessionId = sessionId; // v0.15: the ENGINE session id — persisted so

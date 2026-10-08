@@ -118,14 +118,22 @@ func TestSessionContextPreambleCompact(t *testing.T) {
         if !strings.Contains(out, "no price data for this model") {
                 t.Fatalf("expected unpriced line:\n%s", out)
         }
-        // v1.14.5: the sandbox line always teaches the current sandbox +
-        // the four switchable types (the R5 live finding pinned).
-        if !strings.Contains(out, "Your sandbox: quick") {
-                t.Fatalf("expected the sandbox line for a default chat:\n%s", out)
+        // v1.17.1 THE PIVOT: the sandbox-type teaching is RETIRED (the
+        // picker died; quick by birth) — the line now teaches the STACKED
+        // CAPABILITIES, and the Termux capability gets its own honest
+        // inert note when armed.
+        if !strings.Contains(out, "Your capabilities (stacked by the user in this chat's capabilities library): none stacked yet") {
+                t.Fatalf("expected the capabilities line for a default chat:\n%s", out)
         }
-        if !strings.Contains(out, "quick / hf / terminal / device") {
-                t.Fatalf("expected the switchable sandbox list:\n%s", out)
+        if strings.Contains(out, "quick / hf / terminal / device") || strings.Contains(out, "Your sandbox:") {
+                t.Fatalf("the sandbox-type teaching survived the pivot:\n%s", out)
         }
+        sess.Termux = true
+        out = (&Server{}).sessionContextPreamble(sess)
+        if !strings.Contains(out, "Termux capability: device shell access is ARMED but no termux workspace is bound yet (tools arrive next update") {
+                t.Fatalf("expected the termux inert note when stacked:\n%s", out)
+        }
+        sess.Termux = false
         if len(out) > 1800 {
                 t.Fatalf("session block too fat for a fresh chat: %d chars", len(out))
         }

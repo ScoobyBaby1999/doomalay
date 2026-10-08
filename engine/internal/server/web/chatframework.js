@@ -51,7 +51,9 @@
     // The gate title. Default per user spec v0.16.
     gatelockTitle() { return 'do this quickly - setup the AI bot'; }
     gatelockIntro(state) {
-      return 'Two steps and the chat opens below.';
+      // v1.17.1 THE PIVOT: one step — the model. The sandbox step died
+      // (new chats are quick by birth; capabilities are optional).
+      return 'One step and the chat opens below.';
     }
 
     // The setup boxes. Override. [{key,title,sub,icon,onTap}]
@@ -98,22 +100,13 @@
       });
     }
 
-    // Two setup boxes: the sandbox (= chat type, i.e. THIS registry) and
-    // the model source. The sandbox box lets you switch chat kinds.
+    // v1.17.1 THE PIVOT: ONE required box (the model — the sandbox
+    // picker died; new chats are quick by birth) + ONE optional box (the
+    // capability library — stack what you need, never gated).
     gatelockSteps(ctx) {
       var self = this;
       var st = ctx.state;
       return [
-        {
-          key: 'sandbox',
-          filled: !!st.sandbox,
-          title: st.sandbox ? (window.SandboxLabel ? window.SandboxLabel(st) : (SANDBOX_LABELS[st.sandbox] || st.sandbox)) : '+ Sandbox',
-          sub: st.sandbox ? 'tap to change' : 'tap to connect',
-          icon: st.sandbox ? (SANDBOX_ICONS[st.sandbox] || '⚡') : '🔌',
-          onTap: function () {
-            window.SandboxPicker.open(function (t, d) { ctx.applySandbox(t, d); });
-          }
-        },
         {
           key: 'model',
           filled: !!st.model,
@@ -130,22 +123,40 @@
           // ALIEN face (the 👾 space-invader glyph), not the old robot.
           icon: '👾',
           onTap: function () { ctx.openModelPicker(); }
+        },
+        {
+          // v1.17.1: the CAPABILITIES box — optional, NEVER blocks the
+          // gate (the user's "+capabilities overlay screen" directive).
+          key: 'caps',
+          filled: true,
+          title: '+ capabilities',
+          sub: 'optional · stack what you need',
+          icon: '🧩',
+          onTap: function () {
+            if (window.Capabilities) window.Capabilities.open(ctx);
+          }
         }
       ];
     }
 
-    isFulfilled(state) { return !!(state.sandbox && state.model); }
+    // v1.17.1 THE PIVOT: the model alone opens the gate — a new chat is
+    // quick by birth (state.sandbox = 'quick' at icon creation); the
+    // sandbox picker is gone. Legacy hf/terminal/device SESSIONS keep
+    // their rendering (the ChatTypes registry routes by st.sandbox).
+    isFulfilled(state) { return !!state.model; }
 
+    // v1.17.1 THE PIVOT: pill-sandbox died with the picker — the
+    // capabilities pill replaces it (opens THE CAPABILITY LIBRARY).
+    // When the Termux capability is stacked on the chat, an accent
+    // ⌨ Termux pill joins it (the user's spec: the pill/row in the list
+    // turns to a primary/accent theme color when active).
     pills(ctx) {
-      return [
+      var pills = [
         {
-          id: 'pill-sandbox',
-          label: (SANDBOX_ICONS[ctx.state.sandbox] || '⚡') + ' ' +
-                 ((window.SandboxLabel && ctx.state.sandbox === 'hf')
-                   ? window.SandboxLabel(ctx.state)
-                   : (SANDBOX_LABELS[ctx.state.sandbox] || ctx.state.sandbox || 'Sandbox')),
+          id: 'pill-caps',
+          label: '🧩 capabilities',
           onTap: function () {
-            window.SandboxPicker.open(function (t, d) { ctx.applySandbox(t, d); });
+            if (window.Capabilities) window.Capabilities.open(ctx);
           }
         },
         {
@@ -160,6 +171,16 @@
           onTap: function () { ctx.openModelPicker(); }
         }
       ];
+      if (ctx.state && ctx.state.termux) {
+        pills.push({
+          id: 'pill-termux',
+          label: '⌨ Termux',
+          onTap: function () {
+            if (window.Capabilities) window.Capabilities.open(ctx);
+          }
+        });
+      }
+      return pills;
     }
 
     // v0.26 (user spec): the collapsed header reads a static
@@ -167,6 +188,14 @@
     // summary moved into the pills themselves.
     summaryLine(state) {
       return state && state.dropdownOpen ? 'collapse metadata' : 'expand metadata';
+    }
+
+    // v1.17.1 THE PIVOT: the Termux capability rides the session fields
+    // (the capabilities library's gated toggle stacks it; sessionBody +
+    // persistCaps in chatpanel.js carry it on create + PATCH).
+    extraSessionFields(st) {
+      st = st || {};
+      return { termux: !!st.termux };
     }
 
     // The capability toolbar (effort ladder + web/deep toggles + export).

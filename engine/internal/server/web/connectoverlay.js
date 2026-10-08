@@ -1,6 +1,7 @@
 // connectoverlay.js — reusable full-screen overlay (crisp background).
 //
-// Used by the sandbox picker, model picker, and any nested panel that needs
+// Used by the capability library (v1.17.1 — the sandbox picker's heir),
+// the model picker, and any nested panel that needs
 // to overlay the entire screen. Content-agnostic: the caller provides
 // HTML, the overlay handles show/hide/scrim-tap. v0.76: the background
 // renders UNTOUCHED behind the open overlay (no veil, no backdrop blur).

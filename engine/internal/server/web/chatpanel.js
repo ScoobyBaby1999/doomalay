@@ -13,11 +13,13 @@
 //     └──────────────────────────────────────────────┘     chat type later.
 //     ┌──────────────────────────────────────────────┐
 //     │ do this quickly - setup the AI bot           │  ← THE GATELOCK: the
-//     │ [ 🔌 + Sandbox ]  [ 🤖 + Model ]  (big boxes)│     start of the convo.
+//     │ [ 👾 + Model ] [ 🧩 + capabilities ] (boxes)  │     start of the convo.
 //     ├──────────────────────────────────────────────┤     NOT collapsible —
 //     │  (formatted chat + artifacts + toolbar +     │     it scrolls with the
 //     │   input appear BELOW once the gate is met)   │     conversation.
 //     └──────────────────────────────────────────────┘
+//     (v1.17.1 THE PIVOT: the sandbox box is dead — one required step,
+//     the model, + the optional capabilities library; quick by birth.)
 //
 // v0.17 additions:
 //   - EVERY message renders through window.Formatter (markdown + scheme
@@ -257,7 +259,10 @@
         model: (sessionData && (sessionData.Model || sessionData.model)) || (icon && icon.model) || '',
         provider: (sessionData && (sessionData.Provider || sessionData.provider)) || (icon && icon.provider) || '',
         effort: (sessionData && (sessionData.Effort || sessionData.effort)) || 'med',
-        webSearch: !!(sessionData && (sessionData.WebSearch || sessionData.web_search)),
+        // v1.17.1 THE PIVOT: web search is ON by birth (the v0.45 default-on
+        // made real as a capability — the capabilities library's toggle
+        // flips it); a session that explicitly carries false restores OFF.
+        webSearch: (sessionData && (sessionData.WebSearch === false || sessionData.web_search === false)) ? false : true,
         deepResearch: !!(sessionData && (sessionData.DeepResearch || sessionData.deep_research)),
         // v0.77.6: the lib pill defaults ON — ONE SETTING with the ✦ tweaks
         // Bot Library switch (whose absent = enabled default it mirrors;
@@ -269,6 +274,10 @@
         // {id, name, brief}; null = none. Deep research (one of the
         // default templates) keeps using deepResearch above.
         template: null,
+        // v1.17.1 THE PIVOT: the Termux capability (the capabilities
+        // library's gated toggle stacks it; inert this wave — the tools
+        // arrive with the Termux bridge phases).
+        termux: !!(sessionData && (sessionData.Termux || sessionData.termux)),
         persona: (sessionData && (sessionData.Persona || sessionData.persona)) || '',
         // v0.26: multi-persona + placeholders + the chat's name ({name}).
         personas: null,
@@ -1484,11 +1493,15 @@
   // The header pills used to ALL paint the same hardcoded green (--ok)
   // — "the pills of the chat metadata are all first color and don't
   // follow". Each pill now carries its OWN theme color (the pill id →
-  // [color var, rgb-triplet var]): sandbox→accent, model→accent-2,
-  // template→template tint, skills→persona tint; the dedicated pills
-  // below keep their assigned accents.
+  // [color var, rgb-triplet var]): caps→accent (the sandbox pill's
+  // heir), model→accent-2, template→template tint, skills→persona tint;
+  // the dedicated pills below keep their assigned accents. v1.17.1: the
+  // Termux pill rides the ACCENT (the user's spec: the pill/row in the
+  // list turns to a primary or accent theme color when the capability
+  // is stacked).
   var PILL_TONES = [
-    [/^pill-sandbox/, '--accent', '--accent-rgb'],
+    [/^pill-caps/, '--accent', '--accent-rgb'],
+    [/^pill-termux/, '--accent', '--accent-rgb'],
     [/^pill-model/, '--accent-2', '--accent-2-rgb'],
     [/^pill-template/, '--template-tint', '--template-rgb'],
     [/^pill-skills/, '--persona-tint', '--persona-rgb'],
@@ -2159,6 +2172,11 @@
       scrollEl: null,
       msgContainer: null,
 
+      // v1.17.1 THE PIVOT: applySandbox stays for LEGACY session-PATCH
+      // compat (the engine still honors sandbox/sandbox_mode/sandbox_repo
+      // writes for existing hf chats) — but the picker's entry points died
+      // with it: nothing in the PWA calls this anymore (new chats are quick
+      // by birth; capabilities replace the switch).
       applySandbox: function (sandboxType, detail) {
         state.sandbox = sandboxType;
         // v0.46: the HF detail (mode + repo) rides the session + the icon
@@ -2237,7 +2255,10 @@
       runWSTurn: function (text) {
         var opts = {
           effort: state.effort,
-          web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
+          // v1.17.1 THE PIVOT: the web_search capability toggle rides the
+          // turn again (the v0.45 "default-on, pill removed" hardcode
+          // dies with the capability library's row; birth default ON).
+          web_search: state.webSearch !== false,
           deep_research: !!state.deepResearch,
           model: state.model,
           provider: state.provider
@@ -3919,7 +3940,9 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         effort: state.effort,
-        web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
+        // v1.17.1 THE PIVOT: the capability toggle's real value (ON by
+        // birth — the v0.45 hardcode dies with the library's row).
+        web_search: state.webSearch !== false,
         deep_research: !!state.deepResearch,
         // v0.44: the active method template — the WHOLE resolved blob
         // {id, name, brief} so the reload restores it without re-fetching
@@ -3932,6 +3955,9 @@
         lib_auto: !!state.libAuto,
         template_auto: !!(state.libAuto || state.templateAuto),
         skills_auto: !!(state.libAuto || state.skillsAuto),
+        // v1.17.1 THE PIVOT: the Termux capability rides the caps PATCH
+        // (the capabilities library's gated toggle stacks it here).
+        termux: !!state.termux,
         sliding_window: state.slidingWindow || 40
       })
     }).catch(function (e) { console.error('persist caps failed', e); });
@@ -4034,7 +4060,9 @@
   function sessionBody(icon, state) {
     return {
       title: icon.name,
-      sandbox: state.sandbox,
+      // v1.17.1 THE PIVOT: quick by default — a new chat never picks a
+      // sandbox (legacy hf sessions keep their own value).
+      sandbox: state.sandbox || 'quick',
       // v0.46: HF-chat routing — the mode + own-space repo ride creation
       // (the PATCH in applySandbox covers later switches).
       sandbox_mode: state.sandbox === 'hf' ? (state.sandboxMode || 'shared') : '',
@@ -4042,13 +4070,16 @@
       model: state.model,
       provider: state.provider,
       effort: state.effort || 'med',
-      web_search: true,  // v0.45 ITEM 2: default-on (pill removed)
+      web_search: state.webSearch !== false,  // v1.17.1: the capability toggle (ON by birth)
       deep_research: !!state.deepResearch,
       // v0.60 pt C.9: the lib gate rides creation too (the PATCH in the
       // pill press covers later flips).
       lib_auto: !!state.libAuto,
       template_auto: !!(state.libAuto || state.templateAuto),
       skills_auto: !!(state.libAuto || state.skillsAuto),
+      // v1.17.1 THE PIVOT: the Termux capability rides creation (the
+      // capabilities library's gated toggle; inert this wave).
+      termux: !!state.termux,
       // v0.44: the active method template blob (see persistCaps).
       template: state.template ? JSON.stringify({
         id: state.template.id, name: state.template.name, brief: state.template.brief
@@ -4130,6 +4161,9 @@
         // tools after every reload (the state defaulted them to off).
         if (typeof data.WebSearch === 'boolean') state.webSearch = data.WebSearch;
         if (typeof data.DeepResearch === 'boolean') state.deepResearch = data.DeepResearch;
+        // v1.17.1 THE PIVOT: the Termux capability restores with the rest
+        // of the caps (the engine column round-trips it).
+        if (typeof data.Termux === 'boolean') state.termux = data.Termux;
         // v0.60 pt C.9: restore the lib gate (the lib pill's state; the
         // legacy pill flags promote through the OR for old sessions).
         // v0.77.6: the default is ON — ONE SETTING with the ✦ tweaks

@@ -180,23 +180,34 @@ func (s *Server) sessionContextPreamble(sess *store.Session) string {
         if sess.Sandbox == "hf" {
                 b.WriteString("- This chat's sandbox runs on your Hugging Face Space — repo tools there can't reach the device's engine bridge; run repo work in a quick (on-device) chat when the user needs it.\n")
         }
-        // v1.14.5: THE SANDBOX LINE — the R5 live finding: asked "what sandbox
-        // am I on / what do the others offer", the model honestly said "I
-        // don't have any information about selectable sandboxes" because the
-        // preamble never taught the concept. The user CAN switch where a chat
-        // runs (the panel's sandbox pill); the model should know what it's on
-        // and what the alternatives offer so it can suggest the right move.
-        sb := sess.Sandbox
-        if sb == "" {
-                sb = "quick"
+        // v1.17.1 THE PIVOT: the sandbox teaching line is RETIRED — new
+        // chats are quick by birth (no picker; the user stacks capabilities
+        // instead, from the chat's capabilities library). The old prose
+        // taught picking between quick/hf/terminal/device sandbox TYPES,
+        // which no longer happens. What the model needs now: the caps
+        // actually stacked on THIS chat, honestly derived from the session
+        // fields (legacy hf chats keep their context line above).
+        var caps []string
+        if sess.WebSearch {
+                caps = append(caps, "web search")
         }
-        sbNow := map[string]string{
-                "quick":    "quick (this chat — on-device engine + cloud models, all tools)",
-                "hf":       "hf (Hugging Face Space remote brain — heavy skills, no device bridge)",
-                "terminal": "terminal (on-device Termux brain — local skills)",
-                "device":   "device (local Ollama models — offline)",
-        }[sb]
-        b.WriteString("- Your sandbox: " + sbNow + ". The user can switch a chat's sandbox anytime: quick / hf / terminal / device — suggest the move when an ask fits another sandbox better.\n")
+        if sess.DeepResearch {
+                caps = append(caps, "deep research")
+        }
+        if sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto {
+                caps = append(caps, "library")
+        }
+        capsLine := "none stacked yet"
+        if len(caps) > 0 {
+                capsLine = strings.Join(caps, ", ")
+        }
+        b.WriteString("- Your capabilities (stacked by the user in this chat's capabilities library): " + capsLine + ".\n")
+        // v1.17.1: the Termux capability — ARMED but inert this wave (no
+        // workspace bound, no tools). Short, honest, non-confusing; the
+        // model mentions it only if the user asks.
+        if sess.Termux {
+                b.WriteString("- Termux capability: device shell access is ARMED but no termux workspace is bound yet (tools arrive next update — mention it only if the user asks).\n")
+        }
         return b.String()
 }
 
