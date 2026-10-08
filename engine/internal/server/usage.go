@@ -31,6 +31,8 @@ type usageAccum struct {
         HasCost    bool    `json:"hasCost"`
         LastSeq    int     `json:"lastSeq"`
         HistTokens []int64 `json:"-"` // per-turn totals (context chart)
+        LengthCuts int              `json:"lengthCuts"`      // v1.14.1: turns the provider cut at its cap
+        Finish     map[string]int    `json:"finishReasons"` // v1.14.1: why turns ended
 }
 
 // handleSessionUsage is GET /api/sessions/{id}/usage.
@@ -59,8 +61,10 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 var st struct {
                         State string `json:"state"`
                         Usage *struct {
-                                InputTokens  int `json:"input_tokens"`
-                                OutputTokens int `json:"output_tokens"`
+                                InputTokens  int    `json:"input_tokens"`
+                                OutputTokens int    `json:"output_tokens"`
+                                FinishReason string `json:"finish_reason"`
+                                OutputCut    bool   `json:"output_cut"`
                         } `json:"usage"`
                 }
                 if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
@@ -77,7 +81,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 }
                 acc := byModel[key]
                 if acc == nil {
-                        acc = &usageAccum{}
+                        acc = &usageAccum{Finish: map[string]int{}}
                         byModel[key] = acc
                         order = append(order, key)
                 }
@@ -85,6 +89,15 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 acc.TokensOut += int64(st.Usage.OutputTokens)
                 acc.Turns++
                 acc.LastSeq = ev.Seq
+                // v1.14.1 THE LEDGER: the terminal verdict tallies — how
+                // many turns ended WHY (the length-cut count is the honesty
+                // metric: every one is an output the provider truncated).
+                if st.Usage.FinishReason != "" {
+                        acc.Finish[st.Usage.FinishReason]++
+                }
+                if st.Usage.OutputCut {
+                        acc.LengthCuts++
+                }
                 if cost, priced := llm.CostFor(key, st.Usage.InputTokens, st.Usage.OutputTokens); priced {
                         acc.Cost += cost
                         acc.HasCost = true
@@ -92,6 +105,15 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 total.TokensIn += int64(st.Usage.InputTokens)
                 total.TokensOut += int64(st.Usage.OutputTokens)
                 total.Turns++
+                if st.Usage.FinishReason != "" {
+                        if total.Finish == nil {
+                                total.Finish = map[string]int{}
+                        }
+                        total.Finish[st.Usage.FinishReason]++
+                }
+                if st.Usage.OutputCut {
+                        total.LengthCuts++
+                }
                 if cost, priced := llm.CostFor(key, st.Usage.InputTokens, st.Usage.OutputTokens); priced {
                         total.Cost += cost
                         total.HasCost = true
@@ -133,20 +155,36 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 models = append(models, map[string]any{
                         "model": k, "tokensIn": acc.TokensIn, "tokensOut": acc.TokensOut,
                         "turns": acc.Turns, "cost": round2(acc.Cost), "hasCost": acc.HasCost,
+                        // v1.14.1 THE LEDGER: per-model honesty metrics.
+                        "lengthCuts": acc.LengthCuts, "finishReasons": acc.Finish,
                 })
         }
         // v0.78.1: the current model's rates ride the usage payload so the
         // PM twin of the session-context block (chatpanel.js — PM turns
         // bypass the engine and can't call llm.LookupPrice) can state them.
-        rates := map[string]any{"unpriced": true}
+        // v1.14.1: the SOURCE rides too — "models.dev" (verified) vs the
+        // curated list vs unpriced. Numbers without provenance are guesses.
+        rates := map[string]any{"unpriced": true, "source": "unpriced"}
         if p := llm.LookupPrice(sess.Model); p.Source != "unpriced" {
-                rates = map[string]any{"in": p.InputPerM, "out": p.OutputPerM, "free": p.Free}
+                rates = map[string]any{"in": p.InputPerM, "out": p.OutputPerM, "free": p.Free, "source": p.Source}
+        }
+        // v1.14.1: the window's provenance (spec vs heuristic) + the
+        // verified output cap (0 = undocumented).
+        ctxSource := "heuristic"
+        if _, ok := llm.SpecContext(sess.Model); ok {
+                ctxSource = "models.dev"
+        }
+        maxOut := 0
+        if mo, ok := llm.SpecMaxOutput(sess.Model); ok {
+                maxOut = mo
         }
         writeJSON(w, 200, map[string]any{
                 "sessionId": id,
                 "totals": map[string]any{
                         "tokensIn": total.TokensIn, "tokensOut": total.TokensOut,
                         "turns": total.Turns, "cost": round2(total.Cost), "hasCost": total.HasCost,
+                        // v1.14.1: the honesty metrics.
+                        "lengthCuts": total.LengthCuts, "finishReasons": total.Finish,
                 },
                 "rates": rates,
                 "context": map[string]any{
@@ -156,6 +194,9 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                         // v0.28: the per-chat controls the mind panel owns.
                         "compactEnabled":   sess.CompactEnabled,
                         "compactThreshold": compactThresholdFor(sess),
+                        // v1.14.1 THE LEDGER: provenance + the verified
+                        // output cap (0 = undocumented).
+                        "maxOutputTokens": maxOut, "limitSource": ctxSource,
                 },
                 "models": models,
         })
@@ -187,8 +228,10 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
                         }
                         var st struct {
                                 Usage *struct {
-                                        InputTokens  int `json:"input_tokens"`
-                                        OutputTokens int `json:"output_tokens"`
+                                        InputTokens  int    `json:"input_tokens"`
+                                        OutputTokens int    `json:"output_tokens"`
+                                        FinishReason string `json:"finish_reason"`
+                                        OutputCut    bool   `json:"output_cut"`
                                 } `json:"usage"`
                         }
                         if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
@@ -212,6 +255,16 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
                                 a.TokensIn += int64(st.Usage.InputTokens)
                                 a.TokensOut += int64(st.Usage.OutputTokens)
                                 a.Turns++
+                                // v1.14.1 THE LEDGER: the fleet honesty metrics.
+                                if st.Usage.FinishReason != "" {
+                                        if a.Finish == nil {
+                                                a.Finish = map[string]int{}
+                                        }
+                                        a.Finish[st.Usage.FinishReason]++
+                                }
+                                if st.Usage.OutputCut {
+                                        a.LengthCuts++
+                                }
                         }
                         if cost, priced := llm.CostFor(sess.Model, st.Usage.InputTokens, st.Usage.OutputTokens); priced {
                                 pa.Cost += cost
@@ -223,14 +276,17 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
         }
         provOut := map[string]any{}
         for k, a := range byProvider {
-                provOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost}
+                provOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
+                        "lengthCuts": a.LengthCuts, "finishReasons": a.Finish}
         }
         modelOut := map[string]any{}
         for k, a := range byModel {
-                modelOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost}
+                modelOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
+                        "lengthCuts": a.LengthCuts, "finishReasons": a.Finish}
         }
         writeJSON(w, 200, map[string]any{
-                "totals":    map[string]any{"tokensIn": grand.TokensIn, "tokensOut": grand.TokensOut, "turns": grand.Turns, "cost": round2(grand.Cost), "hasCost": grand.HasCost},
+                "totals": map[string]any{"tokensIn": grand.TokensIn, "tokensOut": grand.TokensOut, "turns": grand.Turns, "cost": round2(grand.Cost), "hasCost": grand.HasCost,
+                        "lengthCuts": grand.LengthCuts, "finishReasons": grand.Finish},
                 "providers": provOut,
                 "models":    modelOut,
                 "sessions":  len(sessions),
