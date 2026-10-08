@@ -912,6 +912,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // consumer when a tools array rides the request.
         var dsml dsmlFilter
         dsml.takeNative = hasTools
+        // v1.14.6 THE SOLID STREAM: the reasoning normalization — the
+        // inline <think>/<thinking> shape (QwQ, R1-distills) rides the
+        // CONTENT wire; this filter extracts it into the canonical
+        // reasoning channel before the DSML filter sees the remainder.
+        think := newThinkFilter()
 
         // v0.95.4 THE OUTPUT FLOOR (the .MD-artifact cutoff class): no
         // max_tokens was EVER set on any chat request — providers that
@@ -1283,7 +1288,11 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                         // content stream for the ReAct parser when not).
                         if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
                                 wd.markDelta() // v0.24: real token — wait-notices go quiet
-                                visible := dsml.feed(choice.Delta.Content)
+                                // v1.14.6: think-tag extraction FIRST — the inline
+                                // reasoning shape rides delta.content; the visible
+                                // remainder then goes through the DSML filter.
+                                extracted, rawVisible := think.feed(choice.Delta.Content)
+                                visible := dsml.feed(rawVisible)
                                 if !firstTok {
                                         firstTok = true
                                         obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "delta")
@@ -1301,6 +1310,9 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                                 obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "head", deltaHead(r, 64))
                                         }
                                 }
+                                if extracted != "" {
+                                        nReason++ // normalized reasoning counts as reasoning
+                                }
                                 if visible != "" {
                                         nContent++
                                         if obs.DeltaTrace() >= 2 {
@@ -1310,10 +1322,13 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                         }
                                 }
                                 if onDelta != nil {
-                                        // v0.93.1: merge the two reasoning field
-                                        // conventions (reasoning_content · reasoning);
-                                        // only one is ever non-empty per chunk.
-                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR, visible)
+                                        // v1.14.6 THE NORMALIZATION TABLE: one canonical
+                                        // reasoning channel — wire-native reasoning_content
+                                        // / reasoning AND the think-tag extraction merge
+                                        // here; only one shape is ever non-empty per
+                                        // chunk in practice, and the sum is always the
+                                        // model's thinking.
+                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR+extracted, visible)
                                 }
                         }
                 }
@@ -1336,6 +1351,19 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
         // unterminated block — the finish_reason=length class — release held
         // partial openers, deliver rescued calls to the right consumer) and
         // surface the token-cap note when the provider cut the output.
+        // v1.14.6: the think filter flushes FIRST — a trailing partial tag
+        // is literal prose (fed through the DSML filter like any content),
+        // an unclosed <think> delivers its whole tail as reasoning (the
+        // length-cut class) through the canonical channel.
+        if tThink, tVisible := think.flush(); tThink != "" || tVisible != "" {
+                if tVisible != "" {
+                        _ = dsml.feed(tVisible) // the tail rides dsml.flush() below
+                }
+                if tThink != "" && onDelta != nil {
+                        nReason++
+                        onDelta(tThink, "")
+                }
+        }
         if dCalls, dVisible := dsml.flush(); len(dCalls) > 0 || dVisible != "" {
                 if dsml.takeNative {
                         calls = append(calls, dCalls...)
