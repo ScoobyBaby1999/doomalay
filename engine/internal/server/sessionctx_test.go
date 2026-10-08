@@ -118,6 +118,14 @@ func TestSessionContextPreambleCompact(t *testing.T) {
         if !strings.Contains(out, "no price data for this model") {
                 t.Fatalf("expected unpriced line:\n%s", out)
         }
+        // v1.14.5: the sandbox line always teaches the current sandbox +
+        // the four switchable types (the R5 live finding pinned).
+        if !strings.Contains(out, "Your sandbox: quick") {
+                t.Fatalf("expected the sandbox line for a default chat:\n%s", out)
+        }
+        if !strings.Contains(out, "quick / hf / terminal / device") {
+                t.Fatalf("expected the switchable sandbox list:\n%s", out)
+        }
         if len(out) > 1800 {
                 t.Fatalf("session block too fat for a fresh chat: %d chars", len(out))
         }

@@ -582,18 +582,25 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
         return out
 }
 
-// knownGoodProbes — live-verified (2026-09-14) models that served real chat
-// completions on a fresh NVIDIA key when ~70% of the catalog was account-404.
+// knownGoodProbes — live-verified models that served real chat completions
+// on a fresh NVIDIA key when ~70% of the catalog was account-404.
 // Used by the probe ladder AND by the frontend auto-pick preference list.
+// v1.14.5 test-heal (2026-10-08 live roster check): nemotron-3.5-lightning-
+// 30b-a3b was DEPROVISIONED from NIM (raw probe: instant 502; the roster no
+// longer lists it) — the auto-pick kept landing on it and every fresh chat
+// inherited a dead-then-flaky model (live-observed: a 3.5-minute first-round
+// stall + repeated "no response from Nvidia" waits). The list now leads with
+// nemotron-3-super-120b-a12b (live-proven: full tool chains, 4s turns) and
+// adds llama-3.2-11b (the weak-model chain receipt).
 func knownGoodProbes(provider string) []string {
         if provider == "nvidia" {
                 return []string{
-                        "nvidia/nemotron-3.5-lightning-30b-a3b",
                         "nvidia/nemotron-3-super-120b-a12b",
                         "z-ai/glm-5.3-flash",
                         "openai/gpt-oss-20b",
                         "nvidia/nemotron-3-ultra-550b-a55b",
                         "google/gemma-4-31b-it",
+                        "meta/llama-3.2-11b-vision-instruct",
                 }
         }
         // v0.25: OpenCode Zen — the FREE models only. kimi-k2.6 (the old probe

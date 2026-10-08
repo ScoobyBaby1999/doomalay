@@ -714,10 +714,15 @@
   // rank ABOVE the popularity score so the auto-pick actually chats.
   function pickAutoModel(catalog, name) {
     if (!catalog) return null;
+    // v1.14.5 test-heal: nemotron-3.5-lightning-30b-a3b was deprovisioned
+    // from NIM (live roster check 2026-10-08: 502/404) — leading with it made
+    // every one-press connect land on a dead-then-flaky model. The live
+    // flagship (nemotron-3-super-120b-a12b, chain-proven today) leads now.
+    // Kept in sync with the engine's knownGoodProbes (catalog.go).
     var KNOWN_GOOD = {
-      nvidia: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-super-120b-a12b',
-               'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
-               'google/gemma-4-31b-it'],
+      nvidia: ['nvidia/nemotron-3-super-120b-a12b', 'z-ai/glm-5.3-flash',
+               'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b',
+               'google/gemma-4-31b-it', 'meta/llama-3.2-11b-vision-instruct'],
       // v0.25: opencode auto-pick → FREE models only (big-pickle first —
       // paid zen models 400 CreditsError on keys without a payment method).
       opencode: ['big-pickle', 'nemotron-3.5-lightning-free',
@@ -797,7 +802,7 @@
     // ("nvidia/nemotron-…") — the engine strips exactly one "nvidia/"
     // per turn, so the slot keeps both. (Verified live: bare
     // "nemotron-…" → NIM 404; org-prefixed → 200.)
-    nvidia: 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b',
+    nvidia: 'nvidia/nvidia/nemotron-3-super-120b-a12b',
     privatemodeai: 'privatemodeai/kimi-k2.6',
     opencode: 'opencode/kimi-k2.6'
   };

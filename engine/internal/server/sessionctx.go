@@ -180,6 +180,23 @@ func (s *Server) sessionContextPreamble(sess *store.Session) string {
         if sess.Sandbox == "hf" {
                 b.WriteString("- This chat's sandbox runs on your Hugging Face Space — repo tools there can't reach the device's engine bridge; run repo work in a quick (on-device) chat when the user needs it.\n")
         }
+        // v1.14.5: THE SANDBOX LINE — the R5 live finding: asked "what sandbox
+        // am I on / what do the others offer", the model honestly said "I
+        // don't have any information about selectable sandboxes" because the
+        // preamble never taught the concept. The user CAN switch where a chat
+        // runs (the panel's sandbox pill); the model should know what it's on
+        // and what the alternatives offer so it can suggest the right move.
+        sb := sess.Sandbox
+        if sb == "" {
+                sb = "quick"
+        }
+        sbNow := map[string]string{
+                "quick":    "quick (this chat — on-device engine + cloud models, all tools)",
+                "hf":       "hf (Hugging Face Space remote brain — heavy skills, no device bridge)",
+                "terminal": "terminal (on-device Termux brain — local skills)",
+                "device":   "device (local Ollama models — offline)",
+        }[sb]
+        b.WriteString("- Your sandbox: " + sbNow + ". The user can switch a chat's sandbox anytime: quick / hf / terminal / device — suggest the move when an ask fits another sandbox better.\n")
         return b.String()
 }
 

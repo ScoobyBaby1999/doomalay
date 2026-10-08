@@ -77,7 +77,10 @@ for (let i = 0; i < 120; i++) {
 await sleep(6000);
 console.log(`engine up on ${PORT}\n`);
 
-const MODEL = 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b';
+// v1.14.5 test-heal: nemotron-3.5-lightning-30b-a3b was deprovisioned from
+// NIM (live roster check: 404) — the live a3b-class flagship is
+// nemotron-3-super-120b-a12b. The chain contract is model-independent.
+const MODEL = 'nvidia/nvidia/nemotron-3-super-120b-a12b';
 const PROVIDER = 'nvidia';
 const SID = 'v1143-horde';
 

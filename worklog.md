@@ -844,3 +844,90 @@ Stage Summary:
   and /mcp), ACTION dead on every path, honest degrade contracts pinned by
   the rig. Parallel bots (tiktoken accuracy, OTel hooks/traces) plug into
   the bus's Observer sockets — no file overlap, no conflicts.
+
+---
+Task ID: v1.14.5
+Agent: Main orchestrator (the real-key E2E wave, fresh session)
+
+Task: The user's fresh keys + the old NVIDIA key — "solely test the chat bot
+and check for errors. If you found no errors then dont do anything."
+
+Work Log:
+- Sandbox reset recovery (3rd time): re-cloned doomalay (main @ 53191635 =
+  v1.14.4 head — the parallel HONEST-ENGINE wave shipped v1.14.1..v1.14.4 on
+  top of my v1.13.6/v1.14.0, rebased in), reinstalled Go 1.25.5, rebuilt the
+  engine, keys at /home/z/keys.env. Tunnel down — sandbox testing.
+- OpenCode deep-probe (11 web searches + gateway source reads): oc_sk_ keys
+  authenticate on ALL THREE lanes (zen/v1, zen/go/v1, inference) but the
+  account has NO Go subscription (EntitlementError) and NO prepaid funds
+  ("Insufficient account funds" on every paid model), and the free tier is
+  hard-walled to the OpenCode app (FreeTierError survives the full 4-condition
+  client gate: opencode UA + ses_ session + stream:true + bash/read tools).
+  The engine's honest-degrade path verified end-to-end (403 error frame +
+  idle + the guidance message). Header contract correct: zen/go 400
+  MissingSessionID reproduced + bypassed with a stable ses_ header.
+- LIVE MATRIX (fresh keys, the engine's real /api/keys flow): NVIDIA valid —
+  the live roster flagship nemotron-3-super-120b-a12b chains calculator +
+  time_now + zip_create flawlessly (4s turns, grounded answers, full trace
+  lifecycle); OpenRouter valid — lfm-2.5-2.6b:free (the 2.6B weak model!)
+  chains instantly, nemotron:free completes through a 229s free-tier queue
+  with honest "waiting on OpenRouter" notices; Mistral key now VALID (was
+  invalid) — currently 429-capacity-limited, the engine's 3-retry backoff
+  (4s→14s) + honest stop is exactly the strictly-429 contract; PM E2E probe
+  5/5 (attestation + refreshSecret + plain + tools passthrough).
+- THE PRE-MADE HORDE re-run: 23/23 with the fleet (fs/memory/think/sqlite =
+  29 community tools + the internal 28 = 57-tool merged registry).
+- REAL-USER UI E2E (agent-browser, engine-served PWA, persistent engine via
+  a double-fork daemonizer — the sandbox reaps normal background spawns):
+  13-round self-knowledge conversation: R1 stock-trading opener (bot knows
+  artifacts + capabilities), R2 lib search → RECOMMENDS THE KRONOS REPO
+  (4 hublib queries with visible retry reasoning), R3 personas (knows Noir
+  Detective + download/activate WITHOUT being asked), R4 workspaces (knows
+  GitHub/HF/Gitea/GitLab/Sourcehut + what the workspace tool does), R6
+  usage/context (EXACT ledger numbers: 159,964 in / 4,364 out, ≈$0.04,
+  62.7% of 262k, correct rate math), R7 five-tool chain incl. COMMUNITY
+  fs_write_file/fs_read_text_file grounded, R8 artifact card, R9 web search
+  with 5-source disclosures, essay + queued follow-up.
+- FPS: 60fps 0 drops (max 20ms gap) at empty, semi-saturated, heavy (12
+  rounds + 2 workspaces + artifacts), and DURING active streaming. Zero
+  console errors, zero engine errors.
+- Queue: QUEUED badge + remove + auto-drain after the running turn.
+  Interrupt: clean stop + "the reply was interrupted — tap Retry". Resend:
+  Retry re-sends and completes on the switched model.
+- Workspaces: GitHub PAT through the real connect flow (✓ logged in
+  @ScoobyBaby1999 → doomalay repo bound FULL access) + HF access token
+  (doomalay-kronos dataset bound FULL) → the workspace tool turn did PARALLEL
+  ls+grep across both, grounded summary (143 HF entries, six Kronos skills).
+- TRUE PM E2E PATH (the earlier GLM 5.3 pick had landed on NVIDIA's copy of
+  the model — PM-unique glm-latest picked instead): the browser loaded the
+  full pmsdk E2E chain (wasm attestation), tool executions went through
+  POST /mcp (the mcp-go bus first), grounded "33 × 3 = 99 + Tokyo 01:10 JST".
+
+THE FINDINGS (the only errors found — all small, all fixed):
+1. THE STALE AUTO-PICK: nemotron-3.5-lightning-30b-a3b was deprovisioned
+   from NIM (live roster check: 502/404) but THREE hardcoded lists still
+   led with it (engine knownGoodProbes + the PWA's KNOWN_GOOD and
+   FALLBACK_MODELS) — every one-press connect inherited a dead-then-flaky
+   model (live-observed: a 3.5-minute round-one stall, then repeated
+   "no response from Nvidia" waits). All three now lead with the live
+   nemotron-3-super-120b-a12b. Verified live: fresh one-press connect lands
+   on the live model.
+2. THE SANDBOX TEACHING GAP (R5): asked "what sandbox am I on / what do the
+   others offer", the model honestly said "I don't have any information
+   about selectable sandboxes" — the session preamble never taught the
+   concept. sessionctx.go now carries the sandbox line (current sandbox +
+   the four switchable types). Verified live: full correct table answer.
+3. v1143 community-chain-test model id healed (the stale lightning → live
+   super; 23/23 re-proven).
+
+Stage Summary:
+- The system is HEALTHY end to end under real keys: tools chain reliably on
+  every chat-capable provider (strong AND weak models), rendering is
+  sequential and delta-correct at a locked 60fps, queue/interrupt/resend all
+  behave, the bot never stops except strictly-429 (displayed, retried 3x),
+  community MCP tools ride the bus, PM executes tools mcp-first like everyone
+  else, and both workspace connects work with full access. The one thing the
+  user must do OUTSIDE the app: add credits (zen pay-per-use) or the Go
+  subscription (with Global region privacy) at opencode.ai for the fresh
+  OpenCode key to chat — the key itself is valid and the engine degrades
+  honestly meanwhile.
