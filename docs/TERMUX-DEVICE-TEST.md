@@ -67,3 +67,36 @@ Common causes:
 | Permission step never completes | the settings screen wasn't reached | the step's button deep-links; otherwise grant manually (Additional permissions) |
 | storage_ok false | the all-files dialog was dismissed | run `termux-setup-storage` again inside Termux |
 | `403 token` | the engine restarted with a stale bridge token | restart the doomalay app fully (swipe away + reopen) |
+
+---
+
+## v1.20.x / v1.21.0 — THE TERMUX LIFE WAVE additions
+
+The v1.20.4 rig + browser E2E proved the whole wave against a fake bridge
+that EXECUTES commands for real (the jailed listing, mkdir, the stdin
+write, the checkin, the tool turn). What still needs YOUR device (the
+v1.21.0 APK — the v1.19.x engine you may still run does not serve the new
+endpoints):
+
+1. **Update the APK to v1.21.0**, then open the app and check
+   `/api/termux/status` through the tunnel — it now carries
+   `checkin_url`, `bootstrap_done`, `probe_suppressed`.
+2. **The quiet gate** — if you ever re-run the setup (new Termux install):
+   step ③'s "Open settings" stays DISABLED until the paste (step ②) lands.
+   The command you copy now carries a `--checkin <url>` tail; the moment
+   the script finishes, step ② flips ✓ BY ITSELF (the script pings the
+   app over loopback — no command bridge needed, no Termux notifications).
+3. **A local device folder as a workspace** — +workspace → connect
+   workspace → Self-Host → device storage: the browser lists your real
+   folders (device storage root, downloads, documents, termux home).
+   Navigate, create a folder, "use this folder" — reads AND writes ride
+   Termux (your All-Files-Access grant, not an app permission).
+4. **The bot's termux tool** — stack ⌨ Termux on a chat with a bound
+   folder and ask it to `ls` / run something / start a python session:
+   the tool is jailed to the bound folder, output is full, execs pace at
+   one per 4 seconds, and `session_start {"name","command"}` +
+   `session_list` + `session_log` + `session_kill` manage background
+   processes (e.g. a `python -m http.server`) with tailable logs.
+5. **The chat metadata** — with Termux stacked and live there is NO ⌨
+   pill in the pill row anymore (the capability lives in the 🧩 library
+   row); the pill row reads 🧩 capabilities · 👾 model · ▣ + workspace.

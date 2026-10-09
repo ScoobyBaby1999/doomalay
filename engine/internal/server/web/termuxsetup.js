@@ -5,6 +5,13 @@
 // ask — tapping the permission screen early meant Termux notification
 // spam while the bootstrap never ran), and a ghost "check now" forces one
 // explicit probe (the old-flow escape hatch).
+// v1.20.4 redteam conviction: bridge_ok means "the loopback bridge
+// ANSWERED" — on a real device it is true from the first poll (our own
+// Kotlin server is always up), so it can never mark the paste step done.
+// The honest step ② marker is bootstrap_done || props_ok — the checkin
+// (the script's own "I ran" curl) or a probe that saw allow-external-apps
+// actually set. THE GATE IS REAL NOW: step ③ physically cannot be tapped
+// before the paste.
 //
 // THE SETUP PAGE rides the reusable ConnectOverlay (THE CONTAINER LAW —
 // one of the two legal surfaces; opened ON TOP of the capability library
@@ -18,7 +25,7 @@
 // endpoints (NO new HTTP paths):
 //
 //   ① Install Termux   done when status.installed    → POST act open_fdroid
-//   ② Bootstrap once   done when status.bridge_ok    → Copy + act open_termux
+//   ② Bootstrap once   done when bootstrap_done||props_ok → Copy + act open_termux
 //   ③ Allow commands   done when status.permission   → act open_permission_settings
 //   ④ Verify           done when status.ready        → auto (poll w/ refresh)
 //
@@ -134,7 +141,7 @@
   //   ready: !!status.ready,
   //   steps: [ { key, done, active, error } × 4 ]
   // }
-  // done: install←installed · bootstrap←bootstrap_done||bridge_ok ·
+  // done: install←installed · bootstrap←bootstrap_done||props_ok ·
   // permission←permission · verify←ready. active = the FIRST not-done step
   // (the user's current focus). error: last_error lands under the active
   // step (that's where the user is stuck); when the bridge itself answered
@@ -145,7 +152,7 @@
     status = status || {};
     var steps = [
       { key: 'install',    done: !!status.installed },
-      { key: 'bootstrap',  done: !!status.bootstrap_done || !!status.bridge_ok },
+      { key: 'bootstrap',  done: !!(status.bootstrap_done || status.props_ok) },
       { key: 'permission', done: !!status.permission },
       { key: 'verify',     done: !!status.ready }
     ];

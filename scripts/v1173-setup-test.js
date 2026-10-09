@@ -192,8 +192,11 @@ console.log('v1.17.3 THE SETUP pins — termuxsetup.js:');
     'the honest gate sub rides under the disabled step ③ button');
   ok(tsx.indexOf('probing paused until the bootstrap lands — no notification spam') >= 0,
     'the status line shows the suppression state honestly');
-  ok(tsx.indexOf('bootstrap_done || !!status.bridge_ok') >= 0,
-    'step ②\'s done marker honors bootstrap_done || bridge_ok');
+  // v1.20.4 redteam re-pin: bridge_ok is ALWAYS true on a real device (the
+  // loopback answers from the first poll) — the honest marker is the
+  // checkin or a probe that SAW props on. THE GATE IS REAL NOW.
+  ok(tsx.indexOf('status.bootstrap_done || status.props_ok') >= 0,
+    'step ②\'s done marker honors bootstrap_done || props_ok (the honest paste proof)');
   ok(tsx.indexOf('copyText(bootstrapCmd, done)') >= 0,
     'Copy copies the CURRENT command (the --checkin tail included)');
   ok(tsx.indexOf('el.textContent = bootstrapCmd') >= 0,
@@ -265,17 +268,21 @@ console.log('v1.17.3 THE SETUP behavior — _stepStates:');
     'the gate opens + the note dies once the bootstrap is done');
   ok(s15.steps[1].error === '', 'no props nag when the checkin itself says the script ran');
 
-  // rung 2: + bridge_ok (the bootstrap round-trip worked)
+  // rung 2: + bridge_ok — the loopback answered, but that is NOT proof the
+  // paste ran (the v1.20.4 conviction: on a real device bridge_ok is always
+  // true, so it must never mark the paste step done). Step ② stays the
+  // focus, step ③ stays GATED.
   var s2 = S({ available: true, installed: true, bridge_ok: true });
-  ok(states(s2) === '✓ ✓ now ·', 'installed + bridge_ok: steps ①② done, permission in focus');
-  ok(s2.steps[2].active === true, 'permission is the active step');
-  ok(s2.steps[2].gated === false, 'bridge_ok also opens the gate (the old-flow done marker)');
+  ok(states(s2) === '✓ now · ·', 'installed + bridge_ok: the paste is STILL pending (bridge_ok is only the loopback)');
+  ok(s2.steps[1].active === true, 'bootstrap stays the active step (the paste is the focus)');
+  ok(s2.steps[2].gated === true, 'the gate holds until the checkin or a props-on probe');
 
-  // rung 3: + permission (the ladder is one short)
+  // rung 3: + permission granted OUT OF ORDER (the user did ③ before ② —
+  // exactly the flow that used to spam) — the paste stays the focus and
+  // the gate is moot for the DONE step but the ladder guides honestly.
   var s3 = S({ available: true, installed: true, bridge_ok: true, permission: true, storage_ok: false });
-  ok(states(s3) === '✓ ✓ ✓ now', 'permission granted: steps ①②③ done, verify in focus');
-  ok(s3.steps[3].active === true && s3.ready === false, 'verify is the live step, not ready yet');
-  ok(s3.steps[3].error.indexOf('storage') >= 0, 'the honest storage note rides under verify');
+  ok(states(s3) === '✓ now ✓ ·', 'permission granted early: the paste is still the active step');
+  ok(s3.steps[1].active === true && s3.ready === false, 'bootstrap is the live step, not ready yet');
 
   // rung 4: + storage/props/ready — the READY condition
   var s4 = S({ available: true, installed: true, bridge_ok: true, permission: true,
