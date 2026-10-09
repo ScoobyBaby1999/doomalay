@@ -75,6 +75,14 @@ type Server struct {
         termuxCache  termuxProbeCache
         termuxFlight chan struct{}
 
+        // v1.20.3 THE ARM: the termux tool's per-session exec pacing —
+        // ≥4s cooldown between one-shot execs + a 12-per-minute rolling
+        // window (the anti-burst law). Lazy maps guarded by termuxExecMu;
+        // only termuxtool.go touches these.
+        termuxExecMu   sync.Mutex
+        termuxExecLast map[string]time.Time
+        termuxExecLog  map[string][]time.Time
+
         // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
         // — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then
         // answers {enabled:false, state:"disabled"} honestly, zero network).

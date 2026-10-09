@@ -32,6 +32,7 @@ func mcpGates(req ChatRequest) mcpbus.Gates {
                 Skills:    req.SkillsToolFn != nil,
                 Persona:   req.PersonaToolFn != nil,
                 Workspace: req.WorkspaceToolFn != nil,
+                Termux:    req.TermuxToolFn != nil,
                 Delegate:  req.DelegateFn != nil,
         }
 }
@@ -71,6 +72,7 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
                 Hublib:        req.HublibToolFn,
                 Skills:        req.SkillsToolFn,
                 Workspace:     req.WorkspaceToolFn,
+                Termux:        req.TermuxToolFn,
                 Delegate:      req.DelegateFn,
                 ProgressTo: func(text string) {
                         ch <- ChatChunk{Type: "progress", Text: text}

@@ -85,6 +85,14 @@ type ChatRequest struct {
         // protocols, mirroring the brain's _build_system_prompt.
         WorkspaceToolFn   func(ctx context.Context, argJSON string) string `json:"-"`
         WorkspaceManifest string                                           `json:"-"`
+        // v1.20.3 THE ARM: the Termux hand on the direct path — the chat's
+        // bound device (termux) workspaces through the server's runner
+        // (exec + file verbs + pkg + background process sessions, HARD-jailed
+        // to the bound folders, full output with Termux's 100KB result cap
+        // honestly reported). Set by the server (it owns the session store +
+        // the bridge); nil = the tool is not offered. Armed only when the
+        // session holds the ⌨ Termux capability AND a device folder is bound.
+        TermuxToolFn func(ctx context.Context, argJSON string) string `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1737,6 +1745,44 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "workspace"}
                 return observation
         }
+        if action == "termux" && req.TermuxToolFn != nil {
+                // v1.20.3 THE ARM on the direct path — the chat's bound
+                // device (termux) workspaces through the server's runner
+                // (it owns the session store + the bridge). The runner
+                // builds every observation (jail refusals, full output,
+                // honest caps); marker heads (EXEC DONE / WROTE /
+                // SESSION STARTED — …) are deterministic, the workspace
+                // branch's shape exactly. Not armed → the default-case
+                // unknown-tool teaching below answers honestly (the
+                // workspace tool's own not-armed message style).
+                var args map[string]any
+                summary := ""
+                if json.Unmarshal([]byte(argJSON), &args) == nil {
+                        // the args ride the nested "args" object (the
+                        // one-tool/verb-map shape) — the flat keys are
+                        // tolerated when a provider flattened them.
+                        if nested, ok := args["args"].(map[string]any); ok {
+                                for _, k := range []string{"command", "path", "pattern", "name", "action"} {
+                                        if v, ok := nested[k].(string); ok && v != "" {
+                                                summary = v
+                                                break
+                                        }
+                                }
+                        }
+                        if summary == "" {
+                                for _, k := range []string{"command", "path", "pattern", "name", "action"} {
+                                        if v, ok := args[k].(string); ok && v != "" {
+                                                summary = v
+                                                break
+                                        }
+                                }
+                        }
+                }
+                ch <- ChatChunk{Type: "tool_use", Name: "termux", Summary: summary, Args: argJSON}
+                observation = req.TermuxToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "termux"}
+                return observation
+        }
         if action == "delegate" && req.DelegateFn != nil {
                 // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
                 // one prompt, up to 3 other models answer in parallel.
@@ -1871,6 +1917,16 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 // and dead-ending. Name the real tool + verbs.
                                 if req.WorkspaceToolFn != nil {
                                         return ", workspace {\"action\": \"help|list|ls|read|grep|view|put|pr|pr_diff|pr_review|pr_comment|pr_merge|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|release_create|branch|fork\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, push, PR, code review, issues, discussions, workflows)"
+                                }
+                                return ""
+                        }()) + (func() string {
+                                // v1.20.3 THE ARM: the device-shell hand joins
+                                // the teaching when armed — same law as the repo
+                                // hand (name the real tool + the verb map; never
+                                // let the model guess "shell" or "terminal" and
+                                // dead-end).
+                                if req.TermuxToolFn != nil {
+                                        return ", termux {\"action\": \"exec|ls|read|write|append|rm|mkdir|grep|find|pkg|session_start|session_list|session_log|session_kill|help\", \"args\": {\"path\":\"…\",\"command\":\"…\"}} (a real Termux Linux shell on the user's device, jailed to this chat's bound device folders — run commands, edit files, install packages, create/kill background process sessions)"
                                 }
                                 return ""
                         }()) + "."
