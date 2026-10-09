@@ -79,7 +79,11 @@ console.log('v1.17.1 THE PIVOT pins:');
 
   var sx = fs.readFileSync(path.join(SERVER, 'sessionctx.go'), 'utf8');
   ok(sx.indexOf('Your capabilities (stacked by the user in this chat\'s capabilities library)') >= 0, 'sessionctx: the capabilities prose line');
-  ok(sx.indexOf('Termux capability: device shell access is ARMED') >= 0, 'sessionctx: the termux inert note');
+  // v1.20.3 re-pin: THE ARM replaced the inert note — the teaching rides
+  // the armed/unbound branches (the capability line survived every wave).
+  ok(sx.indexOf('Termux capability: ARMED but no device folder is connected yet') >= 0,
+    'sessionctx: the termux unbound teach (v1.20.3 THE ARM replaced the inert note)');
+  ok(sx.indexOf('THE TERMUX HAND on this chat') >= 0, 'sessionctx: the armed teach exists (a bound folder arms it)');
   ok(sx.indexOf('quick / hf / terminal / device') < 0, 'sessionctx: the sandbox-type teaching is retired');
 })();
 
