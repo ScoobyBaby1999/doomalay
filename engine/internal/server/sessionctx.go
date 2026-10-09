@@ -202,11 +202,18 @@ func (s *Server) sessionContextPreamble(sess *store.Session) string {
                 capsLine = strings.Join(caps, ", ")
         }
         b.WriteString("- Your capabilities (stacked by the user in this chat's capabilities library): " + capsLine + ".\n")
-        // v1.17.1: the Termux capability — ARMED but inert this wave (no
-        // workspace bound, no tools). Short, honest, non-confusing; the
-        // model mentions it only if the user asks.
+        // v1.20.3 THE ARM: the Termux capability is LIVE. With a bound
+        // device folder the block teaches the hand (the tool's name, the
+        // REAL jail roots, the verb map, the sessions model, the honesty
+        // caps); without one it stays the honest one-liner (mention only
+        // if the user asks).
         if sess.Termux {
-                b.WriteString("- Termux capability: device shell access is ARMED but no termux workspace is bound yet (tools arrive next update — mention it only if the user asks).\n")
+                if roots := s.sessionTermuxRoots(sess.ID); len(roots) > 0 {
+                        b.WriteString("- THE TERMUX HAND on this chat: the `termux` tool — a real Termux Linux shell on the user's device, jailed to this chat's bound device folders: " +
+                                strings.Join(roots, ", ") + ". Verbs: exec (shell commands, workdir = the first bound folder), ls, read, write, append, rm, mkdir, grep (unlimited hits), find, pkg (install/update/remove packages), and background-process sessions — session_start {\"name\",\"command\"} launches a nohup'd process with a pid and a tailable out.log (create and kill e.g. python servers on the fly), session_list / session_log / session_kill watch and stop them. Honesty caps: output is FULL everywhere, Termux's own 100KB result bundle is the only cap (reported when it hits), exec paces at ≥4s between runs with 12 per minute, and file-destroying/device-destroying/power commands are refused. Use it whenever the user asks about their device's files or wants something run, installed or served on the phone.\n")
+                } else {
+                        b.WriteString("- Termux capability: ARMED but no device folder is connected yet (the user connects one via +workspace → device storage; mention only if the user asks).\n")
+                }
         }
         return b.String()
 }

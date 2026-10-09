@@ -103,6 +103,7 @@ func fakeTurn(session string) *Turn {
 		Hublib:    func(ctx context.Context, argJSON string) string { return "OBSERVATION:\nhub ok" },
 		Skills:    func(ctx context.Context, argJSON string) string { return "OBSERVATION:\nskills ok" },
 		Workspace: func(ctx context.Context, argJSON string) string { return "OBSERVATION:\nworkspace ok" },
+		Termux:    func(ctx context.Context, argJSON string) string { return "OBSERVATION:\ntermux ok" },
 		Delegate: func(ctx context.Context, prompt string, models []string) []map[string]any {
 			return []map[string]any{{"model": "test", "answer": "42"}}
 		},
@@ -120,14 +121,14 @@ func args(t *testing.T, v any) json.RawMessage {
 
 // ── the protocol path ────────────────────────────────────────────────
 
-func TestListToolsServesAll28(t *testing.T) {
+func TestListToolsServesAll29(t *testing.T) {
 	b, _ := newTestBus(t)
 	tools, err := b.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools) != 28 {
-		t.Fatalf("want 28 tools, got %d", len(tools))
+	if len(tools) != 29 {
+		t.Fatalf("want 29 tools, got %d", len(tools))
 	}
 	for _, tool := range tools {
 		if tool.Name == "" || tool.Description == "" {
@@ -224,7 +225,7 @@ func TestCallToolEmptyQuery(t *testing.T) {
 func TestGatedToolsRefuseWhenUnarmed(t *testing.T) {
 	b, _ := newTestBus(t)
 	bare := &Turn{SessionID: "s"} // no closures
-	for _, name := range []string{"hublib", "skills", "workspace", "persona_list", "delegate"} {
+	for _, name := range []string{"hublib", "skills", "workspace", "termux", "persona_list", "delegate"} {
 		res := b.CallTool(context.Background(), bare, name, args(t, map[string]any{}))
 		if !res.IsError {
 			t.Fatalf("%s should refuse unarmed", name)
@@ -236,11 +237,11 @@ func TestSpecsGating(t *testing.T) {
 	b, _ := newTestBus(t)
 	none := b.Specs(Gates{})
 	if len(none) != 20 {
-		t.Fatalf("want 20 always-on specs (28 - 8 gated), got %d", len(none))
+		t.Fatalf("want 20 always-on specs (29 - 9 gated), got %d", len(none))
 	}
-	all := b.Specs(Gates{Hublib: true, Skills: true, Persona: true, Workspace: true, Delegate: true})
-	if len(all) != 28 {
-		t.Fatalf("want 28 specs with all gates, got %d", len(all))
+	all := b.Specs(Gates{Hublib: true, Skills: true, Persona: true, Workspace: true, Termux: true, Delegate: true})
+	if len(all) != 29 {
+		t.Fatalf("want 29 specs with all gates, got %d", len(all))
 	}
 	// spot-check the OpenAI wire shape against the proven one
 	var found bool
@@ -266,6 +267,59 @@ func TestSpecsGating(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("calculator spec missing")
+	}
+}
+
+// TestSpecsTermuxGating — v1.20.3 THE ARM: the termux tool rides the
+// manifest ONLY when the Termux gate is armed (the session holds the ⌨
+// capability AND a bound device folder), and its spec carries the
+// one-tool/verb-map shape (action enum + the JSON-object args prop).
+func TestSpecsTermuxGating(t *testing.T) {
+	var found bool
+	for _, s := range SpecsFor(Gates{Termux: true}) {
+		fn, _ := s["function"].(map[string]any)
+		if fn == nil || fn["name"] != "termux" {
+			continue
+		}
+		found = true
+		params, _ := fn["parameters"].(map[string]any)
+		props, _ := params["properties"].(map[string]any)
+		action, _ := props["action"].(map[string]any)
+		if action == nil {
+			t.Fatalf("termux action prop missing: %v", props)
+		}
+		enum, _ := action["enum"].([]string)
+		want := []string{"exec", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"}
+		if len(enum) != len(want) {
+			t.Fatalf("termux action enum = %v, want %v", enum, want)
+		}
+		for i, v := range want {
+			if enum[i] != v {
+				t.Fatalf("termux action enum[%d] = %q, want %q", i, enum[i], v)
+			}
+		}
+		argsProp, _ := props["args"].(map[string]any)
+		if argsProp == nil || argsProp["type"] != "string" {
+			t.Fatalf("termux args prop must be the JSON-object string: %v", argsProp)
+		}
+		req, _ := params["required"].([]string)
+		if len(req) != 2 || req[0] != "action" || req[1] != "args" {
+			t.Fatalf("termux required = %v, want [action args]", req)
+		}
+	}
+	if !found {
+		t.Fatalf("Termux gate armed must advertise the termux tool")
+	}
+	for _, s := range SpecsFor(Gates{}) {
+		fn, _ := s["function"].(map[string]any)
+		if fn != nil && fn["name"] == "termux" {
+			t.Fatalf("Termux gate off must NOT advertise the termux tool")
+		}
+	}
+	// the unarmed Turn's armed-tool list skips it too (the hallucination
+	// teaching names only what is actually armed).
+	if got := (&Bus{}).armedToolList(&Turn{SessionID: "s"}); strings.Contains(got, "termux") {
+		t.Fatalf("unarmed turn must not list termux, got %q", got)
 	}
 }
 
@@ -383,6 +437,8 @@ func TestDefaultSummary(t *testing.T) {
 		{"hublib", `{"action":"search","q":"redteam"}`, "redteam"},
 		{"skills", `{"action":"load","skill":"superpowers"}`, "superpowers"},
 		{"workspace", `{"action":"tree","ws":"owner/repo"}`, "owner/repo"},
+		{"termux", `{"action":"exec","args":{"command":"python -V"}}`, "python -V"},
+		{"termux", `{"action":"read","path":"notes.txt"}`, "notes.txt"},
 		{"persona_set", `{"name":"Scooby"}`, "Scooby"},
 		{"delegate", `{"prompt":"a very long prompt indeed"}`, "a very long prompt indeed"},
 		{"template_list", `{}`, "browse the template library"},
@@ -463,7 +519,7 @@ func TestChain100ExternalTools(t *testing.T) {
 	// the manifest crosses the 100+ horizon: 20 always-on internal + 100
 	specs := b.Specs(Gates{})
 	if len(specs) != 120 {
-		t.Fatalf("want 120 specs (20 internal + 100 chained), got %d", len(specs))
+		t.Fatalf("want 120 specs (20 always-on internal + 100 chained), got %d", len(specs))
 	}
 	// every external spec has a real JSON Schema
 	for _, s := range specs[20:] {
@@ -499,8 +555,8 @@ func TestChain100ExternalTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools) != 128 {
-		t.Fatalf("protocol tools/list should serve 128 (28 internal + 100 chained), got %d", len(tools))
+	if len(tools) != 129 {
+		t.Fatalf("protocol tools/list should serve 129 (29 internal + 100 chained), got %d", len(tools))
 	}
 }
 

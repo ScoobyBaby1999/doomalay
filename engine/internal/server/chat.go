@@ -1838,6 +1838,18 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 TemplateAuto: sess.TemplateAuto,
                 SkillsAuto:   sess.SkillsAuto,
         }
+        // v1.20.3 THE ARM: THE TERMUX HAND on the direct path — the chat's
+        // bound device (termux) workspaces (exec + file verbs + pkg +
+        // background process sessions, jailed to the bound folders). Armed
+        // ONLY when the ⌨ Termux capability is stacked AND a device folder
+        // is bound; the runner itself re-checks and answers the honest teach
+        // when unarmed (the workspace tool's law — the manifest is the first
+        // gate, the runner is the second).
+        if sess.Termux && len(s.sessionTermuxRoots(sessionID)) > 0 {
+                req.TermuxToolFn = func(ctx context.Context, argJSON string) string {
+                        return s.runTermuxAction(ctx, sessionID, argJSON)
+                }
+        }
         // v0.44 SELF-ENABLE: the template ACTION tools need the brain URL
         // ("" on the APK → they degrade honestly). The brain may be
         // unhealthy on this path (that's WHY we're direct-proxying) — the

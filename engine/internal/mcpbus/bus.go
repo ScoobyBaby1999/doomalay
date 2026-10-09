@@ -111,6 +111,9 @@ type Gates struct {
 	Skills    bool
 	Persona   bool
 	Workspace bool
+	// Termux arms the device-shell hand (v1.20.3 THE ARM) — the
+	// chat's bound termux workspaces through the bridge.
+	Termux    bool
 	Delegate  bool
 }
 
@@ -151,6 +154,10 @@ func SpecsFor(g Gates) []map[string]any {
 			}
 		case GateWorkspace:
 			if !g.Workspace {
+				continue
+			}
+		case GateTermux:
+			if !g.Termux {
 				continue
 			}
 		case GateDelegate:
@@ -310,6 +317,10 @@ func (b *Bus) armedToolList(t *Turn) string {
 			}
 		case GateWorkspace:
 			if t.Workspace == nil {
+				continue
+			}
+		case GateTermux:
+			if t.Termux == nil {
 				continue
 			}
 		case GateDelegate:

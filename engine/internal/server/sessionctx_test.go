@@ -130,12 +130,79 @@ func TestSessionContextPreambleCompact(t *testing.T) {
         }
         sess.Termux = true
         out = (&Server{}).sessionContextPreamble(sess)
-        if !strings.Contains(out, "Termux capability: device shell access is ARMED but no termux workspace is bound yet (tools arrive next update") {
-                t.Fatalf("expected the termux inert note when stacked:\n%s", out)
+        if !strings.Contains(out, "Termux capability: ARMED but no device folder is connected yet") {
+                t.Fatalf("expected the armed-but-no-folder line when stacked:\n%s", out)
         }
         sess.Termux = false
         if len(out) > 1800 {
                 t.Fatalf("session block too fat for a fresh chat: %d chars", len(out))
+        }
+}
+
+// TestSessionContextPreambleTermuxArm — v1.20.3 THE ARM: with the ⌨
+// capability stacked AND a bound device folder, the block teaches the
+// termux hand (the tool's name, the REAL jail roots, the verbs, the
+// sessions model, the honesty caps); the v1.17.1 inert note is retired.
+func TestSessionContextPreambleTermuxArm(t *testing.T) {
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        sess := &store.Session{ID: "tarm", Title: "t", Model: "deepseek-v4.1-flash", Provider: "nvidia", Termux: true}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        ws := &store.Workspace{Kind: "termux", Name: "device", Access: "full",
+                Meta: `{"termux_path":"/storage/emulated/0/Doomalay"}`}
+        if err := db.CreateWorkspace(ws); err != nil {
+                t.Fatalf("ws: %v", err)
+        }
+        if err := db.BindWorkspace("tarm", ws.ID); err != nil {
+                t.Fatalf("bind: %v", err)
+        }
+        s := &Server{db: db}
+        out := s.sessionContextPreamble(sess)
+        if !strings.Contains(out, "THE TERMUX HAND on this chat: the `termux` tool") {
+                t.Fatalf("missing the armed teach headline:\n%s", out)
+        }
+        if !strings.Contains(out, "/storage/emulated/0/Doomalay") {
+                t.Fatalf("the teach must carry the REAL jail root:\n%s", out)
+        }
+        for _, pin := range []string{
+                "session_start {\"name\",\"command\"} launches a nohup'd process",
+                "session_list / session_log / session_kill watch and stop them",
+                "Termux's own 100KB result bundle is the only cap",
+                "exec paces at ≥4s between runs with 12 per minute",
+        } {
+                if !strings.Contains(out, pin) {
+                        t.Fatalf("missing teach pin %q:\n%s", pin, out)
+                }
+        }
+        if strings.Contains(out, "tools arrive next update") {
+                t.Fatalf("the v1.17.1 inert note survived THE ARM:\n%s", out)
+        }
+        // a bound termux row WITHOUT a termux_path (no meta) is skipped —
+        // the good root still arms the teach
+        ws2 := &store.Workspace{Kind: "termux", Name: "broken", Access: "full"}
+        if err := db.CreateWorkspace(ws2); err != nil {
+                t.Fatalf("ws2: %v", err)
+        }
+        if err := db.BindWorkspace("tarm", ws2.ID); err != nil {
+                t.Fatalf("bind2: %v", err)
+        }
+        out2 := s.sessionContextPreamble(sess)
+        if !strings.Contains(out2, "THE TERMUX HAND on this chat") {
+                t.Fatalf("the good root still arms the teach:\n%s", out2)
+        }
+        // the rootless row must not leak into the TEACH's jail list (it may
+        // legitimately appear in the generic bound-workspaces line above).
+        teach := out2[strings.Index(out2, "THE TERMUX HAND"):]
+        if strings.Contains(teach, "broken") {
+                t.Fatalf("a rootless termux row leaked into the teach's jail list:\n%s", teach)
         }
 }
 

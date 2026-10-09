@@ -72,6 +72,10 @@ type Turn struct {
 	Skills func(ctx context.Context, argJSON string) string
 	// Workspace runs the connected-repos tool (server closure).
 	Workspace func(ctx context.Context, argJSON string) string
+	// Termux runs the device-shell tool (server closure — v1.20.3 THE
+	// ARM: the chat's bound termux workspaces through the bridge; nil =
+	// the tool honestly reports it is not armed for this chat).
+	Termux func(ctx context.Context, argJSON string) string
 	// Delegate fans a prompt out to other models (server closure).
 	Delegate func(ctx context.Context, prompt string, models []string) []map[string]any
 
@@ -205,6 +209,18 @@ func DefaultSummary(name, argJSON string) string {
 		return first("skill", "q", "action")
 	case "workspace":
 		return first("ws", "path", "query", "what", "action")
+	case "termux":
+		// v1.20.3 THE ARM: the args ride the nested "args" object (the
+		// one-tool/verb-map shape) — fall back to the flat keys when a
+		// provider flattened them.
+		if nested, ok := args["args"].(map[string]any); ok {
+			for _, k := range []string{"command", "path", "pattern", "name", "op"} {
+				if v, ok := nested[k].(string); ok && v != "" {
+					return clampRunes(v, 80)
+				}
+			}
+		}
+		return first("command", "path", "pattern", "name", "action")
 	case "delegate":
 		return clampRunes(get("prompt"), 80)
 	case "persona_list":

@@ -47,6 +47,7 @@ const (
 	GateSkills    Gate = "skills"
 	GatePersona   Gate = "persona"
 	GateWorkspace Gate = "workspace"
+	GateTermux    Gate = "termux"
 	GateDelegate  Gate = "delegate"
 )
 
@@ -77,9 +78,10 @@ func str(key, desc string, required bool) PropDef {
 	return prop(key, desc, PropString, required)
 }
 
-// defs is the full tool registry — 28 tools, ported VERBATIM from
+// defs is the full tool registry — 29 tools, ported VERBATIM from
 // nativeToolSpecs (descriptions + props + required + gating) so the
-// model-visible manifest is byte-identical to the proven one.
+// model-visible manifest is byte-identical to the proven one (v1.20.3
+// THE ARM adds the gated termux hand).
 var defs = []Def{
 	// ── local compute ───────────────────────────────────────────────
 	{Name: "calculator", Desc: "Evaluate a math expression and return the result.", Props: []PropDef{
@@ -223,6 +225,16 @@ var defs = []Def{
 			str("name", "New repo name (create only).", false),
 			prop("kind", "Forge (create/discover only).", PropString, false, "github", "gitea", "gitlab"),
 			prop("private", "Create private (create only).", PropBoolean, false),
+		}},
+	// ── the Termux hand (gated on the Termux closure) ────────────────
+	// v1.20.3 THE ARM (PLAN-V120 §v1.20.3): a real Termux Linux shell on
+	// the user's device, jailed to the chat's bound device folders — the
+	// one-tool/verb-map shape the workspace tool proved.
+	{Name: "termux", Gate: GateTermux,
+		Desc: "A real Termux Linux shell on the user's device. Actions: exec (run a shell command), ls, read, write, append, rm, mkdir, grep, find, pkg (install/update/remove packages), session_start/session_list/session_log/session_kill (create and kill background processes, e.g. python servers, with tailable logs) and help. Jailed to this chat's bound device (termux) workspace folders — paths outside them are refused, never executed. Output is FULL; the only cap is Termux's own 100KB result bundle, honestly reported when hit. Use it whenever the user asks about their device's files or wants something run, installed or served on the phone.",
+		Props: []PropDef{
+			prop("action", "'exec' (run a shell command), 'ls', 'read', 'write', 'append', 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
+			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]}.`, true),
 		}},
 	// ── the swarm delegate (gated on the Delegate closure) ──────────
 	{Name: "delegate", Gate: GateDelegate,

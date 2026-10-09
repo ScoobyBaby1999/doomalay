@@ -158,6 +158,15 @@ func handlerFor(d *Def) server.ToolHandlerFunc {
 			}
 			return textResult(t.Workspace(ctx, argJSON)), nil
 
+		case d.Name == "termux":
+			// v1.20.3 THE ARM: the device-shell hand — the server's
+			// runner builds every observation (jailed, full-output,
+			// honest caps); the handler only carries the text.
+			if t.Termux == nil {
+				return mcp.NewToolResultError("error: the termux tool is not armed for this chat (the ⌨ Termux capability is not stacked or no device folder is connected)"), nil
+			}
+			return textResult(t.Termux(ctx, argJSON)), nil
+
 		case personaTools[d.Name]:
 			if t.Persona == nil {
 				return mcp.NewToolResultError("error: persona tools need a live session on this server"), nil
