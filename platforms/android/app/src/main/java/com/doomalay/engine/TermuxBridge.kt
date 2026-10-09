@@ -213,6 +213,7 @@ object TermuxBridge {
         command: String,
         workdir: String?,
         timeoutMs: Long,
+        stdin: String? = null, // v1.20.2: stdin — forwarded as the RUN_COMMAND_STDIN extra (null = no extra; default keeps every existing call site unchanged)
         onResult: (CommandResult) -> Unit
     ) {
         if (command.isEmpty()) {
@@ -289,6 +290,9 @@ object TermuxBridge {
             putExtra("com.termux.RUN_COMMAND_WORKDIR", workdir ?: TERMUX_HOME)
             putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
             putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "doomalay")
+            // v1.20.2: stdin — the file-write law (bash -c 'cat > "$1"' _
+            // <path> with the content as stdin, zero shell-escaping surface).
+            if (stdin != null) putExtra("com.termux.RUN_COMMAND_STDIN", stdin)
             putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pi)
         }
 
@@ -634,11 +638,13 @@ class TermuxBridgeServer(private val ctx: Context) {
     }
 
     // POST /run — the generic jailed exec. Body: {"command":str,
-    // "workdir":str?, "timeout_ms":int?}. Default timeout 60s, hard cap 180s.
+    // "workdir":str?, "timeout_ms":int?, "stdin":str? (v1.20.2 — forwarded
+    // as RUN_COMMAND_STDIN)}. Default timeout 60s, hard cap 180s.
     private fun handleRun(out: OutputStream, body: ByteArray) {
         val command: String
         var workdir: String? = null
         var timeoutMs = DEFAULT_RUN_TIMEOUT_MS
+        var stdinExtra: String? = null // v1.20.2: stdin — the body's optional "stdin" field
         try {
             val o = JSONObject(String(body, Charsets.UTF_8))
             command = o.optString("command", "")
@@ -646,6 +652,12 @@ class TermuxBridgeServer(private val ctx: Context) {
             if (wd.isNotEmpty()) workdir = wd
             val t = o.optInt("timeout_ms", 0)
             if (t > 0) timeoutMs = t.toLong()
+            // v1.20.2: stdin — rides the intent as RUN_COMMAND_STDIN
+            // (absent/empty = no extra; the background session's own EOF
+            // stdin is the empty-write contract).
+            if (o.has("stdin") && !o.isNull("stdin") && o.optString("stdin", "").isNotEmpty()) {
+                stdinExtra = o.optString("stdin", "")
+            }
         } catch (e: JSONException) {
             writeResponse(out, 400, errJson("invalid JSON body: ${e.message}"))
             return
@@ -659,7 +671,7 @@ class TermuxBridgeServer(private val ctx: Context) {
 
         val latch = CountDownLatch(1)
         val holder = arrayOfNulls<String>(1)
-        TermuxBridge.runCommand(ctx, command, workdir, timeoutMs) { r ->
+        TermuxBridge.runCommand(ctx, command, workdir, timeoutMs, stdinExtra) { r ->
             synchronized(holder) { holder[0] = runJson(r) }
             latch.countDown()
         }

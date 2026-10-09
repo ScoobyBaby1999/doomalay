@@ -141,6 +141,33 @@ func (c *Client) Run(ctx context.Context, command, workdir string, timeoutMS int
 	return &out, nil
 }
 
+// RunWithStdin is Run's stdin-carrying twin (v1.20.2 THE EXTRA_STDIN LAW,
+// PLAN-V120 §v1.20.2): the command's stdin rides the bridge body as
+// "stdin", the Kotlin /run route forwards it into the RUN_COMMAND intent
+// as the com.termux.RUN_COMMAND_STDIN extra, and Termux pipes it into the
+// session — so file writes ride `bash -c 'cat > "$1"' _ <path>` with the
+// content as stdin (zero shell-escaping surface). stdin == "" sends no
+// extra (the background session's own EOF stdin — `cat >` then truncates,
+// which is the empty-write contract). Run stays untouched for every
+// existing caller.
+func (c *Client) RunWithStdin(ctx context.Context, command, workdir string, timeoutMS int, stdin string) (*RunResult, error) {
+	body := map[string]any{"command": command}
+	if workdir != "" {
+		body["workdir"] = workdir
+	}
+	if timeoutMS > 0 {
+		body["timeout_ms"] = timeoutMS
+	}
+	if stdin != "" {
+		body["stdin"] = stdin
+	}
+	var out RunResult
+	if err := c.do(ctx, http.MethodPost, "/run", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Act fires one of the open-* intents on the APK side (open_termux,
 // open_fdroid, open_permission_settings).
 func (c *Client) Act(ctx context.Context, what string) (*ActResult, error) {

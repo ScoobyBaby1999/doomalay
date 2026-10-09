@@ -38,7 +38,7 @@
 (function () {
   'use strict';
 
-  var esc = window.Formatter ? window.Formatter.esc : function (s) {
+  var esc = (typeof window !== 'undefined' && window.Formatter) ? window.Formatter.esc : function (s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
@@ -363,7 +363,32 @@
         'min-height:240px;padding:12px;background:var(--surface-2);' +
         'background-image:var(--surface-2-gradient,none);color:var(--text-1);' +
         'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(var(--ui-fs) - 2px);' +
-        'line-height:1.5;-webkit-overflow-scrolling:touch}';
+        'line-height:1.5;-webkit-overflow-scrolling:touch}' +
+      // ── v1.20.2 THE LOCAL HAND: the Termux device-storage browser ────
+      // (the listing area scrolls inside the page with the capability
+      // rows' thin themed scrollbar; the crumb bar wraps; entry rows are
+      // the wsx-row idiom — plain files dim + cursorless, folders tap).
+      '.wtx-crumbwrap{display:flex;align-items:center;flex-wrap:wrap;gap:4px;' +
+        'padding:10px 16px 4px;font-size:var(--ui-small-fs);border-bottom:1px solid var(--surface-2)}' +
+      '.wtx-crumb{color:var(--accent-2);cursor:pointer;-webkit-tap-highlight-color:transparent;' +
+        'touch-action:manipulation;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.wtx-crumb.cur{color:var(--text-1);font-weight:600;cursor:default}' +
+      '.wtx-sep{color:var(--text-3)}' +
+      '.wtx-list{max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;' +
+        'padding:6px 10px 4px;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}' +
+      '.wtx-list::-webkit-scrollbar{width:5px}' +
+      '.wtx-list::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}' +
+      '.wtx-list::-webkit-scrollbar-track{background:transparent}' +
+      '.wtx-entry{display:flex;align-items:center;gap:10px;min-height:48px;padding:8px 10px;' +
+        'border-radius:12px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}' +
+      '.wtx-entry:not(.file){cursor:pointer}' +
+      '.wtx-entry:not(.file):active{background:rgba(var(--accent-2-rgb),0.10)}' +
+      '.wtx-eico{flex-shrink:0;width:26px;text-align:center;font-size:15px}' +
+      '.wtx-enmid{flex:1;min-width:0}' +
+      '.wtx-ename{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}' +
+      '.wtx-entry.file .wtx-ename{font-weight:400;color:var(--text-2)}' +
+      '.wtx-emeta{font-size:var(--ui-small-fs);color:var(--text-3);overflow:hidden;' +
+        'text-overflow:ellipsis;white-space:nowrap;margin-top:1px}';
     document.head.appendChild(s);
   }
 
@@ -383,7 +408,7 @@
   }
 
   function kindIcon(kind) {
-    return { github: '🐙', gitea: '🍵', gitlab: '🦊', sourcehut: '🪶', device: '📱' }[kind] || '📁';
+    return { github: '🐙', gitea: '🍵', gitlab: '🦊', sourcehut: '🪶', device: '📱', termux: '📱' }[kind] || '📁';
   }
 
   function toast(msg) {
@@ -978,6 +1003,10 @@
     var acc = ws.access || 'read';
     var meta = ws.kind === 'device'
       ? ['this device', ws.meta && ws.meta.display_path || ''].filter(Boolean).join(' · ')
+      : ws.kind === 'termux'
+      // v1.20.2: termux rows render the real jailed path as the sub-line
+      // (the cloud rows' host/branch shape, device-row style).
+      ? ['this device', (ws.meta && (ws.meta.termux_path || ws.meta.display_path)) || ''].filter(Boolean).join(' · ')
       : [ws.kind, [ws.branch, (ws.meta && ws.meta.branches && ws.meta.branches.length > 1)
           ? '+' + (ws.meta.branches.length - 1) + ' branches' : '']
           .filter(Boolean).join(' ')].filter(Boolean).join(' · ');
@@ -1020,7 +1049,7 @@
         ? '<button class="wsx-act primary" data-a="bind">' +
             (inChat ? '✓ remove from this chat' : '＋ add to this chat') + '</button>'
         : '') +
-      (ws.kind !== 'device'
+      (ws.kind !== 'device' && ws.kind !== 'termux'
         ? '<button class="wsx-act" data-a="drawer">☁ open in drawer</button>' +
           '<button class="wsx-act" data-a="chat">✦ explore in chat</button>' +
           ((ws.access === 'read' || ws.access === 'partial')
@@ -1045,8 +1074,9 @@
     var dr = acts.querySelector('[data-a="drawer"]');
     if (dr) dr.addEventListener('click', function () {
       window.ConnectOverlay.close();
-      if (window.Artifacts) window.Artifacts.openDrawer(ws.kind === 'device' ? ws.id : sidNow(),
-        { name: ws.kind === 'device' ? 'device' : 'cloud' });
+      if (window.Artifacts) window.Artifacts.openDrawer(
+        (ws.kind === 'device' || ws.kind === 'termux') ? ws.id : sidNow(),
+        { name: (ws.kind === 'device' || ws.kind === 'termux') ? 'device' : 'cloud' });
       else toast('open the artifacts drawer');
     });
     var ch = acts.querySelector('[data-a="chat"]');
@@ -1639,6 +1669,19 @@
   }
 
   function openDevicePage() {
+    // v1.20.2 THE LOCAL HAND: the Android WebView has no File Access API
+    // (window.showDirectoryPicker doesn't exist there — the user's report:
+    // "nothing in that screen works. The app never requests device storage
+    // permission"). On APK builds the Termux readiness gate picks the
+    // surface instead: ready → THE TERMUX BROWSER, not-ready → the honest
+    // teach page. Desktop keeps the flow below byte-identical.
+    if (apkBuild()) {
+      termuxStatusCached(true).then(function (st) {
+        if (st && st.available && st.ready) openTermuxBrowserPage();
+        else openTermuxTeachPage();
+      });
+      return;
+    }
     var supported = typeof window.showDirectoryPicker === 'function';
     pushPage(
       '<div class="wsx">' +
@@ -1751,6 +1794,353 @@
         finish();
       }
     });
+  }
+
+  // ── v1.20.2 THE LOCAL HAND: the Termux device-storage browser ──────────
+  //
+  // THE ANDROID WEBVIEW TRUTH: window.showDirectoryPicker doesn't exist
+  // there, so the desktop flow above can never run on the APK. On APK
+  // builds every device-storage pick rides the engine's jailed
+  // /api/termux/fs — one jail point, reads + writes both through the
+  // Termux bridge, nothing leaves the phone.
+
+  // the APK gate — the capabilities.js apkGate pattern (the Kotlin
+  // bridge marker, plus the ?apk=1 dev/E2E hook)
+  function apkBuild() {
+    if (window.__doomalayKotlin) return true;
+    try {
+      return /[?&]apk=1(?![a-z0-9])/i.test(String((window.location && window.location.search) || ''));
+    } catch (e) { return false; }
+  }
+
+  // the readiness probe (15s module cache; a fresh probe per open so a
+  // just-finished setup is seen immediately — the engine's own 30s probe
+  // cache already bounds the round-trips)
+  var termuxStatusCache = { at: 0, st: null };
+  function termuxStatusCached(force) {
+    if (!force && termuxStatusCache.st && Date.now() - termuxStatusCache.at < 15000) {
+      return Promise.resolve(termuxStatusCache.st);
+    }
+    return api('/api/termux/status').then(function (st) {
+      termuxStatusCache = { at: Date.now(), st: st || {} };
+      return termuxStatusCache.st;
+    }).catch(function (e) {
+      // a failed probe is an honest not-ready (never a dead page)
+      termuxStatusCache = { at: Date.now(), st: { available: false, error: e.message } };
+      return termuxStatusCache.st;
+    });
+  }
+
+  // not ready → THE HONEST TEACH PAGE (never a dead end): the v1.17.3
+  // setup overlay opens nested (the capabilities.js open(ctx, opts)
+  // idiom — ctx is stored, never read); its exit re-probes once and
+  // swaps to the browser the moment the bridge confirms ready.
+  function openTermuxTeachPage() {
+    pushPage(
+      '<div class="wsx">' +
+        pageHead('📱 device storage') +
+        '<div class="wsx-note" style="padding:10px 16px 2px">📱 Termux isn\u2019t set up — device folders ride it. ' +
+          'one pasted command + three taps, then every chatbot can read + write a folder on this phone.</div>' +
+        '<button class="wsx-go" id="wtx-teach-go">set up Termux</button>' +
+        '<div class="wsx-note">your files never leave the phone.</div>' +
+      '</div>',
+      function () {
+        var go = document.getElementById('wtx-teach-go');
+        if (go) go.addEventListener('click', function () {
+          if (window.TermuxSetup && window.TermuxSetup.open) {
+            window.TermuxSetup.open(currentPicker || {}, {
+              onExit: function () {
+                termuxStatusCached(true).then(function (st) {
+                  if (!(st && st.available && st.ready)) return;
+                  try { window.ConnectOverlay.popPage(); } catch (e) {}
+                  openTermuxBrowserPage();
+                });
+              }
+            });
+          } else {
+            toast('Termux setup is not available on this build');
+          }
+        });
+      });
+  }
+
+  // THE ROOT PICKER's entries (the entry screen of the browser page)
+  var TERMUX_ROOTS = [
+    { alias: 'shared',    icon: '📱', name: 'device storage', meta: 'everything on the phone — /storage/emulated/0' },
+    { alias: 'downloads', icon: '📥', name: 'downloads',      meta: 'the Downloads folder' },
+    { alias: 'documents', icon: '📄', name: 'documents',      meta: 'the Documents folder' },
+    { alias: 'home',      icon: '⌂',  name: 'termux home',    meta: 'Termux\u2019s own private folder' }
+  ];
+
+  // termuxCrumbs (pure — the node rig pins it): a resolved absolute path
+  // → [{label, path}] crumb rows, the two long roots elided to friendly
+  // labels; tap a crumb → its absolute path.
+  function termuxCrumbs(p) {
+    p = String(p || '');
+    if (p.charAt(0) !== '/') return [];
+    var HOME = '/data/data/com.termux/files/home';
+    var SHARED = '/storage/emulated/0';
+    var prefix = '', label = '/';
+    if (p === HOME || p.indexOf(HOME + '/') === 0) { prefix = HOME; label = '⌂ home'; }
+    else if (p === SHARED || p.indexOf(SHARED + '/') === 0) { prefix = SHARED; label = '📱 storage'; }
+    var crumbs = [{ label: label, path: prefix }];
+    var acc = prefix;
+    (prefix ? p.slice(prefix.length) : p).split('/').forEach(function (seg) {
+      if (!seg) return;
+      acc = acc + '/' + seg;
+      crumbs.push({ label: seg, path: acc });
+    });
+    return crumbs;
+  }
+
+  // termuxRelPath (pure — the node rig pins it): the workspace-relative
+  // path of a full listing path under the ws root ('' = the root itself).
+  function termuxRelPath(root, full) {
+    root = String(root || '');
+    full = String(full || '');
+    if (!root || full.indexOf(root) !== 0) return '';
+    return full.slice(root.length).replace(/^\/+/, '');
+  }
+
+  // mtime (epoch seconds) → the repo's date idiom (timeAgo)
+  function whenFmt(mtime) {
+    var t = Number(mtime || 0);
+    if (!t) return '';
+    try { return timeAgo(new Date(t * 1000).toISOString()); } catch (e) { return ''; }
+  }
+
+  // THE TERMUX BROWSER PAGE: the ROOT PICKER renders first; a tap loads
+  // the listing at that root (in place — the list content swaps, the page
+  // stays); dirs tap to descend, files just list (this picker picks
+  // FOLDERS); the action bar carries the name input + mkdir + the CTA.
+  function openTermuxBrowserPage() {
+    var cur = null;     // null = the ROOT PICKER screen, else the current listing path
+    var resolved = '';  // the current listing's resolved absolute path
+    var hist = [];      // past listings (the ‹ back affordance)
+    pushPage(
+      '<div class="wsx">' +
+        pageHead('📱 device storage') +
+        '<div class="wtx-crumbwrap" id="wtx-crumb" style="display:none"></div>' +
+        '<div class="wtx-list" id="wtx-list"></div>' +
+        '<div id="wtx-actions" style="display:none">' +
+          '<div class="wsx-field" style="margin:10px 12px 0"><div class="wsx-label">WORKSPACE NAME</div>' +
+            '<input class="wsx-input" id="wtx-name" placeholder="' +
+              esc(currentPicker.chat || 'my folder') + '" autocomplete="off" spellcheck="false"></div>' +
+          '<div class="wsx-acts" style="padding:8px 12px 2px">' +
+            '<button class="wsx-act primary" id="wtx-mkdir">＋ create folder</button></div>' +
+          '<button class="wsx-go" id="wtx-use">use this folder</button>' +
+          '<div class="wsx-note" style="padding:2px 16px 6px">this picker picks FOLDERS — files just list. ' +
+            'reads + writes ride Termux, jailed to the folder you pick.</div>' +
+        '</div>' +
+      '</div>',
+      function () {
+        renderRootPicker();
+        var mk = document.getElementById('wtx-mkdir');
+        if (mk) mk.addEventListener('click', function () {
+          var inp = document.getElementById('wtx-name');
+          var nm = (inp ? inp.value : '').trim() || (currentPicker.chat || 'my folder');
+          mk.disabled = true; mk.textContent = 'creating…';
+          api('/api/termux/fs', 'POST', { action: 'mkdir', path: resolved, name: nm })
+            .then(function (d) {
+              if (d && d.ok === false) throw new Error(d.error || 'mkdir failed');
+              mk.disabled = false; mk.textContent = '＋ create folder';
+              toast('folder created — ' + nm);
+              navigate(d.path || (resolved + '/' + nm));
+            })
+            .catch(function (e) {
+              mk.disabled = false; mk.textContent = '＋ create folder';
+              toast(e.message);
+            });
+        });
+        var use = document.getElementById('wtx-use');
+        if (use) use.addEventListener('click', function () {
+          var inp = document.getElementById('wtx-name');
+          var nm = (inp ? inp.value : '').trim() || (currentPicker.chat || 'my folder');
+          use.disabled = true; use.textContent = 'saving…';
+          api('/api/workspaces/device', 'POST', {
+            name: nm,
+            termux_path: resolved,
+            session_id: sidNow() || ''
+          }).then(function () {
+            refreshPills();
+            toast('device workspace saved — reads + writes ride Termux');
+            backToPicker();
+          }).catch(function (e) {
+            use.disabled = false; use.textContent = 'use this folder';
+            toast(e.message);
+          });
+        });
+      });
+
+    function renderRootPicker() {
+      cur = null;
+      resolved = '';
+      var crumb = document.getElementById('wtx-crumb');
+      if (crumb) crumb.style.display = 'none';
+      var acts = document.getElementById('wtx-actions');
+      if (acts) acts.style.display = 'none';
+      var list = document.getElementById('wtx-list');
+      if (!list) return;
+      var html = '<div class="wsx-note" style="padding:8px 16px 2px">your files never leave the phone.</div>';
+      TERMUX_ROOTS.forEach(function (rt) {
+        html += '<div class="wsx-opt" data-alias="' + esc(rt.alias) + '" style="margin:6px 12px">' +
+          '<span class="wsx-ico k-device">' + rt.icon + '</span>' +
+          '<span class="wsx-mid">' + esc(rt.name) +
+            '<div class="wsx-meta">' + esc(rt.meta) + '</div></span>' +
+          '<span style="color:var(--text-3)">›</span></div>';
+      });
+      list.innerHTML = html;
+      list.querySelectorAll('[data-alias]').forEach(function (row) {
+        row.addEventListener('click', function () { navigate(row.getAttribute('data-alias')); });
+      });
+    }
+
+    function renderCrumb() {
+      var crumb = document.getElementById('wtx-crumb');
+      if (!crumb) return;
+      var crumbs = termuxCrumbs(resolved);
+      var html = (hist.length
+        ? '<button class="wsx-back" id="wtx-back" style="padding:0 6px 0 0">‹</button>'
+        : '') + '<span style="flex-shrink:0">📍</span>';
+      crumbs.forEach(function (c, i) {
+        var last = i === crumbs.length - 1;
+        html += '<span class="wtx-crumb' + (last ? ' cur' : '') + '" data-path="' + esc(c.path) + '">' +
+          esc(c.label) + '</span>' + (last ? '' : '<span class="wtx-sep">/</span>');
+      });
+      crumb.innerHTML = html;
+      crumb.style.display = '';
+      var back = document.getElementById('wtx-back');
+      if (back) back.addEventListener('click', function () {
+        var prev = hist.pop();
+        if (!prev) return;
+        cur = prev.path;
+        resolved = prev.resolved;
+        listDir(prev.path);
+      });
+      crumb.querySelectorAll('.wtx-crumb:not(.cur)').forEach(function (el) {
+        el.addEventListener('click', function () { navigate(el.getAttribute('data-path')); });
+      });
+    }
+
+    function navigate(path) {
+      if (cur != null) hist.push({ path: cur, resolved: resolved });
+      if (hist.length > 64) hist.shift();
+      cur = path;
+      listDir(path);
+    }
+
+    function listDir(path) {
+      var list = document.getElementById('wtx-list');
+      if (!list) return;
+      var segs = String(path || '').split('/');
+      list.innerHTML = loaderHTML('wtx-load', 'listing ' + (segs[segs.length - 1] || 'folder') + '…');
+      startLoader('wtx-load');
+      api('/api/termux/fs?path=' + encodeURIComponent(path)).then(function (d) {
+        if (d && d.ok === false) throw new Error(d.error || 'listing failed');
+        if (!document.getElementById('wtx-list')) return;   // page swapped
+        resolved = d.path || '';
+        renderCrumb();
+        renderEntries(d);
+        var acts = document.getElementById('wtx-actions');
+        if (acts) acts.style.display = '';
+      }).catch(function (e) {
+        if (!document.getElementById('wtx-list')) return;
+        list.innerHTML =
+          '<div class="wsx-err" style="padding:10px 16px">' + esc(e.message) + '</div>' +
+          '<div class="wsx-acts" style="padding:0 12px 8px">' +
+            '<button class="wsx-act primary" id="wtx-retry">retry</button>' +
+            '<button class="wsx-act" id="wtx-roots">back to roots</button>' +
+          '</div>';
+        var rt = document.getElementById('wtx-retry');
+        if (rt) rt.addEventListener('click', function () { listDir(path); });
+        var ro = document.getElementById('wtx-roots');
+        if (ro) ro.addEventListener('click', renderRootPicker);
+      });
+    }
+
+    function renderEntries(d) {
+      var list = document.getElementById('wtx-list');
+      if (!list) return;
+      var entries = d.entries || [];
+      var html = entries.length ? '' :
+        '<div class="wsx-empty">empty folder — ＋ create one below</div>';
+      entries.forEach(function (en) {
+        var isDir = !!en.dir;
+        var meta = [isDir ? '' : fmtSize(en.size), whenFmt(en.mtime)]
+          .filter(Boolean).join(' · ');
+        html += '<div class="wtx-entry' + (isDir ? '' : ' file') +
+          '" data-dir="' + (isDir ? '1' : '') + '" data-name="' + esc(en.name) + '">' +
+          '<span class="wtx-eico">' + (isDir ? '📁' : '📄') + '</span>' +
+          '<span class="wtx-enmid"><span class="wtx-ename">' + esc(en.name) + '</span>' +
+            (meta ? '<div class="wtx-emeta">' + esc(meta) + '</div>' : '') + '</span>' +
+        '</div>';
+      });
+      if (d.truncated) {
+        html += '<div class="wsx-note" style="padding:8px 16px 2px">first ' + entries.length +
+          ' of ' + esc(String(d.total)) + ' entries — the honest 500 cap</div>';
+      }
+      list.innerHTML = html;
+      list.querySelectorAll('.wtx-entry').forEach(function (row) {
+        if (row.getAttribute('data-dir') !== '1') return;   // files plain — this picker picks folders
+        row.addEventListener('click', function () {
+          navigate(resolved + '/' + row.getAttribute('data-name'));
+        });
+      });
+    }
+  }
+
+  // THE TERMUX FILE VIEWER/EDITOR — the openCloudFile twin over the ws
+  // file verbs (GET = the jailed cat, PUT = the stdin write through the
+  // bridge; binary files get the honest 📦 row, no editor).
+  function openTermuxFile(ws, rel, display) {
+    ensureStyles();
+    var name = display || String(rel || '').split('/').pop() || 'file';
+    window.ConnectOverlay.open(
+      '<div class="wsx" style="display:flex;flex-direction:column;min-height:0">' +
+        '<div class="wsx-head"><span class="wsx-title" style="font-size:var(--ui-fs);' +
+          'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(name) + '</span>' +
+          '<span class="wsx-badge full">termux</span></div>' +
+        '<div id="wtx-fbody" style="min-height:60px"><span class="wsx-sub">loading…</span></div>' +
+      '</div>');
+    api('/api/workspaces/' + encodeURIComponent(ws.id) + '/file?path=' + encodeURIComponent(rel))
+      .then(function (fc) {
+        var body = document.getElementById('wtx-fbody');
+        if (!body) return;
+        if (fc && fc.ok === false) throw new Error(fc.error || 'read failed');
+        if (fc.binary) {
+          body.innerHTML = '<div class="wsx-sub">📦 binary file — ' + fmtSize(fc.size) + '</div>';
+          return;
+        }
+        var text = fc.content || '';
+        body.innerHTML = '<textarea class="wsv-ta" id="wsv-ta" spellcheck="false"></textarea>' +
+          '<div style="display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--surface-2)">' +
+            '<button class="wsx-go" id="wtx-fsave" style="margin:0;width:auto;padding:8px 18px">save to device</button>' +
+            '<span class="wsx-note" id="wtx-fnote" style="padding:6px 0">writes ride Termux — straight into the folder</span>' +
+          '</div>';
+        document.getElementById('wsv-ta').value = text;
+        document.getElementById('wtx-fsave').addEventListener('click', function () {
+          var btn = this;
+          btn.disabled = true; btn.textContent = 'saving…';
+          api('/api/workspaces/' + encodeURIComponent(ws.id) + '/file', 'PUT', {
+            path: rel,
+            content: document.getElementById('wsv-ta').value
+          }).then(function (d) {
+            if (d && d.ok === false) throw new Error(d.error || 'write failed');
+            btn.disabled = false; btn.textContent = 'save to device';
+            var n = document.getElementById('wtx-fnote');
+            if (n) n.textContent = '✓ saved — ' + fmtSize(d.size);
+            toast('saved ' + name);
+          }).catch(function (e) {
+            btn.disabled = false; btn.textContent = 'save to device';
+            var n = document.getElementById('wtx-fnote');
+            if (n) n.textContent = '⚠ ' + e.message;
+          });
+        });
+      })
+      .catch(function (e) {
+        var body = document.getElementById('wtx-fbody');
+        if (body) body.innerHTML = '<div class="wsx-err">' + esc(e.message) + '</div>';
+      });
   }
 
   // device tree: walk a directory handle one level at a time
@@ -1891,7 +2281,9 @@
   function renderCloudSection(listEl, sessionId) {
     if (!listEl || !sessionId) return;
     api('/api/sessions/' + encodeURIComponent(sessionId) + '/workspaces').then(function (d) {
-      var rows = (d.workspaces || []).filter(function (w) { return w.kind !== 'device'; });
+      // v1.20.2: termux rows ride the DEVICE section (their tree is the
+      // jailed fs browser, not a forge tree).
+      var rows = (d.workspaces || []).filter(function (w) { return w.kind !== 'device' && w.kind !== 'termux'; });
       if (!rows.length) return;
       var head = document.createElement('div');
       head.className = 'wsc-sec';
@@ -2009,17 +2401,48 @@
       });
   }
 
-  // ── ARTIFACTS DRAWER: the device section (local FS handles) ────────────
+  // ── ARTIFACTS DRAWER: the device section (local FS handles + v1.20.2
+  // termux rows — the jailed fs browser tree) ─────────────────────────
   function renderDeviceSection(listEl, sessionId) {
     if (!listEl || !sessionId) return;
     api('/api/sessions/' + encodeURIComponent(sessionId) + '/workspaces').then(function (d) {
-      var rows = (d.workspaces || []).filter(function (w) { return w.kind === 'device'; });
+      var rows = (d.workspaces || []).filter(function (w) { return w.kind === 'device' || w.kind === 'termux'; });
       if (!rows.length) return;
       var head = document.createElement('div');
       head.className = 'wsc-sec';
       head.textContent = '📱 DEVICE STORAGE';
       listEl.appendChild(head);
       rows.forEach(function (ws) {
+        if (ws.kind === 'termux') {
+          // v1.20.2: the termux tree — the ws's jailed termux_path is the
+          // root; every level rides GET /api/termux/fs, file taps open the
+          // engine-REST editor twin (openTermuxFile).
+          var root = (ws.meta && (ws.meta.termux_path || ws.meta.display_path)) || '';
+          var trow = document.createElement('div');
+          trow.className = 'wsc-row';
+          trow.style.setProperty('--d', '0');
+          trow.innerHTML =
+            '<span style="flex-shrink:0;width:18px;font-size:13px">▶</span>' +
+            '<span style="flex-shrink:0;font-size:14px">📱</span>' +
+            '<span class="wsc-name" style="font-weight:600">' + esc(ws.name) + '</span>' +
+            '<span class="wsc-size" style="max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+              esc(root || 'device') + '</span>';
+          var tkids = document.createElement('div');
+          tkids.style.display = 'none';
+          listEl.appendChild(trow);
+          listEl.appendChild(tkids);
+          var tloaded = false;
+          trow.addEventListener('click', function () {
+            var open = tkids.style.display !== 'none';
+            tkids.style.display = open ? 'none' : '';
+            trow.firstChild.textContent = open ? '▶' : '▼';
+            if (!tloaded && !open) {
+              tloaded = true;
+              loadTermuxLevel(tkids, ws, root, 1);
+            }
+          });
+          return;
+        }
         var row = document.createElement('div');
         row.className = 'wsc-row';
         row.style.setProperty('--d', '0');
@@ -2093,6 +2516,67 @@
         } else {
           row.addEventListener('click', function () {
             openDeviceFileFromHandle(ws.id, name, handle);
+          });
+        }
+      });
+    }).catch(function (e) {
+      loading.remove();
+      var err = document.createElement('div');
+      err.className = 'wsc-row'; err.style.setProperty('--d', String(depth));
+      err.innerHTML = '<span class="wsc-size" style="color:var(--err)">⚠ ' + esc(e.message) + '</span>';
+      container.appendChild(err);
+    });
+  }
+
+  // v1.20.2: the termux tree in the drawer — GET /api/termux/fs per level
+  // (the ws's termux_path is the root; every child rides the same jail).
+  // File taps open the engine-REST editor twin (openTermuxFile) with the
+  // workspace-relative path.
+  function loadTermuxLevel(container, ws, path, depth) {
+    var root = (ws.meta && (ws.meta.termux_path || ws.meta.display_path)) || '';
+    var loading = document.createElement('div');
+    loading.className = 'wsc-row';
+    loading.style.setProperty('--d', String(depth));
+    loading.innerHTML = '<span class="wsc-size">loading…</span>';
+    container.appendChild(loading);
+    api('/api/termux/fs?path=' + encodeURIComponent(path)).then(function (d) {
+      if (d && d.ok === false) throw new Error(d.error || 'listing failed');
+      loading.remove();
+      var entries = d.entries || [];
+      if (!entries.length) {
+        var e = document.createElement('div');
+        e.className = 'wsc-row'; e.style.setProperty('--d', String(depth));
+        e.innerHTML = '<span class="wsc-size">(empty)</span>';
+        container.appendChild(e);
+        return;
+      }
+      entries.forEach(function (en) {
+        var isDir = !!en.dir;
+        var full = (d.path || path) + '/' + en.name;
+        var row = document.createElement('div');
+        row.className = 'wsc-row';
+        row.style.setProperty('--d', String(depth));
+        row.innerHTML =
+          '<span style="flex-shrink:0;width:18px;font-size:13px">' + (isDir ? '▶' : '·') + '</span>' +
+          '<span class="wsc-name">' + esc(en.name) + '</span>' +
+          '<span class="wsc-size">' + (isDir ? '' : fmtSize(en.size)) + '</span>';
+        container.appendChild(row);
+        if (isDir) {
+          var sub = document.createElement('div');
+          sub.style.display = 'none';
+          container.appendChild(sub);
+          row.addEventListener('click', function () {
+            var o = sub.style.display !== 'none';
+            sub.style.display = o ? 'none' : '';
+            row.firstChild.textContent = o ? '▶' : '▼';
+            if (!o && !sub.dataset.loaded) {
+              sub.dataset.loaded = '1';
+              loadTermuxLevel(sub, ws, full, depth + 1);
+            }
+          });
+        } else {
+          row.addEventListener('click', function () {
+            openTermuxFile(ws, termuxRelPath(root, full), en.name);
           });
         }
       });
@@ -2239,7 +2723,9 @@
   }
 
   // ── exports ────────────────────────────────────────────────────────────
-  window.Workspace = {
+  // (the typeof-window guard + the module tail below let the v1202 node
+  // rig require this file for the pure helpers — the termuxsetup.js path)
+  if (typeof window !== 'undefined') window.Workspace = {
     pill: pill,
     setPillSession: setPillSession,
     openPicker: openPicker,
@@ -2251,4 +2737,9 @@
     onPillRefresh: onPillRefresh,
     toast: toast
   };
+  // v1.20.2: the node test path (scripts/v1202-local-hand-test.js) — the
+  // pure crumb/rel-path helpers, exported the way termuxsetup.js does.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { termuxCrumbs: termuxCrumbs, termuxRelPath: termuxRelPath };
+  }
 })();

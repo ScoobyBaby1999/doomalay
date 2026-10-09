@@ -220,6 +220,20 @@ func (s *Server) routes() {
         // through act.
         s.mux.HandleFunc("GET /api/termux/status", s.handleTermuxStatus)
         s.mux.HandleFunc("POST /api/termux/act", s.handleTermuxAct)
+        // v1.20.2 THE LOCAL HAND: the jailed device-storage FS surface.
+        // GET lists a folder (machine lines Termux-side: the resolved-path
+        // jail echo first, then T|name|size|mtime rows — dirs first,
+        // dotted entries included, 500-entry cap honestly flagged); POST
+        // mkdirs. Every path resolves under the safe roots Termux-side
+        // (readlink -f + the script's exit-42 jail) AND engine-side (the
+        // P| echo prefix re-check) — symlinks can't launder. Termux-side
+        // problems answer {"ok":false,"error":…} at HTTP 200 (the honesty
+        // law above); malformed/jail paths 400 exactly like the act
+        // handler's unknown whats. termuxfs.go also owns the termux rows'
+        // file verbs — the /api/workspaces/{id}/file routes dispatch on
+        // Kind:"termux" (see the v0.46 block below).
+        s.mux.HandleFunc("GET /api/termux/fs", s.handleTermuxFSList)
+        s.mux.HandleFunc("POST /api/termux/fs", s.handleTermuxFSMkdir)
         // v0.48 (task 5): dev-build-only shared public provider keys.
         s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
         s.mux.HandleFunc("GET /api/models", s.handleModels)
@@ -431,6 +445,14 @@ func (s *Server) routes() {
         s.mux.HandleFunc("POST /api/workspaces/accounts", s.handleWorkspaceAccountSet)
         s.mux.HandleFunc("DELETE /api/workspaces/accounts", s.handleWorkspaceAccountDelete)
         s.mux.HandleFunc("POST /api/workspaces/device", s.handleWorkspaceDevice)
+        // v1.20.2 THE LOCAL HAND: device rows saved with a termux_path
+        // (the APK's Termux browser) are Kind "termux" and speak the SAME
+        // file verbs as the cloud rows — the GET/PUT /api/workspaces/{id}/file
+        // routes registered in the v0.44 block above dispatch on
+        // Kind:"termux" into termuxfs.go (the jailed cat read + the
+        // EXTRA_STDIN write). No new pattern is registered here: the file
+        // routes already own these paths, so the PWA's viewer/editor twins
+        // apply to device rows unchanged.
         s.mux.HandleFunc("POST /api/workspaces/{id}/branches", s.handleWorkspaceBranches)
         s.mux.HandleFunc("GET /api/workspaces/oauth/github/status", s.handleGHOAuthStatus)
         s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
