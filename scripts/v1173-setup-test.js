@@ -88,6 +88,27 @@ console.log('v1.17.3 THE SETUP pins — setup.sh:');
   // the one-liner: the file itself advertises the exact curl command
   ok(sh.indexOf('https://raw.githubusercontent.com/ScoobyBaby1999/doomalay/main/termux/setup.sh') >= 0,
     'setup.sh header carries the raw one-liner URL (self-consistent)');
+
+  // v1.20.1 THE QUIET GATE: the --checkin arg + the tail block
+  ok(sh.indexOf('--checkin)') >= 0 && sh.indexOf('DOOMALAY_CHECKIN_URL="$2"') >= 0,
+    'setup.sh parses --checkin <url> into DOOMALAY_CHECKIN_URL');
+  ok(sh.indexOf('DOOMALAY_CHECKIN_URL=""') >= 0,
+    'setup.sh defaults the checkin URL empty (the static one-liner still works)');
+  ok(/unknown args are ignored, never fatal/i.test(sh),
+    'setup.sh documents the never-fatal arg law');
+  ok(sh.indexOf('curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}"') >= 0,
+    'setup.sh curls the checkin URL with the two honest step flags');
+  ok(sh.indexOf('[ -d "$HOME/storage/shared" ] && __storage_flag=1') >= 0,
+    'the storage flag derives from the live ~storage state');
+  ok(sh.indexOf('grep -q "^allow-external-apps" "$HOME/.termux/termux.properties"') >= 0,
+    'the props flag derives from the live termux.properties');
+  ok(sh.indexOf('could not notify the doomalay app — the setup still worked') >= 0,
+    'a failed checkin is honest + non-fatal (the setup still worked)');
+  ok(sh.indexOf('doomalay app notified — setup state is live') >= 0,
+    'a landed checkin says so');
+  var checkinBlock = sh.slice(sh.indexOf('doomalay termux setup complete'));
+  ok(checkinBlock.indexOf('curl -fsS') > 0,
+    'the checkin block rides at the END (after the final-line echo)');
 })();
 
 // ── 2. SOURCE PINS: termuxsetup.js — the setup overlay page ───────────
@@ -153,6 +174,30 @@ console.log('v1.17.3 THE SETUP pins — termuxsetup.js:');
   var hexes = tsx.match(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g) || [];
   ok(hexes.length === 0, 'termuxsetup.js carries zero hardcoded hex colors (' + hexes.join(' ') + ')');
   ok(tsx.indexOf('var(--on-accent)') >= 0, 'the chips ride --on-accent (the accent family)');
+
+  // v1.20.1 THE QUIET GATE pins
+  ok(tsx.indexOf('var bootstrapCmd = BOOTSTRAP_CMD') >= 0,
+    'the live bootstrap command starts as the static one-liner');
+  ok(tsx.indexOf("BOOTSTRAP_CMD + ' -s -- --checkin ' + url") >= 0,
+    'the dynamic command is the one-liner + the --checkin tail');
+  ok(tsx.indexOf('CHECKIN_URL_RE') >= 0 && /\/\^https\?:\\\/\\\/127\\\.0\\\.0\\\.1:\[0-9\]\+/.test(tsx),
+    'the checkin URL passes an exact-shape loopback guard before it enters a shell line');
+  ok(tsx.indexOf('tsx-btn-checknow') >= 0 && /class="tsx-btn ghost" id="tsx-btn-checknow"/.test(tsx),
+    'step ② carries the ghost "check now" button (the old-flow escape hatch)');
+  ok(tsx.indexOf("fetchStatus(inst, true)") >= tsx.indexOf('tsx-btn-checknow'),
+    'check now fires one explicit refresh probe');
+  ok(/btn\.disabled = step\.done \|\| \(step\.key === 'permission' && !!step\.gated\)/.test(tsx),
+    'step ③\'s Open-settings disables while gated on step ② (the disabled visual state)');
+  ok(tsx.indexOf('complete step ② first') >= 0,
+    'the honest gate sub rides under the disabled step ③ button');
+  ok(tsx.indexOf('probing paused until the bootstrap lands — no notification spam') >= 0,
+    'the status line shows the suppression state honestly');
+  ok(tsx.indexOf('bootstrap_done || !!status.bridge_ok') >= 0,
+    'step ②\'s done marker honors bootstrap_done || bridge_ok');
+  ok(tsx.indexOf('copyText(bootstrapCmd, done)') >= 0,
+    'Copy copies the CURRENT command (the --checkin tail included)');
+  ok(tsx.indexOf('el.textContent = bootstrapCmd') >= 0,
+    'the cmd row repaints in place when the command changes');
 })();
 
 // ── 3. SOURCE PINS: the capability-library row rewire ────────────────
@@ -179,7 +224,8 @@ console.log('v1.17.3 THE SETUP behavior — _stepStates:');
   var T = require(path.join(WEB, 'termuxsetup.js'));
   var S = T._stepStates;
   ok(typeof S === 'function', 'termuxsetup.js loads under node and exports _stepStates');
-  ok(T.BOOTSTRAP_CMD === ONE_LINER, 'BOOTSTRAP_CMD is the exact one-liner contract');
+  ok(T.BOOTSTRAP_CMD === ONE_LINER, 'BOOTSTRAP_CMD is the exact one-liner contract (the static export)');
+  ok(typeof T._bootstrapCmdFor === 'function', 'termuxsetup.js exports _bootstrapCmdFor (the dynamic shapes)');
 
   function keys(s) { return s.steps.map(function (x) { return x.key; }).join(','); }
   function states(s) { return s.steps.map(function (x) { return (x.done ? '✓' : (x.active ? 'now' : '·')); }).join(' '); }
@@ -198,18 +244,32 @@ console.log('v1.17.3 THE SETUP behavior — _stepStates:');
   var s0 = S({ available: true });
   ok(s0.ready === false && states(s0) === 'now · · ·', 'empty device: nothing done, install in focus');
   ok(s0.steps[0].active === true, 'the install step is the active focus');
-  ok(errs(s0) === '----', 'no diagnostics on a clean empty status');
+  // v1.20.1: the quiet gate rides from the very first rung — step ③
+  // teaches instead of erroring on a clean empty status
+  ok(s0.steps[2].gated === true && errs(s0) === '--E-',
+    'the gate note rides under step ③ while the bootstrap is pending (the teaching sub)');
+  ok(s0.steps[2].error.indexOf('complete step ② first') === 0,
+    'the gate note is the honest "complete step ② first" line');
 
   // rung 1: installed only
   var s1 = S({ available: true, installed: true, version_name: '0.118.3' });
   ok(states(s1) === '✓ now · ·', 'installed-only: step ① done, bootstrap in focus');
   ok(s1.steps[1].active === true, 'bootstrap is the active step');
   ok(s1.ready === false, 'not ready yet');
+  ok(s1.steps[2].gated === true, 'v1.20.1: step ③ stays gated while the bootstrap is pending');
+
+  // v1.20.1 rung 1.5: the CHECKIN landed (bootstrap_done) — the gate opens
+  var s15 = S({ available: true, installed: true, bootstrap_done: true, checkin_url: 'http://127.0.0.1:8081/x/checkin' });
+  ok(states(s15) === '✓ ✓ now ·', 'bootstrap_done alone completes step ② (the checkin is the truth)');
+  ok(s15.steps[2].gated === false && s15.steps[2].error === '',
+    'the gate opens + the note dies once the bootstrap is done');
+  ok(s15.steps[1].error === '', 'no props nag when the checkin itself says the script ran');
 
   // rung 2: + bridge_ok (the bootstrap round-trip worked)
   var s2 = S({ available: true, installed: true, bridge_ok: true });
   ok(states(s2) === '✓ ✓ now ·', 'installed + bridge_ok: steps ①② done, permission in focus');
   ok(s2.steps[2].active === true, 'permission is the active step');
+  ok(s2.steps[2].gated === false, 'bridge_ok also opens the gate (the old-flow done marker)');
 
   // rung 3: + permission (the ladder is one short)
   var s3 = S({ available: true, installed: true, bridge_ok: true, permission: true, storage_ok: false });
@@ -245,6 +305,27 @@ console.log('v1.17.3 THE SETUP behavior — _stepStates:');
   var s8 = S({ available: true, installed: true, bridge_ok: true, permission: true,
                storage_ok: true, props_ok: false, ready: true });
   ok(s8.ready === true, 'props_ok is informational — ready is the engine\'s word');
+
+  // ── v1.20.1: the DYNAMIC bootstrap command shapes (pure) ─────────
+  var CMD = T._bootstrapCmdFor;
+  var CHECKIN_URL = 'http://127.0.0.1:8081/01234567-89ab-cdef-0123-456789abcdef/checkin';
+  ok(CMD({}) === ONE_LINER, 'no status → the static one-liner');
+  ok(CMD(null) === ONE_LINER, 'null status → the static one-liner');
+  ok(CMD({ available: true }) === ONE_LINER, 'no checkin_url → the static one-liner (old engine)');
+  ok(CMD({ checkin_url: '' }) === ONE_LINER, 'empty checkin_url → the static one-liner');
+  ok(CMD({ checkin_url: CHECKIN_URL }) === ONE_LINER + ' -s -- --checkin ' + CHECKIN_URL,
+    'a live checkin URL → the one-liner + the --checkin tail (exact shape)');
+  ok(CMD({ checkin_url: 'http://127.0.0.1:8081/01234567-89ab-cdef-0123-456789abcdef/checkin?x=1' }) === ONE_LINER,
+    'a query-suffixed URL fails the exact-shape guard → static');
+  ok(CMD({ checkin_url: 'http://10.0.0.5:8081/abcdef/checkin' }) === ONE_LINER,
+    'a non-loopback host fails the guard → static');
+  ok(CMD({ checkin_url: 'https://evil.example.com/checkin' }) === ONE_LINER,
+    'a foreign host fails the guard → static');
+  ok(CMD({ checkin_url: 'http://127.0.0.1:8081/abc; rm -rf /checkin' }) === ONE_LINER,
+    'shell metacharacters fail the guard → static (never pasted into a shell line)');
+  ok(CMD({ checkin_url: 'http://127.0.0.1:8081/ABCDEF/checkin' }) === ONE_LINER,
+    'uppercase hex fails the guard → static');
+  ok(CMD({ checkin_url: 42 }) === ONE_LINER, 'a non-string checkin_url → static (defensive)');
 })();
 
 console.log(pass + ' passed, ' + fail + ' failed');

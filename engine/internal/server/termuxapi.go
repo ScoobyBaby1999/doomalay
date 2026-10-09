@@ -1,7 +1,8 @@
 package server
 
 // termuxapi.go — v1.17.2 THE BRIDGE: the engine-side Termux surface
-// (PLAN-V117 §v1.17.2).
+// (PLAN-V117 §v1.17.2). v1.20.1 THE QUIET GATE (PLAN-V120 §v1.20.1): the
+// checkin passthrough + the probe-suppression law live here too.
 //
 // GET /api/termux/status aggregates two things from the APK's Kotlin
 // TermuxBridgeServer (the loopback server EngineService hosts at
@@ -36,10 +37,14 @@ import (
 // termuxProbeCache is the cached probe outcome (guarded by termuxMu).
 // A probe with a transport error is cached too — a dead bridge answering
 // every poll with a fresh 20s timeout would starve the setup UI.
+// v1.20.1: suppressed marks THE QUIET GATE holding — the last TTL-expiry
+// auto-probe was answered from the STALE cache (no RUN_COMMAND fired);
+// a real probe (auto or forced) resets it.
 type termuxProbeCache struct {
-	at     time.Time               // when the probe finished (zero = never probed)
-	result *termuxbridge.RunResult // nil when the probe errored
-	err    error                   // typed client error (refused/timeout/403/…)
+	at         time.Time               // when the probe finished (zero = never probed)
+	result     *termuxbridge.RunResult // nil when the probe errored
+	err        error                   // typed client error (refused/timeout/403/…)
+	suppressed bool                    // v1.20.1: the last auto-probe was quiet-gated away
 }
 
 // The probe costs a real RUN_COMMAND round-trip through Termux (~1-15s);
@@ -49,6 +54,12 @@ const termuxProbeTTL = 30 * time.Second
 // termuxProbeDeadline bounds one probe round-trip (the bridge itself times
 // out at 15s; +5s slack for the HTTP hop).
 const termuxProbeDeadline = 20 * time.Second
+
+// termuxProbePausedNote is the honest quiet-gate line: the stale answer is
+// served ON PURPOSE — termux-app forces a notification for EVERY
+// RUN_COMMAND while allow-external-apps is unset, so the auto-probe stays
+// paused until the bootstrap's checkin lands (or an explicit ?refresh=1).
+const termuxProbePausedNote = "probe paused — waiting for the Termux bootstrap (step 2) to avoid Termux spam notifications"
 
 // handleTermuxStatus is GET /api/termux/status.
 func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +76,14 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 	st, stErr := s.termux.Status(stCtx)
 	stCancel()
 
+	// THE v1.20.1 QUIET GATE: the auto-probe may fire ONLY when the state
+	// makes it safe — see termuxCanAutoProbe. ?refresh=1 (an explicit user
+	// action: a tap, a check-now, the verify stage) always bypasses it.
+	bootstrapDone := st != nil && st.BootstrapDone
+	canAutoProbe := s.termuxCanAutoProbe(bootstrapDone)
+
 	// Probe half — cached (TTL 30s); ?refresh=1 forces a re-probe.
-	pr, prErr := s.termuxProbeCached(r.URL.Query().Get("refresh") == "1")
+	pr, prErr, suppressed := s.termuxProbeCached(r.URL.Query().Get("refresh") == "1", canAutoProbe)
 
 	var installed, permission bool
 	var versionCode int64
@@ -83,6 +100,17 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 		storageOK = pr.StorageOK
 		propsOK = pr.PropsOK
 	}
+	// v1.20.1: the checkin passthrough (an old bridge that never reports
+	// them stays empty/false — the honest old-flow state).
+	var checkinURL string
+	var checkinAt int64
+	var checkinStorage, checkinProps bool
+	if st != nil {
+		checkinURL = st.CheckinURL
+		checkinAt = st.CheckinAt
+		checkinStorage = st.CheckinStorage
+		checkinProps = st.CheckinProps
+	}
 	var lastError string
 	if stErr != nil || prErr != nil {
 		var parts []string
@@ -94,44 +122,101 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		lastError = strings.Join(parts, "; ")
 	}
+	if suppressed {
+		// the quiet gate is a VISIBLE state, never silence — say so
+		if lastError == "" {
+			lastError = termuxProbePausedNote
+		} else {
+			lastError = strings.Join([]string{lastError, termuxProbePausedNote}, "; ")
+		}
+	}
 
 	writeJSON(w, 200, map[string]any{
-		"available":    true,
-		"android":      runtime.GOOS == "android", // runtime check — same binary every platform
-		"installed":    installed,
-		"version_code": versionCode,
-		"version_name": versionName,
-		"permission":   permission,
-		"bridge_ok":    bridgeOK,
-		"storage_ok":   storageOK,
-		"props_ok":     propsOK,
-		"ready":        bridgeOK && storageOK && installed && permission,
-		"last_error":   lastError,
-		"checked_at":   time.Now().Unix(),
+		"available":        true,
+		"android":          runtime.GOOS == "android", // runtime check — same binary every platform
+		"installed":        installed,
+		"version_code":     versionCode,
+		"version_name":     versionName,
+		"permission":       permission,
+		"bridge_ok":        bridgeOK,
+		"storage_ok":       storageOK,
+		"props_ok":         propsOK,
+		"ready":            bridgeOK && storageOK && installed && permission,
+		"checkin_url":      checkinURL,
+		"bootstrap_done":   bootstrapDone,
+		"checkin_at":       checkinAt,
+		"checkin_storage":  checkinStorage,
+		"checkin_props":    checkinProps,
+		"probe_suppressed": suppressed,
+		"last_error":       lastError,
+		"checked_at":       time.Now().Unix(),
 	})
 }
 
+// termuxCanAutoProbe decides THE QUIET GATE for the auto-probe (a
+// TTL-expiry miss, not a forced one): it may fire ONLY when
+//
+//   (a) the cached probe honestly says props are ON (keep verifying as
+//       before — those probes never trigger the notification path),
+//   (b) the bootstrap checkin arrived (bootstrapDone: the script just set
+//       the props — a probe is safe), or
+//   (c) the cache has NEVER been filled (one first look to learn the
+//       state honestly).
+//
+// Otherwise the stale cache serves past TTL: termux-app FORCES a
+// notification for every RUN_COMMAND while allow-external-apps is unset
+// (RunCommandService's own design), so a 30s-TTL probe loop while the
+// user reads the bootstrap is one notification per 30 seconds of spam —
+// exactly the user's report. bootstrapDone comes from the FRESH /status
+// half; the cache bits are read under the lock.
+func (s *Server) termuxCanAutoProbe(bootstrapDone bool) bool {
+	if bootstrapDone {
+		return true
+	}
+	s.termuxMu.Lock()
+	defer s.termuxMu.Unlock()
+	if s.termuxCache.at.IsZero() {
+		return true // never filled — the first look is honest, not spam
+	}
+	return s.termuxCache.result != nil && s.termuxCache.result.PropsOK
+}
+
 // termuxProbeCached returns the cached probe (TTL termuxProbeTTL), probing
-// on miss; force=true ignores the cache. Concurrent callers SHARE one
-// in-flight probe (the waiters join its result) — the setup overlay can
-// poll while a probe runs without queueing a second RUN_COMMAND, and the
-// mutex is never held across the (up to 20s) network call.
-func (s *Server) termuxProbeCached(force bool) (*termuxbridge.RunResult, error) {
+// on miss; force=true ignores the cache. v1.20.1 THE QUIET GATE: on a
+// TTL-expiry miss with canAutoProbe=false the STALE cache is served (no
+// RUN_COMMAND fires — see termuxCanAutoProbe) and the suppressed flag is
+// set; a real probe (forced or allowed) clears it. Concurrent callers
+// SHARE one in-flight probe (the waiters join its result) — the setup
+// overlay can poll while a probe runs without queueing a second
+// RUN_COMMAND, and the mutex is never held across the (up to 20s) network
+// call.
+func (s *Server) termuxProbeCached(force, canAutoProbe bool) (*termuxbridge.RunResult, error, bool) {
 	s.termuxMu.Lock()
 	if !force && time.Since(s.termuxCache.at) < termuxProbeTTL {
-		r, err := s.termuxCache.result, s.termuxCache.err
+		r, err, sup := s.termuxCache.result, s.termuxCache.err, s.termuxCache.suppressed
 		s.termuxMu.Unlock()
-		return r, err
+		return r, err, sup
 	}
 	if s.termuxFlight != nil {
-		// Join the in-flight probe; its result is fresh by construction.
+		// Join the in-flight probe; its result is fresh by construction
+		// (joining costs zero extra RUN_COMMANDs — the quiet gate only ever
+		// gates FIRING one).
 		flight := s.termuxFlight
 		s.termuxMu.Unlock()
 		<-flight
 		s.termuxMu.Lock()
+		r, err, sup := s.termuxCache.result, s.termuxCache.err, s.termuxCache.suppressed
+		s.termuxMu.Unlock()
+		return r, err, sup
+	}
+	if !force && !canAutoProbe {
+		// THE QUIET GATE: the TTL expired but the state is honestly
+		// known-not-props (or the bridge is dead) and no checkin has arrived
+		// — serve the stale answer, fire nothing, say so.
+		s.termuxCache.suppressed = true
 		r, err := s.termuxCache.result, s.termuxCache.err
 		s.termuxMu.Unlock()
-		return r, err
+		return r, err, true
 	}
 	flight := make(chan struct{})
 	s.termuxFlight = flight
@@ -148,7 +233,7 @@ func (s *Server) termuxProbeCached(force bool) (*termuxbridge.RunResult, error) 
 	s.termuxFlight = nil
 	close(flight)
 	s.termuxMu.Unlock()
-	return r, err
+	return r, err, false
 }
 
 // handleTermuxAct is POST /api/termux/act — body {"what": "open_termux" |

@@ -147,9 +147,9 @@
 
     // v1.17.1 THE PIVOT: pill-sandbox died with the picker — the
     // capabilities pill replaces it (opens THE CAPABILITY LIBRARY).
-    // When the Termux capability is stacked on the chat, an accent
-    // ⌨ Termux pill joins it (the user's spec: the pill/row in the list
-    // turns to a primary/accent theme color when active).
+    // v1.20.1 THE QUIET GATE: the accent ⌨ Termux pill died with the
+    // chat-metadata noise (the user's ask) — the capability stays visible
+    // as the 🧩 library row; state.termux no longer mints a pill.
     pills(ctx) {
       var pills = [
         {
@@ -171,15 +171,6 @@
           onTap: function () { ctx.openModelPicker(); }
         }
       ];
-      if (ctx.state && ctx.state.termux) {
-        pills.push({
-          id: 'pill-termux',
-          label: '⌨ Termux',
-          onTap: function () {
-            if (window.Capabilities) window.Capabilities.open(ctx);
-          }
-        });
-      }
       return pills;
     }
 

@@ -1502,13 +1502,11 @@
   // follow". Each pill now carries its OWN theme color (the pill id →
   // [color var, rgb-triplet var]): caps→accent (the sandbox pill's
   // heir), model→accent-2, template→template tint, skills→persona tint;
-  // the dedicated pills below keep their assigned accents. v1.17.1: the
-  // Termux pill rides the ACCENT (the user's spec: the pill/row in the
-  // list turns to a primary or accent theme color when the capability
-  // is stacked).
+  // the dedicated pills below keep their assigned accents. v1.20.1: the
+  // pill-termux tone entry died with the pill itself (THE QUIET GATE —
+  // the capability rides the 🧩 library row, not the chat metadata).
   var PILL_TONES = [
     [/^pill-caps/, '--accent', '--accent-rgb'],
-    [/^pill-termux/, '--accent', '--accent-rgb'],
     [/^pill-model/, '--accent-2', '--accent-2-rgb'],
     [/^pill-template/, '--template-tint', '--template-rgb'],
     [/^pill-skills/, '--persona-tint', '--persona-rgb'],
@@ -1521,10 +1519,12 @@
     return [null, '--accent', '--accent-rgb'];
   }
 
-  // v1.17.5: renderTypePills — the type's pills (model/caps/termux),
-  // extracted from wireHeader so the session restore can repaint them
-  // LATE (state.termux arrives after the header painted — the ⌨ pill
-  // would otherwise appear only on the NEXT full render).
+  // v1.17.5: renderTypePills — the type's pills (model/caps), extracted
+  // from wireHeader so they paint in one place. v1.20.1: the late-repaint
+  // machinery died with the ⌨ Termux pill (the only pill that ever
+  // depended on late-arriving state) — the pills paint once at wire time
+  // and re-render with every chat panel rebuild, as they always did
+  // before v1.17.5.
   function renderTypePills(pillRow, type, ctx) {
     pillRow.innerHTML = '';
     var pills = type.pills(ctx);
@@ -1666,13 +1666,8 @@
     wireHeaderMeters(bodyEl, icon, state, ctx);
 
     // The type's pills (change method of chat / model anytime).
-    // v1.17.5: extracted into renderTypePills so the session restore can
-    // repaint them LATE (the ⌨ Termux pill rides state.termux, which the
-    // engine session restores after the header painted — the v0.76.5
-    // workspace-badge repaint precedent).
     if (pillRow) {
       renderTypePills(pillRow, type, ctx);
-      state._renderTypePills = function () { renderTypePills(pillRow, type, ctx); };
 
       // v0.17: THE ARTIFACT DRAWER PILL (per user spec: in the collapsible
       // header dropdown). Badge shows this chat's artifact count.
@@ -4243,13 +4238,6 @@
           try { state.placeholders = JSON.parse(data.Placeholders) || {}; } catch (e) {}
         }
         state.chatName = data.Title || state.chatName;
-        // v1.17.5: the LATE PILL REPAINT — state.termux (and any other
-        // late-arriving cap) restores after the header painted; repaint
-        // the type's pills so the ⌨ Termux pill appears now (the v0.76.5
-        // workspace-badge repaint precedent).
-        if (typeof state._renderTypePills === 'function') {
-          try { state._renderTypePills(); } catch (e) { /* repaint is cosmetic */ }
-        }
         cb();
       } else {
         ensureSession(icon, state, cb);

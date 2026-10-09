@@ -17,6 +17,10 @@
 #   3. pkg update + coreutils      (the file tools the next wave's MCP
 #                                     tools rely on)
 #   4. the default workspace dir   (~/storage/shared/Doomalay)
+#   5. the checkin (v1.20.1)        (when the app passes --checkin <url>:
+#                                     one curl tells Doomalay this script
+#                                     finished — zero extra commands,
+#                                     zero notifications)
 #
 # WHY THREE TAPS: Termux's own security model — no script can grant these
 # for you. Everything else is automatic. After this runs, return to the
@@ -27,6 +31,30 @@
 # next step still runs.
 
 set -u
+
+# ── args ───────────────────────────────────────────────────────
+# --checkin <url>: the Doomalay app's loopback checkin URL (v1.20.1 THE
+# QUIET GATE — the app hands it out inside the bootstrap command it
+# shows). When present, step 5 below tells the app this script finished
+# with ZERO extra commands. Unknown args are ignored, never fatal (the
+# same law every step below lives by).
+DOOMALAY_CHECKIN_URL=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --checkin)
+            if [ $# -ge 2 ]; then
+                DOOMALAY_CHECKIN_URL="$2"
+                shift 2
+            else
+                echo "  ⚠ --checkin needs a URL after it (ignored — non-fatal)"
+                shift 1
+            fi
+            ;;
+        *)
+            shift 1
+            ;;
+    esac
+done
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  Doomalay — Termux setup"
@@ -101,3 +129,18 @@ echo ""
 echo "═══════════════════════════════════════════════════════════"
 echo "  doomalay termux setup complete — return to the Doomalay app"
 echo "═══════════════════════════════════════════════════════════"
+
+# ── 5. the checkin (v1.20.1 THE QUIET GATE) ──────────────────────────
+# Tell the Doomalay app the bootstrap ran, with this script's OWN honest
+# step outcomes as the two flags. Non-fatal by the same law as everything
+# above: a failed curl changes nothing — the setup still worked, the app
+# simply keeps watching the old way.
+if [ -n "$DOOMALAY_CHECKIN_URL" ]; then
+    __storage_flag=0; [ -d "$HOME/storage/shared" ] && __storage_flag=1
+    __props_flag=0; grep -q "^allow-external-apps" "$HOME/.termux/termux.properties" 2>/dev/null && __props_flag=1
+    if curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}" >/dev/null 2>&1; then
+        echo "doomalay app notified — setup state is live"
+    else
+        echo "(could not notify the doomalay app — the setup still worked; return to the app)"
+    fi
+fi

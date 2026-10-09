@@ -66,12 +66,21 @@ func NewClient(baseURL string) *Client {
 }
 
 // Status is the /status shape — the Kotlin PackageManager lookups (fresh
-// on every call; sub-millisecond, no caching needed).
+// on every call; sub-millisecond, no caching needed). The v1.20.1 checkin
+// fields are additive: an older Kotlin bridge that predates THE QUIET GATE
+// simply does not send them, and they decode to their zero values (empty
+// URL, false flags, 0 timestamp) — the honest old-flow state, never an
+// error.
 type Status struct {
-	Installed   bool   `json:"installed"`
-	VersionCode int64  `json:"version_code"`
-	VersionName string `json:"version_name"`
-	Permission  bool   `json:"permission"`
+	Installed      bool   `json:"installed"`
+	VersionCode    int64  `json:"version_code"`
+	VersionName    string `json:"version_name"`
+	Permission     bool   `json:"permission"`
+	CheckinURL     string `json:"checkin_url"`
+	BootstrapDone  bool   `json:"bootstrap_done"`
+	CheckinAt      int64  `json:"checkin_at"`
+	CheckinStorage bool   `json:"checkin_storage"`
+	CheckinProps   bool   `json:"checkin_props"`
 }
 
 // RunResult is the /probe + /run result shape. StorageOK/PropsOK are the

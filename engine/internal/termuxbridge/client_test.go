@@ -102,6 +102,57 @@ func TestStatus_HappyPath(t *testing.T) {
 	}
 }
 
+// v1.20.1 THE QUIET GATE: the /status checkin fields decode (a bridge that
+// reports them) and — critically — a bridge that PREDATES them (no fields
+// at all) still decodes to the honest zero state, never an error: an old
+// APK bridge against a new engine is the old flow, not a failure.
+func TestStatus_CheckinFields_DecodeDefensively(t *testing.T) {
+	// the v1.20.1 bridge: checkin fields present
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeStubJSON(w, map[string]any{
+			"installed": true, "version_code": 1002, "version_name": "0.118.3", "permission": true,
+			"checkin_url":     "http://127.0.0.1:8081/01234567-89ab-cdef-0123-456789abcdef/checkin",
+			"bootstrap_done":  true,
+			"checkin_at":      1717000000,
+			"checkin_storage": true,
+			"checkin_props":   false,
+		})
+	}))
+	defer ts.Close()
+	c := NewClient(ts.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s, err := c.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if s.CheckinURL != "http://127.0.0.1:8081/01234567-89ab-cdef-0123-456789abcdef/checkin" ||
+		!s.BootstrapDone || s.CheckinAt != 1717000000 || !s.CheckinStorage || s.CheckinProps {
+		t.Fatalf("checkin fields should decode: %+v", s)
+	}
+
+	// the pre-v1.20.1 bridge: no checkin fields at all
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeStubJSON(w, map[string]any{
+			"installed": true, "version_code": 1002, "version_name": "0.118.3", "permission": true,
+		})
+	}))
+	defer old.Close()
+	c2 := NewClient(old.URL)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	s2, err := c2.Status(ctx2)
+	if err != nil {
+		t.Fatalf("an old bridge must decode, not error: %v", err)
+	}
+	if s2.CheckinURL != "" || s2.BootstrapDone || s2.CheckinAt != 0 || s2.CheckinStorage || s2.CheckinProps {
+		t.Fatalf("missing checkin fields must decode to the zero state: %+v", s2)
+	}
+	if !s2.Installed || !s2.Permission {
+		t.Fatalf("the base ladder still decodes: %+v", s2)
+	}
+}
+
 // THE pin: the probe's StorageOK/PropsOK come from the STDOUT markers
 // (ground truth), not just the JSON fields — here the JSON says false and
 // the stdout says true; the client must land on true.
