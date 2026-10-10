@@ -226,7 +226,7 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
         case "find":
                 return s.termuxVerbFind(ctx, get, roots)
         case "pkg":
-                return s.termuxVerbPkg(ctx, get, args)
+                return s.termuxVerbPkg(ctx, sessionID, get, args)
         case "session_start":
                 return s.termuxVerbSessionStart(ctx, get)
         case "session_list":
@@ -573,33 +573,12 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
         if s.termuxExecGate(sessionID) {
                 return "OBSERVATION:\nerror: exec rate cap — this chat already ran 12 one-shot execs in the last minute (the anti-burst law). Ask the user whether they want more, or wait for the window to roll."
         }
-        res, errObs := s.termuxRunOne(ctx, command, roots[0], timeoutMS)
-        if errObs != "" {
-                return errObs
-        }
-        if res.Timeout {
-                return termuxTimeoutObs(res, timeoutMS)
-        }
-        var sb strings.Builder
-        fmt.Fprintf(&sb, "OBSERVATION:\nEXEC DONE — workdir %s\nexit_code: %d\nstdout:\n", roots[0], res.ExitCode)
-        if res.Stdout == "" {
-                sb.WriteString("(empty)\n")
-        } else {
-                sb.WriteString(res.Stdout)
-                if !strings.HasSuffix(res.Stdout, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        sb.WriteString("stderr:\n")
-        if res.Stderr == "" {
-                sb.WriteString("(empty)\n")
-        } else {
-                sb.WriteString(res.Stderr)
-                if !strings.HasSuffix(res.Stderr, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        return termuxMaybeTrunc(res, sb.String())
+        // v1.23.3 THE LIVE STREAM: exec rides the streaming wrapper — the
+        // output streams into the chat pill twice a second (the WS
+        // tool_stream events / the PM poll), the observation composes from
+        // the streamed buffers (or the broadcast fallback when the curls
+        // never landed).
+        return s.termuxRunStreaming(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS)
 }
 
 // termuxExecCap — 12 one-shot execs per rolling 60s window per
@@ -922,7 +901,7 @@ echo
 // termuxVerbPkg — {op, packages}: pkg install -y / update / remove;
 // every package name sanitized engine-side (safe charset only) BEFORE
 // it ever rides a command line.
-func (s *Server) termuxVerbPkg(ctx context.Context, get func(string) string, args map[string]any) string {
+func (s *Server) termuxVerbPkg(ctx context.Context, sessionID string, get func(string) string, args map[string]any) string {
         op := get("op")
         if op == "" {
                 op = get("action2")
@@ -953,42 +932,19 @@ func (s *Server) termuxVerbPkg(ctx context.Context, get func(string) string, arg
                         return "OBSERVATION:\nerror: package name \"" + p + "\" refused — package names are letters, digits and . _ + - only (no spaces, no shell metacharacters)."
                 }
         }
-        vargs := append([]string{op}, pkgs...)
-        script := `set -u
-op="$1"
-shift
-case "$op" in
-  install) pkg install -y "$@" ;;
-  update) pkg update -y ;;
-  remove) pkg uninstall -y "$@" ;;
-esac
-rc=$?
-if [ "$rc" -ne 0 ]; then echo "pkg $op failed (exit $rc)" >&2; exit "$rc"; fi
-echo "pkg $op done"
-`
-        res, errObs := s.termuxRunOne(ctx, termuxCommand(script, vargs...), "", 180000)
-        if errObs != "" {
-                return errObs
+        // v1.23.3: pkg rides the streaming wrapper too (a python install
+        // is the user's own example — the pip/apt output streams live).
+        // The command builds from the SANITIZED op + package names (the
+        // termuxPkgNameRE law already vetted every name — the same words
+        // the old script passed as positional args).
+        pkgCmd := "pkg update -y"
+        switch op {
+        case "install":
+                pkgCmd = "pkg install -y " + strings.Join(pkgs, " ")
+        case "remove":
+                pkgCmd = "pkg uninstall -y " + strings.Join(pkgs, " ")
         }
-        if res.Timeout {
-                return termuxTimeoutObs(res, 180000)
-        }
-        var sb strings.Builder
-        fmt.Fprintf(&sb, "OBSERVATION:\nPKG %s — full Termux pkg output:\n", strings.ToUpper(op))
-        if res.Stdout != "" {
-                sb.WriteString(res.Stdout)
-                if !strings.HasSuffix(res.Stdout, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        if res.Stderr != "" {
-                sb.WriteString("stderr:\n" + res.Stderr)
-                if !strings.HasSuffix(res.Stderr, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        fmt.Fprintf(&sb, "exit_code: %d\n", res.ExitCode)
-        return termuxMaybeTrunc(res, sb.String())
+        return s.termuxRunStreaming(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 180000)
 }
 
 // ── background-process sessions ─────────────────────────────────────────

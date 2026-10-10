@@ -530,7 +530,30 @@ async function runToolLoop(c, opts) {
         // v1.23.2: the RAW args ride the use event — the pill derives
         // its label (the program being run) from them at render time.
         opts.onTool && opts.onTool({ name: name, summary: summary, args: argsObj });
-        var out = await mcpExecTool(name, argsObj, opts.sessionId || '');
+        // v1.23.3 THE LIVE STREAM: while a termux call blocks on /mcp, poll
+        // the engine's stream side channel (~twice a second) — every delta
+        // fires opts.onToolStream (the same tool_stream events the WS path
+        // receives live). Polling stops when the call resolves.
+        var streamPoller = null, streamLen = 0;
+        if (name === 'termux' && opts.sessionId) {
+          var pollSess = opts.sessionId;
+          streamPoller = setInterval(function () {
+            fetch('/api/termux/stream?session=' + encodeURIComponent(pollSess) + '&after=' + streamLen)
+              .then(function (r) { return r.ok ? r.json() : null; })
+              .then(function (d) {
+                if (!d || !d.active) return;
+                if (typeof d.len === 'number') streamLen = d.len;
+                if (d.text && opts.onToolStream) opts.onToolStream({ name: 'termux', delta: String(d.text) });
+              })
+              .catch(function () { /* the side channel is best-effort */ });
+          }, 600);
+        }
+        var out;
+        try {
+          out = await mcpExecTool(name, argsObj, opts.sessionId || '');
+        } finally {
+          if (streamPoller) clearInterval(streamPoller);
+        }
         obs = out.isError ? out.text : String(out.text || '');
         if (out.sources && out.sources.length) {
           for (var si = 0; si < out.sources.length; si++) {

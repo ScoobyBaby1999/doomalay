@@ -88,6 +88,11 @@ type Server struct {
         // one fetch in flight; offline answers the frozen fallback URL).
         fdroid fdroidCache
 
+        // v1.23.3 THE LIVE STREAM: the Termux stream registry (token-keyed
+        // buffers fed by the wrapper's loopback curls; the WS emitter map +
+        // the PM poll route read the same buffers) — termuxstream.go.
+        txstreams termuxStreams
+
         // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
         // — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then
         // answers {enabled:false, state:"disabled"} honestly, zero network).
@@ -247,6 +252,10 @@ func (s *Server) routes() {
         // Kind:"termux" (see the v0.46 block below).
         s.mux.HandleFunc("GET /api/termux/fs", s.handleTermuxFSList)
         s.mux.HandleFunc("POST /api/termux/fs", s.handleTermuxFSMkdir)
+        // v1.23.3 THE LIVE STREAM: the wrapper's chunk carrier (token-gated)
+        // + the PM loop's poll side channel.
+        s.mux.HandleFunc("POST /api/termux/stream/{token}", s.handleTermuxStreamPost)
+        s.mux.HandleFunc("GET /api/termux/stream", s.handleTermuxStreamPoll)
         // v0.48 (task 5): dev-build-only shared public provider keys.
         s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
         s.mux.HandleFunc("GET /api/models", s.handleModels)

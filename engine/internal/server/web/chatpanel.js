@@ -2880,6 +2880,26 @@
         }
         streamMsg = null; // the next onDelta opens a fresh bubble at the bottom
       },
+      // v1.23.3 THE LIVE STREAM (the PM twin): the poll's deltas land here —
+      // the same append-to-pending-pill + bumpActivity law the WS
+      // tool_stream events follow (the stall fix rides identically).
+      onToolStream: function (ev) {
+        if (!ev || !ev.delta) return;
+        bumpActivity(state);
+        var sName = ev.name || 'termux';
+        for (var sMi = state.messages.length - 1; sMi >= 0; sMi--) {
+          var sMsg = state.messages[sMi];
+          if (!sMsg || sMsg.role !== 'tool' || !sMsg.tool || sMsg.res !== undefined) continue;
+          var sPay = sMsg.payload || {};
+          if ((sPay.name || '') === sName) {
+            sMsg.streamText = (sMsg.streamText || '') + String(ev.delta);
+            if (sMsg.streamText.length > 262144) sMsg.streamText = sMsg.streamText.slice(-262144);
+            setActivity(bodyEl, state, 'running ' + (toolPillLabelParts(sMsg).label || sName) + '… ' + ((sMsg.streamText.length / 1024).toFixed(1)) + ' KB');
+            refreshToolRow(bodyEl, state, sMi);
+            return;
+          }
+        }
+      },
       onTool: function (ev) {
         bumpActivity(state);
         if (ev.name === 'web_search' && ev.sources) {
@@ -4700,6 +4720,31 @@
       }
       lastThink.text += ev.text;
       scheduleUpdate(bodyEl, lastThink, false, state);
+    } else if (type === 'tool_stream') {
+      // v1.23.3 THE LIVE STREAM: the termux runner's output chunk — appends
+      // to the pending pill's streamText (the loading bar's live area) and
+      // BUMPS THE ACTIVITY CLOCK (the stall law: a 3-minute pip install can
+      // never again trip the 120s "may be stuck" escalation — the user's
+      // report). Ephemeral (never persisted, no i) — the merged pill is the
+      // vessel, tool_result closes it.
+      bumpActivity(state);
+      if (ev._replay) return; // replays never carry streams (the persist law)
+      var sName = ev.name || 'termux';
+      var sDelta = ev.delta || ev.text || '';
+      if (!sDelta) return;
+      for (var sMi = state.messages.length - 1; sMi >= 0; sMi--) {
+        var sMsg = state.messages[sMi];
+        if (!sMsg || sMsg.role !== 'tool' || !sMsg.tool || sMsg.res !== undefined) continue;
+        var sPay = sMsg.payload || {};
+        if ((sPay.name || '') === sName) {
+          sMsg.streamText = (sMsg.streamText || '') + sDelta;
+          if (sMsg.streamText.length > 262144) sMsg.streamText = sMsg.streamText.slice(-262144);
+          // the activity line names the running label + the received size
+          setActivity(bodyEl, state, 'running ' + (toolPillLabelParts(sMsg).label || sName) + '… ' + ((sMsg.streamText.length / 1024).toFixed(1)) + ' KB');
+          refreshToolRow(bodyEl, state, sMi);
+          return;
+        }
+      }
     } else if (type === 'tool_use') {
       bumpActivity(state);
       stampThinkEnd(state, evTsMs(ev)); // v0.27.1: the model moved on to tools
@@ -5382,7 +5427,9 @@
         '<div class="tool-pill-head">' +
           '<span class="tool-pill-ico">' + ((merged || msg.result) ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
           '<span class="tool-pill-text">' + esc(parts.label) +
-            (parts.tail ? ' <span class="tool-pill-tail">' + esc(parts.tail) + '</span>' : '') +
+            (pending && msg.streamText
+              ? ' <span class="tool-pill-tail tool-pill-tail-live">' + esc(String(msg.streamText).split('\n').filter(function (l) { return l.trim(); }).slice(-1)[0] || '').slice(0, 64) + '</span>'
+              : (parts.tail ? ' <span class="tool-pill-tail">' + esc(parts.tail) + '</span>' : '')) +
             (pending ? ' <span class="tool-pill-live" aria-hidden="true"></span>' : '') +
           '</span>' +
           (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +

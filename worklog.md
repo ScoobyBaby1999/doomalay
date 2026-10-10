@@ -1038,3 +1038,21 @@ Work Log:
 
 Stage Summary:
 - The Get-Termux tap always serves F-Droid's CURRENT stable link (never manually updated again; offline = the frozen link); exec runs rapid-fire with only the 12/min cap. Engine+Kotlin ride the APK (OTA carries nothing of this phase).
+
+---
+Task ID: v1.23.2
+Agent: Main orchestrator (THE PILL WAVE)
+Task: PLAN-V123 §2 — THE ONE PILL: merge the tool call + result pills, derive the real exec label, the loading bar.
+
+Work Log:
+- chatpanel.js: toolPillLabelParts + termuxArgsOf (the pure label derivation: first token + the ONE generic 'install' join, pkg verb, summary fallback) + mergeToolResult (the pairing-to-last-pending reducer, ei2, resPayload) + refreshToolRow (in-place repaint) — all exported for the rig.
+- messageHTML tool branch: the merged/pending/progress states, the dim tail + live dot, the expanded three-truth-rows (tool/query/result); toolDetailHTML: args pretty-print (object or JSON string), the merged result read, THE LOADING BAR (pending) + the streamText seam for v1.23.3.
+- The WS tool_result handler merges (replay identical — persistence untouched, append-only law); the PM onTool twin merges the result half + persists the RAW args; pmsdk passes args + prefers the nested args.command summary (the 'exec' flat-key vagueness dies).
+- The hide flows honor ei2 (the live hide loop, regenerate, commitEditStash — masking either half drops the vessel).
+- openToolFullView reads msg.res (the borrow walk stays for standalone legacy pills).
+- index.html: the tail/live-dot/bar/stream CSS (theme vars only + prefers-reduced-motion honesty); mobile 390px verified.
+- THE BROWSER WALK (agent-browser + a live engine, zero console errors): the seeded session replayed through the real app renders ONE merged pill ('pip install numpy', result tone, both-spans label+tail) + ONE pending pill ('ls -la' + live dot; expanded = tool/query/result + the 3.375px animated slide bar); the full view opens/closes; the X works.
+- Battery: v1232 rig 39/39 (NEW) · v1171 67/67 · v1212 23/23 · interrupt 65 · v1175 155/155 · v0935 13/13. Pushed d69544ca.
+
+Stage Summary:
+- One pill per action, the program as the placeholder, the query as the tail, the loading bar while in flight — live, replayed, and pre-merge chats alike. The PWA side lands OTA. The stream (v1.23.3) fills the same vessel.

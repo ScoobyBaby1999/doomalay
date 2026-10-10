@@ -1830,6 +1830,13 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 TemplateAuto: sess.TemplateAuto,
                 SkillsAuto:   sess.SkillsAuto,
         }
+        // v1.23.3: the events channel is declared EARLY — the termux stream
+        // emitter (below) pushes tool_stream events into the same pipeline
+        // the ChatChunk converter feeds (two writers, one reader: channels
+        // are send-safe; the closer waits for both).
+        events := make(chan map[string]any, 64)
+        var streamWG sync.WaitGroup
+
         // v1.20.3 THE ARM: THE TERMUX HAND on the direct path — the chat's
         // bound device (termux) workspaces (exec + file verbs + pkg +
         // background process sessions, jailed to the bound folders). Armed
@@ -1838,6 +1845,29 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // when unarmed (the workspace tool's law — the manifest is the first
         // gate, the runner is the second).
         if sess.Termux && len(s.sessionTermuxRoots(sessionID)) > 0 {
+                // v1.23.3 THE LIVE STREAM: the session's chunk emitter — every
+                // streamed termux chunk fires a tool_stream event into this
+                // turn's pipeline (ephemeral, like progress: never persisted —
+                // the replay law stays use + result; the merge pill is the
+                // vessel). Set for the turn's lifetime, cleared on exit.
+                streamCh := make(chan map[string]any, 32)
+                streamWG.Add(1)
+                go func() {
+                        defer streamWG.Done()
+                        for ev := range streamCh {
+                                events <- ev
+                        }
+                }()
+                s.txstreams.setEmitter(sessionID, func(delta string) {
+                        streamCh <- map[string]any{
+                                "type": "tool_stream", "session_id": sessionID,
+                                "name": "termux", "delta": delta,
+                        }
+                })
+                defer func() {
+                        s.txstreams.setEmitter(sessionID, nil)
+                        close(streamCh)
+                }()
                 req.TermuxToolFn = func(ctx context.Context, argJSON string) string {
                         return s.runTermuxAction(ctx, sessionID, argJSON)
                 }
@@ -1855,10 +1885,13 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // v0.15: error events carry provider + model so a future UI/engine
         // desync is instantly diagnosable ("401 via opencode/claude-fable-5"
         // instead of a bare 401).
-        events := make(chan map[string]any, 64)
+        // v1.23.3: `events` is declared EARLY (the termux stream emitter
+        // writes it too); the converter goroutine no longer solely owns the
+        // close — streamWG waits for the stream forwarder first.
         var assistantParts []string // v0.22: resettable (assistant_reset clears a leaked preamble)
         go func() {
                 defer close(events)
+                defer streamWG.Wait()
                 for chunk := range chunks {
                         ev := map[string]any{
                                 "type":       chunk.Type,
@@ -2164,6 +2197,24 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                                         ev[k] = Redact(v)
                                 }
                         }
+                }
+                // v1.23.3 THE LIVE STREAM: tool_stream events are EPHEMERAL —
+                // the termux runner's output chunks stream to the live WS only
+                // (never persisted, no i/seq — the replay law stays use +
+                // result; the merged pill is the vessel, the final
+                // tool_result closes it).
+                if evType == "tool_stream" {
+                        out := map[string]any{"type": "tool_stream", "session_id": sessionID}
+                        if n, ok := ev["name"].(string); ok {
+                                out["name"] = n
+                        }
+                        if d, ok := ev["delta"].(string); ok {
+                                out["delta"] = d
+                        }
+                        if b, err := json.Marshal(out); err == nil {
+                                _ = pipe.send(b)
+                        }
+                        continue
                 }
                 // v0.23 NO-SILENCE: progress events are EPHEMERAL — forwarded
                 // to the live WS only, never persisted, no i/seq (replay never
