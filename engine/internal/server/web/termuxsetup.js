@@ -188,6 +188,67 @@
     return { unavailable: status.available !== true, ready: !!status.ready, steps: steps };
   }
 
+  // ── THE PULSE (v1.21.3 — pure; the node rig tests this) ────────────
+  // _barFor(status, spinFrame, probing) → { bar, fill, empty, pct, label,
+  //   note, spin } — the ASCII progress bar under the step list.
+  // DERIVED FROM _stepStates (one source of truth — the bar can never
+  // disagree with the rows). 20 cells, Unicode blocks with the fractional
+  // tip characters so 4 steps fill smoothly; the braille spinner rides
+  // only while a probe is in flight (the quiet-gate honesty: no fake
+  // motion — probes paused means the bar idles, marked ⏸).
+  var SPIN_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+  var TIP_CHARS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉']; // eighths
+  var BAR_CELLS = 20;
+  var STEP_LABELS = { install: 'install', bootstrap: 'bootstrap', permission: 'permission', verify: 'verify' };
+  var STEP_LEAVE_NOTES = {
+    install: 'leave the app to F-Droid — this page catches up when you return',
+    bootstrap: 'leave to Termux and paste — setup keeps running; come back any time',
+    permission: 'leave to Android settings — this page catches up when you return',
+    verify: 'auto-checking storage + the command bridge…'
+  };
+  function _barFor(status, spinFrame, probing) {
+    var s = _stepStates(status);
+    var done = 0, i, activeKey = '';
+    for (i = 0; i < s.steps.length; i++) {
+      if (s.steps[i].done) done++;
+      if (s.steps[i].active && !s.steps[i].done) activeKey = s.steps[i].key;
+    }
+    var pct = s.ready ? 100 : Math.round((done / s.steps.length) * 100);
+    var filled = (done / s.steps.length) * BAR_CELLS;
+    if (s.ready) filled = BAR_CELLS;
+    var full = Math.floor(filled);
+    var tip = TIP_CHARS[Math.min(7, Math.round((filled - full) * 8))];
+    var empty = BAR_CELLS - full - (tip ? 1 : 0);
+    if (empty < 0) { empty = 0; tip = ''; }
+    var label = s.ready ? 'ready' : ('step ' + (done + 1) + '/4 · ' + (STEP_LABELS[activeKey] || 'setup'));
+    var note = s.ready ? '✓ the sandbox is ready' : (STEP_LEAVE_NOTES[activeKey] || '');
+    if (!s.ready && status && status.probe_suppressed === true) {
+      // THE QUIET GATE honesty: probes are paused — the bar idles, no fake motion
+      note = '⏸ probes paused until the bootstrap lands — no notification spam';
+    }
+    return {
+      fill: '█'.repeat(full), tip: tip, empty: '░'.repeat(empty),
+      pct: pct, label: label, note: note,
+      spin: probing ? SPIN_FRAMES[((spinFrame || 0) % SPIN_FRAMES.length)] : ''
+    };
+  }
+
+  // paintPulse — the in-place repaint (textContent only, escape-safe).
+  function paintPulse(inst) {
+    if (!inst || inst.dead || inst.ready || inst.halted) return;
+    var el = document.getElementById('tsx-pulse');
+    if (!el) return; // the ready/unavailable cards have no bar
+    var b = _barFor(inst.last, inst.spinFrame || 0, !!inst.probing);
+    var fillEl = el.querySelector('#tsx-pulse-fill');
+    var emptyEl = el.querySelector('#tsx-pulse-empty');
+    var labelEl = el.querySelector('#tsx-pulse-label');
+    var noteEl = el.querySelector('#tsx-pulse-note');
+    if (fillEl) fillEl.textContent = b.fill + b.tip;
+    if (emptyEl) emptyEl.textContent = b.empty;
+    if (labelEl) labelEl.textContent = b.spin ? (b.spin + ' ' + b.pct + '% · ' + b.label) : (b.pct + '% · ' + b.label);
+    if (noteEl) noteEl.textContent = b.note || '';
+  }
+
   // ── markup (theme vars only — the capabilities.js row idioms) ────────
   // v1.20.1 THE QUIET GATE: the bootstrap command for a status — the static
   // one-liner until the bridge hands out a checkin URL, then the --checkin
@@ -262,6 +323,16 @@
         stepRow('verify', '④', 'Verify', 'checks storage + the command bridge',
           '', '') +
       '</div>' +
+      // v1.21.3 THE PULSE: the ASCII progress bar — one honest glance at
+      // how far the setup has come (derived from the same _stepStates the
+      // rows read; the spinner rides only while a probe is in flight).
+      '<div class="tsx-pulse" id="tsx-pulse" aria-label="Termux setup progress">' +
+        '<div class="tsx-pulse-row">' +
+          '<span class="tsx-pulse-bar" aria-hidden="true"><span id="tsx-pulse-fill"></span><span id="tsx-pulse-empty"></span></span>' +
+          '<span class="tsx-pulse-label" id="tsx-pulse-label">0% · step 1/4 · install</span>' +
+        '</div>' +
+        '<div class="tsx-pulse-note" id="tsx-pulse-note"></div>' +
+      '</div>' +
       '<div class="tsx-foot">states refresh live while this is open — leave it open while you work in Termux</div>' +
     '</div>';
   }
@@ -303,6 +374,7 @@
     if (!inst || inst.dead) return;
     inst.dead = true;
     if (inst.poll) { clearInterval(inst.poll); inst.poll = null; }
+    if (inst.spin) { clearInterval(inst.spin); inst.spin = null; }
     if (current === inst) current = null;
     var cb = inst.opts && inst.opts.onExit;
     if (cb) { try { cb(inst.last); } catch (e) { console.error(e); } }
@@ -339,8 +411,14 @@
 
   function fetchStatus(inst, force) {
     if (!inst || inst.dead || inst.halted || inst.ready) return;
+    // v1.21.3 THE PULSE: the spinner rides ONLY while a probe is in flight
+    inst.probing = true;
+    paintPulse(inst);
     getJSON('/api/termux/status' + (force ? '?refresh=1' : '')).then(function (status) {
-      if (inst.dead || !window.ConnectOverlay.isOpen()) return;
+      if (inst.dead) return;
+      inst.probing = false;
+      inst.spinFrame = (inst.spinFrame || 0) + 1;
+      if (!window.ConnectOverlay.isOpen()) return;
       if (!status || status.available !== true) {
         // desktop / bridge gone — the honest unavailable card replaces the ladder
         inst.halted = true;
@@ -353,6 +431,9 @@
       applyStatus(inst, status);
     }).catch(function (err) {
       if (inst.dead) return;
+      inst.probing = false;
+      inst.spinFrame = (inst.spinFrame || 0) + 1;
+      paintPulse(inst);
       // honest transient diagnostic — the poll keeps trying
       setStatusLine('status check failed — ' +
         (err && err.message ? err.message : 'unknown error') + ' · retrying…');
@@ -375,6 +456,8 @@
     // steps paint (the status line stays honest — never silence).
     applyBootstrapCmd(status);
     for (var i = 0; i < s.steps.length; i++) paintStep(s.steps[i]);
+    // v1.21.3: the pulse bar follows the same status (one truth, two views)
+    paintPulse(inst);
     setStatusLine(status.probe_suppressed === true
       ? 'probing paused until the bootstrap lands — no notification spam'
       : '');
@@ -508,7 +591,8 @@
     var inst = {
       ctx: ctx, opts: opts,
       last: null, dead: false, halted: false, ready: false, forceNext: false,
-      poll: null
+      probing: false, spinFrame: 0,
+      poll: null, spin: null
     };
     current = inst;
     var pageOpts = {
@@ -523,6 +607,13 @@
     }
     fetchStatus(inst, true);                 // the first fetch refreshes
     inst.poll = setInterval(function () { tick(inst); }, POLL_MS);
+    // v1.21.3 THE PULSE: the spinner's heartbeat (130ms braille frames —
+    // visible ONLY while a probe is in flight; otherwise this paints nothing).
+    inst.spin = setInterval(function () {
+      if (!inst || inst.dead || !inst.probing) return;
+      inst.spinFrame = (inst.spinFrame || 0) + 1;
+      paintPulse(inst);
+    }, 130);
   }
 
   // ── styles (injected once — theme vars only, the cap-row idioms) ────
@@ -609,7 +700,22 @@
       '.tsx-ready-title{font-weight:700;font-size:calc(var(--ui-fs) + 1px);color:var(--accent)}' +
       '.tsx-ready-sub{font-size:var(--ui-small-fs);color:var(--text-3);line-height:1.5}' +
       '.tsx-btn-done{margin-top:6px;padding:9px 22px;color:var(--on-accent);' +
-        'background:var(--accent);border:1px solid var(--accent)}';
+        'background:var(--accent);border:1px solid var(--accent)}' +
+      // v1.21.3 THE PULSE — the ASCII progress bar (theme vars only;
+      // monospace because the bar IS ASCII art; the fill rides the accent)
+      '.tsx-pulse{margin:6px 16px 2px;padding:8px 10px;border-radius:10px;' +
+        'border:1px solid var(--surface-2);background:var(--surface-1)}' +
+      '.tsx-pulse-row{display:flex;align-items:center;gap:8px;min-width:0}' +
+      '.tsx-pulse-bar{flex-shrink:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;' +
+        'font-size:calc(var(--ui-small-fs) - 1px);line-height:1;letter-spacing:0;' +
+        'white-space:nowrap;overflow:hidden}' +
+      '.tsx-pulse-bar #tsx-pulse-fill{color:var(--accent)}' +
+      '.tsx-pulse-bar #tsx-pulse-empty{color:var(--text-3-dim)}' +
+      '.tsx-pulse-label{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;' +
+        'font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);' +
+        'text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.tsx-pulse-note{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
+        'padding:4px 2px 0;line-height:1.45;overflow-wrap:break-word}';
     document.head.appendChild(s);
   }
   if (typeof document !== 'undefined' && document.getElementById && document.head) {
@@ -617,13 +723,14 @@
   }
 
   if (typeof window !== 'undefined') {
-    window.TermuxSetup = { open: open, _stepStates: _stepStates, _bootstrapCmdFor: _bootstrapCmdFor };
+    window.TermuxSetup = { open: open, _stepStates: _stepStates, _bootstrapCmdFor: _bootstrapCmdFor, _barFor: _barFor };
   }
 
   // v1.17.3: the node test path (scripts/v1173-setup-test.js) — the pure
   // ladder computation, exported the same way capabilities.js does.
   // v1.20.1: _bootstrapCmdFor joins it (the dynamic command shapes).
+  // v1.21.3: _barFor joins it (THE PULSE's pure renderer).
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { _stepStates: _stepStates, BOOTSTRAP_CMD: BOOTSTRAP_CMD, _bootstrapCmdFor: _bootstrapCmdFor };
+    module.exports = { _stepStates: _stepStates, BOOTSTRAP_CMD: BOOTSTRAP_CMD, _bootstrapCmdFor: _bootstrapCmdFor, _barFor: _barFor };
   }
 })();
