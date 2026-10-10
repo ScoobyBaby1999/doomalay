@@ -176,7 +176,7 @@ func TestSessionContextPreambleTermuxArm(t *testing.T) {
                 "session_start {\"name\",\"command\"} launches a nohup'd process",
                 "session_list / session_log / session_kill watch and stop them",
                 "Termux's own 100KB result bundle is the only cap",
-                "exec paces at ≥4s between runs with 12 per minute",
+                "exec runs up to 12 per minute per chat",
         } {
                 if !strings.Contains(out, pin) {
                         t.Fatalf("missing teach pin %q:\n%s", pin, out)

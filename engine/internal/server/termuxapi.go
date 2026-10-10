@@ -76,6 +76,12 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 	st, stErr := s.termux.Status(stCtx)
 	stCancel()
 
+	// v1.23.1 THE LINK: every status poll warms the F-Droid resolver in
+	// the background (one flight, 6h cache) — the setup page's Get-Termux
+	// tap answers the CURRENT stable link instantly. Never blocks the
+	// status answer; never errors.
+	s.warmFdroidURL()
+
 	// THE v1.20.1 QUIET GATE: the auto-probe may fire ONLY when the state
 	// makes it safe — see termuxCanAutoProbe. ?refresh=1 (an explicit user
 	// action: a tap, a check-now, the verify stage) always bypasses it.
@@ -238,7 +244,12 @@ func (s *Server) termuxProbeCached(force, canAutoProbe bool) (*termuxbridge.RunR
 
 // handleTermuxAct is POST /api/termux/act — body {"what": "open_termux" |
 // "open_fdroid" | "open_permission_settings"}. Passthrough to the bridge's
-// /act route (the intents fire on the APK side).
+// /act route (the intents fire on the APK side). v1.23.1 THE LINK: the
+// open_fdroid action resolves the CURRENT stable F-Droid APK URL dynamically
+// (F-Droid's own suggestedVersionCode — no more frozen links) and rides it
+// in the act body; the Kotlin side opens it only under the f-droid.org
+// allowlist, else its frozen fallback. A failed resolve answers the frozen
+// link — the tap never breaks.
 func (s *Server) handleTermuxAct(w http.ResponseWriter, r *http.Request) {
 	if s.termux == nil {
 		writeError(w, http.StatusBadRequest, "termux bridge not configured on this engine")
@@ -260,6 +271,24 @@ func (s *Server) handleTermuxAct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if body.What == "open_fdroid" {
+		// v1.23.1: resolve fresh-ish (cached ≤6h) and forward — the bridge
+		// is authoritative for the actual intent; a resolution failure rides
+		// as an empty url and the Kotlin fallback answers.
+		url := s.fdroidTermuxLink(ctx)
+		res, err := s.termux.ActWithURL(ctx, body.What, url)
+		if err != nil {
+			// Honest action-failure report (bridge dead / timeout / 403): the
+			// intent genuinely did not fire — the PWA surfaces the error.
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"ok":    false,
+				"error": err.Error(),
+			})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": res != nil && res.Ok})
+		return
+	}
 	res, err := s.termux.Act(ctx, body.What)
 	if err != nil {
 		// Honest action-failure report (bridge dead / timeout / 403): the

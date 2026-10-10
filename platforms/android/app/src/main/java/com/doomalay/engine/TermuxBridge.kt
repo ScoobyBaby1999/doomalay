@@ -70,8 +70,12 @@ object TermuxBridge {
     private const val TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash"
     private const val TERMUX_HOME = "/data/data/com.termux/files/home"
 
-    // v1.17.2: the verified F-Droid stable APK (versionCode 1002).
+    // v1.17.2: the verified F-Droid stable APK (versionCode 1002). Now the
+    // FALLBACK ONLY — v1.23.1 THE LINK resolves the current stable link
+    // dynamically (F-Droid's own suggestedVersionCode) engine-side and
+    // rides it in the open_fdroid act body (allowlisted below).
     private const val FDROID_APK_URL = "https://f-droid.org/repo/com.termux_1002.apk"
+    private const val FDROID_HOST = "https://f-droid.org/"
 
     // The one-shot verification script the probe runs inside Termux. Markers
     // are the ground truth the engine parses back out of stdout:
@@ -179,8 +183,19 @@ object TermuxBridge {
         ctx.startActivity(launch)
     }
 
-    fun openFdroid(ctx: Context) {
-        val i = Intent(Intent.ACTION_VIEW, Uri.parse(FDROID_APK_URL))
+    fun openFdroid(ctx: Context, resolvedUrl: String? = null) {
+        // v1.23.1 THE LINK: the engine resolves the CURRENT stable Termux
+        // APK URL (F-Droid's package API — suggestedVersionCode) and sends
+        // it here; only https://f-droid.org/ URLs are honored (the
+        // allowlist — anything else falls to the frozen fallback link, so
+        // a stale engine, a failed resolve, or a malformed url can never
+        // redirect the user anywhere but F-Droid).
+        val target = if (!resolvedUrl.isNullOrEmpty() && resolvedUrl.startsWith(FDROID_HOST)) {
+            resolvedUrl
+        } else {
+            FDROID_APK_URL
+        }
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(target))
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ctx.startActivity(i)
     }
@@ -701,19 +716,23 @@ class TermuxBridgeServer(private val ctx: Context) {
     }
 
     // POST /act — the open-* intents. Body: {"what":"open_termux" |
-    // "open_fdroid" | "open_permission_settings"}.
+    // "open_fdroid" | "open_permission_settings"} (+ an optional "url" for
+    // open_fdroid — v1.23.1 THE LINK: the engine's dynamically-resolved
+    // stable APK link, honored only under the f-droid.org allowlist).
     private fun handleAct(out: OutputStream, body: ByteArray) {
         val what: String
+        val url: String?
         try {
             val o = JSONObject(String(body, Charsets.UTF_8))
             what = o.optString("what", "")
+            url = if (o.has("url") && !o.isNull("url")) o.optString("url", "") else null
         } catch (e: JSONException) {
             writeResponse(out, 400, errJson("invalid JSON body: ${e.message}"))
             return
         }
         when (what) {
             "open_termux" -> TermuxBridge.openTermux(ctx)
-            "open_fdroid" -> TermuxBridge.openFdroid(ctx)
+            "open_fdroid" -> TermuxBridge.openFdroid(ctx, url)
             "open_permission_settings" -> TermuxBridge.openPermissionSettings(ctx)
             else -> {
                 writeResponse(out, 400, errJson("unknown what"))

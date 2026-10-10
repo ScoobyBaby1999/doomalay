@@ -178,6 +178,22 @@ func (c *Client) Act(ctx context.Context, what string) (*ActResult, error) {
 	return &out, nil
 }
 
+// ActWithURL is Act with a resolved download URL riding the body (v1.23.1
+// THE LINK: open_fdroid carries the dynamically-resolved stable APK link;
+// the Kotlin side opens it only under its f-droid.org allowlist). An empty
+// url sends the plain act shape (byte-identical to Act).
+func (c *Client) ActWithURL(ctx context.Context, what, url string) (*ActResult, error) {
+	var out ActResult
+	body := map[string]any{"what": what}
+	if url != "" {
+		body["url"] = url
+	}
+	if err := c.do(ctx, http.MethodPost, "/act", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // parseProbeMarkers derives StorageOK/PropsOK from the probe script's
 // stdout markers — the ground truth (the JSON fields are re-derived from
 // them on the client side so a lying/older bridge cannot fake a ready

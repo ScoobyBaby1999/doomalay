@@ -183,13 +183,14 @@ func tool(s *Server, sessionID, action, argsJSON string) string {
         return s.runTermuxAction(context.Background(), sessionID, `{"action":"`+action+`","args":`+argsJSON+`}`)
 }
 
-// shrinkCooldown shrinks the exec pacing for fast tests (restored on
-// cleanup): cooldown d + window w.
-func shrinkCooldown(t *testing.T, d, w time.Duration) {
+// shrinkPacing shrinks the exec pacing for fast tests (restored on
+// cleanup): window w. (v1.23.1: the cooldown is GONE — only the rolling
+// window remains.)
+func shrinkPacing(t *testing.T, w time.Duration) {
         t.Helper()
-        oldCD, oldW := termuxExecCooldown, termuxExecWindow
-        termuxExecCooldown, termuxExecWindow = d, w
-        t.Cleanup(func() { termuxExecCooldown, termuxExecWindow = oldCD, oldW })
+        oldW := termuxExecWindow
+        termuxExecWindow = w
+        t.Cleanup(func() { termuxExecWindow = oldW })
 }
 
 // ── the arming matrix ────────────────────────────────────────────────────
@@ -292,7 +293,7 @@ func TestV1203_Exec_Echo(t *testing.T) {
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "exec1", root)
-        shrinkCooldown(t, time.Millisecond, time.Minute)
+        shrinkPacing(t, time.Minute)
 
         out := tool(s, "exec1", "exec", `{"command":"echo hello-arm"}`)
         if !strings.Contains(out, "EXEC DONE — workdir "+root) {
@@ -425,31 +426,29 @@ func TestV1203_Exec_Blocklist(t *testing.T) {
 
 // ── the pacing gates ─────────────────────────────────────────────────────
 
-func TestV1203_Exec_CooldownAndCap(t *testing.T) {
-        fb := newFakeArmBridge(t)
-        s := newArmServer(t, fb)
-        root := t.TempDir()
-        armTermuxChat(t, s, "pace", root)
-        armTermuxChat(t, s, "pace2", root) // a different session — isolation proof
-        shrinkCooldown(t, 500*time.Millisecond, time.Hour)
-        out := tool(s, "pace", "exec", `{"command":"echo one"}`)
-        if !strings.Contains(out, "EXEC DONE") {
-                t.Fatalf("first exec must run, got:\n%s", out)
-        }
-        // a different session is NOT cooled down by the first
-        out = tool(s, "pace2", "exec", `{"command":"echo two"}`)
-        if !strings.Contains(out, "EXEC DONE") {
-                t.Fatalf("per-SESSION cooldown — a different session must run, got:\n%s", out)
-        }
-        // the same session within the cooldown → the honest wait verdict
-        out = tool(s, "pace", "exec", `{"command":"echo three"}`)
-        if !strings.Contains(out, "exec cooldown") || !strings.Contains(out, "Wait ") || !strings.Contains(out, "s and run the exact same command again") {
-                t.Fatalf("cooldown verdict, got:\n%s", out)
-        }
-        // the refused call consumed nothing (the bridge saw exactly 2 runs)
-        if fb.runCount() != 2 {
-                t.Fatalf("a refused exec must not touch the bridge (runs=%d)", fb.runCount())
-        }
+func TestV1231_Exec_NoCooldown_CapHolds(t *testing.T) {
+	fb := newFakeArmBridge(t)
+	s := newArmServer(t, fb)
+	root := t.TempDir()
+	armTermuxChat(t, s, "pace", root)
+	armTermuxChat(t, s, "pace2", root) // a different session — isolation proof
+	shrinkPacing(t, time.Hour)
+	// v1.23.1 THE PACING: two execs back-to-back on the SAME session, zero
+	// wait — BOTH run (the ≥4s cooldown is gone; the user's ask)
+	for _, cmd := range []string{"echo one", "echo two"} {
+		out := tool(s, "pace", "exec", fmt.Sprintf(`{"command":"%s"}`, cmd))
+		if !strings.Contains(out, "EXEC DONE") {
+			t.Fatalf("no-cooldown law — a rapid exec must run, got:\n%s", out)
+		}
+	}
+	// a different session is not capped by the first's window
+	out := tool(s, "pace2", "exec", `{"command":"echo three"}`)
+	if !strings.Contains(out, "EXEC DONE") {
+		t.Fatalf("per-SESSION window — a different session must run, got:\n%s", out)
+	}
+	if fb.runCount() != 3 {
+		t.Fatalf("all three execs reached the bridge (runs=%d)", fb.runCount())
+	}
 }
 
 // The rate cap: 12 execs in the rolling window, the 13th refuses.
@@ -458,7 +457,7 @@ func TestV1203_Exec_RateCap(t *testing.T) {
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "capwin", root)
-        shrinkCooldown(t, time.Millisecond, time.Minute)
+        shrinkPacing(t, time.Minute)
 
         for i := 0; i < termuxExecCap; i++ {
                 if out := tool(s, "capwin", "exec", fmt.Sprintf(`{"command":"echo n%d"}`, i)); !strings.Contains(out, "EXEC DONE") {
@@ -482,9 +481,9 @@ func TestV1203_TruncationHonesty(t *testing.T) {
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "trunc", root)
-        // cooldown 0 = disabled (the canned responses are instant — the
+        // the window is wide (the canned responses are instant — the
         // deterministic way to test the truncation physics alone).
-        shrinkCooldown(t, 0, time.Minute)
+        shrinkPacing(t, time.Minute)
 
         // stdout alone at the full 100KB budget → the cap fired.
         fb.setCanned(map[string]any{"ok": true, "stdout": strings.Repeat("x", termuxCapBytes), "stderr": "", "exit_code": 0, "timeout": false})

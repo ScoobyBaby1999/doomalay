@@ -240,11 +240,11 @@ async function run() {
   ok(/pm-arm-alive/.test(text), 'PM-path exec runs for real', text);
   ok(/notes\.txt/.test(text), 'PM-path exec workdir = the bound folder', text);
   ok(/exit_code: 0/.test(text), 'PM-path exec reports the exit code', text);
-  // THE PACING PIN (the anti-burst law, honestly taught): an immediate
-  // second exec gets the cooldown refusal — never a silent run.
+  // THE PACING PIN (v1.23.1 re-pin: the ≥4s cooldown is GONE — the user's
+  // ask): an immediate second exec RUNS (rapid fire is legal now); the
+  // anti-burst law lives in the 12/min rolling cap only.
   const paced = await mcpCall('userchat', 'termux', { action: 'exec', args: { command: 'echo paced' } });
-  ok(/exec cooldown/.test(toolText(paced)), 'the immediate second exec gets the honest cooldown teach', toolText(paced));
-  await sleep(4300);
+  ok(/paced/.test(toolText(paced)), 'the immediate second exec RUNS (no cooldown law)', toolText(paced));
 
   res = await mcpCall('userchat', 'termux', { action: 'cmds', args: {} });
   text = toolText(res);

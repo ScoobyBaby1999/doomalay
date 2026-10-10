@@ -75,13 +75,18 @@ type Server struct {
         termuxCache  termuxProbeCache
         termuxFlight chan struct{}
 
-        // v1.20.3 THE ARM: the termux tool's per-session exec pacing —
-        // ≥4s cooldown between one-shot execs + a 12-per-minute rolling
-        // window (the anti-burst law). Lazy maps guarded by termuxExecMu;
-        // only termuxtool.go touches these.
-        termuxExecMu   sync.Mutex
-        termuxExecLast map[string]time.Time
-        termuxExecLog  map[string][]time.Time
+        // v1.20.3 THE ARM: the termux tool's per-session exec pacing — the
+        // 12-per-minute rolling window (the anti-burst law; v1.23.1 THE
+        // PACING removed the ≥4s one-shot cooldown — streaming results and
+        // the model's own serial loop pace the calls; the cap stays the
+        // real guard). Lazy maps guarded by termuxExecMu; only
+        // termuxtool.go touches these.
+        termuxExecMu  sync.Mutex
+        termuxExecLog map[string][]time.Time
+
+        // v1.23.1 THE LINK: the F-Droid stable-APK resolver cache (6h TTL,
+        // one fetch in flight; offline answers the frozen fallback URL).
+        fdroid fdroidCache
 
         // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
         // — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then

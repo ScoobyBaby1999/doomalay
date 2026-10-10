@@ -77,12 +77,14 @@ const (
 // bundle honestly.
 const termuxWriteCap = 1 << 20
 
-// Exec pacing (the shell-wave anti-burst law): ≥4s between one-shot
-// execs per session, and a rolling-window cap of 12 execs/minute. Vars
-// (not consts) so the tests shrink them.
+// Exec pacing (the shell-wave anti-burst law): a rolling-window cap of
+// 12 execs/minute per session. v1.23.1 THE PACING: the ≥4s one-shot
+// cooldown is GONE (the user's ask — streaming results pace the calls
+// naturally and the model's own serial tool loop waits for each result;
+// the rolling cap stays the real anti-burst guard). Vars (not consts) so
+// the tests shrink them.
 var (
-        termuxExecCooldown = 4 * time.Second
-        termuxExecWindow   = 60 * time.Second
+        termuxExecWindow = 60 * time.Second
 )
 
 // The exec blocklist (PLAN-V116's shell-jail law, kept surgical per the
@@ -545,8 +547,8 @@ func termuxMaybeTrunc(res *termuxbridge.RunResult, text string) string {
 // ── exec ─────────────────────────────────────────────────────────────────
 
 // termuxVerbExec — {command, timeout_ms?}: workdir = the FIRST bound
-// root, the blocklist gate, the pacing gates (cooldown + rolling
-// window), FULL stdout+stderr+exit_code.
+// root, the blocklist gate, the pacing gate (the rolling cap), FULL
+// stdout+stderr+exit_code.
 func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(string) string, args map[string]any, roots []string) string {
         command := get("command")
         if command == "" {
@@ -565,14 +567,11 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
         if timeoutMS > 180000 {
                 timeoutMS = 180000
         }
-        // the pacing gates (per-SESSION: cooldown first — a refused exec never
+        // the pacing gate (per-SESSION rolling window — a refused exec never
         // consumes the window; the cap verdict tells the model exactly what
-        // to do).
-        if wait, capped := s.termuxExecGate(sessionID); capped {
+        // to do). v1.23.1: no cooldown — rapid short commands run.
+        if s.termuxExecGate(sessionID) {
                 return "OBSERVATION:\nerror: exec rate cap — this chat already ran 12 one-shot execs in the last minute (the anti-burst law). Ask the user whether they want more, or wait for the window to roll."
-        } else if wait > 0 {
-                return "OBSERVATION:\nerror: exec cooldown — the last exec on this chat ran less than 4s ago (the anti-burst law: one-shots wait ≥4s). Wait " +
-                        strconv.Itoa(wait) + "s and run the exact same command again."
         }
         res, errObs := s.termuxRunOne(ctx, command, roots[0], timeoutMS)
         if errObs != "" {
@@ -608,13 +607,12 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
 // rolling window carries the cap).
 const termuxExecCap = 12
 
-// termuxExecGate enforces THE ARM's pacing: ≥4s between one-shot execs
-// and ≤termuxExecCap execs in the rolling window, per SESSION. It
-// stamps the clocks ONLY when the exec will actually run (a refused
-// call consumes nothing — the model retries after the honest wait).
-// wait > 0 = the cooldown verdict (seconds to wait); capped = the
-// window verdict.
-func (s *Server) termuxExecGate(sessionID string) (wait int, capped bool) {
+// termuxExecGate enforces THE ARM's pacing: ≤termuxExecCap execs in the
+// rolling window, per SESSION. It stamps the clock ONLY when the exec
+// will actually run (a refused call consumes nothing — the model
+// retries honestly). capped = the window verdict. (v1.23.1: the ≥4s
+// cooldown verdict is gone — rapid-fire short commands run.)
+func (s *Server) termuxExecGate(sessionID string) (capped bool) {
         key := sessionID
         if key == "" {
                 key = "(sessionless)"
@@ -622,14 +620,8 @@ func (s *Server) termuxExecGate(sessionID string) (wait int, capped bool) {
         now := time.Now()
         s.termuxExecMu.Lock()
         defer s.termuxExecMu.Unlock()
-        if s.termuxExecLast == nil {
-                s.termuxExecLast = map[string]time.Time{}
+        if s.termuxExecLog == nil {
                 s.termuxExecLog = map[string][]time.Time{}
-        }
-        if last, ok := s.termuxExecLast[key]; ok {
-                if d := termuxExecCooldown - now.Sub(last); d > 0 {
-                        return int((d + time.Second - 1) / time.Second), false
-                }
         }
         cutoff := now.Add(-termuxExecWindow)
         kept := s.termuxExecLog[key][:0]
@@ -640,11 +632,10 @@ func (s *Server) termuxExecGate(sessionID string) (wait int, capped bool) {
         }
         s.termuxExecLog[key] = kept
         if len(kept) >= termuxExecCap {
-                return 0, true
+                return true
         }
-        s.termuxExecLast[key] = now
         s.termuxExecLog[key] = append(kept, now)
-        return 0, false
+        return false
 }
 
 // ── the file verbs ───────────────────────────────────────────────────────
@@ -1189,7 +1180,7 @@ func termuxHelpText(roots []string) string {
         sb.WriteString(`THE CAPABILITY IS THE WHOLE LINUX USERLAND: exec runs ANY command in $PATH — coreutils (ls, cat, cp, mv, head, tail, wc, sort, tr, cut…), findutils, grep/sed/awk, bash scripting, python, git, ssh, curl, tar, and EVERY command of EVERY package pkg installs (node, gcc, clang, rust, ffmpeg, imagemagick, sqlite… the new commands go live the moment the install finishes). The termux-api package adds the device commands (termux-battery-status, termux-wifi-connectioninfo, termux-notification, termux-clipboard-set…). Compile with gcc/clang, serve with python -m http.server as a session, pipe and redirect freely — the only refusals are the file/device/power-destroying class. Discover the live inventory any time with the cmds action (or exec 'command -v <name>').
 
 Actions (one JSON object of arguments per tool call):
-  {"action":"exec","args":{"command":"python -V","timeout_ms":60000}}   run ANY shell command (workdir = the first bound folder; 60s default, 180s max; ≥4s cooldown between execs, 12 per minute)
+  {"action":"exec","args":{"command":"python -V","timeout_ms":60000}}   run ANY shell command (workdir = the first bound folder; 60s default, 180s max; 12 per minute per chat)
   {"action":"cmds","args":{}}                 inventory EVERY available command (PATH, PREFIX, $PREFIX/bin — including all pkg-installed package commands)
   {"action":"ls","args":{"path":""}}           list a folder (dirs first, sizes, mtimes, hidden included)
   {"action":"read","args":{"path":"a.txt"}}    read a WHOLE file (binary files reported honestly)
