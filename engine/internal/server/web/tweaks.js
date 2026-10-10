@@ -394,6 +394,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lib_auto: !!v, template_auto: !!v, skills_auto: !!v })
       }).catch(function () { /* the blob write above is the durable one */ });
+      // v1.21.2 THE SYNC GAP: the toolbar's 🛠 lib pill re-renders NOW
+      // (chatpanel listens for this) — the flip reflects on the pill
+      // immediately instead of waiting for the next full re-render.
+      try { document.dispatchEvent(new CustomEvent('doomalay:caps-changed')); } catch (e) { }
     }
   }
 

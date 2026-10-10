@@ -1,38 +1,35 @@
-// capabilities.js — v1.17.1 THE PIVOT: the capability library.
+// capabilities.js — v1.21.2 THE CLEANSING: the capability library, trimmed
+// to the gates that are REAL (PLAN-V122 §1; the v1.17.1 PIVOT heritage).
 //
-// Born from the sandbox picker's slot (PLAN-V117 §v1.17.1): the user's
-// directive — "Instead of having quick chat, HF chat, and all these. We
-// only have quick chat… pressing the +sandbox should instead act as a
-// +capabilities overlay screen… the user can stack them".
+// v1.21.2 verdict-backed trim (the verify rig convicted the dead weight):
+//   ✂ web_search    — web search is ALWAYS ON (the tools stay armed on
+//                     every path; the flag never disarmed anything).
+//   ✂ deep_research — it lives as the library's publication card
+//                     (doomalay/builtin/deep-research, the 8-stage
+//                     methodology), not as a capability toggle.
+//   ✂ skills_auto / template_auto — the Bot Library gate covers them
+//                     (the server stamps the legacy flags from lib_auto;
+//                     standalone stacks were silently discarded anyway).
 //
-// Renders THE CAPABILITY LIBRARY page on the reusable ConnectOverlay
-// (THE CONTAINER LAW — one of the two legal surfaces). A compact
-// scrollable list of SMALL-ICON rows (the future "port capabilities +
-// list them" library — rows, NOT big cards):
+// What remains — rows bound to the chat session's EXISTING fields (flips
+// ride the persistCaps session-PATCH machinery, never a new path):
+//   🛠 Library       lib_auto   (THE library gate — the server locksteps
+//                               the legacy template/skills flags)
+//   ▣ Workspaces     → window.Workspace.openPicker (the +workspace
+//                      pill's call; the badge shows the bound count)
+//   ⌨ Termux         (APK only — the gated toggle)
+//   🎭 Persona       → window.Persona.open (LAST — the identity row;
+//                      the sub reflects the active persona, falling
+//                      back to the app default's name)
 //
-//   toggles (bound to the chat session's existing fields — flips ride
-//   the EXISTING persistCaps session-PATCH machinery, never a new path):
-//     🔍 Web search    web_search   (default ON — the v0.45 default-on)
-//     🔬 Deep research deep_research
-//     🛠 Library       lib_auto     (the master gate — locksteps the
-//                                    legacy template/skills flags, the
-//                                    exact semantics of the 🛠 lib pill)
-//     ✨ Skills        skills_auto
-//     📄 Templates     template_auto
-//
-//   action rows (open their EXISTING pickers):
-//     🎭 Persona       → window.Persona.open (the persona pill's call)
-//     ▣ Workspaces     → window.Workspace.openPicker (the +workspace
-//                        pill's call; the badge shows the bound count)
-//
-//   ⌨ Termux — APK builds only (window.__doomalayKotlin present):
-//     GET /api/termux/status — a failed fetch or {available:false}
-//     renders NO row at all (desktop honesty). When available: the chip
-//     reads the setup state (ready → accent; otherwise a tappable
-//     "set up…" hint — v1.17.3 wired the row to THE SETUP page), the
-//     toggle only arms when ready, and tapping an unready row opens
-//     window.TermuxSetup (the three-tap ladder overlay). The capability
-//     is inert by default until the device is ready.
+// ⌨ Termux — APK builds only (window.__doomalayKotlin present):
+//   GET /api/termux/status — a failed fetch or {available:false}
+//   renders NO row at all (desktop honesty). When available: the chip
+//   reads the setup state (ready → accent; otherwise a tappable
+//   "set up…" hint — v1.17.3 wired the row to THE SETUP page), the
+//   toggle only arms when ready, and tapping an unready row opens
+//   window.TermuxSetup (the ladder overlay). The capability
+//   is inert by default until the device is ready.
 //
 // Theme vars only, everywhere (the ON chip rides the accent family; the
 // OFF chip the surface/text-3 muted family — zero hardcoded colors).
@@ -68,33 +65,12 @@
     extras = extras || {};
     var rows = [
       {
-        key: 'web_search', icon: '🔍', name: 'Web search', kind: 'toggle',
-        on: st.webSearch !== false, sub: 'live web results in turns'
-      },
-      {
-        key: 'deep_research', icon: '🔬', name: 'Deep research', kind: 'toggle',
-        on: !!st.deepResearch, sub: 'multi-source research pipeline'
-      },
-      {
         key: 'lib_auto', icon: '🛠', name: 'Library', kind: 'toggle',
         on: !!st.libAuto, sub: 'the bot browses + uses the library'
       },
       {
-        key: 'skills_auto', icon: '✨', name: 'Skills', kind: 'toggle',
-        on: !!st.skillsAuto, sub: 'methodology skills load on their own'
-      },
-      {
-        key: 'template_auto', icon: '📄', name: 'Templates', kind: 'toggle',
-        on: !!st.templateAuto, sub: 'the bot browses + applies templates'
-      },
-      {
-        key: 'persona', icon: '🎭', name: 'Persona', kind: 'action',
-        sub: extras.personaName ? ('active · ' + extras.personaName) : 'the default prompt',
-        chip: { cls: extras.personaName ? 'on' : 'off', text: extras.personaName ? 'set' : 'pick' }
-      },
-      {
         key: 'workspaces', icon: '▣', name: 'Workspaces', kind: 'action',
-        sub: 'cloud repos bound to this chat',
+        sub: 'repositories and sandboxes connected to the chat',
         chip: { cls: (extras.wsCount || 0) > 0 ? 'on' : 'off',
                 text: (extras.wsCount == null ? '—' : String(extras.wsCount)) + ' bound' }
       }
@@ -105,10 +81,20 @@
         key: 'termux', icon: '⌨', name: 'Termux', kind: 'termux',
         on: !!st.termux, ready: !!ts.ready,
         sub: st.termux ? 'stacked on this chat · tap to remove'
-          : (ts.ready ? 'tap to stack on this chat' : 'three taps to a real Linux shell'),
+          : (ts.ready ? 'tap to stack on this chat' : 'local Linux sandbox (commands, package installs, local storage)'),
         chip: { cls: ts.ready ? 'on' : 'setup', text: ts.ready ? 'ready' : 'set up…' }
       });
     }
+    // v1.21.2: the persona row moved LAST (the identity row under the
+    // machinery rows) and its sub now ALWAYS names a real persona — the
+    // active one, or the app default's name as the fallback (the engine
+    // resolves the default when the chain comes up empty, so "pick" was
+    // a lie; the default IS the fallback).
+    rows.push({
+      key: 'persona', icon: '🎭', name: 'Persona', kind: 'action',
+      sub: 'active · ' + (extras.personaName || 'Default'),
+      chip: { cls: 'on', text: extras.personaName ? 'set' : 'default' }
+    });
     return rows;
   }
 
@@ -187,22 +173,17 @@
   }
 
   // flipToggle — flips the boolean on the chat state exactly the way the
-  // toolbar's own pills do (the lib gate locksteps the legacy flags).
+  // toolbar's own pills do. v1.21.2: lib_auto is the ONLY toggle — the
+  // client lockstep of the legacy template/skills flags is gone (the
+  // server's PATCH stamps them from lib_auto; one writer, one truth).
   function flipToggle(st, key) {
-    if (key === 'web_search') st.webSearch = !st.webSearch;
-    else if (key === 'deep_research') st.deepResearch = !st.deepResearch;
-    else if (key === 'lib_auto') {
+    if (key === 'lib_auto') {
       st.libAuto = !st.libAuto;
-      // keep the legacy flags in lockstep (the 🛠 lib pill's semantics)
-      st.templateAuto = st.libAuto;
-      st.skillsAuto = st.libAuto;
       // ONE SETTING, TWO VIEWS — the ✦ tweaks Bot Library switch follows
       if (window.ChatTweaks && window.ChatTweaks.syncLibPill) {
         window.ChatTweaks.syncLibPill(st, st.libAuto);
       }
     }
-    else if (key === 'skills_auto') st.skillsAuto = !st.skillsAuto;
-    else if (key === 'template_auto') st.templateAuto = !st.templateAuto;
   }
 
   // ── action rows ──────────────────────────────────────────────────────

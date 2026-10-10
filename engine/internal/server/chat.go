@@ -358,11 +358,14 @@ func (s *Server) chatMetadataPreamble(sess *store.Session, bundleName string) st
         b := &strings.Builder{}
         b.WriteString("\n\n## This chat's controls (what the user can flip — name the pill + the path when relevant)\n")
         b.WriteString("- effort (toolbar pill, currently \"" + effLabel(sess.Effort) + "\"): how deeply you reason per turn (low / med / high ladder).\n")
-        b.WriteString("- web search: ON by default — you search whenever a live fact matters.\n")
+        b.WriteString("- web search: always on — you search whenever a live fact matters.\n")
         if sess.DeepResearch {
                 b.WriteString("- deep research: currently ON — be thorough, multi-source, cross-referenced, cited.\n")
         } else {
-                b.WriteString("- deep research: currently OFF (armed via the lib pill's + when a template owns the composer).\n")
+                // v1.21.2 THE CLEANSING: the stale parenthetical is gone —
+                // deep research arms from the LIBRARY CARD
+                // (doomalay/builtin/deep-research), not a pill.
+                b.WriteString("- deep research: currently OFF (the user can arm it from the library's deep-research card).\n")
         }
         if libOn {
                 b.WriteString("- Bot Library (the 🛠 lib toolbar pill + ✦ tweaks → Bot Library): currently ON — you may browse, download and use the app's library on the fly.\n")

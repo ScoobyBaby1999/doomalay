@@ -2270,10 +2270,12 @@
       runWSTurn: function (text) {
         var opts = {
           effort: state.effort,
-          // v1.17.1 THE PIVOT: the web_search capability toggle rides the
-          // turn again (the v0.45 "default-on, pill removed" hardcode
-          // dies with the capability library's row; birth default ON).
-          web_search: state.webSearch !== false,
+          // v1.21.2 THE CLEANSING: the web_search turn override is gone —
+          // web search is ALWAYS ON (the capability row died; the session
+          // field self-heals true and the tools stay armed on every path).
+          // deep_research still rides: it is armed by the LIBRARY CARD
+          // (doomalay/builtin/deep-research USE → applyTemplate), not by
+          // a capability — the card is the switch, the pipeline is real.
           deep_research: !!state.deepResearch,
           model: state.model,
           provider: state.provider
@@ -3123,7 +3125,9 @@
         state.effort = (levels && levels.length)
           ? ((ownDef2 && levels.indexOf(ownDef2) >= 0) ? ownDef2 : levels[0])
           : 'med';
-        state.webSearch = false;
+        // v1.21.2 THE CLEANSING: web search is ALWAYS ON — the reset
+        // stopped flipping it off (the toggle row is gone; the tools stay
+        // armed). deepResearch still resets (the armed library card).
         state.deepResearch = false;
         state.template = null; // v0.44: the active template clears with the rest
         state.templateAuto = false; // v0.60: the lib gate resets with the rest
@@ -3363,30 +3367,10 @@
       ';padding:4px 10px;border-radius:8px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer';
   }
 
-  // ── v0.52 THE 3 PILLS — the segmented [label | +] builders ──────────
-  // Two hotboxes per pill (user item 6):
-  //   [⧉ template | +]   label press → toggle template_auto (the chat's
-  //                       auto-search cap; ON lights the pill up)
-  //                       + press     → the public library with THIS chat
-  //                       connected (Hub.open('template', {chat}))
-  //   [🛠 skills | +]     same shape for the skills library
-  // The + label is DYNAMIC: the in-use template/skill name for the
-  // current turn (state._turnTemplate/_turnSkill, fed by tool events),
-  // the active manual template persistently, else just '+'.
-  function segPlusLabel(state, kind) {
-    if (kind === 'template') {
-      if (state.template && state.template.name) return shortCap(state.template.name);
-      if (state._turnTemplate) return shortCap(state._turnTemplate);
-      return '+';
-    }
-    // v0.60 pt C.9: the lib pill's + — the v0.68 ACTIVE-BUNDLE SEGMENT
-    // owns the in-use name now (the + stays a plain '+', upstream spec);
-    // an attached bundle shows THERE (armTurnBundle derives state.bundle).
-    if (state._turnSkill) return shortCap(state._turnSkill);
-    if (state._turnTemplate) return shortCap(state._turnTemplate);
-    if (state.template && state.template.name) return shortCap(state.template.name);
-    return '+';
-  }
+  // ── v1.21.2 THE CLEANSING: the standalone template/skills toolbar
+  // pills (segPill/segPlusLabel) are DELETED — dead code since v0.60
+  // pt C.9 put the lib pill in their place (zero callers; the lib pill's
+  // + opens the whole Hub). The one library gate is the lib pill.
 
   // ── v0.68 THE ACTIVE-BUNDLE STATE MACHINE (deterministic) ───────────
   // state._turnBundle = {kind, name} | null — WHAT THE PILL SHOWS.
@@ -3658,86 +3642,6 @@
     return wrap;
   }
 
-  function segPill(bodyEl, state, icon, kind) {
-    var isTpl = kind === 'template';
-    var active = isTpl ? !!(state.templateAuto || state.template || state.deepResearch)
-                       : !!state.skillsAuto;
-    var glyph = isTpl ? '⧉' : '🛠';
-    var label = isTpl ? 'template' : 'skills';
-
-    var wrap = document.createElement('div');
-    wrap.id = 'seg-' + kind;
-    wrap.style.cssText = 'display:inline-flex;align-items:stretch;flex-shrink:0;' +
-      'border:1px solid ' + (active ? 'rgba(var(--accent-rgb),0.55)' : 'var(--border)') + ';' +
-      // v0.67: the ACTIVE wrap renders accent-1's viewport projection
-      // (the same window pattern as the lib pill — one field per var).
-      'background-color:' + (active ? 'rgba(var(--accent-rgb),0.12)' : 'transparent') + ';' +
-      'background-image:' + (active ? 'var(--accent-gradient, none)' : 'none') + ';' +
-      'border-radius:999px;overflow:hidden';
-
-    var lab = document.createElement('button');
-    lab.id = 'seg-' + kind + '-label';
-    lab.textContent = glyph + ' ' + label;
-    lab.setAttribute('aria-pressed', active ? 'true' : 'false');
-    lab.title = isTpl
-      ? 'template auto-search — ON: the assistant browses + uses the template library by itself'
-      : 'skills auto-search — ON: the assistant loads methodology skills by itself';
-    // v0.67: derived ink on the active window (see the lib pill).
-    lab.style.cssText = 'border:none;background:transparent;color:' +
-      (active ? 'var(--on-accent)' : 'var(--text-3)') +
-      ';padding:4px 8px 4px 10px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;' +
-      'white-space:nowrap;-webkit-tap-highlight-color:transparent';
-    lab.addEventListener('click', function () {
-      if (isTpl) {
-        state.templateAuto = !state.templateAuto;
-      } else {
-        state.skillsAuto = !state.skillsAuto;
-      }
-      persistCaps(state, icon);
-      renderToolbar(bodyEl.querySelector('#chat-toolbar'), state,
-        state._effortLevels, icon, bodyEl);
-    });
-
-    var plus = document.createElement('button');
-    plus.id = 'seg-' + kind + '-plus';
-    plus.textContent = segPlusLabel(state, kind);
-    plus.title = isTpl
-      ? 'open the template library — the public library, this chat connected'
-      : 'open the skills library — the public library, this chat connected';
-    plus.setAttribute('aria-label', plus.title);
-    plus.style.cssText = 'border:none;border-left:1px solid ' +
-      (active ? 'rgba(var(--accent-rgb),0.45)' : 'var(--border)') + ';' +
-      'background:transparent;color:' +
-      ((isTpl ? (state.template || state._turnTemplate) : state._turnSkill)
-        ? (active ? 'var(--on-accent)' : 'var(--accent)') : 'var(--text-3)') +
-      ';padding:4px 10px 4px 8px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;' +
-      'max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
-      '-webkit-tap-highlight-color:transparent';
-    plus.addEventListener('click', function () {
-      if (!window.Hub) {
-        if (window.Artifacts && window.Artifacts.toast) window.Artifacts.toast('the library is not available');
-        return;
-      }
-      // the public library with THIS chat connected (user item 5+6): the
-      // hub's chat pill reads `chat_1 · <bot name>` from the start.
-      var chat = null;
-      var c = window.ChatPanel && window.ChatPanel.current();
-      if (c && c.icon) {
-        chat = {
-          sessionId: state.sessionId || (c.icon && c.icon.sessionId) || '',
-          title: c.icon.name || '',
-          name: c.icon.name || '',
-          avatarHTML: (c.icon && c.icon.getAvatarHTML) ? c.icon.getAvatarHTML() : ''
-        };
-      }
-      window.Hub.open(isTpl ? 'template' : 'skill', { chat: chat });
-    });
-
-    wrap.appendChild(lab);
-    wrap.appendChild(plus);
-    return wrap;
-  }
-
   // paintSegPlus — the LIVE + refresher. v0.68: the + is a plain '+'
   // (the in-use name lives in the ACTIVE-BUNDLE segment now — see
   // paintSegBundle); this keeps the + color in sync with the wrap state
@@ -3799,7 +3703,8 @@
     } else if (tpl && tpl.brief) {
       state.template = { id: tpl.id, name: tpl.name, brief: tpl.brief };
       state.deepResearch = false;
-      state.webSearch = false;
+      // v1.21.2: web search stays ALWAYS ON — the old web↔template
+      // mutual exclusion died with the toggle (the tools never disarm).
     } else {
       state.template = null;
       state.deepResearch = false;
@@ -3988,9 +3893,13 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         effort: state.effort,
-        // v1.17.1 THE PIVOT: the capability toggle's real value (ON by
-        // birth — the v0.45 hardcode dies with the library's row).
-        web_search: state.webSearch !== false,
+        // v1.21.2 THE CLEANSING: web search is ALWAYS ON — no UI writes
+        // this anymore; the self-heal rides so an old engine / an old
+        // session with a false row lands on true at the next flip.
+        web_search: true,
+        // deep_research still rides (the LIBRARY CARD arms it —
+        // doomalay/builtin/deep-research USE; the toggle row is gone,
+        // the card is the switch).
         deep_research: !!state.deepResearch,
         // v0.44: the active method template — the WHOLE resolved blob
         // {id, name, brief} so the reload restores it without re-fetching
@@ -4132,7 +4041,9 @@
       model: state.model,
       provider: state.provider,
       effort: state.effort || 'med',
-      web_search: state.webSearch !== false,  // v1.17.1: the capability toggle (ON by birth)
+      // v1.21.2: web_search rides creation as the always-on truth (the
+      // engine births ON when omitted; this self-heals older rows).
+      web_search: true,
       deep_research: !!state.deepResearch,
       // v0.60 pt C.9: the lib gate rides creation too (the PATCH in the
       // pill press covers later flips).
@@ -6312,6 +6223,21 @@
         if (list) st.personas = list;
         if (ph) st.placeholders = ph;
       }
+    }
+  });
+
+  // ── v1.21.2 THE SYNC GAP: the ✦ tweaks Bot Library switch PATCHes the
+  // session flags but never repainted the toolbar — the 🛠 lib pill sat
+  // visually stale until the next full re-render. tweaks.setBox now fires
+  // doomalay:caps-changed; the active chat re-renders its toolbar here.
+  window.addEventListener('doomalay:caps-changed', function () {
+    var c = currentCtx;
+    if (!c || !c.state || !c.bodyEl) return;
+    var tb = c.bodyEl.querySelector('#chat-toolbar');
+    if (tb && c.state._icon) {
+      try {
+        renderToolbar(tb, c.state, c.state._effortLevels || null, c.state._icon, c.bodyEl);
+      } catch (e) { console.error(e); }
     }
   });
 

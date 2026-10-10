@@ -36,7 +36,11 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 Sandbox       string `json:"sandbox"`
                 Effort        string `json:"effort"`
                 Mode          string `json:"mode"`
-                WebSearch     bool   `json:"web_search"`
+                // v1.21.2 THE CLEANSING: web search is ALWAYS ON — the field
+                // is a pointer so "omitted" (every API client that doesn't
+                // know the flag) births TRUE; an explicit false still wins
+                // (API compat).
+                WebSearch     *bool  `json:"web_search"`
                 DeepResearch  bool   `json:"deep_research"`
                 WebTemplate   string `json:"web_template"`
                 DeepTemplate  string `json:"deep_template"`
@@ -92,6 +96,11 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
         if req.Mode == "" {
                 req.Mode = "auto"
         }
+        // v1.21.2 THE CLEANSING: the always-on birth default (omitted = ON).
+        webSearchOn := true
+        if req.WebSearch != nil {
+                webSearchOn = *req.WebSearch
+        }
         if req.JudgeCount == 0 {
                 req.JudgeCount = 3
         }
@@ -121,7 +130,8 @@ func (s *Server) handleSessionsCreate(w http.ResponseWriter, r *http.Request) {
                 Sandbox:       req.Sandbox,
                 Effort:        req.Effort,
                 Mode:          req.Mode,
-                WebSearch:     req.WebSearch,
+                // v1.21.2: omitted web_search births ON (the always-on law).
+                WebSearch:     webSearchOn,
                 DeepResearch:  req.DeepResearch,
                 WebTemplate:   req.WebTemplate,
                 DeepTemplate:  req.DeepTemplate,
