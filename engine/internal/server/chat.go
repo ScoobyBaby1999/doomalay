@@ -544,11 +544,13 @@ const defaultPersonaHF = "## Identity\n" +
 
 // defaultPersonaFor (v0.48 task 6) picks the mode-aware default: HF chats
 // get an assistant that knows it lives in a Hugging Face Space with the
-// full toolchain; quick chats get the classic app persona. v0.67 THE
-// LIBRARY AWARENESS WAVE: both defaults now append the library preamble
-// (conditional on sess.LibAuto) so the engine direct-LLM path matches
-// the brain's library-aware _build_system_prompt — the model knows the
-// library exists, recommends when on, browse-only when off.
+// full toolchain; quick chats get the classic app persona.
+// v1.22.0 THE MIRROR: the library preamble NO LONGER rides here — the
+// PREAMBLE owns the machinery now ({library} expands it; the default
+// preamble carries the slot). The default persona is pure voice:
+// identity + style + tools + the artifact protocol (which also keeps the
+// {artifacts} placeholder honest — the default personas teach it
+// themselves, so the preamble's slot expands empty for them).
 func defaultPersonaFor(sess *store.Session) string {
         if sess != nil && sess.Sandbox == "hf" {
                 p := defaultPersonaHF
@@ -557,9 +559,9 @@ func defaultPersonaFor(sess *store.Session) string {
                 } else {
                         p = strings.ReplaceAll(p, "{repo}", " (the shared sandbox)")
                 }
-                return p + libraryPreamble(sess)
+                return p
         }
-        return defaultPersonaQuick + libraryPreamble(sess)
+        return defaultPersonaQuick
 }
 
 // prettyModelName turns a model slot ("nvidia/nvidia/nemotron-…",
@@ -613,81 +615,64 @@ func providerLabel(provider string) string {
 }
 
 // systemPromptFor composes the per-turn system message (v0.19 personas,
-// v0.20 identity + placeholders, v0.26 MULTI-persona resolution):
+// v0.20 identity + placeholders, v0.26 MULTI-persona resolution,
+// v1.22.0 THE MIRROR — the persona/preamble split):
 //
-//      [identity line — ALWAYS fresh: the CURRENT model + provider + date,
-//       so a mid-conversation model switch instantly changes who the bot
-//       thinks it is]
-//      + [the ACTIVE persona — trigger-satisfied > shuffle-pick >
+//      [the PREAMBLE — the app machinery as an optional, editable block:
+//       the identity line + {repo_access} + {artifacts} + {library} +
+//       {controls} + {session}, expanded live at turn time. 'off' = the
+//       lean prompt (the persona IS the prompt); a saved custom preamble
+//       template may rearrange or rewrite every block]
+//      + [the PERSONA — the voice: trigger-satisfied > shuffle-pick >
 //         always-active; legacy single persona + the app default as
 //         fallbacks]
-//      + [the artifact protocol, unless the persona already carries it]
 //
-// {name} {model} {provider} {skills} + the chat's custom {key} placeholders
-// inside the persona are substituted with the live values every turn.
+// {name} {model} {provider} {skills} {date} + the chat's custom {key}
+// placeholders inside BOTH the persona and the preamble are substituted
+// with the live values every turn; the block placeholders ({session},
+// {controls}, {library}, {repo_access}, {artifacts}) expand AFTER the
+// custom substitution so live block text (JSON examples included) is
+// never touched by user-defined keys.
 func (s *Server) systemPromptFor(sess *store.Session) string {
         return s.systemPromptForMetrics(sess, personaMetrics{}, "")
 }
 
 func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics, bundleName string) string {
-        var b strings.Builder
-        b.WriteString("You are ")
-        if m := prettyModelName(sess.Model); m != "" {
-                b.WriteString(m)
-        } else {
-                b.WriteString("an AI assistant")
-        }
-        if p := strings.TrimSpace(sess.Provider); p != "" {
-                b.WriteString(", hosted via " + providerLabel(p))
-        }
-        if sess.Sandbox == "hf" {
-                // v0.48 task 6: HF chats run the brain inside a Space, not
-                // on the device — the identity line must say so.
-                b.WriteString(", chatting inside the Doomalay app from your Hugging Face Space. ")
-        } else {
-                b.WriteString(", chatting inside the Doomalay app on the user's own device. ")
-        }
-        b.WriteString("Today is " + time.Now().Format("Monday, 2 January 2006") + ".")
-
         ph := s.mergedPlaceholders(sess) // v0.29: global customs + this chat's local customs
-        // v0.68 THE METADATA PERSONAS: every persona (default or custom)
-        // gets the live controls block — the bot knows what each pill does
-        // + the current state, so it can name the exact flip path on ask.
-        // v0.78.1: + the live session block (usage, pricing, context,
-        // connections, bound repos) — the bot knows its own dashboard.
-        meta := s.chatMetadataPreamble(sess, bundleName) + s.sessionContextPreamble(sess)
+
+        // ── the persona (the voice) — the unchanged resolution chain ──
+        var personaRaw string
         if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, m); spec != nil {
-                persona := strings.TrimSpace(spec.Text)
-                if persona == "" {
-                        persona = defaultPersonaFor(sess)
+                personaRaw = strings.TrimSpace(spec.Text)
+                if personaRaw == "" {
+                        personaRaw = defaultPersonaFor(sess)
                 }
-                b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))
-                if !strings.Contains(strings.ToLower(persona), "artifact") {
-                        // Keep the file-save capability alive under custom personas.
-                        b.WriteString("\n\n" + artifactSystemPrompt)
+        } else {
+                personaRaw = strings.TrimSpace(sess.Persona)
+                if personaRaw == "" {
+                        // No custom persona → the mode-aware default (v0.48
+                        // task 6: quick vs HF — the HF default knows it
+                        // lives in a Space with the full toolchain).
+                        personaRaw = defaultPersonaFor(sess)
                 }
-                b.WriteString(s.libStateLine(sess))
-                b.WriteString(meta)
-                return b.String()
         }
-        persona := strings.TrimSpace(sess.Persona)
-        if persona == "" {
-                // No custom persona → the mode-aware default (v0.48 task 6:
-                // quick vs HF — the HF default knows it lives in a Space
-                // with the full toolchain).
-                b.WriteString("\n\n" + substituteAllVars(defaultPersonaFor(sess), sess.Title, sess.Model, sess.Provider, ph))
-                b.WriteString(s.libStateLine(sess))
-                b.WriteString(meta)
-                return b.String()
+        persona := substituteAllVars(personaRaw, sess.Title, sess.Model, sess.Provider, ph)
+        teachesArtifact := strings.Contains(strings.ToLower(personaRaw), "artifact")
+
+        // ── the preamble (the machinery) — v1.22.0 THE MIRROR ──
+        // '' | 'off' | '<id>'; the default template carries the identity
+        // line + the block slots. OFF = the user owns the whole prompt.
+        composed := ""
+        if pre := preambleTextFor(sess); pre != "" {
+                composed = substituteAllVars(pre, sess.Title, sess.Model, sess.Provider, ph) + "\n\n"
         }
-        b.WriteString("\n\n" + substituteAllVars(persona, sess.Title, sess.Model, sess.Provider, ph))
-        if !strings.Contains(strings.ToLower(persona), "artifact") {
-                // Keep the file-save capability alive under custom personas.
-                b.WriteString("\n\n" + artifactSystemPrompt)
-        }
-        b.WriteString(s.libStateLine(sess))
-        b.WriteString(meta)
-        return b.String()
+        composed += persona
+        // the MIRROR blocks expand AFTER the custom substitution (live
+        // block text — the workspace manifest's JSON examples included —
+        // is never touched by user-defined {keys}); {artifacts} yields to
+        // a persona that already teaches the protocol (the old
+        // no-duplication rule, kept).
+        return s.expandPromptBlocks(composed, sess, bundleName, teachesArtifact)
 }
 
 // libStateLine (v0.67.2) — the LIVE library state, appended to every
@@ -1822,7 +1807,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 WorkspaceToolFn: func(ctx context.Context, argJSON string) string {
                         return s.runWorkspaceAction(ctx, sessionID, argJSON)
                 },
-                WorkspaceManifest: s.workspaceManifestFor(sessionID),
+                // v1.22.0 THE MIRROR: the workspace manifest NO LONGER
+                // prepends llm-side — {repo_access} in the composed system
+                // prompt carries it (the expansion covers both turn paths;
+                // the field stays for API/llm-level compat).
+                WorkspaceManifest: "",
                 // v0.44: the active method template (the template pill) —
                 // the turn pipelines prepend the brief as a METHOD TEMPLATE
                 // system block. v0.72: the attached whole bundle's manifest

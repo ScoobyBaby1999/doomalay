@@ -1139,6 +1139,30 @@
     bdlSave();
   }
 
+  // v1.22.0 THE MIRROR: the bundle-path preamble import (the hubitem
+  // twin — the only-my-keys PATCH discipline; the chat needs a session).
+  function importPreambleInto(sessionId, item, payload) {
+    if (!sessionId) return;
+    var parsed = (window.Persona && window.Persona.parsePreambleFile)
+      ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
+    fetch('/api/sessions/' + sessionId)
+      .then(function (r) { return r.json(); })
+      .then(function (sess) {
+        var list = [];
+        try { list = JSON.parse((sess && sess.Preambles) || '[]') || []; } catch (e) { list = []; }
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === item.id) return null; // already imported
+        }
+        list.push({ id: item.id, name: parsed.name || item.name || 'Preamble', text: parsed.body || '' });
+        return fetch('/api/sessions/' + sessionId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ preambles: JSON.stringify(list), preamble_sel: item.id })
+        });
+      })
+      .catch(function () { /* the local row is saved; the chat import degrades honestly */ });
+  }
+
   // the per-type side effects of a bundle member download — the exact
   // ones the old doBundleDownload applied (kept verbatim in spirit).
   function applyHubSideEffects(type, item, payload) {
@@ -1149,6 +1173,9 @@
       window.TemplateSheet.saveFromHub(item, payload);
     }
     if (type === 'persona') importPersonaInto(sid, item, payload);
+    // v1.22.0 THE MIRROR: a bundle's preamble member lands in the chat's
+    // preamble library + goes active (the same import-as-use contract).
+    if (type === 'preamble') importPreambleInto(sid, item, payload);
     if (type === 'theme' && window.LookIO && window.LookIO.importText) {
       window.LookIO.importText(payload);
     }

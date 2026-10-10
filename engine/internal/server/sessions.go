@@ -296,6 +296,21 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
         if v, ok := req["placeholders"].(string); ok {
                 sess.Placeholders = v
         }
+        // v1.22.0 THE MIRROR: the Preamble system — the chat's saved
+        // preamble library (JSON array of {id,name,text}) + the active
+        // selection. The server sanitizes both (caps, id checks, the
+        // default/off markers are not storable rows; a stale id falls
+        // back to the app default).
+        if v, ok := req["preambles"].(string); ok {
+                if strings.TrimSpace(v) == "" {
+                        sess.Preambles = ""
+                } else {
+                        sess.Preambles = sanitizePreambles(v)
+                }
+        }
+        if v, ok := req["preamble_sel"].(string); ok {
+                sess.PreambleSel = sanitizePreambleSel(v, sess.Preambles)
+        }
         // v0.16: the memory-window pill PATCHes this (sliding context size).
         // v0.28: -1 = the WHOLE chat (no window — user spec, the mind
         // slider's minimum); 0 keeps the default 40.

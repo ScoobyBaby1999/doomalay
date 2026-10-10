@@ -56,8 +56,12 @@ console.log('v1.17.1 THE PIVOT pins:');
   ok(cp.indexOf('+ Sandbox') < 0, 'chatpanel: no "+ Sandbox" gatelock/pill/dropdown string');
   ok(/termux:\s*!!state\.termux/.test(cp) && /termux:\s*state\.termux\s*!==\s*false/.test(cp) === false, 'chatpanel: termux rides sessionBody + persistCaps');
   ok(cp.indexOf('termux: !!state.termux') >= 0, 'chatpanel: persistCaps PATCHes termux');
-  ok(/web_search:\s*state\.webSearch\s*!==\s*false/.test(cp), 'chatpanel: the web_search capability rides turns with the real state (no hardcode)');
-  ok(cp.indexOf('web_search: true') < 0, 'chatpanel: the v0.45 web_search:true hardcode is gone');
+  // v1.21.2 THE CLEANSING re-pin: web search is ALWAYS ON — the turn
+  // override is gone, the session field self-heals true, deep research
+  // still rides (the library card arms it).
+  ok(cp.indexOf('web_search: state.webSearch') < 0, 'chatpanel: the web_search turn override is gone (always on, v1.21.2)');
+  ok(/web_search: true,/.test(cp), 'chatpanel: persistCaps sends web_search:true (the always-on law)');
+  ok(/deep_research: !!state\.deepResearch/.test(cp), 'chatpanel: deep_research still rides (the library card arms it)');
   ok(cp.indexOf('[/^pill-caps/') >= 0 && cp.indexOf('[/^pill-termux/') < 0, 'chatpanel: PILL_TONES carries the caps entry — the termux tone died with the pill (v1.20.1)');
   ok(cp.indexOf('[/^pill-sandbox/') < 0, 'chatpanel: the pill-sandbox tone entry is gone');
 
@@ -91,28 +95,30 @@ console.log('v1.17.1 THE PIVOT pins:');
 (function () {
   var C = require(path.join(WEB, 'capabilities.js'));
 
-  // a fresh chat's state: web search ON by birth, lib ON (the v0.77.6
-  // default), deep/skills/templates off, nothing stacked.
+  // a fresh chat's state — v1.21.2 THE CLEANSING: the library is the ONLY
+  // toggle; web/deep/skills/templates rows are gone (the verify rig's
+  // verdicts made law); persona LAST with the default fallback.
   var rows = C.rowsFor({ libAuto: true }, {});
   var by = {};
   rows.forEach(function (r) { by[r.key] = r; });
-  ok(by.web_search.on === true, 'rowsFor: web search defaults ON');
   ok(by.lib_auto.on === true, 'rowsFor: library defaults ON (the lib pill default)');
-  ok(by.deep_research.on === false && by.skills_auto.on === false && by.template_auto.on === false,
-    'rowsFor: deep research / skills / templates default OFF');
+  ok(!by.web_search && !by.deep_research && !by.skills_auto && !by.template_auto,
+    'rowsFor: the web/deep/skills/template rows are GONE (v1.21.2 THE CLEANSING)');
   ok(by.persona.kind === 'action' && by.workspaces.kind === 'action', 'rowsFor: persona + workspaces are action rows');
+  ok(rows[rows.length - 1].key === 'persona', 'rowsFor: persona LAST (v1.21.2)');
   ok(!by.termux, 'rowsFor: NO Termux row without a bridge status (desktop honesty)');
 
-  var chipWebOn = C.chipFor(by.web_search);
-  ok(chipWebOn.cls === 'on' && chipWebOn.text === 'on', 'chipFor: ON = accent chip "on"');
-  var chipDeepOff = C.chipFor(by.deep_research);
-  ok(chipDeepOff.cls === 'off' && chipDeepOff.text === 'off', 'chipFor: OFF = muted chip "off"');
+  var chipLibOn = C.chipFor(by.lib_auto);
+  ok(chipLibOn.cls === 'on' && chipLibOn.text === 'on', 'chipFor: ON = accent chip "on"');
+  var rowsOff = C.rowsFor({ libAuto: false }, {});
+  var chipLibOff = C.chipFor(rowsOff.filter(function (r) { return r.key === 'lib_auto'; })[0]);
+  ok(chipLibOff.cls === 'off' && chipLibOff.text === 'off', 'chipFor: OFF = muted chip "off"');
 
-  // the toggle flip paints the opposite chip
-  var flipped = C.rowsFor({ deepResearch: true }, {});
+  // the toggle flip paints the opposite chip (v1.21.2: the lib toggle)
+  var flipped = C.rowsFor({ libAuto: false }, {});
   var by2 = {};
   flipped.forEach(function (r) { by2[r.key] = r; });
-  ok(C.chipFor(by2.deep_research).cls === 'on', 'rowsFor: a flipped deep_research renders the ON chip');
+  ok(C.chipFor(by2.lib_auto).cls === 'off', 'rowsFor: an unflipped lib renders the OFF chip');
 
   // the persona row shows the active persona name when set
   var prows = C.rowsFor({}, { personaName: 'Kronos' });

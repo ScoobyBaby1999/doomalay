@@ -150,4 +150,17 @@ func init() {
                 PayloadExt: ".py",
                 Desc:       "Runnable Python scripts shared through Hugging Face datasets",
         })
+        // v1.22.0 THE MIRROR: PREAMBLES — the persona-metadata block (the
+        // app briefing: identity line + the machinery slots, written in
+        // {placeholders}). A portable .md file with frontmatter (name +
+        // description + placeholders) + a body; the persona editor's
+        // Preamble panel publishes/downloads them. One Register call —
+        // the routes, tabs and bundles come free (the registry idiom).
+        Register(LibrarySpec{
+                Type:       "preamble",
+                Label:      "Preamble Library",
+                Tag:        "doomalay-preamble",
+                PayloadExt: ".md",
+                Desc:       "Persona preambles — the app briefing blocks, shared through Hugging Face datasets",
+        })
 }

@@ -48,12 +48,14 @@
   // templates are stage-JSON; themes are .doomtheme bundles. The old form
   // labeled everything but personas "(.json)".
   function payloadExt(type) {
-    return { persona: '.md', skill: '.md', template: '.json', theme: '.doomtheme' }[type] || '.json';
+    return { persona: '.md', skill: '.md', template: '.json', theme: '.doomtheme', preamble: '.md' }[type] || '.json';
   }
   function payloadPlaceholder(type) {
     if (type === 'persona') return 'the persona markdown — the text the model receives';
     if (type === 'skill') return 'the skill markdown — SKILL.md-style: name + description frontmatter, then the instructions body (one file — scripts can\u2019t ride the hub payload)';
     if (type === 'template') return 'the template JSON — {"name", "stages": [{name, role, instructions}\u2026], "markdown"}';
+    // v1.22.0 THE MIRROR: the preamble payload is the portable file
+    if (type === 'preamble') return 'the preamble markdown — name/description/placeholders frontmatter, then the body written in {placeholders}';
     return 'the theme bundle JSON — prefills from your current look, or export one from Colors · Import / Export Theme';
   }
 

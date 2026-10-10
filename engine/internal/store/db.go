@@ -189,6 +189,12 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // custom {key} map.
                 {"chat_sessions", "personas", "ALTER TABLE chat_sessions ADD COLUMN personas TEXT"},
                 {"chat_sessions", "placeholders", "ALTER TABLE chat_sessions ADD COLUMN placeholders TEXT"},
+                // v1.22.0 THE MIRROR: the Preamble system — preambles is a
+                // JSON array of {id,name,text} (the chat's saved preamble
+                // library); preamble_sel is the active selection
+                // ("" = the app default · "off" = disabled · "<id>").
+                {"chat_sessions", "preambles", "ALTER TABLE chat_sessions ADD COLUMN preambles TEXT"},
+                {"chat_sessions", "preamble_sel", "ALTER TABLE chat_sessions ADD COLUMN preamble_sel TEXT"},
                 // v0.28: per-chat compaction controls (the mind panel owns
                 // them) — enabled by default, arms at 70% context fill.
                 {"chat_sessions", "compact_enabled", "ALTER TABLE chat_sessions ADD COLUMN compact_enabled INTEGER DEFAULT 1"},

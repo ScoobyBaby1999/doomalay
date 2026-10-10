@@ -561,6 +561,9 @@
         toast('downloaded — ' + cur.item.name);
         if (window.Hub) window.Hub.refreshItem(cur.item);
         if (cur.type === 'persona') importPersona(cur.item, cur.payload);
+        // v1.22.0 THE MIRROR: a downloaded PREAMBLE lands in this chat's
+        // preamble library (the persona list's Preamble panel selects it).
+        if (cur.type === 'preamble') importPreamble(cur.item, cur.payload);
         // v0.44 TEMPLATE PILL: a downloaded TEMPLATE lands in the local
         // user-template library (templatesheet.js "Yours") — it is then
         // selectable from the composer's ⧉ template pill like any other.
@@ -790,6 +793,47 @@
       })
         .then(function (r) {
           if (r && r.ok) toast('added to this chat\'s personas — switch it on from its editor');
+        })
+        .catch(function () { toast('saved locally, but the chat import failed'); });
+    };
+    if (state.sessionId) return go();
+    if (window.ChatPanel.ensureSession) window.ChatPanel.ensureSession(state, go);
+  }
+
+  // v1.22.0 THE MIRROR: the preamble import twin — parse the portable
+  // frontmatter file, append into the chat's preamble library, select it.
+  function importPreamble(item, payload) {
+    var c = window.ChatPanel && window.ChatPanel.current();
+    if (!c || !c.state) return;
+    var state = c.state;
+    var go = function () {
+      if (!state.sessionId) return;
+      var parsed = (window.Persona && window.Persona.parsePreambleFile)
+        ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
+      fetch('/api/sessions/' + state.sessionId)
+        .then(function (r) { return r.json(); })
+        .then(function (sess) {
+          var list = [];
+          try { list = JSON.parse((sess && sess.Preambles) || '[]') || []; } catch (e) { list = []; }
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === item.id) return null; // already imported
+          }
+          list.push({
+            id: item.id,
+            name: parsed.name || item.name || 'Preamble',
+            text: parsed.body || ''
+          });
+          return fetch('/api/sessions/' + state.sessionId, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              preambles: JSON.stringify(list),
+              preamble_sel: item.id // the import IS the use (a template lands ready)
+            })
+          });
+        })
+        .then(function (r) {
+          if (r && r.ok) toast('preamble added + set active — edit it from Persona → Preamble');
         })
         .catch(function () { toast('saved locally, but the chat import failed'); });
     };

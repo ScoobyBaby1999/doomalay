@@ -526,7 +526,9 @@ func TestHubLibraries(t *testing.T) {
         // category) so it never appears in the listing…
         // v0.91.3: + python — runnable Python scripts as a first-class
         // category (the Kronos bundle's entry points publish here) → 6.
-        if len(got.Libraries) != 6 {
+        // v1.22.0 THE MIRROR: + preamble — the persona-metadata block
+        // (the app briefing as a portable, publishable .md) → 7.
+        if len(got.Libraries) != 7 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}
@@ -544,6 +546,10 @@ func TestHubLibraries(t *testing.T) {
         }
         if byType["script"].Tag != "doomalay-script" || byType["script"].PayloadExt != ".sh" {
                 t.Fatalf("script spec = %+v", byType["script"])
+        }
+        // v1.22.0: the preamble library rides the registry (a portable .md)
+        if byType["preamble"].Tag != "doomalay-preamble" || byType["preamble"].PayloadExt != ".md" {
+                t.Fatalf("preamble spec = %+v", byType["preamble"])
         }
         if _, ok := byType["doc"]; ok {
                 t.Fatalf("doc must be hidden from the listing, got %+v", byType["doc"])

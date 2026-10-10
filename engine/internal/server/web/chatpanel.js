@@ -2570,14 +2570,12 @@
     } else {
       personaText = (state.persona || '').trim();
     }
-    var sys = head + '\n\n';
-    if (personaText) {
-      sys += window.Persona.substituteAll(personaText, state.chatName, model, state.provider);
-    } else {
+    var defPersona = '';
+    if (!personaText) {
       // v0.48 task 6: the default persona is mode-aware (quick vs HF)
       // v1.15.3: persona.js ALWAYS provides the mode-aware default (it
       // loads first in index.html — the dead local duplicate is gone).
-      var defPersona = window.Persona.defaultPersonaFor(state.sandbox);
+      defPersona = window.Persona.defaultPersonaFor(state.sandbox);
       // v0.89.3: the HF default carries a {repo} slot (own-space repo or
       // the shared marker) — substituteAll doesn't know it, so it's
       // resolved HERE from the chat's own state (the engine twin's
@@ -2586,17 +2584,61 @@
         defPersona = defPersona.split('{repo}').join(
           state.sandboxRepo ? (' (your Space: ' + state.sandboxRepo + ')') : '');
       }
-      sys += window.Persona.substituteAll(defPersona, state.chatName, model, state.provider);
-      // v0.68: the PM default persona rides the LIBRARY discipline block
-      // (the engine's libraryPreamble twin) + the metadata block — the
-      // PM default now knows the library exists AND every control's
-      // live state, exactly like the engine path.
-      // v0.78.1: + the session dashboard twin (usage/pricing/context/
-      // connections/bound repos).
-      return sys + pmLibraryPreamble(state) + pmMetadataBlock(state) + pmSessionContext(state); // the default persona carries the artifact protocol
     }
-    if (!/artifact/i.test(personaText)) sys += '\n\n' + PM_ARTIFACT_PROMPT;
-    return sys + pmMetadataBlock(state) + pmSessionContext(state);
+    // ── v1.22.0 THE MIRROR: the PREAMBLE twin (the engine's
+    // systemPromptFor, client-side). '' | 'off' | '<id>'; the block
+    // placeholders expand through the PM builders — the PM default now
+    // matches the engine's shape (machinery above, voice below).
+    var sel = state.preambleSel || '';
+    var preTemplate = null;
+    if (sel !== 'off') {
+      preTemplate = window.Persona.defaultPreambleFor(state.sandbox);
+      if (sel && state.preambles && state.preambles.length) {
+        for (var pi = 0; pi < state.preambles.length; pi++) {
+          var pp = state.preambles[pi];
+          if (pp && pp.id === sel && String(pp.text || '').trim()) { preTemplate = pp.text; break; }
+        }
+      }
+    }
+    var teachesArtifact = /artifact/i.test(personaText || defPersona || '');
+    var sys = '';
+    if (preTemplate) {
+      sys = window.Persona.substituteAll(preTemplate, state.chatName, model, state.provider) + '\n\n';
+    }
+    sys += window.Persona.substituteAll(personaText || defPersona, state.chatName, model, state.provider);
+    // the MIRROR blocks expand AFTER substitution (live block text is
+    // never touched by custom {keys}); {artifacts} yields to a persona
+    // that already teaches the protocol.
+    sys = sys
+      .split('{repo_access}').join(pmRepoAccessBlock(state))
+      .split('{artifacts}').join(teachesArtifact ? '' : PM_ARTIFACT_PROMPT)
+      .split('{library}').join(pmLibraryPreamble(state))
+      .split('{controls}').join(pmMetadataBlock(state))
+      .split('{session}').join(pmSessionContext(state));
+    while (sys.indexOf('\n\n\n') >= 0) sys = sys.split('\n\n\n').join('\n\n');
+    return head + sys;
+  }
+
+  // pmRepoAccessBlock (v1.22.0) — the PM twin of the engine's
+  // workspaceManifestFor: the unbound public read hand, or the bound
+  // rows + the access-tier semantics from the primed connection cache.
+  function pmRepoAccessBlock(state) {
+    var PUB = 'PUBLIC REPO ACCESS (no connection needed): the workspace tool reads PUBLIC repos unbound — {"action":"read","ws":"owner/repo","path":"README.md"} and info/tree/ls/readme/grep/view, for any GitHub owner/repo or a full forge URL (gitea/gitlab/sourcehut/HF). Prefer this over hand-built fetches. Private repos and writes (put/pr/issues/…) need the user to connect a workspace (the +workspace pill).';
+    var bound = ((state._pmConn && state._pmConn.bound) || []).filter(function (w) {
+      return (w.kind || w.Kind || 'repo') !== 'termux';
+    });
+    if (!bound.length) return PUB;
+    var lines = bound.map(function (w) {
+      var name = w.name || w.Name || (((w.owner || w.Owner || '') + '/' + (w.repo || w.Repo || '')));
+      var kind = w.kind || w.Kind || 'repo';
+      var access = w.access || w.Access || 'read';
+      var ref = w.id || w.ID || '';
+      return '- ' + name + ' [' + kind + '] access=' + access + (ref ? (' (workspace ref: ' + ref + ')') : '');
+    });
+    return "CONNECTED CLOUD WORKSPACES (this chat's repos — act on them with the workspace tool):\n" +
+      lines.join('\n') +
+      '\naccess=read → browse/tree/read/grep/view only; partial → fork+PR flows; full → direct file writes (API commits). The tool routes through the engine, which holds the credentials.' +
+      '\n\n' + PUB;
   }
 
   function runPMTurn(text, state, bodyEl, icon) {
@@ -4180,6 +4222,12 @@
         if (typeof data.Placeholders === 'string' && data.Placeholders) {
           try { state.placeholders = JSON.parse(data.Placeholders) || {}; } catch (e) {}
         }
+        // v1.22.0 THE MIRROR: the preamble library + selection (the PM
+        // path composes its system message client-side — it needs both).
+        if (typeof data.Preambles === 'string' && data.Preambles) {
+          try { state.preambles = JSON.parse(data.Preambles) || []; } catch (e) {}
+        }
+        if (typeof data.PreambleSel === 'string') state.preambleSel = data.PreambleSel;
         state.chatName = data.Title || state.chatName;
         cb();
       } else {
@@ -6216,12 +6264,18 @@
     var list = e.detail.personas || null;
     var ph = e.detail.placeholders || null;
     var legacy = (e.detail && e.detail.persona) || '';
+    // v1.22.0 THE MIRROR: the preamble library + selection ride the same
+    // broadcast (the PM path composes from the LATEST list).
+    var preList = (e.detail && e.detail.preambles) || null;
+    var preSel = (e.detail && typeof e.detail.preambleSel === 'string') ? e.detail.preambleSel : null;
     for (var k in chatStates) {
       var st = chatStates[k];
       if (st && st.sessionId === sid) {
         st.persona = legacy;
         if (list) st.personas = list;
         if (ph) st.placeholders = ph;
+        if (preList) st.preambles = preList;
+        if (preSel !== null) st.preambleSel = preSel;
       }
     }
   });

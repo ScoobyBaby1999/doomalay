@@ -118,6 +118,34 @@
   // always meant before v0.48)
   var DEFAULT_PERSONA = DEFAULT_PERSONA_QUICK;
 
+  // ── v1.22.0 THE MIRROR: the default PREAMBLE templates ──────────
+  // The app briefing (the machinery) as a portable template — the twin of
+  // the engine's defaultPreambleFor (server/preambles.go). {placeholders}
+  // expand at turn time: {model}/{provider}/{name}/{date} via the
+  // substitution vocabulary, the BLOCK slots ({repo_access}, {artifacts},
+  // {library}, {controls}, {session}) via the engine/PM builders. The
+  // identity line lives HERE now (editable like everything else).
+  var DEFAULT_PREAMBLE_QUICK =
+    'You are {model}, hosted via {provider}, chatting inside the Doomalay app on the user\'s own device. Today is {date}.\n\n' +
+    '{repo_access}\n\n' +
+    '{artifacts}\n\n' +
+    '{library}\n\n' +
+    '{controls}\n\n' +
+    '{session}';
+  var DEFAULT_PREAMBLE_HF =
+    'You are {model}, hosted via {provider}, chatting inside the Doomalay app from your Hugging Face Space. Today is {date}.\n\n' +
+    '{repo_access}\n\n' +
+    '{artifacts}\n\n' +
+    '{library}\n\n' +
+    '{controls}\n\n' +
+    '{session}';
+  function defaultPreambleFor(mode) {
+    return mode === 'hf' ? DEFAULT_PREAMBLE_HF : DEFAULT_PREAMBLE_QUICK;
+  }
+  // the MIRROR block vocabulary (documented for the editor + the
+  // frontmatter's placeholders field — self-describing files)
+  var PREAMBLE_BLOCKS = ['repo_access', 'artifacts', 'library', 'controls', 'session'];
+
   // defaultPersonaFor(mode) — mode-aware default ('hf' → the HF persona).
   function defaultPersonaFor(mode) {
     return mode === 'hf' ? DEFAULT_PERSONA_HF : DEFAULT_PERSONA_QUICK;
@@ -129,6 +157,10 @@
   var placeholders = {};  // {key: value} — this chat's LOCAL customs
   var globalPlaceholders = {}; // v0.29: engine-wide customs (every chatbot)
   var legacyPersona = ''; // v0.19 single-persona column (fallback)
+  // v1.22.0 THE MIRROR: the chat's saved preamble library + the active
+  // selection ('' = the app default · 'off' · '<id>').
+  var preambles = [];     // [{id,name,text}]
+  var preambleSel = '';
   var cm = null;          // the open editor's CodeMirror
   // v0.31: the picker's heart badges + hearted-first sort read the
   // engine's local heart list (GET /api/hub/personas/hearted — hub hearts
@@ -280,6 +312,17 @@
       if (sess && sess.Placeholders) {
         try { placeholders = JSON.parse(sess.Placeholders) || {}; } catch (e) { placeholders = {}; }
       }
+      // v1.22.0 THE MIRROR: the preamble library + selection (absent on
+      // old engines/sessions = the app default). The default/off markers
+      // are states, never rows — a corrupt list filters clean.
+      preambles = [];
+      if (sess && sess.Preambles) {
+        try { preambles = JSON.parse(sess.Preambles) || []; } catch (e) { preambles = []; }
+      }
+      preambleSel = (sess && typeof sess.PreambleSel === 'string') ? sess.PreambleSel : '';
+      preambles = preambles.filter(function (p) {
+        return p && p.id && p.id !== 'default' && p.id !== 'off';
+      });
       personas.forEach(normalize);
       enforceSingleActive(); // v0.28: migrate stored lists to single-active
       return sess;
@@ -331,7 +374,29 @@
     }).then(function () {
       try {
         window.dispatchEvent(new CustomEvent('doomalay:persona-saved', {
-          detail: { sessionId: cur.sessionId, personas: personas, placeholders: placeholders }
+          detail: { sessionId: cur.sessionId, personas: personas, placeholders: placeholders,
+                    preambles: preambles, preambleSel: preambleSel }
+        }));
+      } catch (e) {}
+    });
+  }
+
+  // v1.22.0 THE MIRROR: the preambles' own PATCH — only its OWN keys (the
+  // engine updates just the present fields; the personas/placeholders
+  // lists never ride here, the same only-my-keys discipline hubitem uses).
+  function persistPreambles() {
+    return fetch('/api/sessions/' + cur.sessionId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preambles: JSON.stringify(preambles),
+        preamble_sel: preambleSel
+      })
+    }).then(function () {
+      try {
+        window.dispatchEvent(new CustomEvent('doomalay:persona-saved', {
+          detail: { sessionId: cur.sessionId, personas: personas, placeholders: placeholders,
+                    preambles: preambles, preambleSel: preambleSel }
         }));
       } catch (e) {}
     });
@@ -428,9 +493,29 @@
           '<span class="pv-row-meta"><span class="pv-row-title">Placeholders</span>' +
           '<span class="pv-row-sub">{name} {model} {provider} {skills} + custom keys</span></span>' +
           '<span class="pv-row-chev">›</span>' +
+        '</button>' +
+        // v1.22.0 THE MIRROR: the PREAMBLE row — under the placeholders row
+        // (the user's spec). The sub names the live selection: the app
+        // default, the active custom's name, or off.
+        '<button class="pv-row" data-preamble="1">' +
+          '<span class="pv-row-ico" style="font-family:monospace">¶</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">Preamble</span>' +
+          '<span class="pv-row-sub" id="pv-preamble-sub">' + esc(preambleSub()) + '</span></span>' +
+          '<span class="pv-row-chev">›</span>' +
         '</button>'
       );
     }, wireList);
+  }
+
+  // preambleSub — the list row's live one-liner (pure).
+  function preambleSub() {
+    if (preambleSel === 'off') return 'off — the persona is the whole prompt';
+    if (preambleSel) {
+      for (var i = 0; i < preambles.length; i++) {
+        if (preambles[i].id === preambleSel) return 'active · ' + (preambles[i].name || preambles[i].id);
+      }
+    }
+    return 'active · the app default';
   }
 
   function wireList(el) {
@@ -478,6 +563,259 @@
     if (ph) ph.addEventListener('click', function () {
       PV().pushView(placeholdersView());
     });
+    // v1.22.0 THE MIRROR: the Preamble row — the preamble panel.
+    var pb = el.querySelector('[data-preamble]');
+    if (pb) pb.addEventListener('click', function () {
+      PV().pushView(preambleView());
+    });
+  }
+
+  // ── v1.22.0 THE MIRROR: THE PREAMBLE PANEL ────────────────────────
+  // The persona machinery as an optional, editable, portable block. The
+  // panel: the two state rows (App default / Off) + the saved customs
+  // (tap = select for this chat, the pencil = edit) + add/library. The
+  // editor is the persona editor's twin (name + CodeMirror + save /
+  // ↺ app default / ⇩ .md / ⇧ publish / trash) minus the mode pills.
+  function findPreamble(id) {
+    for (var i = 0; i < preambles.length; i++) if (preambles[i].id === id) return preambles[i];
+    return null;
+  }
+
+  function preambleView() {
+    return view('preamble · ' + cur.name, function () {
+      var rows = '';
+      // the two state rows — the selection chip rides the ACTIVE one
+      var defOn = preambleSel !== 'off' && !findPreamble(preambleSel);
+      var offOn = preambleSel === 'off';
+      rows += preambleRow('default', 'App default', 'composed live — always in sync with the app', defOn, true);
+      rows += preambleRow('off', 'Off', 'the persona IS the whole prompt', offOn, true);
+      preambles.forEach(function (p) {
+        rows += preambleRow(p.id, p.name || p.id,
+          'saved template · tap to make active', preambleSel === p.id, false);
+      });
+      if (!preambles.length) {
+        rows += '<div class="art-loading">no saved preambles yet — add one below</div>';
+      }
+      return (
+        '<p class="pv-hint">The <b>preamble</b> is the app briefing your persona rides on — the identity line, repo access, the artifact protocol, the library, the chat controls and the live session block. Write it in <b>placeholders</b> ({repo_access} {artifacts} {library} {controls} {session} {model} {provider} {name} {date}) and they expand live at every turn. Optional and fully disableable; downloads as a portable .md.</p>' +
+        rows +
+        '<div class="pv-section-label">add</div>' +
+        '<button class="pv-row" data-preamble-new="1">' +
+          '<span class="pv-row-ico">＋</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">New preamble</span>' +
+          '<span class="pv-row-sub">start from the app default</span></span>' +
+        '</button>' +
+        '<button class="pv-row" data-preamble-hub="1">' +
+          '<span class="pv-row-ico">◈</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">Preamble library</span>' +
+          '<span class="pv-row-sub">the community hub — browse, install, publish</span></span>' +
+          '<span class="pv-row-chev">›</span>' +
+        '</button>'
+      );
+    }, wirePreamble);
+  }
+
+  function preambleRow(id, name, sub, active, isState) {
+    return '<button class="pv-row" data-preamble-sel="' + escAttr(id) + '">' +
+      '<span class="pv-row-ico" style="font-family:monospace">' + (isState ? (id === 'off' ? '○' : '⌂') : '¶') + '</span>' +
+      '<span class="pv-row-meta"><span class="pv-row-title">' + esc(name) + '</span>' +
+      '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
+      (isState ? '' :
+        '<span class="pv-row-chev" data-preamble-edit="' + escAttr(id) + '" title="edit this preamble" role="button" tabindex="0">✎</span>') +
+      '<span class="pv-row-chev" style="' + (active ? 'color:var(--accent);font-weight:700' : 'visibility:hidden') + '">✓</span>' +
+    '</button>';
+  }
+
+  function wirePreamble(el) {
+    el.querySelectorAll('[data-preamble-sel]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        // the pencil is its own affordance (edit, not select)
+        var edit = e.target.closest ? e.target.closest('[data-preamble-edit]') : null;
+        if (edit) {
+          var p = findPreamble(edit.getAttribute('data-preamble-edit'));
+          if (p) PV().pushView(preambleEditorView(p));
+          return;
+        }
+        var id = b.getAttribute('data-preamble-sel');
+        preambleSel = id === 'default' ? '' : id;
+        persistPreambles().then(function () {
+          toast(id === 'off' ? 'preamble off — the persona is the whole prompt'
+            : (id === 'default' ? 'the app default preamble is active'
+              : 'preamble active — ' + (findPreamble(id) || {}).name));
+          PV().replaceView(preambleView());
+        }).catch(function (err) { toast((err && err.message) || 'could not save the selection'); });
+      });
+    });
+    var np = el.querySelector('[data-preamble-new]');
+    if (np) np.addEventListener('click', function () {
+      var p = { id: uid(), name: 'Preamble ' + (preambles.length + 1), text: '' };
+      preambles.push(p);
+      persistPreambles().then(function () { PV().pushView(preambleEditorView(p)); });
+    });
+    var hub = el.querySelector('[data-preamble-hub]');
+    if (hub) hub.addEventListener('click', function () {
+      if (window.Hub) window.Hub.open('preamble');
+      else toast('the hub is not available');
+    });
+  }
+
+  // ── v1.22.0: THE PREAMBLE EDITOR (the persona editor's twin) ──────
+  function preambleEditorView(p) {
+    return view('preamble · ' + p.name, function () {
+      return (
+        '<div class="pe-root">' +
+        '<div class="pe-action-row">' +
+          '<button id="pb-save" class="pe-mode-pill" disabled style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">save</button>' +
+          '<button id="pb-default" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">↺ app default</button>' +
+          '<button id="pb-dl" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">⇩ .md</button>' +
+          '<button id="pb-publish" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">⇧ publish</button>' +
+          '<button id="pb-del" class="pe-mode-pill" title="delete this preamble" aria-label="delete this preamble"' +
+            ' style="background:rgba(var(--err-rgb),0.08);border:1px solid rgba(var(--err-rgb),0.4);color:var(--err);' +
+            'display:flex;align-items:center;justify-content:center;padding:6px 10px">' + TRASH_SVG + '</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:7px;margin-bottom:10px;align-items:center;flex:none">' +
+          '<input id="pb-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="preamble name" aria-label="Preamble name">' +
+          '<button id="pb-use" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">use in this chat</button>' +
+        '</div>' +
+        '<p class="pv-hint" style="margin:0 2px 8px;flex:none">Placeholders expand live every turn: <b>{repo_access}</b> {artifacts} {library} {controls} {session} — plus {model} {provider} {name} {date} and your custom keys. Unknown keys stay as written (portable by design).</p>' +
+        '<div class="pe-body-fill" id="pb-body"><div class="art-loading">loading editor…</div></div>' +
+        '</div>'
+      );
+    }, function (el) { wirePreambleEditor(el, p); });
+  }
+
+  function wirePreambleEditor(el, p) {
+    var pcm = null;
+    var dirty = false;
+    var saveBtn = el.querySelector('#pb-save');
+
+    function markDirty() {
+      dirty = true;
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'save · unsaved'; }
+    }
+    function markClean() { dirty = false; if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'save'; } }
+
+    ensureCSS('/vendor/editor/codemirror.css')
+      .then(function () { return ensureScript('/vendor/editor/codemirror.min.js'); })
+      .then(function () { return ensureScript('/vendor/editor/mode-markdown.min.js'); })
+      .then(function () {
+        var host = el.querySelector('#pb-body');
+        if (!host || !window.CodeMirror) return;
+        host.innerHTML = '';
+        var wrap = document.createElement('div');
+        wrap.className = 'art-cm-host';
+        host.appendChild(wrap);
+        pcm = CodeMirror(wrap, {
+          value: String(p.text || '').trim() ? p.text : defaultPreambleFor(cur && cur.sandbox),
+          mode: 'markdown', lineNumbers: true, lineWrapping: true,
+          theme: 'doomalay', viewportMargin: 60
+        });
+        pcm.on('change', markDirty);
+        pcm.refresh();
+      }).catch(function (e) {
+        var host = el.querySelector('#pb-body');
+        if (host) host.innerHTML = '<div class="art-loading">editor failed to load — ' + esc(String(e.message || e)) + '</div>';
+      });
+
+    var nameInput = el.querySelector('#pb-name');
+    if (nameInput) nameInput.addEventListener('input', markDirty);
+
+    if (saveBtn) saveBtn.addEventListener('click', function () {
+      if (!pcm) return;
+      p.text = pcm.getValue();
+      p.name = (nameInput.value || '').trim() || p.name;
+      saveBtn.textContent = 'saving…';
+      persistPreambles().then(function () { markClean(); toast('preamble saved'); })
+        .catch(function () { saveBtn.textContent = 'save · retry?'; saveBtn.disabled = false; });
+    });
+
+    var defBtn = el.querySelector('#pb-default');
+    if (defBtn) defBtn.addEventListener('click', function () {
+      if (pcm) { pcm.setValue(defaultPreambleFor(cur && cur.sandbox)); markDirty(); }
+    });
+
+    var dlBtn = el.querySelector('#pb-dl');
+    if (dlBtn) dlBtn.addEventListener('click', function () {
+      var text = pcm ? pcm.getValue() : (p.text || defaultPreambleFor(cur && cur.sandbox));
+      var file = buildPreambleFile(p.name || 'preamble', text);
+      var safe = (p.name || 'preamble').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+      var blob = new Blob([file], { type: 'text/markdown' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = safe + '.preamble.md';
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 400);
+    });
+
+    var pubBtn = el.querySelector('#pb-publish');
+    if (pubBtn) pubBtn.addEventListener('click', function () {
+      if (!window.HubPublish) { toast('the hub is not available'); return; }
+      var text = pcm ? pcm.getValue() : (p.text || '');
+      window.HubPublish.open('preamble', { name: p.name, payload: buildPreambleFile(p.name, text) });
+    });
+
+    var useBtn = el.querySelector('#pb-use');
+    if (useBtn) useBtn.addEventListener('click', function () {
+      preambleSel = p.id;
+      persistPreambles().then(function () {
+        toast('preamble active — ' + p.name);
+        PV().replaceView(preambleView());
+      });
+    });
+
+    var delBtn = el.querySelector('#pb-del');
+    if (delBtn) delBtn.addEventListener('click', function () {
+      if (delBtn.dataset.armed) {
+        preambles = preambles.filter(function (x) { return x.id !== p.id; });
+        if (preambleSel === p.id) preambleSel = '';
+        persistPreambles().then(function () { toast('preamble deleted'); PV().popView(); });
+      } else {
+        delBtn.dataset.armed = '1';
+        delBtn.textContent = 'sure?';
+        setTimeout(function () {
+          delete delBtn.dataset.armed;
+          delBtn.innerHTML = TRASH_SVG;
+        }, 2600);
+      }
+    });
+  }
+
+  // ── v1.22.0: the portable preamble FILE (frontmatter + body) ──────
+  // The skills' frontmatter idiom: machine-readable metadata, then the
+  // markdown body. Foreign apps read the body and strip or substitute
+  // the {placeholders} — AGENTS.md-grade portability.
+  function buildPreambleFile(name, body) {
+    var keys = PREAMBLE_BLOCKS.concat(['model', 'provider', 'name', 'date']);
+    var found = [];
+    keys.forEach(function (k) {
+      if (body.indexOf('{' + k + '}') >= 0) found.push(k);
+    });
+    return '---\n' +
+      'name: ' + String(name || 'Preamble').replace(/[\r\n]/g, ' ') + '\n' +
+      'description: Doomalay preamble — the app briefing blocks, written in placeholders.\n' +
+      'placeholders: ' + found.join(', ') + '\n' +
+      '---\n\n' +
+      String(body || '');
+  }
+
+  function parsePreambleFile(text) {
+    var t = String(text || '');
+    var out = { name: '', description: '', placeholders: '', body: t };
+    if (t.slice(0, 3) === '---') {
+      var end = t.indexOf('\n---', 3);
+      if (end > 0) {
+        var fm = t.slice(3, end);
+        out.body = t.slice(end + 4).replace(/^\s*\n/, '');
+        fm.split('\n').forEach(function (line) {
+          var m = line.match(/^([A-Za-z_-]+)\s*:\s*(.*)$/);
+          if (!m) return;
+          if (m[1] === 'name') out.name = m[2].trim();
+          else if (m[1] === 'description') out.description = m[2].trim();
+          else if (m[1] === 'placeholders') out.placeholders = m[2].trim();
+        });
+      }
+    }
+    return out;
   }
 
   // ── THE EDITOR VIEW ───────────────────────────────────────────────
@@ -1077,6 +1415,7 @@
         builtin('name', cur ? cur.name : '—', 'the chat\'s own name (Scooby, Lippy, Crippy…)') +
         builtin('model', cur ? String(cur.model).split('/').pop() : '—', 'the live model — swaps instantly when you switch') +
         builtin('provider', cur ? (cur.provider || '—') : '—', 'the live provider label') +
+        builtin('date', new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), 'today — live on every turn') +
         builtin('skills', 'stub', 'inert on purpose for now — will point at skills + MCP servers later') +
         '<div class="pv-section-label">global 🌐</div>' +
         globals +
@@ -1218,7 +1557,9 @@
       .split('{name}').join(chatName || '')
       .split('{model}').join(m)
       .split('{provider}').join(provider || '')
-      .split('{skills}').join('(no skills attached yet)');
+      .split('{skills}').join('(no skills attached yet)')
+      // v1.22.0 THE MIRROR: {date} joins the vocabulary (the engine twin).
+      .split('{date}').join(new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
     Object.keys(merged).sort(function (a, b) { return b.length - a.length; }).forEach(function (k) {
       out = out.split('{' + k + '}').join(merged[k]);
     });
@@ -1295,6 +1636,13 @@
     DEFAULT_PERSONA_QUICK: DEFAULT_PERSONA_QUICK,
     DEFAULT_PERSONA_HF: DEFAULT_PERSONA_HF,
     defaultPersonaFor: defaultPersonaFor,
+    // v1.22.0 THE MIRROR: the preamble twins + the portable-file helpers.
+    DEFAULT_PREAMBLE_QUICK: DEFAULT_PREAMBLE_QUICK,
+    DEFAULT_PREAMBLE_HF: DEFAULT_PREAMBLE_HF,
+    defaultPreambleFor: defaultPreambleFor,
+    buildPreambleFile: buildPreambleFile,
+    parsePreambleFile: parsePreambleFile,
+    PREAMBLE_BLOCKS: PREAMBLE_BLOCKS,
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,
     substituteAll: substituteAll,

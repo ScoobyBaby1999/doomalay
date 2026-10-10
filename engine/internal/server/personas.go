@@ -37,6 +37,7 @@ import (
         "strconv"
         "strings"
         "sync"
+        "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
@@ -753,6 +754,9 @@ func substituteAllVars(text, chatName, model, provider string, ph map[string]str
                 "{model}", m,
                 "{provider}", providerLabel(provider),
                 "{skills}", "(no skills attached yet)",
+                // v1.22.0 THE MIRROR: {date} joins the vocabulary (the
+                // default preamble's identity line; personas may use it too).
+                "{date}", time.Now().Format("Monday, 2 January 2006"),
         )
         out := r.Replace(text)
         // custom placeholders — longest keys first (a {a} must not eat {ab}).
@@ -787,7 +791,7 @@ func substituteAllVars(text, chatName, model, provider string, ph map[string]str
 func (s *Server) handlePlaceholdersGet(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, 200, map[string]any{
                 "placeholders": s.globalPlaceholders(),
-                "builtin":      []string{"name", "model", "provider", "skills", "messages", "turns"},
+                "builtin":      []string{"name", "model", "provider", "skills", "date", "messages", "turns"},
         })
 }
 
@@ -806,7 +810,7 @@ func (s *Server) handlePlaceholdersSet(w http.ResponseWriter, r *http.Request) {
                 return
         }
         switch req.Key {
-        case "name", "model", "provider", "skills", "messages", "turns":
+        case "name", "model", "provider", "skills", "date", "messages", "turns":
                 writeError(w, 400, req.Key+" is built-in — pick another key")
                 return
         }

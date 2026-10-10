@@ -34,6 +34,11 @@ type Session struct {
         // `placeholders` is a JSON map of the chat's custom {key}s.
         Personas        string
         Placeholders    string
+        // v1.22.0 THE MIRROR: the Preamble system — the chat's saved
+        // preamble library (JSON array of {id,name,text}) + the active
+        // selection ("" default · "off" · "<id>"). See server/preambles.go.
+        Preambles       string
+        PreambleSel     string
         ManuallyRenamed bool
         // v0.21 AUTO-COMPACT (ported from the HF space's proactive compression):
         // when the conversation nears the model's context limit, older turns
@@ -94,16 +99,16 @@ INSERT INTO chat_sessions
   (id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
    web_template, deep_template, deep_mode, judge_count, judge_template,
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
-   workspace_id, persona, personas, placeholders, manually_renamed, compact_summary, compact_seq,
+   workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed, compact_summary, compact_seq,
    compact_enabled, compact_threshold, template_id, template_auto, skills_auto,
    lib_auto, termux,
    sandbox_mode, sandbox_repo, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
                 s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
-                s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
+                s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
                 s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.TemplateAuto, s.SkillsAuto,
                 s.LibAuto, s.Termux,
                 s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
@@ -119,14 +124,14 @@ UPDATE chat_sessions SET
   model=?, provider=?, sandbox=?, effort=?, mode=?, web_search=?, deep_research=?,
   web_template=?, deep_template=?, deep_mode=?, judge_count=?, judge_template=?,
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
-  routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, manually_renamed=?,
+  routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, preambles=?, preamble_sel=?, manually_renamed=?,
   compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?,
   template_auto=?, skills_auto=?, lib_auto=?, termux=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
-                s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.ManuallyRenamed,
+                s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed,
                 s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID,
                 s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.Termux, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
         return err
@@ -168,18 +173,19 @@ func (db *DB) GetSession(id string) (*Session, error) {
         var templateID sql.NullString
         var templateAuto, skillsAuto, libAuto, termux sql.NullInt64
         var sandboxMode, sandboxRepo sql.NullString
+        var preambles, preambleSel sql.NullString
         err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
        web_template, deep_template, deep_mode, judge_count, judge_template,
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
-       workspace_id, persona, personas, placeholders, manually_renamed,
+       workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed,
        compact_summary, compact_seq, compact_enabled, compact_threshold, template_id,
        template_auto, skills_auto, lib_auto, termux, sandbox_mode, sandbox_repo, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
                 &s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
                 &s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
                 &s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
-                &s.WorkspaceID, &persona, &personas, &placeholders, &mr,
+                &s.WorkspaceID, &persona, &personas, &placeholders, &preambles, &preambleSel, &mr,
                 &compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID,
                 &templateAuto, &skillsAuto, &libAuto, &termux, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
         if err == sql.ErrNoRows {
@@ -199,6 +205,14 @@ FROM chat_sessions WHERE id=?`, id).Scan(
         }
         if placeholders.Valid {
                 s.Placeholders = placeholders.String
+        }
+        // v1.22.0 THE MIRROR: the preamble library + selection (absent on
+        // pre-migration rows = the app default).
+        if preambles.Valid {
+                s.Preambles = preambles.String
+        }
+        if preambleSel.Valid {
+                s.PreambleSel = preambleSel.String
         }
         // v0.28 FIX: these were never scanned before — after a reload every
         // session PATCH (any field: effort, web_search, model…) wrote the
