@@ -1021,3 +1021,20 @@ live delta update system so users download only what changed.
 The Termux capability is inert by design this wave — workspaces + the
 MCP tool layer (termux_exec + file verbs, jailed to the approved
 workspace) is PLAN-V118, the next wave.
+
+---
+Task ID: v1.23.1
+Agent: Main orchestrator (THE PILL WAVE)
+Task: PLAN-V123 §1 — THE LINK (dynamic F-Droid stable URL) + THE PACING (the 4s exec cooldown dies).
+
+Work Log:
+- Research receipts: fetched F-Droid API v1 live — suggestedVersionCode 1002 (0.118.3 stable) while packages[0] AND [1] are betas today (the user's "2nd link" heuristic would grab a beta — the suggested-code match is the honest pick); RUN_COMMAND = one broadcast (100KB cap, no incremental channel → streaming must originate inside Termux); engine serves 127.0.0.1:8080 on the APK (the checkin pattern proves Termux→loopback works).
+- fdroid.go (NEW): resolveFdroidTermuxURL (5s timeout, 6h TTL cache, one-flight) + pickFdroidURL (suggested-match → first non-prerelease (beta/rc/alpha leading-boundary markers) → frozen 1002) + warmFdroidURL (every status poll warms it in the background).
+- handleTermuxAct: open_fdroid resolves + rides the URL via the NEW bridge ActWithURL; TermuxBridge.kt honors it ONLY under the https://f-droid.org/ allowlist (frozen constant = the fallback). Kotlin diff ~20 lines.
+- THE PACING: termuxExecCooldown/termuxExecLast deleted; the 12/min rolling cap stays; help/sessionctx/example texts updated; TestV1231_Exec_NoCooldown_CapHolds + re-pins (termuxtool_test shrinkPacing, sessionctx_test "12 per minute per chat", v1203 rig 61/61, v1211 rig 30/30 — the immediate second exec RUNS now).
+- Whitespace law incidents (2, both fixed): the Edit tool space-ified tab-styled termuxbridge/client.go + termuxapi.go — python tab-restore, diffs surgical (client.go = ActWithURL only; termuxapi.go = warm + the fdroid act branch).
+- The mirror wave shipped v1.22.0 mid-build → my wave = v1.23.x → v1.24.0 (no collision); rebased clean, battery re-run green post-rebase.
+- Battery: fdroid_test 3/3 · full server suite ok · termuxbridge ok · vet clean · linux+android builds · v1202 66/66 · v1204 38/38 · v1213 25/25 · v1212 23/23. Pushed 40fa32fc (origin/main).
+
+Stage Summary:
+- The Get-Termux tap always serves F-Droid's CURRENT stable link (never manually updated again; offline = the frozen link); exec runs rapid-fire with only the 12/min cap. Engine+Kotlin ride the APK (OTA carries nothing of this phase).

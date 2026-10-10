@@ -505,15 +505,31 @@ async function runToolLoop(c, opts) {
       }
       try {
         var summary = '';
-        for (var sk of ['query', 'url', 'expr', 'q', 'action', 'skill', 'ws', 'name', 'id', 'prompt', 'path', 'pattern']) {
-          if (typeof argsObj[sk] === 'string' && argsObj[sk]) { summary = argsObj[sk].slice(0, 80); break; }
+        // v1.23.2 THE ONE PILL: the nested args object wins first (the
+        // termux shape {"action":"exec","args":{"command":"python -V"}}
+        // summarized the ACTION — "exec" — instead of the command; the
+        // nested command/path/pattern/name is the real query).
+        if (argsObj.args && typeof argsObj.args === 'object') {
+          for (var nk of ['command', 'path', 'pattern', 'name', 'query']) {
+            if (typeof argsObj.args[nk] === 'string' && argsObj.args[nk]) {
+              summary = argsObj.args[nk].slice(0, 80);
+              break;
+            }
+          }
+        }
+        if (!summary) {
+          for (var sk of ['query', 'url', 'expr', 'q', 'action', 'skill', 'ws', 'name', 'id', 'prompt', 'path', 'pattern']) {
+            if (typeof argsObj[sk] === 'string' && argsObj[sk]) { summary = argsObj[sk].slice(0, 80); break; }
+          }
         }
         if (name === 'web_search' || name === 'web_fetch') {
           opts.onProgress && opts.onProgress({ text: name === 'web_search' ? 'searching the web…' : 'reading ' + String(argsObj.url || '').slice(0, 60) + '…' });
         } else if (/^(docx_create|xlsx_create|zip_create|archive_create)$/.test(name)) {
           opts.onProgress && opts.onProgress({ text: 'building ' + (argsObj.name || 'file') + '…' });
         }
-        opts.onTool && opts.onTool({ name: name, summary: summary });
+        // v1.23.2: the RAW args ride the use event — the pill derives
+        // its label (the program being run) from them at render time.
+        opts.onTool && opts.onTool({ name: name, summary: summary, args: argsObj });
         var out = await mcpExecTool(name, argsObj, opts.sessionId || '');
         obs = out.isError ? out.text : String(out.text || '');
         if (out.sources && out.sources.length) {

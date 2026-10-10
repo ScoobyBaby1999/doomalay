@@ -2991,6 +2991,37 @@
   .tool-pill-use { color: var(--text-1); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
+  /* ── v1.23.2 THE ONE PILL: the derived label's dim query tail, the
+     in-flight dot, and the dynamic loading bar (theme vars only) ── */
+  .tool-pill-tail {
+    color: var(--text-3); font-size: calc(var(--chat-fs) * 0.62);
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .tool-pill[data-expanded="1"] .tool-pill-tail { white-space: normal; }
+  .tool-pill-live {
+    display: inline-block; width: calc(6px * var(--chat-scale)); height: calc(6px * var(--chat-scale));
+    border-radius: 50%; margin-left: calc(5px * var(--chat-scale));
+    background: rgb(var(--accent-2-rgb)); vertical-align: middle;
+    animation: tool-pill-pulse 1.05s ease-in-out infinite;
+  }
+  @keyframes tool-pill-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  .tool-pill-bar {
+    display: block; position: relative; height: calc(3px * var(--chat-scale));
+    border-radius: 2px; background: var(--surface-2);
+    overflow: hidden; margin-top: calc(6px * var(--chat-scale)); width: 100%;
+  }
+  .tool-pill-bar::after {
+    content: ''; position: absolute; top: 0; left: -42%; width: 42%; height: 100%;
+    border-radius: 2px; background: rgb(var(--accent-2-rgb));
+    animation: tool-pill-slide 1.15s ease-in-out infinite;
+  }
+  @keyframes tool-pill-slide { 0% { left: -42%; } 100% { left: 100%; } }
+  .tool-pill-stream { display: flex; flex-direction: column; min-width: 0; width: 100%; }
+  @media (prefers-reduced-motion: reduce) {
+    .tool-pill-live, .tool-pill-bar::after { animation: none; }
+    .tool-pill-live { opacity: 0.6; }
+    .tool-pill-bar::after { left: 0; width: 34%; }
+  }
   .tool-pill-detail {
     margin-top: calc(8px * var(--chat-scale)); padding-top: calc(8px * var(--chat-scale));
     border-top: 1px solid var(--border);

@@ -1300,6 +1300,9 @@
           while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
             var popped = state.messages.pop();
             if (popped.ei) regenIds.push(popped.ei);
+            // v1.23.2: a merged vessel hides BOTH halves (else the replayed
+            // result would render as an orphan standalone pill).
+            if (popped.ei2) regenIds.push(popped.ei2);
           }
           // v0.37.1: pop the last USER message too — doSend re-adds it (the
           // engine dedupes its own echo). The old flow kept the original
@@ -2888,12 +2891,34 @@
           appendMessage(msgContainer, scrollEl, pmSrc, bodyEl, icon);
           persist('sources', JSON.stringify(srcs));
         }
+        // v1.23.2 THE ONE PILL (the PM twin): the use half mints the
+        // vessel (the RAW args ride the payload so the label derives at
+        // render — pmsdk passes them since this wave); the result half
+        // MERGES into the pending same-name pill — ONE pill per action.
+        if (ev.result !== undefined && ev.result !== null && !ev.summary) {
+          var merged = mergeToolResult(state.messages, { name: ev.name, text: String(ev.result || ''), sources: ev.sources }, null);
+          if (merged) {
+            refreshToolRow(bodyEl, state, state.messages.indexOf(merged));
+            persist('tool_result',
+              JSON.stringify({ name: ev.name, summary: '', text: ev.result || '' }), merged);
+            if (ev.artifact && ev.artifact.name) {
+              state.messages.push({ role: 'artifact', artifact: ev.artifact });
+              appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
+              refreshArtifactCount(state, bodyEl);
+              if (!state._toolArtifactNames) state._toolArtifactNames = {};
+              state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
+            }
+            return;
+          }
+        }
         var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev, ts: Date.now() };
         if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev, ts: Date.now() };
         state.messages.push(chip);
         appendMessage(msgContainer, scrollEl, chip, bodyEl, icon);
+        // v1.23.2: the RAW args persist with the use (the replay derives
+        // the same label — the derived-program head survives reloads).
         persist(chip.result ? 'tool_result' : 'tool_use',
-          JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '' }), chip);
+          JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '', args: ev.args }), chip);
         // v0.22: file tools saved a binary — card + refresh the drawer count
         if (ev.artifact && ev.artifact.name) {
           state.messages.push({ role: 'artifact', artifact: ev.artifact });
@@ -4710,19 +4735,29 @@
       // v0.68: hublib downloads land here too ("DOWNLOADED — name (typ)"
       // engine-side, "downloaded 'name' — …" brain-side).
       bundleHint(bodyEl, state, pay2);
-      // v1.19.4 THE FULL VIEW: the result pill's collapsed label carries the
-      // tool name + an honest short head of the result (the old label was
-      // empty for every engine result — the pill rendered as a naked arrow).
-      var trLbl = pay2.summary || '';
-      if (!trLbl && pay2.name) {
-        var rt = String(pay2.text || '').replace(/\s+/g, ' ').trim();
-        trLbl = pay2.name + (rt ? ' · ' + (rt.length > 42 ? rt.slice(0, 42) + '…' : rt) : '');
+      // v1.23.2 THE ONE PILL: the result folds into its pending use pill
+      // (the last unresolved same-name tool msg above) — ONE pill per
+      // action, the loading bar dies, the result rides the same vessel.
+      // Replay lands the identical merge (same event order). No pending
+      // use (a result-only event) → the legacy standalone pill.
+      var mergedMsg = mergeToolResult(state.messages, pay2, ev.i);
+      if (mergedMsg) {
+        refreshToolRow(bodyEl, state, state.messages.indexOf(mergedMsg));
+      } else {
+        // v1.19.4 THE FULL VIEW: the result pill's collapsed label carries the
+        // tool name + an honest short head of the result (the old label was
+        // empty for every engine result — the pill rendered as a naked arrow).
+        var trLbl = pay2.summary || '';
+        if (!trLbl && pay2.name) {
+          var rt = String(pay2.text || '').replace(/\s+/g, ' ').trim();
+          trLbl = pay2.name + (rt ? ' · ' + (rt.length > 42 ? rt.slice(0, 42) + '…' : rt) : '');
+        }
+        if (!trLbl) trLbl = 'result';
+        var trMsg = { role: 'tool', text: trLbl, result: true, payload: pay2, ts: evTsMs(ev) };
+        if (ev.i) trMsg.ei = ev.i;
+        state.messages.push(trMsg);
+        appendMessage(msgContainer, scrollEl, trMsg, bodyEl, state._icon, state);
       }
-      if (!trLbl) trLbl = 'result';
-      var trMsg = { role: 'tool', text: trLbl, result: true, payload: pay2, ts: evTsMs(ev) };
-      if (ev.i) trMsg.ei = ev.i;
-      state.messages.push(trMsg);
-      appendMessage(msgContainer, scrollEl, trMsg, bodyEl, state._icon, state);
       // v0.22: file tools (docx/xlsx/zip) — a real download card follows the pill.
       if (ev.artifact && ev.artifact.name) {
         state.messages.push({ role: 'artifact', artifact: ev.artifact });
@@ -4781,7 +4816,10 @@
       for (var hi = 0; hi < hideIds.length; hi++) hideSet[hideIds[hi]] = true;
       var droppedAny = false;
       for (var hj = state.messages.length - 1; hj >= 0; hj--) {
-        if (state.messages[hj].ei && hideSet[state.messages[hj].ei]) {
+        // v1.23.2: a MERGED pill carries both engine ids (the use's ei +
+        // the result's ei2) — hiding either half drops the vessel.
+        var hm = state.messages[hj];
+        if ((hm.ei && hideSet[hm.ei]) || (hm.ei2 && hideSet[hm.ei2])) {
           state.messages.splice(hj, 1);
           droppedAny = true;
         }
@@ -5328,15 +5366,25 @@
     } else if (msg.role === 'tool') {
       // TAPPABLE TOOL PILL — expands to the full payload (query / result).
       var payload = msg.payload || null;
-      var hasDetail = !!(payload && ((payload.query || payload.name && (payload.result || payload.text || payload.summary)) || (payload.sources && payload.sources.length)));
+      // v1.23.2 THE ONE PILL: a tool msg is either the merged vessel (use +
+      // its result on ONE pill — msg.res), the legacy standalone result
+      // (msg.result), a pending use (awaiting its result — the loading bar),
+      // or an ephemeral progress row (msg.progress — a different class).
+      var merged = msg.res !== undefined;
+      var pending = !merged && !msg.result && !msg.progress;
+      var parts = toolPillLabelParts(msg);
+      var hasDetail = !!(payload && ((payload.query || payload.args || payload.name && (merged || msg.result || payload.text || payload.summary)) || (payload.sources && payload.sources.length)));
       // v0.38: per-chat pills default (uiPref) unless this pill was toggled
       var expanded = hasDetail && (msg.expanded !== undefined ? !!msg.expanded : uiPref(currentCtx && currentCtx.state, 'pillsOpen', false));
       var cls = msg.progress ? 'tool-pill tool-pill-progress' :
-        (msg.result ? 'tool-pill tool-pill-result' : 'tool-pill tool-pill-use');
+        ((merged || msg.result) ? 'tool-pill tool-pill-result' : 'tool-pill tool-pill-use');
       var head =
         '<div class="tool-pill-head">' +
-          '<span class="tool-pill-ico">' + (msg.result ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
-          '<span class="tool-pill-text">' + esc(msg.text) + '</span>' +
+          '<span class="tool-pill-ico">' + ((merged || msg.result) ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
+          '<span class="tool-pill-text">' + esc(parts.label) +
+            (parts.tail ? ' <span class="tool-pill-tail">' + esc(parts.tail) + '</span>' : '') +
+            (pending ? ' <span class="tool-pill-live" aria-hidden="true"></span>' : '') +
+          '</span>' +
           (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +
           // v1.19.4 THE FULL VIEW: the redirect control (the same ↗
           // affordance the panel's external-open uses) opens the
@@ -5427,14 +5475,118 @@
     return '';
   }
 
+  // ── v1.23.2 THE ONE PILL: the label + merge laws ──────────────────
+  // The user's spec: one pill per tool action (the call and its result
+  // merged), the collapsed head carrying WHAT the exec is (the program —
+  // "python", "mkdir", "pkg install"… derived programmatically, no static
+  // program lists) with its own query text following, and a dynamic
+  // loading bar while the result is still in flight. The derivation lives
+  // here (pure — exported for the node rig) so every render derives fresh:
+  // live events, replays, and pre-merge persisted chats all land the same.
+  //
+  // THE LABEL LAW: for the termux tool the args carry {action, args:{…}}:
+  //   · exec  → the command's FIRST token (the program), plus " install"
+  //     when the second token is the universal install sub-verb — the one
+  //     generic join, no per-program lists ("pip install numpy" reads as
+  //     what it is; "python -V" is just "python").
+  //   · pkg   → "pkg install <name>" (the verb IS the install).
+  //   · every other action/tool → the summary (today's law) or the name.
+  // THE TAIL: the query text after the label (the command's remainder) —
+  // the collapsed pill shows "label · tail" dim-tailed so the full query
+  // reads at a glance without repeating the program name.
+  function termuxArgsOf(payload) {
+    if (!payload || payload.name !== 'termux') return null;
+    var a = payload.args;
+    if (!a) return null;
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return null; } }
+    if (!a || typeof a !== 'object') return null;
+    var inner = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? a.args : null;
+    return { action: String(a.action || ''), inner: inner };
+  }
+  function toolPillLabelParts(msg) {
+    var p = (msg && msg.payload) || {};
+    var label = '', tail = '';
+    var tx = termuxArgsOf(p);
+    if (tx && tx.action === 'exec') {
+      var cmd = String((tx.inner && tx.inner.command) || '').trim();
+      var toks = cmd.split(/\s+/);
+      label = toks[0] || '';
+      if (label && toks[1] && /^install$/i.test(toks[1])) label += ' install';
+      if (cmd.length > label.length) tail = cmd.slice(label.length).trim();
+    } else if (tx && tx.action === 'pkg') {
+      var pkgName = String((tx.inner && tx.inner.name) || '').trim();
+      label = 'pkg install' + (pkgName ? ' ' + pkgName : '');
+    } else if (msg && msg.result) {
+      // a standalone result pill (the legacy shape): its text is the label
+      label = String(msg.text || p.name || 'result');
+    } else {
+      label = String(p.summary || p.name || (msg && msg.text) || 'tool');
+    }
+    return { label: label, tail: tail };
+  }
+  // mergeToolResult folds a tool_result into the pending same-name use
+  // pill above it (the LAST unresolved one — the pairing law the full-view
+  // already used; a turn's tool calls are sequential). Returns the merged
+  // msg or null (no pending use → the caller renders the standalone result
+  // pill — the legacy safety net). Pure over the messages array (rig).
+  function mergeToolResult(messages, pay, ei) {
+    var name = (pay && pay.name) || '';
+    if (!messages) return null;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      var m = messages[i];
+      if (!m || m.role !== 'tool' || !m.tool || m.res !== undefined) continue;
+      var mp = m.payload || {};
+      if ((mp.name || '') === name) {
+        m.res = String((pay && (pay.text || pay.result)) || '');
+        m.resPayload = pay;
+        if (ei) m.ei2 = ei;
+        return m;
+      }
+    }
+    return null;
+  }
+  // refreshToolRow repaints one tool pill in place (data-mi → the row).
+  function refreshToolRow(bodyEl, state, mi) {
+    var container = bodyEl && bodyEl.querySelector('#chat-messages');
+    if (!container || !state || mi === undefined || mi < 0 || mi >= state.messages.length) return;
+    var row = container.querySelector('.tool-pill[data-mi="' + mi + '"]');
+    if (!row) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = messageHTML(state.messages[mi], mi);
+    var fresh = tmp.firstChild;
+    if (fresh) row.replaceWith(fresh);
+  }
+
   function toolDetailHTML(msg) {
     var p = msg.payload || {};
     var html = '';
+    // v1.23.2 THE ONE PILL: the expanded detail carries the three truth
+    // rows — tool, query, result — on the ONE vessel. The query row
+    // prefers the RAW args (pretty-printed) over the summary; the result
+    // row reads the MERGED result (msg.res) before the legacy shapes.
     if (p.name) html += '<div class="tool-pill-row"><span class="tool-pill-k">tool</span><span>' + esc(p.name) + '</span></div>';
-    if (p.summary) html += '<div class="tool-pill-row"><span class="tool-pill-k">query</span><span>' + esc(p.summary) + '</span></div>';
-    if (p.query) html += '<div class="tool-pill-row"><span class="tool-pill-k">query</span><span>' + esc(p.query) + '</span></div>';
-    var resultText = p.result || p.text || '';
-    if (resultText && !p.sources) {
+    var qTxt = '';
+    if (p.args) {
+      // the args ride as a JSON string (the engine events) or a parsed
+      // object (the PM loop) — either way the query shows pretty JSON.
+      qTxt = typeof p.args === 'object' ? JSON.stringify(p.args, null, 2) : String(p.args);
+      if (typeof p.args !== 'object') { try { qTxt = JSON.stringify(JSON.parse(qTxt), null, 2); } catch (e) {} }
+    } else if (p.query) {
+      qTxt = String(p.query);
+    } else if (p.summary) {
+      qTxt = String(p.summary);
+    }
+    if (qTxt) html += '<div class="tool-pill-row"><span class="tool-pill-k">query</span><span>' + esc(qTxt) + '</span></div>';
+    var resultText = msg.res !== undefined ? msg.res : (p.result || p.text || '');
+    var pending = msg.res === undefined && !msg.result && !msg.progress;
+    if (pending) {
+      // the dynamic loading bar — the result is in flight (the live
+      // stream fills this area twice a second from v1.23.3)
+      html += '<div class="tool-pill-row"><span class="tool-pill-k">result</span><span class="tool-pill-stream">' +
+        (msg.streamText ? '<span class="tool-pill-pre">' + esc(String(msg.streamText).slice(-2000)) + '</span>' : '') +
+        '<span class="tool-pill-bar" role="progressbar" aria-label="result in flight"></span>' +
+      '</span></div>';
+    } else if (resultText && !p.sources) {
       html += '<div class="tool-pill-row"><span class="tool-pill-k">result</span><span class="tool-pill-pre">' +
         esc(String(resultText).slice(0, 2000)) + '</span></div>';
     }
@@ -5465,9 +5617,10 @@
     if (!msg || !msg.payload) return;
     var pay = msg.payload;
     var name = pay.name || 'tool';
+    // v1.23.2 THE ONE PILL: the merged vessel carries the args AND the
+    // result on ONE payload — the borrow walk below stays only for the
+    // legacy standalone result pills (a result-only event with no use).
     var query = pay.args || pay.query || '';
-    // The result event carries no args — borrow from the matching
-    // tool_use half (the nearest same-name use above this pill).
     if (!query) {
       for (var i = mi - 1; i >= 0; i--) {
         var m = st.messages[i];
@@ -5481,7 +5634,7 @@
       }
     }
     if (!query) query = pay.summary || '';
-    var text = String(pay.text || pay.result || '');
+    var text = String(msg.res !== undefined ? msg.res : (pay.text || pay.result || ''));
     var pages = Math.max(1, Math.ceil(text.length / TV_PAGE_CHARS));
     var uid = 'tv' + Date.now();
 
@@ -6086,6 +6239,9 @@
     var ids = [];
     for (var i = 0; i < state._editStash.length; i++) {
       if (state._editStash[i].ei) ids.push(state._editStash[i].ei);
+      // v1.23.2: a merged vessel hides BOTH halves (the use's ei + the
+      // result's ei2 — else the replayed result renders orphaned).
+      if (state._editStash[i].ei2) ids.push(state._editStash[i].ei2);
     }
     emitHideEvents(state, ids);
     state._editStash = null;
@@ -6531,6 +6687,10 @@
       roundFlowApply: roundFlowApply,
       // v0.95.1 isolation seam (scripts/test_isolation_v0951.js)
       healDuplicateSessionBinds: healDuplicateSessionBinds,
+      // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
+      termuxArgsOf: termuxArgsOf,
+      toolPillLabelParts: toolPillLabelParts,
+      mergeToolResult: mergeToolResult,
       states: function () { return chatStates; }
     };
   }
