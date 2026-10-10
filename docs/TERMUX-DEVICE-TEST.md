@@ -100,3 +100,41 @@ endpoints):
 5. **The chat metadata** — with Termux stacked and live there is NO ⌨
    pill in the pill row anymore (the capability lives in the 🧩 library
    row); the pill row reads 🧩 capabilities · 👾 model · ▣ + workspace.
+
+---
+
+## v1.21.1 — THE ARMED HAND additions (the PM-chat fix)
+
+**The bug you hit:** a PrivateMode chat (privatemodeai/…) with ⌨ stacked
+and device folders bound answered *"the termux tool is not armed for
+this chat"* on every call. Three stacked causes, all fixed in v1.21.1:
+
+1. **The PM arm** — PrivateMode chats run their turns in the WebView
+   (the engine can't speak PM's E2E protocol), and their tool calls go
+   through the engine's `/mcp` endpoint. That session Turn was missing
+   the Termux closure entirely — PM bots could NEVER use the termux tool
+   no matter what you stacked. Fixed: the closure now wires (the
+   v1211 rig proves every verb through the exact PM call path).
+2. **The bind is the consent** — your session row said
+   `Termux:false` even though you stacked the row (the PATCH died
+   silently once). Now binding a device folder AUTO-STACKS the
+   capability — the ⌨ row and the bot can never disagree again.
+3. **The silent PATCH death** — a failed capability-flip save (4xx) used
+   to die invisibly while the UI kept showing "stacked". It now toasts
+   the failure honestly.
+
+**Device checklist (needs the v1.21.1 APK — the OTA only updates the
+web side, the engine rides the APK):**
+
+1. Install the v1.21.1 APK (from the release the CI just built).
+2. Open your existing PM chat (the one with the two device folders) —
+   the ⌨ row should now read stacked (your session was also healed
+   remotely through the tunnel: `termux:true` PATCHed).
+3. Ask the bot: *"run `ls` on my device"* or *"what commands do you
+   have?"* — it should call the termux tool and show real output. The
+   new `cmds` action inventories EVERY available command; `pkg install`
+   (e.g. python, node, ffmpeg) makes that package's commands live
+   instantly; `session_start` runs background processes (python servers)
+   you can list/log/kill.
+4. In a NON-PM chat (any other provider), the same works through the
+   engine's direct path.
