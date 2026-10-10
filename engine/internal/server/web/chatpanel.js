@@ -2896,6 +2896,7 @@
             if (sMsg.streamText.length > 262144) sMsg.streamText = sMsg.streamText.slice(-262144);
             setActivity(bodyEl, state, 'running ' + (toolPillLabelParts(sMsg).label || sName) + '… ' + ((sMsg.streamText.length / 1024).toFixed(1)) + ' KB');
             refreshToolRow(bodyEl, state, sMi);
+            tvStreamTick(sMsg); // the open full-view overlay repaints too (v1.23.4)
             return;
           }
         }
@@ -2918,7 +2919,9 @@
         if (ev.result !== undefined && ev.result !== null && !ev.summary) {
           var merged = mergeToolResult(state.messages, { name: ev.name, text: String(ev.result || ''), sources: ev.sources }, null);
           if (merged) {
-            refreshToolRow(bodyEl, state, state.messages.indexOf(merged));
+            var pmTvMi = state.messages.indexOf(merged);
+            refreshToolRow(bodyEl, state, pmTvMi);
+            tvResultLanded(state, pmTvMi, merged); // the open overlay re-renders with the final result (v1.23.4)
             persist('tool_result',
               JSON.stringify({ name: ev.name, summary: '', text: ev.result || '' }), merged);
             if (ev.artifact && ev.artifact.name) {
@@ -4742,6 +4745,7 @@
           // the activity line names the running label + the received size
           setActivity(bodyEl, state, 'running ' + (toolPillLabelParts(sMsg).label || sName) + '… ' + ((sMsg.streamText.length / 1024).toFixed(1)) + ' KB');
           refreshToolRow(bodyEl, state, sMi);
+          tvStreamTick(sMsg); // the open full-view overlay repaints too (v1.23.4)
           return;
         }
       }
@@ -4787,7 +4791,9 @@
       // use (a result-only event) → the legacy standalone pill.
       var mergedMsg = mergeToolResult(state.messages, pay2, ev.i);
       if (mergedMsg) {
-        refreshToolRow(bodyEl, state, state.messages.indexOf(mergedMsg));
+        var tvMi = state.messages.indexOf(mergedMsg);
+        refreshToolRow(bodyEl, state, tvMi);
+        tvResultLanded(state, tvMi, mergedMsg); // the open overlay re-renders with the final result (v1.23.4)
       } else {
         // v1.19.4 THE FULL VIEW: the result pill's collapsed label carries the
         // tool name + an honest short head of the result (the old label was
@@ -5646,9 +5652,16 @@
     return html || '<div class="tool-pill-row">' + esc(JSON.stringify(p).slice(0, 600)) + '</div>';
   }
 
-  // ── v1.19.4 THE FULL VIEW ─────────────────────────────────────────
-  // The full-result overlay: tool name on top, the query under it, the
-  // COMPLETE result paged and scrollable — the user reads exactly what
+  // ── v1.19.4 THE FULL VIEW → v1.23.4 THE POLISH ─────────────────
+  // The full-result overlay, ONE polished box (the user's redesign):
+  // the head (icon + tool name + the derived label) → ONE rounded body
+  // — query · divider · output · pager — → the footer row with the ⧉
+  // copy affordance (bottom-right, clear of the overlay's static ✕ by
+  // construction — the old header copy sat exactly under it). Edge
+  // room: 20px all around, the head's right pad keeps the ✕ zone
+  // clear. The PENDING pill streams LIVE into the output area (v1.23.3
+  // extended to the open overlay — the user watches the install land);
+  // the result landing re-renders in place. The user reads exactly what
   // the bot read (the inline pill detail stays a 2 KB glance; this is
   // the whole thing). Opens in the ConnectOverlay (the overlay screen
   // law — one of the two ratified containers). Every color rides the
@@ -5658,6 +5671,41 @@
     if (n < 1024) return n + ' B';
     if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
     return (n / 1048576).toFixed(1) + ' MB';
+  }
+  // the head's sub line: the derived label + its tail (the pill's own
+  // vocabulary, glance-sized — the FULL query lives in the box below).
+  // Pure over the msg (the v1234 rig's seam).
+  function tvSubFor(msg, name) {
+    var lp = toolPillLabelParts(msg);
+    var sub = '';
+    if (lp.label && lp.label !== name) sub = lp.label + (lp.tail ? ' ' + lp.tail : '');
+    else if (lp.tail) sub = lp.tail;
+    if (sub.length > 90) sub = sub.slice(0, 90) + '…';
+    return sub;
+  }
+  // the open overlay's live wire: ONE tracked pending pill (payload
+  // identity — the tracker survives index reindexes, foreign chats
+  // never cross). Stream ticks repaint the output area (~2/s, the
+  // chunk cadence); the result landing re-renders the whole view once.
+  var tvLive = null; // {payload, uid, landed, lastPaint}
+  function tvStreamTick(msg) {
+    if (!tvLive || tvLive.landed || !msg || msg.payload !== tvLive.payload) return;
+    var el = document.getElementById(tvLive.uid + '-live');
+    if (!el) { tvLive = null; return; } // the overlay closed/replaced
+    var now = Date.now();
+    if (now - tvLive.lastPaint < 400) return; // ~2 paints/sec
+    tvLive.lastPaint = now;
+    var st = String(msg.streamText || '');
+    el.textContent = st.slice(-4096);
+    el.scrollTop = el.scrollHeight; // follow the tail (the terminal law)
+    var kb = document.getElementById(tvLive.uid + '-kb');
+    if (kb) kb.textContent = st ? fmtBytes(st.length) : 'waiting for output…';
+  }
+  function tvResultLanded(state, mi, msg) {
+    if (!tvLive || tvLive.landed || !msg || msg.payload !== tvLive.payload) return;
+    tvLive.landed = true;
+    tvLive = null;
+    openToolFullView(state, mi); // in place: ov.open re-renders the open overlay
   }
   function openToolFullView(st, mi) {
     var msg = st.messages[mi];
@@ -5682,6 +5730,9 @@
     }
     if (!query) query = pay.summary || '';
     var text = String(msg.res !== undefined ? msg.res : (pay.text || pay.result || ''));
+    var pending = msg.res === undefined && !msg.result && !msg.progress;
+    var streamText = pending ? String(msg.streamText || '') : '';
+    var sub = tvSubFor(msg, name);
     var pages = Math.max(1, Math.ceil(text.length / TV_PAGE_CHARS));
     var uid = 'tv' + Date.now();
 
@@ -5691,7 +5742,7 @@
       if (typeof q === 'string' && q.charAt(0) === '{') {
         try { pretty = JSON.stringify(JSON.parse(q), null, 2); } catch (e) {}
       }
-      return '<div class="tv-row"><span class="tv-k">query</span>' +
+      return '<div class="tv-sec tv-sec-q"><div class="tv-k">query</div>' +
         '<pre class="tv-q">' + esc(String(pretty)) + '</pre></div>';
     }
     function pageHtml(pi) {
@@ -5706,15 +5757,37 @@
     }
     var html =
       '<div class="tool-fullview">' +
-        '<div class="tv-head"><span class="tv-ico">⌕</span>' +
-          '<span class="tv-name">' + esc(name) + '</span>' +
-          '<button class="tv-copy" id="' + uid + '-copy">copy</button></div>' +
-        qHtml(query) +
-        '<div id="' + uid + '-page">' + pageHtml(0) + '</div>' +
+        '<div class="tv-head">' +
+          '<span class="tv-ico">⌕</span>' +
+          '<span class="tv-title">' +
+            '<span class="tv-name">' + esc(name) + '</span>' +
+            (sub ? '<span class="tv-sub">' + esc(sub) + '</span>' : '') +
+          '</span>' +
+        '</div>' +
+        '<div class="tv-body">' +
+          qHtml(query) +
+          '<div class="tv-sec tv-sec-out">' +
+            '<div class="tv-k">output' + (pending ? ' · live' : '') + '</div>' +
+            (pending
+              ? '<pre class="tv-stream" id="' + uid + '-live">' + esc(streamText.slice(-4096)) + '</pre>' +
+                '<div class="tv-kb" id="' + uid + '-kb">' + (streamText ? fmtBytes(streamText.length) : 'waiting for output…') + '</div>' +
+                '<span class="tool-pill-bar tv-bar" role="progressbar" aria-label="result in flight"></span>'
+              : '<div id="' + uid + '-page">' + pageHtml(0) + '</div>') +
+          '</div>' +
+        '</div>' +
+        '<div class="tv-foot">' +
+          '<button class="tv-copy" id="' + uid + '-copy" aria-label="copy the output">' +
+            '<span class="tv-copy-ico" aria-hidden="true">⧉</span>' +
+            '<span id="' + uid + '-copylbl">copy</span>' +
+          '</button>' +
+        '</div>' +
       '</div>';
     var ov = window.ConnectOverlay;
     if (!ov || !ov.open) return;
-    ov.open(html);
+    // the live wire: a pending pill is tracked so its stream repaints
+    // the open overlay (v1.23.3's law extended here); closing kills it.
+    tvLive = pending ? { payload: pay, uid: uid, landed: false, lastPaint: Date.now() } : null;
+    ov.open(html, { onClose: function () { tvLive = null; } });
     // mount the active page through the Formatter (markdown → code cards)
     function mountPage(pi) {
       var host = document.getElementById(uid + '-page');
@@ -5736,11 +5809,22 @@
       if (prev) prev.onclick = function () { if (pi > 0) mountPage(pi - 1); };
       if (next) next.onclick = function () { if (pi < pages - 1) mountPage(pi + 1); };
     }
-    mountPage(0);
+    // pending → no page host exists yet; the result landing re-renders
+    // the whole view and mounts page 0 then.
+    if (!pending) mountPage(0);
     var cp = document.getElementById(uid + '-copy');
     if (cp) cp.onclick = function () {
-      var done = function () { cp.textContent = 'copied'; setTimeout(function () { cp.textContent = 'copy'; }, 1200); };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
+      // pending → the live stream so far (what's shown is what's copied)
+      var cpText = pending ? String(msg.streamText || '') : text;
+      var lbl = document.getElementById(uid + '-copylbl') || cp;
+      var done = function () {
+        lbl.textContent = 'copied';
+        setTimeout(function () { lbl.textContent = 'copy'; }, 1200);
+      };
+      // the repo's copy idiom (clipboard API + the execCommand fallback
+      // the WebView needs)
+      if (window.Formatter && window.Formatter.copyText) window.Formatter.copyText(cpText, done);
+      else if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cpText).then(done, done);
       else done();
     };
   }
@@ -6738,6 +6822,8 @@
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
       mergeToolResult: mergeToolResult,
+      // v1.23.4 THE POLISH seam (scripts/v1234-polish-rig.cjs)
+      tvSubFor: tvSubFor,
       states: function () { return chatStates; }
     };
   }

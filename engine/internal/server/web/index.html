@@ -3060,46 +3060,73 @@
   }
   .tool-pill-open:hover { color: var(--accent-2); background: rgba(var(--accent-2-rgb), 0.14); }
   .tool-pill[data-expanded="1"] .tool-pill-open:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.14); }
-  .tool-fullview { display: flex; flex-direction: column; gap: 10px; }
+  /* ── v1.23.4 THE POLISH: the full view as ONE box (the user's
+     redesign) — the two prototype surfaces (the tv-q + tv-result
+     boxes) merge into ONE .tv-body; the copy affordance moves to a
+     FOOTER row (the ⧉ icon + a small "copy" label, bottom-right —
+     clear of the overlay's static top-right ✕ by construction, the
+     old header copy sat exactly under it); 20px of edge room all
+     around (the MD3 edge-collision law). Theme vars only. ── */
+  .tool-fullview {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 20px 20px 16px;
+  }
   .tv-head {
-    display: flex; align-items: center; gap: 8px;
-    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    /* the right pad keeps the static ✕ zone (top:7 right:9 + the 17px
+       glyph) clear by construction — a long tool name can never run
+       under it */
+    padding: 2px 34px 2px 0;
   }
   .tv-ico {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; border-radius: 8px;
+    width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0;
     color: var(--on-accent-2); background: rgba(var(--accent-2-rgb), 0.16);
     font-size: 13px;
   }
-  .tv-name { font-weight: 650; font-size: 14px; color: var(--text-1); flex: 1; overflow-wrap: anywhere; }
-  .tv-copy {
-    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
-    border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  .tv-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .tv-name { font-weight: 650; font-size: 14px; color: var(--text-1); overflow-wrap: anywhere; }
+  .tv-sub { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+  /* THE ONE BOX — query · divider · output · pager, one rounded
+     surface (the two prototype boxes die) */
+  .tv-body {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden;
+    display: flex; flex-direction: column;
   }
-  .tv-copy:hover { color: var(--text-1); border-color: var(--border-strong); }
-  .tv-row { display: flex; flex-direction: column; gap: 4px; }
+  .tv-sec { padding: 12px 14px; }
+  .tv-sec + .tv-sec { border-top: 1px solid var(--border); }
   .tv-k {
     font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--text-3);
+    color: var(--text-3); font-weight: 700; margin-bottom: 6px;
   }
   .tv-q {
     margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
-    color: var(--text-2); background: var(--surface-2);
-    border: 1px solid var(--border); border-radius: 10px;
-    padding: 8px 10px; max-height: 120px; overflow: auto;
+    color: var(--text-2);
+    max-height: 120px; overflow: auto;
     white-space: pre-wrap; word-break: break-word;
   }
+  /* the LIVE output area (a pending pill's stream — v1.23.3 extended
+     to the open overlay): mono, tail-following, capped */
+  .tv-stream {
+    margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    color: var(--text-2);
+    max-height: min(40vh, 360px); overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .tv-kb { font-size: 11px; color: var(--text-3); margin-top: 8px; }
+  /* the in-flight bar rides the pill's own indeterminate-slide
+     animation; the track paints --border so it reads on the box */
+  .tv-bar { margin-top: 10px; background: var(--border); }
   .tv-result {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 12px; padding: 10px 12px;
-    max-height: min(52vh, 480px); overflow-y: auto;
+    max-height: min(48vh, 440px); overflow-y: auto;
     font-size: 13px; color: var(--text-1);
     overflow-wrap: anywhere;
   }
   .tv-result pre, .tv-result code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
   .tv-pager {
     display: flex; align-items: center; justify-content: center; gap: 12px;
-    padding-top: 2px;
+    padding: 8px 10px; margin-top: 10px; border-top: 1px solid var(--border);
   }
   .tv-pg-btn {
     width: 30px; height: 30px; border-radius: 50%;
@@ -3109,6 +3136,21 @@
   .tv-pg-btn:disabled { opacity: 0.35; cursor: default; }
   .tv-pg-btn:not(:disabled):hover { color: var(--text-1); border-color: var(--border-strong); }
   .tv-pg-info { font-size: 12px; color: var(--text-3); }
+  /* the footer row — the copy affordance rides bottom-right (the user's
+     spec: the ⧉ icon + a small "copy" label beside it) */
+  .tv-foot {
+    display: flex; align-items: center; justify-content: flex-end;
+    padding-top: 2px;
+  }
+  .tv-copy {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+    border-radius: 9px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color .15s ease, border-color .15s ease;
+  }
+  .tv-copy:hover { color: var(--text-1); border-color: var(--border-strong); }
+  .tv-copy-ico { font-size: 13px; line-height: 1; }
 
   /* ── sources cards (tappable, pretty) — v0.34 chat-scaled; v0.38 COLLAPSIBLE ── */
   .src-wrap {

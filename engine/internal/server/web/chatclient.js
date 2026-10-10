@@ -75,11 +75,20 @@
   // starts); once events flow, a >REPLAY_QUIET_MS gap between arrivals
   // means the backlog drained — this event (and everything after) is
   // LIVE and goes out untagged.
+  // v1.23.4: ONLY events that carry a seq can be part of a replayed
+  // backlog (persisted events ride seq; the ephemeral family — progress,
+  // tool_stream, ws_state — is never persisted and never replays). The
+  // v0.44 heuristic tagged by ARRIVAL TIME alone, so a turn that starts
+  // soon after the connect (no backlog at all: the first arrival IS a
+  // live event) chained <1200ms arrivals into a permanent "replay" —
+  // and a live termux stream (0.5s chunks, never a 1200ms gap) stayed
+  // tagged for its whole life, dead on arrival at the panel's
+  // `ev._replay` guards. The seq check is the truth: no seq, no replay.
   ChatClient.prototype._tagReplay = function (ev) {
     var now = Date.now();
     if (this._replaying) {
       if (this._replayLastAt && now - this._replayLastAt > 1200) this._replaying = false;
-      else if (ev && typeof ev === 'object') ev._replay = true;
+      else if (ev && typeof ev === 'object' && ev.seq !== undefined) ev._replay = true;
     }
     this._replayLastAt = now;
   };

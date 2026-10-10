@@ -138,3 +138,48 @@ web side, the engine rides the APK):**
    you can list/log/kill.
 4. In a NON-PM chat (any other provider), the same works through the
    engine's direct path.
+
+## v1.24.0 — THE PILL WAVE additions (the full UX polish)
+
+The wave's five fronts are all PWA-side except where noted: the F-Droid
+link goes dynamic (the setup page's Get Termux always opens the current
+STABLE — engine-side resolution against the F-Droid API, rides the APK),
+the exec cooldown is gone (12/min cap stays), the tool pills merge (one
+pill per action with the real program name), long output streams live
+into the pill (~2/s), and the full-view overlay is ONE polished box.
+
+**Device checklist:**
+
+1. Install the v1.24.0 APK (the engine-side pieces — the F-Droid
+   resolver, the pacing, the stream route + wrapper — ride the APK; the
+   overlay/PWA pieces also land OTA for older APKs).
+2. **The setup link**: Settings → the ⌨ Termux setup page → tap
+   *Get Termux* — F-Droid should open at the CURRENT stable Termux
+   page (not a pinned old version). If F-Droid is unreachable, the
+   static 0.118.3 link answers (honest fallback).
+3. **The ONE pill + the live stream**: ask the bot to install something
+   slow (e.g. *“install python then show me the version”* or any
+   `pkg install …`). While it runs:
+   - ONE pill per action (not call + result separately), labeled with
+     the actual program (`pkg install python`, `bash`, `python`) —
+     never the vague `exec`.
+   - The pill's collapsed tail shows the LIVE last line of output
+     (~twice a second).
+   - Tap the pill's **↗** — the full-view overlay opens: the head
+     (tool + the derived label), ONE rounded box (query · divider ·
+     output), and the output area FILLS LIVE while the command runs
+     (the byte counter under it counts up). Watch the install land in
+     real time.
+4. **The overlay polish**: the ⧉ copy affordance is a footer button
+     (bottom-right, icon + small "copy" label — no longer under the ✕);
+     the query and output ride ONE box with a divider; 20px of edge
+     room all around. Copy works mid-stream (copies what's shown).
+5. **The landing**: when the command finishes, the OPEN overlay
+     re-renders in place with the complete result (paged if huge, with
+     the page buttons + byte count). Long results scroll.
+6. **Replay**: close the overlay, leave the chat, come back (or reload)
+   — the transcript is still ONE pill with the same label; the ↗ opens
+   the overlay with the full result.
+7. **Rapid execs**: two commands back to back — no 4s wait anymore
+   (both run immediately; the 13th in a minute still gets the honest
+   pace refusal).
