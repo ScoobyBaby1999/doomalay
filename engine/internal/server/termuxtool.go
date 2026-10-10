@@ -59,7 +59,7 @@ import (
 // ── the verb registry + the honesty constants ────────────────────────────
 
 // termuxVerbs is the canonical verb list (help + unknown-action teach).
-const termuxVerbs = "help, exec, ls, read, write, append, rm, mkdir, grep, find, pkg, session_start, session_list, session_log, session_kill"
+const termuxVerbs = "help, exec, cmds, ls, read, write, append, rm, mkdir, grep, find, pkg, session_start, session_list, session_log, session_kill"
 
 // termuxCapBytes is Termux's own result-Bundle physics (ResultSender's
 // TRANSACTION_SIZE_LIMIT_IN_BYTES): stdout+stderr ride the
@@ -207,6 +207,8 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
                 return "OBSERVATION:\n" + termuxHelpText(roots)
         case "exec":
                 return s.termuxVerbExec(ctx, sessionID, get, args, roots)
+        case "cmds":
+                return s.termuxVerbCmds(ctx)
         case "ls":
                 return s.termuxVerbLs(ctx, get, roots)
         case "read":
@@ -885,6 +887,47 @@ fi
 
 // ── pkg ──────────────────────────────────────────────────────────────────
 
+// termuxVerbCmds — v1.21.1 THE ARMED HAND ("add everything that termux
+// supports… all the linux commands, and if any package is installed,
+// all that packages commands"): the FULL command inventory, one honest
+// listing. A FIXED script (zero model/user strings anywhere near it —
+// the pkg idiom): PATH, PREFIX, then every executable in $PREFIX/bin
+// (the coreutils userland + every command every pkg-installed package
+// shipped + the termux-api commands when that package is in). The model
+// runs any of them with exec, discovers new ones after pkg with cmds
+// again, and pokes single names with exec's `command -v <name>`.
+func (s *Server) termuxVerbCmds(ctx context.Context) string {
+        script := `set -u
+echo "PATH=${PATH:-}"
+echo "PREFIX=${PREFIX:-/data/data/com.termux/files/usr}"
+ls "${PREFIX:-/data/data/com.termux/files/usr}/bin" 2>/dev/null | tr '\n' ' '
+echo
+`
+        res, errObs := s.termuxRunOne(ctx, termuxCommand(script), "", 60000)
+        if errObs != "" {
+                return errObs
+        }
+        if res.Timeout {
+                return termuxTimeoutObs(res, 60000)
+        }
+        var sb strings.Builder
+        sb.WriteString("OBSERVATION:\nCMDS — every command available in this Termux (run ANY of them with exec; pkg install adds a package's commands instantly — cmds again to see them):\n")
+        if res.Stdout != "" {
+                sb.WriteString(res.Stdout)
+                if !strings.HasSuffix(res.Stdout, "\n") {
+                        sb.WriteString("\n")
+                }
+        }
+        if res.Stderr != "" {
+                sb.WriteString("stderr:\n" + res.Stderr)
+                if !strings.HasSuffix(res.Stderr, "\n") {
+                        sb.WriteString("\n")
+                }
+        }
+        fmt.Fprintf(&sb, "exit_code: %d\n", res.ExitCode)
+        return termuxMaybeTrunc(res, sb.String())
+}
+
 // termuxVerbPkg — {op, packages}: pkg install -y / update / remove;
 // every package name sanitized engine-side (safe charset only) BEFORE
 // it ever rides a command line.
@@ -1143,8 +1186,11 @@ func termuxHelpText(roots []string) string {
         for _, root := range roots {
                 fmt.Fprintf(&sb, "- %s\n", root)
         }
-        sb.WriteString(`Actions (one JSON object of arguments per tool call):
-  {"action":"exec","args":{"command":"python -V","timeout_ms":60000}}   run a shell command (workdir = the first bound folder; 60s default, 180s max; ≥4s cooldown between execs, 12 per minute)
+        sb.WriteString(`THE CAPABILITY IS THE WHOLE LINUX USERLAND: exec runs ANY command in $PATH — coreutils (ls, cat, cp, mv, head, tail, wc, sort, tr, cut…), findutils, grep/sed/awk, bash scripting, python, git, ssh, curl, tar, and EVERY command of EVERY package pkg installs (node, gcc, clang, rust, ffmpeg, imagemagick, sqlite… the new commands go live the moment the install finishes). The termux-api package adds the device commands (termux-battery-status, termux-wifi-connectioninfo, termux-notification, termux-clipboard-set…). Compile with gcc/clang, serve with python -m http.server as a session, pipe and redirect freely — the only refusals are the file/device/power-destroying class. Discover the live inventory any time with the cmds action (or exec 'command -v <name>').
+
+Actions (one JSON object of arguments per tool call):
+  {"action":"exec","args":{"command":"python -V","timeout_ms":60000}}   run ANY shell command (workdir = the first bound folder; 60s default, 180s max; ≥4s cooldown between execs, 12 per minute)
+  {"action":"cmds","args":{}}                 inventory EVERY available command (PATH, PREFIX, $PREFIX/bin — including all pkg-installed package commands)
   {"action":"ls","args":{"path":""}}           list a folder (dirs first, sizes, mtimes, hidden included)
   {"action":"read","args":{"path":"a.txt"}}    read a WHOLE file (binary files reported honestly)
   {"action":"write","args":{"path":"f.txt","content":"…"}}   write (overwrite) a file — ≤1MB per call
@@ -1153,7 +1199,7 @@ func termuxHelpText(roots []string) string {
   {"action":"mkdir","args":{"path":"d"}}       create a folder (mkdir -p)
   {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — UNLIMITED hits
   {"action":"find","args":{"path":"","name":"*.go"}}   find files by name
-  {"action":"pkg","args":{"op":"install","packages":["python","git"]}}  install|update|remove Termux packages
+  {"action":"pkg","args":{"op":"install","packages":["python","git"]}}  install|update|remove Termux packages (the package's commands go live instantly)
   {"action":"session_start","args":{"name":"web","command":"python -m http.server 8000"}}  background process (nohup + pid + out.log) — create AND kill on the fly, like python processes
   {"action":"session_list","args":{}}         every session: name, pid, live/dead, log size, the ps line
   {"action":"session_log","args":{"name":"web","tail":200}}    the session's full log tail

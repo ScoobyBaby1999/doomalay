@@ -2449,6 +2449,24 @@
       lines.push('- Repos bound to this chat: none yet.');
     }
     lines.push('- You have ' + (conn.totalWorkspaces || 0) + ' workspace(s) connected in total. You CAN be connected to workspaces \u2014 GitHub, Gitea, GitLab, Sourcehut and Hugging Face repos (models, datasets and Spaces) \u2014 many repo structures are available; the user connects them from the library/hub connect flow, and when bound the repo tools can list, grep, read and edit them at the access level shown above (read / partial / full).');
+    // v1.21.1 THE ARMED HAND: the termux twin \u2014 PM turns bypass the
+    // engine, so this block is the ONLY system-prompt place a PM bot
+    // learns the hand (the ungated /mcp manifest always listed the tool,
+    // but the model never knew what the chat was armed with \u2014 the user's
+    // live repro: the bot answered "no termux/workspace connected" while
+    // two device folders sat bound). The primed bound list already
+    // carries the kind:'termux' rows with their jailed paths.
+    var txRoots = (bound || []).filter(function (w) {
+      return (w.kind || w.Kind || '') === 'termux';
+    }).map(function (w) {
+      var m = w.meta || w.Meta || {};
+      return (m.termux_path || m.display_path || w.name || 'device folder');
+    });
+    if (txRoots.length) {
+      lines.push('- THE TERMUX HAND on this chat: the `termux` tool \u2014 a real Termux Linux shell on the user\'s device, the whole Linux userland (exec runs ANY command in $PATH; pkg installs any package and its commands go live instantly; cmds inventories every available command; background processes via session_start/session_kill), jailed to this chat\'s bound device folders: ' + txRoots.join(', ') + '. Use it whenever the user asks about their device\'s files or wants anything run, installed, compiled or served on the phone.');
+    } else if (state && state.termux) {
+      lines.push('- Termux capability: ARMED but no device folder is bound yet (the user connects one via +workspace \u2192 device storage; mention only if the user asks).');
+    }
     if (state && state.sandbox === 'hf') {
       lines.push('- This chat\u2019s sandbox runs on your Hugging Face Space \u2014 repo tools there can\u2019t reach the device\u2019s engine bridge; run repo work in a quick (on-device) chat when the user needs it.');
     }
@@ -3990,7 +4008,21 @@
         termux: !!state.termux,
         sliding_window: state.slidingWindow || 40
       })
-    }).catch(function (e) { console.error('persist caps failed', e); });
+    }).then(function (r) {
+      // v1.21.1 THE SILENT-DEATH FIX: a 4xx/5xx PATCH is NOT a fetch
+      // rejection — the old code's .catch never fired for it, the UI row
+      // kept its optimistic "stacked" chip, and the session never learned
+      // the flip (the live repro: ⌨ stacked in the UI, session.termux
+      // false in the store, the bot refusing forever). The failure now
+      // surfaces honestly — the toast names it and the reload reverts.
+      if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+      return r.json();
+    }).catch(function (e) {
+      console.error('persist caps failed', e);
+      try {
+        if (window.toast) window.toast('could not save the capability flip \u2014 ' + (e && e.message ? e.message : 'network error') + ' (reopens after a reload)');
+      } catch (e2) { /* toast absent — the console line carries it */ }
+    });
   }
 
   // ── WebSocket connect ─────────────────────────────────────────

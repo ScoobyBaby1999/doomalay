@@ -2626,6 +2626,18 @@ func (s *Server) sessionMcpTurn(sessionID string) *mcpbus.Turn {
                 Hublib:        func(ctx context.Context, argJSON string) string { return s.runHublibAction(sessionID, argJSON) },
                 Skills:        func(ctx context.Context, argJSON string) string { return s.runSkillsAction(sessionID, argJSON) },
                 Workspace:     func(ctx context.Context, argJSON string) string { return s.runWorkspaceAction(ctx, sessionID, argJSON) },
+                // v1.21.1 THE ARMED HAND: the Termux closure was the ONE
+                // missing arm on this Turn — every PrivateMode chat is
+                // frontend-driven (the browser loop executes its tools
+                // through /mcp with X-Doomalay-Session), so PM bots
+                // answered "the termux tool is not armed for this chat"
+                // forever while the user had the ⌨ stacked AND a device
+                // folder bound (the live repro: mcpbus/handlers.go's nil
+                // -closure teach). The closure wires UNCONDITIONALLY (the
+                // workspace idiom) — runTermuxAction re-checks the real
+                // gates (sess.Termux + the bound termux roots) and teaches
+                // honestly, exactly like the direct path.
+                Termux:       func(ctx context.Context, argJSON string) string { return s.runTermuxAction(ctx, sessionID, argJSON) },
                 Delegate:      func(ctx context.Context, prompt string, models []string) []map[string]any { return s.RunDelegate(ctx, prompt, models, keys) },
         }
 }

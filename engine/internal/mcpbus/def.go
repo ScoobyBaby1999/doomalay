@@ -230,10 +230,14 @@ var defs = []Def{
 	// v1.20.3 THE ARM (PLAN-V120 §v1.20.3): a real Termux Linux shell on
 	// the user's device, jailed to the chat's bound device folders — the
 	// one-tool/verb-map shape the workspace tool proved.
+	// v1.21.1 THE ARMED HAND: the Desc teaches the whole-userland truth
+	// (any command in $PATH + every pkg-installed package's commands) and
+	// the cmds inventory — this text IS the manifest the PM browser loop
+	// and every native-tools model sees.
 	{Name: "termux", Gate: GateTermux,
-		Desc: "A real Termux Linux shell on the user's device. Actions: exec (run a shell command), ls, read, write, append, rm, mkdir, grep, find, pkg (install/update/remove packages), session_start/session_list/session_log/session_kill (create and kill background processes, e.g. python servers, with tailable logs) and help. Jailed to this chat's bound device (termux) workspace folders — paths outside them are refused, never executed. Output is FULL; the only cap is Termux's own 100KB result bundle, honestly reported when hit. Use it whenever the user asks about their device's files or wants something run, installed or served on the phone.",
+		Desc: "A real Termux Linux shell on the user's device — the whole Linux userland: exec runs ANY command in $PATH (coreutils, findutils, grep/sed/awk, bash, python, git, ssh, curl…), pkg installs any package and its commands go live instantly, and cmds inventories every available command. Actions: exec (run ANY shell command), cmds (inventory all commands), ls, read, write, append, rm, mkdir, grep, find, pkg (install/update/remove packages), session_start/session_list/session_log/session_kill (create and kill background processes, e.g. python servers, with tailable logs) and help. Jailed to this chat's bound device (termux) workspace folders — paths outside them are refused, never executed. Output is FULL; the only cap is Termux's own 100KB result bundle, honestly reported when hit. Use it whenever the user asks about their device's files or wants anything run, installed, compiled or served on the phone.",
 		Props: []PropDef{
-			prop("action", "'exec' (run a shell command), 'ls', 'read', 'write', 'append', 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
+			prop("action", "'exec' (run ANY shell command), 'cmds' (inventory every available command), 'ls', 'read', 'write', 'append', 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "cmds", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
 			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]}.`, true),
 		}},
 	// ── the swarm delegate (gated on the Delegate closure) ──────────

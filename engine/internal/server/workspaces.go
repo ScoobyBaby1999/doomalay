@@ -59,6 +59,7 @@ import (
         "encoding/json"
         "fmt"
         "io"
+        "log"
         "net/http"
         "net/url"
         "os"
@@ -517,6 +518,11 @@ func (s *Server) handleWorkspaceBind(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 500, "store: "+err.Error())
                 return
         }
+        // v1.21.1: binding a termux workspace stacks the capability (the
+        // bind IS the consent — the row and the runner can never disagree).
+        if ws.Kind == "termux" {
+                s.autoStackTermuxCap(req.SessionID)
+        }
         writeJSON(w, 200, map[string]any{"bound": true})
 }
 
@@ -579,6 +585,30 @@ func (s *Server) sessionWorkspaceCap(w http.ResponseWriter, sid string) bool {
                 return false
         }
         return true
+}
+
+// autoStackTermuxCap — v1.21.1 THE ARMED HAND: binding a termux workspace
+// IS the Termux capability's consent. The v1.20.3 two-gate law (the ⌨
+// toggle AND a bound folder) trapped the user in practice: the library
+// row's PATCH died silently once (persistCaps had no res.ok check — a
+// 4xx is not a fetch rejection) and the bot refused forever while the
+// UI showed stacked. Binding a device folder now stacks the capability
+// the same moment (the ⌨ row reads the session truth, so the row and
+// the runner can never disagree again); unstacking the row stays the
+// kill-switch. Every bind site calls this right after BindWorkspace.
+func (s *Server) autoStackTermuxCap(sid string) {
+        sid = strings.TrimSpace(sid)
+        if s.db == nil || sid == "" {
+                return
+        }
+        sess, err := s.db.GetSession(sid)
+        if err != nil || sess == nil || sess.Termux {
+                return
+        }
+        sess.Termux = true
+        if err := s.db.UpdateSession(sess); err != nil {
+                log.Printf("termux auto-stack failed for %s: %v", sid, err)
+        }
 }
 
 func (s *Server) handleSessionWorkspaceBind(w http.ResponseWriter, r *http.Request) {
@@ -651,6 +681,11 @@ func (s *Server) handleSessionWorkspaceBind(w http.ResponseWriter, r *http.Reque
                 return
         }
         ws, _ := s.db.GetWorkspace(wid)
+        // v1.21.1: binding a termux workspace stacks the capability (the
+        // bind IS the consent — the row and the runner can never disagree).
+        if ws != nil && ws.Kind == "termux" {
+                s.autoStackTermuxCap(sid)
+        }
         s.wsJSON(w, 200, ws, map[string]any{"bound": true})
 }
 
@@ -2327,6 +2362,9 @@ func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
                                 writeError(w, 500, "store: "+err.Error())
                                 return
                         }
+                        // v1.21.1: the termux pick IS the capability consent —
+                        // stack it the same moment the folder binds.
+                        s.autoStackTermuxCap(req.SessionID)
                 }
                 s.wsJSON(w, 200, ws, map[string]any{"termux": true})
                 return

@@ -1021,3 +1021,134 @@ func TestV1203_Helpers(t *testing.T) {
                 t.Fatalf("termuxBytes drifted")
         }
 }
+
+// ── v1.21.1 THE ARMED HAND ───────────────────────────────────────────────
+
+// TestV1211_SessionMcpTurnTermuxClosure — THE PM PATH PIN: the /mcp session
+// Turn (the ONLY tool path every PrivateMode chat's browser loop uses —
+// PM turns are frontend-driven and never touch the engine's direct
+// ChatRequest) must carry the Termux closure. The v1.20.3 blind spot
+// (nil closure) made PM bots answer "the termux tool is not armed for
+// this chat" forever while the user had the ⌨ stacked AND device
+// folders bound — the live repro.
+func TestV1211_SessionMcpTurnTermuxClosure(t *testing.T) {
+        fb := newFakeArmBridge(t)
+        s := newArmServer(t, fb)
+        root := t.TempDir()
+        armTermuxChat(t, s, "pmchat", root)
+
+        turn := s.sessionMcpTurn("pmchat")
+        if turn == nil {
+                t.Fatalf("sessionMcpTurn must resolve the armed session")
+        }
+        if turn.Termux == nil {
+                t.Fatalf("THE PM ARM: the session Turn must carry the Termux closure (the v1.20.3 blind spot)")
+        }
+        out := turn.Termux(context.Background(), `{"action":"help"}`)
+        if !strings.Contains(out, "termux tool — a real Termux Linux shell") || !strings.Contains(out, root) {
+                t.Fatalf("the PM-path termux call must answer the real help with the bound root, got:\n%s", out)
+        }
+        // armed exec through the PM path — the real bridge round trip
+        out = turn.Termux(context.Background(), `{"action":"exec","args":{"command":"echo pm-arm-alive"}}`)
+        if !strings.Contains(out, "pm-arm-alive") {
+                t.Fatalf("the PM-path exec must run for real, got:\n%s", out)
+        }
+
+        // unarmed session: the closure wires UNCONDITIONALLY (the runner
+        // gates, not the resolver) and the teach is honest, bridge untouched.
+        s.db.CreateSession(&store.Session{ID: "pmbare", Title: "t", Model: "m", Provider: "p"})
+        turn = s.sessionMcpTurn("pmbare")
+        if turn == nil || turn.Termux == nil {
+                t.Fatalf("the closure wires unconditionally (the runner gates, not the resolver)")
+        }
+        out = turn.Termux(context.Background(), `{"action":"exec","args":{"command":"echo hi"}}`)
+        if !strings.Contains(out, "the ⌨ Termux capability is not stacked") {
+                t.Fatalf("the unarmed PM chat gets the honest not-stacked teach, got:\n%s", out)
+        }
+        if fb.runCount() != 1 {
+                t.Fatalf("the unarmed chat must never touch the bridge (runs=%d)", fb.runCount())
+        }
+}
+
+// TestV1211_AutoStackOnDeviceBind — THE BIND IS THE CONSENT: POSTing a
+// termux workspace with a session_id stacks the capability the same
+// moment; the bind route re-stacks after an unstack (the toggle stays
+// the kill-switch only until the user binds again); a non-termux device
+// row never touches the flag.
+func TestV1211_AutoStackOnDeviceBind(t *testing.T) {
+        fb := newFakeArmBridge(t)
+        s := newArmServer(t, fb)
+
+        s.db.CreateSession(&store.Session{ID: "bindchat", Title: "t", Model: "m", Provider: "p"})
+        code, out := v1202Req(t, s, "POST", "/api/workspaces/device",
+                `{"name":"my folder","termux_path":"/storage/emulated/0/Doomalay/myfolder","session_id":"bindchat"}`)
+        if code != 200 {
+                t.Fatalf("device POST: %d %v", code, out)
+        }
+        sess, _ := s.db.GetSession("bindchat")
+        if sess == nil || !sess.Termux {
+                t.Fatalf("the termux bind must auto-stack the capability (the bind IS the consent)")
+        }
+
+        // unstack sticks (the kill-switch works between binds)
+        v1202Req(t, s, "PATCH", "/api/sessions/bindchat", `{"termux":false}`)
+        sess, _ = s.db.GetSession("bindchat")
+        if sess == nil || sess.Termux {
+                t.Fatalf("unstacking must stick after the bind")
+        }
+
+        // re-binding through the workspace bind route re-stacks
+        wss, _ := s.db.ListSessionWorkspaces("bindchat")
+        if len(wss) != 1 {
+                t.Fatalf("the bound row must exist (got %d)", len(wss))
+        }
+        code, out = v1202Req(t, s, "POST", "/api/workspaces/"+wss[0].ID+"/bind", `{"session_id":"bindchat"}`)
+        if code != 200 {
+                t.Fatalf("bind route: %d %v", code, out)
+        }
+        sess, _ = s.db.GetSession("bindchat")
+        if sess == nil || !sess.Termux {
+                t.Fatalf("re-binding a termux workspace must re-stack the capability")
+        }
+
+        // a NON-termux device row never touches the flag
+        s.db.CreateSession(&store.Session{ID: "cloudchat", Title: "t", Model: "m", Provider: "p"})
+        code, out = v1202Req(t, s, "POST", "/api/workspaces/device", `{"name":"local","path":"/x","session_id":"cloudchat"}`)
+        if code != 200 {
+                t.Fatalf("plain device POST: %d %v", code, out)
+        }
+        sess, _ = s.db.GetSession("cloudchat")
+        if sess == nil || sess.Termux {
+                t.Fatalf("a non-termux device row must not stack the capability")
+        }
+}
+
+// TestV1211_CmdsInventory — the new cmds action: the FIXED script (zero
+// model strings — the pkg idiom) inventories PATH + PREFIX + the
+// $PREFIX/bin userland through the bridge, whole-truth, fail-soft when
+// PREFIX is unset (the ${PREFIX:-default} law under set -u).
+func TestV1211_CmdsInventory(t *testing.T) {
+        fb := newFakeArmBridge(t)
+        s := newArmServer(t, fb)
+        root := t.TempDir()
+        armTermuxChat(t, s, "cmdchat", root)
+
+        out := tool(s, "cmdchat", "cmds", `{}`)
+        if !strings.Contains(out, "CMDS — every command available") {
+                t.Fatalf("the cmds header, got:\n%s", out)
+        }
+        if !strings.Contains(out, "PATH=") || !strings.Contains(out, "PREFIX=") {
+                t.Fatalf("the inventory must carry PATH + PREFIX, got:\n%s", out)
+        }
+        // the fake bridge's bash runs the script for real: the fail-soft
+        // default PREFIX path doesn't exist locally → ls prints nothing,
+        // the script still exits 0 (the honesty: no crash, no junk).
+        if !strings.Contains(out, "exit_code: 0") {
+                t.Fatalf("the fixed fail-soft script must exit 0, got:\n%s", out)
+        }
+        // the armed chat's help must teach the new verb + the userland
+        out = tool(s, "cmdchat", "help", `{}`)
+        if !strings.Contains(out, `"action":"cmds"`) || !strings.Contains(out, "WHOLE LINUX USERLAND") {
+                t.Fatalf("the help must teach cmds + the whole-userland capability, got:\n%s", out)
+        }
+}

@@ -289,7 +289,7 @@ func TestSpecsTermuxGating(t *testing.T) {
 			t.Fatalf("termux action prop missing: %v", props)
 		}
 		enum, _ := action["enum"].([]string)
-		want := []string{"exec", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"}
+		want := []string{"exec", "cmds", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"}
 		if len(enum) != len(want) {
 			t.Fatalf("termux action enum = %v, want %v", enum, want)
 		}
