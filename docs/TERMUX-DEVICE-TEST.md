@@ -183,3 +183,38 @@ into the pill (~2/s), and the full-view overlay is ONE polished box.
 7. **Rapid execs**: two commands back to back — no 4s wait anymore
    (both run immediately; the 13th in a minute still gets the honest
    pace refusal).
+
+## v1.25.0 — THE PARITY WAVE additions (every surface that already
+worked right becomes the pattern)
+
+1. **The Termux capability row speaks the on/off pill**: Settings → the
+   capability library (the 🧩 box on a new chat, or the caps pill) —
+   once Termux is READY, the Termux row's chip reads **on** (stacked)
+   or **off** — the exact pill every toggle row speaks — while the
+   description line stays STATIC ("local Linux sandbox (commands,
+   package installs, local storage)" in both states). Tap the row: the
+   chip flips on → off → on; the description never moves.
+2. **The drawer from the workspace picker**: Workspaces → tap a local
+   (termux) workspace row → **📂 open in drawer** — the artifacts
+   drawer opens with the DEVICE STORAGE tree (NO "session not found").
+   Expand the folder, tap a file: the editor opens. Edit + **save to
+   device** — then check the file in your file manager: the content
+   actually changed (save writes the real file, it is not a download).
+3. **The honest folder names**: add a self-host workspace from a picked
+   folder WITHOUT typing a name — the workspace lists under the
+   folder's REAL name (the basename), never "my folder".
+4. **The bundle face**: open the library (🛠 lib + the +), pick a
+   bundle, press **▶ use** — back in the chat:
+   - The chat icon on the canvas grows a small corner badge showing the
+     BUNDLE's own icon (the same one the library card shows). Nothing
+     in use → no badge at all (the old always-on ⚡ is gone).
+   - The pill right of the lib shows the bundle name + an **✕**; the
+     old full-width "▣ bundle" row above the toolbar is gone.
+   - Press the **✕** — the bundle detaches (badge disappears, the
+     manifest is dropped). Re-attach and reload the page: the badge
+     re-appears on its own at chat open.
+5. **The one-word pill titles**: run a few different tool actions —
+   `ls`, a file write, a `grep`, `pkg install …`, a background session.
+   Every pill now leads with a one-word VERB chip (`ls`, `file_write`,
+   `grep`, `pkg`, `session`…) followed by the dim query — never the
+   generic `exec`. The ↗ full-view overlay's title says the same verb.
