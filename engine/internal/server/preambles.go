@@ -29,11 +29,12 @@ package server
 // substitutes them — the AGENTS.md / Agent-Flavored-Markdown idiom).
 
 import (
-	"encoding/json"
-	"strings"
-	"time"
+        "encoding/json"
+        "net/http"
+        "strings"
+        "time"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // PreambleSpec is one saved preamble: {id, name, text} — the persona row's
@@ -41,89 +42,89 @@ import (
 // trigger on). Stored as a JSON array in chat_sessions.preambles; the
 // selection lives in chat_sessions.preamble_sel ('' default | 'off' | id).
 type PreambleSpec struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Text string `json:"text"`
+        ID   string `json:"id"`
+        Name string `json:"name"`
+        Text string `json:"text"`
 }
 
 const (
-	// PreambleSelOff — the explicit OFF marker for chat_sessions.preamble_sel.
-	PreambleSelOff = "off"
-	// preambleMaxText / preambleMaxCount — the storage sanity caps (the
-	// personas machinery has no caps, but preambles embed live blocks;
-	// 64KB of template is far beyond any honest use).
-	preambleMaxText  = 64 * 1024
-	preambleMaxCount = 50
+        // PreambleSelOff — the explicit OFF marker for chat_sessions.preamble_sel.
+        PreambleSelOff = "off"
+        // preambleMaxText / preambleMaxCount — the storage sanity caps (the
+        // personas machinery has no caps, but preambles embed live blocks;
+        // 64KB of template is far beyond any honest use).
+        preambleMaxText  = 64 * 1024
+        preambleMaxCount = 50
 )
 
 // parsePreambles decodes the session's preambles JSON (defensive — a
 // corrupt blob parses as empty; the default preamble still composes).
 func parsePreambles(raw string) []PreambleSpec {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var specs []PreambleSpec
-	if err := json.Unmarshal([]byte(raw), &specs); err != nil {
-		return nil
-	}
-	out := specs[:0]
-	for _, p := range specs {
-		p.ID = strings.TrimSpace(p.ID)
-		p.Name = strings.TrimSpace(p.Name)
-		if len(p.Text) > preambleMaxText {
-			p.Text = p.Text[:preambleMaxText]
-		}
-		if p.ID == "" || strings.EqualFold(p.ID, "default") || strings.EqualFold(p.ID, PreambleSelOff) {
-			continue // the default/off states are NOT storable rows
-		}
-		out = append(out, p)
-	}
-	return out
+        raw = strings.TrimSpace(raw)
+        if raw == "" {
+                return nil
+        }
+        var specs []PreambleSpec
+        if err := json.Unmarshal([]byte(raw), &specs); err != nil {
+                return nil
+        }
+        out := specs[:0]
+        for _, p := range specs {
+                p.ID = strings.TrimSpace(p.ID)
+                p.Name = strings.TrimSpace(p.Name)
+                if len(p.Text) > preambleMaxText {
+                        p.Text = p.Text[:preambleMaxText]
+                }
+                if p.ID == "" || strings.EqualFold(p.ID, "default") || strings.EqualFold(p.ID, PreambleSelOff) {
+                        continue // the default/off states are NOT storable rows
+                }
+                out = append(out, p)
+        }
+        return out
 }
 
 // sanitizePreambles caps the list (the PATCH path's write guard).
 func sanitizePreambles(raw string) string {
-	specs := parsePreambles(raw)
-	if len(specs) > preambleMaxCount {
-		specs = specs[:preambleMaxCount]
-	}
-	b, err := json.Marshal(specs)
-	if err != nil {
-		return ""
-	}
-	return string(b)
+        specs := parsePreambles(raw)
+        if len(specs) > preambleMaxCount {
+                specs = specs[:preambleMaxCount]
+        }
+        b, err := json.Marshal(specs)
+        if err != nil {
+                return ""
+        }
+        return string(b)
 }
 
 // sanitizePreambleSel normalizes the selection: 'default'/'' → '', 'off'
 // → 'off', an id that exists in the chat's list stays, an id that doesn't
 // falls back to '' (the default — a deleted preamble can't wedge a chat).
 func sanitizePreambleSel(sel, preamblesRaw string) string {
-	sel = strings.TrimSpace(strings.ToLower(sel))
-	switch sel {
-	case "", "default":
-		return ""
-	case PreambleSelOff:
-		return PreambleSelOff
-	}
-	for _, p := range parsePreambles(preamblesRaw) {
-		if strings.EqualFold(p.ID, sel) {
-			return p.ID
-		}
-	}
-	return ""
+        sel = strings.TrimSpace(strings.ToLower(sel))
+        switch sel {
+        case "", "default":
+                return ""
+        case PreambleSelOff:
+                return PreambleSelOff
+        }
+        for _, p := range parsePreambles(preamblesRaw) {
+                if strings.EqualFold(p.ID, sel) {
+                        return p.ID
+                }
+        }
+        return ""
 }
 
 // defaultPreambleFor — the app default preamble TEMPLATE (not stored —
 // composed live so it always matches the app). The PM twin carries the
 // same text (persona.js DEFAULT_PREAMBLE_QUICK/HF).
 func defaultPreambleFor(sess *store.Session) string {
-	where := ", chatting inside the Doomalay app on the user's own device. "
-	if sess != nil && sess.Sandbox == "hf" {
-		where = ", chatting inside the Doomalay app from your Hugging Face Space. "
-	}
-	return "You are {model}, hosted via {provider}" + where + "Today is {date}.\n\n" +
-		"{repo_access}\n\n{artifacts}\n\n{library}\n\n{controls}\n\n{session}"
+        where := ", chatting inside the Doomalay app on the user's own device. "
+        if sess != nil && sess.Sandbox == "hf" {
+                where = ", chatting inside the Doomalay app from your Hugging Face Space. "
+        }
+        return "You are {model}, hosted via {provider}" + where + "Today is {date}.\n\n" +
+                "{repo_access}\n\n{artifacts}\n\n{library}\n\n{controls}\n\n{session}"
 }
 
 // preambleTextFor resolves the chat's preamble RAW TEMPLATE:
@@ -131,22 +132,22 @@ func defaultPreambleFor(sess *store.Session) string {
 // custom (a missing id falls back to the default — a deleted preamble
 // never wedges a chat).
 func preambleTextFor(sess *store.Session) string {
-	if sess == nil {
-		return ""
-	}
-	switch sanitizePreambleSel(sess.PreambleSel, sess.Preambles) {
-	case PreambleSelOff:
-		return ""
-	case "":
-		return defaultPreambleFor(sess)
-	}
-	sel := strings.TrimSpace(sess.PreambleSel)
-	for _, p := range parsePreambles(sess.Preambles) {
-		if strings.EqualFold(p.ID, sel) && strings.TrimSpace(p.Text) != "" {
-			return p.Text
-		}
-	}
-	return defaultPreambleFor(sess)
+        if sess == nil {
+                return ""
+        }
+        switch sanitizePreambleSel(sess.PreambleSel, sess.Preambles) {
+        case PreambleSelOff:
+                return ""
+        case "":
+                return defaultPreambleFor(sess)
+        }
+        sel := strings.TrimSpace(sess.PreambleSel)
+        for _, p := range parsePreambles(sess.Preambles) {
+                if strings.EqualFold(p.ID, sel) && strings.TrimSpace(p.Text) != "" {
+                        return p.Text
+                }
+        }
+        return defaultPreambleFor(sess)
 }
 
 // expandPromptBlocks expands the MIRROR placeholder vocabulary across the
@@ -154,35 +155,97 @@ func preambleTextFor(sess *store.Session) string {
 // same placeholders). personaTeachesArtifact keeps the old rule: a persona
 // that already carries the artifact protocol doesn't get {artifacts} twice.
 func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName string, personaTeachesArtifact bool) string {
-	if !strings.Contains(text, "{") {
-		return text
-	}
-	out := text
-	if strings.Contains(out, "{repo_access}") {
-		out = strings.ReplaceAll(out, "{repo_access}", s.workspaceManifestFor(sess.ID))
-	}
-	if strings.Contains(out, "{artifacts}") {
-		art := ""
-		if !personaTeachesArtifact {
-			art = artifactSystemPrompt
-		}
-		out = strings.ReplaceAll(out, "{artifacts}", art)
-	}
-	if strings.Contains(out, "{library}") {
-		out = strings.ReplaceAll(out, "{library}", libraryPreamble(sess)+s.libStateLine(sess))
-	}
-	if strings.Contains(out, "{controls}") {
-		out = strings.ReplaceAll(out, "{controls}", s.chatMetadataPreamble(sess, bundleName))
-	}
-	if strings.Contains(out, "{session}") {
-		out = strings.ReplaceAll(out, "{session}", s.sessionContextPreamble(sess))
-	}
-	if strings.Contains(out, "{date}") {
-		out = strings.ReplaceAll(out, "{date}", time.Now().Format("Monday, 2 January 2006"))
-	}
-	// the empty blocks ({artifacts} skipped) leave blank gaps — collapse
-	for strings.Contains(out, "\n\n\n") {
-		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
-	}
-	return out
+        if !strings.Contains(text, "{") {
+                return text
+        }
+        out := text
+        if strings.Contains(out, "{repo_access}") {
+                out = strings.ReplaceAll(out, "{repo_access}", s.workspaceManifestFor(sess.ID))
+        }
+        if strings.Contains(out, "{artifacts}") {
+                art := ""
+                if !personaTeachesArtifact {
+                        art = artifactSystemPrompt
+                }
+                out = strings.ReplaceAll(out, "{artifacts}", art)
+        }
+        if strings.Contains(out, "{library}") {
+                out = strings.ReplaceAll(out, "{library}", libraryPreamble(sess)+s.libStateLine(sess))
+        }
+        if strings.Contains(out, "{controls}") {
+                out = strings.ReplaceAll(out, "{controls}", s.chatMetadataPreamble(sess, bundleName))
+        }
+        if strings.Contains(out, "{session}") {
+                out = strings.ReplaceAll(out, "{session}", s.sessionContextPreamble(sess))
+        }
+        if strings.Contains(out, "{date}") {
+                out = strings.ReplaceAll(out, "{date}", time.Now().Format("Monday, 2 January 2006"))
+        }
+        // the empty blocks ({artifacts} skipped) leave blank gaps — collapse
+        for strings.Contains(out, "\n\n\n") {
+                out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
+        }
+        return out
+}
+
+// ── v1.27.1 THE FULL LEXICON: the blocks preview endpoint ───────────
+//
+//   GET /api/sessions/{id}/blocks
+//
+// Decision §5-B of PLAN-V126 (the user approved the endpoint): every
+// MIRROR block row in the placeholders screen can show its CURRENT
+// expansion — rendered by the SAME builders the turn path uses
+// (expandPromptBlocks's five), one source of truth. Each preview is
+// capped (this is a glance, not the whole prompt) and reports its full
+// size; {artifacts} reports collapsed:true + empty text when the chat's
+// active persona already teaches the protocol (the no-duplication rule,
+// evaluated identically to systemPromptForMetrics).
+
+const blockPreviewCap = 2000
+
+func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
+        sess, err := s.db.GetSession(r.PathValue("id"))
+        if err != nil || sess == nil {
+                writeError(w, 404, "session not found")
+                return
+        }
+        // the {artifacts} yield rule — the same teachesArtifact test the
+        // turn composition runs (active persona text mentions artifacts).
+        personaRaw := ""
+        if spec := s.resolveActivePersonaMerged(parsePersonas(sess), sess, personaMetrics{}); spec != nil {
+                personaRaw = spec.Text
+        } else if strings.TrimSpace(sess.Persona) != "" {
+                personaRaw = sess.Persona
+        }
+        if personaRaw == "" {
+                personaRaw = defaultPersonaFor(sess)
+        }
+        teachesArtifact := strings.Contains(strings.ToLower(personaRaw), "artifact")
+
+        blocks := map[string]map[string]any{}
+        emit := func(key, text string) {
+                chars := len([]rune(text))
+                if chars > blockPreviewCap {
+                        runes := []rune(text)
+                        text = string(runes[:blockPreviewCap])
+                }
+                blocks[key] = map[string]any{
+                        "text":      text,
+                        "chars":     chars,
+                        "truncated": chars > blockPreviewCap,
+                        "collapsed": false,
+                }
+        }
+        emit("repo_access", s.workspaceManifestFor(sess.ID))
+        if teachesArtifact {
+                blocks["artifacts"] = map[string]any{
+                        "text": "", "chars": 0, "truncated": false, "collapsed": true,
+                }
+        } else {
+                emit("artifacts", artifactSystemPrompt)
+        }
+        emit("library", libraryPreamble(sess)+s.libStateLine(sess))
+        emit("controls", s.chatMetadataPreamble(sess, ""))
+        emit("session", s.sessionContextPreamble(sess))
+        writeJSON(w, 200, map[string]any{"blocks": blocks})
 }

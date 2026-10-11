@@ -145,6 +145,33 @@
   // the MIRROR block vocabulary (documented for the editor + the
   // frontmatter's placeholders field — self-describing files)
   var PREAMBLE_BLOCKS = ['repo_access', 'artifacts', 'library', 'controls', 'session'];
+  // v1.27.1 THE FULL LEXICON: the rest of the vocabulary, grouped. The
+  // five facts + two metrics; phase 2 (THE TIE) re-points both lists
+  // from GET /api/placeholders so the engine stays the single source.
+  var PH_BUILTIN = ['name', 'model', 'provider', 'skills', 'date', 'messages', 'turns'];
+  // the HARD REFUSE law (v1.27.1): built-ins + block names are never
+  // custom keys — customs substitute FIRST, so a custom {session} would
+  // silently shadow the live block. The add box refuses both classes.
+  function reservedPlaceholderKey(k) {
+    if (PH_BUILTIN.indexOf(k) >= 0) return 'built-in';
+    if (PREAMBLE_BLOCKS.indexOf(k) >= 0) return 'a live preamble block';
+    return '';
+  }
+  // mergedCustomCount — global ∪ local customs (local wins, but for a
+  // count the union is the honest number).
+  function mergedCustomCount() {
+    var seen = {};
+    Object.keys(globalPlaceholders).forEach(function (k) { seen[k] = 1; });
+    Object.keys(placeholders).forEach(function (k) { seen[k] = 1; });
+    return Object.keys(seen).length;
+  }
+  // placeholderRowSub — the chat-data row's live enumeration (the user's
+  // ask: the row above the Preamble row lists what we actually use).
+  function placeholderRowSub() {
+    var n = mergedCustomCount();
+    var base = '12 built-ins — 5 blocks · 5 facts · 2 metrics';
+    return n ? base + ' + ' + n + ' custom' : base;
+  }
 
   // defaultPersonaFor(mode) — mode-aware default ('hf' → the HF persona).
   function defaultPersonaFor(mode) {
@@ -491,7 +518,10 @@
         '<button class="pv-row" data-placeholders="1">' +
           '<span class="pv-row-ico" style="font-family:monospace">{ }</span>' +
           '<span class="pv-row-meta"><span class="pv-row-title">Placeholders</span>' +
-          '<span class="pv-row-sub">{name} {model} {provider} {skills} + custom keys</span></span>' +
+          // v1.27.1 THE FULL LEXICON: the row enumerates the REAL
+          // vocabulary (5 MIRROR blocks + the facts + the metrics) —
+          // the full spelling lives one tap away in the screen.
+          '<span class="pv-row-sub">' + esc(placeholderRowSub()) + '</span></span>' +
           '<span class="pv-row-chev">›</span>' +
         '</button>' +
         // v1.22.0 THE MIRROR: the PREAMBLE row — under the placeholders row
@@ -1379,6 +1409,12 @@
   // determines if this new placeholder is global and works for all
   // chatbots, or local and is only recognised by this one chatbot."
   // Globals persist via /api/placeholders; locals via the session PATCH.
+  //
+  // v1.27.1 THE FULL LEXICON (the user's tie-in ask): the screen now
+  // shows the WHOLE vocabulary — the five MIRROR blocks (each expands to
+  // its CURRENT expansion via GET /api/sessions/{id}/blocks, the same
+  // builders the turn path runs), the live facts, the trigger metrics,
+  // then the static customs with the hard-refuse law on the add box.
   function placeholdersView() {
     return view('placeholders', function () {
       function builtin(key, val, sub) {
@@ -1388,14 +1424,34 @@
           '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);font-weight:600;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(val) + '</span>' +
         '</div>';
       }
+      // the five MIRROR blocks — tap a row to unfold its live expansion
+      // (the same text the engine renders into the prompt this turn).
+      function blockRow(key, sub) {
+        return '<button class="pv-row" data-block-row="' + escAttr(key) + '" style="text-align:left;width:100%">' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
+          '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
+          '<span class="pv-row-chev" aria-hidden="true">›</span>' +
+        '</button>' +
+        '<div data-block-prev="' + escAttr(key) + '" style="display:none;margin:-2px 0 6px;padding:8px 10px;border:1px solid var(--surface-2);border-radius:8px;background:var(--surface-1);max-height:150px;overflow:auto">' +
+          '<div class="art-loading">…</div>' +
+        '</div>';
+      }
       function customRow(k, v, scope) {
         var badge = scope === 'global'
           ? '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--text-3);letter-spacing:0.3px">🌐 global</span>'
           : '<span style="flex-shrink:0;font-size:var(--ui-micro-fs);font-weight:700;color:var(--text-3);letter-spacing:0.3px">📍 this chat</span>';
+        // the legacy shadower (a stored custom named like a live block):
+        // creation is refused everywhere now — an existing one is flagged
+        // until it's deleted (no backward-compat ride, per the user).
+        var shadow = PREAMBLE_BLOCKS.indexOf(k) >= 0
+          ? '<span class="pv-row-sub" style="color:var(--warn);font-weight:600">⚠ shadows the live {' + esc(k) + '} block — delete + re-add under a free name</span>'
+          : '';
         return '<div class="pv-row" style="cursor:default">' +
           '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
-          '<span class="pv-row-sub">' + badge + ' · usable in personas + triggers</span></span>' +
-          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:28%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v) + '</span>' +
+          '<span class="pv-row-sub">' + badge + ' · static · personas · preamble · triggers</span>' +
+          shadow +
+          '</span>' +
+          '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:24%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v) + '</span>' +
           '<button data-del-key="' + escAttr(k) + '" data-del-scope="' + scope + '" style="background:transparent;border:none;color:var(--err);font-size:15px;cursor:pointer;padding:6px 8px;flex-shrink:0">✕</button>' +
         '</div>';
       }
@@ -1410,13 +1466,23 @@
       });
       if (!customs) customs = '<div class="art-loading" style="padding:14px">no local placeholders yet</div>';
       return (
-        '<p class="pv-hint">These substitute into every persona on every turn. <b>🌐 global</b> keys work for ALL chatbots; <b>📍 local</b> keys only this one. Both feed trigger conditions.</p>' +
-        '<div class="pv-section-label">built-in</div>' +
+        '<p class="pv-hint">Two classes: <b>LIVE</b> keys are computed fresh every turn by the app; <b>STATIC</b> keys are your stored values. Both substitute into every persona AND the active preamble on every turn; customs also power trigger conditions. Unknown keys stay as written (portable by design).</p>' +
+        '<div class="pv-section-label">live blocks — the preamble machinery</div>' +
+        blockRow('repo_access', '1st block — the workspace manifest: the public read hand + this chat\'s bound repos') +
+        blockRow('artifacts', '2nd block — the artifact protocol (empty when your persona already teaches it)') +
+        blockRow('library', '3rd block — the library briefing + the live library state') +
+        blockRow('controls', '4th block — this chat\'s controls ledger (every pill, live)') +
+        blockRow('session', '5th block — the live session dashboard (usage, context, connections)') +
+        '<div class="pv-section-label">live facts</div>' +
         builtin('name', cur ? cur.name : '—', 'the chat\'s own name (Scooby, Lippy, Crippy…)') +
         builtin('model', cur ? String(cur.model).split('/').pop() : '—', 'the live model — swaps instantly when you switch') +
         builtin('provider', cur ? (cur.provider || '—') : '—', 'the live provider label') +
         builtin('date', new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), 'today — live on every turn') +
         builtin('skills', 'stub', 'inert on purpose for now — will point at skills + MCP servers later') +
+        '<div class="pv-section-label">trigger metrics</div>' +
+        builtin('messages', 'count', 'trigger-only — folds into the history count; never written into the prompt') +
+        builtin('turns', 'count', 'trigger-only — user turns; never written into the prompt') +
+        '<p class="pv-hint" style="margin:4px 2px 0">The aliases {message_count} and {turn_count} also work in triggers. Blocks are NOT trigger keys — prose isn\'t a comparable fact.</p>' +
         '<div class="pv-section-label">global 🌐</div>' +
         globals +
         '<div class="pv-section-label">this chat 📍</div>' +
@@ -1438,6 +1504,55 @@
   }
 
   function wirePlaceholders(el) {
+    // ── the live block previews (v1.27.1 §5-B: the engine endpoint) ──
+    var blocksData = null;
+    function fillPreview(node) {
+      var k = node.getAttribute('data-block-prev');
+      var b = blocksData && blocksData[k];
+      if (!b) {
+        node.innerHTML = '<div class="art-loading">preview unavailable</div>';
+        return;
+      }
+      if (b.collapsed) {
+        node.innerHTML = '<div style="color:var(--text-3);font-size:var(--ui-micro-fs)">collapsed — your persona already teaches the artifact protocol, so this block rides empty</div>';
+        return;
+      }
+      var t = String(b.text || '');
+      var lines = t.split('\n');
+      var head = lines.slice(0, 6).join('\n');
+      var html = '<div style="white-space:pre-wrap;font-family:monospace;font-size:var(--ui-micro-fs);color:var(--text-2)">' + esc(head) + '</div>';
+      var rest = t.length - head.length;
+      if (rest > 0) {
+        html += '<div style="margin-top:6px;color:var(--text-3);font-size:var(--ui-micro-fs)">+ ' + Number(rest).toLocaleString() + ' more chars' +
+          (b.truncated ? ' (' + Number(b.chars).toLocaleString() + ' total)' : '') + ' — the full block rides every turn</div>';
+      }
+      node.innerHTML = html;
+    }
+    el.querySelectorAll('[data-block-row]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-block-row');
+        var node = el.querySelector('[data-block-prev="' + k + '"]');
+        if (!node) return;
+        var open = node.style.display !== 'none';
+        node.style.display = open ? 'none' : 'block';
+        if (!open) {
+          if (blocksData) fillPreview(node);
+          // else the pending fetch (below) fills it on arrival — the "…"
+          // from the markup stands until then.
+        }
+      });
+    });
+    if (cur && cur.sessionId) {
+      fetch('/api/sessions/' + encodeURIComponent(cur.sessionId) + '/blocks')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          blocksData = (d && d.blocks) || {};
+          el.querySelectorAll('[data-block-prev]').forEach(function (n) {
+            if (n.style.display !== 'none') fillPreview(n);
+          });
+        })
+        .catch(function () { blocksData = null; });
+    }
     // the scope pill (v0.29): global ⇄ local for the NEW key being added
     var scope = 'local';
     el.querySelectorAll('#ph-scope button').forEach(function (b) {
@@ -1453,7 +1568,10 @@
       var k = (el.querySelector('#ph-key').value || '').trim().replace(/[{}]/g, '');
       var v = el.querySelector('#ph-val').value;
       if (!k || !/^[A-Za-z0-9_]+$/.test(k)) { toast('keys are letters, numbers and _ only'); return; }
-      if (['name', 'model', 'provider', 'skills', 'messages', 'turns'].indexOf(k) >= 0) { toast(k + ' is built-in — pick another key'); return; }
+      // v1.27.1 THE HARD REFUSE: built-ins AND the five block names (the
+      // engine PUT + PATCH enforce the same law — this is the UI door).
+      var cls = reservedPlaceholderKey(k);
+      if (cls) { toast(k + ' is ' + cls + ' — pick another key'); return; }
       var done = function () {
         toast('{' + k + '} added — ' + (scope === 'global' ? 'every chatbot' : 'this chat'));
         loadGlobals().then(function () { PV().replaceView(placeholdersView()); });

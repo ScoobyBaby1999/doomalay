@@ -294,7 +294,10 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
                 }
         }
         if v, ok := req["placeholders"].(string); ok {
-                sess.Placeholders = v
+                // v1.27.1 THE HARD REFUSE: the local customs obey the same
+                // reserved-key law as the global PUT — reserved names never
+                // persist (existing shadowers die on this write).
+                sess.Placeholders = sanitizeLocalPlaceholders(v)
         }
         // v1.22.0 THE MIRROR: the Preamble system — the chat's saved
         // preamble library (JSON array of {id,name,text}) + the active

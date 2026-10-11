@@ -304,6 +304,10 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/placeholders", s.handlePlaceholdersGet)
         s.mux.HandleFunc("PUT /api/placeholders", s.handlePlaceholdersSet)
         s.mux.HandleFunc("DELETE /api/placeholders/{key}", s.handlePlaceholdersDelete)
+        // v1.27.1 THE FULL LEXICON: the live MIRROR-block preview (the
+        // placeholders screen renders each block's current expansion —
+        // the same builders the turn path runs).
+        s.mux.HandleFunc("GET /api/sessions/{id}/blocks", s.handleSessionBlocks)
 
         // Chat session CRUD.
         s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)

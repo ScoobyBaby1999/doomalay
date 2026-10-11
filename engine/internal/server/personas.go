@@ -273,9 +273,72 @@ func parsePlaceholders(sess *store.Session) map[string]string {
         return m
 }
 
+// sanitizeLocalPlaceholders (v1.27.1 THE HARD REFUSE, the PATCH door) —
+// the session PATCH stores the local customs verbatim; reserved keys
+// never do. A map carrying {session}/{library}/… loses exactly those
+// entries (existing shadowers die on the chat's next write — the user's
+// no-backward-compat call); everything else rides untouched.
+func sanitizeLocalPlaceholders(raw string) string {
+        trimmed := strings.TrimSpace(raw)
+        if trimmed == "" {
+                return trimmed
+        }
+        m := map[string]string{}
+        if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+                return trimmed // not a map — leave it for parsePlaceholders to degrade
+        }
+        dropped := false
+        for k := range m {
+                if _, bad := isReservedPlaceholderKey(k); bad {
+                        delete(m, k)
+                        dropped = true
+                }
+        }
+        if !dropped {
+                return trimmed
+        }
+        b, err := json.Marshal(m)
+        if err != nil {
+                return trimmed
+        }
+        return string(b)
+}
+
 // globalPlaceholderKey is the app_settings row that holds the GLOBAL
 // custom placeholders (the ones every chatbot recognizes) as one JSON map.
 const globalPlaceholderKey = "global_placeholders"
+
+// placeholderBuiltins — the substitution + trigger vocabulary (the live
+// facts + the trigger-only metrics). One shared slice: the GET payload,
+// the PUT reserved check and the bot-tool guard all read THIS list (four
+// hand-maintained copies used to drift — v1.27.2 THE TIE finishes the
+// client side).
+var placeholderBuiltins = []string{"name", "model", "provider", "skills", "date", "messages", "turns"}
+
+// placeholderBlocks — the five MIRROR block keys (expandPromptBlocks,
+// preambles.go, renders them live at every turn). Reserved as of v1.27.1
+// THE HARD REFUSE: customs substitute FIRST (substituteAllVars runs
+// before expandPromptBlocks), so a custom key named like a block would
+// silently shadow the live block in every persona AND the preamble —
+// no longer creatable anywhere (the API PUT, the bot's placeholder_set,
+// or a session PATCH carrying one).
+var placeholderBlocks = []string{"repo_access", "artifacts", "library", "controls", "session"}
+
+// isReservedPlaceholderKey — the hard-refuse law: built-ins + block names
+// are never custom keys. The class string names the collision honestly.
+func isReservedPlaceholderKey(k string) (string, bool) {
+        for _, b := range placeholderBuiltins {
+                if k == b {
+                        return "built-in", true
+                }
+        }
+        for _, b := range placeholderBlocks {
+                if k == b {
+                        return "a live preamble block", true
+                }
+        }
+        return "", false
+}
 
 // globalPlaceholders reads the engine-wide custom placeholder map.
 // Nil-DB safe (unit tests construct Servers without one).
@@ -638,8 +701,16 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
 }
 
 // setPlaceholder writes one custom placeholder, local (the session's map)
-// or global (the engine-wide map).
+// or global (the engine-wide map). v1.27.1: the bot door obeys the same
+// hard-refuse law as the HTTP PUT — a reserved key never becomes a custom.
 func (s *Server) setPlaceholder(sess *store.Session, key, value, scope string) error {
+        key = strings.TrimSpace(strings.Trim(key, "{}"))
+        if key == "" || !validPlaceholderKey(key) {
+                return fmt.Errorf("key must be letters, numbers and _ (built-ins are reserved)")
+        }
+        if class, bad := isReservedPlaceholderKey(key); bad {
+                return fmt.Errorf("%s is %s — pick another key", key, class)
+        }
         if scope == "global" {
                 return s.setGlobalPlaceholder(key, value)
         }
@@ -809,9 +880,11 @@ func (s *Server) handlePlaceholdersSet(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 400, "key must be letters, numbers and _ (built-ins are reserved)")
                 return
         }
-        switch req.Key {
-        case "name", "model", "provider", "skills", "date", "messages", "turns":
-                writeError(w, 400, req.Key+" is built-in — pick another key")
+        // v1.27.1 THE HARD REFUSE: built-ins AND the five MIRROR block
+        // names are reserved — a custom {session} would shadow the live
+        // block (customs substitute first). One shared law, three doors.
+        if class, bad := isReservedPlaceholderKey(req.Key); bad {
+                writeError(w, 400, req.Key+" is "+class+" — pick another key")
                 return
         }
         if err := s.setGlobalPlaceholder(req.Key, req.Value); err != nil {
