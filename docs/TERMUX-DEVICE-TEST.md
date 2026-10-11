@@ -222,9 +222,10 @@ worked right becomes the pattern)
 ## v1.27.0 — THE HONEST PROGRAM additions (the exec titles + the unbound
 burst)
 
-> The exec-title fix rides the **OTA** (open the app once after this
-> release and the banner applies it — no reinstall). The unbound burst
-> default + the live cap read ride the **APK** (the engine changed).
+> The engine changed this wave, so `min_engine` walls the delta — the
+> OTA banner says "engine update required" and **one v1.27.0 APK install
+> carries everything** (the title fix, the unbound default, and the ✦
+> Termux section together).
 
 1. **The exec pills speak the program** (the blank-title fix — PM/quick
    chats): ask the bot to run a few one-shot execs — `cal 10 2026`,
