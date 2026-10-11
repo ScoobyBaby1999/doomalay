@@ -37,7 +37,9 @@ const caps = require(path.join(WEB, 'capabilities.js'));
 
   const rows3 = caps.rowsFor({}, { personaName: '', termux: { available: true, ready: true } });
   const t3 = rows3.find(r => r.key === 'termux');
-  ck('termux sub text (ready, unstacked)', t3.sub === 'tap to stack on this chat', t3.sub);
+  ck('termux sub text (ready, unstacked) is the STATIC sub (v1.24.1 — the chip carries state)',
+    t3.sub === 'local Linux sandbox (commands, package installs, local storage)', t3.sub);
+  ck('termux chip (ready, unstacked) says off', caps.chipFor(t3).text === 'off', caps.chipFor(t3).text);
 }
 
 // ── the persisted file contracts ───────────────────────────────────────

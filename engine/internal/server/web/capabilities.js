@@ -77,12 +77,15 @@
     ];
     var ts = extras.termux;
     if (ts && ts.available) {
+      // v1.24.1 THE PILL PARITY: the sub is STATIC (what the row IS —
+      // the MD3 settings-row law: the description never moves under the
+      // finger) and the chip carries the stack state like every toggle
+      // row — 'on'/'off' once setup is ready, 'set up…' before (chipFor
+      // derives it; the tap flow below is unchanged).
       rows.push({
         key: 'termux', icon: '⌨', name: 'Termux', kind: 'termux',
         on: !!st.termux, ready: !!ts.ready,
-        sub: st.termux ? 'stacked on this chat · tap to remove'
-          : (ts.ready ? 'tap to stack on this chat' : 'local Linux sandbox (commands, package installs, local storage)'),
-        chip: { cls: ts.ready ? 'on' : 'setup', text: ts.ready ? 'ready' : 'set up…' }
+        sub: 'local Linux sandbox (commands, package installs, local storage)'
       });
     }
     // v1.21.2: the persona row moved LAST (the identity row under the
@@ -99,7 +102,14 @@
   }
 
   // chipFor — the ON/OFF chip a toggle row renders (pure).
+  // v1.24.1: the termux row joins the law — once setup is READY the chip
+  // speaks 'on'/'off' from the stack state (exactly the toggle rows' pill);
+  // before that it stays the 'set up…' hint (tap opens the setup ladder).
   function chipFor(row) {
+    if (row.kind === 'termux') {
+      if (!row.ready) return { cls: 'setup', text: 'set up…' };
+      return row.on ? { cls: 'on', text: 'on' } : { cls: 'off', text: 'off' };
+    }
     if (row.kind === 'toggle') {
       return row.on
         ? { cls: 'on', text: 'on' }

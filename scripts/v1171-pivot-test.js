@@ -148,19 +148,23 @@ console.log('v1.17.1 THE PIVOT pins:');
   ok(ready && ready.ready === true && ready.on === false, 'termux: ready reports the toggle armed-able');
 
   // the row shape: unready → the tappable "set up…" hint chip (v1.17.3
-  // rewire — was the muted "not set up" chip + a toast); ready → accent
-  // "ready" chip; stacked → the stacked sub line.
+  // rewire — was the muted "not set up" chip + a toast); ready → the
+  // on/off state chip (v1.24.1 THE PILL PARITY: the sub is STATIC — the
+  // MD3 settings-row law — and the chip carries the stack state exactly
+  // like every toggle row; "ready"/"stacked…"/"tap to stack" are dead).
   var rowsU = C.rowsFor({}, { termux: { available: true, ready: false } });
   var tu = rowsU.filter(function (r) { return r.key === 'termux'; })[0];
   ok(tu && C.chipFor(tu).text === 'set up…' && C.chipFor(tu).cls === 'setup',
     'termux: unready row carries the tappable "set up…" hint chip (the v1.17.3 rewire)');
   var rowsR = C.rowsFor({}, { termux: { available: true, ready: true } });
   var tr = rowsR.filter(function (r) { return r.key === 'termux'; })[0];
-  ok(tr && C.chipFor(tr).text === 'ready' && C.chipFor(tr).cls === 'on' && tr.sub === 'tap to stack on this chat',
-    'termux: ready row carries the accent "ready" chip + the stack invitation');
+  ok(tr && C.chipFor(tr).text === 'off' && C.chipFor(tr).cls === 'off' &&
+      tr.sub === 'local Linux sandbox (commands, package installs, local storage)',
+    'termux: ready+unstacked row carries the "off" chip + the static sub');
   var rowsS = C.rowsFor({ termux: true }, { termux: { available: true, ready: true } });
   var tson = rowsS.filter(function (r) { return r.key === 'termux'; })[0];
-  ok(tson && tson.sub === 'stacked on this chat · tap to remove', 'termux: a stacked capability reads "stacked on this chat"');
+  ok(tson && C.chipFor(tson).text === 'on' && C.chipFor(tson).cls === 'on' &&
+      tson.sub === tr.sub, 'termux: a stacked capability flips the chip to "on" — the sub never moves');
 })();
 
 // ── 4. BEHAVIOR: the chatframework gatelock + pills (window stubs) ────
