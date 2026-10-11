@@ -3013,6 +3013,28 @@
     color: var(--text-3); font-size: calc(var(--chat-fs) * 0.62);
     overflow: hidden; text-overflow: ellipsis;
   }
+  /* ── v1.24.5 THE PILL TITLE (user spec: "a one word title in the pill
+     showing the actual operation — ls, grep, file_write, bash, mkdir —
+     never a generic 'exec'"): the one-word verb rides its own small chip
+     between the ico and the dim query body — a compact mono-feeling
+     label at 0.62× the chat fs, 600 weight, surface-2 fill, a hair
+     border, tiny radius. flex-shrink:0 so a long query never crowds the
+     verb away. Theme vars only, nothing hardcoded. ── */
+  .tool-pill-name {
+    flex-shrink: 0;
+    font-size: calc(var(--chat-fs) * 0.62);
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: calc(5px * var(--chat-scale));
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+  .tool-pill-text { color: var(--text-3); }
+  .tool-pill-progress .tool-pill-text,
+  .tool-pill-progress .tool-pill-name { color: var(--text-3); }
   .tool-pill[data-expanded="1"] .tool-pill-tail { white-space: normal; }
   .tool-pill-live {
     display: inline-block; width: calc(6px * var(--chat-scale)); height: calc(6px * var(--chat-scale));

@@ -5533,10 +5533,18 @@
       var head =
         '<div class="tool-pill-head">' +
           '<span class="tool-pill-ico">' + ((merged || msg.result) ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
-          '<span class="tool-pill-text">' + esc(parts.label) +
+          // v1.24.5 THE PILL TITLE (user spec: "a one word title in the
+          // pill showing the actual operation — ls, grep, file_write,
+          // bash, mkdir — never a generic 'exec'"): a small chip between
+          // the ico and the text span carries the one-word VERB; the
+          // text span renders the BODY (dim — the query/args remainder),
+          // the live stream line rides it while pending. The generic
+          // label-blends-into-query shape dies.
+          (parts.title ? '<span class="tool-pill-name">' + esc(parts.title) + '</span>' : '') +
+          '<span class="tool-pill-text">' + esc(parts.body) +
             (pending && msg.streamText
               ? ' <span class="tool-pill-tail tool-pill-tail-live">' + esc(String(msg.streamText).split('\n').filter(function (l) { return l.trim(); }).slice(-1)[0] || '').slice(0, 64) + '</span>'
-              : (parts.tail ? ' <span class="tool-pill-tail">' + esc(parts.tail) + '</span>' : '')) +
+              : '') +
             (pending ? ' <span class="tool-pill-live" aria-hidden="true"></span>' : '') +
           '</span>' +
           (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +
@@ -5657,9 +5665,17 @@
     var inner = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? a.args : null;
     return { action: String(a.action || ''), inner: inner };
   }
+  // v1.24.5 THE PILL TITLE — the honest one-word titles for the termux
+  // verbs that are not exec/pkg (the plan's exact table; a session_*
+  // verb folds to 'session' at the use site).
+  var TERMUX_ACTION_TITLES = {
+    write: 'file_write', append: 'file_write', read: 'file_read',
+    ls: 'ls', rm: 'rm', mkdir: 'mkdir', grep: 'grep', find: 'find',
+    cmds: 'cmds', help: 'help'
+  };
   function toolPillLabelParts(msg) {
     var p = (msg && msg.payload) || {};
-    var label = '', tail = '';
+    var label = '', tail = '', title = '', body = '';
     var tx = termuxArgsOf(p);
     if (tx && tx.action === 'exec') {
       var cmd = String((tx.inner && tx.inner.command) || '').trim();
@@ -5667,16 +5683,50 @@
       label = toks[0] || '';
       if (label && toks[1] && /^install$/i.test(toks[1])) label += ' install';
       if (cmd.length > label.length) tail = cmd.slice(label.length).trim();
+      // v1.24.5: the ONE-WORD TITLE = the program itself (bash / ls /
+      // python…); the body = the command's remainder after it. The
+      // 'install' join stays a label-only nicety (the activity line) —
+      // the title stays one word, the sub-verb rides the body.
+      title = toks[0] || '';
+      body = title && cmd.length > title.length ? cmd.slice(title.length).trim() : '';
     } else if (tx && tx.action === 'pkg') {
       var pkgName = String((tx.inner && tx.inner.name) || '').trim();
       label = 'pkg install' + (pkgName ? ' ' + pkgName : '');
+      // v1.24.5: pkg → title 'pkg', body 'install <name>' (the plan's
+      // exact shape — the verb IS the install).
+      title = 'pkg';
+      body = 'install' + (pkgName ? ' ' + pkgName : '');
     } else if (msg && msg.result) {
       // a standalone result pill (the legacy shape): its text is the label
       label = String(msg.text || p.name || 'result');
+      // v1.24.5: the title speaks the verb when the args rode along (the
+      // PM result persist carries them), else the tool's own name; the
+      // body = the result head text.
+      title = (tx && tx.action)
+        ? (TERMUX_ACTION_TITLES[tx.action] ||
+           (tx.action.indexOf('session_') === 0 ? 'session' : tx.action))
+        : String(p.name || 'tool');
+      body = String(msg.text || p.summary || '');
     } else {
       label = String(p.summary || p.name || (msg && msg.text) || 'tool');
+      if (tx && tx.action) {
+        // v1.24.5 THE PILL TITLE: the non-exec/pkg termux verbs speak
+        // their HONEST one-word title — write/append → file_write, read
+        // → file_read, ls/rm/mkdir/grep/find/cmds/help → themselves,
+        // session_* → session. The label law is UNCHANGED (the old
+        // else-branch shape above); the body carries the path/pattern.
+        title = TERMUX_ACTION_TITLES[tx.action] ||
+          (tx.action.indexOf('session_') === 0 ? 'session' : tx.action);
+        body = String(p.summary || (tx.inner && (tx.inner.path ||
+          tx.inner.pattern || tx.inner.name)) || '');
+      } else {
+        // v1.24.5: every other tool → title = the tool's own name
+        // (web_search, hublib, workspace…), body = the summary/query.
+        title = String(p.name || 'tool');
+        body = String(p.summary || (msg && msg.text) || '');
+      }
     }
-    return { label: label, tail: tail };
+    return { label: label, tail: tail, title: title, body: body };
   }
   // mergeToolResult folds a tool_result into the pending same-name use
   // pill above it (the LAST unresolved one — the pairing law the full-view
@@ -5776,10 +5826,15 @@
   // the head's sub line: the derived label + its tail (the pill's own
   // vocabulary, glance-sized — the FULL query lives in the box below).
   // Pure over the msg (the v1234 rig's seam).
+  // v1.24.5: the sub prefers the BODY (the title-stripped remainder —
+  // the tv-name above it already speaks the one-word title, so the sub
+  // must never echo it); the label+tail shape stays the fallback for
+  // msgs with no body derivation.
   function tvSubFor(msg, name) {
     var lp = toolPillLabelParts(msg);
     var sub = '';
-    if (lp.label && lp.label !== name) sub = lp.label + (lp.tail ? ' ' + lp.tail : '');
+    if (lp.body) sub = lp.body;
+    else if (lp.label && lp.label !== name) sub = lp.label + (lp.tail ? ' ' + lp.tail : '');
     else if (lp.tail) sub = lp.tail;
     if (sub.length > 90) sub = sub.slice(0, 90) + '…';
     return sub;
@@ -5833,7 +5888,14 @@
     var text = String(msg.res !== undefined ? msg.res : (pay.text || pay.result || ''));
     var pending = msg.res === undefined && !msg.result && !msg.progress;
     var streamText = pending ? String(msg.streamText || '') : '';
-    var sub = tvSubFor(msg, name);
+    // v1.24.5 THE PILL TITLE: the head's NAME speaks the one-word verb
+    // (bash / file_write / web_search… — the pill's own title chip); the
+    // raw tool name ('termux') moves to the tooltip + aria-label (it
+    // already lives in the query box below); the sub passes the TITLE as
+    // the name so a label equal to it never echoes into the sub.
+    var tp = toolPillLabelParts(msg);
+    var tvTitle = tp.title || name;
+    var sub = tvSubFor(msg, tvTitle);
     var pages = Math.max(1, Math.ceil(text.length / TV_PAGE_CHARS));
     var uid = 'tv' + Date.now();
 
@@ -5861,7 +5923,8 @@
         '<div class="tv-head">' +
           '<span class="tv-ico">⌕</span>' +
           '<span class="tv-title">' +
-            '<span class="tv-name">' + esc(name) + '</span>' +
+            '<span class="tv-name"' + (tvTitle !== name ? ' title="' + escAttr(name) +
+              '" aria-label="the ' + escAttr(name) + ' tool"' : '') + '>' + esc(tvTitle) + '</span>' +
             (sub ? '<span class="tv-sub">' + esc(sub) + '</span>' : '') +
           '</span>' +
         '</div>' +

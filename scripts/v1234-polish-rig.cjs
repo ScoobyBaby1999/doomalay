@@ -53,9 +53,12 @@ function eq(name, got, want) {
 // Pure seam: tvSubFor(msg, name).
 const S = (payload, name) => P.tvSubFor({ payload }, name || (payload && payload.name) || 'tool');
 
-eq('termux exec → sub is label + tail',
-  S({ name: 'termux', args: { action: 'exec', args: { command: 'python -m pip install numpy' } } }, 'termux'),
-  'python -m pip install numpy');
+// v1.24.5 re-pin: the tv-name above the sub speaks the one-word TITLE
+// ('python' — the pill's verb chip), so the sub is the TITLE-STRIPPED
+// body (never an echo of the name it sits under).
+eq('termux exec → sub is the body (title-stripped — v1.24.5)',
+  S({ name: 'termux', args: { action: 'exec', args: { command: 'python -m pip install numpy' } } }, 'python'),
+  '-m pip install numpy');
 eq('label === name with a tail → the sub is the tail only (no echo)',
   S({ name: 'termux', args: { action: 'exec', args: { command: 'termux bash -c "ls"' } } }, 'termux'),
   'bash -c "ls"');

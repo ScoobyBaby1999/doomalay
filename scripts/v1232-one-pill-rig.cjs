@@ -52,47 +52,53 @@ function eq(name, got, want) {
     fails.push(name + ' — got ' + JSON.stringify(got) + ' want ' + JSON.stringify(want));
   }
 }
+// v1.24.5 re-pin: toolPillLabelParts grew `title` + `body` (THE PILL
+// TITLE — the one-word verb chip; the v1245 rig owns that matrix) — the
+// v1232 law pins the LABEL/TAIL pair only (the activity line's shape).
+function eqLT(name, parts, want) {
+  eq(name, { label: parts.label, tail: parts.tail }, want);
+}
 
 // ══ 1. THE LABEL DERIVATION MATRIX ═══════════════════════════════════
 // The user's ask: "exec" was vague — the pill names WHAT the exec is.
 const L = (payload) => P.toolPillLabelParts({ payload });
 
 // exec: the program is the placeholder, the command's remainder the tail
-eq('python -V → label python, tail -V',
+eqLT('python -V → label python, tail -V',
   L({ name: 'termux', args: { action: 'exec', args: { command: 'python -V' } } }),
   { label: 'python', tail: '-V' });
-eq('pip install numpy → label "pip install" (the ONE generic join)',
+eqLT('pip install numpy → label "pip install" (the ONE generic join)',
   L({ name: 'termux', args: { action: 'exec', args: { command: 'pip install numpy' } } }),
   { label: 'pip install', tail: 'numpy' });
-eq('pkg install python → label "pkg install"',
+eqLT('pkg install python → label "pkg install"',
   L({ name: 'termux', args: { action: 'exec', args: { command: 'pkg install python' } } }),
   { label: 'pkg install', tail: 'python' });
-eq('mkdir e2e → label mkdir', 
+eqLT('mkdir e2e → label mkdir', 
   L({ name: 'termux', args: { action: 'exec', args: { command: 'mkdir e2e-project' } } }),
   { label: 'mkdir', tail: 'e2e-project' });
-eq('ls alone → label ls, no tail',
+eqLT('ls alone → label ls, no tail',
   L({ name: 'termux', args: { action: 'exec', args: { command: 'ls' } } }),
   { label: 'ls', tail: '' });
-eq('bash -c script → label bash',
+eqLT('bash -c script → label bash',
   L({ name: 'termux', args: { action: 'exec', args: { command: 'bash -c "for i in 1 2 3; do echo $i; done"' } } }),
   { label: 'bash', tail: '-c "for i in 1 2 3; do echo $i; done"' });
 // the args ride as a JSON STRING on the engine events — same derivation
-eq('string args (the engine event shape) parse identically',
+eqLT('string args (the engine event shape) parse identically',
   L({ name: 'termux', args: '{"action":"exec","args":{"command":"python -m http.server 8000"}}' }),
   { label: 'python', tail: '-m http.server 8000' });
 // the pkg VERB: the action IS the install
-eq('pkg verb → "pkg install numpy"',
+eqLT('pkg verb → "pkg install numpy"',
   L({ name: 'termux', args: { action: 'pkg', args: { name: 'numpy' } } }),
   { label: 'pkg install numpy', tail: '' });
 // non-termux tools: today's law (summary || name)
-eq('web_search keeps its summary label',
+eqLT('web_search keeps its summary label',
   L({ name: 'web_search', summary: 'best termux keyboards 2026' }),
   { label: 'best termux keyboards 2026', tail: '' });
-eq('no summary → the tool name',
+eqLT('no summary → the tool name',
   L({ name: 'workspace' }),
   { label: 'workspace', tail: '' });
 // garbage honesty: empty command → empty label, never a crash
-eq('empty exec → honest empty label',
+eqLT('empty exec → honest empty label',
   L({ name: 'termux', args: { action: 'exec', args: {} } }),
   { label: '', tail: '' });
 ok('garbage args never crash the derivation',

@@ -249,7 +249,8 @@ ok('S3: the message sends', sendRes.includes('sent'), sendRes);
 const pillUp = await waitFn("document.querySelectorAll('.tool-pill:not(.tool-pill-progress)').length >= 1", 20000);
 ok('S3: the ONE pill appears (the tool_use event)', pillUp);
 if (pillUp) {
-  const pillInfo = abEval("(function(){var p=document.querySelector('.tool-pill');var lbl=p&&p.querySelector('.tool-pill-text');return p?p.className+' | '+(lbl?lbl.textContent.slice(0,80):''):'none'})()");
+  // v1.24.5: the verb rides the .tool-pill-name chip; the text span is the dim body
+  const pillInfo = abEval("(function(){var p=document.querySelector('.tool-pill');var nm=p&&p.querySelector('.tool-pill-name');var lbl=p&&p.querySelector('.tool-pill-text');return p?p.className+' | '+(nm?nm.textContent:'')+' | '+(lbl?lbl.textContent.slice(0,80):''):'none'})()");
   ok('S3: the pill is the PENDING use shape (the loading bar, no result yet)',
     /tool-pill-use/.test(pillInfo), pillInfo);
   ok('S3: the pill label derives the PROGRAM (bash), not "exec"',
@@ -262,7 +263,7 @@ abEval('(function(){var o=document.querySelector(\'.tool-pill-open\');if(!o)retu
 const ovUp = await waitFn("!!document.querySelector('.tool-fullview')", 8000);
 ok('S4: the overlay opens', ovUp);
 if (ovUp) {
-  const one = abEval("(function(){var v=document.querySelector('.tool-fullview');if(!v)return 'none';return JSON.stringify({body:!!v.querySelector('.tv-body'),row:!!v.querySelector('.tv-row'),secQ:!!v.querySelector('.tv-sec-q'),stream:!!v.querySelector('.tv-stream'),kb:!!v.querySelector('.tv-kb'),bar:!!v.querySelector('.tv-bar'),foot:!!v.querySelector('.tv-foot'),copyInFoot:!!v.querySelector('.tv-foot .tv-copy'),copyIco:!!v.querySelector('.tv-copy-ico'),btnInHead:!!v.querySelector('.tv-head button'),name:(v.querySelector('.tv-name')||{}).textContent,sub:(v.querySelector('.tv-sub')||{}).textContent})})()");
+  const one = abEval("(function(){var v=document.querySelector('.tool-fullview');if(!v)return 'none';return JSON.stringify({body:!!v.querySelector('.tv-body'),row:!!v.querySelector('.tv-row'),secQ:!!v.querySelector('.tv-sec-q'),stream:!!v.querySelector('.tv-stream'),kb:!!v.querySelector('.tv-kb'),bar:!!v.querySelector('.tv-bar'),foot:!!v.querySelector('.tv-foot'),copyInFoot:!!v.querySelector('.tv-foot .tv-copy'),copyIco:!!v.querySelector('.tv-copy-ico'),btnInHead:!!v.querySelector('.tv-head button'),name:(v.querySelector('.tv-name')||{}).textContent,nameAttr:(v.querySelector('.tv-name')||{}).title,sub:(v.querySelector('.tv-sub')||{}).textContent})})()");
   let s = {};
   try { s = JSON.parse(JSON.parse(one)); } catch (e) { try { s = JSON.parse(one); } catch (e2) {} }
   ok('S4: ONE box (.tv-body), the old .tv-row DEAD', s.body === true && s.row === false, one);
@@ -270,7 +271,10 @@ if (ovUp) {
   ok('S4: the pending trio (stream + kb + bar) renders', s.stream === true && s.kb === true && s.bar === true);
   ok('S4: the footer copy (⧉ icon + label) — NO button in the head',
     s.foot === true && s.copyInFoot === true && s.copyIco === true && s.btnInHead === false, one);
-  ok('S4: the head shows the tool + the derived label', s.name === 'termux' && /bash/.test(s.sub || ''), one);
+  // v1.24.5: tv-name speaks the one-word TITLE (bash); the raw 'termux'
+  // name rides the title attribute; the sub is the title-stripped body
+  ok('S4: the head shows the one-word title (bash) + the body sub; the raw name in the tooltip',
+    s.name === 'bash' && /-c/.test(s.sub || '') && s.nameAttr === 'termux', one);
   const qTxt = abEval("(document.querySelector('.tv-q')||{}).textContent || ''");
   ok('S4: the query carries the command (pretty JSON)', /bash -c/.test(qTxt) && /pkg step/.test(qTxt), qTxt.slice(0, 120));
   ab('screenshot ' + SHOTS + '/s4-overlay-live.png');
@@ -343,8 +347,8 @@ abEval("window.doomalay && window.doomalay.openChatBySession && window.doomalay.
 await sleep(2000);
 const replayPills = abEval("document.querySelectorAll('.tool-pill:not(.tool-pill-progress)').length");
 ok('S9: after reload the transcript is still ONE pill (the persist law)', replayPills === '1', replayPills);
-const replayLbl = abEval("(function(){var t=document.querySelector('.tool-pill-text');return t?t.textContent.slice(0,80):\'none\'})()");
-ok('S9: the replayed pill keeps the derived label (bash, not exec)', /bash/.test(replayLbl), replayLbl);
+const replayLbl = abEval("(function(){var n=document.querySelector('.tool-pill-name');var t=document.querySelector('.tool-pill-text');return (n?n.textContent:'')+' | '+(t?t.textContent.slice(0,80):'none'})()");
+ok('S9: the replayed pill keeps the derived verb chip (bash, not exec)', /^bash \|/.test(replayLbl), replayLbl);
 // the replayed overlay carries the result
 abEval('(function(){var o=document.querySelector(\'.tool-pill-open\');if(o){o.click();return \'ok\'}return \'no ctl\'})()');
 const replayOv = await waitFn("!!document.querySelector('.tool-fullview .tv-result')", 8000);
