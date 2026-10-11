@@ -63,7 +63,7 @@ console.log('v1.17.3 THE SETUP pins — setup.sh:');
   // step b: termux-setup-storage — the warning echo comes BEFORE it
   ok(sh.indexOf('termux-setup-storage') >= 0, 'setup.sh runs termux-setup-storage (interactive)');
   ok(sh.indexOf('A DIALOG WILL APPEAR') >= 0 &&
-     sh.indexOf('A DIALOG WILL APPEAR') < sh.indexOf('termux-setup-storage;'),
+     sh.indexOf('A DIALOG WILL APPEAR') < sh.indexOf('command -v termux-setup-storage'),
     'setup.sh warns about the All-Files dialog BEFORE termux-setup-storage runs');
   ok(sh.indexOf('Allow all files access') >= 0, 'setup.sh tells the user exactly which button to tap');
   ok(/termux-setup-storage;[^\n]*\n[^\n]*echo[^\n]*storage setup did not finish/.test(sh) === false &&
