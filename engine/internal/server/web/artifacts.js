@@ -311,6 +311,11 @@
     liveCM = null; // drawer replaces the editor — drop its resize hook
     currentSession = sessionId;
     currentChat = chat || null;
+    // v1.24.2 THE DRAWER PARITY: chat.adhoc — a device/termux workspace
+    // row the caller wants VISIBLE even when it isn't bound to this
+    // session (the workspace picker's "open in drawer" button). It rides
+    // through to renderDeviceSection, which dedupes by id.
+    var adhoc = (chat && chat.adhoc) || null;
 
     var html =
       '<div class="art-scrim"></div>' +
@@ -347,7 +352,7 @@
       // v0.46: device-storage workspaces (local FS handles) get their own
       // drawer section — files read/write straight to disk.
       if (window.Workspace && window.Workspace.renderDeviceSection) {
-        try { window.Workspace.renderDeviceSection(listEl, sessionId); } catch (e) {}
+        try { window.Workspace.renderDeviceSection(listEl, sessionId, adhoc); } catch (e) {}
       }
     }).catch(function (e) {
       listEl.style.overflow = 'auto';

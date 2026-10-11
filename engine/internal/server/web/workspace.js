@@ -1073,10 +1073,22 @@
     });
     var dr = acts.querySelector('[data-a="drawer"]');
     if (dr) dr.addEventListener('click', function () {
+      // v1.24.2 THE DRAWER PARITY: the drawer is SESSION-scoped (its
+      // first fetch is /api/sessions/<SID>/artifacts) — the old branch
+      // passed the WORKSPACE id for device/termux rows, so the engine
+      // 404'd "session not found" and the tree/editor sections never
+      // rendered (the manual drawer path always worked because it passes
+      // the real session id). Now every branch passes sidNow(); the
+      // clicked device/termux row rides along as an ADHOC row so it
+      // renders even when it isn't bound to this chat (renderDeviceSection
+      // dedupes by id).
+      var sid = sidNow();
+      if (!sid) { toast('connect a model first'); return; }
       window.ConnectOverlay.close();
       if (window.Artifacts) window.Artifacts.openDrawer(
-        (ws.kind === 'device' || ws.kind === 'termux') ? ws.id : sidNow(),
-        { name: (ws.kind === 'device' || ws.kind === 'termux') ? 'device' : 'cloud' });
+        sid,
+        { name: (ws.kind === 'device' || ws.kind === 'termux') ? 'device' : 'cloud',
+          adhoc: (ws.kind === 'device' || ws.kind === 'termux') ? ws : null });
       else toast('open the artifacts drawer');
     });
     var ch = acts.querySelector('[data-a="chat"]');
@@ -2403,10 +2415,18 @@
 
   // ── ARTIFACTS DRAWER: the device section (local FS handles + v1.20.2
   // termux rows — the jailed fs browser tree) ─────────────────────────
-  function renderDeviceSection(listEl, sessionId) {
+  function renderDeviceSection(listEl, sessionId, adhoc) {
     if (!listEl || !sessionId) return;
     api('/api/sessions/' + encodeURIComponent(sessionId) + '/workspaces').then(function (d) {
       var rows = (d.workspaces || []).filter(function (w) { return w.kind === 'device' || w.kind === 'termux'; });
+      // v1.24.2 THE DRAWER PARITY: the caller's ADHOC row (the workspace
+      // picker's "open in drawer" tap) renders even when it isn't bound
+      // to this session — same tree, same editor, same SAVE; deduped by
+      // id when the bind already lists it.
+      if (adhoc && (adhoc.kind === 'device' || adhoc.kind === 'termux') &&
+          !rows.some(function (w) { return w.id === adhoc.id; })) {
+        rows.unshift(adhoc);
+      }
       if (!rows.length) return;
       var head = document.createElement('div');
       head.className = 'wsc-sec';
