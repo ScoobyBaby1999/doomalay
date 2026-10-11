@@ -96,6 +96,47 @@ eq('string args (the engine event shape) derive identically',
   L({ name: 'termux', args: '{"action":"exec","args":{"command":"python -m http.server 8000"}}' }),
   { label: 'python', tail: '-m http.server 8000', title: 'python', body: '-m http.server 8000' });
 
+// ══ v1.26.1 THE STRING ARGS — the device's REAL shapes ═══════════════
+// The live Faqous events (v1.26.0 device, glm-5.3-flash through the PM
+// arm) carry the inner args as a JSON STRING — the MCP manifest's own
+// declared type (mcpbus/def.go "args": string). The matrix above only
+// ever pinned the OBJECT inner; the string form is the exact hole that
+// blanked every exec pill's title on the real device.
+console.log('v1.26.1 THE STRING ARGS — the device shapes (the blank-title hole):');
+eq('PM/device shape: inner args as a JSON STRING → title cal, body "10 2026"',
+  L({ name: 'termux', args: { action: 'exec', args: '{"command": "cal 10 2026"}' } }),
+  { label: 'cal', tail: '10 2026', title: 'cal', body: '10 2026' });
+eq('WS/device shape: outer string + inner string (double-encoded)',
+  L({ name: 'termux', args: '{"action":"exec","args":"{\\"command\\": \\"sed s/hello/SALUT/i hello.sh\\"}"}' }),
+  { label: 'sed', tail: 's/hello/SALUT/i hello.sh', title: 'sed', body: 's/hello/SALUT/i hello.sh' });
+eq("the user's example batch — python3 / du / curl all derive",
+  [L({ name: 'termux', args: { action: 'exec', args: '{"command": "python3 -c \\"print(1)\\""}' } }).title,
+   L({ name: 'termux', args: { action: 'exec', args: '{"command": "du -sh ."}' } }).title,
+   L({ name: 'termux', args: { action: 'exec', args: '{"command": "curl -s https://api.github.com/zen"}' } }).title].join(','),
+  'python3,du,curl');
+eq('a leading POSIX assignment is grammar, not the program (FOO=1 python3 → python3)',
+  L({ name: 'termux', args: { action: 'exec', args: { command: 'FOO=1 python3 -c "print(2**10)"' } } }),
+  { label: 'python3', tail: '-c "print(2**10)"', title: 'python3', body: '-c "print(2**10)"' });
+eq('several assignments skip together (A=1 B=2 ls → ls)',
+  L({ name: 'termux', args: { action: 'exec', args: { command: 'A=1 B=2 ls -la' } } }),
+  { label: 'ls', tail: '-la', title: 'ls', body: '-la' });
+eq('a flat command (no nested args — the runner-tolerated shape) derives too',
+  L({ name: 'termux', args: { action: 'exec', command: 'du -sh . ; find . -type f | wc -l' } }),
+  { label: 'du', tail: '-sh . ; find . -type f | wc -l', title: 'du', body: '-sh . ; find . -type f | wc -l' });
+eq('a pure assignment command (no program) is honest: the first word',
+  L({ name: 'termux', args: { action: 'exec', args: { command: 'FOO=bar' } } }).title, 'FOO=bar');
+eq('a garbage-huge token clamps at 28 (the chip never blows)',
+  L({ name: 'termux', args: { action: 'exec', args: { command: 'x'.repeat(60) + ' y' } } }).title.length, 28);
+eq('the transcript pkg shape (packages ARRAY) → install cowsay',
+  L({ name: 'termux', args: { action: 'pkg', args: { op: 'install', packages: ['cowsay'] } } }),
+  { label: 'pkg install cowsay', tail: '', title: 'pkg', body: 'install cowsay' });
+eq('pkg with several packages joins them',
+  L({ name: 'termux', args: { action: 'pkg', args: { packages: ['cowsay', 'jq'] } } }).body,
+  'install cowsay jq');
+eq('the transcript ls shape (inner string) → the path body',
+  L({ name: 'termux', args: { action: 'ls', args: '{"path": "/storage/emulated/0/Documents"}' } }).body,
+  '/storage/emulated/0/Documents');
+
 // pkg: title 'pkg', body 'install <name>' (the plan's exact shape)
 eq('pkg verb → title pkg, body "install numpy"',
   L({ name: 'termux', args: { action: 'pkg', args: { name: 'numpy' } } }),
@@ -238,6 +279,9 @@ eq('tvSubFor: a web_search summary body',
   'best keyboards 2026');
 eq('tvSubFor: no body → the label+tail fallback',
   S({ name: 'termux', args: 'not json' }, 'termux'), '');
+eq('tvSubFor: the device exec shape (inner string) sub = the command remainder',
+  S({ name: 'termux', args: { action: 'exec', args: '{"command": "cal 10 2026"}' } }, 'cal'),
+  '10 2026');
 {
   const long = 'x'.repeat(200);
   const got = S({ name: 'termux', args: { action: 'exec', args: { command: 'python ' + long } } }, 'python');

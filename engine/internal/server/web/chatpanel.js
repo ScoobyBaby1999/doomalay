@@ -5662,8 +5662,37 @@
     if (!a) return null;
     if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return null; } }
     if (!a || typeof a !== 'object') return null;
-    var inner = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? a.args : null;
-    return { action: String(a.action || ''), inner: inner };
+    // v1.26.1 THE STRING ARGS (the user's blank-title report): the MCP
+    // manifest DECLARES the nested "args" prop as a JSON-object STRING
+    // (mcpbus/def.go — the shape every schema-following PM model emits;
+    // the live device's events carry exactly
+    // {"action":"exec","args":"{\"command\": \"cal 10 2026\"}"}), so
+    // the inner args ride DOUBLE-ENCODED — parse them. The engine's
+    // runner has tolerated all three forms (string / object / flat)
+    // since v1.20.3; the frontend derivation now mirrors it: the parsed
+    // nested object, with FLAT top-level keys folded in when the nested
+    // args never carried them (the runner's own merge law — nested
+    // wins, flat fills the gaps).
+    var inner = a.args;
+    if (typeof inner === 'string') {
+      var s = inner.trim();
+      inner = null;
+      if (s) { try { inner = JSON.parse(s); } catch (e) { inner = null; } }
+    }
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) inner = null;
+    // the flat fold runs even when the nested args never rode (a flat
+    // {"action":"exec","command":"…"} is the runner's tolerated shape)
+    var folded = null;
+    if (inner) {
+      folded = {};
+      for (var ik in inner) folded[ik] = inner[ik];
+    }
+    for (var fk in a) {
+      if (fk === 'action' || fk === 'args') continue;
+      if (folded === null) folded = {};
+      if (folded[fk] === undefined) folded[fk] = a[fk];
+    }
+    return { action: String(a.action || ''), inner: folded };
   }
   // v1.24.5 THE PILL TITLE — the honest one-word titles for the termux
   // verbs that are not exec/pkg (the plan's exact table; a session_*
@@ -5679,18 +5708,38 @@
     var tx = termuxArgsOf(p);
     if (tx && tx.action === 'exec') {
       var cmd = String((tx.inner && tx.inner.command) || '').trim();
-      var toks = cmd.split(/\s+/);
-      label = toks[0] || '';
-      if (label && toks[1] && /^install$/i.test(toks[1])) label += ' install';
-      if (cmd.length > label.length) tail = cmd.slice(label.length).trim();
-      // v1.24.5: the ONE-WORD TITLE = the program itself (bash / ls /
-      // python…); the body = the command's remainder after it. The
-      // 'install' join stays a label-only nicety (the activity line) —
-      // the title stays one word, the sub-verb rides the body.
-      title = toks[0] || '';
-      body = title && cmd.length > title.length ? cmd.slice(title.length).trim() : '';
+      // v1.26.1 THE PROGRAM TOKEN (the user's law + one grammatical
+      // refinement): the title = the command's FIRST word — except a
+      // leading NAME=value word is a POSIX assignment prefixing the
+      // utility (grammar, not the program), so the first NON-assignment
+      // word is the program. Purely derived — no program lists, no
+      // dictionaries (the user's constraint). The one regex yields the
+      // program token AND its end offset: the body = the raw command
+      // remainder after it ('FOO=1 python -V' titles 'python', body
+      // '-V'). A garbage-huge token clamps at 28 chars so a mangled pill
+      // can never blow the chip.
+      var pm = /(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(\S+)/.exec(cmd);
+      title = pm ? pm[1] : '';
+      if (title.length > 28) title = title.slice(0, 28);
+      var rest = pm ? cmd.slice(pm.index + pm[0].length).trim() : '';
+      label = title;
+      if (label && /^install\b/i.test(rest)) label += ' install';
+      tail = label === title ? rest : rest.replace(/^install\s+/i, '');
+      // v1.24.5's law kept: the title is ONE word (the program itself —
+      // bash / ls / cal / python3…); the body = the command's remainder
+      // after it; the 'install' join stays a label-only nicety (the
+      // activity line), the sub-verb rides the body.
+      body = rest;
     } else if (tx && tx.action === 'pkg') {
-      var pkgName = String((tx.inner && tx.inner.name) || '').trim();
+      // v1.26.1: the name reads the manifest's own shape — the packages
+      // ARRAY ("packages":["cowsay"], the form the device's pkg events
+      // actually carry) joined, falling back to name. The string-args
+      // fix finally delivers inner to this branch, which used to read a
+      // .name the real events never had.
+      var pk = tx.inner || {};
+      var pkgName = (Array.isArray(pk.packages) && pk.packages.length)
+        ? pk.packages.map(function (x) { return String(x); }).filter(Boolean).join(' ')
+        : String(pk.name || '').trim();
       label = 'pkg install' + (pkgName ? ' ' + pkgName : '');
       // v1.24.5: pkg → title 'pkg', body 'install <name>' (the plan's
       // exact shape — the verb IS the install).

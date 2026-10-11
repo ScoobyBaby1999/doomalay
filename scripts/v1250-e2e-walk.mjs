@@ -168,7 +168,11 @@ function startStub() {
         await sleep(100);
         sse(res, { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_v1251', type: 'function', function: { name: 'termux', arguments: '' } }] } }] });
         await sleep(50);
-        sse(res, { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ action: 'exec', args: { command: SLOW_CMD, timeout_ms: 60000 } }) } }] } }] });
+        // v1.26.1: the DEVICE'S EXACT SHAPE — the nested args as a JSON
+        // STRING (the MCP manifest's declared type; the live Faqous
+        // events' form — the blank-title bug's root cause, now pinned
+        // in BOTH walks)
+        sse(res, { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ action: 'exec', args: JSON.stringify({ command: SLOW_CMD, timeout_ms: 60000 }) }) } }] } }] });
         await sleep(50);
         sse(res, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
       } else {
