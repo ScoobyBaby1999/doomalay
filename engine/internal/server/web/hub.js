@@ -925,6 +925,12 @@
         id: bcur.id,
         name: bcur.id,
         tag: (meta && meta.tag) || '',
+        // v1.24.4 THE BUNDLE FACE: the bundle's own icon + repo ride the
+        // handoff — the chat's icon badge renders the SAME face the
+        // library card's title-left icon does (IconLib.card), the canvas
+        // raster follows, and the badge hides when nothing is in use.
+        icon: (meta && meta.icon) || '',
+        repo: (meta && meta.repo) || '',
         members: members
       };
       var mounted = window.ChatPanel.current ? window.ChatPanel.current() : null;

@@ -3570,19 +3570,52 @@
     // v0.71: an attached WHOLE BUNDLE leads (it outranks the single
     // template — applyBundle arms it; tool events still override live
     // during the turn, and the next user message re-derives back).
+    // v1.24.4: the derivation keeps the icon fields — the FACE the badge
+    // paints rides the same derivation (bundleBadgeOf below).
     state._turnBundle = (state.bundle && state.bundle.name)
-      ? { kind: 'bundle', name: state.bundle.name }
+      ? { kind: 'bundle', name: state.bundle.name,
+          icon: state.bundle.icon || '', repo: state.bundle.repo || '' }
       : (state.template && state.template.name)
         ? { kind: 'template', name: state.template.name }
         : null;
     paintSegBundle(bodyEl, state);
   }
 
+  // bundleBadgeOf — PURE (exported for the node rig): the turn bundle →
+  // the icon-face object the ChatIcon badge paints. A whole-bundle turn
+  // bundle carries the attached bundle's icon+repo when it has them (the
+  // arm derivation or a matching state.bundle); a member in use (or a
+  // bundle with no icon) is glyph-only — the kind speaks, the name rides
+  // the tooltip. null = nothing in use → the badge re-derives legacy.
+  function bundleBadgeOf(state) {
+    var b = state && state._turnBundle;
+    if (!b || !b.name) return null;
+    if (b.kind === 'bundle') {
+      var icon = String(b.icon || '');
+      var repo = String(b.repo || '');
+      if (!icon && state.bundle && state.bundle.name === b.name) {
+        icon = String(state.bundle.icon || '');
+        repo = String(state.bundle.repo || '');
+      }
+      return { kind: 'bundle', name: String(b.name), icon: icon, repo: repo };
+    }
+    return { kind: String(b.kind || 'bundle'), name: String(b.name), icon: '', repo: '' };
+  }
+
   // paintSegBundle — the LIVE half: swap the segment's text/visibility
   // without re-rendering the toolbar (the turn is streaming; a full
   // re-render would drop it). Detached/stale bodyEls are fine — the
   // querySelector just misses and the state survives for the reopen.
+  // v1.24.4 THE BUNDLE FACE TWIN: every seg paint ALSO syncs the chat
+  // icon's corner badge (state._icon.setBundleBadge) — the seg is the
+  // toolbar's truth, the badge is the canvas face, ONE derivation feeds
+  // both (arm/hint/apply/X all flow through here).
   function paintSegBundle(bodyEl, state, segHint) {
+    // the badge twin runs FIRST — it is DOM-independent (the canvas icon
+    // owns it) and must fire even when the toolbar seg is gone/detached.
+    if (state && state._icon && typeof state._icon.setBundleBadge === 'function') {
+      try { state._icon.setBundleBadge(bundleBadgeOf(state)); } catch (e) {}
+    }
     var host = bodyEl && bodyEl.querySelector ? bodyEl : null;
     if (!host && currentCtx && currentCtx.bodyEl) host = currentCtx.bodyEl;
     if (!host && !segHint) return;
@@ -3599,17 +3632,51 @@
     if (!b || !b.name) {
       if (seg.style.display !== 'none') {
         seg.style.display = 'none';
-        seg.textContent = '';
+        var lab0 = seg.querySelector('.seg-lib-bundle-label');
+        if (lab0) lab0.textContent = '';
+        else seg.textContent = '';
         seg.removeAttribute('aria-label');
         seg.removeAttribute('title');
       }
       return;
     }
     var label = bundleGlyph(b.kind) + ' ' + shortCap(b.name);
-    if (seg.textContent !== label) seg.textContent = label;
-    seg.setAttribute('aria-label', 'in use this turn — ' + b.kind + ': ' + b.name);
-    seg.title = b.name + ' (' + b.kind + ') in use this turn — tap to open the library';
-    if (seg.style.display !== '') seg.style.display = '';
+    // v1.24.4: the label rides the LABEL SPAN (the ✕ sibling stays — a
+    // long name must never ellipsize the ✕ away); a seg without the
+    // span (a plain textContent seg) degrades to the old whole-write.
+    var labEl = seg.querySelector('.seg-lib-bundle-label');
+    if (labEl) {
+      if (labEl.textContent !== label) labEl.textContent = label;
+    } else if (seg.textContent !== label) {
+      seg.textContent = label;
+    }
+    seg.setAttribute('aria-label', 'in use this turn — ' + b.kind + ': ' + b.name +
+      ' — press ✕ to drop it');
+    seg.title = b.name + ' (' + b.kind + ') in use this turn — tap to open the library, ✕ drops it';
+    if (seg.style.display !== 'inline-flex') seg.style.display = 'inline-flex';
+  }
+
+  // v1.24.4 THE SEG ✕ — drop the turn's active bundle. An ATTACHED whole
+  // bundle DETACHES (the tpl-chip ✕ law: state.bundle = null + saveBundle
+  // + persistCaps — the lib gate stays where the user left it, only the
+  // manifest goes); a member-in-use (no attached bundle matching it) just
+  // clears the turn display — the seg hides, the badge hides, the next
+  // tool event re-fills what the turn actually uses.
+  function dropTurnBundle(bodyEl, state) {
+    if (!state) return;
+    if (state.bundle && state.bundle.name && state._turnBundle &&
+        state._turnBundle.kind === 'bundle' &&
+        state._turnBundle.name === state.bundle.name) {
+      state.bundle = null;
+      saveBundle(state);
+    }
+    state._turnBundle = null;
+    paintSegBundle(bodyEl, state);   // hides the seg + the badge (the twin)
+    persistCaps(state, state._icon);
+    var tb = bodyEl && bodyEl.querySelector('#chat-toolbar');
+    if (tb && state._icon) {
+      renderToolbar(tb, state, state._effortLevels || null, state._icon, bodyEl);
+    }
   }
 
   function shortCap(name) {
@@ -3711,13 +3778,39 @@
     // so the row reads as ONE compact control group instead of the
     // bundle segment visually dominating the toolbar. shortCap caps the
     // label at 11 chars (full name stays in the tooltip + aria).
-    seg.style.cssText = 'display:none;border:none;' +
+    // v1.24.4 THE SEG ✕ (user spec: "pressing X cancels/drops the active
+    // bundle for that turn"): the pill becomes a LABEL SPAN + an ✕ SPAN —
+    // the label carries the name (ellipsis-safe at 66px), the ✕ drops the
+    // turn's active bundle (an attached whole bundle DETACHES, a member-
+    // in-use just clears the turn display). The pill itself stays a
+    // button → openLib; the ✕ swallows the click so the library never
+    // opens under the drop. Inline-flex so the ✕ can never be ellipsized
+    // away by a long name.
+    seg.style.cssText = 'display:flex;align-items:center;gap:3px;border:none;' +
       'border-left:1px solid rgba(var(--accent-rgb),0.45);' +
       'background-color:rgba(var(--accent-rgb),0.12);' +
       'background-image:var(--accent-gradient, none);' +
       'color:var(--on-accent);padding:3px 7px 3px 6px;font-size:9.5px;font-weight:600;' +
       'font-family:inherit;cursor:pointer;white-space:nowrap;max-width:88px;overflow:hidden;' +
-      'text-overflow:ellipsis;flex-shrink:1;-webkit-tap-highlight-color:transparent';
+      'flex-shrink:1;-webkit-tap-highlight-color:transparent';
+    var segLab = document.createElement('span');
+    segLab.className = 'seg-lib-bundle-label';
+    segLab.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:66px;min-width:0';
+    var segX = document.createElement('span');
+    segX.className = 'seg-lib-bundle-x';
+    segX.textContent = '✕';
+    segX.title = 'drop the bundle in use';
+    segX.setAttribute('role', 'button');
+    segX.setAttribute('aria-label', 'Drop the bundle in use this turn');
+    segX.style.cssText = 'flex-shrink:0;opacity:0.8;padding:1px;font-size:10px;line-height:1';
+    segX.addEventListener('click', function (e) {
+      // swallow: the pill's own click (openLib) must not fire under the ✕
+      e.stopPropagation();
+      if (e.preventDefault) e.preventDefault();
+      dropTurnBundle(bodyEl, state);
+    });
+    seg.appendChild(segLab);
+    seg.appendChild(segX);
     seg.addEventListener('click', openLib);
 
     wrap.appendChild(lab);
@@ -3859,7 +3952,12 @@
     if (bundle && bundle.id && bundle.members && bundle.members.length) {
       state.bundle = {
         id: String(bundle.id), name: String(bundle.name || bundle.id),
-        tag: String(bundle.tag || ''), members: bundle.members
+        tag: String(bundle.tag || ''),
+        // v1.24.4 THE BUNDLE FACE: the icon + repo ride the stored
+        // manifest (localStorage round-trips them) so the chat icon's
+        // badge paints the bundle's own face on every open.
+        icon: String(bundle.icon || ''), repo: String(bundle.repo || ''),
+        members: bundle.members
       };
       state.libAuto = true;                 // the bundle rides the lib gate
       state.templateAuto = true; state.skillsAuto = true;  // legacy lockstep
@@ -3904,23 +4002,21 @@
   // the edit-banner DOM mechanics (insert as the inputbar's first child,
   // slide-in) but its own element (the edit banner is NEVER touched).
   // Deep research shows no chip (its state is the pill's data-on itself).
+  // v1.24.4: the chip renders ONLY for templates — the bundle case is
+  // DEAD (the user's spec: the full-width '▣ <bundle>' row above the lib
+  // pill duplicated the seg's exact text; the seg + the icon badge carry
+  // the bundle now, the seg's own ✕ does the detach the chip's ✕ did).
   function syncTemplateChip(bodyEl, state, icon) {
     if (!bodyEl) return;
     var existing = bodyEl.querySelector('#tpl-chip');
-    // v0.71: a whole-bundle attachment ALSO shows the chip ('▣ <bundle>')
-    // — clearing it detaches the bundle (the lib gate stays where the
-    // user left it; only the manifest goes).
-    if (!state.template && !state.bundle) {
+    if (!state.template) {
       if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
       return;
     }
     var bar = bodyEl.querySelector('#chat-inputbar');
     if (!bar) return;
-    var isBundle = !state.template && !!state.bundle;
-    var name = isBundle
-      ? ((state.bundle && state.bundle.name) || 'bundle')
-      : ((state.template && state.template.name) || 'template');
-    var glyph = isBundle ? '▣' : '⧉';
+    var name = ((state.template && state.template.name) || 'template');
+    var glyph = '⧉';
     if (existing) {
       var label = existing.querySelector('.tpl-chip-text');
       if (label) label.textContent = glyph + ' ' + name;
@@ -3933,15 +4029,10 @@
     b.innerHTML =
       '<span class="tpl-chip-ico" aria-hidden="true">' + glyph + '</span>' +
       '<span class="tpl-chip-text">' + esc(glyph + ' ' + name) + '</span>' +
-      '<button class="tpl-chip-x" title="' + (isBundle ? 'detach the bundle' : 'clear the template') +
-        '" aria-label="' + (isBundle ? 'Detach the attached bundle' : 'Clear the active template') + '">✕</button>';
+      '<button class="tpl-chip-x" title="clear the template"' +
+        ' aria-label="Clear the active template">✕</button>';
     b.querySelector('.tpl-chip-x').addEventListener('click', function () {
-      if (isBundle) {
-        state.bundle = null;
-        saveBundle(state);
-      } else {
-        state.template = null;
-      }
+      state.template = null;
       // v0.68: dropping the armed template drops the segment's manual
       // show too (a streaming turn's next tool event re-fills its real
       // usage if it uses something). v0.71: a detached BUNDLE falls back
@@ -4249,6 +4340,16 @@
         // v0.71: restore the attached WHOLE-BUNDLE manifest (localStorage,
         // keyed by session — see applyBundle).
         loadBundle(state);
+        // v1.24.4 THE BUNDLE FACE: the badge INIT — an attached bundle
+        // faces the chat icon at OPEN (not just on live events): the
+        // explicit arm derives _turnBundle from the restored manifest,
+        // the badge twin paints it, and the replay's events refine it to
+        // the turn's actual usage as they land (the deterministic law).
+        // Guarded to this state's own ctx (a mid-bind chat switch must
+        // never paint another chat's seg/badge).
+        if (currentCtx && currentCtx.state === state) {
+          armTurnBundle(currentCtx.bodyEl, state);
+        }
         // v0.44: restore the active method template (the persisted blob
         // {id, name, brief} — engine column template_id, PATCHed by
         // persistCaps; deep research restores via the flag above).
@@ -6824,6 +6925,9 @@
       mergeToolResult: mergeToolResult,
       // v1.23.4 THE POLISH seam (scripts/v1234-polish-rig.cjs)
       tvSubFor: tvSubFor,
+      // v1.24.4 THE BUNDLE FACE seam (scripts/v1244-bundle-face-rig.cjs)
+      bundleBadgeOf: bundleBadgeOf,
+      dropTurnBundle: dropTurnBundle,
       states: function () { return chatStates; }
     };
   }

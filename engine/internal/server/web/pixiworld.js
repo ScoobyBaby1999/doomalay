@@ -204,7 +204,14 @@
     if (e) return e.ready ? e.img : null;
     e = { img: new Image(), ready: false };
     imgCache[url] = e;
-    e.img.onload = function () { e.ready = true; S.dirtyAll = true; };
+    e.img.onload = function () {
+      e.ready = true; S.dirtyAll = true;
+      // v1.24.4: a landing image re-checks the appearance fingerprints —
+      // the bundle badge's file: icon rides the fingerprint (a readiness
+      // bit, below), so the art replaces the glyph on the next frame, not
+      // whenever the 1s watcher happens to tick.
+      watchAppearances();
+    };
     e.img.onerror = function () { e.dead = true; };
     e.img.src = url;
     return null;
@@ -218,8 +225,24 @@
     try {
       ring = icon._personaRingEl ? String(icon._personaRingEl.style.background || '') : '';
     } catch (e) {}
+    // v1.24.4 THE BUNDLE FACE: the badge identity + the file-icon
+    // readiness ride the fingerprint — a face change re-rasters, and the
+    // async image landing flips the bit so the art replaces the glyph the
+    // frame after it loads.
+    var bbk = '';
+    var bb = icon.bundleBadge;
+    if (bb && bb.name) {
+      bbk = bb.kind + ':' + bb.name + ':' + (bb.icon || '') + ':' + (bb.repo || '');
+      if (bb.icon && window.IconLib && window.IconLib.fileURL) {
+        var burl = window.IconLib.fileURL(bb.icon, bb.repo);
+        if (burl) {
+          var be = imgCache[burl];
+          bbk += (be && be.ready) ? '|1' : '|0';
+        }
+      }
+    }
     return [icon.family, icon.iconIndex, icon.iconCustom ? 1 : 0, icon.iconRev || 0,
-            icon.name || '', icon.sandbox || '', icon.radius || 28, ring,
+            icon.name || '', icon.sandbox || '', icon.radius || 28, ring, bbk,
             themeStamp].join('|');
   }
   var themeStamp = 0;
@@ -283,18 +306,36 @@
     g.strokeStyle = c.text3dim; g.lineWidth = 2;
     g.beginPath(); g.arc(cx, cy, R - 1, 0, Math.PI * 2); g.stroke();
 
-    // sandbox corner chip (20px at the disc's right edge)
-    if (icon.sandbox) {
+    // sandbox corner chip (20px at the disc's right edge) — v1.24.4 THE
+    // BUNDLE FACE: the chip paints the bundle-in-use's own art when it
+    // has a file: icon (the module image cache; async — the glyph paints
+    // first, the art replaces it the frame the image lands), else the
+    // kind glyph; a QUICK sandbox with nothing in use paints NO chip at
+    // all (the meaningless always-on ⚡ dies); legacy non-quick sandboxes
+    // keep their glyph exactly as before.
+    var bb = icon.bundleBadge || null;
+    if (bb || (icon.sandbox && icon.sandbox !== 'quick')) {
       var bad = (window.ChatIcon && window.ChatIcon.ChatIcon && window.ChatIcon.ChatIcon.SANDBOX_BADGES) || {};
-      var glyph = bad[icon.sandbox] || '⚡';
+      var bgl = (window.ChatIcon && window.ChatIcon.ChatIcon && window.ChatIcon.ChatIcon.BUNDLE_GLYPHS) || {};
+      var glyph = bb ? (bgl[bb.kind] || bgl.bundle || '⤓') : (bad[icon.sandbox] || '⚡');
       var bx = cx + R - 10, by = cy + R - 18;
       g.fillStyle = c.surface1;
       g.strokeStyle = c.ok; g.lineWidth = 1.5;
       g.beginPath(); g.arc(bx, by, 10, 0, Math.PI * 2); g.fill(); g.stroke();
-      g.fillStyle = c.text1;
-      g.font = '11px system-ui, sans-serif';
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(glyph, bx, by + 0.5);
+      var painted = false;
+      if (bb && bb.icon && window.IconLib && window.IconLib.fileURL) {
+        var bu = window.IconLib.fileURL(bb.icon, bb.repo);
+        if (bu) {
+          var bi = imageFor(bu);   // primes the cache — the onload re-checks
+          if (bi) { g.drawImage(bi, bx - 6.5, by - 6.5, 13, 13); painted = true; }
+        }
+      }
+      if (!painted) {
+        g.fillStyle = c.text1;
+        g.font = '11px system-ui, sans-serif';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(glyph, bx, by + 0.5);
+      }
     }
 
     // the name pill (max-width 80, ellipsis, text-2 on the flat CARD —

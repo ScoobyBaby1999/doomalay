@@ -163,7 +163,7 @@ ev "document.getElementById('hub-bundle-use').click(); 'used'" >/dev/null; sleep
 HS=$(ev "(function(){
   var c = window.ChatPanel && window.ChatPanel.current();
   var s = c && c.state;
-  var chip = document.querySelector('#tpl-chip .tpl-chip-text');
+  var chip = document.querySelector('#tpl-chip');  // v1.24.4: GONE for bundles
   var lab = document.getElementById('seg-lib-label');
   var stored = {};
   try { stored = JSON.parse(localStorage.getItem('doomalay.chatbundle.v1')) || {}; } catch (e) {}
@@ -175,7 +175,11 @@ HS=$(ev "(function(){
     libAuto: !!(s && s.libAuto),
     botLib: !!(s && s._tweaks && s._tweaks.botLib),
     pillPressed: lab ? lab.getAttribute('aria-pressed') : 'gone',
-    chip: chip ? chip.textContent : 'no-chip',
+    chipGone: !chip,
+    badgeFace: (function () {
+      var c2 = window.ChatPanel && window.ChatPanel.current();
+      return !!(c2 && c2.icon && c2.icon.bundleBadge && c2.icon.bundleBadge.name === 'superpowers-mock');
+    })(),
     bravoStored: !!stored['$SID_B'],
     alphaStored: !!stored['$SID_A'],
     segShown: (function () {
@@ -189,10 +193,10 @@ import json,sys
 d = json.load(sys.stdin)
 ok = (d['onBravo'] and d['libGone'] and d['panelOpen'] and d['bundle'] and
       d['libAuto'] and d['botLib'] and d['pillPressed'] == 'true' and
-      'superpowers-mock' in d['chip'] and d['bravoStored'] and not d['alphaStored'] and
+      d['chipGone'] and d['badgeFace'] and d['bravoStored'] and not d['alphaStored'] and
       d['segShown'])
 print('yes' if ok else 'no')")
-ck "HANDSHAKE: lib closed completely, Bravo opened + bundle armed, BOTH toggles ON, pill reflects it, ▣ box shows the bundle, Alpha untouched" "$Z3" "$HS"
+ck "HANDSHAKE: lib closed completely, Bravo opened + bundle armed, BOTH toggles ON, pill reflects it, the icon badge faces the bundle (chip gone — v1.24.4), Alpha untouched" "$Z3" "$HS"
 
 # the tweaks blob persisted botLib=true for Bravo (the "enable both" twin)
 BLOB2=$(curl -s $BASE/api/sessions/$SID_B/tweaks | python3 -c "

@@ -111,6 +111,14 @@
     // the panel icon updated but the canvas icon never did).
     static SANDBOX_BADGES = { quick: '⚡', hf: '🤗', device: '🔗', terminal: '⌨️' };
 
+    // ── v1.24.4 THE BUNDLE FACE (PLAN-V125 §4) ────────────────────────
+    // The kind glyphs when a bundle-in-use has no icon of its own (the
+    // BUNDLE_GLYPHS twin chatpanel's pill speaks — one source of truth for
+    // the DOM badge AND the pixi raster, which reads it off ChatIcon like
+    // it reads SANDBOX_BADGES).
+    static BUNDLE_GLYPHS = { template: '⧉', skill: '✦', script: '⚙', doc: '▤', bundle: '⤓',
+      persona: '☺', theme: '◐' };
+
     _renderIcon() {
       const cfg = window.DoomalayConfig;
       // v0.76.6: resolve the family EXPLICITLY — the old chain fell
@@ -172,10 +180,62 @@
       this._renderSandboxBadge();
     }
 
+    // ── v1.24.4 THE BUNDLE FACE: setBundleBadge(bundle) ─────────────
+    // bundle = {icon, repo, name, kind} | null — WHAT the bot is actually
+    // using from the library this turn (the seg pill's twin; the canvas
+    // raster reads the same object). Render law:
+    //   · a badge object → the bundle's own FACE — the SAME IconLib.card
+    //     resolver the library card's title-left icon uses (a file: icon
+    //     renders as the img, a lucide name as the themed inline svg);
+    //     no icon / unknown icon → the kind glyph;
+    //   · null → the legacy derivation: a NON-QUICK sandbox keeps its
+    //     glyph (🤗/🔗/⌨️ — real routing info); a QUICK sandbox with
+    //     nothing in use gets NO badge at all — the always-on ⚡ that
+    //     said nothing (every chat is quick) dies.
+    // The pixi twin reads `icon.bundleBadge` (appearanceFingerprint keys
+    // it, so the raster re-keys when the face changes).
+    setBundleBadge(bundle) {
+      var b = (bundle && bundle.name) ? {
+        icon: String(bundle.icon || ''),
+        repo: String(bundle.repo || ''),
+        name: String(bundle.name),
+        kind: String(bundle.kind || 'bundle')
+      } : null;
+      // identity guard: an unchanged face never churns the DOM (paintSeg
+      // fires per tool event; the old remove+append per event flapped).
+      var same = JSON.stringify(b) === JSON.stringify(this.bundleBadge || null);
+      if (same) return;
+      this.bundleBadge = b;
+      this._renderSandboxBadge();
+    }
+
     _renderSandboxBadge() {
       const old = this._badgeEl;
       if (old) old.remove();
+      this._badgeEl = null;
+      // v1.24.4: the bundle-in-use face outranks everything.
+      const bb = this.bundleBadge;
+      if (bb) {
+        const badge = document.createElement('div');
+        badge.className = 'sandbox-badge bbdg';
+        var html = (bb.icon && window.IconLib)
+          ? (window.IconLib.card(bb.icon, bb.repo, 13) || '') : '';
+        if (html) {
+          badge.innerHTML = html;
+        } else {
+          badge.textContent = ChatIcon.BUNDLE_GLYPHS[bb.kind] ||
+            ChatIcon.BUNDLE_GLYPHS.bundle;
+        }
+        badge.title = bb.name + ' (' + bb.kind + ') — in use this turn';
+        badge.setAttribute('aria-label', badge.title);
+        this._badgeEl = badge;
+        this.el.appendChild(badge);
+        return;
+      }
       if (!this.sandbox) return;
+      // v1.24.4: quick + nothing in use → NO badge (the ⚡ dies; a badge
+      // that is always present says nothing). Legacy sandboxes keep theirs.
+      if (this.sandbox === 'quick') return;
       const badge = document.createElement('div');
       badge.className = 'sandbox-badge';
       badge.textContent = ChatIcon.SANDBOX_BADGES[this.sandbox] || '⚡';

@@ -431,6 +431,22 @@
     pointer-events: none;
     z-index: 2;
   }
+  /* v1.24.4 — THE BUNDLE FACE: the badge-as-face variant. The bundle's
+     own icon renders through the same IconLib.card resolver the library
+     card uses (file: art as an img, a lucide name as the themed inline
+     svg — currentColor resolves against the badge's own ink). Glyph-only
+     badges (a member in use, or a bundle with no icon) inherit the old
+     text ink. Theme vars only, nothing hardcoded. */
+  .chatbot .sandbox-badge.bbdg {
+    color: var(--text-1);
+    padding: 0;
+  }
+  .chatbot .sandbox-badge.bbdg svg,
+  .chatbot .sandbox-badge.bbdg img {
+    display: block;
+    width: 13px;
+    height: 13px;
+  }
   /* v0.84.2 — THE PERSONA BADGE RING: the active persona's badge wraps
      the icon disc. A radial-gradient MASK carves the center out, so the
      element paints as a BAND around the disc for every kind — solid and

@@ -161,19 +161,29 @@ ev "(function(){
 ATTACHED=$(ev "(function(){
   var c = window.ChatPanel && window.ChatPanel.current && window.ChatPanel.current();
   var s = c && c.state;
-  var chip = document.querySelector('#tpl-chip .tpl-chip-text');
+  var chip = document.querySelector('#tpl-chip');
+  var seg = document.getElementById('seg-lib-bundle');
+  var lab = seg && (seg.querySelector('.seg-lib-bundle-label') || {}).textContent;
+  // v1.24.4 re-pin: the redundant full-width ▣ chip is DEAD — the seg
+  // (label + ✕) and the chat icon's corner badge carry the bundle now
+  var iconBadge = c && c.icon ? (c.icon.bundleBadge || null) : null;
   return JSON.stringify({
     bundle: !!(s && s.bundle && s.bundle.id === 'superpowers-mock'),
     members: s && s.bundle ? s.bundle.members.length : 0,
     libAuto: !!(s && s.libAuto),
-    chip: chip ? chip.textContent : 'no-chip',
+    chipGone: !chip,
+    segShown: !!(seg && seg.style.display !== 'none' && lab && lab.indexOf('superpowers') >= 0),
+    segX: !!(seg && seg.querySelector('.seg-lib-bundle-x')),
+    badgeFace: !!(iconBadge && iconBadge.name === 'superpowers-mock'),
     stored: !!(function(){ try { return (JSON.parse(localStorage.getItem('doomalay.chatbundle.v1')) || {})['$SID']; } catch (e) { return null; } })()
   });
 })()")
 has "state.bundle armed (the whole bundle attached)" "$ATTACHED" '"bundle":true'
 check "the manifest carries both members" "$(echo "$ATTACHED" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["members"])')" "2"
 has "the lib gate flipped ON with the bundle" "$ATTACHED" '"libAuto":true'
-has "the ▣ bundle chip shows in the input bar" "$ATTACHED" '"chip":"▣ superpowers-mock"'
+has "the redundant ▣ chip is GONE (the seg + badge carry the bundle — v1.24.4)" "$ATTACHED" '"chipGone":true'
+has "the seg shows the bundle (label span + ✕)" "$ATTACHED" '"segShown":true'
+has "the chat icon's badge faces the bundle" "$ATTACHED" '"badgeFace":true'
 has "the bundle persists in localStorage (session-keyed)" "$ATTACHED" '"stored":true'
 
 # send a message through the real UI → the stubbed PM turn must carry the bundle

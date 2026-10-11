@@ -74,8 +74,11 @@ P=$(ev "(function(){
     fs: cs.fontSize, mw: cs.maxWidth,
     pad: cs.paddingTop + '/' + cs.paddingRight + '/' + cs.paddingBottom + '/' + cs.paddingLeft,
     width: Math.round(sr.width),
-    label: seg.textContent,
-    labelLen: seg.textContent.length,
+    // v1.24.4 re-pin: the label rides the LABEL SPAN now (the seg grew
+    // an ✕ sibling that must never be ellipsized away)
+    label: (seg.querySelector('.seg-lib-bundle-label') || {}).textContent || seg.textContent,
+    labelLen: ((seg.querySelector('.seg-lib-bundle-label') || {}).textContent || '').length,
+    hasX: !!seg.querySelector('.seg-lib-bundle-x'),
     titleCarriesFullName: seg.title.indexOf('superpowers-mega-bundle-name') >= 0
   });
 })()")
@@ -85,7 +88,7 @@ d = json.load(sys.stdin)
 if d.get('missing'): print('no'); exit()
 ok = (d['visible'] and d['inWrap'] and d['order'] == 'seg-lib-label|seg-lib-plus|seg-lib-bundle' and
       d['rightOfPlus'] and d['sameRow'] and d['fs'] == '9.5px' and d['mw'] == '88px' and
-      d['pad'] == '3px/7px/3px/6px' and d['width'] <= 90 and
+      d['pad'] == '3px/7px/3px/6px' and d['width'] <= 94 and d['hasX'] and
       d['labelLen'] <= 14 and d['label'].endswith('…') and d['titleCarriesFullName'])
 print('yes' if ok else 'no')")
 ck "compact pill: 3rd child of the lib row, immediately right of +, same row, 9.5px/88px/3-7 pad, capped label, full name in tooltip" "$Z" "$P"
