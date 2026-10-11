@@ -152,6 +152,40 @@ func TestV1271_PatchSanitizesLocals(t *testing.T) {
         }
 }
 
+// TestV1272_GetCarriesVocabulary — THE TIE: the GET payload carries the
+// whole vocabulary from the shared slices (the client's PH_VOCAB cache
+// feeds off this — no more hand-maintained client lists).
+func TestV1272_GetCarriesVocabulary(t *testing.T) {
+        s := newLexiconServer(t)
+        req := httptest.NewRequest("GET", "/api/placeholders", nil)
+        rec := httptest.NewRecorder()
+        s.handlePlaceholdersGet(rec, req)
+        if rec.Code != 200 {
+                t.Fatalf("GET: want 200, got %d", rec.Code)
+        }
+        var out struct {
+                Builtin []string `json:"builtin"`
+                Blocks  []string `json:"blocks"`
+        }
+        if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+                t.Fatalf("decode: %v", err)
+        }
+        if len(out.Builtin) != 7 || len(out.Blocks) != 5 {
+                t.Fatalf("vocabulary drifted: builtin=%v blocks=%v", out.Builtin, out.Blocks)
+        }
+        for _, want := range []string{"date", "session", "repo_access"} {
+                found := false
+                for _, k := range append(out.Builtin, out.Blocks...) {
+                        if k == want {
+                                found = true
+                        }
+                }
+                if !found {
+                        t.Fatalf("%s missing from the GET vocabulary", want)
+                }
+        }
+}
+
 // TestV1271_BlocksEndpoint — the preview renders the five builders, capped,
 // with the {artifacts} collapse rule evaluated exactly like the turn path.
 func TestV1271_BlocksEndpoint(t *testing.T) {

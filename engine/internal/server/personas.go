@@ -860,9 +860,14 @@ func substituteAllVars(text, chatName, model, provider string, ph map[string]str
 // the engine does the same on every turn (mergedPlaceholders).
 
 func (s *Server) handlePlaceholdersGet(w http.ResponseWriter, r *http.Request) {
+        // v1.27.2 THE TIE: the payload carries the WHOLE vocabulary — the
+        // global customs, the built-ins and the MIRROR blocks, all from
+        // the same shared slices the reserved law reads. The client caches
+        // both lists into PH_VOCAB and retires its hand-maintained copies.
         writeJSON(w, 200, map[string]any{
                 "placeholders": s.globalPlaceholders(),
-                "builtin":      []string{"name", "model", "provider", "skills", "date", "messages", "turns"},
+                "builtin":      placeholderBuiltins,
+                "blocks":       placeholderBlocks,
         })
 }
 

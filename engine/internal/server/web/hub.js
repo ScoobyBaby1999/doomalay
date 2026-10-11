@@ -1147,10 +1147,19 @@
 
   // v1.22.0 THE MIRROR: the bundle-path preamble import (the hubitem
   // twin — the only-my-keys PATCH discipline; the chat needs a session).
+  // v1.27.2 THE IMPORT BRIDGE: the parsed body's {keys} are diffed
+  // against the live vocabulary; unknown customs surface as one-tap
+  // suggestion rows in the { } placeholders screen (the add flow
+  // prefilled, 🌐) — import now tells the placeholders screen what the
+  // preamble needs.
   function importPreambleInto(sessionId, item, payload) {
     if (!sessionId) return;
     var parsed = (window.Persona && window.Persona.parsePreambleFile)
       ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
+    if (window.Persona && window.Persona.preambleKeyNeeds && window.Persona.suggestPlaceholderKeys) {
+      var needs = window.Persona.preambleKeyNeeds(parsed.body || payload || '');
+      if (needs.length) window.Persona.suggestPlaceholderKeys(needs);
+    }
     fetch('/api/sessions/' + sessionId)
       .then(function (r) { return r.json(); })
       .then(function (sess) {

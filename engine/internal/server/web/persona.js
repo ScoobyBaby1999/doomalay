@@ -149,12 +149,19 @@
   // five facts + two metrics; phase 2 (THE TIE) re-points both lists
   // from GET /api/placeholders so the engine stays the single source.
   var PH_BUILTIN = ['name', 'model', 'provider', 'skills', 'date', 'messages', 'turns'];
+  // v1.27.2 THE TIE: ONE client-side vocabulary — PH_VOCAB — fed by the
+  // engine's GET /api/placeholders payload (builtin + blocks, the same
+  // slices the reserved law reads). The constants above are the offline
+  // fallback until the first answer lands. Every consumer reads PH_VOCAB:
+  // the add-box reserved check, the blocks section, the shadower badge,
+  // buildPreambleFile's frontmatter detection, the import bridge.
+  var PH_VOCAB = { builtin: PH_BUILTIN.slice(), blocks: PREAMBLE_BLOCKS.slice() };
   // the HARD REFUSE law (v1.27.1): built-ins + block names are never
   // custom keys — customs substitute FIRST, so a custom {session} would
   // silently shadow the live block. The add box refuses both classes.
   function reservedPlaceholderKey(k) {
-    if (PH_BUILTIN.indexOf(k) >= 0) return 'built-in';
-    if (PREAMBLE_BLOCKS.indexOf(k) >= 0) return 'a live preamble block';
+    if (PH_VOCAB.builtin.indexOf(k) >= 0) return 'built-in';
+    if (PH_VOCAB.blocks.indexOf(k) >= 0) return 'a live preamble block';
     return '';
   }
   // mergedCustomCount — global ∪ local customs (local wins, but for a
@@ -171,6 +178,39 @@
     var n = mergedCustomCount();
     var base = '12 built-ins — 5 blocks · 5 facts · 2 metrics';
     return n ? base + ' + ' + n + ' custom' : base;
+  }
+  // ── v1.27.2 THE IMPORT BRIDGE ─────────────────────────────────────
+  // A hub preamble may carry custom keys this app has never seen. The
+  // import path diffs the body's {keys} against the live vocabulary
+  // (PH_VOCAB + the merged customs) and any unknown key becomes a
+  // one-tap suggestion row in the placeholders screen — the add flow
+  // prefilled, 🌐 global by default (a published preamble wants its key
+  // everywhere). Known non-custom keys stay literal by design ({repo} is
+  // the HF default persona's template-internal slot; {message_count}/
+  // {turn_count} are the trigger aliases).
+  var phSuggestions = [];
+  var PH_TEMPLATES = { repo: 1, message_count: 1, turn_count: 1 };
+  function preambleKeyNeeds(body) {
+    body = String(body || '');
+    if (body.indexOf('{') < 0) return [];
+    var known = {};
+    PH_VOCAB.blocks.forEach(function (k) { known[k] = 1; });
+    PH_VOCAB.builtin.forEach(function (k) { known[k] = 1; });
+    Object.keys(PH_TEMPLATES).forEach(function (k) { known[k] = 1; });
+    Object.keys(globalPlaceholders).forEach(function (k) { known[k] = 1; });
+    Object.keys(placeholders).forEach(function (k) { known[k] = 1; });
+    var found = {};
+    body.replace(/\{([A-Za-z0-9_]+)\}/g, function (_, k) { found[k] = 1; return _; });
+    return Object.keys(found).filter(function (k) { return !known[k]; });
+  }
+  function suggestPlaceholderKeys(keys) {
+    phSuggestions = (keys || []).filter(function (k) { return !!k; });
+    if (!phSuggestions.length) return;
+    if (phSuggestions.length === 1) {
+      toast('the preamble uses {' + phSuggestions[0] + '} — create it under { } placeholders');
+    } else {
+      toast('the preamble needs ' + phSuggestions.length + ' placeholders — open { } placeholders');
+    }
   }
 
   // defaultPersonaFor(mode) — mode-aware default ('hf' → the HF persona).
@@ -201,6 +241,10 @@
   function loadGlobals() {
     return fetch('/api/placeholders').then(function (r) { return r.json(); }).then(function (d) {
       globalPlaceholders = (d && d.placeholders) || {};
+      // v1.27.2 THE TIE: the engine's lists ARE the vocabulary — cache
+      // them (an older engine without the fields keeps the fallback).
+      if (d && Array.isArray(d.builtin) && d.builtin.length) PH_VOCAB.builtin = d.builtin;
+      if (d && Array.isArray(d.blocks) && d.blocks.length) PH_VOCAB.blocks = d.blocks;
       globalsFresh = true;
       return globalPlaceholders;
     }).catch(function () { return globalPlaceholders; });
@@ -707,7 +751,14 @@
           '<input id="pb-name" class="pv-input" style="flex:1;min-height:40px" value="' + escAttr(p.name) + '" placeholder="preamble name" aria-label="Preamble name">' +
           '<button id="pb-use" class="pv-btn" style="min-height:40px;padding:8px 10px;font-size:var(--ui-micro-fs)">use in this chat</button>' +
         '</div>' +
-        '<p class="pv-hint" style="margin:0 2px 8px;flex:none">Placeholders expand live every turn: <b>{repo_access}</b> {artifacts} {library} {controls} {session} — plus {model} {provider} {name} {date} and your custom keys. Unknown keys stay as written (portable by design).</p>' +
+        '<div style="display:flex;gap:8px;margin:0 2px 8px;align-items:flex-start;flex:none">' +
+          // v1.27.2 THE TIE: the static hint becomes a tappable vocabulary
+          // pill — both editors (persona + preamble) share the one
+          // inventory view (the { } pill already exists on the persona
+          // editor; this is the preamble twin).
+          '<button id="pb-vocab" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2);flex:none;font-family:monospace">{ } vocabulary</button>' +
+          '<span class="pv-hint" style="margin:0;flex:1">Placeholders expand live every turn — the five blocks, the live facts, and your custom keys. Unknown keys stay as written (portable by design).</span>' +
+        '</div>' +
         '<div class="pe-body-fill" id="pb-body"><div class="art-loading">loading editor…</div></div>' +
         '</div>'
       );
@@ -749,6 +800,13 @@
 
     var nameInput = el.querySelector('#pb-name');
     if (nameInput) nameInput.addEventListener('input', markDirty);
+
+    // v1.27.2 THE TIE: the vocabulary pill → the placeholders screen (the
+    // view stack already supports the push).
+    var vocabBtn = el.querySelector('#pb-vocab');
+    if (vocabBtn) vocabBtn.addEventListener('click', function () {
+      PV().pushView(placeholdersView());
+    });
 
     if (saveBtn) saveBtn.addEventListener('click', function () {
       if (!pcm) return;
@@ -814,11 +872,21 @@
   // The skills' frontmatter idiom: machine-readable metadata, then the
   // markdown body. Foreign apps read the body and strip or substitute
   // the {placeholders} — AGENTS.md-grade portability.
+  // v1.27.2 THE TIE: the detection reads PH_VOCAB (the engine's lists)
+  // AND the customs — a preamble using {brand} now declares it, so a
+  // foreign runtime (and our own import bridge) knows what it needs.
   function buildPreambleFile(name, body) {
-    var keys = PREAMBLE_BLOCKS.concat(['model', 'provider', 'name', 'date']);
+    var facts = ['name', 'model', 'provider', 'date', 'skills'];
+    var keys = PH_VOCAB.blocks.concat(PH_VOCAB.builtin.filter(function (k) {
+      return facts.indexOf(k) >= 0; // the trigger-only metrics never ride preambles
+    }));
+    var merged = {};
+    Object.keys(globalPlaceholders).forEach(function (k) { merged[k] = 1; });
+    Object.keys(placeholders).forEach(function (k) { merged[k] = 1; });
+    Object.keys(merged).forEach(function (k) { keys.push(k); });
     var found = [];
     keys.forEach(function (k) {
-      if (body.indexOf('{' + k + '}') >= 0) found.push(k);
+      if (found.indexOf(k) < 0 && body.indexOf('{' + k + '}') >= 0) found.push(k);
     });
     return '---\n' +
       'name: ' + String(name || 'Preamble').replace(/[\r\n]/g, ' ') + '\n' +
@@ -1443,7 +1511,7 @@
         // the legacy shadower (a stored custom named like a live block):
         // creation is refused everywhere now — an existing one is flagged
         // until it's deleted (no backward-compat ride, per the user).
-        var shadow = PREAMBLE_BLOCKS.indexOf(k) >= 0
+        var shadow = PH_VOCAB.blocks.indexOf(k) >= 0
           ? '<span class="pv-row-sub" style="color:var(--warn);font-weight:600">⚠ shadows the live {' + esc(k) + '} block — delete + re-add under a free name</span>'
           : '';
         return '<div class="pv-row" style="cursor:default">' +
@@ -1465,6 +1533,18 @@
         customs += customRow(k, placeholders[k], 'local');
       });
       if (!customs) customs = '<div class="art-loading" style="padding:14px">no local placeholders yet</div>';
+      // v1.27.2 THE IMPORT BRIDGE: one-tap rows for the keys an imported
+      // preamble needs (the hub import suggested them; tapping prefills
+      // the add box below, 🌐 global scope).
+      var sugg = '';
+      phSuggestions.forEach(function (k) {
+        sugg += '<button class="pv-row" data-ph-suggest="' + escAttr(k) + '">' +
+          '<span class="pv-row-ico" style="font-family:monospace">＋</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(k) + '}</span>' +
+          '<span class="pv-row-sub">this preamble uses it — tap to prefill the add box</span></span>' +
+          '<span class="pv-row-chev">›</span></button>';
+      });
+      if (sugg) sugg = '<div class="pv-section-label">the imported preamble needs</div>' + sugg;
       return (
         '<p class="pv-hint">Two classes: <b>LIVE</b> keys are computed fresh every turn by the app; <b>STATIC</b> keys are your stored values. Both substitute into every persona AND the active preamble on every turn; customs also power trigger conditions. Unknown keys stay as written (portable by design).</p>' +
         '<div class="pv-section-label">live blocks — the preamble machinery</div>' +
@@ -1487,6 +1567,7 @@
         globals +
         '<div class="pv-section-label">this chat 📍</div>' +
         customs +
+        sugg +
         '<div class="pv-section-label">add</div>' +
         '<div style="display:flex;gap:8px;margin-top:2px">' +
           '<input id="ph-key" class="pv-input" style="flex:1" placeholder="key (letters, numbers, _)">' +
@@ -1573,6 +1654,9 @@
       var cls = reservedPlaceholderKey(k);
       if (cls) { toast(k + ' is ' + cls + ' — pick another key'); return; }
       var done = function () {
+        // a satisfied suggestion retires its row
+        var si = phSuggestions.indexOf(k);
+        if (si >= 0) phSuggestions.splice(si, 1);
         toast('{' + k + '} added — ' + (scope === 'global' ? 'every chatbot' : 'this chat'));
         loadGlobals().then(function () { PV().replaceView(placeholdersView()); });
       };
@@ -1589,6 +1673,22 @@
       }
       placeholders[k] = v;
       persist().then(done);
+    });
+    // v1.27.2 THE IMPORT BRIDGE: a suggestion tap prefills the add flow
+    // (the key in the box, 🌐 global scope — a published preamble wants
+    // its key everywhere).
+    el.querySelectorAll('[data-ph-suggest]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-ph-suggest');
+        var inp = el.querySelector('#ph-key');
+        if (inp) { inp.value = k; inp.focus(); }
+        scope = 'global';
+        el.querySelectorAll('#ph-scope button').forEach(function (o) {
+          o.setAttribute('data-on', o.getAttribute('data-scope') === 'global' ? '1' : '0');
+        });
+        var val = el.querySelector('#ph-val');
+        if (val) val.focus();
+      });
     });
     el.querySelectorAll('[data-del-key]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -1761,6 +1861,11 @@
     buildPreambleFile: buildPreambleFile,
     parsePreambleFile: parsePreambleFile,
     PREAMBLE_BLOCKS: PREAMBLE_BLOCKS,
+    // v1.27.2 THE TIE: the one vocabulary + the import bridge (hub.js
+    // calls these when a downloaded preamble carries unknown keys).
+    PH_VOCAB: PH_VOCAB,
+    preambleKeyNeeds: preambleKeyNeeds,
+    suggestPlaceholderKeys: suggestPlaceholderKeys,
     // PM-path composition (chatpanel.js):
     resolveActive: resolveActive,
     substituteAll: substituteAll,
