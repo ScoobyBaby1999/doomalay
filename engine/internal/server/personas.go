@@ -761,6 +761,14 @@ func (s *Server) triggerSatisfied(sess *store.Session, t *PersonaTrigger, ph map
         case "provider":
                 cur = providerLabel(sess.Provider)
                 isStr = true
+        case "date":
+                // v1.27.3 THE TRIGGER TIE: {date} was substitutable but never
+                // triggerable — a date trigger silently never fired. Now the
+                // weekday string ("Monday"…"Sunday") compares case-
+                // insensitively with = / != — the "activate on Monday"
+                // pattern. Ordering ops stay false (a weekday has no order).
+                cur = time.Now().Format("Monday")
+                isStr = true
         default:
                 v, ok := ph[key]
                 if !ok {

@@ -1389,7 +1389,10 @@
     groups.push({ label: 'built-in globals', keys: [
       { key: 'name', sub: 'the chat\'s own name' },
       { key: 'model', sub: 'the live model' },
-      { key: 'provider', sub: 'the live provider label' }
+      { key: 'provider', sub: 'the live provider label' },
+      // v1.27.3: {date} is triggerable now (the weekday string, = / != —
+      // the engine gained the case; the blocks stay OUT by design).
+      { key: 'date', sub: 'today\'s weekday — "activate on Monday" (= / !=)' }
     ]});
     groups.push({ label: 'live metrics', keys: [
       { key: 'messages', sub: 'messages in the model-visible history' },
@@ -1441,7 +1444,12 @@
           '</select>' +
           '<input id="tr-val" class="pv-input" type="text" inputmode="text" value="' + escAttr(String(t.value)) + '" placeholder="number or text">' +
         '</div>' +
-        '<p class="pv-hint" style="margin:8px 2px 0">numbers compare numerically (<b>messages &gt; 10</b>); text compares as-is (<b>provider = anthropic</b>). Create more keys under <b>{ } placeholders</b> — global ones work in every chatbot, local ones only here.</p>' +
+        '<p class="pv-hint" style="margin:8px 2px 0">numbers compare numerically (<b>messages &gt; 10</b>); text compares as-is (<b>provider = anthropic</b>, <b>date = Monday</b>).</p>' +
+        // v1.27.3 THE TRIGGER TIE: the static pointer becomes a tappable
+        // pill — the builder hands the user straight to the inventory.
+        '<div style="display:flex;margin:8px 2px 0">' +
+          '<button id="tr-vocab" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2);font-family:monospace">{ } create more keys under placeholders</button>' +
+        '</div>' +
         '<div style="display:flex;gap:8px;margin-top:16px">' +
           '<button id="tr-save" class="pv-btn pv-btn-primary" style="flex:2">set trigger</button>' +
           '<button id="tr-cancel" class="pv-btn" style="flex:1">cancel</button>' +
@@ -1453,6 +1461,12 @@
   function wireTrigger(el, p) {
     var cancel = el.querySelector('#tr-cancel');
     if (cancel) cancel.addEventListener('click', function () { PV().popView(); });
+    // v1.27.3: the vocabulary pill → the placeholders screen (the view
+    // stack carries the push; back returns to the builder untouched).
+    var vocab = el.querySelector('#tr-vocab');
+    if (vocab) vocab.addEventListener('click', function () {
+      PV().pushView(placeholdersView());
+    });
     var save = el.querySelector('#tr-save');
     if (save) save.addEventListener('click', function () {
       var key = (el.querySelector('#tr-key').value || '').trim().replace(/[{}]/g, '');
@@ -1690,10 +1704,35 @@
         if (val) val.focus();
       });
     });
+    // v1.27.3 THE DELETE GUARD: a key referenced by this chat's personas
+    // or preambles doesn't die silently — the first ✕ warns with the
+    // referencing row's name and arms; the second (within the window)
+    // deletes anyway. Honest scope: the scan covers THIS chat only (a
+    // 🌐 global may ride other chats' personas too — the toast says so).
+    function referencingSources(k) {
+      var needle = '{' + k + '}';
+      var hits = [];
+      personas.forEach(function (p) {
+        if (p && typeof p.text === 'string' && p.text.indexOf(needle) >= 0) hits.push(p.name || 'a persona');
+      });
+      preambles.forEach(function (p) {
+        if (p && typeof p.text === 'string' && p.text.indexOf(needle) >= 0) hits.push(p.name || p.id || 'a preamble');
+      });
+      return hits;
+    }
     el.querySelectorAll('[data-del-key]').forEach(function (b) {
       b.addEventListener('click', function () {
         var k = b.getAttribute('data-del-key');
-        if (b.getAttribute('data-del-scope') === 'global') {
+        var isGlobal = b.getAttribute('data-del-scope') === 'global';
+        var refs = referencingSources(k);
+        if (refs.length && !b.dataset.armed) {
+          b.dataset.armed = '1';
+          toast('{' + k + '} is used by ' + refs[0] + (refs.length > 1 ? ' + ' + (refs.length - 1) + ' more' : '') +
+            ' — tap ✕ again to delete anyway' + (isGlobal ? ' (this scan covers this chat only)' : ''));
+          setTimeout(function () { delete b.dataset.armed; }, 3400);
+          return;
+        }
+        if (isGlobal) {
           fetch('/api/placeholders/' + encodeURIComponent(k), { method: 'DELETE' })
             .then(function () { return loadGlobals(); })
             .then(function () { PV().replaceView(placeholdersView()); });
@@ -1739,6 +1778,9 @@
     if (key === 'name') return live.name || '';
     if (key === 'model') return String(live.model || '').split('/').pop() || '';
     if (key === 'provider') return live.provider || '';
+    // v1.27.3 THE TRIGGER TIE: {date} joins the trigger vocabulary (the
+    // engine twin case-insensitively compares the weekday string).
+    if (key === 'date') return new Date().toLocaleDateString('en-GB', { weekday: 'long' });
     // custom: local wins over global (mirrors mergedPlaceholders)
     if (Object.prototype.hasOwnProperty.call(placeholders, key)) return String(placeholders[key]);
     if (Object.prototype.hasOwnProperty.call(globalPlaceholders, key)) return String(globalPlaceholders[key]);

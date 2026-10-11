@@ -13,6 +13,7 @@ import (
         "encoding/json"
         "net/http/httptest"
         "strings"
+        "time"
         "testing"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -183,6 +184,47 @@ func TestV1272_GetCarriesVocabulary(t *testing.T) {
                 if !found {
                         t.Fatalf("%s missing from the GET vocabulary", want)
                 }
+        }
+}
+
+// TestV1273_DateTrigger — {date} joins the trigger vocabulary: the
+// weekday string compares case-insensitively with = / != (the "activate
+// on Monday" pattern); ordering ops stay false; the stored persona
+// actually activates when satisfied.
+func TestV1273_DateTrigger(t *testing.T) {
+        s := newLexiconServer(t)
+        today := time.Now().Format("Monday")
+        // the case-insensitive = path (the stored value rides lowercase)
+        trig := `[
+                {"id":"a","name":"Base","text":"BASE","mode":"always"},
+                {"id":"d","name":"Weekday","text":"DATED","mode":"trigger","trigger":{"key":"date","op":"=","value":"` + strings.ToLower(today) + `"}}
+        ]`
+        sess := &store.Session{ID: "s-lex4", Title: "Lippy", Personas: trig}
+        if err := s.db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        // satisfied today → the date persona fires (case-insensitive)
+        got := s.resolveActivePersonaMerged(parsePersonas(sess), sess, personaMetrics{})
+        if got == nil || got.ID != "d" {
+                t.Fatalf("the date trigger must fire on %s, got %+v", today, got)
+        }
+        // != the wrong weekday also fires
+        trigNE := `[{"id":"n","name":"NotSun","text":"NE","mode":"always"},{"id":"m","name":"NE","text":"M","mode":"trigger","trigger":{"key":"date","op":"!=","value":"Xday"}}]`
+        sessNE := &store.Session{ID: "s-lex5", Title: "Lippy", Personas: trigNE}
+        if got := s.resolveActivePersonaMerged(parsePersonas(sessNE), sessNE, personaMetrics{}); got == nil || got.ID != "m" {
+                t.Fatalf("date != Xday must fire, got %+v", got)
+        }
+        // == a weekday that never exists stays silent — the always persona rides
+        trigWrong := `[{"id":"w","name":"Base","text":"B","mode":"always"},{"id":"f","name":"Fool","text":"F","mode":"trigger","trigger":{"key":"date","op":"=","value":"Foolsday"}}]`
+        sessW := &store.Session{ID: "s-lex6", Title: "Lippy", Personas: trigWrong}
+        if got := s.resolveActivePersonaMerged(parsePersonas(sessW), sessW, personaMetrics{}); got == nil || got.ID != "w" {
+                t.Fatalf("an unsatisfied date trigger must NOT activate, got %+v", got)
+        }
+        // ordering on a weekday never fires (a weekday has no order)
+        trigOrd := `[{"id":"o","name":"Base","text":"B","mode":"always"},{"id":"p","name":"Ord","text":"O","mode":"trigger","trigger":{"key":"date","op":"<","value":"Monday"}}]`
+        sessO := &store.Session{ID: "s-lex7", Title: "Lippy", Personas: trigOrd}
+        if got := s.resolveActivePersonaMerged(parsePersonas(sessO), sessO, personaMetrics{}); got == nil || got.ID != "o" {
+                t.Fatalf("date < Monday must never fire, got %+v", got)
         }
 }
 
