@@ -240,9 +240,10 @@ async function run() {
   ok(/pm-arm-alive/.test(text), 'PM-path exec runs for real', text);
   ok(/notes\.txt/.test(text), 'PM-path exec workdir = the bound folder', text);
   ok(/exit_code: 0/.test(text), 'PM-path exec reports the exit code', text);
-  // THE PACING PIN (v1.23.1 re-pin: the ≥4s cooldown is GONE — the user's
-  // ask): an immediate second exec RUNS (rapid fire is legal now); the
-  // anti-burst law lives in the 12/min rolling cap only.
+  // THE PACING PIN (v1.26.2 re-pin: the ≥4s cooldown is GONE — v1.23.1;
+  // the compiled 12/min cap is GONE too — the burst cap is the chat's own
+  // ✦ tweaks blob now, UNBOUND by default): an immediate second exec RUNS
+  // (rapid fire is legal, and this rig's chat never arms a cap).
   const paced = await mcpCall('userchat', 'termux', { action: 'exec', args: { command: 'echo paced' } });
   ok(/paced/.test(toolText(paced)), 'the immediate second exec RUNS (no cooldown law)', toolText(paced));
 

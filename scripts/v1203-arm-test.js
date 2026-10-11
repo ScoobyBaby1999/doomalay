@@ -79,10 +79,12 @@ console.log('v1.20.3 THE ARM pins — server:');
   ok(/termuxBlocklistHit\(command\)/.test(tool), 'the blocklist gate runs on every exec');
   ok(/fork bomb/.test(tool) && /mkfs/.test(tool) && /reboot/.test(tool) && /dd writing/.test(tool),
     'the blocklist classes: fork bomb / mkfs / power / dd');
-  // THE PACING LAW (v1.23.1 re-pin: the ≥4s cooldown is GONE — the
-  // rolling 12/min cap is the whole anti-burst law)
-  ok(/termuxExecCap = 12/.test(tool), 'the rolling 12/min exec cap');
-  ok(!/termuxExecCooldown/.test(tool), 'the ≥4s one-shot cooldown is REMOVED');
+  // THE PACING LAW (v1.26.2 re-pin: the ≥4s cooldown is GONE — v1.23.1;
+  // the compiled 12/min cap is GONE too — the burst cap is the chat's
+  // own ✦ tweaks blob now, UNBOUND by default)
+  ok(/termuxExecCapOf/.test(tool), 'the exec cap reads the chat tweaks blob (per-chat, live)');
+  ok(!/termuxExecCap = 12|termuxExecCooldown/.test(tool), 'the compiled 12/min cap + the ≥4s cooldown are both REMOVED (unbound default)');
+  ok(/unbound/i.test(tool), 'the unbound default is taught at the gate');
   // THE JAIL LAW: exit 42 Termux-side, prefix-check engine-side
   ok(/exit 42/.test(tool), 'the jail script exits 42 on violation (never touches the file)');
   // THE WHOLE-TRUTH LAW: Termux's 100KB is the only cap, reported honestly

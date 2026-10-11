@@ -427,39 +427,44 @@ func TestV1203_Exec_Blocklist(t *testing.T) {
 // ── the pacing gates ─────────────────────────────────────────────────────
 
 func TestV1231_Exec_NoCooldown_CapHolds(t *testing.T) {
-	fb := newFakeArmBridge(t)
-	s := newArmServer(t, fb)
-	root := t.TempDir()
-	armTermuxChat(t, s, "pace", root)
-	armTermuxChat(t, s, "pace2", root) // a different session — isolation proof
-	shrinkPacing(t, time.Hour)
-	// v1.23.1 THE PACING: two execs back-to-back on the SAME session, zero
-	// wait — BOTH run (the ≥4s cooldown is gone; the user's ask)
-	for _, cmd := range []string{"echo one", "echo two"} {
-		out := tool(s, "pace", "exec", fmt.Sprintf(`{"command":"%s"}`, cmd))
-		if !strings.Contains(out, "EXEC DONE") {
-			t.Fatalf("no-cooldown law — a rapid exec must run, got:\n%s", out)
-		}
-	}
-	// a different session is not capped by the first's window
-	out := tool(s, "pace2", "exec", `{"command":"echo three"}`)
-	if !strings.Contains(out, "EXEC DONE") {
-		t.Fatalf("per-SESSION window — a different session must run, got:\n%s", out)
-	}
-	if fb.runCount() != 3 {
-		t.Fatalf("all three execs reached the bridge (runs=%d)", fb.runCount())
-	}
+        fb := newFakeArmBridge(t)
+        s := newArmServer(t, fb)
+        root := t.TempDir()
+        armTermuxChat(t, s, "pace", root)
+        armTermuxChat(t, s, "pace2", root) // a different session — isolation proof
+        shrinkPacing(t, time.Hour)
+        // v1.23.1 THE PACING: two execs back-to-back on the SAME session, zero
+        // wait — BOTH run (the ≥4s cooldown is gone; the user's ask)
+        for _, cmd := range []string{"echo one", "echo two"} {
+                out := tool(s, "pace", "exec", fmt.Sprintf(`{"command":"%s"}`, cmd))
+                if !strings.Contains(out, "EXEC DONE") {
+                        t.Fatalf("no-cooldown law — a rapid exec must run, got:\n%s", out)
+                }
+        }
+        // a different session is not capped by the first's window
+        out := tool(s, "pace2", "exec", `{"command":"echo three"}`)
+        if !strings.Contains(out, "EXEC DONE") {
+                t.Fatalf("per-SESSION window — a different session must run, got:\n%s", out)
+        }
+        if fb.runCount() != 3 {
+                t.Fatalf("all three execs reached the bridge (runs=%d)", fb.runCount())
+        }
 }
 
-// The rate cap: 12 execs in the rolling window, the 13th refuses.
+// The rate cap (v1.26.2): the cap is the CHAT'S OWN — armed via the ✦
+// tweaks blob; the Nth+1 exec in the rolling window refuses with the
+// honest path; the default (no blob) is UNBOUND.
 func TestV1203_Exec_RateCap(t *testing.T) {
         fb := newFakeArmBridge(t)
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "capwin", root)
         shrinkPacing(t, time.Minute)
+        if err := s.db.SetSetting(chatTweaksKey("capwin"), `{"execCap":12}`); err != nil {
+                t.Fatalf("tweaks: %v", err)
+        }
 
-        for i := 0; i < termuxExecCap; i++ {
+        for i := 0; i < 12; i++ {
                 if out := tool(s, "capwin", "exec", fmt.Sprintf(`{"command":"echo n%d"}`, i)); !strings.Contains(out, "EXEC DONE") {
                         t.Fatalf("exec %d within the window must run, got:\n%s", i, out)
                 }
@@ -468,9 +473,80 @@ func TestV1203_Exec_RateCap(t *testing.T) {
         if !strings.Contains(out, "exec rate cap") || !strings.Contains(out, "12 one-shot execs") {
                 t.Fatalf("rate cap verdict, got:\n%s", out)
         }
+        if !strings.Contains(out, "✦ tweaks") {
+                t.Fatalf("the refusal must teach where the cap lives, got:\n%s", out)
+        }
         // the capped call consumed nothing (exactly 12 runs reached the bridge)
-        if fb.runCount() != termuxExecCap {
+        if fb.runCount() != 12 {
                 t.Fatalf("a capped exec must not touch the bridge (runs=%d)", fb.runCount())
+        }
+}
+
+// v1.26.2 THE UNBOUND BURST (the user's ask: "set the default to
+// unbound"): no tweaks blob (or a 0/negative/garbage one) → the gate
+// always passes — a 20-exec burst runs free; a chat that arms a cap
+// gets the rolling window with the live-read value.
+func TestV1262_UnboundDefault(t *testing.T) {
+        fb := newFakeArmBridge(t)
+        s := newArmServer(t, fb)
+        root := t.TempDir()
+        armTermuxChat(t, s, "burst", root)
+        shrinkPacing(t, time.Hour) // a wide window: only the absent cap can save the burst
+        for i := 0; i < 20; i++ {
+                if out := tool(s, "burst", "exec", fmt.Sprintf(`{"command":"echo n%d"}`, i)); !strings.Contains(out, "EXEC DONE") {
+                        t.Fatalf("unbounded exec %d must run, got:\n%s", i, out)
+                }
+        }
+        if fb.runCount() != 20 {
+                t.Fatalf("the whole burst reached the bridge (runs=%d)", fb.runCount())
+        }
+        // garbage / zero / negative / foreign blobs stay unbound
+        for _, blob := range []string{`{}`, `{"execCap":0}`, `{"execCap":-5}`, `not json`, `{"botLib":false}`} {
+                if err := s.db.SetSetting(chatTweaksKey("burst"), blob); err != nil {
+                        t.Fatalf("tweaks: %v", err)
+                }
+                if out := tool(s, "burst", "exec", `{"command":"echo again"}`); !strings.Contains(out, "EXEC DONE") {
+                        t.Fatalf("blob %s must stay unbound, got:\n%s", blob, out)
+                }
+        }
+        // an armed cap on a FRESH session reads live and holds
+        armTermuxChat(t, s, "burst2", root)
+        if err := s.db.SetSetting(chatTweaksKey("burst2"), `{"execCap":3}`); err != nil {
+                t.Fatalf("tweaks: %v", err)
+        }
+        for i := 0; i < 3; i++ {
+                if out := tool(s, "burst2", "exec", fmt.Sprintf(`{"command":"echo c%d"}`, i)); !strings.Contains(out, "EXEC DONE") {
+                        t.Fatalf("armed exec %d must run, got:\n%s", i, out)
+                }
+        }
+        if out := tool(s, "burst2", "exec", `{"command":"echo cap"}`); !strings.Contains(out, "exec rate cap") || !strings.Contains(out, "3 one-shot execs") {
+                t.Fatalf("the armed cap must refuse the 4th honestly, got:\n%s", out)
+        }
+}
+
+// the blob parse matrix: absent/garbage/zero/negative → 0 (unbound),
+// N → N, huge → the 1000 clamp; a STRING value never arms (the honest
+// strict parse — the ✦ UI writes numbers).
+func TestV1262_CapOfMatrix(t *testing.T) {
+        s := newArmServer(t, newFakeArmBridge(t))
+        for blob, want := range map[string]int{
+                ``:               0,
+                `{}`:             0,
+                `{"execCap":0}`:  0,
+                `{"execCap":-5}`: 0,
+                `not json`:       0,
+                `{"execCap":"12"}`: 0,
+                `{"botLib":false}`: 0,
+                `{"execCap":12}`:  12,
+                `{"execCap":1}`:   1,
+                `{"execCap":999999}`: 1000,
+        } {
+                if err := s.db.SetSetting(chatTweaksKey("capmatrix"), blob); err != nil {
+                        t.Fatalf("tweaks: %v", err)
+                }
+                if got := s.termuxExecCapOf("capmatrix"); got != want {
+                        t.Fatalf("blob %q → cap %d, want %d", blob, got, want)
+                }
         }
 }
 

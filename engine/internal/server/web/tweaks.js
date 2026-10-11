@@ -453,6 +453,9 @@
     delete state._tweaks.chatScheme;
     delete state._tweaks.fmtOverrides;
     SIZES.forEach(function (d) { delete state._tweaks[d.key]; });
+    // v1.26.2: reset everything includes the exec burst cap (back to
+    // the unbound default — the lean-blob law)
+    delete state._tweaks.execCap;
     if (state._tweaks.bg) {
       if (state.sessionId) {
         fetch('/api/sessions/' + state.sessionId + '/background', { method: 'DELETE' })
@@ -782,6 +785,12 @@
         var sec = A.section || function (t, inner) { return '<div>' + inner + '</div>'; };
         var e = effective(state);
         var t = state._tweaks || {};
+        // v1.26.2 THE TERMUX SECTION: the burst cap's derived display
+        // values (the wiring in onMount re-derives the same — never
+        // render-state-dependent)
+        var capArmed = typeof t.execCap === 'number' && t.execCap > 0;
+        var capDisplay = capArmed ? Math.round(t.execCap) : 12;
+        var capSliderVal = Math.max(5, Math.min(120, capDisplay));
         // v0.77.6: ONE SETTING, TWO VIEWS — the switch shows the EFFECTIVE
         // gate (the pill flag AND the blob), exactly what the engine's
         // libStateLine ANDs; every toggle dual-writes so they can never
@@ -846,6 +855,32 @@
                 'the bot only uses bundles already in Your library — new downloads wait until this is back on.'),
               t.botDL !== false)
           ) +
+          // v1.26.2 THE UNBOUND BURST (the user's ask: "set the default to
+          // unbound and add a frontend tweak-able variable in the per
+          // chat tweaks screen to set an optional limit"): the ⌨ Termux
+          // section — the burst-cap switch + the execs/minute slider.
+          // OFF (the default) writes NOTHING (the lean-blob law — absent
+          // = unbound); ON writes {execCap: N} into this chat's tweaks
+          // blob, which the engine's exec gate reads live, every exec.
+          sec('Termux',
+            '<p class="hint">The ⌨ exec pacing for this chat — one-shot execs in the bound device folders. Unbound by default (the bursts still run jailed, blocklisted and streamed); arm the cap to pace a chatty model.</p>' +
+            '<div class="setting-row" style="align-items:center;justify-content:space-between;gap:10px">' +
+              '<span style="min-width:0"><label>Exec burst cap</label>' +
+                '<p class="hint" style="margin:2px 0 0">unbound — every exec the model fires runs. armed — at most N one-shot execs per rolling minute; the (N+1)th refuses with the honest ask (the model tells you, never a silent drop).</p></span>' +
+              '<span class="pv-sub-value" id="tw-exec-cap-state" style="flex:0 0 auto">' + (capArmed ? 'capped' : 'unbound') + '</span>' +
+              '<label class="app-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">' +
+                '<input type="checkbox" id="tw-exec-cap-toggle"' + (capArmed ? ' checked' : '') + ' style="opacity:0;width:0;height:0;position:absolute">' +
+                '<span class="app-switch-track" id="tw-exec-cap-track" style="position:absolute;inset:0;background:' + (capArmed ? 'var(--accent)' : 'var(--surface-3)') + ';border-radius:12px;transition:background 0.15s"></span>' +
+                '<span class="app-switch-thumb" id="tw-exec-cap-thumb" style="position:absolute;top:2px;left:' + (capArmed ? '20px' : '2px') + ';width:20px;height:20px;background:var(--on-accent);border-radius:50%;transition:left 0.15s"></span>' +
+              '</label>' +
+            '</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;margin-top:4px' + (capArmed ? '' : ';opacity:0.45') + '" id="tw-exec-cap-row">' +
+              '<input type="range" class="pv-range" id="tw-exec-cap-slider" min="5" max="120" step="1" value="' + capSliderVal + '" aria-label="exec burst cap per minute"' + (capArmed ? '' : ' disabled') + '>' +
+              '<span class="pv-sub-value" id="tw-exec-cap-val" style="flex:0 0 auto;white-space:nowrap">' + (capArmed ? capDisplay + ' / minute' : '—') + '</span>' +
+            '</div>' +
+            '<p class="hint" style="margin:6px 0 0">the cap rides this chat\'s tweaks blob — it applies on the very next exec, no restart, both the engine loop and the PM path.</p>' +
+            '<p class="hint" style="margin:8px 0 0;color:var(--text-3)">applies once the device runs engine v1.26.2+ — older binaries keep their built-in pacing.</p>'
+          ) +
           sec('Background',
             '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +
             '<div class="tw-bgseg">' +
@@ -902,6 +937,11 @@
           if (window.AppearanceUI.wireFmtEditors) window.AppearanceUI.wireFmtEditors(el);
         }
         var t0 = state._tweaks || {};
+        // v1.26.2 THE TERMUX SECTION's derived values (the render's twins —
+        // re-derived here so the wiring never depends on render state)
+        var capArmed = typeof (state._tweaks && state._tweaks.execCap) === 'number' && state._tweaks.execCap > 0;
+        var capNow = capArmed
+          ? Math.max(5, Math.min(120, Math.round(state._tweaks.execCap))) : 12;
 
         // v0.52: the Bot Library boxes — flip the switch in place (track +
         // thumb), write through setBox (strict whitelist → blob → engine).
@@ -916,6 +956,54 @@
             if (thumb) thumb.style.left = on ? '20px' : '2px';
           });
         });
+
+        // v1.26.2 THE UNBOUND BURST — the ✦ Termux section's wiring: the
+        // switch arms/disarms the burst cap, the slider picks N (5..120,
+        // arming at 12 — the old law's familiar number). OFF deletes the
+        // key (the lean-blob law: absent = unbound); ON writes execCap —
+        // the engine gate reads the same blob live. Persist rides the
+        // standard debounced tweaks PUT.
+        var capTgl = el.querySelector('#tw-exec-cap-toggle');
+        var capTrack = el.querySelector('#tw-exec-cap-track');
+        var capThumb = el.querySelector('#tw-exec-cap-thumb');
+        var capSlider = el.querySelector('#tw-exec-cap-slider');
+        var capRow = el.querySelector('#tw-exec-cap-row');
+        var capVal = el.querySelector('#tw-exec-cap-val');
+        var capStateEl = el.querySelector('#tw-exec-cap-state');
+        function capPaint(armed, v) {
+          if (capTrack) capTrack.style.background = armed ? 'var(--accent)' : 'var(--surface-3)';
+          if (capThumb) capThumb.style.left = armed ? '20px' : '2px';
+          if (capSlider) { capSlider.disabled = !armed; if (armed) capSlider.value = String(v); }
+          if (capRow) capRow.style.opacity = armed ? '1' : '0.45';
+          if (capVal) capVal.textContent = armed ? v + ' / minute' : '—';
+          if (capStateEl) capStateEl.textContent = armed ? 'capped' : 'unbound';
+        }
+        function capWrite(armed, v) {
+          touch(state);
+          if (armed) state._tweaks.execCap = v;
+          else delete state._tweaks.execCap;
+          persist(state);
+        }
+        if (capTgl) capTgl.addEventListener('change', function () {
+          capArmed = capTgl.checked;
+          if (capArmed) {
+            var sv = parseInt(capSlider && capSlider.value, 10);
+            if (!isNaN(sv) && sv >= 5) capNow = Math.min(120, sv);
+          }
+          capPaint(capArmed, capNow);
+          capWrite(capArmed, capNow);
+        });
+        if (capSlider) {
+          var capT = null;
+          capSlider.addEventListener('input', function () {
+            var v = parseInt(capSlider.value, 10);
+            if (!isNaN(v)) { capNow = v; capPaint(true, v); }
+          });
+          capSlider.addEventListener('change', function () {
+            clearTimeout(capT);
+            capT = setTimeout(function () { if (capArmed) capWrite(true, capNow); }, 250);
+          });
+        }
 
         // v0.52 (user spec item 10): the CHAT ICON section — the built-in
         // cells + the browse-image crop flow (the SAME CropUI pipeline the

@@ -77,12 +77,14 @@ const (
 // bundle honestly.
 const termuxWriteCap = 1 << 20
 
-// Exec pacing (the shell-wave anti-burst law): a rolling-window cap of
-// 12 execs/minute per session. v1.23.1 THE PACING: the ≥4s one-shot
-// cooldown is GONE (the user's ask — streaming results pace the calls
-// naturally and the model's own serial tool loop waits for each result;
-// the rolling cap stays the real anti-burst guard). Vars (not consts) so
-// the tests shrink them.
+// Exec pacing: a rolling-window exec cap, per chat, read live from the
+// chat's ✦ tweaks blob ({"execCap": N} — absent/0 = UNBOUND). v1.26.2
+// THE UNBOUND BURST (the user's ask: "set the default to unbound and add
+// a frontend tweak-able variable in the per chat tweaks screen to set an
+// optional limit"): the compiled 12/min const is GONE — bursts run free
+// by default (execs are jailed + blocklisted + streamed, the model's
+// own tool loop waits on each result, and the turn budget backstops a
+// runaway); a chat that wants the guard arms it in ✦ tweaks → Termux.
 var (
         termuxExecWindow = 60 * time.Second
 )
@@ -569,9 +571,10 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
         }
         // the pacing gate (per-SESSION rolling window — a refused exec never
         // consumes the window; the cap verdict tells the model exactly what
-        // to do). v1.23.1: no cooldown — rapid short commands run.
-        if s.termuxExecGate(sessionID) {
-                return "OBSERVATION:\nerror: exec rate cap — this chat already ran 12 one-shot execs in the last minute (the anti-burst law). Ask the user whether they want more, or wait for the window to roll."
+        // to do). v1.23.1: no cooldown — rapid short commands run. v1.26.2:
+        // the cap is the chat's own (unbound unless armed in ✦ tweaks).
+        if cap := s.termuxExecCapOf(sessionID); cap > 0 && s.termuxExecGate(sessionID, cap) {
+                return fmt.Sprintf("OBSERVATION:\nerror: exec rate cap — this chat's burst cap is %d one-shot execs per minute (armed in ✦ tweaks → Termux). Ask the user whether they want more — or to lift the cap there — or wait for the window to roll.", cap)
         }
         // v1.23.3 THE LIVE STREAM: exec rides the streaming wrapper — the
         // output streams into the chat pill twice a second (the WS
@@ -581,17 +584,45 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
         return s.termuxRunStreaming(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS)
 }
 
-// termuxExecCap — 12 one-shot execs per rolling 60s window per
-// session (the per-turn-equivalent law: the runner is per-call, so the
-// rolling window carries the cap).
-const termuxExecCap = 12
+// termuxExecCapOf reads the chat's burst cap from its tweaks blob
+// (chat.tweaks.<sid> — the ✦ tweaks screen's Termux section writes
+// {"execCap": N}). Absent, 0, negative, or garbage → UNBOUND (the
+// default). Clamped ≤1000 so a fat-fingered blob can never pin the
+// window log forever. The blob is the single source — both the direct
+// ACTION path and the MCP/PM path run through the runner with the chat's
+// session id, so one read covers every family.
+func (s *Server) termuxExecCapOf(sessionID string) int {
+        if s.db == nil || sessionID == "" {
+                return 0
+        }
+        raw, err := s.db.GetSetting(chatTweaksKey(sessionID))
+        if err != nil || raw == "" {
+                return 0
+        }
+        var t struct {
+                ExecCap int `json:"execCap"`
+        }
+        if json.Unmarshal([]byte(raw), &t) != nil {
+                return 0
+        }
+        if t.ExecCap < 0 {
+                return 0
+        }
+        if t.ExecCap > 1000 {
+                return 1000
+        }
+        return t.ExecCap
+}
 
-// termuxExecGate enforces THE ARM's pacing: ≤termuxExecCap execs in the
-// rolling window, per SESSION. It stamps the clock ONLY when the exec
-// will actually run (a refused call consumes nothing — the model
-// retries honestly). capped = the window verdict. (v1.23.1: the ≥4s
-// cooldown verdict is gone — rapid-fire short commands run.)
-func (s *Server) termuxExecGate(sessionID string) (capped bool) {
+// termuxExecGate enforces the chat's ARMED burst cap: ≤cap execs in the
+// rolling window, per SESSION. It stamps the clock ONLY while a cap is
+// armed and ONLY when the exec will actually run (unbound execs never
+// fill the window — the cap starts counting when the chat arms it; a
+// refused call consumes nothing — the model retries honestly). capped =
+// the window verdict. (v1.23.1: the ≥4s cooldown verdict is gone —
+// rapid-fire short commands run; v1.26.2: cap comes from the chat's
+// tweaks, 0/absent = unbound, always pass.)
+func (s *Server) termuxExecGate(sessionID string, cap int) (capped bool) {
         key := sessionID
         if key == "" {
                 key = "(sessionless)"
@@ -610,7 +641,7 @@ func (s *Server) termuxExecGate(sessionID string) (capped bool) {
                 }
         }
         s.termuxExecLog[key] = kept
-        if len(kept) >= termuxExecCap {
+        if len(kept) >= cap {
                 return true
         }
         s.termuxExecLog[key] = append(kept, now)
