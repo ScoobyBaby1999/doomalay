@@ -178,8 +178,9 @@ console.log('v1.20.2 THE LOCAL HAND pins — workspace.js:');
     'the cloud drawer section excludes termux rows');
   ok(js.indexOf("w.kind === 'device' || w.kind === 'termux'") >= 0,
     'the device drawer section includes termux rows');
-  ok(js.indexOf("module.exports = { termuxCrumbs: termuxCrumbs, termuxRelPath: termuxRelPath }") >= 0,
-    'the pure helpers export module-style (the termuxsetup.js node path)');
+  ok(js.indexOf("module.exports = { termuxCrumbs: termuxCrumbs, termuxRelPath: termuxRelPath,") >= 0 &&
+    js.indexOf("termuxFolderName: termuxFolderName }") >= 0,
+    'the pure helpers export module-style (the termuxsetup.js node path; v1.24.3 grew termuxFolderName)');
   // THE THEME-VAR LAW: zero hardcoded hex colors
   var hexes = js.match(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g) || [];
   ok(hexes.length === 0, 'workspace.js carries zero hardcoded hex colors (' + hexes.join(' ') + ')');

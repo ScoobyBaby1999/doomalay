@@ -2323,6 +2323,14 @@ func (s *Server) handleWorkspaceDevice(w http.ResponseWriter, r *http.Request) {
                 return
         }
         req.Name = strings.TrimSpace(req.Name)
+        if req.Name == "" && strings.TrimSpace(req.TermuxPath) != "" {
+                // v1.24.3 THE HONEST NAMES (belt-and-braces): an empty name
+                // with a termux path derives the folder's basename — a
+                // self-host workspace names itself after the real folder,
+                // never a placeholder (the PWA derives it first; this is
+                // the server-side twin for any other caller).
+                req.Name = termuxFolderBase(strings.TrimSpace(req.TermuxPath))
+        }
         if req.Name == "" {
                 writeError(w, 400, "name is required")
                 return

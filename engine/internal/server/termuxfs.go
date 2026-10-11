@@ -38,6 +38,7 @@ import (
         "fmt"
         "io"
         "net/http"
+        "path/filepath"
         "strconv"
         "strings"
         "time"
@@ -201,6 +202,19 @@ func termuxQuote(s string) string {
 func termuxResolvedOK(p string) bool {
         return p == "/storage/emulated/0" || strings.HasPrefix(p, "/storage/emulated/0/") ||
                 p == "/data/data/com.termux/files/home" || strings.HasPrefix(p, "/data/data/com.termux/files/home/")
+}
+
+// termuxFolderBase — v1.24.3 THE HONEST NAMES: the basename of a jailed
+// Termux path ('' for a bare root). The PWA's termuxFolderName twin — the
+// engine derives the same honest default when a device-workspace POST
+// arrives with an empty name (a self-host workspace names itself after
+// the real folder, never a placeholder).
+func termuxFolderBase(p string) string {
+        base := filepath.Base(filepath.Clean(p))
+        if base == "/" || base == "." {
+                return ""
+        }
+        return base
 }
 
 // termuxPathShapeOK reports whether p is a shape the engine will even

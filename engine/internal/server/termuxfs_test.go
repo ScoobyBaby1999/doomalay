@@ -1084,3 +1084,53 @@ func TestV1202_PureHelpers(t *testing.T) {
                 t.Fatalf("the honest total: %v %d %v", entries, total, err)
         }
 }
+
+// ── 8. v1.24.3 THE HONEST NAMES ───────────────────────────────────────────
+
+func TestV1243_TermuxFolderBase(t *testing.T) {
+        cases := []struct{ in, want string }{
+                {"/storage/emulated/0/Doomalay/notes", "notes"},
+                {"/storage/emulated/0/e2e-project", "e2e-project"},
+                {"/data/data/com.termux/files/home/work", "work"},
+                {"/storage/emulated/0/Doomalay/notes/", "notes"},   // trailing slash
+                {"/storage/emulated/0", "0"},                        // the JS twin derives the same
+                {"/data/data/com.termux/files/home", "home"},
+                {"", ""},
+                {"/", ""},
+        }
+        for _, c := range cases {
+                if got := termuxFolderBase(c.in); got != c.want {
+                        t.Errorf("termuxFolderBase(%q) = %q, want %q", c.in, got, c.want)
+                }
+        }
+}
+
+func TestV1243_DevicePost_EmptyNameDerives(t *testing.T) {
+        s, db := newV1202Server(t, "http://127.0.0.1:1/dead")
+        sid := "v1243sess"
+        if err := db.CreateSession(&store.Session{ID: sid, Title: "t", Model: "nvidia/x", Provider: "nvidia"}); err != nil {
+                t.Fatalf("session: %v", err)
+        }
+        // the v1.24.3 belt-and-braces: an empty name + a termux path
+        // derives the folder's basename (the PWA derives it first; the
+        // engine twin keeps any other caller honest).
+        code, out := v1202Req(t, s, "POST", "/api/workspaces/device",
+                `{"name":"","termux_path":"/storage/emulated/0/e2e-project","session_id":"`+sid+`"}`)
+        if code != 200 {
+                t.Fatalf("the empty-name termux POST derives the name, got %d: %v", code, out)
+        }
+        if out["name"] != "e2e-project" {
+                t.Fatalf("the row names itself after the real folder: %v", out)
+        }
+        if out["repo"] != "e2e-project" {
+                t.Fatalf("the slug rides the derived name: %v", out)
+        }
+        // the bare-root derivation is empty → the honest 400 (a root path
+        // has no basename; the client's 'my folder' last resort fires
+        // there, so the engine never sees this — but it stays honest)
+        code2, out2 := v1202Req(t, s, "POST", "/api/workspaces/device",
+                `{"name":"","path":"x","session_id":"`+sid+`"}`)
+        if code2 != 400 {
+                t.Fatalf("a truly nameless row stays refused: %d %v", code2, out2)
+        }
+}

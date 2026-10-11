@@ -1742,6 +1742,9 @@
       window.showDirectoryPicker({ mode: 'readwrite' }).then(function (h) {
         dirHandle = h;
         go.disabled = false;
+        // v1.24.3: an empty name box pre-fills with the picked folder's
+        // own name (the honest default — editable, never forced)
+        if (nameInput && !nameInput.value.trim()) nameInput.value = h.name;
         note.innerHTML =
           'picked: <b style="color:var(--text-1)">' + esc(h.name) + '</b>' +
           '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
@@ -1777,7 +1780,8 @@
     go.addEventListener('click', function () {
       var err = document.getElementById('wsv-err');
       err.style.display = 'none';
-      var name = (nameInput.value || '').trim() || 'my files';
+      var name = (nameInput.value || '').trim() ||
+        (dirHandle && dirHandle.name) || 'my files';   // v1.24.3: the real folder's name, never the static first
       if (!dirHandle) return;
       var target = dirHandle;
       var finish = function () {
@@ -1914,6 +1918,19 @@
     return full.slice(root.length).replace(/^\/+/, '');
   }
 
+  // v1.24.3 termuxFolderName (pure — the v1243 rig pins it): the HONEST
+  // default workspace name — the picked folder's own basename (the last
+  // non-empty path segment; trailing slashes trimmed; '' for a bare
+  // root). The static 'my folder' fallback is the LAST resort, never the
+  // first, so a self-host workspace names itself after the real folder.
+  function termuxFolderName(path) {
+    var segs = String(path || '').replace(/\/+$/, '').split('/');
+    for (var i = segs.length - 1; i >= 0; i--) {
+      if (segs[i]) return segs[i];
+    }
+    return '';
+  }
+
   // mtime (epoch seconds) → the repo's date idiom (timeAgo)
   function whenFmt(mtime) {
     var t = Number(mtime || 0);
@@ -1936,8 +1953,7 @@
         '<div class="wtx-list" id="wtx-list"></div>' +
         '<div id="wtx-actions" style="display:none">' +
           '<div class="wsx-field" style="margin:10px 12px 0"><div class="wsx-label">WORKSPACE NAME</div>' +
-            '<input class="wsx-input" id="wtx-name" placeholder="' +
-              esc(currentPicker.chat || 'my folder') + '" autocomplete="off" spellcheck="false"></div>' +
+            '<input class="wsx-input" id="wtx-name" placeholder="my folder" autocomplete="off" spellcheck="false"></div>' +
           '<div class="wsx-acts" style="padding:8px 12px 2px">' +
             '<button class="wsx-act primary" id="wtx-mkdir">＋ create folder</button></div>' +
           '<button class="wsx-go" id="wtx-use">use this folder</button>' +
@@ -1950,7 +1966,9 @@
         var mk = document.getElementById('wtx-mkdir');
         if (mk) mk.addEventListener('click', function () {
           var inp = document.getElementById('wtx-name');
-          var nm = (inp ? inp.value : '').trim() || (currentPicker.chat || 'my folder');
+          // v1.24.3: the honest default — the CURRENT folder's basename
+          // (the static 'my folder' survives only for a bare root)
+          var nm = (inp ? inp.value : '').trim() || termuxFolderName(resolved) || 'my folder';
           mk.disabled = true; mk.textContent = 'creating…';
           api('/api/termux/fs', 'POST', { action: 'mkdir', path: resolved, name: nm })
             .then(function (d) {
@@ -1967,7 +1985,10 @@
         var use = document.getElementById('wtx-use');
         if (use) use.addEventListener('click', function () {
           var inp = document.getElementById('wtx-name');
-          var nm = (inp ? inp.value : '').trim() || (currentPicker.chat || 'my folder');
+          // v1.24.3: the honest default — the picked folder names the
+          // workspace (never the static 'my folder' unless the path IS
+          // a bare root); a typed name always wins
+          var nm = (inp ? inp.value : '').trim() || termuxFolderName(resolved) || 'my folder';
           use.disabled = true; use.textContent = 'saving…';
           api('/api/workspaces/device', 'POST', {
             name: nm,
@@ -2055,6 +2076,15 @@
         renderEntries(d);
         var acts = document.getElementById('wtx-actions');
         if (acts) acts.style.display = '';
+        // v1.24.3: the name box's placeholder names the CURRENT folder —
+        // the suggested name rides every navigation (a typed name is
+        // never touched; the placeholder is the hint, the submit fallback
+        // does the same derivation).
+        var ninp = document.getElementById('wtx-name');
+        if (ninp) {
+          var hint = termuxFolderName(resolved);
+          ninp.placeholder = hint || 'my folder';
+        }
       }).catch(function (e) {
         if (!document.getElementById('wtx-list')) return;
         list.innerHTML =
@@ -2759,7 +2789,9 @@
   };
   // v1.20.2: the node test path (scripts/v1202-local-hand-test.js) — the
   // pure crumb/rel-path helpers, exported the way termuxsetup.js does.
+  // v1.24.3: termuxFolderName joins (the v1243 rig).
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { termuxCrumbs: termuxCrumbs, termuxRelPath: termuxRelPath };
+    module.exports = { termuxCrumbs: termuxCrumbs, termuxRelPath: termuxRelPath,
+      termuxFolderName: termuxFolderName };
   }
 })();
