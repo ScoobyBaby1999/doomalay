@@ -218,3 +218,35 @@ worked right becomes the pattern)
    Every pill now leads with a one-word VERB chip (`ls`, `file_write`,
    `grep`, `pkg`, `session`…) followed by the dim query — never the
    generic `exec`. The ↗ full-view overlay's title says the same verb.
+
+## v1.27.0 — THE HONEST PROGRAM additions (the exec titles + the unbound
+burst)
+
+> The exec-title fix rides the **OTA** (open the app once after this
+> release and the banner applies it — no reinstall). The unbound burst
+> default + the live cap read ride the **APK** (the engine changed).
+
+1. **The exec pills speak the program** (the blank-title fix — PM/quick
+   chats): ask the bot to run a few one-shot execs — `cal 10 2026`,
+   `python3 -c …`, `du -sh .`, `sed …`, `curl …`. Every exec pill now
+   leads with the PROGRAM chip (`cal`, `python3`, `du`, `sed`, `curl`)
+   + the dim command remainder — the pills were blank before this
+   release (the args ride as a JSON string on the PM path and the
+   derivation only accepted objects). The ↗ overlay's title says the
+   same program. Reload the chat: the pills keep their chips (the
+   derivation is render-time, replay included).
+2. **The burst runs unbound by default**: ask for "a mixed batch of 15
+   random exec commands, all independent" — ALL of them run (the old
+   12-per-minute law is gone; nothing refuses at #13).
+3. **The optional cap is a per-chat tweak**: open the chat's ✦ tweaks
+   panel → the **Termux** section → "Exec burst cap":
+   - OFF (the default) = unbound — the state value reads "unbound".
+   - Flip the switch ON → the slider picks the cap (5..120, arming at
+     12); the value label reads "N / minute". Fire more than N execs
+     in a minute: the (N+1)th refuses with the honest ask ("this
+     chat's burst cap is N one-shot execs per minute (armed in ✦
+     tweaks → Termux)") — the model tells you, never a silent drop.
+   - Flip the switch OFF → the cap lifts immediately (the very next
+     exec runs). "↺ reset everything" also clears it.
+   - Note: the cap counts from the moment you arm it (unbound execs
+     never fill the window).
