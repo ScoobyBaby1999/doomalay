@@ -32,10 +32,12 @@
 // is automatic. The four step rows auto-advance by polling the v1.17.2
 // endpoints (NO new HTTP paths):
 //
-//   ① Install Termux   done when status.installed    → POST act open_fdroid
-//   ② Bootstrap once   done when bootstrap_done||props_ok → Copy + act open_termux
-//   ③ Allow commands   done when status.permission   → act open_permission_settings
-//   ④ Verify           done when status.ready        → auto (poll w/ refresh)
+//   1 Install Termux   done when status.installed    → POST act open_fdroid
+//   2 Bootstrap once   done when bootstrap_done||props_ok → Copy/Open Termux ⌘ (carries the command)
+//   3 Allow commands   done when status.permission   → act open_permission_settings
+//   (verify)           done when status.ready        → HIDDEN since v1.29.1 — the ladder still
+//                                                     computes + force-polls it; the user sees 3
+//                                                     steps and the status line carries its signal
 //
 // The poll: GET /api/termux/status every 3s while the page is mounted;
 // ?refresh=1 on the first fetch, after each action, and while the verify
@@ -179,7 +181,7 @@
     }
     // the honest sub under the gated (disabled) step ③ button
     if (steps[2].gated && !steps[2].done) {
-      steps[2].error = 'complete step ② first — the permission grant only works after the bootstrap';
+      steps[2].error = 'complete step 2 first — the permission grant only works after the bootstrap';
     }
     var le = status.last_error ? String(status.last_error) : '';
     if (le) {
@@ -220,9 +222,15 @@
     if (el) el.textContent = bootstrapCmd;
   }
 
-  function stepRow(key, ico, name, sub, extraMid, buttonsHTML) {
+  // v1.29.1 THE TERMUX LADDER: the step badge is a designed NUMBER pill
+  // (a circle carrying 1/2/3), not a unicode glyph in a rounded square.
+  // The paint lives in paintStep (pending → active → done), the markup
+  // here is just the shell. `n` is the display number (the HIDDEN verify
+  // stage keeps its internal key but no row — the user sees 3 steps).
+  var STEP_NUM = { install: 1, bootstrap: 2, permission: 3, verify: 4 };
+  function stepRow(key, name, sub, extraMid, buttonsHTML) {
     return '<div class="tsx-row" id="tsx-row-' + key + '" role="listitem">' +
-      '<span class="tsx-ico">' + ico + '</span>' +
+      '<span class="tsx-num wait" id="tsx-num-' + key + '">' + (STEP_NUM[key] || '') + '</span>' +
       '<span class="tsx-mid">' +
         '<span class="tsx-name">' + esc(name) + '</span>' +
         '<span class="tsx-desc">' + esc(sub) + '</span>' +
@@ -241,6 +249,7 @@
       'aria-label="open F-Droid to install Termux">Get Termux</button>';
     var cmd = '<div class="tsx-cmd" id="tsx-cmd" aria-label="the bootstrap command — long-press to select">' +
       esc(bootstrapCmd) + '</div>';
+    // (hint is built below openTx — both land in the bootstrap row)
     var copy = '<button class="tsx-btn ghost" id="tsx-btn-copy" type="button" ' +
       'aria-label="copy the bootstrap command">Copy</button>';
     // v1.20.1 THE QUIET GATE: one explicit probe on demand (the old-flow
@@ -248,8 +257,16 @@
     // checkin lands, so the user needs a hand-fired way to check).
     var checkNow = '<button class="tsx-btn ghost" id="tsx-btn-checknow" type="button" ' +
       'aria-label="force one status check now">check now</button>';
+    // v1.29.1: Open Termux now CARRIES the command — one tap puts the
+    // current bootstrap command on the clipboard AND opens Termux (the
+    // label's ⌘ marks it). Termux's security model forbids typing into
+    // the terminal from outside (RUN_COMMAND needs the very property
+    // this command sets), so the honest maximum is: the user long-presses
+    // → Paste → Enter. The hint below the command teaches exactly that.
     var openTx = '<button class="tsx-btn" id="tsx-btn-termux" type="button" ' +
-      'aria-label="open the Termux app">Open Termux</button>';
+      'aria-label="copy the command and open the Termux app">Open Termux ⌘</button>';
+    var hint = '<span class="tsx-hint">Open Termux copies the command — in Termux: ' +
+      'long-press the terminal → Paste, then Enter</span>';
     var settings = '<button class="tsx-btn" id="tsx-btn-settings" type="button" ' +
       'aria-label="open the permission settings screen">Open settings</button>';
     return '<div class="tsx-page" id="tsx-page">' +
@@ -260,15 +277,17 @@
       '<div class="tsx-note">Termux\'s own security needs three taps from you — ' +
         'install, one pasted command, one permission. Everything else here is automatic.</div>' +
       '<div class="tsx-status-line" id="tsx-status-line">checking this device…</div>' +
+      // v1.29.1: the VERIFY stage is HIDDEN, not removed — the ladder
+      // still computes it (shouldForce still force-polls it; the ready
+      // card still lands from it) but the user sees THREE steps. Its
+      // signal rides the status line (applyStatus).
       '<div class="tsx-steps" role="list">' +
-        stepRow('install', '①', 'Install Termux', 'the real terminal app, from F-Droid',
+        stepRow('install', 'Install Termux', 'the real terminal app, from F-Droid',
           gh, fdroid) +
-        stepRow('bootstrap', '②', 'Bootstrap once', 'paste one command in Termux',
-          cmd, copy + checkNow + openTx) +
-        stepRow('permission', '③', 'Allow commands', 'grant Doomalay permission to run Termux commands',
+        stepRow('bootstrap', 'Bootstrap once', 'paste one command in Termux',
+          cmd + hint, copy + checkNow + openTx) +
+        stepRow('permission', 'Allow commands', 'grant Doomalay permission to run Termux commands',
           '', settings) +
-        stepRow('verify', '④', 'Verify', 'checks storage + the command bridge',
-          '', '') +
       '</div>' +
       '<div class="tsx-foot">states refresh live while this is open — the live ASCII progress bar runs on the Termux terminal itself, while the bootstrap runs</div>' +
     '</div>';
@@ -398,11 +417,20 @@
     if (!window.ConnectOverlay.isOpen()) return;
     // v1.20.1: the command row + the quiet-gate line update before the
     // steps paint (the status line stays honest — never silence).
+    // v1.29.1: the hidden verify stage speaks HERE — while ①–③ are done
+    // and the ladder is not ready, the status line says what's being
+    // verified, and the storage note (formerly ④'s error slot) surfaces
+    // in the same breath. Honesty kept, prototype row gone.
     applyBootstrapCmd(status);
     for (var i = 0; i < s.steps.length; i++) paintStep(s.steps[i]);
-    setStatusLine(status.probe_suppressed === true
-      ? 'probing paused until the bootstrap lands — no notification spam'
-      : '');
+    var line = '';
+    if (!s.ready && s.steps[0].done && s.steps[1].done && s.steps[2].done) {
+      line = s.steps[3].error || 'finishing — verifying storage + the command bridge…';
+    }
+    if (!line && status.probe_suppressed === true) {
+      line = 'probing paused until the bootstrap lands — no notification spam';
+    }
+    setStatusLine(line);
   }
 
   // chip + button + diagnostic repaint (in place — the page never rebuilds)
@@ -420,11 +448,22 @@
     }
     var err = document.getElementById('tsx-err-' + step.key);
     if (err) err.textContent = step.error || '';
+    // v1.29.1: the number pill repaints with the step (pending dim →
+    // active accent ring → done accent fill + ✓) — the polish the user
+    // asked for, same state family as the chip on the right.
+    var pill = document.getElementById('tsx-num-' + step.key);
+    if (pill) {
+      pill.className = 'tsx-num ' + (step.done ? 'done' : (step.active ? 'now' : 'wait'));
+      pill.textContent = step.done ? '✓' : String(STEP_NUM[step.key] || '');
+    }
     // action buttons disable once their step is done (honest "nothing
     // left to do here"); Copy stays a utility (always enabled). v1.20.1:
     // step ③'s Open-settings ALSO disables while gated on step ② (THE
     // QUIET GATE — the honest sub under it teaches why), and step ②'s
     // ghost "check now" disables once the bootstrap has landed.
+    // v1.29.1: Open Termux stays ENABLED even when step ② is done — it
+    // is the user's bridge back to Termux (a re-run, a look), not a
+    // once-only setup action.
     var btnMap = { install: 'tsx-btn-fdroid', bootstrap: 'tsx-btn-termux',
                    permission: 'tsx-btn-settings', verify: null };
     var id = btnMap[step.key];
@@ -484,8 +523,17 @@
       setStatusLine('checking now…');
       fetchStatus(inst, true);
     });
+    // v1.29.1 THE CARRIED COMMAND: one tap = the CURRENT command (the
+    // --checkin tail included) on the clipboard + Termux opens. The
+    // clipboard write happens while the WebView is focused (a user tap —
+    // Android grants it); the open intent is the bridge's open_termux.
     var openTx = by('tsx-btn-termux');
     if (openTx) openTx.addEventListener('click', function () {
+      openTx.disabled = true;
+      copyText(bootstrapCmd, function () {
+        openTx.disabled = false;
+        try { toast('command copied — long-press in Termux → Paste → Enter'); } catch (e0) {}
+      });
       act(inst, 'open_termux', 'could not open Termux — is it installed?');
     });
     var settings = by('tsx-btn-settings');
@@ -580,9 +628,18 @@
         'margin-bottom:6px;border-radius:12px;border:1px solid var(--surface-2);' +
         'background:var(--surface-1);transition:border-color 0.15s}' +
       '.tsx-row.now{border-color:rgba(var(--accent-rgb),0.55)}' +
-      '.tsx-ico{flex-shrink:0;width:26px;height:26px;border-radius:8px;display:flex;' +
-        'align-items:center;justify-content:center;font-size:13px;' +
-        'background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.25)}' +
+      // v1.29.1 THE NUMBER PILL: a designed 24px circle — pending dim,
+      // active accent ring, done accent fill + ✓ (replaces the unicode
+      // glyph in a rounded square — the prototype look is gone).
+      '.tsx-num{flex-shrink:0;width:24px;height:24px;border-radius:999px;' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'font-size:12px;font-weight:700;transition:all 0.15s}' +
+      '.tsx-num.wait{color:var(--text-3);background:var(--surface-2);' +
+        'border:1px solid var(--border)}' +
+      '.tsx-num.now{color:var(--accent);background:rgba(var(--accent-rgb),0.12);' +
+        'border:1.5px solid var(--accent)}' +
+      '.tsx-num.done{color:var(--on-accent);background:var(--accent);' +
+        'border:1px solid var(--accent)}' +
       '.tsx-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}' +
       '.tsx-name{font-weight:600;font-size:var(--ui-small-fs);color:var(--text-1)}' +
       '.tsx-desc{font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-3)}' +
@@ -599,6 +656,9 @@
         'background:var(--surface-2);border:1px solid var(--border);border-radius:8px;' +
         'padding:6px 8px;margin-top:3px;word-break:break-all;white-space:normal;' +
         'user-select:text;-webkit-user-select:text;cursor:pointer;overflow-wrap:anywhere}' +
+      // v1.29.1: the paste-gesture hint under the bootstrap command
+      '.tsx-hint{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
+        'line-height:1.45;margin-top:4px;overflow-wrap:break-word}' +
       // the state chip — done rides the accent family, now is SOLID accent
       // (on-accent), wait stays muted (the theme-var chip law)
       '.tsx-chip{flex-shrink:0;font-size:calc(var(--ui-small-fs) - 2px);' +

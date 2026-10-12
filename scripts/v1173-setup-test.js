@@ -188,7 +188,7 @@ console.log('v1.17.3 THE SETUP pins — termuxsetup.js:');
     'check now fires one explicit refresh probe');
   ok(/btn\.disabled = step\.done \|\| \(step\.key === 'permission' && !!step\.gated\)/.test(tsx),
     'step ③\'s Open-settings disables while gated on step ② (the disabled visual state)');
-  ok(tsx.indexOf('complete step ② first') >= 0,
+  ok(tsx.indexOf('complete step 2 first') >= 0,
     'the honest gate sub rides under the disabled step ③ button');
   ok(tsx.indexOf('probing paused until the bootstrap lands — no notification spam') >= 0,
     'the status line shows the suppression state honestly');
@@ -251,8 +251,8 @@ console.log('v1.17.3 THE SETUP behavior — _stepStates:');
   // teaches instead of erroring on a clean empty status
   ok(s0.steps[2].gated === true && errs(s0) === '--E-',
     'the gate note rides under step ③ while the bootstrap is pending (the teaching sub)');
-  ok(s0.steps[2].error.indexOf('complete step ② first') === 0,
-    'the gate note is the honest "complete step ② first" line');
+  ok(s0.steps[2].error.indexOf('complete step 2 first') === 0,
+    'the gate note is the honest "complete step 2 first" line');
 
   // rung 1: installed only
   var s1 = S({ available: true, installed: true, version_name: '0.118.3' });
