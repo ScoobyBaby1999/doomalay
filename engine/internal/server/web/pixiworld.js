@@ -850,21 +850,29 @@
   window.addEventListener('doomalay:theme-applied', onThemeChanged);
   if (window.Settings && window.Settings.onChange) {
     window.Settings.onChange(function (st) {
-      if (st && typeof st.worldLayer !== 'undefined') { evaluate(); return; }
+      if (!st) return;
       // v1.30.1 THE SOFT RASTER: an aa/dpr change re-inits the layer
       // (the knobs are init-time-only) — but ONLY when the RESOLVED
-      // pair actually moved (onChange carries the full state, so the
+      // pair actually moved (onChange carries the FULL state, so the
       // resolved comparison IS the value-change gate: a settings
       // burst never reboots a resting context). A boot-in-flight
       // finishes on its own knobs; the next change re-reads fresh.
-      if (st && (typeof st.worldAA !== 'undefined' || typeof st.worldDpr !== 'undefined')) {
-        if (!S.app) return;                  // next boot reads them fresh
-        var aa2 = resolveAA();
-        var dpr2 = Math.min(window.devicePixelRatio || 1, resolveDpr());
-        if (aa2 === S.aa && dpr2 === S.res) return;
-        deactivate();
-        evaluate();                          // re-boots when the gate says so
+      // THE ORDER MATTERS (the v1310 walk convicted the first shape):
+      // worldLayer is defined in EVERY state, so a worldLayer-first
+      // branch would short-circuit and the aa/dpr path would never
+      // run — the knobs decide FIRST, then the gate re-evaluates.
+      if (typeof st.worldAA !== 'undefined' || typeof st.worldDpr !== 'undefined') {
+        if (S.app) {
+          var aa2 = resolveAA();
+          var dpr2 = Math.min(window.devicePixelRatio || 1, resolveDpr());
+          if (aa2 !== S.aa || dpr2 !== S.res) {
+            deactivate();
+            evaluate();                        // re-boots when the gate says so
+            return;
+          }
+        }
       }
+      if (typeof st.worldLayer !== 'undefined') evaluate();
     });
   }
   // atoms count changes → the shells/stars re-layout rides the ticker's
