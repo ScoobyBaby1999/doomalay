@@ -276,7 +276,21 @@
   //   2. Prism highlighting is deferred to the final render (highlighting
   //      a growing code block per tick is pure waste — the highlight
   //      would be recomputed anyway).
+  // v1.30.4 THE LEDGER: the measured shell around the real formatter —
+  // every renderInto reports its duration to PerfHUD (counters always
+  // on; marks only while a watcher exists). Guarded for PerfHUD's
+  // absence (formatter loads after perfhud in index.html, but the
+  // standalone/rig shapes tolerate it either way).
   function renderInto(el, text, opts) {
+    var PH = window.PerfHUD;
+    var t0 = PH ? PH.markStart('fmt') : 0;
+    try {
+      return renderIntoMeasured(el, text, opts);
+    } finally {
+      if (PH) PH.ledger('fmt', t0);
+    }
+  }
+  function renderIntoMeasured(el, text, opts) {
     opts = opts || {};
     var mode = opts.mode || 'full';
     text = String(text == null ? '' : text);

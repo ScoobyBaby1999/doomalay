@@ -6242,7 +6242,21 @@
   // background chats — i.e. the FOREGROUND chat's container — then either
   // overwrote a foreign bubble by index collision or appended foreign
   // rows that vanished on the next rebuild. THE leak.
+  // v1.30.4 THE LEDGER: the measured shell around the real renderer —
+  // every message render reports its duration to PerfHUD (counters
+  // always on; the mark/measure API only while a watcher exists).
+  // Guarded: PerfHUD loads before chatpanel, but the rig/standalone
+  // shapes tolerate its absence.
   function updateMessageEl(bodyEl, msg, final, ownerState) {
+    var PH = window.PerfHUD;
+    var t0 = PH ? PH.markStart('render') : 0;
+    try {
+      return updateMessageElMeasured(bodyEl, msg, final, ownerState);
+    } finally {
+      if (PH) PH.ledger('render', t0);
+    }
+  }
+  function updateMessageElMeasured(bodyEl, msg, final, ownerState) {
     var st = ownerState || (currentCtx && currentCtx.state);
     if (!st || !isOwner(st) || !currentCtx || !currentCtx.bodyEl) return;
     var container = currentCtx.bodyEl.querySelector('#chat-messages');

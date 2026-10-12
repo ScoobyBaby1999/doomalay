@@ -40,11 +40,53 @@
     batches: 0, buckets: 0, paintMs: 0,
     nodes: 0, layers: 0,
     painter: '', world: '',            // v0.85.2/.3 fill these
-    watchers: 0, hudOn: false          // v0.88: the honest instrument — the
+    watchers: 0, hudOn: false,         // v0.88: the honest instrument — the
                                        // meter's refcount + chip state (the
                                        // rig proves setHud's idempotence)
+    // v1.30.4 THE LEDGER (PLAN-V131 §4): the pipeline's own latency —
+    // how long a message render took, what the formatter cost, how many
+    // wire events arrived. Counters are ALWAYS on (the longtask
+    // observer's precedent); the mark/measure API rides only while a
+    // watcher exists (the timeline bonus, not the source of truth).
+    renders: 0, renderMsWorst: 0, renderMsLast: 0,
+    lastRenders: 0, renderRate: 0,
+    fmtCount: 0, fmtMsWorst: 0,
+    wsEvents: 0
   };
   window.DoomalayPerf = P;
+
+  // ── v1.30.4 THE LEDGER — the pipeline measures itself ──────────
+  // markStart(kind) → t0 (always; the mark API only while watched).
+  // ledger(kind, t0) → ms (the counter move IS the source of truth;
+  //   performance.measure lands only when the timeline is listening —
+  //   an observer-free page never pays for marks).
+  // bump(kind) — the wire counter (chatclient's onmessage).
+  function markStart(kind) {
+    try {
+      if (watchers > 0 && performance.mark) performance.mark('doomalay:' + kind + ':start');
+    } catch (e) {}
+    return performance.now();
+  }
+  function ledger(kind, t0) {
+    var ms = performance.now() - t0;
+    if (kind === 'fmt') {
+      P.fmtCount++;
+      if (ms > P.fmtMsWorst) P.fmtMsWorst = ms;
+    } else {
+      P.renders++; P.renderMsLast = ms;
+      if (ms > P.renderMsWorst) P.renderMsWorst = ms;
+    }
+    try {
+      if (watchers > 0 && performance.mark && performance.measure) {
+        performance.mark('doomalay:' + kind + ':end');
+        performance.measure('doomalay:' + kind, 'doomalay:' + kind + ':start', 'doomalay:' + kind + ':end');
+      }
+    } catch (e) { /* a mark lost the watchers race — the counter already moved */ }
+    return ms;
+  }
+  function bump(kind) {
+    if (kind === 'ws') P.wsEvents++;
+  }
 
   // ── the long-task observer (always on — the jank ledger) ──────────
   try {
@@ -92,12 +134,15 @@
     var now = performance.now();
     // rates over the window since the last sample
     var dp = P.paints - P.lastPaints, da = P.atomFrames - P.lastAtomFrames;
+    var dr = P.renders - P.lastRenders;                 // v1.30.4: the ledger rate
     var win = (now - (sample.last || now - 500)) / 1000;
     if (win > 0.05) {
       P.paintRate = Math.round(dp / win);
       P.atomRate = Math.round(da / win);
+      P.renderRate = Math.round(dr / win);
     }
     P.lastPaints = P.paints; P.lastAtomFrames = P.atomFrames;
+    P.lastRenders = P.renders;
     sample.last = now;
     // the rolling fps + frame ms over the last window
     if (frames > 0) {
@@ -195,6 +240,9 @@
       row('pf-atoms', 'Atom frames', 'star-layer frames per second') +
       row('pf-cache', 'Lattice cache', 'hit-rate') +
       row('pf-batches', 'Paint batches', 'buckets → fills per frame') +
+      row('pf-render', 'Render ledger', 'message renders · worst') +   // v1.30.4
+      row('pf-fmt', 'Formatter', 'renders · worst ms') +               // v1.30.4
+      row('pf-ws', 'Wire events', 'ws messages lifetime') +            // v1.30.4
       row('pf-nodes', 'DOM nodes', '') +
       row('pf-layers', 'Est. layers', 'icons + promoted chrome') +
       (P.painter ? row('pf-painter', 'Painter', 'the canvas owner') : '') +
@@ -269,6 +317,11 @@
     var tot = P.cacheHits + P.cacheMisses;
     set('pf-cache', tot ? (Math.round(100 * P.cacheHits / tot) + '% · ' + tot + ' ops') : '—');
     set('pf-batches', P.batches + ' fills · ' + P.buckets + ' buckets');
+    // v1.30.4: the ledger rows — rates ride the sampler window, the
+    // worst-latency numbers are lifetime (the value-change gate holds).
+    set('pf-render', (P.renderRate || 0) + '/s · worst ' + Math.round(P.renderMsWorst) + 'ms');
+    set('pf-fmt', (P.fmtCount || 0) + ' · worst ' + Math.round(P.fmtMsWorst) + 'ms');
+    set('pf-ws', String(P.wsEvents || 0));
     set('pf-nodes', P.nodes || '—');
     set('pf-layers', (P.layers || '—') + ' est.');
     if (doc.getElementById('pf-painter')) set('pf-painter', P.painter || 'main thread');
@@ -329,6 +382,12 @@
   window.PerfHUD = {
     setHud: setHud,
     // the rig hook: force one sample + read (the honest instrument)
-    sample: function () { sample(); return P; }
+    sample: function () { sample(); return P; },
+    // v1.30.4: the ledger — chatpanel/formatter/chatclient measure the
+    // pipeline through these three (counters always on; marks only while
+    // a watcher exists). Guarded call sites tolerate PerfHUD's absence.
+    markStart: markStart,
+    ledger: ledger,
+    bump: bump
   };
 })();

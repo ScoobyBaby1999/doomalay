@@ -152,6 +152,9 @@
 
     this.ws.onmessage = function (e) {
       try {
+        // v1.30.4 THE LEDGER: the wire counter (guarded — the rig shapes
+        // may run without perfhud).
+        if (window.PerfHUD) window.PerfHUD.bump('ws');
         var ev = JSON.parse(e.data);
         // v0.44: tag the connect-time backlog burst (_replay) BEFORE the
         // panel sees it — see the header comment.
