@@ -215,6 +215,27 @@
           '<option value="off"' + (s.worldLayer === 'off' ? ' selected' : '') + '>off (dom icons)</option>' +
         '</select>' +
       '</div>' +
+      // v1.30.1 THE SOFT RASTER (PLAN-V131 §1): the sprite layer's raster
+      // knobs, decided before init — a change re-inits the layer (the
+      // ~100ms boot the auto threshold already accepts).
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;flex-wrap:wrap">' +
+        '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">Sprite antialias</span>' +
+        '<select data-setting-key="worldAA" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:4px 8px;border-radius:6px;font-size:var(--ui-small-fs);font-family:inherit">' +
+          '<option value="auto"' + (s.worldAA === 'auto' || !s.worldAA ? ' selected' : '') + '>auto (hardware gl)</option>' +
+          '<option value="on"' + (s.worldAA === 'on' ? ' selected' : '') + '>always on</option>' +
+          '<option value="off"' + (s.worldAA === 'off' ? ' selected' : '') + '>off (fastest)</option>' +
+        '</select>' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;flex-wrap:wrap">' +
+        '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">Sprite resolution cap</span>' +
+        '<select data-setting-key="worldDpr" data-setting-transform="number" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-1);padding:4px 8px;border-radius:6px;font-size:var(--ui-small-fs);font-family:inherit">' +
+          '<option value="0"' + (!s.worldDpr ? ' selected' : '') + '>auto (2× cap)</option>' +
+          '<option value="1"' + (parseFloat(s.worldDpr) === 1 ? ' selected' : '') + '>1×</option>' +
+          '<option value="1.5"' + (parseFloat(s.worldDpr) === 1.5 ? ' selected' : '') + '>1.5×</option>' +
+          '<option value="2"' + (parseFloat(s.worldDpr) === 2 ? ' selected' : '') + '>2×</option>' +
+          '<option value="3"' + (parseFloat(s.worldDpr) === 3 ? ' selected' : '') + '>3×</option>' +
+        '</select>' +
+      '</div>' +
       '<label style="display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer">' +
         '<input type="checkbox" id="pf-worker" ' + (s.workerPaint ? 'checked' : '') + ' style="accent-color:var(--accent);width:16px;height:16px">' +
         '<span style="font-size:var(--ui-small-fs);color:var(--text-1)">Paint the grid in a worker <span style="color:var(--text-3-dim)">(applies on reload)</span></span>' +

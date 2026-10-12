@@ -115,6 +115,31 @@
     return (m === 'on' || m === 'off') ? m : 'auto';
   }
 
+  // ── v1.30.1 THE SOFT RASTER — the raster knobs become decisions ──
+  // (PLAN-V131 §1) Pixi v8 resolves antialias + resolution at app.init()
+  // ONLY; both were constants (MSAA always on, dpr capped at 2) — a
+  // per-frame raster tax every device paid regardless of GPU class or
+  // panel density. Now they resolve from settings:
+  //   resolveAA: 'auto' reads the GL verdict (the classifier the gate
+  //   already trusts — hardware gl → true); 'on'/'off' are explicit. An
+  //   'on' on software gl is the user's call (the gate keeps the layer
+  //   off there anyway unless forced through).
+  //   resolveDpr: 0 (or anything non-numeric) = the legacy 2× cap;
+  //   1..3 caps explicitly, still clamped by the device's own dpr.
+  // A changed pair re-inits the layer (deactivate + the gate pass
+  // re-boots — the ~100ms boot the auto threshold already accepts).
+  function resolveAA() {
+    var st = (window.Settings && window.Settings.getState()) || {};
+    if (st.worldAA === 'on') return true;
+    if (st.worldAA === 'off') return false;
+    return !glGateVerdict().software;
+  }
+  function resolveDpr() {
+    var st = (window.Settings && window.Settings.getState()) || {};
+    var c = parseFloat(st.worldDpr);
+    return (c >= 1 && c <= 3) ? c : 2;
+  }
+
   // ── v0.88 THE GL-SPEED GATE ─────────────────────────────────────────
   // A software GL (SwiftShader / llvmpipe — headless Chromium, weak VMs,
   // broken-driver fallbacks) rasterizes the sprite layer SLOWER than the
@@ -461,14 +486,19 @@
       cv.style.cssText = 'position:fixed;top:0;left:0;pointer-events:none;z-index:100';
       document.body.insertBefore(cv, document.getElementById('chatbots'));
       S.canvas = cv;
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // v1.30.1 THE SOFT RASTER: decide BEFORE init (Pixi v8 is
+      // init-time-only on both knobs) — the resolved pair rides S for
+      // the value-change gate + the honest perf row.
+      var aa = resolveAA();
+      var dpr = Math.min(window.devicePixelRatio || 1, resolveDpr());
+      S.aa = aa; S.res = dpr;
       var app = new PIXI.Application();
       app.init({
         canvas: cv,
         width: window.innerWidth,
         height: window.innerHeight,
         backgroundAlpha: 0,
-        antialias: true,
+        antialias: aa,
         resolution: dpr,
         autoDensity: true,
         preference: 'webgl',
@@ -499,6 +529,7 @@
         var gate = glGateVerdict();
         try {
           window.DoomalayPerf.world = 'pixi (' + S.renderer + ')' +
+            ' · aa ' + (S.aa ? 'on' : 'off') + ' · ' + S.res + '×' +
             (gate.software ? ' — FORCED (software gl: ' + (gate.renderer || '?') + ')' : '');
         } catch (e) {}
         // the handover frame: one repaint clears the stale #c2 stars (the
@@ -819,7 +850,21 @@
   window.addEventListener('doomalay:theme-applied', onThemeChanged);
   if (window.Settings && window.Settings.onChange) {
     window.Settings.onChange(function (st) {
-      if (st && typeof st.worldLayer !== 'undefined') evaluate();
+      if (st && typeof st.worldLayer !== 'undefined') { evaluate(); return; }
+      // v1.30.1 THE SOFT RASTER: an aa/dpr change re-inits the layer
+      // (the knobs are init-time-only) — but ONLY when the RESOLVED
+      // pair actually moved (onChange carries the full state, so the
+      // resolved comparison IS the value-change gate: a settings
+      // burst never reboots a resting context). A boot-in-flight
+      // finishes on its own knobs; the next change re-reads fresh.
+      if (st && (typeof st.worldAA !== 'undefined' || typeof st.worldDpr !== 'undefined')) {
+        if (!S.app) return;                  // next boot reads them fresh
+        var aa2 = resolveAA();
+        var dpr2 = Math.min(window.devicePixelRatio || 1, resolveDpr());
+        if (aa2 === S.aa && dpr2 === S.res) return;
+        deactivate();
+        evaluate();                          // re-boots when the gate says so
+      }
     });
   }
   // atoms count changes → the shells/stars re-layout rides the ticker's
@@ -837,6 +882,7 @@
     return { active: !!S.app, mode: S.mode, renderer: S.renderer,
              driver: driverRAF ? 'running' : 'resting',
              gate: S.gate ? { software: S.gate.software, renderer: S.gate.renderer } : null,
+             aa: !!S.aa, res: S.res || 0,   // v1.30.1: the resolved raster pair
              threshold: THRESHOLD, entities: entitiesCount(),
              sprites: sprites, textures: textures, stars: stars,
              lastError: S.lastError };

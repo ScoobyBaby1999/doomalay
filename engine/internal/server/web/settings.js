@@ -74,6 +74,12 @@
     // + atom stars + halos). 'auto' = at ≥ 60 chats (the measured DOM
     // icon ceiling), 'on'/'off' force it.
     worldLayer: 'auto',
+    // ── v1.30.1 THE SOFT RASTER (PLAN-V131 §1): the sprite layer's
+    // raster knobs are decisions, not constants. Pixi v8 resolves
+    // antialias/resolution at init only, so a change re-inits the
+    // layer (deactivate + the gate pass re-boots, ~100ms).
+    worldAA: 'auto',           // 'auto' = hardware gl only (the verdict) | 'on' | 'off'
+    worldDpr: 0,               // 0 = the legacy 2× cap | 1 / 1.5 / 2 / 3 explicit
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────
