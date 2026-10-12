@@ -2167,27 +2167,14 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                 }
         }
 
-        fold := func(events []*store.Event) (msgs []llm.Message) {
-                for _, ev := range events {
-                        if hidden[ev.ID] {
-                                continue
-                        }
-                        switch ev.EventType {
-                        case "user":
-                                msgs = append(msgs, llm.Message{Role: "user", Content: ev.Content})
-                        case "assistant":
-                                msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content})
-                        case "assistant_delta":
-                                // Pre-v0.13 sessions: fold consecutive deltas into one message.
-                                last := len(msgs) - 1
-                                if last >= 0 && msgs[last].Role == "assistant" && !msgs[last].FoldedDone {
-                                        msgs[last].Content += ev.Content
-                                } else {
-                                        msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
-                                }
-                        }
-                }
-                return msgs
+        // v1.29.4 THE TOOL MEMORY: the fold emits window-countable SLOTS —
+        // user/assistant messages and COMPLETE tool pairs (the in-turn wire
+        // shape: assistant-with-tool_calls + the tool result) — so the
+        // model's own observations ride the conversation (the Doobie
+        // transcript's amnesia dies) and one pair counts as ONE window
+        // message. toolfold.go owns the law.
+        foldSlotsOnly := func(events []*store.Event) []historySlot {
+                return foldSlots(events, hidden)
         }
 
         limit := window*3 + 64
@@ -2205,18 +2192,11 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                         if ferr != nil {
                                 return nil
                         }
-                        msgs := fold(all)
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                        return slotsWindowed(foldSlotsOnly(all), window)
                 }
-                msgs := fold(events)
-                if len(msgs) >= window || reachedHead {
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                slots := foldSlotsOnly(events)
+                if len(slots) >= window || reachedHead {
+                        return slotsWindowed(slots, window)
                 }
                 limit *= 2 // not enough messages yet — widen the tail
                 if limit > 32768 {
@@ -2225,11 +2205,7 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                         if ferr != nil {
                                 return nil
                         }
-                        msgs := fold(all)
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                        return slotsWindowed(foldSlotsOnly(all), window)
                 }
         }
 }

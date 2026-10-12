@@ -79,6 +79,13 @@ func (s *Server) maybeCompact(ctx context.Context, pipe *chatPipe, sess *store.S
                 switch ev.EventType {
                 case "user", "assistant", "assistant_delta":
                         liveChars += len(ev.Content)
+                case "tool_result":
+                        // v1.29.4 THE TOOL MEMORY: tool observations now RIDE the
+                        // history (the slot fold) — they must count toward the
+                        // trigger or compaction arms too late. The raw payload
+                        // length (JSON wrapper included) runs slightly hot —
+                        // safer than blind.
+                        liveChars += len(ev.Content)
                 }
         }
         liveTokens := llm.EstimateTokens(sess.CompactSummary) + llm.EstimateTokensN(liveChars)
@@ -295,6 +302,9 @@ func (s *Server) handleSessionCompact(w http.ResponseWriter, r *http.Request) {
 // buildHistoryCompacted assembles the model-facing history: the compact
 // summary (as a lead-in note) + events after the compact point, folded
 // and windowed exactly like buildHistory.
+// v1.29.4 THE TOOL MEMORY: the fold is the SLOT fold (toolfold.go) —
+// tool pairs ride the history as the in-turn wire shape, one pair = ONE
+// window slot; results clamped + marked + redacted; older pairs stubbed.
 func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, window int) []llm.Message {
         var msgs []llm.Message
         if strings.TrimSpace(sess.CompactSummary) != "" {
@@ -304,38 +314,38 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
         if err != nil {
                 return msgs
         }
-        var live []llm.Message
+        // v1.29.4: one fold pass over the live segment — the SLOT fold
+        // (toolfold.go) owns the law; the boundary is the compact point.
+        var liveEvents []*store.Event
         for _, ev := range events {
                 if ev.Seq <= sess.CompactSeq {
                         continue
                 }
-                switch ev.EventType {
-                case "user":
-                        live = append(live, llm.Message{Role: "user", Content: ev.Content})
-                case "assistant":
-                        live = append(live, llm.Message{Role: "assistant", Content: ev.Content})
-                case "assistant_delta":
-                        last := len(live) - 1
-                        if last >= 0 && live[last].Role == "assistant" && !live[last].FoldedDone {
-                                live[last].Content += ev.Content
-                        } else {
-                                live = append(live, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
-                        }
+                if ev.EventType == "user" || ev.EventType == "assistant" ||
+                        ev.EventType == "assistant_delta" || ev.EventType == "tool_use" || ev.EventType == "tool_result" {
+                        liveEvents = append(liveEvents, ev)
                 }
         }
-        msgs = append(msgs, live...)
+        live := foldSlots(liveEvents, nil)
         if window < 0 {
-                return msgs // -1 = the whole chat — no window (v0.28 mind slider)
+                return append(msgs, slotsWindowed(live, -1)...) // -1 = the whole chat — no window (v0.28 mind slider)
         }
-        if len(msgs) > window {
-                // keep the summary note + the windowed tail
-                if len(msgs) > 0 && strings.HasPrefix(msgs[0].Content, "[conversation so far") {
-                        msgs = append([]llm.Message{msgs[0]}, msgs[len(msgs)-window+1:]...)
-                } else {
-                        msgs = msgs[len(msgs)-window:]
+        // v0.97 window law preserved: the note eats one slot of the clamp
+        // (note + window-1 live = window messages total); no note → the
+        // live slots clamp to the window themselves.
+        hasNote := len(msgs) > 0 && strings.HasPrefix(msgs[0].Content, "[conversation so far")
+        if hasNote {
+                if len(live)+1 > window {
+                        tail := window - 1
+                        if tail < 1 {
+                                tail = 1
+                        }
+                        return append(msgs, slotsWindowed(live, tail)...)
                 }
+        } else if len(live) > window {
+                return slotsWindowed(live, window)
         }
-        return msgs
+        return append(msgs, slotsWindowed(live, -1)...)
 }
 
 // clampServer truncates a string (compact summaries, observations).

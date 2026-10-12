@@ -641,6 +641,20 @@ func looksLikeIntentOnly(reply string) bool {
         return false
 }
 
+// ── v1.29.4 THE PROCEED (PLAN-V130 §4) ─────────────────────────────────────
+//
+// The announcement-exit disease (the Doobie transcript): a round that
+// narrates intent with NO tool calls ended the turn — the announcement
+// became the final answer and the user had to push. shouldProceed is the
+// pure decision the native-tools loop consults before that exit; the loop
+// bounds it at maxProceeds (the third announcement IS the answer — no
+// infinite narration loop) and only with tools armed.
+const maxProceeds = 2
+
+func shouldProceed(roundText string) bool {
+        return looksLikeIntentOnly(strings.TrimSpace(roundText))
+}
+
 // looksLikeCapabilityDenial — the second nudge flavor (v0.28): the model
 // claims it CAN'T do something the tools do. Slightly longer budget
 // than intent (denials can carry an apologetic preamble).
