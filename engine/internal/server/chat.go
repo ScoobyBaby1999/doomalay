@@ -1937,8 +1937,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // emitter (below) pushes tool_stream events into the same pipeline
         // the ChatChunk converter feeds (two writers, one reader: channels
         // are send-safe; the closer waits for both).
+        // v1.30.0 THE UNBRICKED TURN: streamDone is hoisted here — the CHUNK
+        // CONVERTER ends it when the model's stream ends (the stream source's
+        // natural end), breaking the v1.23.3 close-cycle deadlock.
         events := make(chan map[string]any, 64)
         var streamWG sync.WaitGroup
+        streamDone := make(chan struct{}) // nil-safe: a closed-by-nobody channel only matters when the emitter armed
 
         // v1.20.3 THE ARM: THE TERMUX HAND on the direct path — the chat's
         // bound device (termux) workspaces (exec + file verbs + pkg +
@@ -1953,12 +1957,44 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // turn's pipeline (ephemeral, like progress: never persisted —
                 // the replay law stays use + result; the merge pill is the
                 // vessel). Set for the turn's lifetime, cleared on exit.
+                //
+                // v1.30.0 THE UNBRICKED TURN (found by the v1300 real-model
+                // replication): the OLD shape deferred close(streamCh) to
+                // streamFromDirectProxy's RETURN — but that return waits for
+                // forwardEvents, which waits for close(events), which waits
+                // for streamWG, which waits for THIS pump, which waits for
+                // close(streamCh): a CYCLE that bricked every emitter-armed
+                // turn — the turn lock never released, the next send on the
+                // session busy-rejected FOREVER (the "turn gets interrupted"
+                // symptom's deepest face). The done-signal design breaks it:
+                // the pump exits on streamDone (never a channel close — an
+                // in-flight emitter send can never panic), and the CHUNK
+                // CONVERTER (which ends when the model's stream ends, exactly
+                // when the stream source should end too) owns the sequence:
+                // emitter off → done → wait → close(events).
                 streamCh := make(chan map[string]any, 32)
                 streamWG.Add(1)
                 go func() {
                         defer streamWG.Done()
-                        for ev := range streamCh {
-                                events <- ev
+                        for {
+                                select {
+                                case ev := <-streamCh:
+                                        events <- ev
+                                case <-streamDone:
+                                        // drain any stragglers the emitter had
+                                        // in flight when it went dark (the
+                                        // buffer is small; the chunks are
+                                        // ephemeral — a post-drain straggler
+                                        // is dropped, never a panic)
+                                        for {
+                                                select {
+                                                case ev := <-streamCh:
+                                                        events <- ev
+                                                default:
+                                                        return
+                                                }
+                                        }
+                                }
                         }
                 }()
                 s.txstreams.setEmitter(sessionID, func(delta string) {
@@ -1967,10 +2003,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                 "name": "termux", "delta": delta,
                         }
                 })
-                defer func() {
-                        s.txstreams.setEmitter(sessionID, nil)
-                        close(streamCh)
-                }()
+                defer s.txstreams.setEmitter(sessionID, nil) // the belt: even a converter panic can't leave a live emitter
                 req.TermuxToolFn = func(ctx context.Context, argJSON string) string {
                         return s.runTermuxAction(ctx, sessionID, argJSON)
                 }
@@ -1991,10 +2024,22 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // v1.23.3: `events` is declared EARLY (the termux stream emitter
         // writes it too); the converter goroutine no longer solely owns the
         // close — streamWG waits for the stream forwarder first.
+        // v1.30.0 THE UNBRICKED TURN: the LIFO order here IS the fix —
+        // when the model's chunks end: (3rd) emitter off + streamDone
+        // fires (the pump drains + exits), (2nd) streamWG.Wait() (the
+        // pump is gone by now — no cycle: nothing waits on
+        // streamFromDirectProxy's return anymore), (1st) close(events)
+        // → forwardEvents exits → the turn returns → THE LOCK RELEASES.
+        // (The old shape parked close(streamCh) on streamFromDirectProxy's
+        // return — the cycle that bricked every emitter-armed turn.)
         var assistantParts []string // v0.22: resettable (assistant_reset clears a leaked preamble)
         go func() {
                 defer close(events)
                 defer streamWG.Wait()
+                defer func() {
+                        s.txstreams.setEmitter(sessionID, nil) // no new chunks accepted
+                        close(streamDone)                      // the pump's exit signal (never a channel close on streamCh)
+                }()
                 for chunk := range chunks {
                         ev := map[string]any{
                                 "type":       chunk.Type,
