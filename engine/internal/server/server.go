@@ -14,7 +14,6 @@ import (
         "net/url"
         "path/filepath"
         "runtime"
-        "strconv"
         "strings"
         "sync"
         "time"
@@ -529,6 +528,15 @@ func (s *Server) routes() {
         // revalidate (the assets are embedded — the "network" hop is
         // local + cheap); the big vendored blobs keep their own
         // long-lived rules.
+        // v1.32.2: THE HONEST VALIDATOR — no-cache without a validator
+        // made every revalidation a FULL 200 (embed.FS carries no
+        // Last-Modified/ETag): every reload re-downloaded the whole tree
+        // from the loopback. staticHandler adds the sha256 validators +
+        // the weak If-None-Match 304 gate + gzip variants (own -gz
+        // validator + Vary) — webstatic.go. max-age/immutable stays OUT:
+        // the ota-first overlay serves patches at the SAME URLs, so a
+        // lifetime would go stale after a patch; it returns with the
+        // bundler wave's content-hashed filenames.
         distFS, _ := fs.Sub(webFS, "web")
         // v1.17.4 THE LIVE UPDATE: THE APPLY MECHANISM — the ota-first
         // overlay. A downloaded patch at <dataDir>/ota/<web-relative-path>
@@ -536,21 +544,17 @@ func (s *Server) routes() {
         // WITHOUT an engine restart (the PWA's post-download reload fetches
         // the new bytes through this handler). Path traversal is guarded:
         // only clean relative paths under web/ resolve to a disk file.
-        s.mux.Handle("/", noCacheFS{s.otaOverlay(http.FileServer(http.FS(distFS)))})
+        s.mux.Handle("/", noCacheFS{s.otaOverlay(staticHandler{root: distFS})})
 
         // v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
         // Content-Encoding: gzip so the WebView decompresses transparently —
         // WebAssembly.instantiateStreaming requires the correct MIME type.
+        // v1.32.2: the route gains its validator (serveWasmAsset — ETag +
+        // the weak INM 304 gate; the max-age contract is untouched).
         wasmGz, err := fs.ReadFile(webFS, "web/vendor/pm/privatemode.wasm.gz")
         if err == nil {
                 s.mux.HandleFunc("GET /vendor/pm/privatemode.wasm", func(w http.ResponseWriter, r *http.Request) {
-                        w.Header().Set("Content-Type", "application/wasm")
-                        w.Header().Set("Content-Encoding", "gzip")
-                        w.Header().Set("Cache-Control", "public, max-age=86400")
-                        w.Header().Set("Content-Length", strconv.Itoa(len(wasmGz)))
-                        if r.Method == http.MethodGet {
-                                _, _ = w.Write(wasmGz)
-                        }
+                        serveWasmAsset(w, r, wasmGz)
                 })
         } else {
                 log.Printf("warning: PM wasm asset missing: %v", err)

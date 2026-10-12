@@ -436,17 +436,21 @@ func (s *Server) otaOverlay(next http.Handler) http.Handler {
                                 for _, cand := range otaCandidates(rel) {
                                         disk := filepath.Join(root, filepath.FromSlash(cand))
                                         if fi, err := os.Stat(disk); err == nil && fi.Mode().IsRegular() {
-                                                if f, err := os.Open(disk); err == nil {
-                                                        defer f.Close()
-                                                        if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
-                                                                // ServeContent sets the content-type from the
-                                                                // file's extension — the same mapping the
-                                                                // embedded FileServer uses — and honors range
-                                                                // requests; noCacheFS (the outer wrapper)
-                                                                // forces revalidation.
-                                                                http.ServeContent(w, r, path.Base(disk), fi.ModTime(), f)
-                                                                return
-                                                        }
+                                                data, rerr := os.ReadFile(disk)
+                                                if rerr == nil {
+                                                        // v1.32.2 THE HONEST VALIDATOR: the SAME policy
+                                                        // as the embedded tree (serveAssetBytes — the
+                                                        // sha256 ETag, the weak If-None-Match 304 gate,
+                                                        // gzip with its own -gz validator). THE OTA
+                                                        // CORRECTNESS is structural: the ETag hashes
+                                                        // the SERVED bytes, so a patch flips the
+                                                        // validator on the next request — a cached
+                                                        // client's stale If-None-Match misses and the
+                                                        // patch bytes land on the reload. noCacheFS
+                                                        // (the outer wrapper) keeps forcing
+                                                        // revalidation.
+                                                        serveAssetBytes(w, r, path.Base(disk), data)
+                                                        return
                                                 }
                                         }
                                 }
