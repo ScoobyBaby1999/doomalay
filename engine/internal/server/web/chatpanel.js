@@ -117,6 +117,26 @@
     currentCtx = null;
   });
 
+  // ── v1.30.3 THE QUIET ROOM (PLAN-V131 §3) — the room lights, the
+  // panel catches up. The activity tick skips its DOM work while
+  // document.hidden (see ensureActivityWatch); THIS listener runs ONE
+  // catch-up pass the moment the app returns — the indicator + the
+  // reasoning stats re-render the instant the room lights instead of
+  // waiting out the next 500ms tick. One module-level listener, added
+  // once, never per-turn; the transcript renders are deliberately NOT
+  // hidden-gated (they are the persisted record — correctness, not
+  // cosmetics — and hidden renders are near-free).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    for (var id in chatStates) {
+      var st = chatStates[id];
+      if (st && st.isStreaming && isOwner(st) && currentCtx.bodyEl) {
+        renderActivity(currentCtx.bodyEl, st, false);
+        tickThinkingMeta(currentCtx.bodyEl, st);
+      }
+    }
+  });
+
   // v0.38 PER-CHAT BOX DEFAULTS: thinking / sources / pills remember the
   // user's expanded/collapsed preference PER CHAT (tweaks blob uiState).
   function uiPref(state, key, dflt) {
@@ -5414,6 +5434,15 @@
         hideActivity(currentCtx && currentCtx.bodyEl, state);
         return;
       }
+      // v1.30.3 THE QUIET ROOM (PLAN-V131 §3): a backgrounded app must
+      // not pay a 2Hz style/layout bill for an indicator nobody can see
+      // (Chrome throttles the timer anyway — 1Hz, then 1/min after 5min
+      // — so the work landed in bursts for nothing). The tick keeps
+      // RUNNING — the clear branch above is how the timer dies, and
+      // stop/start races are the spaghetti this phase refuses — but the
+      // DOM work skips while document.hidden. The module visibilitychange
+      // listener runs ONE catch-up pass when the room lights.
+      if (document.hidden) return;
       // v0.35 ISOLATION: only render when THIS chat owns the live DOM. The
       // old `|| bodyEl` fallback resolved to the shared panel node and kept
       // a leaked "waiting on kimi-k3…" row ticking inside the foreground
