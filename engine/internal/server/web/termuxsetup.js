@@ -307,27 +307,37 @@
     '</div>';
   }
 
-  function readyHTML(status) {
-    // v1.28.3 THE DEVICE COMMANDS LIGHT: one honest line under the title —
-    // the Termux:API companion app is the device-commands unlock (battery,
-    // wifi, location, camera, notification, clipboard…). Installed → the
-    // capabilities read live; absent → the exact two-step unlock is taught
-    // (the app from F-Droid + pkg install termux-api). Older bridges never
-    // send api_installed → false → the locked line (which was true).
+  function readyHTML(status, stacked) {
+    // v1.28.3 THE DEVICE COMMANDS LIGHT → v1.33.3 THE SETTLED SETUP (the
+    // user's report: the completion screen carried a line that READ as an
+    // error — "I must download termux from f-droid and package install
+    // termux" — because "device commands locked — install the Termux:API
+    // app (F-Droid)…" sat under "⌨ Termux is ready" (a contradiction) and
+    // one line under setup step ① "Install Termux from F-Droid" it read
+    // as the SAME demand twice). The truth, told plainly: Termux:API is a
+    // SEPARATE companion app (not Termux itself) + a pkg — an OPTIONAL
+    // unlock for device commands. Termux itself is fully ready. The word
+    // "locked" dies (it carried the error weight); no warning tone.
     var apiLine;
     if (status && status.api_installed === true) {
       apiLine = '<span class="tsx-ready-api">device commands live — battery · wifi · ' +
         'location · camera · notification · clipboard (termux-api)</span>';
     } else {
-      apiLine = '<span class="tsx-ready-api">device commands locked — install the Termux:API ' +
-        'app (F-Droid) + pkg install termux-api to unlock battery · wifi · ' +
-        'location · camera · notification · clipboard</span>';
+      apiLine = '<span class="tsx-ready-api">optional — device commands (battery · wifi · location · ' +
+        'camera · notification · clipboard) need the Termux:API companion app — a separate ' +
+        'app from F-Droid — plus <span class="tsx-mono">pkg install termux-api</span> in Termux. ' +
+        'Termux itself is fully ready without it.</span>';
     }
+    // v1.33.3: the sub-line speaks the stacked truth when the auto-stack
+    // fired (the capabilities opener), and the stack-teaching line when it
+    // didn't (the workspace picker's device-folder opener has no chat).
+    var sub = stacked
+      ? '⌨ Termux is stacked on this chat — the shell, the exec, and the file hand are one tap away'
+      : 'a real Linux shell — stack ⌨ Termux on a chat from the capabilities library';
     return '<div class="tsx-ready" id="tsx-ready">' +
       '<div class="tsx-ready-card" role="status">' +
         '<span class="tsx-ready-title">⌨ Termux is ready</span>' +
-        '<span class="tsx-ready-sub">a real Linux shell — stack ⌨ Termux on this chat ' +
-          'from the capabilities library</span>' +
+        '<span class="tsx-ready-sub">' + sub + '</span>' +
         apiLine +
         '<button class="tsx-btn tsx-btn-done" id="tsx-btn-done" type="button" ' +
           'aria-label="close the setup screen">Done</button>' +
@@ -407,8 +417,19 @@
     var s = _stepStates(status);
     if (s.ready && !inst.ready) {
       inst.ready = true;
+      // v1.33.3 THE AUTO-STACK (the user's report: "it was switched off"
+      // after setup — read as a reset): the opener may pass opts.onReady —
+      // it fires ONCE at the ready transition (BEFORE the card renders, so
+      // the card can speak the stacked truth). Return true = the capability
+      // was stacked on this chat (the capabilities library's own persist
+      // path); false/absent = nothing stacked (the workspace picker's
+      // device-folder opener has no chat to stack on).
+      var stacked = false;
+      if (inst.opts && typeof inst.opts.onReady === 'function') {
+        try { stacked = !!inst.opts.onReady(status); } catch (e) { console.error(e); }
+      }
       if (!window.ConnectOverlay.isOpen()) return;
-      window.ConnectOverlay.replaceContent(readyHTML(status), {
+      window.ConnectOverlay.replaceContent(readyHTML(status, stacked), {
         onSwap: function () { wireReady(inst); },
         onClose: function () { kill(inst); }
       });
@@ -562,9 +583,19 @@
       // setup page was pushed over (PLAN-V117 §v1.17.3 "Exit → back to
       // the capability library") — the user's next move is stacking the
       // now-ready capability, one row away. A cold-open (nothing beneath
-      // this page) closes the overlay as before. The popped page's own
-      // teardown rides the interval's liveness watch (popPage fires no
-      // onClose) → onExit → the row's forced re-probe.
+      // this page) closes the overlay as before.
+      //
+      // v1.33.3 THE INSTANT RETURN (the report: "the termux option
+      // disappeared from capabilities — I had to exit and re-open"):
+      // the teardown used to ride the poll interval's liveness watch
+      // (popPage fires no onClose), so onExit — the caps row's refresh —
+      // fired up to a full POLL_MS after the pop, ON TOP of a forced
+      // ?refresh=1 bridge re-probe: seconds of row-less library. Done
+      // now kills the instance FIRST (onExit fires synchronously, the
+      // cached last status lands in the row's extras instantly — the
+      // wire() re-append paints it with the pop) and the background
+      // force probe keeps the readiness honest after.
+      kill(inst);
       if (window.ConnectOverlay.popPage && window.ConnectOverlay.popPage()) return;
       window.ConnectOverlay.close();
     });
@@ -655,7 +686,7 @@
         'font-size:calc(var(--ui-small-fs) - 1px);color:var(--text-1);' +
         'background:var(--surface-2);border:1px solid var(--border);border-radius:8px;' +
         'padding:6px 8px;margin-top:3px;word-break:break-all;white-space:normal;' +
-        'user-select:text;-webkit-user-select:text;cursor:pointer;overflow-wrap:anywhere}' +
+        'user-select:text;-webkit-user-select:text;cursor:pointer;overflow-wrap:anywhere}.tsx-mono{font-family:var(--mono,monospace);font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);overflow-wrap:anywhere}' +
       // v1.29.1: the paste-gesture hint under the bootstrap command
       '.tsx-hint{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
         'line-height:1.45;margin-top:4px;overflow-wrap:break-word}' +

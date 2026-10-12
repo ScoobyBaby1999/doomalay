@@ -243,12 +243,33 @@
 
   // openTermuxSetup — the v1.17.3 setup overlay (the "set up…" chip and
   // the unready row both land here). onExit fires when the setup page
-  // dies (close / back-pop) → force a fresh status probe so the row
-  // flips to its ready state the moment the bridge confirms it.
+  // dies (Done's synchronous kill / close / back-pop) — the last status
+  // lands in the row's extras INSTANTLY (v1.33.3: no POLL_MS wait, no
+  // probe round-trip before the row speaks) and the forced background
+  // probe keeps the readiness honest.
+  // onReady fires ONCE at the ready transition (v1.33.3 THE AUTO-STACK):
+  // ready + a live session + currently off → the capability stacks ON
+  // through the row's own persist path (the user's report: "it was
+  // switched off" after setup read as a reset — the setup's whole
+  // purpose IS stacking the capability for the chat that opened it).
   function openTermuxSetup(ctx, extras) {
     if (window.TermuxSetup && window.TermuxSetup.open) {
       window.TermuxSetup.open(ctx, {
-        onExit: function () { probeTermux(ctx, extras, true); }
+        onReady: function (status) {
+          var st = ctx && ctx.state;
+          if (!st || !st.sessionId || st.termux) return false;
+          st.termux = true;
+          if (extras.termux) extras.termux.on = true; // the cached row speaks the stacked truth instantly
+          persist(ctx);
+          return true;
+        },
+        onExit: function (lastStatus) {
+          if (lastStatus) {
+            var ts = termuxRowState(lastStatus, ctx.state);
+            if (ts) extras.termux = ts;
+          }
+          probeTermux(ctx, extras, true);
+        }
       });
     } else {
       toast('Termux needs setup first');
@@ -300,6 +321,19 @@
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tap(); }
       });
     });
+    // v1.33.3 THE VANISHING ROW, killed at the root (the user's report:
+    // "the termux option disappeared from capabilities — I had to exit
+    // and re-open"): the caps page rides the ConnectOverlay navStack as
+    // an html STRING captured at open — BEFORE the async termux probe
+    // appended the row — so every pop-back to the snapshot rendered a
+    // row-less library (the setup's Done pop, the back gesture). wire()
+    // runs on EVERY render of the page (the initial onSwap + every
+    // pop-back's onSwap) — it now re-appends the row synchronously from
+    // the CACHED extras.termux (no probe wait), and the background probe
+    // keeps the readiness honest. The row can never vanish again: any
+    // render of the caps page paints it the moment the probe has ever
+    // landed.
+    if (extras.termux) paintTermuxRow(ctx, extras);
   }
 
   // ── the Termux status probe (APK only — lazily, only when visible) ───
@@ -324,23 +358,30 @@
       if (!ts) return;
       extras.termux = ts;
       if (!window.ConnectOverlay.isOpen()) return;
-      var listEl = document.getElementById('cap-list');
-      if (!listEl) return;
-      var old = listEl.querySelector('[data-cap="termux"]');
-      if (old) old.parentNode.removeChild(old);
-      var holder = document.createElement('div');
-      holder.innerHTML = rowHTML(rowsFor(ctx.state, extras).filter(function (r) {
-        return r.key === 'termux';
-      })[0]);
-      listEl.appendChild(holder.firstChild);
-      var row = listEl.querySelector('[data-cap="termux"]');
-      if (!row) return;
-      var tap = function () { onTermuxTap(ctx, extras); };
-      row.addEventListener('click', tap);
-      row.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tap(); }
-      });
+      paintTermuxRow(ctx, extras);
     }).catch(function () { /* no bridge → no row */ });
+  }
+
+  // v1.33.3: the row append, extracted (wire()'s cached re-append + the
+  // probe's repaint ride the same idempotent path — an existing row is
+  // replaced in place, never duplicated).
+  function paintTermuxRow(ctx, extras) {
+    var listEl = document.getElementById('cap-list');
+    if (!listEl) return;
+    var old = listEl.querySelector('[data-cap="termux"]');
+    if (old) old.parentNode.removeChild(old);
+    var holder = document.createElement('div');
+    holder.innerHTML = rowHTML(rowsFor(ctx.state, extras).filter(function (r) {
+      return r.key === 'termux';
+    })[0]);
+    listEl.appendChild(holder.firstChild);
+    var row = listEl.querySelector('[data-cap="termux"]');
+    if (!row) return;
+    var tap = function () { onTermuxTap(ctx, extras); };
+    row.addEventListener('click', tap);
+    row.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tap(); }
+    });
   }
 
   // ── the bound-workspace count (the +workspace badge's own fetch) ─────
