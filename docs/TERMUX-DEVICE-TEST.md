@@ -251,3 +251,46 @@ burst)
      exec runs). "↺ reset everything" also clears it.
    - Note: the cap counts from the moment you arm it (unbound execs
      never fill the window).
+
+## v1.29.0 — THE MAXIMAL HAND additions (the long budget + the taught
+physics + the device-commands light)
+
+> The engine AND the Kotlin bridge changed this wave, so `min_engine`
+> walls the delta — **one v1.29.0 APK install carries everything**.
+
+1. **The 60-second timeout is dead** (the Doobie audit's report): ask
+   the bot to run something that takes 70–90 seconds without passing a
+   timeout — e.g. `exec 'sleep 75; echo done'` or a slow download
+   (`curl -o big …`). It now COMPLETES (the old build killed it at
+   60s with "TIMEOUT — Termux killed the command"). The default exec
+   budget is 10 minutes; the model can pass `timeout_ms` up to
+   30 minutes; anything longer should run as a background session
+   (session_start — no budget).
+2. **The honest timeout text**: force one with a tiny budget — ask for
+   `exec 'sleep 10'` with `timeout_ms: 2000`. The observation now says
+   "TIMEOUT — the 2s exec budget ended; the command may still be
+   running in Termux (pass timeout_ms up to 1800000, or session_start
+   it for unbounded)" + the partial output — the old text claimed
+   "Termux killed the command" (neither half was true).
+3. **The noexec law is taught (the discovery burn dies)**: ask the bot
+   to compile something (gcc or go) in the bound folder and run the
+   binary. The old build burned 4+ calls discovering the
+   Permission-denied physics; now the help/manifest/preamble teach it
+   up front — the bot goes straight to
+   `cp mybin $HOME/ && chmod 755 $HOME/mybin && $HOME/mybin` (shared
+   storage is FUSE noexec; $HOME is exec-capable).
+4. **The honest budgets in the help**: ask the bot to call the termux
+   `help` action — the exec line now reads "10 min default, 30 min max
+   via timeout_ms; longer jobs → session_start" and the pacing line
+   reads "UNBOUND by default; the user can arm an optional per-minute
+   burst cap in ✦ tweaks" (the old help claimed a 12/min cap that
+   hasn't been armed by default since v1.26.2).
+5. **The device-commands light**: open the Termux setup screen (or
+   re-run it from the capabilities row when unready) — once READY, the
+   card carries one more line:
+   - Termux:API companion app installed → "device commands live —
+     battery · wifi · location · camera · notification · clipboard
+     (termux-api)".
+   - Not installed (most devices) → "device commands locked — install
+     the Termux:API app (F-Droid) + pkg install termux-api to unlock
+     …" — the exact two-step unlock, taught where you land.
