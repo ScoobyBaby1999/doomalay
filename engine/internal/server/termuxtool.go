@@ -1174,10 +1174,14 @@ func termuxHelpText(roots []string) string {
         for _, root := range roots {
                 fmt.Fprintf(&sb, "- %s\n", root)
         }
-        sb.WriteString(`THE CAPABILITY IS THE WHOLE LINUX USERLAND: exec runs ANY command in $PATH — coreutils (ls, cat, cp, mv, head, tail, wc, sort, tr, cut…), findutils, grep/sed/awk, bash scripting, python, git, ssh, curl, tar, and EVERY command of EVERY package pkg installs (node, gcc, clang, rust, ffmpeg, imagemagick, sqlite… the new commands go live the moment the install finishes). The termux-api package adds the device commands (termux-battery-status, termux-wifi-connectioninfo, termux-notification, termux-clipboard-set…). Compile with gcc/clang, serve with python -m http.server as a session, pipe and redirect freely — the only refusals are the file/device/power-destroying class. Discover the live inventory any time with the cmds action (or exec 'command -v <name>').
+        sb.WriteString(`THE CAPABILITY IS THE WHOLE LINUX USERLAND: exec runs ANY command in $PATH — coreutils (ls, cat, cp, mv, head, tail, wc, sort, tr, cut…), findutils, grep/sed/awk, bash scripting, python, git, ssh, curl, tar, and EVERY command of EVERY package pkg installs (node, gcc, clang, rust, ffmpeg, imagemagick, sqlite… the new commands go live the moment the install finishes). The termux-api package + the Termux:API companion app (F-Droid) add the device commands (termux-battery-status, termux-wifi-connectioninfo, termux-location, termux-notification, termux-clipboard-set…) — cmds shows them once installed. Compile with gcc/clang, serve with python -m http.server as a session, pipe and redirect freely — the only refusals are the file/device/power-destroying class. Discover the live inventory any time with the cmds action (or exec 'command -v <name>').
+
+THE EXEC PHYSICS (Android's two real laws, so you never burn calls discovering them):
+- TIME: the exec budget is 10 minutes by default, 30 minutes max (pass timeout_ms up to 1800000); anything longer runs as a BACKGROUND session instead (session_start — no budget, tailable log, killable pid).
+- NOEXEC: shared storage (the bound folders, /storage/emulated/0) is FUSE-mounted noexec — a binary compiled there CANNOT execute. Copy it to $HOME (real storage, exec-capable) and set the bit first: cp mybin $HOME/ && chmod 755 $HOME/mybin && $HOME/mybin. File writes onto shared storage also land without the exec bit — same fix.
 
 Actions (one JSON object of arguments per tool call):
-  {"action":"exec","args":{"command":"python -V","timeout_ms":60000}}   run ANY shell command (workdir = the first bound folder; 60s default, 180s max; 12 per minute per chat)
+  {"action":"exec","args":{"command":"python -V","timeout_ms":600000}}   run ANY shell command (workdir = the first bound folder; 10 min default, 30 min max via timeout_ms; longer jobs → session_start)
   {"action":"cmds","args":{}}                 inventory EVERY available command (PATH, PREFIX, $PREFIX/bin — including all pkg-installed package commands)
   {"action":"ls","args":{"path":""}}           list a folder (dirs first, sizes, mtimes, hidden included)
   {"action":"read","args":{"path":"a.txt"}}    read a WHOLE file (binary files reported honestly)
@@ -1192,7 +1196,7 @@ Actions (one JSON object of arguments per tool call):
   {"action":"session_list","args":{}}         every session: name, pid, live/dead, log size, the ps line
   {"action":"session_log","args":{"name":"web","tail":200}}    the session's full log tail
   {"action":"session_kill","args":{"name":"web"}}   SIGTERM → 3s → SIGKILL, honestly reported
-Honesty caps: output is FULL everywhere — the only cap is Termux's own 100KB result bundle, reported when it hits. Commands that destroy files, devices or the system power state are refused (never executed).`)
+Honesty caps: output is FULL everywhere — the only cap is Termux's own 100KB result bundle, reported when it hits (the live stream bypasses it engine-side, tail + true total). exec pacing is UNBOUND by default; the user can arm an optional per-minute burst cap in ✦ tweaks → Termux. Commands that destroy files, devices or the system power state are refused (never executed).`)
         return sb.String()
 }
 

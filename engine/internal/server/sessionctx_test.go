@@ -175,8 +175,11 @@ func TestSessionContextPreambleTermuxArm(t *testing.T) {
         for _, pin := range []string{
                 "session_start {\"name\",\"command\"} launches a nohup'd process",
                 "session_list / session_log / session_kill watch and stop them",
-                "Termux's own 100KB result bundle is the only cap",
-                "exec runs up to 12 per minute per chat",
+                "Termux's own 100KB result bundle is the only hard cap",
+                "exec pacing is unbound unless the user arms a burst cap",
+                "10-minute budget by default, 30 min max via timeout_ms",
+                "shared storage is FUSE noexec",
+                "copy it to $HOME and chmod 755 first",
         } {
                 if !strings.Contains(out, pin) {
                         t.Fatalf("missing teach pin %q:\n%s", pin, out)

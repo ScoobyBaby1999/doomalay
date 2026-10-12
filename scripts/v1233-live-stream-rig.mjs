@@ -240,7 +240,7 @@ async function run() {
   await armSession('slow1');
   const tres = await mcpCall('slow1', 'termux', { action: 'exec', args: { command: 'echo partial-one; sleep 8', timeout_ms: 2000 } });
   const ttext = toolText(tres);
-  ok(/TIMEOUT — Termux killed the command at its 2s budget/.test(ttext), 'the TIMEOUT verdict', ttext.slice(0, 200));
+  ok(/TIMEOUT — the 2s exec budget ended; the command may still be running in Termux/.test(ttext), 'the TIMEOUT verdict (the v1.28.1 two-truth text)', ttext.slice(0, 200));
   ok(/partial-one/.test(ttext), 'the PARTIAL stdout rides (from the live stream)', ttext.slice(0, 300));
 
   console.log('S5 — THE HONEST EDGE:');

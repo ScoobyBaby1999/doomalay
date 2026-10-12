@@ -654,7 +654,8 @@ class TermuxBridgeServer(private val ctx: Context) {
 
     // POST /run — the generic jailed exec. Body: {"command":str,
     // "workdir":str?, "timeout_ms":int?, "stdin":str? (v1.20.2 — forwarded
-    // as RUN_COMMAND_STDIN)}. Default timeout 60s, hard cap 180s.
+    // as RUN_COMMAND_STDIN)}. Default timeout 10 min, hard cap 30 min
+    // (v1.28.1 THE LONG BUDGET).
     private fun handleRun(out: OutputStream, body: ByteArray) {
         val command: String
         var workdir: String? = null
@@ -819,8 +820,12 @@ class TermuxBridgeServer(private val ctx: Context) {
     }
 
     companion object {
-        private const val DEFAULT_RUN_TIMEOUT_MS = 60_000L
-        private const val MAX_RUN_TIMEOUT_MS = 180_000L
+        // v1.28.1 THE LONG BUDGET (the twin law — both sides match the
+        // engine's termuxtool.go): default 10 min (the Doobie audit's
+        // Go-module fetch died at the old 60s default), ceiling 30 min.
+        // The unbounded lane is the sessions' (session_start, no budget).
+        private const val DEFAULT_RUN_TIMEOUT_MS = 600_000L
+        private const val MAX_RUN_TIMEOUT_MS = 1_800_000L
         private const val MIN_RUN_TIMEOUT_MS = 1_000L
     }
 }
