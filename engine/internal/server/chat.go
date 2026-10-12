@@ -755,6 +755,12 @@ func (s *Server) libStateLine(sess *store.Session) string {
         if tpl {
                 state += "; the template auto-search pill is ON"
         }
+        // v1.29.6 THE PERSISTED SKILL: the loaded skill speaks — mechanical
+        // state visibility (the model knows its methodology is armed
+        // without re-loading it).
+        if lib && sess.SkillHead != "" && s.sessionLibOn(sess.ID) {
+                state += "; the skill " + sess.SkillName + " is loaded and armed for this chat's turns (its head rides every turn)"
+        }
         state += ". The user flips it at ✦ tweaks → Bot Library.]"
         return state
 }

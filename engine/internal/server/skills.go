@@ -44,6 +44,7 @@ package server
 
 import (
         "encoding/json"
+        "log"
         "net/http"
         "os"
         "path/filepath"
@@ -56,6 +57,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hfzero"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
 
 // Output caps — mirror the brain's dt_skills so both halves of the port
@@ -477,7 +479,21 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                 if err != nil {
                         return "", "read failed: " + err.Error()
                 }
-                text := "SKILL LOADED — " + e.Name + ". Follow this methodology now.\n\n" +
+                // v1.29.6 THE PERSISTED SKILL: the load PERSISTS the head on
+                // the session row — the methodology rides every turn from
+                // here on (buildHistoryCompacted injects it as a lead-in),
+                // so the follow-through survives the turn boundary. A new
+                // load replaces; the lib gate governs the injection.
+                if s.db != nil && session != "" {
+                        if sess, gerr := s.db.GetSession(session); gerr == nil && sess != nil {
+                                sess.SkillName = e.Name
+                                sess.SkillHead = llm.ClampMarked(stripFrontmatter(string(body)), 3000)
+                                if uerr := s.db.UpdateSession(sess); uerr != nil {
+                                        log.Printf("skill head persist: %v", uerr)
+                                }
+                        }
+                }
+                text := "SKILL LOADED — " + e.Name + ". Follow this methodology now — it stays armed for this chat's turns.\n\n" +
                         clip(stripFrontmatter(string(body)), skillsLoadMax, "\n…(body clipped — the skills tool with {\"action\":\"read\",\"skill\":\""+e.Name+"\",\"path\":\"SKILL.md\"} for the tail)")
                 return text, ""
         case "files":

@@ -327,6 +327,17 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
                 }
         }
         live := foldSlots(liveEvents, nil)
+        // v1.29.6 THE PERSISTED SKILL: the loaded skill's head rides as a
+        // lead-in (the CompactSummary pattern) while the lib gate is on —
+        // the model chose to load it; the persistence is state, so the
+        // follow-through survives every turn boundary. One lead-in per
+        // history; the compact note (if any) leads first.
+        if sess.SkillHead != "" && s.sessionLibOn(sess.ID) {
+                head := llm.ClampMarked(sess.SkillHead, 3000)
+                note := "[active skill: " + sess.SkillName + " — loaded by you for this work; follow it]\n" +
+                        head + "\n[end of skill head]"
+                msgs = append(msgs, llm.Message{Role: "user", Content: note})
+        }
         if window < 0 {
                 return append(msgs, slotsWindowed(live, -1)...) // -1 = the whole chat — no window (v0.28 mind slider)
         }
