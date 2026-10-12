@@ -93,6 +93,21 @@ func oauthDonePage(w http.ResponseWriter, provider, user, errMsg, backQuery stri
         w.Header().Set("Content-Type", "text/html; charset=utf-8")
         w.Header().Set("Cache-Control", "no-store")
         w.WriteHeader(http.StatusOK)
+        // v1.33.4 THE UNASKED RETURN (the user's report: "we can instead
+        // just close the panel automatically as the OAuth is over at that
+        // point anyways"): on the APK the flow's tail (this page) sat in
+        // the native panel sheet until manually closed. When the page is
+        // NOT a popup (window.opener null — the sheet/external-browser
+        // case; the popup path closes itself above) and the flow
+        // SUCCEEDED, fire the app's own deep link after a short beat:
+        // the panel sheet catches the scheme (dismiss + wakeSpa) and the
+        // app foregrounds — the flow ends itself, zero taps. ERROR pages
+        // never auto-return (the failure must be read). On desktop
+        // browsers the unknown scheme is a silent no-op.
+        autoReturn := ""
+        if ok {
+                autoReturn = "if (!window.opener) setTimeout(function(){ try { location.href = 'doomalay://return'; } catch (e) {} }, 1100);"
+        }
         _, _ = w.Write([]byte("<!doctype html><html><head><meta charset=\"utf-8\">" +
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
                 "<title>Doomalay — " + template.HTMLEscapeString(title) + "</title></head>" +
@@ -106,6 +121,7 @@ func oauthDonePage(w http.ResponseWriter, provider, user, errMsg, backQuery stri
                 // popup case. Standalone tabs ignore it, so the buttons above
                 // remain; no auto-redirect to / EVER (that was the bug).
                 "setTimeout(function(){ try { window.close(); } catch (e) {} }, 600);" +
+                autoReturn +
                 "})();</script>" +
                 "</body></html>"))
 }

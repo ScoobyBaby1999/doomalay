@@ -378,6 +378,13 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     @Volatile private var showing = false
     @Volatile private var liveUrl = ""
 
+    // v1.33.4 THE UNASKED RETURN: the origin this sheet was last OPENED
+    // at (open()'s url) — an OAuth flow that started here returns here
+    // (the provider's redirect to the engine's callback), and that
+    // homecoming must never trip the redirect guard ("asked to be
+    // redirected to 192.xx.xx…" — the user's report).
+    @Volatile private var rootOrigin: String = ""
+
     // drag tracking (the strip is the handle — 1:1 finger follow)
     private var dragStartY = 0f
     private var dragStartOffset = 0f
@@ -405,6 +412,9 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     fun open(url: String, optsJson: String) {
         if (editMode) exitEdit(restoreDock = false)   // v0.68.0: a fresh link — the typed draft is stale
         try { themeJson = JSONObject(optsJson) } catch (e: Exception) { themeJson = JSONObject() }
+        // v1.33.4: the flow's start origin is recorded BEFORE anything
+        // loads — the guard's homecoming exemption consults it.
+        rootOrigin = originOfUrl(url)
         // v0.87.1: the web-tab identity (opts.tab {id, icon, gradient}) —
         // the circle paints from it; a non-tab open (getkey links, plain
         // links) keeps the circle hidden.
@@ -918,11 +928,45 @@ class PanelBrowserSheet(private val activity: MainActivity) {
     // guardShouldAsk — TRUE when the move deserves the banner: a
     // different REGISTRABLE domain, not from a search engine, not the
     // one-shot accepted target, and not the sheet's own first load.
+    //
+    // v1.33.4 THE UNASKED RETURN (the user's report: "we get asked to be
+    // redirected to 192.xx.xx or whatever the port the app is running
+    // on" — mid-auth-flow): an OAuth callback to the ENGINE's origin is a
+    // HOMECOMING, not a third-party hop. Two exemptions answer it:
+    //   · the target host is loopback/private (127.0.0.1 · localhost ·
+    //     RFC1918 10/8, 172.16/12, 192.168/16) — the app's own engine or
+    //     the user's LAN engines, whatever port;
+    //   · the target's origin equals rootOrigin — the origin THIS sheet
+    //     was opened at (the flow's own start: a remote workspace engine,
+    //     a tunnel, a gateway) — a return to where the flow began.
+    // Third-party redirects elsewhere keep the guard exactly as specced.
+    private fun originOfUrl(u: String): String = try {
+        val uri = java.net.URI(u)
+        val port = if (uri.port > 0) ":${uri.port}" else ""
+        (uri.scheme ?: "http") + "://" + (uri.host ?: "") + port
+    } catch (e: Exception) { "" }
+
+    private fun isPrivateOrLoopbackHost(host: String): Boolean {
+        val h = host.lowercase().removePrefix("www.")
+        if (h.isEmpty()) return false
+        if (h == "localhost" || h == "::1" || h == "[::1]") return true
+        val parts = h.split('.').filter { it.isNotEmpty() }
+        if (parts.size == 4 && parts.all { p -> val v = p.toIntOrNull(); v != null && v in 0..255 }) {
+            if (parts[0] == "127") return true                                  // loopback
+            if (parts[0] == "10") return true                                   // 10/8
+            if (parts[0] == "192" && parts[1] == "168") return true             // 192.168/16
+            if (parts[0] == "172" && (parts[1].toIntOrNull() ?: -1) in 16..31) return true // 172.16/12
+        }
+        return false
+    }
+
     private fun guardShouldAsk(target: String): Boolean {
         if (guardAllow == target) return false
         val fromHost = hostOfUrl(liveUrl)
         val toHost = hostOfUrl(target)
         if (fromHost.isEmpty() || toHost.isEmpty()) return false
+        if (isPrivateOrLoopbackHost(toHost)) return false            // v1.33.4: the engine's own origins never ask
+        if (rootOrigin.isNotEmpty() && originOfUrl(target) == rootOrigin) return false // the flow's start origin
         if (registrableDomain(fromHost) == registrableDomain(toHost)) return false
         if (searchHosts.contains(registrableDomain(fromHost))) return false
         if (trustedHosts.contains(registrableDomain(toHost))) return false

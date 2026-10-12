@@ -283,6 +283,16 @@ class MainActivity : Activity() {
                 }
                 private fun handleUrl(url: String?): Boolean {
                     if (url == null) return false
+                    // v1.33.4 THE UNASKED RETURN: the app's own deep-link
+                    // scheme fired from the OAuth done page (the
+                    // auto-return when the flow is over) — the SPA is
+                    // right here and the app is already foreground, so
+                    // CONSUME it (return true — never hand our own scheme
+                    // to the browser routing below, never try to load it
+                    // as a page). The done page's wake arrives via the
+                    // visibilitychange refetch; the sheet catches the
+                    // scheme itself (dismiss + wakeSpa) on its own path.
+                    if (url.startsWith("doomalay://")) return true
                     if (url.startsWith("http://127.0.0.1:8080") || url.startsWith("about:")) return false
                     // v0.63.5: THE PANEL GETS THE LINK FIRST. The web UI's
                     // docked browser (browserdock.js) renders links as a
