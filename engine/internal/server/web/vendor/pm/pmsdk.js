@@ -180,19 +180,33 @@ var PM_LIB_PROTOCOL = PM_LIB_ACTIONS + '\n' + PM_LIB_DISCIPLINE;
 // user's report). The catch at the call site turned the crash into the
 // brief pill and the turn continued without the bootstrap. (Compare
 // _pmManifestCache below — always declared.)
-var _pmBootstrapCache = null;
+//
+// v1.33.5 THE ISOLATED MINDS: the cache is SESSION-KEYED. The engine's
+// bootstrap is session-gated (skills.go refuses when the session's lib
+// gate is OFF), but the cache served the FIRST PM chat's bootstrap to
+// EVERY other PM chat forever — cross-chat prompt-level bleed (one
+// chat's armed skill discipline riding another chat's turns). The map
+// keys by sessionId exactly as _pmManifestCache does; the TTL (60s)
+// rides the per-session entry so a fresh chat never inherits a stale
+// one.
+var _pmBootstrapCache = { entries: {}, ttlMs: 60000 };
 function fetchLibBootstrap(sessionId) {
-  if (_pmBootstrapCache) return Promise.resolve(_pmBootstrapCache);
+  var key = sessionId || '';
+  var ent = _pmBootstrapCache.entries[key];
+  var now = Date.now();
+  if (ent && ent.at && (now - ent.at) < _pmBootstrapCache.ttlMs && ent.result) {
+    return Promise.resolve(ent.result);
+  }
+  delete _pmBootstrapCache.entries[key];
   var u = '/api/tools/skills?action=bootstrap' + (sessionId ? '&session=' + encodeURIComponent(sessionId) : '');
   return fetch(u).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.result) {
-      _pmBootstrapCache = d.result;
+      _pmBootstrapCache.entries[key] = { result: d.result, at: Date.now() };
       return d.result;
     }
-    _pmBootstrapCache = null;
     throw new Error((d && d.error) || 'bootstrap unavailable');
   }).catch(function (e) {
-    _pmBootstrapCache = null;
+    delete _pmBootstrapCache.entries[key];
     throw e;
   });
 }

@@ -469,6 +469,17 @@
     syncSendButton(bodyEl, state);
     renderSendQueue(bodyEl, state, icon, panel);
     scheduleOpenFlush(bodyEl, state);
+    // v1.33.1 THE RETURNING MODEL (the user's report: "the model select pill
+    // goes away on a mature chat if the panel is closed and re-opened"):
+    // app.js HIDES #panel-model-btn on every open (the v0.14 per-open reset),
+    // and this restore path mirrors "the renderHost tail wiring (minus the
+    // rebuild)" — but the mirror skipped updateHeaderBtn (renderHost:1425's
+    // own line), so a stash-restored chat kept the button hidden forever: no
+    // model label, no way to change models mid-chat. The mirror completes —
+    // the pill returns with the stash. (The change itself was always safe:
+    // v0.37 stops the running turn first, the PATCH persists, and the event
+    // log is model-agnostic — memory and continuity untouched.)
+    updateHeaderBtn(state, icon, bodyEl, panel);
 
     // the WS: re-point the callbacks (the closures reference the restored
     // nodes) + revive a client that died while backgrounded — the gap
@@ -2914,7 +2925,7 @@
       if (!streamMsg) {
         streamMsg = { role: 'assistant', text: '', complete: false, streaming: true, ts: Date.now() };
         state.messages.push(streamMsg);
-        appendMessage(msgContainer, scrollEl, streamMsg, bodyEl, icon);
+        appendMessage(msgContainer, scrollEl, streamMsg, bodyEl, icon, state); // v1.33.5: ownerState — the WS twin's isolation law
       }
       return streamMsg;
     };
@@ -2993,7 +3004,7 @@
           return persist('error', errText).then(function () {
             var epm = { role: 'error', text: errText };
             state.messages.push(epm);
-            appendMessage(msgContainer, scrollEl, epm, bodyEl, icon);
+            appendMessage(msgContainer, scrollEl, epm, bodyEl, icon, state); // v1.33.5: ownerState
             syncSendButton(bodyEl, state); // v0.42: the failed turn → retry affordance
             return persist('status', JSON.stringify({ state: 'error', usage: usage || null }));
           });
@@ -3041,7 +3052,7 @@
         if (!last || last.role !== 'thinking') {
           last = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now(), ts: Date.now() };
           state.messages.push(last);
-          appendMessage(msgContainer, scrollEl, last, bodyEl, icon);
+          appendMessage(msgContainer, scrollEl, last, bodyEl, icon, state); // v1.33.5: ownerState — the blank-reasoning-box leak dies
         }
         last.text += t;
         scheduleUpdate(bodyEl, last, false, state);
@@ -3112,7 +3123,7 @@
           });
           var pmSrc = { role: 'sources', sources: srcs, ts: Date.now() };
           state.messages.push(pmSrc);
-          appendMessage(msgContainer, scrollEl, pmSrc, bodyEl, icon);
+          appendMessage(msgContainer, scrollEl, pmSrc, bodyEl, icon, state); // v1.33.5: ownerState
           persist('sources', JSON.stringify(srcs));
         }
         // v1.23.2 THE ONE PILL (the PM twin): the use half mints the
@@ -3129,7 +3140,7 @@
               JSON.stringify({ name: ev.name, summary: '', text: ev.result || '' }), merged);
             if (ev.artifact && ev.artifact.name) {
               state.messages.push({ role: 'artifact', artifact: ev.artifact });
-              appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
+              appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon, state); // v1.33.5: ownerState
               refreshArtifactCount(state, bodyEl);
               if (!state._toolArtifactNames) state._toolArtifactNames = {};
               state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
@@ -3140,7 +3151,7 @@
         var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev, ts: Date.now() };
         if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev, ts: Date.now() };
         state.messages.push(chip);
-        appendMessage(msgContainer, scrollEl, chip, bodyEl, icon);
+        appendMessage(msgContainer, scrollEl, chip, bodyEl, icon, state); // v1.33.5: ownerState — a backgrounded PM turn's tool pills never land in the foreground chat
         // v1.23.2: the RAW args persist with the use (the replay derives
         // the same label — the derived-program head survives reloads).
         persist(chip.result ? 'tool_result' : 'tool_use',
@@ -3148,7 +3159,7 @@
         // v0.22: file tools saved a binary — card + refresh the drawer count
         if (ev.artifact && ev.artifact.name) {
           state.messages.push({ role: 'artifact', artifact: ev.artifact });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon);
+          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon, state); // v1.33.5: ownerState
           refreshArtifactCount(state, bodyEl);
           // v0.26: remember tool-saved names — the model sometimes ALSO
           // writes an artifact block for the same file (the double-
@@ -6043,10 +6054,54 @@
   // verbs that are not exec/pkg (the plan's exact table; a session_*
   // verb folds to 'session' at the use site).
   var TERMUX_ACTION_TITLES = {
-    write: 'file_write', append: 'file_write', read: 'file_read',
+    // v1.33.2 THE HONEST TAILS (the user's law: "show read X"): the file
+    // verbs speak the plain verb — 'read notes.txt', 'write main.go' —
+    // the X (the path's tail) rides the body. v1.24.5's 'file_read'/
+    // 'file_write' family names die; the listing/search verbs keep
+    // themselves exactly as shipped.
+    write: 'write', append: 'append', read: 'read',
     ls: 'ls', rm: 'rm', mkdir: 'mkdir', grep: 'grep', find: 'find',
     cmds: 'cmds', help: 'help'
   };
+  // v1.33.2 THE HONEST TAILS — the tail law (pure, no lists): the last
+  // non-empty segment after / or \ ("display the tail up to the last \ —
+  // for a full path we only get the last bit of text after the last
+  // slash"), clamped at 40 so a mangled pill can never blow the chip.
+  // '' on empty — callers keep their fallback body (never a blank pill).
+  function pathTail(s) {
+    var v = String(s == null ? '' : s).trim();
+    if (!v) return '';
+    var segs = v.split(/[\/\\]+/);
+    for (var i = segs.length - 1; i >= 0; i--) {
+      if (segs[i]) return segs[i].length > 40 ? segs[i].slice(0, 40) : segs[i];
+    }
+    return '';
+  }
+  // v1.33.2 — the generic args parser for EVERY tool family (the
+  // termuxArgsOf law generalized: the payload's args may be an object,
+  // a JSON string, or carry the manifest's nested args form — the
+  // engine runner has tolerated all three since v1.20.3). Returns the
+  // parsed flat args object or null.
+  function toolArgsOf(payload) {
+    if (!payload) return null;
+    var a = payload.args;
+    if (a === undefined || a === null) return null;
+    if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { return null; } }
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+    var inner = a.args;
+    if (typeof inner === 'string') {
+      var s2 = inner.trim();
+      inner = null;
+      if (s2) { try { inner = JSON.parse(s2); } catch (e) { inner = null; } }
+    }
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      var m = {};
+      for (var ik in inner) m[ik] = inner[ik];
+      for (var fk in a) { if (fk !== 'args' && m[fk] === undefined) m[fk] = a[fk]; }
+      return m;
+    }
+    return a;
+  }
   function toolPillLabelParts(msg) {
     var p = (msg && msg.payload) || {};
     var label = '', tail = '', title = '', body = '';
@@ -6105,19 +6160,68 @@
       label = String(p.summary || p.name || (msg && msg.text) || 'tool');
       if (tx && tx.action) {
         // v1.24.5 THE PILL TITLE: the non-exec/pkg termux verbs speak
-        // their HONEST one-word title — write/append → file_write, read
-        // → file_read, ls/rm/mkdir/grep/find/cmds/help → themselves,
-        // session_* → session. The label law is UNCHANGED (the old
-        // else-branch shape above); the body carries the path/pattern.
+        // their HONEST one-word title; session_* → session. The label
+        // law is UNCHANGED (the old else-branch shape above).
         title = TERMUX_ACTION_TITLES[tx.action] ||
           (tx.action.indexOf('session_') === 0 ? 'session' : tx.action);
         body = String(p.summary || (tx.inner && (tx.inner.path ||
           tx.inner.pattern || tx.inner.name)) || '');
+        // v1.33.2 THE HONEST TAILS: the file verbs carry the PATH TAIL as
+        // the body — the collapsed pill reads "read notes.txt", "write
+        // main.go", "ls src" (the user's law: the X is the last segment
+        // after the last slash). The search verbs keep their PATTERN as
+        // the X (what you grep for, not where); the full path rides the
+        // expanded truth rows unchanged.
+        var inn = tx.inner || {};
+        if (inn.path && (tx.action === 'read' || tx.action === 'write' ||
+                         tx.action === 'append' || tx.action === 'ls' ||
+                         tx.action === 'rm' || tx.action === 'mkdir')) {
+          var tX = pathTail(inn.path);
+          if (tX) body = tX;
+        }
+        if ((tx.action === 'grep' || tx.action === 'find') && inn.pattern) {
+          body = String(inn.pattern).slice(0, 40);
+        }
       } else {
         // v1.24.5: every other tool → title = the tool's own name
         // (web_search, hublib, workspace…), body = the summary/query.
         title = String(p.name || 'tool');
         body = String(p.summary || (msg && msg.text) || '');
+        // v1.33.2 THE HONEST TAILS (the user's law: "skills load X",
+        // "templates, personas, ext — X derived dynamically"): the
+        // library/persona/workspace families speak their verb + the
+        // tail of the name/path/id they actually act on. Purely derived
+        // off the parsed args — no lists; an empty X keeps the fallback
+        // body (never a blank pill); unknown families keep the
+        // v1.24.5 law byte-identical.
+        var ga = toolArgsOf(p);
+        if (ga) {
+          var fam = String(p.name || ''), act = String(ga.action || '');
+          var xOf = function (v) { var t = pathTail(v); return t; };
+          if (fam === 'skills') {
+            if (act === 'load') { title = 'skills load'; var sX = xOf(ga.skill); if (sX) body = sX; }
+            else if (act === 'read') { title = 'skills read'; var rX = xOf(ga.path || ga.skill); if (rX) body = rX; }
+            else if (act === 'search') { title = 'skills search'; if (ga.q) body = String(ga.q).slice(0, 40); }
+            else if (act === 'files') { title = 'skills files'; var fX = xOf(ga.skill); if (fX) body = fX; }
+            else if (act) { title = 'skills ' + act.slice(0, 12); }
+          } else if (fam === 'template_show') {
+            title = 'template'; var t2 = xOf(ga.id); if (t2) body = t2;
+          } else if (fam === 'persona_set') {
+            title = 'persona'; var p2 = xOf(ga.from || ga.name || ga.id); if (p2) body = p2;
+          } else if (fam === 'persona_activate') {
+            title = 'persona'; var p3 = xOf(ga.id); if (p3) body = p3;
+          } else if (fam === 'hublib') {
+            if (act === 'download') { title = 'hublib download'; var h1 = xOf(ga.id || ga.repo); if (h1) body = h1; }
+            else if (act === 'download_bundle') { title = 'hublib bundle'; var h2 = xOf(ga.id); if (h2) body = h2; }
+            else if (act === 'search') { title = 'hublib search'; if (ga.q) body = String(ga.q).slice(0, 40); }
+            else if (act === 'get') { title = 'hublib'; var h3 = xOf(ga.id || ga.repo); if (h3) body = h3; }
+            else if (act) { title = 'hublib ' + act.slice(0, 12); }
+          } else if (fam === 'workspace') {
+            if (act === 'read' || act === 'put' || act === 'tree' || act === 'ls') {
+              title = act; var w1 = xOf(ga.path); if (w1) body = w1;
+            } else if (act === 'readme') { title = 'readme'; var w2 = xOf(ga.ws); if (w2) body = w2; }
+          }
+        }
       }
     }
     return { label: label, tail: tail, title: title, body: body };
@@ -6144,7 +6248,15 @@
     return null;
   }
   // refreshToolRow repaints one tool pill in place (data-mi → the row).
+  // v1.33.5 THE ISOLATED MINDS: the row lives in the chat that OWNS the
+  // live DOM — a backgrounded turn's merge (the PM path reaches here with
+  // the SHARED bodyEl while another chat is on screen) must never resolve
+  // #chat-messages off the foreground body and replace a FOREIGN row
+  // (data-mi collisions repaint another chat's pill). Owner-gated: the
+  // data merges into state.messages (the truth); the owner's next render
+  // paints it — the WS path's own law.
   function refreshToolRow(bodyEl, state, mi) {
+    if (!state || !isOwner(state)) return; // v1.33.5: only the DOM's owner repaints
     var container = bodyEl && bodyEl.querySelector('#chat-messages');
     if (!container || !state || mi === undefined || mi < 0 || mi >= state.messages.length) return;
     var row = container.querySelector('.tool-pill[data-mi="' + mi + '"]');
@@ -7413,6 +7525,9 @@
       // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
+      // v1.33.2 THE HONEST TAILS seams (scripts/v1340-ownership-rig.cjs)
+      pathTail: pathTail,
+      toolArgsOf: toolArgsOf,
       toolQueryText: toolQueryText,
       mergeToolResult: mergeToolResult,
       // v1.23.4 THE POLISH seam (scripts/v1234-polish-rig.cjs)

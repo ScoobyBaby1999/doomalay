@@ -133,28 +133,30 @@ eq('the transcript pkg shape (packages ARRAY) → install cowsay',
 eq('pkg with several packages joins them',
   L({ name: 'termux', args: { action: 'pkg', args: { packages: ['cowsay', 'jq'] } } }).body,
   'install cowsay jq');
-eq('the transcript ls shape (inner string) → the path body',
+eq('the transcript ls shape (inner string) → the path TAIL body (v1.33.2 re-pin)',
   L({ name: 'termux', args: { action: 'ls', args: '{"path": "/storage/emulated/0/Documents"}' } }).body,
-  '/storage/emulated/0/Documents');
+  'Documents');
 
 // pkg: title 'pkg', body 'install <name>' (the plan's exact shape)
 eq('pkg verb → title pkg, body "install numpy"',
   L({ name: 'termux', args: { action: 'pkg', args: { name: 'numpy' } } }),
   { label: 'pkg install numpy', tail: '', title: 'pkg', body: 'install numpy' });
 
-// the file verbs: write/append → file_write, read → file_read
-eq('write → title file_write, body the path',
+// the file verbs — RE-PINNED v1.33.2 THE HONEST TAILS (the user's law:
+// "show read X" — the verb + the path's TAIL after the last slash;
+// v1.24.5's 'file_read'/'file_write' family names are dead by spec)
+eq('write → title write, body the path TAIL',
   L({ name: 'termux', args: { action: 'write', args: { path: '/home/x/notes.md', content: 'hi' } }, summary: '/home/x/notes.md' }),
-  { label: '/home/x/notes.md', tail: '', title: 'file_write', body: '/home/x/notes.md' });
-eq('append → title file_write too',
+  { label: '/home/x/notes.md', tail: '', title: 'write', body: 'notes.md' });
+eq('append → title append',
   L({ name: 'termux', args: { action: 'append', args: { path: '/home/x/log.md' } }, summary: '/home/x/log.md' }).title,
-  'file_write');
-eq('read → title file_read, body the path',
+  'append');
+eq('read → title read',
   L({ name: 'termux', args: { action: 'read', args: { path: '/home/x/a.txt' } }, summary: '/home/x/a.txt' }).title,
-  'file_read');
-eq('read without a summary → body from the inner path',
+  'read');
+eq('read without a summary → body from the inner path TAIL',
   L({ name: 'termux', args: { action: 'read', args: { path: '/home/x/a.txt' } } }).body,
-  '/home/x/a.txt');
+  'a.txt');
 
 // the listing verbs speak themselves
 eq('ls verb → title ls',
@@ -195,9 +197,9 @@ eq('workspace no summary → title workspace, body empty',
 eq('a standalone result → title the tool name, body the text',
   P.toolPillLabelParts({ result: true, text: 'EXEC DONE (0)', payload: { name: 'termux', text: 'EXEC DONE (0)' } }),
   { label: 'EXEC DONE (0)', tail: '', title: 'termux', body: 'EXEC DONE (0)' });
-eq('a standalone result with args speaks the verb title',
+eq('a standalone result with args speaks the verb title (v1.33.2 re-pin)',
   P.toolPillLabelParts({ result: true, text: 'ok', payload: { name: 'termux', text: 'ok', args: { action: 'write', args: { path: '/x' } } } }).title,
-  'file_write');
+  'write');
 
 // garbage honesty: never a crash, never a generic 'exec'
 eq('empty exec → honest empty title',
