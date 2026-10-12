@@ -51,6 +51,10 @@
     renders: 0, renderMsWorst: 0, renderMsLast: 0,
     lastRenders: 0, renderRate: 0,
     fmtCount: 0, fmtMsWorst: 0,
+    // v1.32.1 THE OFF-THREAD TAIL (PLAN-V133 §1): the worker formatter's
+    // own ledger — submit→apply latency, and how many stale applies the
+    // latest-wins law dropped.
+    fmtwCount: 0, fmtwMsWorst: 0, fmtwDrops: 0,
     wsEvents: 0
   };
   window.DoomalayPerf = P;
@@ -72,6 +76,11 @@
     if (kind === 'fmt') {
       P.fmtCount++;
       if (ms > P.fmtMsWorst) P.fmtMsWorst = ms;
+    } else if (kind === 'fmtw') {
+      // v1.32.1: the worker tail's submit→apply round-trip (the async
+      // pipeline's honest latency — parse off-thread + the hop)
+      P.fmtwCount++;
+      if (ms > P.fmtwMsWorst) P.fmtwMsWorst = ms;
     } else {
       P.renders++; P.renderMsLast = ms;
       if (ms > P.renderMsWorst) P.renderMsWorst = ms;
@@ -86,6 +95,7 @@
   }
   function bump(kind) {
     if (kind === 'ws') P.wsEvents++;
+    else if (kind === 'fmtwDrops') P.fmtwDrops++;   // v1.32.1: latest-wins drops
   }
 
   // ── the long-task observer (always on — the jank ledger) ──────────
@@ -242,6 +252,7 @@
       row('pf-batches', 'Paint batches', 'buckets → fills per frame') +
       row('pf-render', 'Render ledger', 'message renders · worst') +   // v1.30.4
       row('pf-fmt', 'Formatter', 'renders · worst ms') +               // v1.30.4
+      row('pf-fmtw', 'Formatter worker', 'tail renders · worst ms · drops') +   // v1.32.1
       row('pf-ws', 'Wire events', 'ws messages lifetime') +            // v1.30.4
       row('pf-nodes', 'DOM nodes', '') +
       row('pf-layers', 'Est. layers', 'icons + promoted chrome') +
@@ -321,6 +332,7 @@
     // worst-latency numbers are lifetime (the value-change gate holds).
     set('pf-render', (P.renderRate || 0) + '/s · worst ' + Math.round(P.renderMsWorst) + 'ms');
     set('pf-fmt', (P.fmtCount || 0) + ' · worst ' + Math.round(P.fmtMsWorst) + 'ms');
+    set('pf-fmtw', (P.fmtwCount || 0) + ' · worst ' + Math.round(P.fmtwMsWorst) + 'ms · ' + (P.fmtwDrops || 0) + ' drops');   // v1.32.1
     set('pf-ws', String(P.wsEvents || 0));
     set('pf-nodes', P.nodes || '—');
     set('pf-layers', (P.layers || '—') + ' est.');

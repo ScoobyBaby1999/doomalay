@@ -290,7 +290,148 @@
       if (PH) PH.ledger('fmt', t0);
     }
   }
+
+  // ── v1.32.1 THE OFF-THREAD TAIL — the worker formatter (PLAN-V133 §1) ──
+  // THE DOMPURIFY DECISION, on the record: DOMPurify is DOM-only (upstream
+  // issue #577) — a worker run would need a linkedom/jsdom shim, a new
+  // vendored dependency inside the security-critical component. So the
+  // split is by TRUST and COST: the WORKER runs the expensive STRING half
+  // (artifact extraction + fence collapse + marked.parse — marked is
+  // officially worker-safe); MAIN keeps the cheap TRUST half —
+  // DOMPurify.sanitize → innerHTML → postProcess. The worker returns RAW
+  // marked HTML at exactly today's pre-sanitize trust level, and the ONLY
+  // place it becomes DOM is applyRendered(), which sanitizes first. ALWAYS.
+  //
+  // ELIGIBILITY: only the per-tick repeated parses (streaming full/thinking
+  // renders — the no-tier render and the two-tier TAIL). Stable chunks
+  // (streaming:false), final renders, user and plain modes keep the sync
+  // pipeline byte-identical to pre-v1.32.1 behavior.
+  //
+  // LATEST-WINS: one monotonic job id per container (WeakMap). An apply
+  // whose id is no longer the container's newest is DROPPED (counted on
+  // the fmtw ledger row). A worker's messages arrive in postMessage order,
+  // so per-container applies stay FIFO; latest-wins only kills the case
+  // that matters — a newer call superseded the job before its apply ran.
+  //
+  // FALLBACK: no Worker (rig/VM shapes), a spawn throw, a dead port, or a
+  // worker-level error → fmtw.failed = true → the sync path (the exact
+  // pre-wave behavior) for every later call. Three ok:false job results
+  // (a broken worker protocol) trip the same honest fallback.
+  var fmtw = {
+    w: null, failed: false, seq: 0, errs: 0,
+    latest: (typeof WeakMap === 'function') ? new WeakMap() : null,
+    inflight: {}            // id → {el, opts, text, t0} — bounded by in-flight jobs
+  };
+  function fmtwEnsure() {
+    if (fmtw.w || fmtw.failed) return fmtw.w;
+    try {
+      fmtw.w = new Worker('/formatter.worker.js');
+      fmtw.w.onmessage = fmtwOnMessage;
+      fmtw.w.onerror = function () {
+        fmtw.failed = true;
+        try { fmtw.w.terminate(); } catch (e) {}
+        fmtw.w = null;
+      };
+    } catch (e) {
+      fmtw.failed = true;
+      fmtw.w = null;
+    }
+    return fmtw.w;
+  }
+  function fmtwEligible(opts) {
+    return !!(fmtw.latest && opts && opts.streaming &&
+      (opts.mode === 'full' || opts.mode === 'thinking'));
+  }
+  function fmtwSubmit(el, text, opts) {
+    var w = fmtwEnsure();
+    if (!w) {
+      renderIntoSync(el, text, opts);
+      return { el: el, artifacts: [], async: false };
+    }
+    var id = ++fmtw.seq;
+    fmtw.latest.set(el, id);
+    var PH = window.PerfHUD;
+    var t0 = PH ? PH.markStart('fmtw') : 0;
+    fmtw.inflight[id] = { el: el, opts: opts, text: text, t0: t0 };
+    try {
+      w.postMessage({ id: id, mode: opts.mode || 'full', text: text, streaming: !!opts.streaming });
+    } catch (e) {
+      // a dead port (teardown race) — this call finishes sync
+      delete fmtw.inflight[id];
+      if (PH) PH.ledger('fmtw', t0);
+      renderIntoSync(el, text, opts);
+      return { el: el, artifacts: [], async: false };
+    }
+    return { el: el, artifacts: [], async: true };
+  }
+  function fmtwOnMessage(ev) {
+    var res = ev.data || {};
+    var job = fmtw.inflight[res.id];
+    delete fmtw.inflight[res.id];
+    if (!job) return;                       // unknown/stale id — nothing to own
+    var PH = window.PerfHUD;
+    if (PH) PH.ledger('fmtw', job.t0);      // the submit→apply round-trip
+    if (!res.ok) {
+      // the worker refused the job — this call finishes sync; a broken
+      // protocol (three failures) retires the worker for good
+      if (++fmtw.errs >= 3) fmtw.failed = true;
+      renderIntoSync(job.el, job.text, job.opts);
+      return;
+    }
+    if (fmtw.latest.get(job.el) !== res.id) {
+      if (PH) PH.bump('fmtwDrops');
+      return;
+    }
+    applyRendered(job.el, res.html, res.artifacts || [], job.opts);
+  }
+
+  // The DOM half — the ONLY place any rendered html becomes DOM, and it
+  // sanitizes first (THE SANITIZE LAW: worker output and sync output pass
+  // the same gate). The exact pre-wave DOM sequence, byte-for-byte.
+  function applyRendered(el, html, artifacts, opts) {
+    opts = opts || {};
+    var mode = opts.mode || 'full';
+
+    el.innerHTML = sanitize(html);
+
+    // Streaming cursor (appended INSIDE the scope div)
+    if (opts.streaming && mode !== 'plain') {
+      var scope = el.querySelector('.fmt');
+      if (scope) {
+        var cur = document.createElement('span');
+        cur.className = 'fmt-cursor';
+        scope.appendChild(cur);
+      }
+    }
+
+    // thinking stats line (elapsed + chars — the creative extra)
+    if (mode === 'thinking' && opts.thinkingMeta) {
+      var tm = opts.thinkingMeta;
+      var stats = document.createElement('div');
+      stats.className = 'fmt-th-stats';
+      stats.textContent = '✻ reasoning · ' + (tm.elapsed || 0) + 's · ' +
+        (tm.chars != null ? humanChars(tm.chars) : '');
+      el.insertBefore(stats, el.firstChild);
+    }
+
+    postProcess(el, artifacts, opts);
+    // v0.22 PERF: only the FINAL render pays for Prism + full code layout.
+    if (opts.streaming) {
+      collapseLongCode(el);
+    }
+  }
+
+  // the router: eligible streaming renders go to the worker; everything
+  // else keeps the sync pipeline.
   function renderIntoMeasured(el, text, opts) {
+    opts = opts || {};
+    if (fmtwEligible(opts)) return fmtwSubmit(el, String(text == null ? '' : text), opts);
+    return renderIntoSync(el, text, opts);
+  }
+
+  // the sync pipeline — the pre-v1.32.1 renderIntoMeasured body, unchanged
+  // in behavior; the string half inline, the DOM half via applyRendered.
+  function renderIntoSync(el, text, opts) {
     opts = opts || {};
     var mode = opts.mode || 'full';
     text = String(text == null ? '' : text);
@@ -331,33 +472,7 @@
       html = '<div class="' + scopeClass + '">' + body + '</div>';
     }
 
-    el.innerHTML = sanitize(html);
-
-    // Streaming cursor (appended INSIDE the scope div)
-    if (opts.streaming && mode !== 'plain') {
-      var scope = el.querySelector('.fmt');
-      if (scope) {
-        var cur = document.createElement('span');
-        cur.className = 'fmt-cursor';
-        scope.appendChild(cur);
-      }
-    }
-
-    // thinking stats line (elapsed + chars — the creative extra)
-    if (mode === 'thinking' && opts.thinkingMeta) {
-      var tm = opts.thinkingMeta;
-      var stats = document.createElement('div');
-      stats.className = 'fmt-th-stats';
-      stats.textContent = '✻ reasoning · ' + (tm.elapsed || 0) + 's · ' +
-        (tm.chars != null ? humanChars(tm.chars) : '');
-      el.insertBefore(stats, el.firstChild);
-    }
-
-    postProcess(el, artifacts, opts);
-    // v0.22 PERF: only the FINAL render pays for Prism + full code layout.
-    if (opts.streaming) {
-      collapseLongCode(el);
-    }
+    applyRendered(el, html, artifacts, opts);
     return { el: el, artifacts: artifacts };
   }
 
@@ -844,7 +959,13 @@
     currentScheme: function () { return currentScheme; },
     copyText: copyText,
     extractArtifacts: extractArtifacts,
-    esc: esc
+    esc: esc,
+    // v1.32.1: the off-thread tail's introspection (the rigs read it; it
+    // answers 'is the worker path live, and how much work is in flight')
+    __fmtw: function () {
+      return { failed: fmtw.failed, spawned: !!fmtw.w, seq: fmtw.seq,
+               inflight: Object.keys(fmtw.inflight).length };
+    }
   };
   // v0.28: media zoom overlay (formatter-internal, but exposed so the
   // artifacts editor / anywhere else can reuse it).
