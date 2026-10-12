@@ -156,6 +156,16 @@
         // v0.44: tag the connect-time backlog burst (_replay) BEFORE the
         // panel sees it — see the header comment.
         self._tagReplay(ev);
+        // v1.29.4 THE STEADY RESUME: the engine announces the backlog's
+        // end EXPLICITLY (ws_state replay_done, no seq — never persisted).
+        // The 1200ms quiet-gap heuristic below stays as the fallback for
+        // older engines; the marker is the deterministic truth — a resume
+        // that lands straight into a fast live stream (reasoning deltas
+        // <1200ms apart) used to keep the tag on its LIVE deltas forever
+        // (no re-arm, tool_stream dropped — the frozen reasoning box).
+        if (ev && ev.type === 'ws_state' && ev.state === 'replay_done') {
+          self._stopReplayTag();
+        }
         // v0.39: track the seq cursor + turn activity for the ladder.
         if (ev && typeof ev.seq === 'number' && ev.seq > self.lastSeq) {
           self.lastSeq = ev.seq;
