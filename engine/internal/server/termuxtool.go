@@ -438,11 +438,16 @@ func (s *Server) termuxRunOne(ctx context.Context, command, workdir string, time
         return res, ""
 }
 
-// termuxTimeoutObs — the bridge's own timeout killed the script: the
-// honest partial-output report.
+// termuxTimeoutObs — the budget ended before the command did: the
+// honest two-truth report. v1.28.1: the old text claimed "Termux killed
+// the command" — neither half was true (the budget is OURS, and nothing
+// is killed: the Kotlin timeout only stops WAITING; the Termux-side
+// process may still be running — the stream-recovery law exists exactly
+// for that). The new text says both truths and teaches the ladder
+// (timeout_ms up to the ceiling; session_start for the unbounded class).
 func termuxTimeoutObs(res *termuxbridge.RunResult, timeoutMS int) string {
         var sb strings.Builder
-        fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — Termux killed the command at its %ds budget", timeoutMS/1000)
+        fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
         if res != nil && res.Stdout != "" {
                 sb.WriteString("; partial stdout:\n" + res.Stdout)
         }
@@ -554,20 +559,23 @@ func termuxMaybeTrunc(res *termuxbridge.RunResult, text string) string {
 func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(string) string, args map[string]any, roots []string) string {
         command := get("command")
         if command == "" {
-                return "OBSERVATION:\nerror: exec needs {\"action\":\"exec\",\"args\":{\"command\":\"…\",\"timeout_ms\":60000}} — the shell command to run in the first bound folder (" + roots[0] + ")"
+                return "OBSERVATION:\nerror: exec needs {\"action\":\"exec\",\"args\":{\"command\":\"…\",\"timeout_ms\":600000}} — the shell command to run in the first bound folder (" + roots[0] + ")"
         }
         if why := termuxBlocklistHit(command); why != "" {
                 // NEVER executed — the blocklist class is reported honestly.
                 return "OBSERVATION:\nREFUSED — the command looks like " + why +
                         ". The termux exec blocklist (the shell-jail law) never runs the file-destroying / device-destroying / system-power class. Rephrase without the destructive operation; a command inside the bound folders stays yours to run."
         }
-        // timeout: default 60s, the bridge's own 180s hard cap.
-        timeoutMS := 60000
+        // timeout: v1.28.1 THE LONG BUDGET (the Doobie audit's ask — the
+        // 60s default killed a live Go-module fetch): default 10 min,
+        // the bridge's own 30 min ceiling; unbounded jobs are the session
+        // lane's (session_start, no budget).
+        timeoutMS := 600000
         if v, ok := args["timeout_ms"].(float64); ok && v > 0 {
                 timeoutMS = int(v)
         }
-        if timeoutMS > 180000 {
-                timeoutMS = 180000
+        if timeoutMS > 1800000 {
+                timeoutMS = 1800000
         }
         // the pacing gate (per-SESSION rolling window — a refused exec never
         // consumes the window; the cap verdict tells the model exactly what
@@ -975,7 +983,9 @@ func (s *Server) termuxVerbPkg(ctx context.Context, sessionID string, get func(s
         case "remove":
                 pkgCmd = "pkg uninstall -y " + strings.Join(pkgs, " ")
         }
-        return s.termuxRunStreaming(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 180000)
+        // v1.28.1: 10 min (the audit's 38MB golang took 37s; a slow-network
+        // toolchain needs the headroom — the output streams live either way).
+        return s.termuxRunStreaming(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 600000)
 }
 
 // ── background-process sessions ─────────────────────────────────────────

@@ -82,7 +82,7 @@ func newFakeArmBridge(t *testing.T) *fakeArmBridge {
                 }
                 command, _ := body["command"].(string)
                 workdir, _ := body["workdir"].(string)
-                timeoutMS := 60000
+                timeoutMS := 600000
                 if v, ok := body["timeout_ms"].(float64); ok && v > 0 {
                         timeoutMS = int(v)
                 }
@@ -318,39 +318,40 @@ func TestV1203_Exec_Echo(t *testing.T) {
                 t.Fatalf("honest failure report, got:\n%s", out)
         }
 
-        // the timeout_ms the bridge received: default 60000
+        // the timeout_ms the bridge received: v1.28.1 default 600000 (10 min)
         fb.mu.Lock()
         lastTimeout := fb.lastTimeout
         fb.mu.Unlock()
-        if lastTimeout != 60000 {
-                t.Fatalf("default timeout must be 60s, got %v", lastTimeout)
+        if lastTimeout != 600000 {
+                t.Fatalf("default timeout must be 600s (v1.28.1 THE LONG BUDGET), got %v", lastTimeout)
         }
 }
 
 // The timeout cap: a huge timeout_ms is clamped to the bridge's own
-// 180s ceiling.
+// 30-minute ceiling (v1.28.1).
 func TestV1203_Exec_TimeoutClamp(t *testing.T) {
         fb := newFakeArmBridge(t)
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "clamp", root)
-        tool(s, "clamp", "exec", `{"command":"true","timeout_ms":999999}`)
+        tool(s, "clamp", "exec", `{"command":"true","timeout_ms":9999999}`)
         fb.mu.Lock()
         lastTimeout := fb.lastTimeout
         fb.mu.Unlock()
-        if lastTimeout != 180000 {
-                t.Fatalf("timeout_ms must clamp at 180000, got %v", lastTimeout)
+        if lastTimeout != 1800000 {
+                t.Fatalf("timeout_ms must clamp at 1800000, got %v", lastTimeout)
         }
 }
 
-// The bridge's own timeout → the honest TIMEOUT observation.
+// The bridge's own timeout → the honest TIMEOUT observation (v1.28.1:
+// the two-truth text — the budget ended, the command may still run).
 func TestV1203_Exec_Timeout_Honest(t *testing.T) {
         fb := newFakeArmBridge(t)
         s := newArmServer(t, fb)
         root := t.TempDir()
         armTermuxChat(t, s, "slow", root)
         out := tool(s, "slow", "exec", `{"command":"echo partial; sleep 5","timeout_ms":1000}`)
-        if !strings.Contains(out, "TIMEOUT — Termux killed the command at its 1s budget") {
+        if !strings.Contains(out, "TIMEOUT — the 1s exec budget ended; the command may still be running in Termux") {
                 t.Fatalf("timeout observation, got:\n%s", out)
         }
         if !strings.Contains(out, "partial") {
