@@ -288,12 +288,28 @@
     '</div>';
   }
 
-  function readyHTML() {
+  function readyHTML(status) {
+    // v1.28.3 THE DEVICE COMMANDS LIGHT: one honest line under the title —
+    // the Termux:API companion app is the device-commands unlock (battery,
+    // wifi, location, camera, notification, clipboard…). Installed → the
+    // capabilities read live; absent → the exact two-step unlock is taught
+    // (the app from F-Droid + pkg install termux-api). Older bridges never
+    // send api_installed → false → the locked line (which was true).
+    var apiLine;
+    if (status && status.api_installed === true) {
+      apiLine = '<span class="tsx-ready-api">device commands live — battery · wifi · ' +
+        'location · camera · notification · clipboard (termux-api)</span>';
+    } else {
+      apiLine = '<span class="tsx-ready-api">device commands locked — install the Termux:API ' +
+        'app (F-Droid) + pkg install termux-api to unlock battery · wifi · ' +
+        'location · camera · notification · clipboard</span>';
+    }
     return '<div class="tsx-ready" id="tsx-ready">' +
       '<div class="tsx-ready-card" role="status">' +
         '<span class="tsx-ready-title">⌨ Termux is ready</span>' +
         '<span class="tsx-ready-sub">a real Linux shell — stack ⌨ Termux on this chat ' +
           'from the capabilities library</span>' +
+        apiLine +
         '<button class="tsx-btn tsx-btn-done" id="tsx-btn-done" type="button" ' +
           'aria-label="close the setup screen">Done</button>' +
       '</div>' +
@@ -373,7 +389,7 @@
     if (s.ready && !inst.ready) {
       inst.ready = true;
       if (!window.ConnectOverlay.isOpen()) return;
-      window.ConnectOverlay.replaceContent(readyHTML(), {
+      window.ConnectOverlay.replaceContent(readyHTML(status), {
         onSwap: function () { wireReady(inst); },
         onClose: function () { kill(inst); }
       });
@@ -617,6 +633,11 @@
         'border:1px solid rgba(var(--accent-rgb),0.55);background:rgba(var(--accent-rgb),0.08)}' +
       '.tsx-ready-title{font-weight:700;font-size:calc(var(--ui-fs) + 1px);color:var(--accent)}' +
       '.tsx-ready-sub{font-size:var(--ui-small-fs);color:var(--text-3);line-height:1.5}' +
+      // v1.28.3: the device-commands line — the legal surfaces only (the
+      // file's own theme-vars law), the content carries the live/locked state.
+      '.tsx-ready-api{font-size:var(--ui-small-fs);color:var(--text-2);line-height:1.5;' +
+        'text-align:center;padding:8px 10px;border-radius:10px;' +
+        'background:var(--surface-1);border:1px solid var(--surface-2);max-width:100%}' +
       '.tsx-btn-done{margin-top:6px;padding:9px 22px;color:var(--on-accent);' +
         'background:var(--accent);border:1px solid var(--accent)}';
 

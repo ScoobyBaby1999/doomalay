@@ -61,6 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object TermuxBridge {
     private const val TERMUX_PACKAGE = "com.termux"
+    private const val TERMUX_API_PACKAGE = "com.termux.api" // v1.28.3: the device-commands companion app
     private const val TERMUX_RUN_COMMAND_SERVICE = "com.termux.app.RunCommandService"
     private const val PERM_RUN_COMMAND = "com.termux.permission.RUN_COMMAND"
     private const val RUN_COMMAND_INTENT = "com.termux.RUN_COMMAND"
@@ -135,6 +136,25 @@ object TermuxBridge {
     // ── The honest-state ladder ─────────────────────────────────────────
 
     fun isInstalled(ctx: Context): Boolean = packageInfo(ctx) != null
+
+    // v1.28.3 THE DEVICE COMMANDS LIGHT: is the Termux:API companion app
+    // installed? The device commands (termux-battery-status, termux-location,
+    // termux-notification, termux-clipboard-set…) need BOTH this app and
+    // `pkg install termux-api` — the /status field tells the setup card
+    // and the help whether the unlock is one install away. Additive: older
+    // bridges never send it, the engine decodes false (the honest old flow).
+    fun isApiInstalled(ctx: Context): Boolean = try {
+        val pm = ctx.packageManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(TERMUX_API_PACKAGE, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(TERMUX_API_PACKAGE, 0)
+        }
+        true
+    } catch (_: Exception) {
+        false // absent or broken — honest false, never a crash
+    }
 
     // 0 when Termux is not installed (the setup UI treats 0 as "unknown").
     fun versionCode(ctx: Context): Long {
@@ -571,6 +591,7 @@ class TermuxBridgeServer(private val ctx: Context) {
     private fun statusJson(): String {
         val o = JSONObject()
         o.put("installed", TermuxBridge.isInstalled(ctx))
+        o.put("api_installed", TermuxBridge.isApiInstalled(ctx))
         o.put("version_code", TermuxBridge.versionCode(ctx))
         o.put("version_name", TermuxBridge.versionName(ctx) ?: JSONObject.NULL)
         o.put("permission", TermuxBridge.isPermissionGranted(ctx))

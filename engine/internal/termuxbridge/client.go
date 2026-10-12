@@ -72,9 +72,11 @@ func NewClient(baseURL string) *Client {
 // fields are additive: an older Kotlin bridge that predates THE QUIET GATE
 // simply does not send them, and they decode to their zero values (empty
 // URL, false flags, 0 timestamp) — the honest old-flow state, never an
-// error.
+// error. v1.28.3: api_installed follows the same additive law (an old
+// bridge → false — the device commands read as locked, which was true).
 type Status struct {
         Installed      bool   `json:"installed"`
+        APIInstalled   bool   `json:"api_installed"`
         VersionCode    int64  `json:"version_code"`
         VersionName    string `json:"version_name"`
         Permission     bool   `json:"permission"`
