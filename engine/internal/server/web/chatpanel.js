@@ -113,7 +113,41 @@
   // anymore. panel.close() dispatches 'doomalay:panel-closed'; clearing
   // currentCtx here means a still-streaming background chat's closures
   // can't paint into the hidden panel (they flip to data-only mode).
+  // v1.29.1 THE STASHED CHAT: the live #chat-root is captured into the
+  // chat's state BEFORE ownership drops — a re-open of the SAME chat
+  // restores the DOM untouched instead of re-rendering the whole convo
+  // (the user's law: "re-renders the chat history instead of having it
+  // cached = turn gets interrupted. This is very bad."). Detached nodes
+  // keep their listeners and children; state._miEls (mi→el cache) stays
+  // VALID because the same nodes re-attach. One fragment per state, an
+  // LRU of 3 stashed chats (memory discipline).
+  var domStashLRU = [];
+  function stashChatDOM() {
+    try {
+      if (!currentCtx || !currentCtx.state || !currentCtx.bodyEl) return;
+      var bodyEl = currentCtx.bodyEl, st = currentCtx.state;
+      var root = bodyEl.querySelector('#chat-root');
+      if (!root || !root.parentNode || root.parentNode !== bodyEl) return; // a stacked view owns the body — no stash (full render on reopen)
+      var frag = document.createDocumentFragment();
+      frag.appendChild(root); // detaches; listeners + the tree survive
+      st._domStash = frag;
+      st._stashLen = st.messages.length;
+      st._stashScroll = null;
+      var sc = frag.querySelector('#chat-scroll');
+      if (sc) st._stashScroll = sc.scrollTop;
+      st._stashAt = Date.now();
+      var idx = domStashLRU.indexOf(st.id);
+      if (idx >= 0) domStashLRU.splice(idx, 1);
+      domStashLRU.push(st.id);
+      while (domStashLRU.length > 3) {
+        var oldId = domStashLRU.shift();
+        var oldSt = chatStates[oldId];
+        if (oldSt && oldSt !== st) { oldSt._domStash = null; oldSt._stashLen = 0; }
+      }
+    } catch (e) { /* the stash is an optimization — never fatal */ }
+  }
   document.addEventListener('doomalay:panel-closed', function () {
+    stashChatDOM();
     currentCtx = null;
   });
 
@@ -340,7 +374,154 @@
   // ── Render entry: build the host layout + delegate to the ChatType ──
   function render(bodyEl, icon, panel) {
     var state = getOrCreateState(icon.id, icon._sessionData, icon);
+    // v1.29.1 THE STASHED CHAT: a chat re-opened after a panel close
+    // restores its live DOM from the stash — the convo never re-renders,
+    // the in-flight turn keeps its elements, and the delta that landed
+    // while closed appends cheaply. Falls back to renderHost on any
+    // shape change (gate flip, transcript restructure, huge growth).
+    if (restoreStashedChat(bodyEl, icon, state, panel)) return;
     renderHost(bodyEl, icon, state, panel);
+  }
+
+  // v1.29.1 THE STASHED CHAT — the restore half. TRUE = the panel now
+  // shows the stashed tree (renderHost skipped). The wiring mirrors the
+  // renderHost tail (the WS re-point + revive, the send button, the
+  // queue, the open flush) but skips the entire innerHTML rebuild: the
+  // stashed nodes keep their listeners, their formatting, and the
+  // mi→el cache (state._miEls — the SAME nodes re-attach, so it stays
+  // valid; renderHost nulls it because ITS wipe invalidates it).
+  function restoreStashedChat(bodyEl, icon, state, panel) {
+    var frag = state && state._domStash;
+    if (!frag || !frag.querySelector) { if (state) state._domStash = null; return false; }
+    var root = null;
+    try { root = frag.querySelector('#chat-root'); } catch (e) { root = null; }
+    if (!root) { state._domStash = null; return false; }
+
+    // the transcript may only have GROWN while closed — a masked or
+    // restructured transcript (retry/edit paths) falls back to the full
+    // render, and a >300-message burst makes the delta append cost more
+    // than a fresh tail render anyway.
+    if (typeof state._stashLen !== 'number' ||
+        state.messages.length < state._stashLen ||
+        state.messages.length - state._stashLen > 300) {
+      state._domStash = null; return false;
+    }
+
+    var type = window.ChatTypes.get(state.sandbox || 'quick');
+    // the gate may not have flipped while closed — the stash's shape
+    // (gatelock view vs #chat-live) must match the live fulfillment.
+    var liveInStash = !!frag.querySelector('#chat-live');
+    var completeNow = false;
+    try { completeNow = type.isFulfilled(state); } catch (e) { completeNow = false; }
+    if (liveInStash !== !!completeNow) { state._domStash = null; return false; }
+    if (completeNow) state.fulfilled = true;
+
+    // a chat switch without a close: the OUTGOING chat's live formatted
+    // DOM dies at the re-attach below — salvage it first (the renderHost
+    // head does the same before its wipe).
+    if (currentCtx && currentCtx.state && currentCtx.bodyEl === bodyEl &&
+        currentCtx.state !== state) {
+      salvageFormatted(bodyEl, currentCtx.state);
+    }
+    // also salvage THIS state's residue (a same-chat re-render left it)
+    if (currentCtx && currentCtx.state === state) salvageFormatted(bodyEl, state);
+
+    // clear any residue and re-attach the stashed tree — the ONE DOM
+    // write of the whole path (no innerHTML parse, no re-format).
+    while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+    bodyEl.appendChild(frag);
+    state._domStash = null; // consumed — one restore per stash
+
+    var scrollEl = bodyEl.querySelector('#chat-scroll');
+    var msgContainer = bodyEl.querySelector('#chat-messages');
+    currentCtx = { bodyEl: bodyEl, icon: icon, state: state, panel: panel, type: type };
+    var ctx = buildCtx(bodyEl, icon, state, panel, type);
+    currentCtx.ctx = ctx;
+    if (scrollEl) ctx.scrollEl = scrollEl;
+
+    // the delta: messages that landed while the chat was closed ran in
+    // data-only mode (no DOM) — append them now, in order, onto the
+    // restored container. appendMessage clears the greeting/starters on
+    // the first real row, exactly like the live path.
+    var stashLen = state._stashLen;
+    if (msgContainer) {
+      for (var i = stashLen; i < state.messages.length; i++) {
+        appendMessage(msgContainer, null, state.messages[i], bodyEl, icon, state);
+      }
+    }
+
+    // scroll: back where the user left off (a stash of the same length);
+    // new content while closed lands at the bottom (the reading law).
+    if (scrollEl) {
+      if (state._stashScroll != null && state.messages.length === stashLen) {
+        scrollEl.scrollTop = state._stashScroll;
+      } else if (state.messages.length > stashLen) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      } else {
+        restoreChatScroll(scrollEl, state);
+      }
+    }
+    state._stashLen = 0; state._stashScroll = null;
+
+    // the renderHost tail wiring (minus the rebuild): meters, button,
+    // queue, the open flush.
+    refreshHeaderMeters(bodyEl, state);
+    syncSendButton(bodyEl, state);
+    renderSendQueue(bodyEl, state, icon, panel);
+    scheduleOpenFlush(bodyEl, state);
+
+    // the WS: re-point the callbacks (the closures reference the restored
+    // nodes) + revive a client that died while backgrounded — the gap
+    // replay then resolves the turn's truth (THE UNBROKEN TURN, v1.29.2).
+    state._bgDrop = null; // consumed: the revive + gap replay own the verdict now
+    if (state.client) {
+      state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, icon, panel); };
+      wireClientClose(bodyEl, state, msgContainer);
+      reviveClient(state);
+    } else if (!state._wsBinding) {
+      state._wsBinding = bindEngineSession(icon, state, function () {
+        state._wsBinding = null;
+        refreshHeaderMeters(bodyEl, state);
+        if (window.ChatTweaks) window.ChatTweaks.attach(state);
+        if (state.sessionId) {
+          window.Artifacts.setSession(state.sessionId, { name: icon.name });
+          refreshArtifactCount(state, bodyEl);
+          connectWS(bodyEl, state, msgContainer);
+        } else {
+          ensureSession(icon, state, function () {
+            if (state.sessionId) window.Artifacts.setSession(state.sessionId, { name: icon.name });
+            refreshArtifactCount(state, bodyEl);
+            if (bodyEl.querySelector('#chat-input')) connectWS(bodyEl, state, msgContainer);
+          });
+        }
+      });
+    }
+
+    // a turn still streaming while the panel was closed: the activity
+    // watchdog's interval kept ticking data-only — ownership is live
+    // again, its next 500ms tick repaints the row; re-arm it if the
+    // interval was somehow lost (the never-silent law).
+    if (state.isStreaming) ensureActivityWatch(bodyEl, state);
+
+    // labels may land async (the catalog fetch): exactly ONE post-labels
+    // full re-render, same law as renderHost (rare — cached after the
+    // first load; the honest fallback when header labels are missing).
+    if (!H.hasLabels()) {
+      H.ensureCatalog().then(function () {
+        if (bodyEl.isConnected && !state._labelsDone && currentCtx &&
+            currentCtx.state === state) {
+          if (panel && typeof panel.viewDepth === 'function' && panel.viewDepth() > 0) {
+            state._labelsPending = true;
+            return;
+          }
+          state._labelsDone = true;
+          renderHost(bodyEl, icon, state, panel);
+        }
+      });
+    } else {
+      state._labelsDone = true;
+    }
+    return true;
   }
 
   // v0.34 PER-CHAT SCROLL MEMORY (user spec): "each chatbot must remember
@@ -987,6 +1168,8 @@
 
   function renderHost(bodyEl, icon, state, panel) {
     state._miEls = null; // v1.15.3: the DOM wipe below invalidates the mi→el cache
+    state._domStash = null; // v1.29.1: a full render SUPERSEDES any stash — the fresh tree is the truth
+    state._stashLen = 0;
     var type = window.ChatTypes.get(state.sandbox || 'quick');
     // v0.83.4: capture the OUTGOING ctx before the overwrite — bodyEl
     // still holds its formatted DOM until the innerHTML wipe below
@@ -4175,6 +4358,20 @@
   function wireClientClose(bodyEl, state, msgContainer) {
     state.client.onClose = function () {
       if (!state.isStreaming) return;
+      // v1.29.2 THE UNBROKEN TURN: a drop while the chat is BACKGROUNDED
+      // (the panel is closed — currentCtx is null, or another chat owns
+      // the live DOM) never declares the turn dead. The engine NEVER kills
+      // a turn on socket loss (chat.go: the event log keeps filling) — the
+      // old code flipped isStreaming + parked the queue + wrote an error
+      // the user only saw at reopen, while the engine was STILL RUNNING
+      // the turn: the exact "panel closes, re-opens, turn gets
+      // interrupted" defect. The turn stays armed; the reopen's revive +
+      // gap replay resolves the truth (terminal → honest end; deltas →
+      // the turn keeps streaming into the restored DOM).
+      if (!isOwner(state)) {
+        state._bgDrop = Date.now();
+        return;
+      }
       state.isStreaming = false;
       state._actText = null;
       // v0.44 (CAUSE #2): the turn died without its engine echo ever
@@ -5126,7 +5323,13 @@
         // LIVE turn end. 'error' parks the queue (something is broken);
         // replayed idles were filtered by wasStreaming above; a user stop
         // parked it via _holdQueue at tap time.
-        if (ev.state === 'idle' && wasStreaming) flushSendQueue(bodyEl, state);
+        // v1.29.2: `!ev._replay` — a REPLAYED idle (the turn honestly ended
+        // while the panel was closed; the gap replay delivers its terminal
+        // at reopen) parks the flush for scheduleOpenFlush's post-quiet
+        // window instead of firing it mid-replay-burst (the interleaved
+        // send could hit the engine's busy-reject and persist a terminal
+        // error INTO the live transcript — the interrupt's second face).
+        if (ev.state === 'idle' && wasStreaming && !ev._replay) flushSendQueue(bodyEl, state);
       } else if (ev.state === 'running' && (ev.text || ev.message)) {
         // v0.23: running-state messages ("network hiccup — retry 1/2",
         // research stages) now feed the activity indicator instead of
@@ -5811,6 +6014,31 @@
     }
     return { action: String(a.action || ''), inner: folded };
   }
+
+  // v1.29.3 THE HONEST QUERY: the readable query text for a tool payload —
+  // the overlay's query box and the inline pill detail both derive through
+  // here. The termux tool's args ride the manifest's double-encoded string
+  // inner (v1.26.1's law) or a flat object; the derivation prints the
+  // action + the PARSED inner as pretty JSON. Other tools with object args
+  // print pretty JSON. String args return null (the callers' string paths
+  // keep the existing pretty-print). This kills "[object Object]" — the old
+  // qHtml stringified the args OBJECT bare because its pretty branch only
+  // fired for strings.
+  function toolQueryText(pay) {
+    if (!pay || typeof pay !== 'object') return null;
+    var a = pay.args;
+    if (a === undefined || a === null || a === '') return null;
+    var tx = (pay.name === 'termux') ? termuxArgsOf(pay) : null;
+    if (tx) {
+      var obj = { action: tx.action };
+      if (tx.inner) obj.args = tx.inner;
+      try { return JSON.stringify(obj, null, 2); } catch (e) { return null; }
+    }
+    if (typeof a === 'object') {
+      try { return JSON.stringify(a, null, 2); } catch (e) { return String(a); }
+    }
+    return null; // a string arg rides the callers' own string path
+  }
   // v1.24.5 THE PILL TITLE — the honest one-word titles for the termux
   // verbs that are not exec/pkg (the plan's exact table; a session_*
   // verb folds to 'session' at the use site).
@@ -5937,10 +6165,17 @@
     if (p.name) html += '<div class="tool-pill-row"><span class="tool-pill-k">tool</span><span>' + esc(p.name) + '</span></div>';
     var qTxt = '';
     if (p.args) {
-      // the args ride as a JSON string (the engine events) or a parsed
-      // object (the PM loop) — either way the query shows pretty JSON.
-      qTxt = typeof p.args === 'object' ? JSON.stringify(p.args, null, 2) : String(p.args);
-      if (typeof p.args !== 'object') { try { qTxt = JSON.stringify(JSON.parse(qTxt), null, 2); } catch (e) {} }
+      // v1.29.3 THE HONEST QUERY: termux args ride the manifest's
+      // double-encoded string inner — derive the READABLE query (the
+      // action + the parsed inner) instead of the raw escaped JSON the
+      // old path printed; other tools keep the pretty-JSON shape.
+      qTxt = toolQueryText(p) || '';
+      if (!qTxt) {
+        // the args ride as a JSON string (the engine events) or a parsed
+        // object (the PM loop) — either way the query shows pretty JSON.
+        qTxt = typeof p.args === 'object' ? JSON.stringify(p.args, null, 2) : String(p.args);
+        if (typeof p.args !== 'object') { try { qTxt = JSON.stringify(JSON.parse(qTxt), null, 2); } catch (e) {} }
+      }
     } else if (p.query) {
       qTxt = String(p.query);
     } else if (p.summary) {
@@ -6037,7 +6272,11 @@
     // v1.23.2 THE ONE PILL: the merged vessel carries the args AND the
     // result on ONE payload — the borrow walk below stays only for the
     // legacy standalone result pills (a result-only event with no use).
-    var query = pay.args || pay.query || '';
+    // v1.29.3 THE HONEST QUERY: termux's object args (the double-encoded
+    // string inner) derive through toolQueryText — the old
+    // `pay.args || pay.query` handed qHtml a raw OBJECT and its
+    // string-only pretty branch printed "[object Object]".
+    var query = toolQueryText(pay) || pay.args || pay.query || '';
     if (!query) {
       for (var i = mi - 1; i >= 0; i--) {
         var m = st.messages[i];
@@ -6045,7 +6284,7 @@
         if (m.result) break;
         var p2 = m.payload || {};
         if ((p2.name || '') === name && (p2.args || p2.query || p2.summary)) {
-          query = p2.args || p2.query || p2.summary;
+          query = toolQueryText(p2) || p2.args || p2.query || p2.summary;
           break;
         }
       }
@@ -6068,7 +6307,12 @@
     function qHtml(q) {
       if (!q) return '';
       var pretty = q;
-      if (typeof q === 'string' && q.charAt(0) === '{') {
+      // v1.29.3: objects print pretty JSON — the string-only branch was
+      // the "[object Object]" hole (the termux object args fell through
+      // to String(pretty)).
+      if (typeof q === 'object') {
+        try { pretty = JSON.stringify(q, null, 2); } catch (e) { pretty = String(q); }
+      } else if (typeof q === 'string' && q.charAt(0) === '{') {
         try { pretty = JSON.stringify(JSON.parse(q), null, 2); } catch (e) {}
       }
       return '<div class="tv-sec tv-sec-q"><div class="tv-k">query</div>' +
@@ -7120,6 +7364,10 @@
     },
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },
+    // v1.29.1 THE STASHED CHAT: exposed for the rigs + the E2E walk —
+    // stash/restore are the panel-lifecycle pair the tests drive directly.
+    stashChatDOM: stashChatDOM,
+    restoreStashedChat: restoreStashedChat,
     // v0.97 C3: jump-to-event / find paths call this before querying a
     // row — a not-yet-backfilled head flushes synchronously so the row
     // exists to scroll to.
@@ -7165,6 +7413,7 @@
       // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
+      toolQueryText: toolQueryText,
       mergeToolResult: mergeToolResult,
       // v1.23.4 THE POLISH seam (scripts/v1234-polish-rig.cjs)
       tvSubFor: tvSubFor,

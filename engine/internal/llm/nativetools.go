@@ -232,6 +232,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         contentSeen := false
         think := ""
         nudged := false
+        proceeds := 0 // v1.29.4 THE PROCEED: bounded at 2 — the third announcement IS the answer
         // v0.95.4: the repeat-call cache (see the twin in the ReAct loop).
         seenCalls := map[string]string{}
 
@@ -263,6 +264,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 var usage *Usage
                 var calls []nativeCall
                 roundHadContent := false // v0.93.3: per-round prose flag (contentSeen is turn-wide)
+                roundText := ""          // v1.29.4 THE PROCEED: the round's visible prose (tail-kept for intent matching)
                 err := netPauseLadder(ctx, ch, roundReq.Provider, func() (bool, error) {
                         emitted := false
                         u, c, e := scanSSECollect(ctx, roundReq, extra, ch, func(reasoning, content string) {
@@ -277,6 +279,10 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 if content != "" {
                                         contentSeen = true
                                         roundHadContent = true
+                                        roundText += content // v1.29.4: the proceed reads the announcement
+                                        if len(roundText) > 1600 {
+                                                roundText = roundText[len(roundText)-900:]
+                                        }
                                         ch <- ChatChunk{Type: "assistant_delta", Text: content}
                                 }
                         })
@@ -312,6 +318,30 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens)
                 }
                 if len(calls) == 0 {
+                        // v1.29.4 THE PROCEED (revived v0.24 design — dead
+                        // since v1.13.3 THE GUT): a round that ANNOUNCES a plan
+                        // ("Let me read the code regions…", "I will now check the
+                        // timers") with no tool calls used to END THE TURN — the
+                        // announcement became the final answer and the user had
+                        // to push ("Continue, sorry for the interrupt" — the
+                        // Doobie transcript's exact shape). The loop now appends
+                        // the announcement + ONE mechanical proceed instruction
+                        // and continues — the model executes instead of waiting.
+                        // Bounded at 2 proceeds per turn (the third announcement
+                        // IS the answer); thinking stays ON (this is not the
+                        // silent shape); tools must be armed (nothing to execute
+                        // otherwise — the nudge would be noise).
+                        if contentSeen && roundHadContent && proceeds < maxProceeds && len(specs) > 0 && shouldProceed(roundText) {
+                                proceeds++
+                                obs.EmitS(ctx, obs.Notice, "round", round, "text", "intent-only reply — proceed round armed")
+                                ch <- ChatChunk{Type: "progress", Text: "the plan is announced — proceeding to execution…"}
+                                if strings.TrimSpace(roundText) != "" {
+                                        history = append(history, Message{Role: "assistant", Content: roundText})
+                                }
+                                history = append(history, Message{Role: "user",
+                                        Content: "(proceed — execute the announced plan with your tools now)"})
+                                continue
+                        }
                         // v0.82.3 THE ANSWER-FORCE NET: a silent round (no calls,
                         // no visible content this whole turn) is NOT a final
                         // answer — it's the reasoning-without-reply shape.
@@ -423,7 +453,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                         Role:       "tool",
                                         ToolCallID: c.ID,
                                         Name:       c.Function.Name,
-                                        Content:    clamp(strings.TrimPrefix(c.SkipText, "OBSERVATION:\n"), 24000),
+                                        Content:    ClampMarked(strings.TrimPrefix(c.SkipText, "OBSERVATION:\n"), 24000), // v1.29.4: the honest marker
                                 })
                                 continue
                         }
@@ -467,7 +497,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 Role:       "tool",
                                 ToolCallID: c.ID,
                                 Name:       c.Function.Name,
-                                Content:    clamp(obsText, 24000),
+                                Content:    ClampMarked(obsText, 24000), // v1.29.4: the honest marker
                         })
                 }
         }

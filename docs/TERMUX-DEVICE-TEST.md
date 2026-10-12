@@ -294,3 +294,42 @@ physics + the device-commands light)
    - Not installed (most devices) → "device commands locked — install
      the Termux:API app (F-Droid) + pkg install termux-api to unlock
      …" — the exact two-step unlock, taught where you land.
+
+---
+
+## v1.30.0 THE CONTINUOUS MIND — the 6-walk device checklist
+
+The wave's law: the chat never re-renders, the turn never interrupts,
+the bot remembers what its hands read, and the GitHub hand is real.
+
+1. **The stashed chat (the snappy re-render dies)**: open a chat, send a
+   message that runs a termux exec, and CLOSE the panel mid-turn (drag
+   down past the close threshold). Re-open the same chat — the
+   conversation appears INSTANTLY (no re-render flash, the scroll returns
+   where you left it), the in-flight turn keeps streaming into the same
+   tree, and NO "Connection dropped — Tap Retry" bubble ever appears.
+2. **The turn finishes while closed**: start a long exec turn, close the
+   panel, wait, re-open — the turn's answer is there and complete (the
+   engine kept running it; the reopen resolved the truth, never a false
+   interrupt).
+3. **The honest query**: tap any termux pill's ↗ — the query box shows
+   the REAL command (pretty JSON with the action + the parsed args),
+   never `[object Object]`. Same after a reload (the replayed pill).
+4. **The tool memory**: ask the bot to `cat` a file via termux, then in
+   a NEW message ask "what did the file say — without running anything?"
+   — the bot answers from memory (no new exec pill). The old build
+   re-read the file (the amnesia).
+5. **The proceed**: give the bot a task that tempts an announcement
+   ("I will now check the timers…") — the turn CONTINUES to execution
+   (you'll see "the plan is announced — proceeding to execution…") up to
+   twice, instead of ending the turn and waiting for you to push.
+6. **The GitHub hand**: connect a GitHub token once (the workspace
+   connect flow), then ask the bot to `git_setup` — one call arms
+   ~/.git-credentials (0600 + credential.helper=store + the identity) in
+   Termux; every later `git clone/push` just works with NO token in any
+   command. Ask for tags: the workspace tool's `view tags` lists them
+   and `tag_create {tag, sha, message}` cuts one.
+7. **The persisted skill**: with the lib pill on, ask the bot to load a
+   skill — from then on every turn in that chat follows it (the
+   methodology rides the history; it no longer evaporates at the turn
+   boundary).

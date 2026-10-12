@@ -755,6 +755,12 @@ func (s *Server) libStateLine(sess *store.Session) string {
         if tpl {
                 state += "; the template auto-search pill is ON"
         }
+        // v1.29.6 THE PERSISTED SKILL: the loaded skill speaks — mechanical
+        // state visibility (the model knows its methodology is armed
+        // without re-loading it).
+        if lib && sess.SkillHead != "" && s.sessionLibOn(sess.ID) {
+                state += "; the skill " + sess.SkillName + " is loaded and armed for this chat's turns (its head rides every turn)"
+        }
         state += ". The user flips it at ✦ tweaks → Bot Library.]"
         return state
 }
@@ -1931,8 +1937,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // emitter (below) pushes tool_stream events into the same pipeline
         // the ChatChunk converter feeds (two writers, one reader: channels
         // are send-safe; the closer waits for both).
+        // v1.30.0 THE UNBRICKED TURN: streamDone is hoisted here — the CHUNK
+        // CONVERTER ends it when the model's stream ends (the stream source's
+        // natural end), breaking the v1.23.3 close-cycle deadlock.
         events := make(chan map[string]any, 64)
         var streamWG sync.WaitGroup
+        streamDone := make(chan struct{}) // nil-safe: a closed-by-nobody channel only matters when the emitter armed
 
         // v1.20.3 THE ARM: THE TERMUX HAND on the direct path — the chat's
         // bound device (termux) workspaces (exec + file verbs + pkg +
@@ -1947,12 +1957,44 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // turn's pipeline (ephemeral, like progress: never persisted —
                 // the replay law stays use + result; the merge pill is the
                 // vessel). Set for the turn's lifetime, cleared on exit.
+                //
+                // v1.30.0 THE UNBRICKED TURN (found by the v1300 real-model
+                // replication): the OLD shape deferred close(streamCh) to
+                // streamFromDirectProxy's RETURN — but that return waits for
+                // forwardEvents, which waits for close(events), which waits
+                // for streamWG, which waits for THIS pump, which waits for
+                // close(streamCh): a CYCLE that bricked every emitter-armed
+                // turn — the turn lock never released, the next send on the
+                // session busy-rejected FOREVER (the "turn gets interrupted"
+                // symptom's deepest face). The done-signal design breaks it:
+                // the pump exits on streamDone (never a channel close — an
+                // in-flight emitter send can never panic), and the CHUNK
+                // CONVERTER (which ends when the model's stream ends, exactly
+                // when the stream source should end too) owns the sequence:
+                // emitter off → done → wait → close(events).
                 streamCh := make(chan map[string]any, 32)
                 streamWG.Add(1)
                 go func() {
                         defer streamWG.Done()
-                        for ev := range streamCh {
-                                events <- ev
+                        for {
+                                select {
+                                case ev := <-streamCh:
+                                        events <- ev
+                                case <-streamDone:
+                                        // drain any stragglers the emitter had
+                                        // in flight when it went dark (the
+                                        // buffer is small; the chunks are
+                                        // ephemeral — a post-drain straggler
+                                        // is dropped, never a panic)
+                                        for {
+                                                select {
+                                                case ev := <-streamCh:
+                                                        events <- ev
+                                                default:
+                                                        return
+                                                }
+                                        }
+                                }
                         }
                 }()
                 s.txstreams.setEmitter(sessionID, func(delta string) {
@@ -1961,10 +2003,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                 "name": "termux", "delta": delta,
                         }
                 })
-                defer func() {
-                        s.txstreams.setEmitter(sessionID, nil)
-                        close(streamCh)
-                }()
+                defer s.txstreams.setEmitter(sessionID, nil) // the belt: even a converter panic can't leave a live emitter
                 req.TermuxToolFn = func(ctx context.Context, argJSON string) string {
                         return s.runTermuxAction(ctx, sessionID, argJSON)
                 }
@@ -1985,10 +2024,22 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
         // v1.23.3: `events` is declared EARLY (the termux stream emitter
         // writes it too); the converter goroutine no longer solely owns the
         // close — streamWG waits for the stream forwarder first.
+        // v1.30.0 THE UNBRICKED TURN: the LIFO order here IS the fix —
+        // when the model's chunks end: (3rd) emitter off + streamDone
+        // fires (the pump drains + exits), (2nd) streamWG.Wait() (the
+        // pump is gone by now — no cycle: nothing waits on
+        // streamFromDirectProxy's return anymore), (1st) close(events)
+        // → forwardEvents exits → the turn returns → THE LOCK RELEASES.
+        // (The old shape parked close(streamCh) on streamFromDirectProxy's
+        // return — the cycle that bricked every emitter-armed turn.)
         var assistantParts []string // v0.22: resettable (assistant_reset clears a leaked preamble)
         go func() {
                 defer close(events)
                 defer streamWG.Wait()
+                defer func() {
+                        s.txstreams.setEmitter(sessionID, nil) // no new chunks accepted
+                        close(streamDone)                      // the pump's exit signal (never a channel close on streamCh)
+                }()
                 for chunk := range chunks {
                         ev := map[string]any{
                                 "type":       chunk.Type,
@@ -2167,27 +2218,14 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                 }
         }
 
-        fold := func(events []*store.Event) (msgs []llm.Message) {
-                for _, ev := range events {
-                        if hidden[ev.ID] {
-                                continue
-                        }
-                        switch ev.EventType {
-                        case "user":
-                                msgs = append(msgs, llm.Message{Role: "user", Content: ev.Content})
-                        case "assistant":
-                                msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content})
-                        case "assistant_delta":
-                                // Pre-v0.13 sessions: fold consecutive deltas into one message.
-                                last := len(msgs) - 1
-                                if last >= 0 && msgs[last].Role == "assistant" && !msgs[last].FoldedDone {
-                                        msgs[last].Content += ev.Content
-                                } else {
-                                        msgs = append(msgs, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
-                                }
-                        }
-                }
-                return msgs
+        // v1.29.4 THE TOOL MEMORY: the fold emits window-countable SLOTS —
+        // user/assistant messages and COMPLETE tool pairs (the in-turn wire
+        // shape: assistant-with-tool_calls + the tool result) — so the
+        // model's own observations ride the conversation (the Doobie
+        // transcript's amnesia dies) and one pair counts as ONE window
+        // message. toolfold.go owns the law.
+        foldSlotsOnly := func(events []*store.Event) []historySlot {
+                return foldSlots(events, hidden)
         }
 
         limit := window*3 + 64
@@ -2205,18 +2243,11 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                         if ferr != nil {
                                 return nil
                         }
-                        msgs := fold(all)
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                        return slotsWindowed(foldSlotsOnly(all), window)
                 }
-                msgs := fold(events)
-                if len(msgs) >= window || reachedHead {
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                slots := foldSlotsOnly(events)
+                if len(slots) >= window || reachedHead {
+                        return slotsWindowed(slots, window)
                 }
                 limit *= 2 // not enough messages yet — widen the tail
                 if limit > 32768 {
@@ -2225,11 +2256,7 @@ func (s *Server) buildHistory(sessionID string, window int) []llm.Message {
                         if ferr != nil {
                                 return nil
                         }
-                        msgs := fold(all)
-                        if len(msgs) > window {
-                                msgs = msgs[len(msgs)-window:]
-                        }
-                        return msgs
+                        return slotsWindowed(foldSlotsOnly(all), window)
                 }
         }
 }
@@ -2449,6 +2476,11 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 toolUseID, _ := ev["tool_use_id"].(string)
 
                 // V0 FIX: persist the event AS IT EMITS (not at turn-end).
+                // v1.29.5 THE GITHUB HAND: the pasted-PAT hazard dies — the
+                // persisted tool_use/tool_result content runs the SAME
+                // redaction as user events (persistRedact, redact.go's twin
+                // law: the DB + replay + export speak the redacted form).
+                content = persistRedact(evType, content)
                 persisted, err := s.db.AppendEvent(sessionID, evType, content, toolUseID)
                 if err != nil {
                         log.Printf("persist event: %v", err)
@@ -2530,6 +2562,12 @@ func fmtError(code, message, provider, model string) string {
 // emit sends a JSON event to the live pipe (or persists only when the
 // pipe is nil — the boot-time title path).
 func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID string) {
+        // v1.29.5 THE GITHUB HAND: user + tool events persist REDACTED (a
+        // pasted PAT in the chat is the exact workaround this wave kills —
+        // the DB, the replay, the export and the model's history all speak
+        // the redacted form; the live frame below carries it too so the
+        // panel shows the catch the moment it lands).
+        content = persistRedact(evType, content)
         persisted, err := s.db.AppendEvent(sessionID, evType, content, toolUseID)
         if err != nil {
                 log.Printf("emit persist: %v", err)

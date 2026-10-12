@@ -82,11 +82,12 @@ func newFakeArmBridge(t *testing.T) *fakeArmBridge {
                 }
                 command, _ := body["command"].(string)
                 workdir, _ := body["workdir"].(string)
+                stdin, _ := body["stdin"].(string) // v1.29.5: the EXTRA_STDIN lane (git_setup rides it)
                 timeoutMS := 600000
                 if v, ok := body["timeout_ms"].(float64); ok && v > 0 {
                         timeoutMS = int(v)
                 }
-                writeStubBridgeJSON(w, fb.exec(command, workdir, timeoutMS))
+                writeStubBridgeJSON(w, fb.exec(command, workdir, timeoutMS, stdin))
         })
         // the three other bridge routes (v1.17.2 contract — status ladder).
         mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
@@ -106,10 +107,15 @@ func newFakeArmBridge(t *testing.T) *fakeArmBridge {
 
 // exec runs one bridge command through the local bash with HOME + PATH
 // overridden (the pkg shim dir first) — the honest /run twin.
-func (fb *fakeArmBridge) exec(command, workdir string, timeoutMS int) map[string]any {
+// v1.29.5: stdin rides through (the v1.20.2 EXTRA_STDIN law — the
+// Kotlin bridge forwards it into the RUN_COMMAND intent).
+func (fb *fakeArmBridge) exec(command, workdir string, timeoutMS int, stdin string) map[string]any {
         ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMS)*time.Millisecond)
         defer cancel()
         cmd := exec.CommandContext(ctx, "bash", "-c", command)
+        if stdin != "" {
+                cmd.Stdin = strings.NewReader(stdin)
+        }
         if workdir != "" {
                 cmd.Dir = workdir
         }

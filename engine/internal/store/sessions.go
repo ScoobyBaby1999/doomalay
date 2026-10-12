@@ -71,6 +71,14 @@ type Session struct {
         // toggle (replaces the two pill toggles; the effective value ORs
         // the legacy two until the first PATCH stamps it).
         LibAuto bool
+        // v1.29.6 THE PERSISTED SKILL: the loaded skill's head (the
+        // methodology's first ~3KB) + its name — the model chose to load
+        // it; this persistence is STATE (the follow-through fix: the old
+        // behavior evaporated the methodology at turn end, so the model
+        // re-announced instead of following). A new load replaces; the
+        // lib gate (sessionLibOn) governs the injection.
+        SkillName string
+        SkillHead string
         // v1.17.1 THE PIVOT: the Termux capability — the stacked capability
         // field the capabilities library's gated toggle writes (column
         // termux INTEGER DEFAULT 0, exactly like the lib_auto/skills_auto
@@ -101,16 +109,16 @@ INSERT INTO chat_sessions
    sliding_window, max_context, tool_allowlist, hooks_config, routing,
    workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed, compact_summary, compact_seq,
    compact_enabled, compact_threshold, template_id, template_auto, skills_auto,
-   lib_auto, termux,
+   lib_auto, termux, skill_name, skill_head,
    sandbox_mode, sandbox_repo, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
                 s.ToolAllowlist, s.HooksConfig, s.Routing, s.WorkspaceID,
                 s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
                 s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.TemplateAuto, s.SkillsAuto,
-                s.LibAuto, s.Termux,
+                s.LibAuto, s.Termux, s.SkillName, s.SkillHead,
                 s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
         return err
 }
@@ -126,14 +134,14 @@ UPDATE chat_sessions SET
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
   routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, preambles=?, preamble_sel=?, manually_renamed=?,
   compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?,
-  template_auto=?, skills_auto=?, lib_auto=?, termux=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
+  template_auto=?, skills_auto=?, lib_auto=?, termux=?, skill_name=?, skill_head=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
                 s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed,
                 s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID,
-                s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.Termux, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
+                s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.Termux, s.SkillName, s.SkillHead, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
         return err
 }
 
@@ -173,6 +181,7 @@ func (db *DB) GetSession(id string) (*Session, error) {
         var templateID sql.NullString
         var templateAuto, skillsAuto, libAuto, termux sql.NullInt64
         var sandboxMode, sandboxRepo sql.NullString
+        var skillName, skillHead sql.NullString
         var preambles, preambleSel sql.NullString
         err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
@@ -180,14 +189,14 @@ SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_resea
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
        workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed,
        compact_summary, compact_seq, compact_enabled, compact_threshold, template_id,
-       template_auto, skills_auto, lib_auto, termux, sandbox_mode, sandbox_repo, created_at, updated_at
+       template_auto, skills_auto, lib_auto, termux, skill_name, skill_head, sandbox_mode, sandbox_repo, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
                 &s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
                 &s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
                 &s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
                 &s.WorkspaceID, &persona, &personas, &placeholders, &preambles, &preambleSel, &mr,
                 &compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID,
-                &templateAuto, &skillsAuto, &libAuto, &termux, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
+                &templateAuto, &skillsAuto, &libAuto, &termux, &skillName, &skillHead, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
         if err == sql.ErrNoRows {
                 return nil, nil
         }
@@ -205,6 +214,13 @@ FROM chat_sessions WHERE id=?`, id).Scan(
         }
         if placeholders.Valid {
                 s.Placeholders = placeholders.String
+        }
+        // v1.29.6: the persisted skill head (absent on pre-migration rows = none).
+        if skillName.Valid {
+                s.SkillName = skillName.String
+        }
+        if skillHead.Valid {
+                s.SkillHead = skillHead.String
         }
         // v1.22.0 THE MIRROR: the preamble library + selection (absent on
         // pre-migration rows = the app default).

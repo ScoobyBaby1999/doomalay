@@ -54,7 +54,7 @@ import (
 // forge's own `truncated` signal (upstream physics), never a local cut.
 
 // workspaceVerbs is the canonical verb list (help + unknown-action teach).
-const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
+const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, tag_create, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
 
 // runWorkspaceAction executes an "the workspace tool with {json}" call for the
 // direct path (and, since v0.81.6, the PM tool server + the brain's
@@ -544,6 +544,28 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                         return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
                 return "OBSERVATION:\nDELETED — " + path + " @ " + branch + "\ncommit: " + url
+        case "tag_create":
+                // v1.29.5 THE GITHUB HAND: the tag verb (lightweight or
+                // annotated by message presence — the user's "no tool for
+                // tags" hurdle dies).
+                ws := toolWS
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — creating tags needs FULL access."
+                }
+                tag := get("tag")
+                sha := get("sha")
+                if tag == "" || sha == "" {
+                        return "OBSERVATION:\nerror: tag_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"sha\":\"<commit sha>\", \"message\":\"annotation\"|\"\"} — the sha comes from view commits (or the branch head)"
+                }
+                ref, err := s.wsClient(ws).CreateTag(ctx, tag, sha, get("message"), s.wsToken(ws))
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+                }
+                kind := "lightweight"
+                if strings.TrimSpace(get("message")) != "" {
+                        kind = "annotated"
+                }
+                return "OBSERVATION:\nTAG CREATED — " + ref + " (" + kind + ") in " + ws.Name + "\nrelease_create can now publish a release on it, or view tags lists it."
         case "release_create", "release":
                 ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access != forge.AccessFull {
@@ -677,6 +699,26 @@ func (s *Server) wsViewText(ctx context.Context, ws *store.Workspace, what, stat
                 fmt.Fprintf(&sb, "%d release(s) in %s:\n", len(rows), ws.Name)
                 for _, rel := range rows {
                         fmt.Fprintf(&sb, "- %s — %s (%s)\n", rel.Tag, rel.Name, rel.PublishedAt)
+                }
+        case "tags":
+                // v1.29.5 THE GITHUB HAND: the tags view (the user's
+                // "no tool for tags" hurdle). Name + short sha (+ the
+                // annotated message when the forge carries it).
+                rows, err := c.Tags(ctx, tok, limit)
+                if err != nil {
+                        return "error: " + err.Error()
+                }
+                fmt.Fprintf(&sb, "%d tag(s) in %s:\n", len(rows), ws.Name)
+                for _, tg := range rows {
+                        sha := tg.SHA
+                        if len(sha) > 9 {
+                                sha = sha[:9]
+                        }
+                        line := "- " + tg.Name + " " + sha
+                        if tg.Message != "" {
+                                line += " — " + clip(tg.Message, 60)
+                        }
+                        sb.WriteString(line + "\n")
                 }
         case "workflows":
                 rows, err := c.Workflows(ctx, tok)

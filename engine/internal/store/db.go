@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   manually_renamed INTEGER DEFAULT 0,
   template_id     TEXT,
   created_at      REAL NOT NULL,
-  updated_at      REAL NOT NULL
+  updated_at      REAL NOT NULL,
+  skill_name      TEXT,
+  skill_head      TEXT
 );
 
 -- ONE definition of chat_events (resolves the schema conflict from the old
@@ -222,6 +224,12 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // lib_auto/skills_auto siblings). INERT this wave: the
                 // Termux bridge + tools arrive with v1.17.2/v1.18.
                 {"chat_sessions", "termux", "ALTER TABLE chat_sessions ADD COLUMN termux INTEGER DEFAULT 0"},
+                // v1.29.6 THE PERSISTED SKILL: the loaded skill's name +
+                // head (~3KB methodology) ride the session row — the
+                // follow-through fix (the old behavior evaporated the
+                // methodology at turn end).
+                {"chat_sessions", "skill_name", "ALTER TABLE chat_sessions ADD COLUMN skill_name TEXT"},
+                {"chat_sessions", "skill_head", "ALTER TABLE chat_sessions ADD COLUMN skill_head TEXT"},
                 // v0.44: the workspaces wave — the bare v0.17 workspaces
                 // table grows the cloud-repo columns (host kind, owner/repo,
                 // access level, token vault key, default branch, meta JSON).
