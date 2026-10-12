@@ -26,12 +26,12 @@ package server
 // tools/call blocks).
 
 import (
-        "context"
-        "fmt"
-        "strings"
-        "time"
+	"context"
+	"fmt"
+	"strings"
+	"time"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
 )
 
 // termuxStreamScript is THE WRAPPER — $1 = the stream URL, $2 = the
@@ -82,15 +82,15 @@ exit "$ec"
 // serves 127.0.0.1:<port> (the APK law; the checkin precedent proves
 // Termux reaches it).
 func (s *Server) termuxStreamURL(token string) string {
-        host := "127.0.0.1"
-        if s.cfg != nil && s.cfg.Bind != "" && s.cfg.Bind != "0.0.0.0" {
-                host = s.cfg.Bind
-        }
-        port := 8080
-        if s.cfg != nil && s.cfg.Port != 0 {
-                port = s.cfg.Port
-        }
-        return fmt.Sprintf("http://%s:%d/api/termux/stream/%s", host, port, token)
+	host := "127.0.0.1"
+	if s.cfg != nil && s.cfg.Bind != "" && s.cfg.Bind != "0.0.0.0" {
+		host = s.cfg.Bind
+	}
+	port := 8080
+	if s.cfg != nil && s.cfg.Port != 0 {
+		port = s.cfg.Port
+	}
+	return fmt.Sprintf("http://%s:%d/api/termux/stream/%s", host, port, token)
 }
 
 // termuxRunStreaming runs ONE long command through the streaming
@@ -99,91 +99,91 @@ func (s *Server) termuxStreamURL(token string) string {
 // headline parameter rides the observation head ("EXEC DONE" / "PKG
 // INSTALL DONE"); workdir "" (pkg) omits the workdir line.
 func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, command, workdir string, timeoutMS int) string {
-        st := s.txstreams.register(sessionID)
-        url := s.termuxStreamURL(st.token)
-        res, errObs := s.termuxRunOne(ctx, termuxCommand(termuxStreamScript, url, command, st.token), workdir, timeoutMS)
-        if errObs != "" {
-                s.txstreams.closeStream(st)
-                return errObs
-        }
-        if res.Timeout {
-                // the engine's budget fired: stop accepting chunks (the wrapper
-                // may still run in Termux) + report the honest PARTIAL output —
-                // the accumulated stream IS the partial. When the curls never
-                // landed (the stream buffers are empty), the wrapper died before
-                // its own cat — the logs live on disk under the token's name: ONE
-                // recovery cat reads them (then cleans them up).
-                s.txstreams.closeStream(st)
-                st.mu.Lock()
-                out, errB, outSeen, errSeen := st.out, st.errS, st.outSeen, st.errSeen
-                st.mu.Unlock()
-                if outSeen+errSeen == 0 {
-                        if rec := s.termuxStreamRecover(ctx, st.token); rec != nil {
-                                out, errB = rec.Stdout, rec.Stderr
-                        }
-                }
-                var sb strings.Builder
-                fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
-                if out != "" {
-                        sb.WriteString("; partial stdout:\n" + out)
-                }
-                if errB != "" {
-                        sb.WriteString("\nstderr:\n" + errB)
-                }
-                return sb.String()
-        }
-        // compose: the streamed buffers when chunks landed, the broadcast
-        // fallback otherwise (the wrapper's cat carried the logs out).
-        st.mu.Lock()
-        out, errB, outSeen, errSeen, gotChunks, ec := st.out, st.errS, st.outSeen, st.errSeen, st.outSeen+st.errSeen > 0, st.ec
-        st.mu.Unlock()
-        if !gotChunks {
-                out, errB, outSeen, errSeen = res.Stdout, res.Stderr, len(res.Stdout), len(res.Stderr)
-        }
-        if !st.done {
-                // the done-curl never landed (the loopback curls failed) — the
-                // wrapper's own exit code is the truth (the broadcast carried it).
-                ec = res.ExitCode
-                // and the entry must not outlive its run: complete it now (the GC
-                // only sweeps done/closed streams — an abandoned never-done entry
-                // would leak forever).
-                s.txstreams.complete(st, ec)
-        }
-        var sb strings.Builder
-        sb.WriteString("OBSERVATION:\n" + headline)
-        if workdir != "" {
-                sb.WriteString(" — workdir " + workdir)
-        }
-        fmt.Fprintf(&sb, "\nexit_code: %d\nstdout:\n", ec)
-        if out == "" {
-                sb.WriteString("(empty)\n")
-        } else {
-                sb.WriteString(out)
-                if !strings.HasSuffix(out, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        sb.WriteString("stderr:\n")
-        if errB == "" {
-                sb.WriteString("(empty)\n")
-        } else {
-                sb.WriteString(errB)
-                if !strings.HasSuffix(errB, "\n") {
-                        sb.WriteString("\n")
-                }
-        }
-        // THE WHOLE-TRUTH LAW, both editions: the streamed path bypasses
-        // Termux's 100KB bundle (the loopback curls are unbounded), so the cap
-        // is enforced engine-side — the tail rides, the TRUE total reports.
-        // The fallback path (no curls landed) IS the bundle physics — the
-        // original termuxMaybeTrunc law applies byte-identically.
-        if gotChunks {
-                if outSeen > termuxCapBytes || errSeen > termuxCapBytes {
-                        fmt.Fprintf(&sb, "[termux: output truncated at 100KB — %d bytes stdout + %d bytes stderr streamed total]\n", outSeen, errSeen)
-                }
-                return sb.String()
-        }
-        return termuxMaybeTrunc(res, sb.String())
+	st := s.txstreams.register(sessionID)
+	url := s.termuxStreamURL(st.token)
+	res, errObs := s.termuxRunOne(ctx, termuxCommand(termuxStreamScript, url, command, st.token), workdir, timeoutMS)
+	if errObs != "" {
+		s.txstreams.closeStream(st)
+		return errObs
+	}
+	if res.Timeout {
+		// the engine's budget fired: stop accepting chunks (the wrapper
+		// may still run in Termux) + report the honest PARTIAL output —
+		// the accumulated stream IS the partial. When the curls never
+		// landed (the stream buffers are empty), the wrapper died before
+		// its own cat — the logs live on disk under the token's name: ONE
+		// recovery cat reads them (then cleans them up).
+		s.txstreams.closeStream(st)
+		st.mu.Lock()
+		out, errB, outSeen, errSeen := st.out, st.errS, st.outSeen, st.errSeen
+		st.mu.Unlock()
+		if outSeen+errSeen == 0 {
+			if rec := s.termuxStreamRecover(ctx, st.token); rec != nil {
+				out, errB = rec.Stdout, rec.Stderr
+			}
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
+		if out != "" {
+			sb.WriteString("; partial stdout:\n" + out)
+		}
+		if errB != "" {
+			sb.WriteString("\nstderr:\n" + errB)
+		}
+		return sb.String()
+	}
+	// compose: the streamed buffers when chunks landed, the broadcast
+	// fallback otherwise (the wrapper's cat carried the logs out).
+	st.mu.Lock()
+	out, errB, outSeen, errSeen, gotChunks, ec := st.out, st.errS, st.outSeen, st.errSeen, st.outSeen+st.errSeen > 0, st.ec
+	st.mu.Unlock()
+	if !gotChunks {
+		out, errB, outSeen, errSeen = res.Stdout, res.Stderr, len(res.Stdout), len(res.Stderr)
+	}
+	if !st.done {
+		// the done-curl never landed (the loopback curls failed) — the
+		// wrapper's own exit code is the truth (the broadcast carried it).
+		ec = res.ExitCode
+		// and the entry must not outlive its run: complete it now (the GC
+		// only sweeps done/closed streams — an abandoned never-done entry
+		// would leak forever).
+		s.txstreams.complete(st, ec)
+	}
+	var sb strings.Builder
+	sb.WriteString("OBSERVATION:\n" + headline)
+	if workdir != "" {
+		sb.WriteString(" — workdir " + workdir)
+	}
+	fmt.Fprintf(&sb, "\nexit_code: %d\nstdout:\n", ec)
+	if out == "" {
+		sb.WriteString("(empty)\n")
+	} else {
+		sb.WriteString(out)
+		if !strings.HasSuffix(out, "\n") {
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("stderr:\n")
+	if errB == "" {
+		sb.WriteString("(empty)\n")
+	} else {
+		sb.WriteString(errB)
+		if !strings.HasSuffix(errB, "\n") {
+			sb.WriteString("\n")
+		}
+	}
+	// THE WHOLE-TRUTH LAW, both editions: the streamed path bypasses
+	// Termux's 100KB bundle (the loopback curls are unbounded), so the cap
+	// is enforced engine-side — the tail rides, the TRUE total reports.
+	// The fallback path (no curls landed) IS the bundle physics — the
+	// original termuxMaybeTrunc law applies byte-identically.
+	if gotChunks {
+		if outSeen > termuxCapBytes || errSeen > termuxCapBytes {
+			fmt.Fprintf(&sb, "[termux: output truncated at 100KB — %d bytes stdout + %d bytes stderr streamed total]\n", outSeen, errSeen)
+		}
+		return sb.String()
+	}
+	return termuxMaybeTrunc(res, sb.String())
 }
 
 // termuxStreamRecover cats a timed-out wrapper's logs by token (the
@@ -191,17 +191,17 @@ func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, co
 // only a timeout death leaves them behind). ONE quick bridge call, 5s
 // budget; nil when the bridge fails (the partial is best-effort honesty).
 func (s *Server) termuxStreamRecover(ctx context.Context, token string) *termuxbridge.RunResult {
-        script := `set -u
+	script := `set -u
 d="$HOME/.doomalay/streams"
 cat "$d/o.$1" 2>/dev/null
 cat "$d/e.$1" >&2 2>/dev/null
 rm -f -- "$d/o.$1" "$d/e.$1" 2>/dev/null
 `
-        recCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-        defer cancel()
-        res, errObs := s.termuxRunOne(recCtx, termuxCommand(script, token), "", 5000)
-        if errObs != "" || res == nil || res.Timeout {
-                return nil
-        }
-        return res
+	recCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res, errObs := s.termuxRunOne(recCtx, termuxCommand(script, token), "", 5000)
+	if errObs != "" || res == nil || res.Timeout {
+		return nil
+	}
+	return res
 }
