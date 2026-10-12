@@ -225,3 +225,9 @@ if (failCount) {
   process.exit(1);
 }
 console.log('THE MEMORY IS REAL: the model answered turn 2 from the folded tool observation — no re-read.');
+// v1.31.1: the deterministic exit — the in-process bridge server keeps node's
+// event loop alive forever (a listening server never lets the process exit),
+// so an all-pass run HUNG after printing 10/10 (the rig looked dead while the
+// engine was healthy — the false "the turn never ended" read). Exit(0) is
+// the honest terminal for a one-shot rig.
+process.exit(0);

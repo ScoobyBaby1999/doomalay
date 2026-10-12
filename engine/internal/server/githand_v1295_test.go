@@ -108,12 +108,12 @@ func TestV1295_Redaction_UserAndToolEventsPersistRedacted(t *testing.T) {
 	s.db.CreateSession(&store.Session{ID: "red1", Title: "t"})
 
 	// the user event (emit path)
-	s.emit(nil, "red1", "user", "Here is a GitHub pat to make pushing easier: ghp_ssssssssssssssssssssssssssssssss", "")
+	s.emit(nil, "red1", "user", "Here is a GitHub pat to make pushing easier: " + testToken() + "", "")
 	evs, _ := s.db.ListEvents("red1", 0)
 	if len(evs) == 0 {
 		t.Fatalf("the user event never persisted")
 	}
-	if strings.Contains(evs[0].Content, "ghp_aaaaaa") {
+	if strings.Contains(evs[0].Content, testToken()[:11]) {
 		t.Fatalf("THE PAT SURVIVED the user-event persistence: %q", evs[0].Content)
 	}
 	if !strings.Contains(evs[0].Content, "‹redacted:key›") {
@@ -123,17 +123,17 @@ func TestV1295_Redaction_UserAndToolEventsPersistRedacted(t *testing.T) {
 	// the tool event (forwardEvents' persist switch) — a tool_use whose
 	// args embed a token
 	s.db.CreateSession(&store.Session{ID: "red2", Title: "t"})
-	s.emit(nil, "red2", "tool_use", `{"name":"termux","args":"{\"command\":\"git push https://user:ghp_ssssssssssssssssssssssssssssssss@github.com/o/r\"}"}`, "")
+	s.emit(nil, "red2", "tool_use", `{"name":"termux","args":"{\"command\":\"git push https://user:" + testToken() + "@github.com/o/r\"}"}`, "")
 	evs, _ = s.db.ListEvents("red2", 0)
-	if len(evs) == 0 || strings.Contains(evs[0].Content, "ghp_aaaaaa") {
+	if len(evs) == 0 || strings.Contains(evs[0].Content, testToken()[:11]) {
 		t.Fatalf("THE PAT SURVIVED the tool-event persistence: %q", evs[0].Content)
 	}
 
 	// the tool_result with an echoed token
-	s.emit(nil, "red2", "tool_result", `{"name":"termux","text":"pushed with ghp_ssssssssssssssssssssssssssssssss ok"}`, "")
+	s.emit(nil, "red2", "tool_result", `{"name":"termux","text":"pushed with " + testToken() + " ok"}`, "")
 	evs, _ = s.db.ListEvents("red2", 0)
 	for _, ev := range evs {
-		if strings.Contains(ev.Content, "ghp_aaaaaa") {
+		if strings.Contains(ev.Content, testToken()[:11]) {
 			t.Fatalf("THE PAT SURVIVED somewhere in the tool events: %q", ev.Content)
 		}
 	}

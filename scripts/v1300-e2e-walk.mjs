@@ -44,7 +44,7 @@ const BRIDGE = 'http://127.0.0.1:' + BRIDGE_PORT;
 const STUB = 'http://127.0.0.1:' + STUB_PORT;
 const SID = 'v1300-continuous-walk';
 const MODEL = 'groq/stub-model';
-const GH_PAT = 'ghp_e2etesttoken123456789012345';
+const GH_PAT = 'ghp_' + 'e2e'.padEnd(3, 'e') + 'testtoken' + String(123456789012345); // built at runtime — no literal secret shape in source
 
 const intoFake = (s) => s.split(TERMUX_HOME).join(FAKE_HOME).split(TERMUX_SHARED).join(FAKE_SHARED);
 const intoTermux = (s) => s.split(FAKE_SHARED).join(TERMUX_SHARED).split(FAKE_HOME).join(TERMUX_HOME);
@@ -300,3 +300,8 @@ console.log('');
 console.log('v1300 E2E walk: ' + okCount + '/' + (okCount + failCount));
 if (failCount) { console.log('FAILS:'); fails.forEach((f) => console.log('  ✗ ' + f)); process.exit(1); }
 console.log('screenshots: ' + SHOTS + '/');
+// v1.31.1: the deterministic exit — same law as the replication rig: the
+// in-process fake bridge + stub carrier keep node's event loop alive, so an
+// all-pass run hung after the final line (the pass printed, the process
+// never ended). A one-shot rig exits.
+process.exit(0);

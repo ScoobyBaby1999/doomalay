@@ -12,6 +12,12 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
+// testToken — a ghp_-shaped fake built at RUNTIME (a literal would trip
+// secret scanners; the shape exercises Redact's regex honestly).
+func testToken() string {
+	return "ghp_" + strings.Repeat("t", 8) + "synthetic" + strings.Repeat("0", 12)
+}
+
 func toolUseEv(t *testing.T, name, args string) string {
         t.Helper()
         b, err := json.Marshal(map[string]string{"name": name, "args": args, "summary": "exec"})
@@ -161,7 +167,7 @@ func TestV1294_FoldSlots_MarkerAndRedact(t *testing.T) {
         // the pasted-PAT hazard: a token in the result NEVER rides the history
         events = []*store.Event{
                 {ID: 3, EventType: "tool_use", Content: toolUseEv(t, "termux", `{"action":"exec"}`)},
-                {ID: 4, EventType: "tool_result", Content: toolResultEv(t, "termux", "the push worked with ghp_aaaaaa4CmkvTBVwyw7yNYm33ed5dO124kKEl")},
+                {ID: 4, EventType: "tool_result", Content: toolResultEv(t, "termux", "the push worked with " + testToken() + "")},
         }
         slots = foldSlots(events, nil)
         if strings.Contains(slots[0].msgs[1].Content, "ghp_") {
