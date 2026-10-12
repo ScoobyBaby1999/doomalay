@@ -173,6 +173,14 @@ var PM_LIB_ACTIONS = [
 var PM_LIB_DISCIPLINE = 'If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST load it BEFORE starting the work it covers. Load → follow the skill\u2019s workflow to the letter.';
 var PM_LIB_PROTOCOL = PM_LIB_ACTIONS + '\n' + PM_LIB_DISCIPLINE;
 
+// v1.29.2 THE DECLARED CACHE: _pmBootstrapCache is now DECLARED. The old
+// code read it bare (line below) — a ReferenceError on the FIRST call,
+// before the fetch ever fired, on every PM turn with the lib pill ON:
+// "skill library unavailable — _pmBootstrapCache is not defined" (the
+// user's report). The catch at the call site turned the crash into the
+// brief pill and the turn continued without the bootstrap. (Compare
+// _pmManifestCache below — always declared.)
+var _pmBootstrapCache = null;
 function fetchLibBootstrap(sessionId) {
   if (_pmBootstrapCache) return Promise.resolve(_pmBootstrapCache);
   var u = '/api/tools/skills?action=bootstrap' + (sessionId ? '&session=' + encodeURIComponent(sessionId) : '');

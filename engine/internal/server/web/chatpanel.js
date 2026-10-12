@@ -2846,7 +2846,7 @@
       // v0.27.1: pmsdk fires this when the thinking phase ends (content
       // starts or the stream closes) — freeze the bubble's timer there
       // instead of letting it count tool time as "reasoning".
-      onThinkingEnd: function () { stampThinkEnd(state); },
+      onThinkingEnd: function () { stampThinkEnd(state, 0, bodyEl); },
       onDelta: function (t) {
         clearHint();
         bumpActivity(state);
@@ -4406,14 +4406,29 @@
   // 181s" rounds whose actual thinking was ~30s). endedAt is stamped the
   // moment the stream moves past thinking (content, a tool event, or turn
   // end) — both the WS engine path and the PM bridge report through here.
-  function stampThinkEnd(state, tsMs) {
+  function stampThinkEnd(state, tsMs, bodyEl) {
     if (!state || !Array.isArray(state.messages)) return;
     var lt = state.messages[state.messages.length - 1];
     // v0.38: prefer the SERVER timestamp of the event that ended the
     // thinking phase (ev.ts rides every persisted event) — arrival time
     // lies on replays (whole turns land in one burst → "0s") and on
     // post-completion bursts.
-    if (lt && lt.role === 'thinking' && !lt.endedAt) lt.endedAt = tsMs || Date.now();
+    if (lt && lt.role === 'thinking' && !lt.endedAt) {
+      lt.endedAt = tsMs || Date.now();
+      // v1.29.2 THE QUIET END (the user's report): the CHAIN ended — the
+      // stream moved past thinking (content, a tool, sources) — so the
+      // bubble stops streaming NOW: the blinking cursor dies, the live
+      // dot freezes, the elapsed chip hides. The old behavior kept
+      // streaming=true until the TURN ended, so a finished reasoning
+      // chain blinked through every tool call and reply after it. The
+      // next thinking event opens a FRESH bubble (the role check) with
+      // its own cursor — chains read as chains. The stats line keeps
+      // its frozen "reasoning · Ns · chars" (endedAt is stamped).
+      if (lt.streaming) {
+        lt.streaming = false;
+        updateMessageEl(bodyEl, lt, false, state);
+      }
+    }
   }
 
   function container2(bodyEl, mi) {
@@ -4698,6 +4713,24 @@
           // (or the generic streaming state) until real events land.
           setActivity(bodyEl, state, state._waitPhase || 'reconnected — streaming…');
         }
+      } else if (ev.state === 'replay_done') {
+        // v1.29.4 THE STEADY RESUME: the engine says the backlog burst is
+        // OVER — the live feed is authoritative from here. When the
+        // resume landed mid-turn, force ONE honest repaint of the last
+        // streaming bubbles: the gap replay appended to the DATA (the
+        // stats ticker reads it — the user's "the dynamic text keeps
+        // increasing"), but the bubble render could have raced the
+        // burst; one pass erases the divergence for good.
+        if (state.isStreaming && isOwner(state)) {
+          var flushed = 0;
+          for (var rmi = state.messages.length - 1; rmi >= 0 && flushed < 4; rmi--) {
+            var rm = state.messages[rmi];
+            if (rm && (rm.role === 'thinking' || rm.role === 'assistant') && rm.streaming) {
+              updateMessageEl(bodyEl, rm, false, state);
+              flushed++;
+            }
+          }
+        }
       } else if (ev.state === 'failed') {
         state._wsDropped = false;
         // the ladder is exhausted → the terminal error path (wireClientClose)
@@ -4752,7 +4785,7 @@
     }
     if (type === 'assistant_delta' || type === 'assistant_complete') {
       bumpActivity(state);
-      stampThinkEnd(state, evTsMs(ev)); // v0.27.1: content follows thinking → timer freezes
+      stampThinkEnd(state, evTsMs(ev), bodyEl); // v0.27.1: content follows thinking → timer freezes
       if (ev.text) {
         var last = state.messages[state.messages.length - 1];
         if (!last || last.role !== 'assistant' || last.complete) {
@@ -4774,7 +4807,7 @@
         }
       }
     } else if (type === 'assistant') {
-      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev), bodyEl); // v0.27.1
       // v0.93.3: the segment-true decision is pure (roundFlowApply —
       // exported for the node rig); the DOM work rides it.
       var dec = roundFlowApply(state.messages, ev, 'assistant');
@@ -4852,7 +4885,7 @@
       }
     } else if (type === 'tool_use') {
       bumpActivity(state);
-      stampThinkEnd(state, evTsMs(ev)); // v0.27.1: the model moved on to tools
+      stampThinkEnd(state, evTsMs(ev), bodyEl); // v0.27.1: the model moved on to tools
       // v0.20: PM-persisted tool events carry their payload as a JSON text
       // (the engine's own events have name/summary top-level) — lift it.
       var pay = ev;
@@ -4873,7 +4906,7 @@
       appendMessage(msgContainer, scrollEl, tuMsg, bodyEl, state._icon, state);
     } else if (type === 'tool_result') {
       bumpActivity(state);
-      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev), bodyEl); // v0.27.1
       var pay2 = ev;
       if ((!pay2.name || pay2.summary === undefined) && pay2.text) {
         try { pay2 = JSON.parse(pay2.text); } catch (e) {}
@@ -4919,7 +4952,7 @@
         state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
       }
     } else if (type === 'sources') {
-      stampThinkEnd(state, evTsMs(ev)); // v0.27.1
+      stampThinkEnd(state, evTsMs(ev), bodyEl); // v0.27.1
       var srcs = ev.sources || [];
       if (!srcs.length && ev.text) { try { srcs = JSON.parse(ev.text); } catch (e) {} }
       if (srcs.length) {
@@ -4935,7 +4968,7 @@
       // LIVE events carry {summary, items} top-level; REPLAYED ones carry
       // the same payload as JSON in text (the engine persists content=text)
       // — both shapes render identically (hubitem.js's PM-lift pattern).
-      stampThinkEnd(state, evTsMs(ev));
+      stampThinkEnd(state, evTsMs(ev), bodyEl);
       var hitems = ev.items || [];
       var hsum = ev.summary || '';
       if (!hitems.length && ev.text) {
@@ -5360,10 +5393,16 @@
       var n = (m.text || '').length;
       var chars = n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
       var chip = wrap.querySelector('.th-elapsed');
-      if (chip && m.streaming) {
-        chip.style.display = '';
-        var t = ' · ' + (secs >= 90 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
-        if (chip.textContent !== t) chip.textContent = t;
+      if (chip) {
+        if (m.streaming) {
+          chip.style.display = '';
+          var t = ' · ' + (secs >= 90 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
+          if (chip.textContent !== t) chip.textContent = t;
+        } else {
+          // v1.29.2: the chain ended — the elapsed chip goes with it (the
+          // stats line keeps the frozen "reasoning · Ns · chars").
+          chip.style.display = 'none';
+        }
       }
       var stats = wrap.querySelector('.fmt-th-stats');
       if (stats) {
