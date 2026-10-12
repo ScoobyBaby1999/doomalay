@@ -2425,6 +2425,11 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 toolUseID, _ := ev["tool_use_id"].(string)
 
                 // V0 FIX: persist the event AS IT EMITS (not at turn-end).
+                // v1.29.5 THE GITHUB HAND: the pasted-PAT hazard dies — the
+                // persisted tool_use/tool_result content runs the SAME
+                // redaction as user events (persistRedact, redact.go's twin
+                // law: the DB + replay + export speak the redacted form).
+                content = persistRedact(evType, content)
                 persisted, err := s.db.AppendEvent(sessionID, evType, content, toolUseID)
                 if err != nil {
                         log.Printf("persist event: %v", err)
@@ -2506,6 +2511,12 @@ func fmtError(code, message, provider, model string) string {
 // emit sends a JSON event to the live pipe (or persists only when the
 // pipe is nil — the boot-time title path).
 func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID string) {
+        // v1.29.5 THE GITHUB HAND: user + tool events persist REDACTED (a
+        // pasted PAT in the chat is the exact workaround this wave kills —
+        // the DB, the replay, the export and the model's history all speak
+        // the redacted form; the live frame below carries it too so the
+        // panel shows the catch the moment it lands).
+        content = persistRedact(evType, content)
         persisted, err := s.db.AppendEvent(sessionID, evType, content, toolUseID)
         if err != nil {
                 log.Printf("emit persist: %v", err)

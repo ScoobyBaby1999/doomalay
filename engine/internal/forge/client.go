@@ -628,3 +628,30 @@ func (c *Client) CreateRelease(ctx context.Context, tag, name, body, target, tok
         }
         return "", ErrUnsupported
 }
+
+// Tags — v1.29.5 THE GITHUB HAND: the tags view. HF/sourcehut → the
+// honest ErrUnsupported refusal.
+func (c *Client) Tags(ctx context.Context, token string, limit int) ([]Tag, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghTags(ctx, token, limit)
+        case "gitea":
+                return c.gtTags(ctx, token, limit)
+        case "gitlab":
+                return c.glTags(ctx, token, limit)
+        }
+        return nil, ErrUnsupported
+}
+
+// CreateTag — v1.29.5: lightweight (no message) or annotated (message).
+func (c *Client) CreateTag(ctx context.Context, tag, sha, message, token string) (string, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghCreateTag(ctx, tag, sha, message, token)
+        case "gitea":
+                return c.gtCreateTag(ctx, tag, sha, token)
+        case "gitlab":
+                return c.glCreateTag(ctx, tag, sha, message, token)
+        }
+        return "", ErrUnsupported
+}

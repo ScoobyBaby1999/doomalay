@@ -45,6 +45,8 @@ import (
         "encoding/base64"
         "encoding/json"
         "fmt"
+        "io"
+        "net/http"
         "path"
         "reflect"
         "regexp"
@@ -59,7 +61,7 @@ import (
 // ── the verb registry + the honesty constants ────────────────────────────
 
 // termuxVerbs is the canonical verb list (help + unknown-action teach).
-const termuxVerbs = "help, exec, cmds, ls, read, write, append, rm, mkdir, grep, find, pkg, session_start, session_list, session_log, session_kill"
+const termuxVerbs = "help, exec, cmds, ls, read, write, append, rm, mkdir, grep, find, pkg, git_setup, session_start, session_list, session_log, session_kill"
 
 // termuxCapBytes is Termux's own result-Bundle physics (ResultSender's
 // TRANSACTION_SIZE_LIMIT_IN_BYTES): stdout+stderr ride the
@@ -229,6 +231,8 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
                 return s.termuxVerbFind(ctx, get, roots)
         case "pkg":
                 return s.termuxVerbPkg(ctx, sessionID, get, args)
+        case "git_setup":
+                return s.termuxVerbGitSetup(ctx)
         case "session_start":
                 return s.termuxVerbSessionStart(ctx, get)
         case "session_list":
@@ -988,6 +992,93 @@ func (s *Server) termuxVerbPkg(ctx context.Context, sessionID string, get func(s
         return s.termuxRunStreaming(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 600000)
 }
 
+// ── v1.29.5 THE GITHUB HAND: git_setup ────────────────────────────────────
+//
+// The user's hurdle (the Doobie transcript's last line): the model could
+// git-clone/commit inside Termux but NEVER push — Termux has no GitHub
+// credentials, and the only workaround was the user pasting a PAT into
+// the chat (which then lived in the DB unredacted). The engine already
+// holds the answer: the encrypted vault's GITHUB_PAT (ghconnect's paste
+// box / the brokered OAuth). git_setup arms it inside Termux ONCE:
+//
+//   · the token rides STDIN over the loopback bridge (RunWithStdin —
+//     the v1.20.2 lane): NEVER in a command string, never in the
+//     persisted tool_use args ({"action":"git_setup"} carries nothing),
+//     never in the observation text
+//   · the script writes ~/.git-credentials (umask 077, chmod 600) +
+//     credential.helper=store + the identity (from the GitHub API's
+//     login, best-effort) — then every git clone/push/pull just works
+//   · git installs via pkg when missing
+func (s *Server) termuxVerbGitSetup(ctx context.Context) string {
+        if s.termux == nil {
+                return "OBSERVATION:\nerror: this engine has no Termux bridge (a desktop build, or the APK's loopback bridge is down) — git_setup cannot run here."
+        }
+        tok := s.githubToken()
+        if tok == "" {
+                return "OBSERVATION:\nerror: no GitHub token in the vault — the user connects once (the workspace connect flow: the +workspace pill → GitHub sign-in, or paste a PAT) and git_setup arms it here. After that every git clone/push in Termux works with NO credentials in any command, ever."
+        }
+        login, err := ghLoginFor(ctx, tok)
+        if err != nil || login == "" {
+                login = "x-access-token" // the PAT convention — any username works
+        }
+        email := login + "@users.noreply.github.com"
+        script := `set -u
+umask 077
+login="$1"; email="$2"
+command -v git >/dev/null 2>&1 || pkg install -y git >/dev/null 2>&1
+read -r cred
+printf '%s\n' "$cred" > "$HOME/.git-credentials"
+chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
+git config --global credential.helper store
+git config --global user.name  >/dev/null 2>&1 || git config --global user.name  "$login"
+git config --global user.email >/dev/null 2>&1 || git config --global user.email "$email"
+echo "git $(git --version 2>&1 | cut -d' ' -f3)"
+echo "credential.helper: $(git config --global credential.helper)"
+echo "identity: $(git config --global user.name) <$(git config --global user.email)>"
+`
+        credLine := "https://" + login + ":" + tok + "@github.com"
+        runCtx, cancel := context.WithTimeout(ctx, 185*time.Second)
+        defer cancel()
+        res, err := s.termux.RunWithStdin(runCtx, termuxCommand(script, login, email), "", 180000, credLine)
+        if err != nil {
+                return "OBSERVATION:\nerror: the Termux bridge did not answer — " + err.Error()
+        }
+        if res.Timeout {
+                return termuxTimeoutObs(res, 180000)
+        }
+        if res.ExitCode != 0 {
+                return termuxFailObs(res)
+        }
+        out := Redact(strings.TrimRight(res.Stdout, "\n"))
+        return "OBSERVATION:\nGIT ARMED — the vault's GitHub token now lives in Termux (~/.git-credentials, 0600, credential.helper=store). git clone / pull / push against github.com just work now — no token in any command, ever. (The gh CLI is pkg install gh if you want it.)\n" + out
+}
+
+// ghLoginFor — the GitHub API's /user login for the token (best-effort;
+// the identity only, never fatal).
+func ghLoginFor(ctx context.Context, tok string) (string, error) {
+        req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+        if err != nil {
+                return "", err
+        }
+        req.Header.Set("Authorization", "Bearer "+tok)
+        req.Header.Set("Accept", "application/vnd.github+json")
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return "", err
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != 200 {
+                return "", fmt.Errorf("github /user: %s", resp.Status)
+        }
+        var m struct {
+                Login string `json:"login"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&m); err != nil {
+                return "", err
+        }
+        return m.Login, nil
+}
+
 // ── background-process sessions ─────────────────────────────────────────
 
 // termuxVerbSessionStart — {name, command}: $HOME/.doomalay/sessions/
@@ -1192,6 +1283,7 @@ Actions (one JSON object of arguments per tool call):
   {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — UNLIMITED hits
   {"action":"find","args":{"path":"","name":"*.go"}}   find files by name
   {"action":"pkg","args":{"op":"install","packages":["python","git"]}}  install|update|remove Termux packages (the package's commands go live instantly)
+  {"action":"git_setup","args":{}}              arm the vault's GitHub token in Termux — ~/.git-credentials (0600) + credential.helper=store + identity; after ONE call every git clone/push just works (the token rides bridge stdin, never a command, never the chat)
   {"action":"session_start","args":{"name":"web","command":"python -m http.server 8000"}}  background process (nohup + pid + out.log) — create AND kill on the fly, like python processes
   {"action":"session_list","args":{}}         every session: name, pid, live/dead, log size, the ps line
   {"action":"session_log","args":{"name":"web","tail":200}}    the session's full log tail

@@ -15,9 +15,9 @@
 package server
 
 import (
-	"regexp"
-	"strings"
-	"sync"
+        "regexp"
+        "strings"
+        "sync"
 )
 
 // redactedKey is the replacement marker (matches the brain's twin).
@@ -26,23 +26,23 @@ const redactedKey = "‹redacted:key›"
 // redactShapes — provider/service key shapes (ordered longest-first is
 // unnecessary for alternation; Go's regexp picks the leftmost-longest).
 var redactShapes = regexp.MustCompile(
-	`sk-proj-[A-Za-z0-9_-]{20,}|` +
-		`sk-[A-Za-z0-9_-]{16,}|` +
-		`nvapi-[A-Za-z0-9_-]{16,}|` +
-		`hf_[A-Za-z0-9]{20,}|` +
-		`github_pat_[A-Za-z0-9_]{20,}|` +
-		`ghp_[A-Za-z0-9]{20,}|` +
-		`gho_[A-Za-z0-9]{20,}|` +
-		`ghu_[A-Za-z0-9]{20,}|` +
-		`ghs_[A-Za-z0-9]{20,}|` +
-		`ghr_[A-Za-z0-9]{20,}|` +
-		`glpat-[A-Za-z0-9_-]{15,}|` +
-		`dop_v1_[A-Za-z0-9]{20,}|` +
-		`pypi-[A-Za-z0-9]{20,}|` +
-		`xox[baprs]-[A-Za-z0-9-]{10,}|` +
-		`AIza[A-Za-z0-9_-]{30,}|` +
-		`ant-api-key-[A-Za-z0-9_-]{20,}|` +
-		`doom-space-[A-Za-z0-9_-]{16,}`)
+        `sk-proj-[A-Za-z0-9_-]{20,}|` +
+                `sk-[A-Za-z0-9_-]{16,}|` +
+                `nvapi-[A-Za-z0-9_-]{16,}|` +
+                `hf_[A-Za-z0-9]{20,}|` +
+                `github_pat_[A-Za-z0-9_]{20,}|` +
+                `ghp_[A-Za-z0-9]{20,}|` +
+                `gho_[A-Za-z0-9]{20,}|` +
+                `ghu_[A-Za-z0-9]{20,}|` +
+                `ghs_[A-Za-z0-9]{20,}|` +
+                `ghr_[A-Za-z0-9]{20,}|` +
+                `glpat-[A-Za-z0-9_-]{15,}|` +
+                `dop_v1_[A-Za-z0-9]{20,}|` +
+                `pypi-[A-Za-z0-9]{20,}|` +
+                `xox[baprs]-[A-Za-z0-9-]{10,}|` +
+                `AIza[A-Za-z0-9_-]{30,}|` +
+                `ant-api-key-[A-Za-z0-9_-]{20,}|` +
+                `doom-space-[A-Za-z0-9_-]{16,}`)
 
 // urlCreds — an embedded URL credential (scheme://user:secret@host): the
 // secret half of the pair is redacted, the structure preserved.
@@ -50,52 +50,67 @@ var urlCreds = regexp.MustCompile(`(://[^/\s:@]+:)([^@\s]{8,})(@)`)
 
 // the exact-value set (vault values ≥ 16 chars), refreshed on key writes.
 var (
-	redactValsMu sync.RWMutex
-	redactVals   []string
+        redactValsMu sync.RWMutex
+        redactVals   []string
 )
 
 // Redact redacts key-shaped + known-vault substrings from a string.
 // Never panics; nil-safe.
 func Redact(s string) string {
-	if s == "" {
-		return s
-	}
-	out := redactShapes.ReplaceAllString(s, redactedKey)
-	out = urlCreds.ReplaceAllString(out, "${1}"+redactedKey+"${3}")
-	redactValsMu.RLock()
-	vals := redactVals
-	redactValsMu.RUnlock()
-	for _, v := range vals {
-		if len(v) >= 16 && strings.Contains(out, v) {
-			out = strings.ReplaceAll(out, v, redactedKey)
-		}
-	}
-	return out
+        if s == "" {
+                return s
+        }
+        out := redactShapes.ReplaceAllString(s, redactedKey)
+        out = urlCreds.ReplaceAllString(out, "${1}"+redactedKey+"${3}")
+        redactValsMu.RLock()
+        vals := redactVals
+        redactValsMu.RUnlock()
+        for _, v := range vals {
+                if len(v) >= 16 && strings.Contains(out, v) {
+                        out = strings.ReplaceAll(out, v, redactedKey)
+                }
+        }
+        return out
 }
 
 // RedactAny — Redact for the loose event fields (string passthrough,
 // anything else returned unchanged).
 func RedactAny(v any) any {
-	if s, ok := v.(string); ok {
-		return Redact(s)
-	}
-	return v
+        if s, ok := v.(string); ok {
+                return Redact(s)
+        }
+        return v
+}
+
+// persistRedact — v1.29.5 THE GITHUB HAND: the persistence-boundary law.
+// user + tool_use/tool_result content is redacted BEFORE it touches the
+// event store (the pasted-PAT-in-chat workaround left tokens in the DB
+// unredacted; the replay, the export, and the model's history fold all
+// read the persisted form). Streaming deltas (assistant_delta/thinking)
+// stay raw — a token can split across fragments, and the history fold's
+// own Redact catches the joined form. Everything else passes untouched.
+func persistRedact(evType, content string) string {
+        switch evType {
+        case "user", "tool_use", "tool_result":
+                return Redact(content)
+        }
+        return content
 }
 
 // refreshRedactVals rebuilds the exact-value set from the vault (called
 // on key writes — keys.go / devkeys.go / fanOutRemoteEnv's neighborhood).
 func (s *Server) refreshRedactVals() {
-	if s.vault == nil {
-		return
-	}
-	env := s.vault.AsEnv()
-	vals := make([]string, 0, len(env))
-	for _, v := range env {
-		if len(v) >= 16 {
-			vals = append(vals, v)
-		}
-	}
-	redactValsMu.Lock()
-	redactVals = vals
-	redactValsMu.Unlock()
+        if s.vault == nil {
+                return
+        }
+        env := s.vault.AsEnv()
+        vals := make([]string, 0, len(env))
+        for _, v := range env {
+                if len(v) >= 16 {
+                        vals = append(vals, v)
+                }
+        }
+        redactValsMu.Lock()
+        redactVals = vals
+        redactValsMu.Unlock()
 }
