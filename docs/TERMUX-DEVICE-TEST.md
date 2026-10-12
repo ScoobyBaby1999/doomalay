@@ -333,3 +333,36 @@ the bot remembers what its hands read, and the GitHub hand is real.
    skill — from then on every turn in that chat follows it (the
    methodology rides the history; it no longer evaporates at the turn
    boundary).
+
+## v1.34.0 — THE OWNERSHIP WAVE (the 5-walk device checklist)
+
+1. **The returning model**: open a mature chat (one with replies), close
+   the panel (swipe down), reopen it — the header's model pill is STILL
+   THERE (model name · provider). Tap it: the model browser opens —
+   pick a different model: the chat switches (the running turn stops
+   first, nothing is lost). The old build lost the pill forever on
+   every reopen.
+2. **The honest tails**: ask the bot to read a file (`read
+   /storage/emulated/0/notes.txt` style) — the collapsed pill reads
+   "read notes.txt" (the verb + the FILE's name, not the generic
+   file_read or a blank). Ask it to load a skill: "skills load
+   superpowers". Template/persona asks speak "template X"/"persona X".
+   The full path still shows when the pill is expanded.
+3. **The settled setup**: the caps screen → Termux row → setup → when
+   it completes, the card reads "optional — device commands … need the
+   Termux:API companion app — a separate app from F-Droid — plus `pkg
+   install termux-api`. Termux itself is fully ready without it" (NOT
+   an error). Tap Done: you land back on the caps page and the Termux
+   row is right there, switched ON (the setup stacks it for the chat —
+   no more hunting for a vanished row).
+4. **The unasked return**: during an auth flow (GitHub workspace
+   connect / HF), the provider's redirect back to the engine NEVER
+   asks "redirect to 192.x?" anymore (the app's own origins are
+   exempt). When the connect lands, the panel browser closes itself
+   (~1s after the ✓) and the panel updates — no manual close.
+5. **The isolated minds**: start a privatemodeai chat doing autonomous
+   work, then create/open a SECOND privatemodeai chat while the first
+   runs — the fresh chat stays clean (its greeting, zero foreign
+   reasoning boxes or tool pills). Reopen the first: everything it did
+   while backgrounded is there. Many PM chats in parallel, each on its
+   own workspace, no interference.
