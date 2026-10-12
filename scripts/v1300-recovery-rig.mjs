@@ -90,7 +90,9 @@ ok('the PM path reports through the same law',
 ok('the elapsed chip hides with the chain (the stats line keeps the frozen label)',
   /chip\.style\.display = 'none'/.test(cp));
 ok('the pmsdk bootstrap cache is DECLARED (the ReferenceError pill is dead)',
-  /var _pmBootstrapCache = null;/.test(read(path.join(WEB, 'vendor', 'pm', 'pmsdk.js'))));
+  // v1.33.5 (the ownership wave) evolved the shape: null → the session-keyed
+  // { entries, ttlMs } cache — the DECLARATION is the law this pin guards.
+  /var _pmBootstrapCache = /.test(read(path.join(WEB, 'vendor', 'pm', 'pmsdk.js'))));
 
 // ══ §3 THE OPEN DOOR (source mirrors of the Go pins) ══════════════════
 console.log('§3 the open door — the takeover sits in the busy branch');
@@ -147,7 +149,10 @@ ok('chatclient loads in the vm harness', typeof ChatClient === 'function');
 ok('the engine sends the replay_done marker (ephemeral, after the burst)',
   /"state": "replay_done", "resumed": since > 1/.test(goChat));
 ok('the panel force-repaints streaming bubbles when the burst ends',
-  /else if \(ev\.state === 'replay_done'\) \{[\s\S]{0,900}updateMessageEl\(bodyEl, rm, false, state\);/.test(cp));
+  // v1.35.0: the branch now also carries THE TRUTH ARM before the repaint
+  // loop — the window widens, the pin's intent (a force-repaint inside the
+  // replay_done branch) is unchanged.
+  /else if \(ev\.state === 'replay_done'\) \{[\s\S]{0,3600}updateMessageEl\(bodyEl, rm, false, state\);/.test(cp));
 
 // ══ done ══════════════════════════════════════════════════════════════
 console.log('\n' + (n - fails.length) + '/' + n + ' checks passed');

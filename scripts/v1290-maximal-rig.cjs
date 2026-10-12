@@ -114,8 +114,10 @@ ok('the engine /api/termux/status passes it through',
   /"api_installed":\s+apiInstalled/.test(goapi));
 ok('the setup ready card speaks the live state',
   /device commands live — battery · wifi ·/.test(tsx));
-ok('the setup ready card teaches the locked unlock (both pieces)',
-  /device commands locked — install the Termux:API ' \+\n\s*'app \(F-Droid\) \+ pkg install termux-api to unlock/.test(tsx));
+ok('the setup ready card teaches the device-commands unlock (both pieces)',
+  // v1.33.3 (the ownership wave) re-voiced the teach BY DESIGN: the
+  // error-weighted "locked" died; the companion-app law stays.
+  /Termux:API companion app/.test(tsx) && /pkg install termux-api/.test(tsx));
 ok('the ready card line rides the legal surfaces only (the theme-vars law)',
   /\.tsx-ready-api\{[^}]*var\(--surface-1\)[^}]*var\(--surface-2\)/.test(tsx));
 

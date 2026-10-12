@@ -301,6 +301,56 @@ func takeoverStaleTurn(sessionID string, sender *websocket.Conn) bool {
         return true
 }
 
+// v1.34.0 THE TURN PULSE — the open door's aliveness probe. The user's
+// law: "once a turn in a session starts, nothing should automatically end
+// it unless the user manually does so." The v1.29.3 door (the Nvidia
+// wedge: a HUNG turn held the lock forever) keyed on conn ownership
+// alone — a RESUMED client's fresh send (page reload mid-turn, a
+// reconnect's queued flush) landed on a NEW conn that owned no registered
+// turn, and the door ABORTED A LIVE TURN: the S5 rig conviction (the
+// fresh-socket send killed a streaming turn mid-flight, its transcript
+// truncated with a fabricated clean idle). The pulse separates the two
+// shapes the old gate conflated:
+//   · ALIVE — the turn produced ANY event (persisted or ephemeral:
+//     deltas, thinking, progress, tool_stream) within the stale window →
+//     the door stays SHUT; the new sender gets the honest busy answer
+//     ("the previous turn is still running — tap Stop to end it, or wait
+//     for it to finish").
+//   · STALE — no event for the window (the hung-provider wedge the door
+//     was built for) → the door opens exactly as before.
+const turnStaleAfter = 120 * time.Second // mirrors the client's own stall chip
+
+var (
+        turnActMu    sync.Mutex
+        turnActivity = make(map[string]time.Time)
+)
+
+func markTurnEvent(sessionID string) {
+        turnActMu.Lock()
+        turnActivity[sessionID] = time.Now()
+        turnActMu.Unlock()
+}
+
+// turnStale — true when the session's turn has been SILENT past the
+// window (or never pulsed at all — the pre-gate behavior for exotic
+// paths). A silent-but-young turn is ALIVE by definition: quiet phases
+// (provider queues, long tool runs between events) are normal life.
+func turnStale(sessionID string) bool {
+        turnActMu.Lock()
+        t, ok := turnActivity[sessionID]
+        turnActMu.Unlock()
+        if !ok {
+                return true
+        }
+        return time.Since(t) > turnStaleAfter
+}
+
+func releaseTurnPulse(sessionID string) {
+        turnActMu.Lock()
+        delete(turnActivity, sessionID)
+        turnActMu.Unlock()
+}
+
 // turnAbort registers an in-flight turn's cancel per session, so a
 // client "stop" aborts ONLY that turn — not the shared read-loop context
 // (v0.19: the old code called cancel() on the loop's ctx, which poisoned
@@ -1038,10 +1088,23 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
                 // listeners), take the lock with a short bounded wait, and
                 // run the new turn. A same-conn double-send keeps the
                 // instant reject.
+                // v1.34.0 THE TURN PULSE: the door now opens ONLY on a STALE
+                // turn (silent past turnStaleAfter — the wedge shape). A
+                // LIVE turn (any event within the window — a quiet provider
+                // queue, a long tool run) keeps the lock: the new sender
+                // gets the honest busy answer below and the running turn
+                // finishes. The S5 rig convicted the owner-only gate: a
+                // fresh-socket send (page reload mid-turn) aborted a
+                // streaming turn — the exact "leaving the app mid-turn
+                // interrupts the bot" report.
                 if takeoverStaleTurn(sessionID, sender) {
-                        log.Printf("open door: session %s turn lock held by a client that is no longer serving — aborting the stale turn for the new sender", sessionID)
-                        abortTurn(sessionID)
-                        release, ok = lockSessionWait(sessionID, 3*time.Second)
+                        if turnStale(sessionID) {
+                                log.Printf("open door: session %s turn lock held by a silent (stale) client — aborting the stale turn for the new sender", sessionID)
+                                abortTurn(sessionID)
+                                release, ok = lockSessionWait(sessionID, 3*time.Second)
+                        } else {
+                                log.Printf("open door: session %s turn lock held by a LIVE turn (pulsed within %s) — the new sender waits for the honest busy answer", sessionID, turnStaleAfter)
+                        }
                 }
         }
         if !ok {
@@ -1062,6 +1125,14 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
                 return
         }
         defer release()
+
+        // v1.34.0 THE TURN PULSE: the send itself is the first heartbeat —
+        // the pre-first-event window (provider queue, model resolve) is
+        // ALIVE time, not staleness. forwardEvents re-marks on EVERY event
+        // (persisted or ephemeral) for the turn's whole life; the deferred
+        // release clears the entry so a finished turn can never look alive.
+        markTurnEvent(sessionID)
+        defer releaseTurnPulse(sessionID)
 
         s.emit(pipe, sessionID, "user", userText, "")
 
@@ -2298,6 +2369,13 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                 lastThinkFlush = time.Now()
         }
         for ev := range events {
+                // v1.34.0 THE TURN PULSE: every event — persisted or
+                // ephemeral (deltas, thinking, progress, tool_stream) — is a
+                // heartbeat. The open door's aliveness gate reads this: a
+                // turn that pulses is LIVE and can never be aborted by a
+                // new sender; only a turn silent past turnStaleAfter (the
+                // wedge) opens the door.
+                markTurnEvent(sessionID)
                 // Normalize the event into the wire format + persist.
                 evType, _ := ev["type"].(string)
                 // v0.37: a user-initiated Stop (turnCtx CANCELED — the Stop button

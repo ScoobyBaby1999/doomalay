@@ -512,7 +512,23 @@
     // watchdog's interval kept ticking data-only — ownership is live
     // again, its next 500ms tick repaints the row; re-arm it if the
     // interval was somehow lost (the never-silent law).
-    if (state.isStreaming) ensureActivityWatch(bodyEl, state);
+    if (state.isStreaming) {
+      ensureActivityWatch(bodyEl, state);
+      // v1.35.0 THE FRESH RESTORE: the closed window's beats updated
+      // state.messages data-only — the stashed DOM still shows the text
+      // as it was at CLOSE time. Force ONE honest repaint of the tail's
+      // streaming bubbles the moment ownership returns (the next live
+      // delta would heal it within 180ms; the law is to never show a
+      // stale mid-turn bubble on reopen).
+      var flushed = 0;
+      for (var rmi = state.messages.length - 1; rmi >= 0 && flushed < 4; rmi--) {
+        var rm = state.messages[rmi];
+        if (rm && (rm.role === 'thinking' || rm.role === 'assistant') && rm.streaming) {
+          updateMessageEl(bodyEl, rm, false, state);
+          flushed++;
+        }
+      }
+    }
 
     // labels may land async (the catalog fetch): exactly ONE post-labels
     // full re-render, same law as renderHost (rare — cached after the
@@ -4366,41 +4382,40 @@
   // reconnect ladder is exhausted (~20s of retries, each announced as a
   // ws_state indicator) — by then the engine's persisted events carry the
   // truth, so the honest close-out lands in the OWNING chat only.
+  // v1.35.0 THE UNBROKEN TURN (the user's law: "once a turn in a session
+  // starts, nothing should automatically end it unless the user manually
+  // does so"): ladder exhaustion is a WIRE fact, not a TURN fact — the
+  // engine NEVER kills a turn on socket loss (chat.go: the event log keeps
+  // filling, a resume picks the stream up). The old owner-path FABRICATED
+  // a terminal here (isStreaming=false + a persisted-looking error bubble
+  // + a parked queue) while the turn was still alive engine-side: a >20s
+  // network wobble on a long convo — or a drop that outlived the ladder
+  // while the panel was closed and the chat was reopened before the
+  // revive poll fired — painted "Connection to the engine dropped
+  // mid-reply… Tap Retry" over a RUNNING turn (the rig's S2/S3
+  // conviction). Both faces now hold the turn armed; the honest state is
+  // an INDICATOR, not a terminal:
+  //   · background (not owner) → _bgDrop as before (the reopen's revive +
+  //     gap replay own the verdict);
+  //   · owner → the turn STAYS armed (Stop still works, the queue still
+  //     parks its fires on the turn end), the activity row says exactly
+  //     what is true, and the revive poll keeps reconnecting every 20s
+  //     until the wire returns. The gap replay then resolves the truth:
+  //     an engine terminal ends the turn honestly; live deltas resume the
+  //     stream. A fabricated bubble can never again end a live turn.
   function wireClientClose(bodyEl, state, msgContainer) {
     state.client.onClose = function () {
       if (!state.isStreaming) return;
-      // v1.29.2 THE UNBROKEN TURN: a drop while the chat is BACKGROUNDED
-      // (the panel is closed — currentCtx is null, or another chat owns
-      // the live DOM) never declares the turn dead. The engine NEVER kills
-      // a turn on socket loss (chat.go: the event log keeps filling) — the
-      // old code flipped isStreaming + parked the queue + wrote an error
-      // the user only saw at reopen, while the engine was STILL RUNNING
-      // the turn: the exact "panel closes, re-opens, turn gets
-      // interrupted" defect. The turn stays armed; the reopen's revive +
-      // gap replay resolves the truth (terminal → honest end; deltas →
-      // the turn keeps streaming into the restored DOM).
       if (!isOwner(state)) {
         state._bgDrop = Date.now();
         return;
       }
-      state.isStreaming = false;
-      state._actText = null;
-      // v0.44 (CAUSE #2): the turn died without its engine echo ever
-      // arriving — the pending-send ledger is stale (the ws_state 'failed'
-      // revive poll may still replay events, but a NEW send records a
-      // fresh entry; the tail-scan catches stragglers either way).
-      state._pendingSends = null;
-      var msg = { role: 'error', text: 'Connection to the engine dropped mid-reply and could not be re-established — your messages and partial replies are saved. Tap Retry to resend.' };
-      state.messages.push(msg);
-      state._holdQueue = true; // v0.42: a dropped turn parks the queue (not a clean finish)
-      if (isOwner(state)) {
-        hideActivity(bodyEl, state);
-        appendMessage(currentCtx.bodyEl.querySelector('#chat-messages'), null, msg, currentCtx.bodyEl, state._icon, state);
-        // v0.42: the error bubble IS the last turn → the button reads RETRY
-        // (the old reset-to-Send lost the one affordance that mattered).
-        syncSendButton(currentCtx.bodyEl, state);
-        completeAllStreaming(currentCtx.bodyEl, state);
-      }
+      state._wsDropped = true;
+      setActivity(bodyEl, state, 'connection lost — the turn continues engine-side, reconnecting…');
+      // the ws_state 'failed' branch arms this poll too; arm it here as
+      // belt and braces (onClose can fire without the synthetic event on
+      // exotic paths — a client closed from under the panel, tunnels).
+      startReviveTimer(state);
     };
   }
 
@@ -4942,6 +4957,41 @@
           setActivity(bodyEl, state, state._waitPhase || 'reconnected — streaming…');
         }
       } else if (ev.state === 'replay_done') {
+        // v1.35.0 THE TRUTH ARM: the backlog IS the engine's truth. When it
+        // ends WITHOUT a terminal status after the turn's user echo (a
+        // mid-turn log: the page reloaded / the WebView died while the
+        // engine still ran the turn — the quiet phase of a long tool run
+        // produces NO live deltas to re-arm on), the turn is ALIVE right
+        // now: arm the streaming state from the transcript's truth instead
+        // of waiting for a live delta. The old shape left the button on
+        // Send through the whole quiet window — one user send rode the
+        // engine's open door and aborted the live turn (the S4/S5 rig
+        // conviction). The law: the button reads Stop whenever the engine
+        // holds a turn, and the ONLY client-side terminals are
+        // engine-truth terminals.
+        // THE TAIL LAW (the ownership-walk conviction): "no terminal in
+        // the log" alone is not proof of a live turn — the terminal is
+        // EMITTED by the engine's guaranteed-terminal guard, but a log
+        // can also END at a complete record (seeded sessions, a segment
+        // final). The tail decides: arm only when the LAST message reads
+        // mid-turn (a bare user echo, an open assistant, a thinking
+        // bubble, a pending tool pill, sources) — a COMPLETE assistant
+        // segment or an error/notice tail is a FINISHED turn, never armed.
+        if (!state.isStreaming && state._terminalSeen === false &&
+            state.messages.some(function (m) { return m.role === 'user'; })) {
+          var lastM = state.messages[state.messages.length - 1];
+          var midTurn = !!lastM && !(
+            (lastM.role === 'assistant' && lastM.complete) ||
+            lastM.role === 'error' || lastM.role === 'notice'
+          );
+          if (midTurn) {
+            state.isStreaming = true;
+            state._turnStartAt = state._turnStartAt || Date.now();
+            ensureActivityWatch(bodyEl, state);
+            setActivity(bodyEl, state, 'the turn is still running engine-side…');
+            syncSendButton(bodyEl, state);
+          }
+        }
         // v1.29.4 THE STEADY RESUME: the engine says the backlog burst is
         // OVER — the live feed is authoritative from here. When the
         // resume landed mid-turn, force ONE honest repaint of the last
@@ -4971,6 +5021,11 @@
     }
     if (type === 'user') {
       bumpActivity(state);
+      // v1.35.0 THE TRUTH ARM ledger: a user echo opens a turn — no
+      // terminal has been seen for it (the status handler sets the flag;
+      // the replay_done arm reads it). Both echo shapes (stamp + push)
+      // open the same window.
+      state._terminalSeen = false;
       // v0.44 INTERRUPT FIX (CAUSE #2): the engine echo of a message WE
       // sent must stamp the optimistic bubble wherever it now sits. The
       // old code only checked the LAST message — a mid-turn reconnect's
@@ -5274,6 +5329,11 @@
       appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, state._icon, state);
     } else if (type === 'status') {
       if (ev.state === 'idle' || ev.state === 'error') {
+        // v1.35.0 THE TRUTH ARM ledger: a terminal (live OR replayed) is
+        // the engine's own end-of-turn record. The replay_done arming
+        // reads it: a backlog that ends on a terminal is a FINISHED turn
+        // (never re-arm); a backlog that ends mid-turn arms the stream.
+        state._terminalSeen = true;
         // v0.42: wasStreaming separates the LIVE end of THIS turn from
         // REPLAYED old idles (a fresh-open replay re-lands every historic
         // status event — those must never flush the queue).
@@ -7525,7 +7585,7 @@
       // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
-      // v1.33.2 THE HONEST TAILS seams (scripts/v1340-ownership-rig.cjs)
+      // v1.33.2 THE HONEST TAILS seams (scripts/v1350-ownership-rig.cjs)
       pathTail: pathTail,
       toolArgsOf: toolArgsOf,
       toolQueryText: toolQueryText,
