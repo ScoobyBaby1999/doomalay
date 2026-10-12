@@ -5196,10 +5196,59 @@
   // throttled re-render for streaming (markdown every ~180ms, not per delta)
   // v0.35: ownerState rides along so background chats never index their
   // bubbles against the foreground chat.
+  //
+  // v1.30.2 THE GESTURE MASK (PLAN-V131 §2): a stream and a finger
+  // compete for the same frame budget — an assistant_delta burst landing
+  // mid-glide rendered per throttle tick into the very DOM the gesture
+  // is moving (the spring pays the other's layout). The mask reads the
+  // gesture fact gesture.js already publishes (writeY stamps
+  // __doomalayGestureAt per motion frame; writeVis already consumes it
+  // with the same 200ms freshness window — ONE gesture definition, not
+  // two):
+  //   · while the gesture is fresh, the streaming re-render PARKS on the
+  //     trailing timer instead of rendering synchronously past 180ms;
+  //   · the parked flush re-checks the mask and re-arms (120ms
+  //     granularity) while still fresh — bounded by THE MAX-DEFER
+  //     DEADLINE (400ms from the first parked call): a stream that
+  //     never stops cannot starve the panel, and the settle reads one
+  //     flush right after the spring ends;
+  //   · unmasked behavior is byte-identical to the v0.23 throttle.
+  // The error paths need NO stamp — they append directly (never ride
+  // this throttle), so a terminal bubble lands the same instant during
+  // a gesture as at rest (the structural bypass).
+  var GESTURE_FRESH_MS = 200;     // the writeVis gestFresh window
+  var GESTURE_MASK_MAX_MS = 400;  // the max-defer deadline
+  function gestureFresh() {
+    var g = window.__doomalayGestureAt;
+    return !!(g && performance.now() - g < GESTURE_FRESH_MS);
+  }
+  function flushMasked(bodyEl, msg, ownerState) {
+    if (msg._maskAt && gestureFresh() && Date.now() - msg._maskAt < GESTURE_MASK_MAX_MS) {
+      msg._renderPending = setTimeout(function () {
+        msg._renderPending = null;
+        flushMasked(bodyEl, msg, ownerState);
+      }, 120);
+      return;
+    }
+    msg._maskAt = 0;
+    msg._renderTimer = Date.now();
+    updateMessageEl(bodyEl, msg, false, ownerState);
+  }
   function scheduleUpdate(bodyEl, msg, immediate, ownerState) {
     if (immediate) { updateMessageEl(bodyEl, msg, true, ownerState); return; }
     msg._renderTimer = msg._renderTimer || 0;
     var now = Date.now();
+    if (gestureFresh()) {
+      if (!msg._maskAt) msg._maskAt = now;
+      if (!msg._renderPending) {
+        msg._renderPending = setTimeout(function () {
+          msg._renderPending = null;
+          flushMasked(bodyEl, msg, ownerState);
+        }, 180);
+      }
+      return;
+    }
+    msg._maskAt = 0;
     if (now - msg._renderTimer > 180) {
       msg._renderTimer = now;
       updateMessageEl(bodyEl, msg, false, ownerState);
