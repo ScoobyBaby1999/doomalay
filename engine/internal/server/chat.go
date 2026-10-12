@@ -256,13 +256,66 @@ func lockSession(id string) (release func(), ok bool) {
         }
 }
 
+// lockSessionWait — v1.29.3 THE OPEN DOOR's second half: the bounded-wait
+// variant of lockSession. The takeover aborts the stale turn first; the
+// abort's cancel propagates to the stream goroutine and the lock releases
+// when THAT goroutine exits — a beat later. The sender polls up to `wait`
+// (50ms steps) for the hand-off; missing the window is an honest reject.
+func lockSessionWait(id string, wait time.Duration) (release func(), ok bool) {
+        deadline := time.Now().Add(wait)
+        for {
+                if r, got := lockSession(id); got {
+                        return r, true
+                }
+                if time.Now().After(deadline) {
+                        return nil, false
+                }
+                time.Sleep(50 * time.Millisecond)
+        }
+}
+
+// takeoverStaleTurn — v1.29.3 THE OPEN DOOR's gate. True when the
+// session's turn lock is held AND NO registered turn belongs to the
+// sender's conn (the sender's frame just landed on a live socket, so
+// "no turn of mine" means the held turn's client is gone or is someone
+// else — an interrupted turn nobody can reach with a Stop anymore; the
+// exact wedge the user reported on Nvidia: a disconnected turn held the
+// lock forever and every later send ate "agent already processing").
+// The OWNER is recorded at turn start (registerTurnCancel) — NOT the
+// pipe's current socket (a resumed client swaps into the same pipe, so
+// the pipe's ws IS the new sender by the time the second send arrives —
+// the live rig convicted that shape). A same-conn double-send keeps the
+// instant reject (the client's own queue machine owns that case).
+func takeoverStaleTurn(sessionID string, sender *websocket.Conn) bool {
+        if sender == nil {
+                return false // defensive — the caller always has a conn
+        }
+        turnMu.Lock()
+        cancels := turnCancels[sessionID]
+        turnMu.Unlock()
+        for _, c := range cancels {
+                if c != nil && c.owner == sender {
+                        return false // the sender owns the in-flight turn — its own business
+                }
+        }
+        return true
+}
+
 // turnAbort registers an in-flight turn's cancel per session, so a
 // client "stop" aborts ONLY that turn — not the shared read-loop context
 // (v0.19: the old code called cancel() on the loop's ctx, which poisoned
 // every future turn on the same socket — "the new model doesn't reply").
 // Each registration wraps the cancel in a unique struct so release can
 // identify exactly ITS handle (funcs aren't comparable in Go).
-type turnCancel struct{ cancel context.CancelFunc }
+// turnCancel: one in-flight turn's cancel + v1.29.3's OWNER — the client
+// conn the turn was started for. The open door's gate reads it: a new
+// send from a conn that owns NO registered turn of this session is a
+// client the held turn does not belong to (the interrupted-turn shape:
+// the owner's socket died mid-turn, the turn hung, the lock is stuck).
+type turnCancel struct {
+        cancel context.CancelFunc
+        owner  *websocket.Conn
+}
 
 var (
         turnMu      sync.Mutex
@@ -279,8 +332,8 @@ func abortTurn(sessionID string) {
         }
 }
 
-func registerTurnCancel(sessionID string, cancel context.CancelFunc) *turnCancel {
-        tc := &turnCancel{cancel: cancel}
+func registerTurnCancel(sessionID string, cancel context.CancelFunc, owner *websocket.Conn) *turnCancel {
+        tc := &turnCancel{cancel: cancel, owner: owner}
         turnMu.Lock()
         turnCancels[sessionID] = append(turnCancels[sessionID], tc)
         turnMu.Unlock()
@@ -830,6 +883,26 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                         }
                 }
         }
+        // v1.29.4 THE STEADY RESUME: the backlog burst's end is EXPLICIT.
+        // The client's replay tag (which keeps the burst from re-arming
+        // the streaming UI) used to clear only on a >1200ms arrival gap —
+        // a resume landing straight into a fast live stream (reasoning
+        // deltas <1200ms apart) NEVER cleared it, and every live delta
+        // stayed _replay-tagged (second-class: no stream re-arm,
+        // tool_stream dropped — the "reasoning box stalls after a
+        // network resume" report). The marker ends the tag
+        // deterministically: everything AFTER this frame is LIVE.
+        // Ephemeral by construction: no seq → never persisted, never
+        // replayed (the ws_state family's law).
+        if b, merr := json.Marshal(map[string]any{
+                "type": "ws_state", "session_id": sessionID,
+                "state": "replay_done", "resumed": since > 1,
+        }); merr == nil {
+                if err := pipe.send(b); err != nil {
+                        pipe.clear(conn, gen)
+                        return
+                }
+        }
 
         // Pings live for exactly as long as THIS handler.
         pingCtx, pingCancel := context.WithCancel(context.Background())
@@ -878,7 +951,7 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
                 }
                 switch msgType {
                 case "send":
-                        go s.handleTurn(pipe, sessionID, sess, msg)
+                        go s.handleTurn(conn, pipe, sessionID, sess, msg)
                 case "stop":
                         // v0.19: abort ONLY the in-flight turn(s) for this session.
                         // The old cancel() killed the shared read-loop ctx — after ONE
@@ -913,7 +986,7 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
 // (abortTurn) and the stream's own end are the only cancellation paths; a
 // WS drop just clears the pipe while the turn keeps persisting (a resumed
 // client picks it up).
-func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
+func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
         // v0.15 (crash fix): this runs in its own goroutine — a panic here
         // would take the whole engine down (dead app, white screen). The
         // recoverMiddleware can't see goroutine panics, so guard locally.
@@ -944,6 +1017,28 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         // v0 FIX: per-session turn lock, non-blocking acquire, release in defer.
         release, ok := lockSession(sessionID)
         if !ok {
+                // v1.29.3 THE OPEN DOOR (the user's Nvidia report): a busy
+                // reject used to be blind. A turn interrupted client-side
+                // (network drop → the reconnect ladder exhausted) keeps
+                // running engine-side BY DESIGN (v0.39) and can hang on a
+                // deprovisioned stream — the lock stays held indefinitely,
+                // every later send ate "agent already processing" forever,
+                // and the only outs were Stop from a client that can no
+                // longer send, or a restart. But THIS frame just arrived on
+                // a live socket: when NO registered turn belongs to the
+                // sender's conn (the owner is recorded at turn start), the
+                // sender is not the held turn's own client — abort the
+                // stale turn (its own terminal status lands on any
+                // listeners), take the lock with a short bounded wait, and
+                // run the new turn. A same-conn double-send keeps the
+                // instant reject.
+                if takeoverStaleTurn(sessionID, sender) {
+                        log.Printf("open door: session %s turn lock held by a client that is no longer serving — aborting the stale turn for the new sender", sessionID)
+                        abortTurn(sessionID)
+                        release, ok = lockSessionWait(sessionID, 3*time.Second)
+                }
+        }
+        if !ok {
                 // v0.44 INTERRUPT FIX (the orphaned optimistic bubble): a busy
                 // reject used to persist ONLY the error — never the user message,
                 // never a terminal status. The PWA's optimistic bubble never got
@@ -953,8 +1048,10 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
                 // same emit the normal path does), then the error, then a
                 // TERMINAL status error — a reload now shows the message + the
                 // failure, and the client unblocks on the terminal.
+                // v1.29.3: the message names the way out (the old
+                // "agent already processing" was a dead end).
                 s.emit(pipe, sessionID, "user", userText, "")
-                s.emit(pipe, sessionID, "error", `{"error":"busy","message":"agent already processing"}`, "")
+                s.emit(pipe, sessionID, "error", `{"error":"busy","message":"the previous turn is still running — tap Stop to end it, or wait for it to finish"}`, "")
                 s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
                 return
         }
@@ -1159,7 +1256,7 @@ func (s *Server) handleTurn(pipe *chatPipe, sessionID string, sess *store.Sessio
         // is released when the stream goroutine returns and the deferred
         // terminal-status emit below guarantees the UI always unblocks.
         turnCtx, turnCancel := context.WithCancel(context.Background())
-        tcHandle := registerTurnCancel(sessionID, turnCancel)
+        tcHandle := registerTurnCancel(sessionID, turnCancel, sender)
         terminal := false // did the stream end with a status idle/error?
         defer func() {
                 releaseTurnCancel(sessionID, tcHandle)

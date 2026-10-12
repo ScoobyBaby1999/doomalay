@@ -176,7 +176,7 @@ async function armSession(id) {
 async function run() {
   seedFs();
   const bridge = startBridge();
-  const build = spawn('/home/z/sdk/go/bin/go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], { cwd: __ROOT + '/engine', stdio: 'inherit' });
+  const build = spawn(process.env.GO_BIN || 'go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], { cwd: __ROOT + '/engine', stdio: 'inherit' });
   await new Promise((r, j) => { build.on('close', (c) => c === 0 ? r() : j(new Error('build failed'))); });
   bootEngine();
   await waitEngine();

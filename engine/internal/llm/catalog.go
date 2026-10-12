@@ -433,8 +433,11 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 }
                 if lastInconclusive != "" {
                         // No candidate reached the auth layer (all model-level
-                        // errors) — can't confirm either way.
-                        return ValidateResult{State: "unverified", Reason: lastInconclusive}
+                        // errors) — can't confirm either way. v1.29.3: the
+                        // reason says so HONESTLY — the user's yellow box read
+                        // "probe bigcode/starcoder2-15b: 404 page not found"
+                        // and looked like a bad key; the key was never rejected.
+                        return ValidateResult{State: "unverified", Reason: lastInconclusive + " — model-level errors only; the key itself was never rejected"}
                 }
                 return ValidateResult{State: "unverified", Reason: "probe ladder exhausted"}
 
@@ -576,10 +579,17 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
         return out
 }
 
-// probeCandidateCap bounds the chat_probe ladder (v1.15.1): the user's
-// "3-5 available models" — a handful of live-roster candidates, not a
-// full-catalog sweep (each rung is a real completion request).
-const probeCandidateCap = 5
+// probeCandidateCap bounds the chat_probe ladder (v1.15.3): a handful of
+// live-roster candidates, not a full-catalog sweep (each rung is a real
+// completion request).
+// v1.29.3 THE DEEPER LADDER (the user's Nvidia report, live-probed):
+// nvidia's /models wire order leads with RETIRED entries — 01-ai/yi-large,
+// bigcode/starcoder2-15b… all 404/410 while the key is fine (deepseek-v4.1
+// flash 200s on the same key). At cap 5 the ladder burned every rung on
+// the rotten head and the connect flow showed the yellow "saved
+// unverified" box. 12 rungs reach past the ancient head (the first live
+// model sits at roster position 8, live-verified 2026-10).
+const probeCandidateCap = 12
 
 // isFreeProbeModel knows the per-provider free-model rules (probe ladder only).
 func isFreeProbeModel(provider, modelID string) bool {

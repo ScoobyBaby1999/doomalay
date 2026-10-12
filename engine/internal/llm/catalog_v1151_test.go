@@ -66,15 +66,21 @@ func TestV1151_ProbeLadderIsLiveDerived(t *testing.T) {
         }
 
         got := probeCandidates("nvidia", cfg, "key", "")
-        if len(got) != probeCandidateCap {
-                t.Fatalf("ladder = %v (len %d), want exactly %d live-roster candidates", got, len(got), probeCandidateCap)
+        // v1.29.3: the cap grew 5 → 12 (the rotten-roster-head fix — the
+        // user's Nvidia ladder burned all 5 rungs on retired models); an
+        // 8-model roster therefore lands WHOLE (the fallback rung dedupes).
+        if len(got) != 8 {
+                t.Fatalf("ladder = %v (len %d), want exactly 8 live-roster candidates (cap now %d)", got, len(got), probeCandidateCap)
         }
         want := []string{
                 "z-ai/glm-5.3-flash",
                 "openai/gpt-oss-20b",
                 "nvidia/nemotron-3-super-120b-a12b",
                 "meta/llama-3.2-11b-vision-instruct",
-                "google/gemma-4-31b-it", // 5th free model fills the cap; the any-model fallback rung is unreachable
+                "google/gemma-4-31b-it",
+                "qwen/qwen3.6-coder",
+                "deepseek/deepseek-v4",
+                "kimi/kimi-k3", // the whole roster — the cap is headroom, not a trimmer, until 12
         }
         for i := range want {
                 if got[i] != want[i] {

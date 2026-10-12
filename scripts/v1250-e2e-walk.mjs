@@ -240,7 +240,7 @@ fs.rmSync(DATA_DIR, { recursive: true, force: true });
 fs.rmSync(SHOTS, { recursive: true, force: true });
 fs.mkdirSync(SHOTS, { recursive: true });
 try { execSync("pkill -f '" + ENGINE_BIN + "' || true"); } catch (e) {}
-execFileSync('/home/z/sdk/go/bin/go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], { cwd: __ROOT + '/engine', stdio: 'inherit' });
+execFileSync(process.env.GO_BIN || 'go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], { cwd: __ROOT + '/engine', stdio: 'inherit' });
 startBridge();
 startStub();
 bootEngine();
