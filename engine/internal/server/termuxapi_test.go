@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,19 +46,22 @@ func newTermuxTestServer(t *testing.T, bridgeURL string) *Server {
 // oldBridge=true serves the PRE-v1.20.1 /status shape (no checkin fields
 // at all — the defensive-decode pin).
 type termuxStub struct {
-	srv         *httptest.Server
-	probeHits   atomic.Int32
-	statusMu    sync.Mutex
-	installed   bool
-	permission  bool
-	propsOK     bool // the probe's props marker (false → props_missing stdout)
-	oldBridge   bool
+	srv          *httptest.Server
+	probeHits    atomic.Int32
+	statusMu     sync.Mutex
+	installed    bool
+	permission   bool
+	propsOK      bool // the probe's props marker (false → props_missing stdout)
+	oldBridge    bool
 	apiInstalled bool // v1.28.3: the Termux:API companion app field
-	checkinURL  string
-	bootstrapD  bool
-	checkinAt   int64
-	checkinSto  bool
-	checkinPro  bool
+	checkinURL   string
+	bootstrapD   bool
+	checkinAt    int64
+	checkinSto   bool
+	checkinPro   bool
+	runStdout    string   // v1.35.2: the /run stdout (the ledger state-read)
+	runExitCode  int      // v1.35.2: the /run exit code (a failing resume)
+	runLog       []string // v1.35.2: every /run command, in order (the pin)
 }
 
 func newTermuxStubBridge(t *testing.T, installed, permission bool) *termuxStub {
@@ -113,8 +117,20 @@ func newTermuxStubBridge(t *testing.T, installed, permission bool) *termuxStub {
 		})
 	})
 	mux.HandleFunc("POST /run", func(w http.ResponseWriter, r *http.Request) {
+		// v1.35.2: the run is now OBSERVABLE + CONFIGURABLE — the resume
+		// tests pin the exact command composed (the runLog) and the ledger
+		// state-read rides runStdout (defaults keep the old empty shape,
+		// so every pre-existing test sees the same bridge).
+		var body map[string]any
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
+		st.statusMu.Lock()
+		cmd, _ := body["command"].(string)
+		st.runLog = append(st.runLog, cmd)
+		out := st.runStdout
+		code := st.runExitCode
+		st.statusMu.Unlock()
 		writeStubBridgeJSON(w, map[string]any{
-			"ok": true, "stdout": "", "stderr": "", "exit_code": 0,
+			"ok": true, "stdout": out, "stderr": "", "exit_code": code,
 			"err": 0, "errmsg": nil, "timeout": false,
 		})
 	})

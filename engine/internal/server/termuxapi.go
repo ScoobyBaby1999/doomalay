@@ -119,6 +119,24 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 		checkinStorage = st.CheckinStorage
 		checkinProps = st.CheckinProps
 	}
+	// v1.35.2 THE QUIET FINISHER: the ledger state read rides the SAME
+	// quiet gate as the auto-probe (bootstrapDone || propsOK) — zero
+	// RUN_COMMANDs pre-bootstrap. The pending ledger then arms the
+	// throttled auto-attempt (a FORCED fetch rides the short window —
+	// the user's explicit moment: a check-now tap, the WebView's online
+	// event). The status answer itself never blocks on any of this.
+	gateOpen := bootstrapDone || (pr != nil && pr.PropsOK)
+	forcedFetch := r.URL.Query().Get("refresh") == "1"
+	snap := s.termuxStateCached(gateOpen, forcedFetch)
+	pkgsState := ""
+	pkgsPending := false
+	if snap.state != nil {
+		pkgsState = snap.state["pkgs"]
+		pkgsPending = pkgsState == "pending"
+	}
+	resume := s.termuxResumeSnapshot()
+	s.termuxMaybeAutoResume(pkgsPending, forcedFetch)
+
 	var lastError string
 	if stErr != nil || prErr != nil {
 		var parts []string
@@ -140,37 +158,45 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{
-		"available":        true,
-		"android":          runtime.GOOS == "android", // runtime check — same binary every platform
-		"installed":        installed,
-		"api_installed":    apiInstalled, // v1.28.3: the Termux:API companion app (the device-commands unlock)
-		"version_code":     versionCode,
-		"version_name":     versionName,
-		"permission":       permission,
-		"bridge_ok":        bridgeOK,
-		"storage_ok":       storageOK,
-		"props_ok":         propsOK,
-		"ready":            bridgeOK && storageOK && installed && permission,
-		"checkin_url":      checkinURL,
-		"bootstrap_done":   bootstrapDone,
-		"checkin_at":       checkinAt,
-		"checkin_storage":  checkinStorage,
-		"checkin_props":    checkinProps,
-		"probe_suppressed": suppressed,
-		"last_error":       lastError,
-		"checked_at":       time.Now().Unix(),
+		"available":       true,
+		"android":         runtime.GOOS == "android", // runtime check — same binary every platform
+		"installed":       installed,
+		"api_installed":   apiInstalled, // v1.28.3: the Termux:API companion app (the device-commands unlock)
+		"version_code":    versionCode,
+		"version_name":    versionName,
+		"permission":      permission,
+		"bridge_ok":       bridgeOK,
+		"storage_ok":      storageOK,
+		"props_ok":        propsOK,
+		"ready":           bridgeOK && storageOK && installed && permission,
+		"checkin_url":     checkinURL,
+		"bootstrap_done":  bootstrapDone,
+		"checkin_at":      checkinAt,
+		"checkin_storage": checkinStorage,
+		"checkin_props":   checkinProps,
+		// v1.35.2 THE QUIET FINISHER (additive — the old PWA ignores
+		// these; an old script's device answers the honest empty state)
+		"pkgs_state":        pkgsState,
+		"pkgs_pending":      pkgsPending,
+		"resume_running":    resume.running,
+		"resume_last_at":    resume.lastAt,
+		"resume_last_ok":    resume.lastOK,
+		"resume_last_error": resume.lastErr,
+		"probe_suppressed":  suppressed,
+		"last_error":        lastError,
+		"checked_at":        time.Now().Unix(),
 	})
 }
 
 // termuxCanAutoProbe decides THE QUIET GATE for the auto-probe (a
 // TTL-expiry miss, not a forced one): it may fire ONLY when
 //
-//   (a) the cached probe honestly says props are ON (keep verifying as
-//       before — those probes never trigger the notification path),
-//   (b) the bootstrap checkin arrived (bootstrapDone: the script just set
-//       the props — a probe is safe), or
-//   (c) the cache has NEVER been filled (one first look to learn the
-//       state honestly).
+//	(a) the cached probe honestly says props are ON (keep verifying as
+//	    before — those probes never trigger the notification path),
+//	(b) the bootstrap checkin arrived (bootstrapDone: the script just set
+//	    the props — a probe is safe), or
+//	(c) the cache has NEVER been filled (one first look to learn the
+//	    state honestly).
 //
 // Otherwise the stale cache serves past TTL: termux-app FORCES a
 // notification for every RUN_COMMAND while allow-external-apps is unset
