@@ -55,6 +55,14 @@
 // Theme vars only, everywhere (chips ride --accent/--on-accent/--surface-*/
 // --text-* — zero hardcoded colors). ES5-ish, IIFE, window.X module.
 //
+// v1.35.3 THE HONEST READY (PLAN-V136 §v1.35.3): an offline setup now lands
+// on a ready card that tells the WHOLE truth — the shell works, the packages
+// that could not fetch wait in the ledger and the engine finishes them when
+// the device is back online (the WebView's own `online` event force-polls;
+// the card's line flips IN PLACE when the ledger does). A `finish setup now`
+// button hands the impatient user the same executor the auto-attempt uses.
+// Theme vars only; the ladder keeps its three visible steps; no new surfaces.
+//
 // Exposes: window.TermuxSetup { open, _stepStates }
 
 (function () {
@@ -195,6 +203,13 @@
         steps[1].error = 'allow-external-apps is still off — re-run the bootstrap command';
       }
     }
+    // v1.35.3: the pending-packages state rides the bootstrap row's own
+    // diagnostic slot (a state, never an error tone) — the honest teach:
+    // the offline bootstrap left the package steps in the ledger and the
+    // engine finishes them on its own when the network returns.
+    if (status.pkgs_pending === true && steps[1].done && !steps[1].error) {
+      steps[1].error = 'packages pending (no network at bootstrap) — the app finishes them automatically when you\'re back online';
+    }
     return { unavailable: status.available !== true, ready: !!status.ready, steps: steps };
   }
 
@@ -334,11 +349,22 @@
     var sub = stacked
       ? '⌨ Termux is stacked on this chat — the shell, the exec, and the file hand are one tap away'
       : 'a real Linux shell — stack ⌨ Termux on a chat from the capabilities library';
+    // v1.35.3: the pending-packages truth rides the card — a STATE, never
+    // an error: the shell works NOW, the ledger owes the package steps,
+    // and the engine pays them automatically when the network returns.
+    var pkgsLine = '';
+    if (status && status.pkgs_pending === true) {
+      pkgsLine = '<span class="tsx-ready-pkgs" id="tsx-ready-pkgs">packages finish installing when you\'re back online — ' +
+        'this completes automatically</span>' +
+        '<button class="tsx-btn ghost tsx-btn-pkgs" id="tsx-btn-pkgs" type="button" ' +
+        'aria-label="finish the pending package setup now">finish setup now</button>';
+    }
     return '<div class="tsx-ready" id="tsx-ready">' +
       '<div class="tsx-ready-card" role="status">' +
         '<span class="tsx-ready-title">⌨ Termux is ready</span>' +
         '<span class="tsx-ready-sub">' + sub + '</span>' +
         apiLine +
+        pkgsLine +
         '<button class="tsx-btn tsx-btn-done" id="tsx-btn-done" type="button" ' +
           'aria-label="close the setup screen">Done</button>' +
       '</div>' +
@@ -356,6 +382,11 @@
     if (!inst || inst.dead) return;
     inst.dead = true;
     if (inst.poll) { clearInterval(inst.poll); inst.poll = null; }
+    // v1.35.3: the online listener dies with the instance (no leaks)
+    if (inst.onOnline) {
+      try { window.removeEventListener('online', inst.onOnline); } catch (e8) {}
+      inst.onOnline = null;
+    }
     if (current === inst) current = null;
     var cb = inst.opts && inst.opts.onExit;
     if (cb) { try { cb(inst.last); } catch (e) { console.error(e); } }
@@ -415,8 +446,12 @@
 
   function applyStatus(inst, status) {
     var s = _stepStates(status);
-    if (s.ready && !inst.ready) {
-      inst.ready = true;
+    // v1.35.3: the ready latch now waits for the FULL truth — a pending
+    // ledger keeps the polls alive so the card's line can flip in place
+    // when the engine's finisher pays what the offline setup owed.
+    var fullReady = s.ready && status.pkgs_pending !== true;
+    if (s.ready && !inst.readyCardShown) {
+      inst.readyCardShown = true;
       // v1.33.3 THE AUTO-STACK (the user's report: "it was switched off"
       // after setup — read as a reset): the opener may pass opts.onReady —
       // it fires ONCE at the ready transition (BEFORE the card renders, so
@@ -430,9 +465,23 @@
       }
       if (!window.ConnectOverlay.isOpen()) return;
       window.ConnectOverlay.replaceContent(readyHTML(status, stacked), {
-        onSwap: function () { wireReady(inst); },
+        onSwap: function () { wireReady(inst); wirePending(inst); },
         onClose: function () { kill(inst); }
       });
+      if (fullReady) inst.ready = true;
+      return;
+    }
+    if (inst.readyCardShown) {
+      // the card is up — the pending line updates IN PLACE (the page never
+      // rebuilds), and the latch lands when the ledger says all-ok
+      updatePending(inst, status);
+      if (fullReady && !inst.ready) {
+        inst.ready = true;
+        if (!inst.pkgsDoneAnnounced) {
+          inst.pkgsDoneAnnounced = true;
+          try { toast('Termux packages ready — the offline setup is fully paid'); } catch (e6) {}
+        }
+      }
       return;
     }
     if (!window.ConnectOverlay.isOpen()) return;
@@ -496,6 +545,60 @@
       var cn = document.getElementById('tsx-btn-checknow');
       if (cn) cn.disabled = step.done;
     }
+  }
+
+  // v1.35.3: the pending line's in-place flip — the card never rebuilds,
+  // the textContent swaps carry the truth as the ledger moves.
+  function updatePending(inst, status) {
+    var line = document.getElementById('tsx-ready-pkgs');
+    if (!line) return;                       // the card rendered all-ok — nothing to update
+    var btn = document.getElementById('tsx-btn-pkgs');
+    if (status && status.pkgs_pending === true) {
+      var txt = 'packages finish installing when you\'re back online — this completes automatically';
+      if (status.resume_running === true) {
+        txt = 'finishing now — the pending packages are installing…';
+      } else if (status.resume_last_ok === false && status.resume_last_error) {
+        txt = 'the last finish attempt failed (' + status.resume_last_error + ') — retrying automatically, or tap below';
+      }
+      line.textContent = txt;
+      if (btn) { btn.style.display = ''; btn.disabled = status.resume_running === true; }
+    } else {
+      line.textContent = 'packages ready ✓ — everything the offline setup owed is paid';
+      if (btn) btn.style.display = 'none';
+    }
+  }
+
+  // v1.35.3: the finish button — the SAME executor the auto-attempt uses
+  // (POST /api/termux/resume), one tap, honest feedback, then the poll
+  // watches the ledger flip.
+  function wirePending(inst) {
+    var btn = document.getElementById('tsx-btn-pkgs');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (inst.dead || inst.halted) return;
+      btn.disabled = true;
+      setStatusLine('asking the engine to finish the pending packages…');
+      postJSON('/api/termux/resume', {}).then(function (d) {
+        if (inst.dead) return;
+        if (!d || d.ok !== true) {
+          toast('could not start the finisher — the poll keeps watching');
+          btn.disabled = false;
+          return;
+        }
+        if (d.already_running === true) {
+          setStatusLine('already finishing — the packages complete in the background');
+        } else {
+          try { toast('finishing setup — the pending packages are installing'); } catch (e7) {}
+        }
+        inst.forceNext = true;
+        fetchStatus(inst, true);
+      }).catch(function (err) {
+        if (inst.dead) return;
+        btn.disabled = false;
+        setStatusLine('the finisher did not answer — ' +
+          (err && err.message ? err.message : 'unknown error') + ' · the poll keeps watching');
+      });
+    });
   }
 
   // ── actions (the v1.17.2 endpoints — zero new HTTP paths) ────────────
@@ -612,9 +715,23 @@
     var inst = {
       ctx: ctx, opts: opts,
       last: null, dead: false, halted: false, ready: false, forceNext: false,
-      poll: null
+      poll: null,
+      // v1.35.3: the honest-ready machinery — the card-shown latch (the
+      // ready LATCH waits for the full truth while a ledger is pending),
+      // the one-time paid-in-full toast, and the online listener
+      readyCardShown: false, pkgsDoneAnnounced: false, onOnline: null
     };
     current = inst;
+    // v1.35.3: the WebView's own connectivity signal — the moment the user
+    // "does try to use the network", one forced status fetch arms the
+    // engine's short-window auto-attempt and the card's line flips when the
+    // ledger pays out. Killed with the instance (no leaks).
+    inst.onOnline = function () {
+      if (inst.dead || inst.halted || inst.ready) return;
+      if (!window.ConnectOverlay.isOpen()) return;
+      fetchStatus(inst, true);
+    };
+    window.addEventListener('online', inst.onOnline);
     var pageOpts = {
       onSwap: function () { wire(inst); },
       onClose: function () { kill(inst); }
@@ -729,6 +846,12 @@
       '.tsx-ready-api{font-size:var(--ui-small-fs);color:var(--text-2);line-height:1.5;' +
         'text-align:center;padding:8px 10px;border-radius:10px;' +
         'background:var(--surface-1);border:1px solid var(--surface-2);max-width:100%}' +
+      // v1.35.3: the pending-packages line rides the same card family
+      // (theme vars only — surface-1 card, border edge, text-2)
+      '.tsx-ready-pkgs{font-size:var(--ui-small-fs);color:var(--text-2);line-height:1.5;' +
+        'text-align:center;padding:8px 10px;border-radius:10px;' +
+        'background:var(--surface-1);border:1px solid var(--border);max-width:100%}' +
+      '.tsx-btn-pkgs{margin-top:2px;align-self:center}' +
       '.tsx-btn-done{margin-top:6px;padding:9px 22px;color:var(--on-accent);' +
         'background:var(--accent);border:1px solid var(--accent)}';
 
@@ -742,12 +865,14 @@
     window.TermuxSetup = { open: open, _stepStates: _stepStates, _bootstrapCmdFor: _bootstrapCmdFor };
   }
 
-  // v1.17.3: the node test path (scripts/v1173-setup-test.js) — the pure
+  // ── the node test path (scripts/v1173-setup-test.js) — the pure
   // ladder computation, exported the same way capabilities.js does.
   // v1.20.1: _bootstrapCmdFor joins it (the dynamic command shapes).
   // v1.24.1: _barFor leaves it (THE TERMINAL PULSE — the bar lives in
   // termux/setup.sh now; scripts/v1241-terminal-pulse-rig.cjs tests that).
+  // v1.35.3: _readyCardFor joins it (the pending shapes — the honest-ready
+  // rig pins the card's whole-truth line + the finish button + the flip).
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { _stepStates: _stepStates, BOOTSTRAP_CMD: BOOTSTRAP_CMD, _bootstrapCmdFor: _bootstrapCmdFor };
+    module.exports = { _stepStates: _stepStates, BOOTSTRAP_CMD: BOOTSTRAP_CMD, _bootstrapCmdFor: _bootstrapCmdFor, _readyCardFor: readyHTML };
   }
 })();

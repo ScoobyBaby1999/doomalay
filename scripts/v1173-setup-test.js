@@ -96,8 +96,10 @@ console.log('v1.17.3 THE SETUP pins — setup.sh:');
     'setup.sh defaults the checkin URL empty (the static one-liner still works)');
   ok(/unknown args are ignored, never fatal/i.test(sh),
     'setup.sh documents the never-fatal arg law');
-  ok(sh.indexOf('curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}"') >= 0,
-    'setup.sh curls the checkin URL with the two honest step flags');
+  // v1.35.1 re-point (PLAN-V136, intent unchanged): the checkin curl grows
+  // its THIRD honest flag — &pkgs= — the finisher wave's additive param
+  ok(sh.indexOf('curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}&pkgs=${__pkgs_flag}"') >= 0,
+    'setup.sh curls the checkin URL with the three honest step flags');
   ok(sh.indexOf('[ -d "$HOME/storage/shared" ] && __storage_flag=1') >= 0,
     'the storage flag derives from the live ~storage state');
   ok(sh.indexOf('grep -q "^allow-external-apps" "$HOME/.termux/termux.properties"') >= 0,
@@ -125,12 +127,15 @@ console.log('v1.17.3 THE SETUP pins — termuxsetup.js:');
   var tsxAt = idx.indexOf('src="termuxsetup.js"');
   ok(tsxAt > capAt && capAt >= 0, 'index.html loads termuxsetup.js after capabilities.js');
 
-  // the two v1.17.2 endpoints ONLY (no new HTTP paths)
+  // the termux endpoints — v1.35.3 re-point (PLAN-V136, intent evolved ON
+  // THE RECORD): the v1.17.3 law was "no new HTTP paths"; the finisher wave
+  // sanctions exactly ONE deliberate addition — POST /api/termux/resume —
+  // the resume executor's explicit door. The allowlist grows by one.
   var apis = tsx.match(/\/api\/[a-z0-9\/_-]*/g) || [];
   var bad = apis.filter(function (a) {
-    return a !== '/api/termux/status' && a !== '/api/termux/act';
+    return a !== '/api/termux/status' && a !== '/api/termux/act' && a !== '/api/termux/resume';
   });
-  ok(bad.length === 0, 'termuxsetup.js speaks ONLY the two v1.17.2 endpoints (' + bad.join(', ') + ')');
+  ok(bad.length === 0, 'termuxsetup.js speaks ONLY the sanctioned termux endpoints (' + bad.join(', ') + ')');
   ok(tsx.indexOf('?refresh=1') >= 0, 'termuxsetup.js forces refresh probes (first fetch / after actions / verify stage)');
 
   // the container law: the ConnectOverlay is the ONLY surface
@@ -210,7 +215,11 @@ console.log('v1.17.3 THE SETUP pins — the capabilities row rewire:');
   ok(cap.indexOf('window.TermuxSetup.open(ctx') >= 0,
     'capabilities: the unready Termux row opens window.TermuxSetup (the toast is replaced)');
   ok(cap.indexOf('openTermuxSetup') >= 0, 'capabilities: the openTermuxSetup helper');
-  ok(cap.indexOf('onExit: function () { probeTermux(ctx, extras, true); }') >= 0,
+  // v1.35.3 re-point (pre-existing staleness, found + fixed here): the
+  // v1.33.3 ownership wave re-voiced onExit to carry the LAST STATUS into
+  // the row state — the forced re-probe intent is unchanged.
+  ok(cap.indexOf('onExit: function (lastStatus) {') >= 0 &&
+     cap.indexOf('probeTermux(ctx, extras, true);') >= 0,
     'capabilities: the row re-probes (forced) when the setup page exits — flips to ready');
   ok(cap.indexOf("toast('Termux needs setup first')") >= 0,
     'capabilities: the honest fallback toast when TermuxSetup is missing (defensive)');
