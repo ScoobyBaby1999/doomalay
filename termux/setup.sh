@@ -2,6 +2,11 @@
 # setup.sh — v1.24.1 THE TERMINAL PULSE: the Doomalay↔Termux bootstrap (run
 # INSIDE Termux — fetched by curl from the repo, NOT bundled in the APK, so
 # it evolves without app updates).
+# v1.35.1 THE PENDING LEDGER (PLAN-V136 THE FINISHER WAVE): an offline run no
+# longer dead-ends — the failed package steps land in $HOME/.doomalay-setup/
+# state (the ledger) + resume.sh (the finisher), and the Doomalay engine
+# completes them automatically when the device is back online. THE LAW: a
+# setup that RAN is a setup that FINISHES.
 #
 # THE ONE-LINER (paste in Termux, press enter):
 #   curl -fsSL https://raw.githubusercontent.com/ScoobyBaby1999/doomalay/main/termux/setup.sh | bash
@@ -262,6 +267,122 @@ __phase_end() { # $1 n  $2 verdict line (the ✓/⚠ text)
     fi
 }
 
+# ── THE PENDING LEDGER (v1.35.1 THE FINISHER WAVE) ────────────
+# $HOME/.doomalay-setup/state — one key=value line per step, the honest
+# record of what THIS run completed. The Doomalay engine reads it through
+# the bridge and finishes the pending steps itself when the device is back
+# online (PLAN-V136): the user never re-runs, remembers, or babysits.
+# THE LAWS: (1) only the REAL run writes it (the render demo touches
+# nothing — DM_LEDGER_LIVE stays empty there); (2) every write is atomic
+# (the tmp+mv idiom this script already lives by); (3) a write failure is
+# non-fatal — the ledger is a gift to the recovery, never a dependency.
+DM_LEDGER_DIR="$HOME/.doomalay-setup"
+DM_LEDGER="$DM_LEDGER_DIR/state"
+DM_PKGS_STATE=""      # ok | pending
+DM_STORAGE_STATE=""   # granted | missing
+DM_WS_STATE=""        # ok | skipped
+DM_LEDGER_LIVE=""
+
+__ledger_write() {
+    [ "$DM_LEDGER_LIVE" = "1" ] || return 0
+    mkdir -p "$DM_LEDGER_DIR" 2>/dev/null || return 0
+    {
+        [ -n "$DM_PKGS_STATE" ]     && printf 'pkgs=%s\n' "$DM_PKGS_STATE"
+        [ -n "$DM_STORAGE_STATE" ]  && printf 'storage=%s\n' "$DM_STORAGE_STATE"
+        [ -n "$DM_WS_STATE" ]       && printf 'workspace=%s\n' "$DM_WS_STATE"
+        true
+    } > "${DM_LEDGER}.tmp" 2>/dev/null \
+        && mv -f "${DM_LEDGER}.tmp" "$DM_LEDGER" 2>/dev/null
+    return 0
+}
+
+# __write_resume — the recovery method itself (v1.35.1): a self-contained
+# idempotent finisher the Doomalay engine fires through the bridge (and the
+# user can run by hand). Offline it is a SECONDS-LONG no-op (the probe is
+# the one pkg itself uses — bounded curl, no `timeout` dependency); online
+# it completes exactly what the ledger says is missing, rewrites the
+# ledger, and re-checkins with the third honest flag. Written ONLY when
+# something is actually pending. The baked checkin URL rides its own file
+# (never shell-injected into the heredoc); the engine always passes a
+# fresh --checkin, which wins.
+__write_resume() {
+    mkdir -p "$DM_LEDGER_DIR" 2>/dev/null || return 0
+    cat > "${DM_LEDGER_DIR}/resume.sh" <<'RESUME_EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# resume.sh — v1.35.1 THE FINISHER (PLAN-V136): completes what an offline
+# setup left pending, then rewrites the ledger + re-checkins. Written by
+# setup.sh; run by the Doomalay engine (via the bridge) or by hand:
+#   bash ~/.doomalay-setup/resume.sh
+# Offline → exits 0 in seconds with NOTHING touched (the ledger stands;
+# the next attempt rides whenever the caller chooses). Online → the
+# pending steps run, the ledger flips, the app hears the bell.
+set -u
+DM_DIR="$HOME/.doomalay-setup"
+DM_LEDGER="$DM_DIR/state"
+DM_CHECKIN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --checkin)
+            if [ $# -ge 2 ]; then DM_CHECKIN="$2"; shift 2; else shift 1; fi
+            ;;
+        *) shift 1 ;;
+    esac
+done
+[ -n "$DM_CHECKIN" ] || DM_CHECKIN="$(cat "$DM_DIR/checkin" 2>/dev/null || true)"
+
+# ── the reachability probe (pkg's own idiom, self-bounded) ────
+DM_MIRROR="https://packages-cf.termux.dev/apt/termux-main/dists/stable/Release"
+DM_MIRROR2="https://packages.termux.dev/apt/termux-main/dists/stable/Release"
+__online() {
+    command -v curl >/dev/null 2>&1 || return 1
+    curl --head --fail --max-time 6 --connect-timeout 5 "$DM_MIRROR" >/dev/null 2>&1 \
+        && return 0
+    curl --head --fail --max-time 6 --connect-timeout 5 "$DM_MIRROR2" >/dev/null 2>&1
+}
+__online || exit 0
+
+# ── the pending steps (only what the ledger says is missing) ──
+DM_OK=1
+command -v pkg >/dev/null 2>&1 || DM_OK=0
+if [ "$DM_OK" = "1" ]; then
+    pkg update -y >/dev/null 2>&1 || DM_OK=0
+    pkg install -y coreutils >/dev/null 2>&1 || DM_OK=0
+fi
+
+# ── the workspace step (auto-completable once storage is live) ──
+DM_WS="ok"
+if [ -d "$HOME/storage/shared" ]; then
+    mkdir -p "$HOME/storage/shared/Doomalay" 2>/dev/null || DM_WS="skipped"
+else
+    DM_WS="skipped"
+fi
+
+# ── the ledger rewrite (the truth the engine reads) ───────────
+mkdir -p "$DM_DIR" 2>/dev/null
+if [ "$DM_OK" = "1" ]; then DM_PKGS_OUT="ok"; else DM_PKGS_OUT="pending"; fi
+if [ -d "$HOME/storage/shared" ]; then DM_ST_OUT="granted"; else DM_ST_OUT="missing"; fi
+{
+    printf 'pkgs=%s\n' "$DM_PKGS_OUT"
+    printf 'storage=%s\n' "$DM_ST_OUT"
+    printf 'workspace=%s\n' "$DM_WS"
+    true
+} > "${DM_LEDGER}.tmp" 2>/dev/null \
+    && mv -f "${DM_LEDGER}.tmp" "$DM_LEDGER" 2>/dev/null
+
+# ── the bell (non-fatal — the ledger is the truth, this is the sound) ──
+if [ -n "$DM_CHECKIN" ]; then
+    if [ "$DM_OK" = "1" ]; then DM_PK=1; else DM_PK=0; fi
+    curl -fsS --max-time 6 "${DM_CHECKIN}?resume=1&pkgs=${DM_PK}" >/dev/null 2>&1 || true
+fi
+exit 0
+RESUME_EOF
+    chmod +x "${DM_LEDGER_DIR}/resume.sh" 2>/dev/null
+    if [ -n "${DOOMALAY_CHECKIN_URL:-}" ]; then
+        printf '%s\n' "$DOOMALAY_CHECKIN_URL" > "${DM_LEDGER_DIR}/checkin" 2>/dev/null
+    fi
+    return 0
+}
+
 # ── the wake lock (the safe-to-leave text is EARNED) ───────────
 DM_SAFE=0
 if [ -n "$DM_DEMO" ]; then
@@ -295,7 +416,16 @@ __dm_cleanup() {
 }
 trap __dm_cleanup EXIT
 
+# ── the real run begins — the ledger goes live. The demo below NEVER
+# calls __ledger_write (only the real phases do), so the render-demo keeps
+# touching nothing; the flag simply arms the real run's writes. ──
+DM_LEDGER_LIVE=1
+__pkg_fail=0
+
 # ── THE RENDER DEMO — same machinery, zero real actions ───────
+# v1.35.1: DM_DEMO_PENDING=1 renders the OFFLINE shape (the packages step
+# fails honestly + the pending banner + the finisher teaching) — the rig's
+# window into both outcomes. The default demo stays byte-identical.
 if [ -n "$DM_DEMO" ]; then
     __out "═══════════════════════════════════════════════════════════"
     __out "  Doomalay — Termux setup (RENDER DEMO — nothing is touched)"
@@ -313,21 +443,38 @@ if [ -n "$DM_DEMO" ]; then
     DM_LAST_LABEL="storage access"; __phase_end 2 "✓ 2/4 storage access granted"
     __phase_begin 3 "packages" "updating packages + installing coreutils (the file tools)…"
     __dm_state 2 "3/4 packages" "$(__dm_note_for 3)" "$DM_LOG" run
-    printf 'Hit:1 https://packages-cf.termux.dev/apt/termux-main InRelease\n' >> "$DM_LOG"
-    sleep 1
-    printf 'Get:2 https://packages-cf.termux.dev/apt/termux-main Packages [2,345 kB]\n' >> "$DM_LOG"
-    sleep 1
-    printf 'Fetched 9,812 kB in 4s (2,451 kB/s)\n' >> "$DM_LOG"
-    sleep 1
-    __out "  ✓ coreutils is already the newest version"
-    DM_LAST_LABEL="packages"; __phase_end 3 "✓ 3/4 packages ready"
+    if [ -n "${DM_DEMO_PENDING:-}" ]; then
+        # the OFFLINE shape — the honest failure the finisher wave recovers
+        printf 'Err:1 https://packages-cf.termux.dev/apt/termux-main InRelease\n' >> "$DM_LOG"
+        sleep 1
+        printf "Temporary failure resolving 'packages-cf.termux.dev'\n" >> "$DM_LOG"
+        sleep 1
+        __out "  ⚠ pkg update failed (network?) — non-fatal, continuing anyway"
+        __out "  ⚠ coreutils install failed — the step waits in the ledger"
+        DM_LAST_LABEL="packages"; __phase_end 3 "⚠ 3/4 packages pending (no network) — the app finishes this automatically"
+    else
+        printf 'Hit:1 https://packages-cf.termux.dev/apt/termux-main InRelease\n' >> "$DM_LOG"
+        sleep 1
+        printf 'Get:2 https://packages-cf.termux.dev/apt/termux-main Packages [2,345 kB]\n' >> "$DM_LOG"
+        sleep 1
+        printf 'Fetched 9,812 kB in 4s (2,451 kB/s)\n' >> "$DM_LOG"
+        sleep 1
+        __out "  ✓ coreutils is already the newest version"
+        DM_LAST_LABEL="packages"; __phase_end 3 "✓ 3/4 packages ready"
+    fi
     __phase_begin 4 "workspace" "the Doomalay folder on shared storage…"
     sleep 1
     __out "  ✓ workspace ready: ~/storage/shared/Doomalay"
     DM_LAST_LABEL="workspace"; __phase_end 4 "✓ 4/4 workspace ready"
     __out ""
     __out "═══════════════════════════════════════════════════════════"
-    __out "  doomalay termux setup complete — return to the Doomalay app"
+    if [ -n "${DM_DEMO_PENDING:-}" ]; then
+        __out "  doomalay termux setup complete — 1 step pending: packages"
+        __out "  no network right now — the Doomalay app finishes this automatically"
+        __out "  when you're back online (or run: bash ~/.doomalay-setup/resume.sh)"
+    else
+        __out "  doomalay termux setup complete — return to the Doomalay app"
+    fi
     __out "═══════════════════════════════════════════════════════════"
     rm -f "$DM_LOG" 2>/dev/null
     if [ -n "$DM_TTY" ]; then
@@ -371,6 +518,7 @@ __phase_end 1 "✓ 1/4 external apps allowed"
 __phase_begin 2 "storage access" 'A DIALOG WILL APPEAR: tap "Allow all files access"'
 if [ -d "$HOME/storage/shared" ]; then
     __out "  ✓ storage already granted (~/storage is live)"
+    DM_STORAGE_STATE="granted"
     DM_LAST_LABEL="storage access"
     __phase_end 2 "✓ 2/4 storage access confirmed"
 elif command -v termux-setup-storage >/dev/null 2>&1; then
@@ -380,15 +528,27 @@ elif command -v termux-setup-storage >/dev/null 2>&1; then
         __out "  ⚠ storage setup did not finish (canceled or denied) — non-fatal."
         __out "    to retry later, run:  termux-setup-storage   and tap Allow"
     fi
+    # the ledger records the TRUTH either way (the dialog is interactive —
+    # the finisher NEVER re-fires it; the ledger just says where things stand)
+    if [ -d "$HOME/storage/shared" ]; then
+        DM_STORAGE_STATE="granted"
+    else
+        DM_STORAGE_STATE="missing"
+    fi
     DM_LAST_LABEL="storage access"
     __phase_end 2 "✓ 2/4 storage access granted"
 else
     __out "  ⚠ termux-setup-storage not found — storage stays off (non-fatal)"
+    DM_STORAGE_STATE="missing"
     DM_LAST_LABEL="storage access"
     __phase_end 2 "⚠ 2/4 storage setup unavailable"
 fi
+__ledger_write
 
 # ── 3. packages: update + coreutils ───────────────────────────
+# v1.35.1: a failure here is no longer a dead end — it lands in the ledger
+# (pkgs=pending) + resume.sh is written, and the Doomalay engine finishes
+# the step on its own when the device is back online (PLAN-V136).
 __phase_begin 3 "packages" "updating packages + installing coreutils (the file tools)…"
 if command -v pkg >/dev/null 2>&1; then
     if [ -n "$DM_TTY" ]; then
@@ -397,9 +557,9 @@ if command -v pkg >/dev/null 2>&1; then
             __dm_state 2 "3/4 packages" "$(__dm_note_for 3)" "$DM_LOG" run
         fi
         pkg update -y >> "$DM_LOG" 2>&1 \
-            || __out "  ⚠ pkg update failed (network?) — non-fatal, continuing anyway"
+            || { __pkg_fail=1; __out "  ⚠ pkg update failed (network?) — non-fatal, continuing anyway"; }
         pkg install -y coreutils >> "$DM_LOG" 2>&1 \
-            || { __out "  ⚠ coreutils install failed — non-fatal; retry later with: pkg install coreutils"
+            || { __pkg_fail=1; __out "  ⚠ coreutils install failed — non-fatal; the finisher retries it"
                  if [ -s "$DM_LOG" ]; then
                      tail -n 3 "$DM_LOG" 2>/dev/null | while IFS= read -r l; do
                          __out "    | $l"
@@ -410,15 +570,25 @@ if command -v pkg >/dev/null 2>&1; then
         DM_LOG=""
     else
         pkg update -y \
-            || __out "  ⚠ pkg update failed (network?) — non-fatal, continuing anyway"
+            || { __pkg_fail=1; __out "  ⚠ pkg update failed (network?) — non-fatal, continuing anyway"; }
         pkg install -y coreutils \
-            || __out "  ⚠ coreutils install failed — non-fatal; retry later with: pkg install coreutils"
+            || { __pkg_fail=1; __out "  ⚠ coreutils install failed — non-fatal; the finisher retries it"; }
     fi
 else
     __out "  ⚠ pkg not found — skipping package updates (non-fatal)"
+    __pkg_fail=1
 fi
 DM_LAST_LABEL="packages"
-__phase_end 3 "✓ 3/4 packages ready"
+if [ "$__pkg_fail" = "1" ]; then
+    DM_PKGS_STATE="pending"
+    __ledger_write
+    __write_resume
+    __phase_end 3 "⚠ 3/4 packages pending (no network?) — the app finishes this automatically"
+else
+    DM_PKGS_STATE="ok"
+    __ledger_write
+    __phase_end 3 "✓ 3/4 packages ready"
+fi
 
 # ── 4. the default workspace dir ──────────────────────────────
 __phase_begin 4 "workspace" "the Doomalay folder on shared storage…"
@@ -426,35 +596,51 @@ if [ -d "$HOME/storage/shared" ]; then
     WS_DIR="$HOME/storage/shared/Doomalay"
     if mkdir -p "$WS_DIR" 2>/dev/null; then
         __out "  ✓ workspace ready: $WS_DIR"
+        DM_WS_STATE="ok"
         DM_LAST_LABEL="workspace"
         __phase_end 4 "✓ 4/4 workspace ready"
     else
         __out "  ⚠ could not create $WS_DIR (non-fatal — create it later if the app asks)"
+        DM_WS_STATE="skipped"
         DM_LAST_LABEL="workspace"
         __phase_end 4 "⚠ 4/4 workspace dir failed"
     fi
 else
     __out "  ⚠ ~/storage/shared is not live yet — skipping the workspace dir (non-fatal;"
     __out "    rerun this setup after granting storage access)"
+    DM_WS_STATE="skipped"
     DM_LAST_LABEL="workspace"
     __phase_end 4 "⚠ 4/4 workspace skipped (no storage)"
 fi
+__ledger_write
 
 # ── done ──────────────────────────────────────────────────────
+# v1.35.1: the banner speaks the ledger's truth — the all-ok line is
+# byte-identical (the v1.24.1 rig pins it); a pending run adds its own
+# honest variant + the finisher teaching (the app OR one command).
 __out ""
 __out "═══════════════════════════════════════════════════════════"
-__out "  doomalay termux setup complete — return to the Doomalay app"
+if [ "$__pkg_fail" = "1" ]; then
+    __out "  doomalay termux setup complete — 1 step pending: packages"
+    __out "  no network right now — the Doomalay app finishes this automatically"
+    __out "  when you're back online (or run: bash ~/.doomalay-setup/resume.sh)"
+else
+    __out "  doomalay termux setup complete — return to the Doomalay app"
+fi
 __out "═══════════════════════════════════════════════════════════"
 
 # ── the checkin (v1.20.1 THE QUIET GATE) ──────────────────────
 # Tell the Doomalay app the bootstrap ran, with this script's OWN honest
-# step outcomes as the two flags. Non-fatal by the same law as everything
-# above: a failed curl changes nothing — the setup still worked, the app
-# simply keeps watching the old way.
+# step outcomes as the flags. v1.35.1: the third honest flag — pkgs=1|0 —
+# rides the same curl (an older bridge ignores the unknown param, the
+# additive law; a newer one reads it). Non-fatal by the same law as
+# everything above: a failed curl changes nothing — the setup still
+# worked, the app simply keeps watching the old way.
 if [ -n "$DOOMALAY_CHECKIN_URL" ]; then
     __storage_flag=0; [ -d "$HOME/storage/shared" ] && __storage_flag=1
     __props_flag=0; grep -q "^allow-external-apps" "$HOME/.termux/termux.properties" 2>/dev/null && __props_flag=1
-    if curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}" >/dev/null 2>&1; then
+    __pkgs_flag=1; [ "$__pkg_fail" = "1" ] && __pkgs_flag=0
+    if curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}&pkgs=${__pkgs_flag}" >/dev/null 2>&1; then
         __out "doomalay app notified — setup state is live"
     else
         __out "(could not notify the doomalay app — the setup still worked; return to the app)"

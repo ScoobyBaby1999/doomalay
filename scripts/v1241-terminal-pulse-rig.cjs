@@ -78,14 +78,21 @@ console.log('v1.24.1 THE TERMINAL PULSE — setup.sh syntax + source pins:');
   ck('the demo touches nothing (no pkg/mkdir inside the demo block)',
     (() => {
       const d = sh.slice(sh.indexOf('THE RENDER DEMO'), sh.indexOf('# ── the header'));
-      return !/\bpkg\b/.test(d) && !/mkdir -p "\$HOME\/\.termux"/.test(d) &&
+      // v1.35.1 re-point (PLAN-V136, intent unchanged): the demo still runs
+      // NO real actions — but the OFFLINE demo shape (DM_DEMO_PENDING) now
+      // PRINTS the honest failure lines, which MENTION pkg. The law is
+      // "no real action", so the pin targets invocations, not prose.
+      return !/^ *pkg /m.test(d) && !/mkdir -p "\$HOME\/\.termux"/.test(d) &&
              !/termux-setup-storage$/.test(d.trim());
     })());
   // the v1.17.3 contracts that survive
   ck('the raw one-liner URL stays in the header',
     sh.includes('https://raw.githubusercontent.com/ScoobyBaby1999/doomalay/main/termux/setup.sh'));
-  ck('the checkin curl keeps its two honest flags',
-    sh.includes('curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}"'));
+  // v1.35.1 re-point (PLAN-V136, intent unchanged): the checkin curl grows
+  // its THIRD honest flag — &pkgs= — the finisher wave's additive param
+  // (an older bridge ignores it, the same law the second flag rode in on)
+  ck('the checkin curl keeps its three honest flags',
+    sh.includes('curl -fsS --max-time 6 "${DOOMALAY_CHECKIN_URL}?storage=${__storage_flag}&props=${__props_flag}&pkgs=${__pkgs_flag}"'));
 })();
 
 console.log('v1.24.1 — the app-side removal pins (termuxsetup.js):');
@@ -224,8 +231,13 @@ console.log('v1.24.1 — the plain-mode degradation (piped output, real script, 
     r.out.includes('pkg not found — skipping package updates (non-fatal)'));
   ck('plain: the missing storage command is honest + non-fatal',
     r.out.includes('termux-setup-storage not found — storage stays off (non-fatal)'));
-  ck('plain: the completion line still lands',
-    r.out.includes('doomalay termux setup complete — return to the Doomalay app'));
+  // v1.35.1 re-point (PLAN-V136, intent unchanged): this environment has NO
+  // pkg — the honest completion line is now the PENDING variant (the ledger
+  // waits, the app finishes it later). The all-ok exact line is pinned by
+  // the demo + the live-harness checks below, where pkg exists.
+  ck('plain: the completion line still lands (the pending variant — pkg is missing here)',
+    r.out.includes('doomalay termux setup complete') &&
+    r.out.includes('1 step pending: packages'));
   ck('plain: the props write landed inside the temp HOME (nothing leaked)',
     fs.readFileSync(path.join(home, '.termux', 'termux.properties'), 'utf8').includes('allow-external-apps = true'));
   fs.rmSync(home, { recursive: true, force: true });
