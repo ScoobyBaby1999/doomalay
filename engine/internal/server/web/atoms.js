@@ -74,6 +74,51 @@
   // map resets (a one-frame re-hash blip, never a leak).
   var STAR_CACHE = new Map();
   var MAX_WS = 32;                            // the chat binding cap (engine twin)
+  // v1.37.1 THE FLAT STAR MATH: one Float64Array of [omega, phase, r]
+  // per (iconId, star-total), populated through the SAME starConstOf
+  // populate starPos runs (identical BY CONSTRUCTION — the rig pins it).
+  // paintCore's star loop reads the typed array + projects inline: the
+  // per-star key-string concat + Map.get + {x,y,z,r} result object die
+  // (~28.8K objects/sec of GC pressure gone at 60fps/480 stars). The
+  // back-half scratch is a preallocated module array (grown, never
+  // shrunk). Bounded beside STAR_CACHE (the same 4096 reset law).
+  var FIELDS_CACHE = new Map();
+  var BACK_SCRATCH = [];
+  function starConstOf(key) {
+    var c = STAR_CACHE.get(key);
+    if (c === undefined) {
+      var h1 = hashStr(key + '~a'), h2 = hashStr(key + '~b'),
+          h3 = hashStr(key + '~c'), h4 = hashStr(key + '~d');
+      c = {
+        omega: (0.35 + h1 * 0.45) * (h2 < 0.5 ? -1 : 1),   // rad/s ±
+        phase: h3 * Math.PI * 2,
+        r: 1.9 + h4 * 1.1                                  // star radius px @ scale 1
+      };
+      if (STAR_CACHE.size > 4096) STAR_CACHE.clear();
+      STAR_CACHE.set(key, c);
+    }
+    return c;
+  }
+  function starFieldsOf(iconId, n) {
+    n = Math.max(0, Math.min(MAX_WS, n | 0));
+    var fk = iconId + '#' + n;
+    var f = FIELDS_CACHE.get(fk);
+    if (f !== undefined) return f;
+    var layout = shellLayout(n);
+    var total = 0;
+    for (var L = 0; L < layout.length; L++) total += layout[L];
+    f = new Float64Array(total * 3);
+    var w = 0;
+    for (var L2 = 0; L2 < layout.length; L2++) {
+      for (var j = 0; j < layout[L2]; j++) {
+        var c = starConstOf(iconId + '|' + L2 + '|' + j);
+        f[w++] = c.omega; f[w++] = c.phase; f[w++] = c.r;
+      }
+    }
+    if (FIELDS_CACHE.size > 4096) FIELDS_CACHE.clear();
+    FIELDS_CACHE.set(fk, f);
+    return f;
+  }
 
   var counts = {};        // sessionId → star count (the bound-workspace count)
   var t0 = performance.now() / 1000;
@@ -111,18 +156,10 @@
   // v0.88: the per-star hashes + the per-level trig live in the caches
   // above — per frame this is 2 trig + a multiply, byte-identical output.
   function starPos(key, level, R, t) {
-    var c = STAR_CACHE.get(key);
-    if (c === undefined) {
-      var h1 = hashStr(key + '~a'), h2 = hashStr(key + '~b'),
-          h3 = hashStr(key + '~c'), h4 = hashStr(key + '~d');
-      c = {
-        omega: (0.35 + h1 * 0.45) * (h2 < 0.5 ? -1 : 1),   // rad/s ±
-        phase: h3 * Math.PI * 2,
-        r: 1.9 + h4 * 1.1                                  // star radius px @ scale 1
-      };
-      if (STAR_CACHE.size > 4096) STAR_CACHE.clear();
-      STAR_CACHE.set(key, c);
-    }
+    // v1.37.1: the populate lives in starConstOf — starPos (the rig's
+    // geometric twin) and starFieldsOf (the paint loop's flat array)
+    // share ONE hash law, so both hosts stay identical BY CONSTRUCTION.
+    var c = starConstOf(key);
     var ang = t * c.omega + c.phase;
     var u = Math.cos(ang), v = Math.sin(ang);
     var B = TILT_BASIS[level] || TILT_BASIS[0];
@@ -295,6 +332,8 @@
       var cy = (icon.y - offsetY) * s;
       if (cx < -pad || cx > W + pad || cy < -pad || cy > H + pad) continue; // cull
       var layout = shellLayout(n);
+      var fields = starFieldsOf(icon.id, n);   // v1.37.1: the flat per-star constants
+      var base = 0;                            // the running star index across shells
       var discR = (typeof icon.radius === 'number' ? icon.radius : 28) * s + 2 * s;
       stats.chats++;
 
@@ -314,32 +353,46 @@
         // disc), front half after (over the disc): within a shell the two
         // halves never overlap the same pixel for long, and back-first
         // keeps the front pass on top where they cross.
-        var back = [];
+        // v1.37.1 THE FLAT STAR MATH: the loop reads starFieldsOf's flat
+        // [omega, phase, r] array + the hoisted level basis and projects
+        // INLINE — the per-star key string, Map.get, and {x,y,z,r} result
+        // object are GONE (identical math to starPos BY CONSTRUCTION —
+        // starConstOf is the one populate both share); the back half
+        // rides the preallocated BACK_SCRATCH (x,y,r triples).
+        var B = TILT_BASIS[L] || TILT_BASIS[0];
+        var back = BACK_SCRATCH;
+        var backN = 0;
         for (var j = 0; j < layout[L]; j++) {
-          var p = starPos(icon.id + '|' + L + '|' + j, L, R, t);
-          p.r *= s;
-          var inside = (p.x * p.x + p.y * p.y) < discR * discR;
-          if (p.z < 0) {
+          var k3 = (base + j) * 3;
+          var ang = t * fields[k3] + fields[k3 + 1];
+          var pr = fields[k3 + 2] * s;
+          var u = Math.cos(ang), v = Math.sin(ang);
+          var px = (u * B.e1x + v * B.e2x) * R;
+          var py = (u * B.e1y + v * B.e2y) * R;
+          var pz = (u * B.e1z + v * B.e2z) * R;
+          var inside = (px * px + py * py) < discR * discR;
+          if (pz < 0) {
             // BACK — evenodd clip: everything EXCEPT the icon disc, dimmed —
             // the star slides behind the nucleus (an inside one vanishes).
             if (inside) { stats.backHidden++; stats.stars++; continue; }
-            back.push(p);
+            back[backN++] = px; back[backN++] = py; back[backN++] = pr;
           } else {
             if (inside) stats.frontInside++;
             // FRONT — full alpha, tiny glow halo (two arcs, no allocations)
-            var rr = Math.max(0.9, p.r);
+            var rr = Math.max(0.9, pr);
             ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.18)';
             ctx.beginPath();
-            ctx.arc(cx + p.x, cy + p.y, rr * 2.4, 0, Math.PI * 2);
+            ctx.arc(cx + px, cy + py, rr * 2.4, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.95)';
             ctx.beginPath();
-            ctx.arc(cx + p.x, cy + p.y, rr, 0, Math.PI * 2);
+            ctx.arc(cx + px, cy + py, rr, 0, Math.PI * 2);
             ctx.fill();
             stats.stars++;
           }
         }
-        if (back.length) {
+        base += layout[L];
+        if (backN) {
           // BACK — evenodd clip: everything EXCEPT the icon disc, dimmed —
           // the star slides behind the nucleus.
           ctx.save();
@@ -347,12 +400,11 @@
           ctx.rect(-2 * pad, -2 * pad, W + 4 * pad, H + 4 * pad);
           ctx.arc(cx, cy, discR, 0, Math.PI * 2);
           ctx.clip('evenodd');
-          for (var q = 0; q < back.length; q++) {
-            var bp = back[q];
-            var brr = Math.max(0.7, bp.r * 0.85);
+          for (var q = 0; q < backN; q += 3) {
+            var brr = Math.max(0.7, back[q + 2] * 0.85);
             ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.5)';
             ctx.beginPath();
-            ctx.arc(cx + bp.x, cy + bp.y, brr, 0, Math.PI * 2);
+            ctx.arc(cx + back[q], cy + back[q + 1], brr, 0, Math.PI * 2);
             ctx.fill();
             stats.stars++;
           }
@@ -363,11 +415,26 @@
     return stats;
   }
 
+  // v0.97: THE MOTION TEMPO — the user's canvas ask: "make everything,
+  // dots, stars, icons, workspace stars, everything that has movement,
+  // much slower". 0.5 = half speed everywhere the AMBIENT world moves
+  // (lattice dots/shuttle, atom shell orbits, orbit-star pulse). NOT
+  // applied to: physics (drag/throw stays 1:1) or TabGroups ω (already
+  // glacial at 1.7–10.5 min/orbit and rig-pinned).
+  // v1.37.1: declared ABOVE the AtomCore export (the export literal must
+  // read the VALUE, not a hoisted undefined) + EXPOSED — pixiworld's
+  // world clock multiplies it for the tempo parity (its stars used to
+  // orbit at 2× the DOM twin's speed — the v0.97 slow-down never rode
+  // the world layer's own clock).
+  var MOTION_TEMPO = 0.5;
+
   ROOT.AtomCore = {
     paintCore: paintCore,
     paintDots: paintDotsCore,
     shellLayout: shellLayout,
     starPos: starPos,
+    starFieldsOf: starFieldsOf,       // v1.37.1: the flat [omega, phase, r] per (icon, n)
+    MOTION_TEMPO: MOTION_TEMPO,       // v1.37.1: the world layer's tempo parity rides it
     SHELL_CAP: SHELL_CAP,
     SHELL_R: SHELL_R,
     SHELL_TILT: SHELL_TILT,
@@ -600,14 +667,6 @@
     }
     return painted;
   }
-
-  // v0.97: THE MOTION TEMPO — the user's canvas ask: "make everything,
-  // dots, stars, icons, workspace stars, everything that has movement,
-  // much slower". 0.5 = half speed everywhere the AMBIENT world moves
-  // (lattice dots/shuttle, atom shell orbits, orbit-star pulse). NOT
-  // applied to: physics (drag/throw stays 1:1) or TabGroups ω (already
-  // glacial at 1.7–10.5 min/orbit and rig-pinned).
-  var MOTION_TEMPO = 0.5;
 
   // ── the main-thread twin (the feed + the themed wrapper) ──────────
   if (typeof document === 'undefined') return;   // worker: core only
