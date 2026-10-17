@@ -1,0 +1,765 @@
+selector,family,first_class,vars_consumed(count),vars
+:root,other,other,12,--accent-2 --border --field-accent-1 --field-accent-2 --field-accent-3 --field-canvas --field-ink --field-surface --surface-2 --text-1 --ui-small-fs --veil-ink-rgb
+.ctx-ring,ctx,ctx-ring,7,--accent --accent-rgb --p --ring --surface-3 --thr --zone
+#chat-panel,other,chat-panel,6,--border --panel-field-h --shadow-ink-rgb --surface-1 --surface-1-gradient --text-shadow
+.chatbot .icon,chat,chatbot,5,--shadow-ink-rgb --surface-2 --text-1 --text-3-dim --veil-ink-rgb
+.chatbot .sandbox-badge,chat,chatbot,5,--card-rgb --ok --shadow-ink-rgb --surface-1 --ui-small-fs
+.wt-omni,workspace,wt-omni,5,--border --raised-chrome --text-1 --ui-small-fs --wt-fs
+.tool-pill-name,controls,tool-pill-name,5,--border --chat-fs --chat-scale --surface-2 --text-2
+.art-tree,artifacts,art-tree,5,--accent-2-rgb --border --err --text-1 --ui-fs
+.hub-chatpill,hub/library,hub-chatpill,5,--border --border-rgb --surface-1 --text-1 --ui-small-fs
+.hub-libpill,hub/library,hub-libpill,5,--bg-app-rgb --border --raised-chrome --text-2 --ui-small-fs
+.hub-publish,hub/library,hub-publish,5,--accent --accent-rgb --hub-tone --hub-tone-rgb --ui-small-fs
+.hub-bunch-chip,hub/library,hub-bunch-chip,5,--accent --hub-tone --raised-chrome --text-1 --ui-small-fs
+.hi-chip,hub/library,hi-chip,5,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb --ui-small-fs
+.hi-stagen,hub/library,hi-stagen,5,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb --ui-small-fs
+.hi-stage-mt,hub/library,hi-stage-mt,5,--border-strong --surface-2-rgb --surface-3-rgb --text-2 --ui-small-fs
+.dx-pill,dx,dx-pill,5,--border --border-rgb --raised-chrome --text-2 --ui-small-fs
+.gr-mini,settings,gr-mini,5,--raised-chrome --raised-ring --shadow-ink-rgb --text-2 --ui-small-fs
+.chatbot .name,chat,chatbot,4,--bg-app-rgb --card-rgb --text-2 --ui-small-fs
+#perf-hud-chip,other,perf-hud-chip,4,--border --surface-2-rgb --text-1 --ui-micro-fs
+#canvas-empty .ce-btn,ce,ce-btn,4,--accent --accent-gradient --on-accent --ui-fs
+.wt-card-btn,workspace,wt-card-btn,4,--accent-rgb --text-1 --ui-small-fs --wt-fs
+.wt-guard,workspace,wt-guard,4,--accent-rgb --surface-1 --text-2 --ui-small-fs
+.wt-guard-go,workspace,wt-guard-go,4,--accent-rgb --text-1 --ui-small-fs --wt-fs
+.wt-root.custom-tint .wt-ext,workspace,wt-root,4,--accent-2 --bg-panel --text-1 --wt-c2
+.wt-root.custom-tint .wt-card,workspace,wt-root,4,--accent --border --surface-1 --wt-c1
+.wt-root.custom-tint .wt-guard,workspace,wt-root,4,--accent --accent-2 --wt-c1 --wt-c2
+.wtw-btn,wtw,wtw-btn,4,--border --raised-chrome --text-1 --ui-small-fs
+.te-tagged,theme-editor,te-tagged,4,--accent-gradient --accent-rgb --text-1 --ui-micro-fs
+.msg-user,chat,msg-user,4,--accent --accent-gradient --chat-scale --on-accent
+.msg-error,chat,msg-error,4,--chat-fs --chat-scale --err --err-rgb
+.msg-notice,chat,msg-notice,4,--chat-fs --chat-scale --notice --notice-rgb
+.starter-chip,starter,starter-chip,4,--border --surface-1 --text-2 --ui-small-fs
+.starter-chip:hover,starter,starter-chip,4,--accent --shadow-ink-rgb --surface-2 --text-1
+.chat-jump,chat,chat-jump,4,--border-strong --raised-chrome --shadow-ink-rgb --text-1
+.ts-chip,ts,ts-chip,4,--border --raised-chrome --text-3 --ui-micro-fs
+.ts-stage-n,ts,ts-stage-n,4,--accent-gradient --accent-rgb --text-1 --ui-micro-fs
+.fmt-yt-pip,chat-content,fmt-yt-pip,4,--bg-panel --border --chat-scale --text-1
+.fmt-code-inline,chat-content,fmt-code-inline,4,--border --chat-scale --fmt-a1 --surface-2
+.fmt-cbtn,chat-content,fmt-cbtn,4,--border --chat-fs --chat-scale --text-3
+.fmt-artifact,chat-content,fmt-artifact,4,--accent-2-rgb --border --chat-scale --fmt-a3
+.fmt-artifact-dl,chat-content,fmt-artifact-dl,4,--accent-2-rgb --chat-fs --chat-scale --fmt-link
+.chat-working,chat,chat-working,4,--accent-rgb --chat-fs --chat-scale --text-2
+.cw-switch,cw,cw-switch,4,--chat-fs --chat-scale --warn --warn-rgb
+.tool-pill-progress,controls,tool-pill-progress,4,--border --raised-chrome --raised-ring --text-3
+.src-card-dom,src,src-card-dom,4,--accent-2-rgb --chat-fs --chat-scale --fmt-a1
+.art-sheet-btn,artifacts,art-sheet-btn,4,--border --raised-chrome --text-1 --ui-fs
+.art-sheet-input,artifacts,art-sheet-input,4,--fmt-a1 --raised-chrome --text-1 --ui-fs
+.vw-quote,vw,vw-quote,4,--accent --accent-rgb --fmt-a2 --text-2
+.art-toast,artifacts,art-toast,4,--border --raised-chrome --text-1 --ui-small-fs
+".pv-input, .pv-select",pv,pv-input,4,--border --raised-chrome --text-1 --ui-fs
+.pv-btn,pv,pv-btn,4,--border-strong --raised-chrome --text-1 --ui-fs
+#util-row .util-btn,util,util-btn,4,--border --border-rgb --raised-chrome --text-3
+.hub-chatpill--mine.on,hub/library,hub-chatpill--mine,4,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb
+.hub-search,hub/library,hub-search,4,--border --raised-chrome --text-1 --ui-fs
+".hub-sortico[data-on=""1""]",hub/library,hub-sortico,4,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb
+.hub-root.scrunch .hub-searchico,hub/library,hub-root,4,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb
+.hub-ctl,hub/library,hub-ctl,4,--border --raised-chrome --text-3 --ui-small-fs
+.hub-step-val,hub/library,hub-step-val,4,--accent-2-rgb --hub-tone-rgb --text-1 --ui-small-fs
+.hub-card--bunch .hub-card-ico,hub/library,hub-card--bunch,4,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb
+.hub-memq-empty,hub/library,hub-memq-empty,4,--border --surface-1 --text-3 --ui-small-fs
+.hub-nav,hub/library,hub-nav,4,--border --raised-chrome --text-2 --ui-small-fs
+.hi-chip--info,hub/library,hi-chip--info,4,--border-strong --surface-2-rgb --surface-3-rgb --text-2
+.hi-viewseg button.on,hub/library,hi-viewseg,4,--accent-2 --accent-2-rgb --hub-tone --hub-tone-rgb
+.hi-fab,hub/library,hi-fab,4,--border-strong --raised-chrome --shadow-ink-rgb --text-1
+.hi-delbar-btn,hub/library,hi-delbar-btn,4,--border-strong --surface-3 --text-1 --ui-small-fs
+.hp-textarea,hp,hp-textarea,4,--border --raised-chrome --text-1 --ui-fs
+.hp-mini,hp,hp-mini,4,--border --raised-chrome --text-2 --ui-small-fs
+.hp-pick,hp,hp-pick,4,--border --raised-chrome --text-1 --ui-fs
+.dx-chip,dx,dx-chip,4,--accent-2-rgb --border-rgb --text-2 --ui-small-fs
+.gr-rm,settings,gr-rm,4,--border-strong --surface-2 --surface-3 --text-2
+.crop-btn,crop,crop-btn,4,--raised-chrome --raised-ring --text-1 --ui-small-fs
+.hp-focus-btn,hp,hp-focus-btn,4,--border --raised-chrome --text-2 --ui-micro-fs
+"[data-fmt-grad~=""a1""] h1, [data-fmt-grad~=""a1""] h2, [data-fmt-grad~=""a1""] h3",other,"[data-fmt-grad~=""a1""]",4,--fmt-a1 --fmt-a1-gradient --fmt-a1-ink --text-1
+"[data-fmt-grad~=""a1""] .hub-card-name-in",hub/library,hub-card-name-in,4,--fmt-a1 --fmt-a1-gradient --fmt-a1-ink --text-1
+#menu,other,menu,3,--border --raised-chrome --shadow-ink-rgb
+.chatbot .pin-badge,chat,chatbot,3,--accent --shadow-ink-rgb --surface-1
+.del-ov-keep,del,del-ov-keep,3,--border-strong --surface-2 --text-1
+#dock-expando.open,open,open,3,--border --shadow-ink-rgb --surface-1
+#canvas-empty .ce-card,ce,ce-card,3,--border --shadow-ink-rgb --surface-1
+#panel-tab-icon .wt-circle-grad,workspace,wt-circle-grad,3,--accent --accent-2 --text-1
+#panel-model-btn,other,panel-model-btn,3,--accent-rgb --text-1 --ui-small-fs
+".wt-go, .wt-ext",workspace,wt-go,3,--border --raised-chrome --text-3
+".wt-go:hover, .wt-ext:hover",workspace,wt-go,3,--accent-rgb --surface-3 --text-1
+.wt-card-title,workspace,wt-card-title,3,--text-1 --ui-fs --wt-fs
+.wt-card-url,workspace,wt-card-url,3,--text-3 --ui-small-fs --wt-fs
+.wt-card-desc,workspace,wt-card-desc,3,--text-2 --ui-small-fs --wt-fs
+.wt-card-why,workspace,wt-card-why,3,--text-3 --ui-small-fs --wt-fs
+.wt-root.custom-tint .wt-bar,workspace,wt-root,3,--accent --bg-panel --wt-c1
+.wt-root.custom-tint .wt-omni,workspace,wt-root,3,--accent-2 --bg-panel --wt-c2
+.wtw-chip,wtw,wtw-chip,3,--border --text-3 --ui-small-fs
+.settings-nav .tab,settings,settings-nav,3,--text-3 --text-3-rgb --ui-fs
+.color-row-reset,color,color-row-reset,3,--border --raised-chrome --text-3
+.color-row-reset:hover,color,color-row-reset,3,--accent --surface-3 --text-1
+.te-rm,theme-editor,te-rm,3,--border-strong --surface-1 --text-2
+.te-tool,theme-editor,te-tool,3,--raised-chrome --raised-ring --text-2
+.te-tile,theme-editor,te-tile,3,--border-strong --text-3 --ui-micro-fs
+.te-tex-btn,theme-editor,te-tex-btn,3,--border-strong --text-3 --ui-micro-fs
+.te-srow input[type=range]::-webkit-slider-thumb,theme-editor,te-srow,3,--on-accent --shadow-ink-rgb --surface-1
+.slot-pop,slot,slot-pop,3,--border --card --shadow-ink-rgb
+.slot-pop-close,slot,slot-pop-close,3,--border --raised-chrome --text-2
+.slot-pop-btn,slot,slot-pop-btn,3,--border --text-2 --ui-small-fs
+.msg-assistant,chat,msg-assistant,3,--chat-scale --surface-1 --text-1
+.chat-find,chat,chat-find,3,--border --raised-chrome --shadow-ink-rgb
+.chat-find-input,chat,chat-find-input,3,--border --raised-chrome --text-1
+.chat-find-btn,chat,chat-find-btn,3,--border --raised-chrome --text-2
+.err-switch,err,err-switch,3,--border-strong --raised-chrome --text-1
+.err-switch:hover,err,err-switch,3,--accent --shadow-ink-rgb --surface-3
+.ts-act,ts,ts-act,3,--border --text-2 --ui-small-fs
+.ts-notice,ts,ts-notice,3,--border --text-3 --ui-micro-fs
+.fmt blockquote,chat-content,fmt,3,--accent-2-rgb --fmt-a2 --text-2
+"[data-fmt-grad~=""a1""] .fmt h2",chat-content,fmt,3,--fmt-a1 --fmt-a1-gradient --fmt-a1-ink
+"[data-fmt-grad~=""a3""] .fmt h4",chat-content,fmt,3,--fmt-a3 --fmt-a3-gradient --fmt-a3-ink
+"[data-fmt-grad~=""bright""] .fmt h1",chat-content,fmt,3,--fmt-bright --fmt-bright-gradient --fmt-bright-ink
+"[data-fmt-grad~=""link""] .fmt-user a.fmt-link",chat-content,fmt-user,3,--fmt-link --fmt-link-gradient --fmt-link-ink
+.fmt-yt-cap,chat-content,fmt-yt-cap,3,--chat-fs --chat-scale --text-2
+.lv-card,lv,lv-card,3,--border --chat-fs --surface-1
+"#media-zoom #mz-close, #media-zoom #mz-open",other,media-zoom,3,--bg-app-rgb --border-strong --text-1
+.fmt-codehead,chat-content,fmt-codehead,3,--bg-panel --border --chat-scale
+.msg-think-summary,chat,msg-think-summary,3,--chat-fs --chat-scale --text-2
+.msg-think-body,chat,msg-think-body,3,--chat-fs --chat-scale --text-3
+.tool-pill-detail,controls,tool-pill-detail,3,--border --chat-fs --chat-scale
+.tv-pg-btn,tv,tv-pg-btn,3,--border --surface-2 --text-2
+.tv-copy,tv,tv-copy,3,--border --surface-2 --text-2
+.src-wrap,src,src-wrap,3,--bg-app --border --chat-scale
+.src-wrap .src-count,src,src-wrap,3,--accent-2-rgb --chat-scale --text-1
+.hub-wrap,hub/library,hub-wrap,3,--bg-app --border --chat-scale
+.hub-count,hub/library,hub-count,3,--accent-2-rgb --chat-scale --text-1
+.hmsg-card-ico,hmsg,hmsg-card-ico,3,--accent-2-rgb --chat-fs --chat-scale
+.hmsg-dl,hmsg,hmsg-dl,3,--accent-2-rgb --chat-scale --text-1
+.art-panel,artifacts,art-panel,3,--border --shadow-ink-rgb --surface-1
+.art-row-btn,artifacts,art-row-btn,3,--border --text-3 --ui-small-fs
+.art-rename-input,artifacts,art-rename-input,3,--fmt-a1 --raised-chrome --text-1
+.art-ed-btn,artifacts,art-ed-btn,3,--border --text-2 --ui-small-fs
+.art-sheet,artifacts,art-sheet,3,--border --shadow-ink-rgb --surface-1
+.vw-h1,vw,vw-h1,3,--border --text-1 --ui-fs
+.vw-li-num::before,vw,vw-li-num,3,--accent --fmt-a2 --ui-small-fs
+.vw-tab,vw,vw-tab,3,--border --text-2 --ui-small-fs
+.vw-arch-fmt,vw,vw-arch-fmt,3,--accent-2-rgb --text-3 --ui-small-fs
+.art-unsaved,artifacts,art-unsaved,3,--err-rgb --surface-1 --warn
+.pe-identity-k,pe,pe-identity-k,3,--accent-rgb --text-3 --ui-micro-fs
+".art-unsaved-discard, .art-unsaved-stay",artifacts,art-unsaved-discard,3,--border --text-1 --ui-small-fs
+.pv-btn-primary,pv,pv-btn-primary,3,--accent-gradient --accent-rgb --text-1
+#chat-search-input,other,chat-search-input,3,--border --raised-chrome --text-1
+.chat-search-nav,chat,chat-search-nav,3,--border --raised-chrome --text-2
+.ctx-ring::after,ctx,ctx-ring,3,--border-strong --thr --tick-op
+.hub-topdock,hub/library,hub-topdock,3,--bg-app-rgb --border --surface-1
+.hub-searchico,hub/library,hub-searchico,3,--border --raised-chrome --text-2
+.hub-bundles-track,hub/library,hub-bundles-track,3,--border --shadow-ink-rgb --surface-3
+.hub-card,hub/library,hub-card,3,--border-strong --shadow-ink-rgb --surface-1
+.hub-card-ico,hub/library,hub-card-ico,3,--border --surface-2-rgb --text-1
+.hub-card-name,hub/library,hub-card-name,3,--text-1 --ui-fs --veil-ink-rgb
+.hub-card-desc,hub/library,hub-card-desc,3,--text-2 --ui-small-fs --veil-ink-rgb
+.hub-bunch-sec-n,hub/library,hub-bunch-sec-n,3,--border --raised-chrome --text-2
+.hub-memq-x,hub/library,hub-memq-x,3,--border --raised-chrome --text-2
+.hub-bunch-hero-name,hub/library,hub-bunch-hero-name,3,--bg-panel-rgb --text-1 --ui-fs
+.hub-bunch-hero-desc,hub/library,hub-bunch-hero-desc,3,--bg-panel-rgb --text-2 --ui-small-fs
+.hub-bunch-hero .hi-fold-ico,hub/library,hub-bunch-hero,3,--bg-panel-rgb --text-2 --ui-small-fs
+.hub-group-del,hub/library,hub-group-del,3,--err --err-rgb --ui-small-fs
+.hub-empty,hub/library,hub-empty,3,--border --text-3 --ui-small-fs
+.hub-empty-retry,hub/library,hub-empty-retry,3,--accent-rgb --text-1 --ui-small-fs
+.hp-icocell,hp,hp-icocell,3,--raised-chrome --text-2 --ui-small-fs
+.hi-ico,hub/library,hi-ico,3,--bg-panel-rgb --border --text-1
+.hi-delbar,hub/library,hi-delbar,3,--err-rgb --raised-chrome --shadow-ink-rgb
+.hp-file-rm,hp,hp-file-rm,3,--err --err-rgb --ui-small-fs
+.hp-addfile,hp,hp-addfile,3,--accent-2-rgb --text-1 --ui-small-fs
+.hp-chip,hp,hp-chip,3,--accent-2-rgb --text-2 --ui-small-fs
+.hp-sec,hp,hp-sec,3,--border --border-rgb --surface-1
+.tw-iconcell,tw,tw-iconcell,3,--border --raised-chrome --text-1
+.pp-heart,pp,pp-heart,3,--border-rgb --text-3-dim --ui-small-fs
+".panel-header, .panel-body",panel,panel-header,3,--panel-field-h --surface-1-gradient --text-shadow
+".gr-editor, .gr-swatches, .gr-tools",settings,gr-editor,3,--border --card --text-shadow
+[data-s1-grad] .app-switch input:not(:checked) ~ .app-switch-track,app,app-switch,3,--accent-gradient --surface-1-gradient --surface-3-rgb
+"[style*=""solid var(--border)""][style*=""background-color: var(--surface-1)""]",other,"[style*=""solid",3,--border --surface-1 --surface-1-gradient
+"[data-a1-grad] [style*=""background-color: rgba(var(--accent-rgb)""]",other,[data-a1-grad],3,--accent-gradient --accent-rgb --on-accent
+"[data-a2-grad] [style*=""background-color: rgba(var(--accent-2-rgb)""]",other,[data-a2-grad],3,--accent-2-gradient --accent-2-rgb --on-accent-2
+"[data-a3-grad] [style*=""background-color: rgba(var(--accent-3-rgb)""]",other,[data-a3-grad],3,--accent-3-gradient --accent-3-rgb --on-accent-3
+"html, body",other,"html,",2,--bg-panel --text-1
+#menu button,other,menu,2,--text-1 --ui-fs
+.del-ov-glyph,del,del-ov-glyph,2,--err --err-rgb
+.del-ov-title,del,del-ov-title,2,--text-1 --ui-fs
+.del-ov-long,del,del-ov-long,2,--text-3 --ui-small-fs
+.del-ov-sub,del,del-ov-sub,2,--text-2 --ui-small-fs
+.del-ov-yes,del,del-ov-yes,2,--err --err-rgb
+#settings-btn,other,settings-btn,2,--border --surface-1
+#dock-toggle,other,dock-toggle,2,--text-3 --ui-fs
+#dock-expando:not(.open) #dock-toggle,open,open,2,--border --surface-1
+#canvas-empty .ce-title,ce,ce-title,2,--text-1 --ui-fs
+#canvas-empty .ce-sub,ce,ce-sub,2,--text-2 --ui-micro-fs
+#canvas-empty .ce-tip,ce,ce-tip,2,--text-3 --ui-micro-fs
+#chat-panel .handle #panel-tab-icon,handle,handle,2,--border --raised-chrome
+#chat-panel .panel-header .meta .name,panel,panel-header,2,--text-1 --ui-fs
+#chat-panel .panel-header .meta .sub,panel,panel-header,2,--text-3-dim --ui-micro-fs
+#chat-panel .panel-body .placeholder,panel,panel-body,2,--text-3 --ui-fs
+.wt-bar,workspace,wt-bar,2,--border --surface-1
+.wt-card,workspace,wt-card,2,--border --surface-1
+.wt-guard-ico,workspace,wt-guard-ico,2,--accent --accent-rgb
+.wt-guard-txt,workspace,wt-guard-txt,2,--ui-small-fs --wt-fs
+.wt-root.custom-tint .wt-omni:focus,workspace,wt-root,2,--accent-2 --wt-c2
+.wtw-chip.on,wtw,wtw-chip,2,--accent-rgb --text-1
+.wtw-btn-ghost,wtw,wtw-btn-ghost,2,--border --text-3
+0%,other,0%,2,--accent-rgb --shadow-ink-rgb
+100%,other,100%,2,--accent-rgb --shadow-ink-rgb
+".settings-nav .tab[data-page=""appearance""].active",settings,settings-nav,2,--accent-rgb --text-1
+".settings-nav .tab[data-page=""sizing""].active",settings,settings-nav,2,--accent-2-rgb --text-1
+".settings-nav .tab[data-page=""general""].active",settings,settings-nav,2,--accent-3-rgb --text-1
+.settings-section h3,settings,settings-section,2,--text-1 --ui-fs
+.settings-section h3 .chevron,settings,settings-section,2,--text-3 --ui-micro-fs
+.color-row-name,color,color-row-name,2,--text-1 --ui-fs
+.color-row-banner,color,color-row-banner,2,--border --highlight-inset-rgb
+.te-name,theme-editor,te-name,2,--border --card
+.te-name b,theme-editor,te-name,2,--text-1 --ui-fs
+.te-hint,theme-editor,te-hint,2,--text-3 --ui-micro-fs
+.te-banner,theme-editor,te-banner,2,--border --surface-2
+.te-stop.sel,theme-editor,te-stop,2,--accent --accent-rgb
+.te-add,theme-editor,te-add,2,--border-strong --text-3
+.te-col-title,theme-editor,te-col-title,2,--text-3 --ui-micro-fs
+.te-tile.on,theme-editor,te-tile,2,--accent --accent-rgb
+.te-tex-btn:active,theme-editor,te-tex-btn,2,--accent --text-1
+.te-angle-v,theme-editor,te-angle-v,2,--text-2 --ui-small-fs
+.te-interim,theme-editor,te-interim,2,--border --card
+.te-interim input[type=color],theme-editor,te-interim,2,--border --surface-2
+.te-hex,theme-editor,te-hex,2,--text-2 --ui-small-fs
+.te-note,theme-editor,te-note,2,--text-3 --ui-micro-fs
+.te-hex-ro,theme-editor,te-hex-ro,2,--text-1 --ui-small-fs
+.te-slab,theme-editor,te-slab,2,--text-3 --ui-micro-fs
+.te-sw-empty,theme-editor,te-sw-empty,2,--text-3 --ui-micro-fs
+.te-tag-title,theme-editor,te-tag-title,2,--text-1 --ui-fs
+.te-tag-sub,theme-editor,te-tag-sub,2,--text-3 --ui-micro-fs
+.te-tag-name,theme-editor,te-tag-name,2,--text-1 --ui-small-fs
+.te-tag-desc,theme-editor,te-tag-desc,2,--text-3 --ui-micro-fs
+.slot-pop-title,slot,slot-pop-title,2,--text-1 --ui-fs
+.slot-pop-grid-title,slot,slot-pop-grid-title,2,--text-3 --ui-micro-fs
+.slot-row,slot,slot-row,2,--border --card
+.slot-row-name,slot,slot-row-name,2,--text-1 --ui-fs
+.slot-row-name .hint,slot,slot-row-name,2,--text-3 --ui-micro-fs
+.slot-row-reset,slot,slot-row-reset,2,--border --text-3
+.app-switch input:checked ~ .app-switch-track,app,app-switch,2,--accent --accent-gradient
+.setting-row label,setting,setting-row,2,--text-1 --ui-fs
+.hint,hint,hint,2,--text-3 --ui-small-fs
+.color-hex,color,color-hex,2,--text-3 --ui-micro-fs
+.chat-find-input:focus,chat,chat-find-input,2,--accent --accent-rgb
+.chat-find-btn:hover,chat,chat-find-btn,2,--border-strong --surface-3
+#edit-banner .eb-cancel,eb,eb-cancel,2,--border --text-2
+#tpl-chip .tpl-chip-x,tpl,tpl-chip-x,2,--border --text-2
+.ts-group,ts,ts-group,2,--text-3 --ui-micro-fs
+.ts-row,ts,ts-row,2,--border --surface-1
+.ts-row-name,ts,ts-row-name,2,--text-1 --ui-fs
+.ts-row-desc,ts,ts-row-desc,2,--text-3 --ui-micro-fs
+.ts-meta,ts,ts-meta,2,--text-3 --ui-micro-fs
+.ts-star,ts,ts-star,2,--border --text-3
+.ts-star-on,ts,ts-star-on,2,--warn --warn-rgb
+.ts-empty,ts,ts-empty,2,--text-3 --ui-small-fs
+.ts-detail-name,ts,ts-detail-name,2,--text-1 --ui-fs
+.ts-detail-desc,ts,ts-detail-desc,2,--text-3 --ui-small-fs
+.ts-stage-name,ts,ts-stage-name,2,--text-1 --ui-fs
+.ts-stage-fo,ts,ts-stage-fo,2,--text-3 --ui-micro-fs
+.ts-stage-ins,ts,ts-stage-ins,2,--text-2 --ui-small-fs
+.fmt-media-img,chat-content,fmt-media-img,2,--bg-app --border
+.fmt-yt,chat-content,fmt-yt,2,--border --surface-1
+.fmt-yt-play,chat-content,fmt-yt-play,2,--chat-scale --shadow-ink-rgb
+.fmt-codecard,chat-content,fmt-codecard,2,--border --surface-1
+.fmt-codelang,chat-content,fmt-codelang,2,--chat-fs --fmt-a2
+.fmt-cbtn:active,chat-content,fmt-cbtn,2,--border --fmt-bright
+.fmt-cbtn-save,chat-content,fmt-cbtn-save,2,--border --fmt-a3
+.fmt-codetext,chat-content,fmt-codetext,2,--chat-fs --text-1
+.fmt table thead th,chat-content,fmt,2,--accent-rgb --text-1
+".fmt th, .fmt td",chat-content,fmt,2,--border --chat-scale
+.fmt-th-stats,chat-content,fmt-th-stats,2,--text-3 --ui-small-fs
+.msg-think,chat,msg-think,2,--accent-rgb --chat-scale
+.th-elapsed,th,th-elapsed,2,--chat-fs --text-3
+.fmt-artifact-name,chat-content,fmt-artifact-name,2,--chat-fs --fmt-bright
+.fmt-artifact-sub,chat-content,fmt-artifact-sub,2,--chat-fs --text-3
+.cwd i,cwd,cwd,2,--accent --accent-gradient
+.cwe,cwe,cwe,2,--text-3 --ui-small-fs
+.chat-working-stalled,chat,chat-working-stalled,2,--text-1 --warn-rgb
+.tool-pill,controls,tool-pill,2,--chat-fs --chat-scale
+.tool-pill-use,controls,tool-pill-use,2,--accent-2-rgb --text-1
+.tool-pill-result,controls,tool-pill-result,2,--ok --ok-rgb
+.tool-pill-tail,controls,tool-pill-tail,2,--chat-fs --text-3
+.tool-pill-live,controls,tool-pill-live,2,--accent-2-rgb --chat-scale
+.tool-pill-bar,controls,tool-pill-bar,2,--chat-scale --surface-2
+.tool-pill-k,controls,tool-pill-k,2,--chat-scale --text-3
+.tool-pill-pre,controls,tool-pill-pre,2,--chat-scale --text-2
+.tool-pill-link,controls,tool-pill-link,2,--chat-fs --fmt-link
+.tool-pill-open,controls,tool-pill-open,2,--chat-scale --text-3
+.tool-pill-open:hover,controls,tool-pill-open,2,--accent-2 --accent-2-rgb
+".tool-pill[data-expanded=""1""] .tool-pill-open:hover",controls,tool-pill,2,--accent --accent-rgb
+.tv-ico,tv,tv-ico,2,--accent-2-rgb --on-accent-2
+.tv-body,tv,tv-body,2,--border --surface-2
+.tv-pg-btn:not(:disabled):hover,tv,tv-pg-btn,2,--border-strong --text-1
+.tv-copy:hover,tv,tv-copy,2,--border-strong --text-1
+.src-wrap > .src-wrap-label,src,src-wrap,2,--chat-scale --text-3
+.src-card-title,src,src-card-title,2,--chat-fs --text-2
+.src-card-sub,src,src-card-sub,2,--chat-fs --text-3
+.hub-wrap > .hub-wrap-label,hub/library,hub-wrap,2,--chat-scale --text-3
+.hmsg-card,hmsg,hmsg-card,2,--chat-scale --surface-2
+.hmsg-card-title,hmsg,hmsg-card-title,2,--chat-fs --text-2
+.hmsg-card-sub,hmsg,hmsg-card-sub,2,--chat-fs --text-3
+.hmsg-card-stats,hmsg,hmsg-card-stats,2,--chat-fs --text-3
+.hmsg-dl.hmsg-dld,hmsg,hmsg-dl,2,--ok --ok-rgb
+.msg-action-btn,chat,msg-action-btn,2,--text-1 --ui-fs
+.msg-action-ico,chat,msg-action-ico,2,--fmt-a1 --ui-fs
+.msg-action-ts,chat,msg-action-ts,2,--border --text-3
+.art-title,artifacts,art-title,2,--text-1 --ui-fs
+.art-count,artifacts,art-count,2,--text-3 --ui-small-fs
+".art-loading, .art-empty",artifacts,art-loading,2,--text-3 --ui-fs
+.art-empty-sub,artifacts,art-empty-sub,2,--text-3-dim --ui-small-fs
+.art-row,artifacts,art-row,2,--border --surface-1
+.art-row-sub,artifacts,art-row-sub,2,--text-3 --ui-small-fs
+.art-row-btn-danger,artifacts,art-row-btn-danger,2,--err --err-rgb
+.art-confirm-label,artifacts,art-confirm-label,2,--err --ui-small-fs
+".art-confirm-yes, .art-confirm-no",artifacts,art-confirm-yes,2,--border --text-1
+.art-confirm-yes,artifacts,art-confirm-yes,2,--err --err-rgb
+.art-ed-btn.dirty,artifacts,art-ed-btn,2,--accent-2-rgb --fmt-a1
+.art-ed-btn-danger,artifacts,art-ed-btn-danger,2,--err --err-rgb
+".art-tree .wb-col.ftc-size, .art-tree .wb-col.ftc-date",artifacts,art-tree,2,--text-3 --ui-small-fs
+.art-tree .art-act-btn:active,artifacts,art-tree,2,--surface-2 --text-1
+.art-sheet-name,artifacts,art-sheet-name,2,--text-1 --ui-fs
+.art-sheet-btn.danger,artifacts,art-sheet-btn,2,--err --err-rgb
+.vw-doc,vw,vw-doc,2,--text-1 --ui-fs
+.vw-li-bullet::before,vw,vw-li-bullet,2,--accent --fmt-a2
+".vw-tab[data-on=""1""]",vw,vw-tab,2,--accent-2-rgb --text-1
+.vw-table td,vw,vw-table,2,--border --text-2
+.vw-table td.vw-th,vw,vw-table,2,--accent-rgb --text-1
+.vw-arch-n,vw,vw-arch-n,2,--text-3 --ui-small-fs
+.vw-arch-name,vw,vw-arch-name,2,--text-1 --ui-small-fs
+.vw-arch-size,vw,vw-arch-size,2,--text-3 --ui-small-fs
+.vw-member-pre,vw,vw-member-pre,2,--text-2 --ui-small-fs
+.vw-member-note,vw,vw-member-note,2,--text-2 --ui-small-fs
+.art-fallback-ta,artifacts,art-fallback-ta,2,--surface-1 --text-1
+.art-binary-name,artifacts,art-binary-name,2,--text-1 --ui-fs
+.art-binary-sub,artifacts,art-binary-sub,2,--text-3 --ui-small-fs
+.pe-identity,pe,pe-identity,2,--border --ui-small-fs
+.pe-identity-hint,pe,pe-identity-hint,2,--accent-rgb --text-3-dim
+.art-unsaved-text,artifacts,art-unsaved-text,2,--err --ui-small-fs
+.art-unsaved-discard,artifacts,art-unsaved-discard,2,--err --err-rgb
+.art-unsaved-stay,artifacts,art-unsaved-stay,2,--ok --ok-rgb
+.cm-s-doomalay.CodeMirror,cm,cm-s-doomalay,2,--surface-1 --text-1
+.cm-s-doomalay .CodeMirror-gutters,cm,cm-s-doomalay,2,--bg-panel --border
+"#panel-view-back, #panel-view-x",other,"panel-view-back,",2,--border --text-2
+.pv-row,pv,pv-row,2,--border --surface-1
+.pv-row-title,pv,pv-row-title,2,--text-1 --ui-fs
+.pv-row-sub,pv,pv-row-sub,2,--text-3 --ui-small-fs
+.pv-sub-label,pv,pv-sub-label,2,--text-1 --ui-small-fs
+.pv-sub-value,pv,pv-sub-value,2,--text-3 --ui-micro-fs
+.pv-hint,pv,pv-hint,2,--text-3 --ui-small-fs
+.pe-mode-pill,pe,pe-mode-pill,2,--border-rgb --ui-micro-fs
+.ph-scope-pill button,ph,ph-scope-pill,2,--text-3 --ui-micro-fs
+".ph-scope-pill button[data-on=""1""]",ph,ph-scope-pill,2,--accent-2-rgb --text-1
+.pv-section-label,pv,pv-section-label,2,--text-3 --ui-micro-fs
+.chat-search-count,chat,chat-search-count,2,--text-3 --ui-small-fs
+#util-row .util-btn:active,util,util-btn,2,--surface-3 --text-2
+.ctx-cost,ctx,ctx-cost,2,--text-3 --ui-micro-fs
+.hub-chatpill-chev,hub/library,hub-chatpill-chev,2,--text-3 --ui-micro-fs
+.hub-root,hub/library,hub-root,2,--accent-2 --accent-2-rgb
+".hub-root[data-tone=""persona""]",hub/library,hub-root,2,--accent-2 --accent-2-rgb
+".hub-root[data-tone=""template""]",hub/library,hub-root,2,--accent --accent-rgb
+".hub-root[data-tone=""skill""]",hub/library,hub-root,2,--accent-3 --accent-3-rgb
+".hub-root[data-tone=""script""]",hub/library,hub-root,2,--accent-4 --accent-4-rgb
+".hub-root[data-tone=""doc""]",hub/library,hub-root,2,--accent --accent-rgb
+.pub-title,pub,pub-title,2,--text-1 --ui-fs
+.pub-status,pub,pub-status,2,--text-3 --ui-micro-fs
+.pub-status button,pub,pub-status,2,--text-1 --ui-micro-fs
+.hub-searchico:hover,hub/library,hub-searchico,2,--accent --hub-tone
+.hub-search:focus,hub/library,hub-search,2,--accent --hub-tone
+.hub-sortico:hover,hub/library,hub-sortico,2,--raised-chrome --text-1
+.hub-fsub,hub/library,hub-fsub,2,--text-3 --ui-micro-fs
+.pub-sub,pub,pub-sub,2,--text-3 --ui-small-fs
+.hub-libpill-count,hub/library,hub-libpill-count,2,--text-3 --ui-small-fs
+".hub-libpill[data-on=""1""]",hub/library,hub-libpill,2,--accent-rgb --text-1
+".hub-libpill[data-tone=""acc1""][data-on=""1""]",hub/library,hub-libpill,2,--accent-rgb --text-1
+".hub-libpill[data-tone=""acc2""][data-on=""1""]",hub/library,hub-libpill,2,--accent-2-rgb --text-1
+".hub-libpill[data-tone=""acc3""][data-on=""1""]",hub/library,hub-libpill,2,--accent-3-rgb --text-1
+.hub-bundles,hub/library,hub-bundles,2,--text-3 --ui-small-fs
+.hub-bundles-dot,hub/library,hub-bundles-dot,2,--shadow-ink-rgb --text-2
+.hub-bundles.on .hub-bundles-track,hub/library,hub-bundles,2,--accent-2-rgb --hub-tone-rgb
+.hub-bundles.on .hub-bundles-dot,hub/library,hub-bundles,2,--accent-2 --hub-tone
+.hub-card-author,hub/library,hub-card-author,2,--text-3 --ui-small-fs
+.hub-card-foot,hub/library,hub-card-foot,2,--text-2 --ui-small-fs
+.hub-card-stat,hub/library,hub-card-stat,2,--text-2 --ui-small-fs
+.hub-card-stat--stages,hub/library,hub-card-stat--stages,2,--text-3 --ui-small-fs
+.hub-bunch-sec-h,hub/library,hub-bunch-sec-h,2,--text-3 --ui-small-fs
+.hub-bunch-sec-h:active,hub/library,hub-bunch-sec-h,2,--accent-2-rgb --hub-tone-rgb
+.hub-bunch-sec-h .hub-sec-chev,hub/library,hub-bunch-sec-h,2,--text-3 --ui-small-fs
+.hub-memq-x:hover,hub/library,hub-memq-x,2,--accent --hub-tone
+.hub-memq-n,hub/library,hub-memq-n,2,--text-3 --ui-small-fs
+.hub-bundle-flag,hub/library,hub-bundle-flag,2,--shadow-ink-rgb --ui-small-fs
+#hub-bundle-dl .hub-dl-count,hub/library,hub-dl-count,2,--text-1 --ui-fs
+#hub-bundle-dl .hub-dl-ok,hub/library,hub-dl-ok,2,--ok --ui-fs
+#hub-bundle-dl.is-done,is,is-done,2,--ok --ok-rgb
+#hub-bundle-dl.is-running::after,is,is-running,2,--dl-p --ok
+.hub-mine-delbar,hub/library,hub-mine-delbar,2,--bg-app-rgb --shadow-ink-rgb
+.hubrepo-file-path,hubrepo,hubrepo-file-path,2,--text-1 --ui-fs
+.hubrepo-file-repo,hubrepo,hubrepo-file-repo,2,--text-3 --ui-small-fs
+.hubrepo-imgwrap img,hubrepo,hubrepo-imgwrap,2,--border --surface-2
+.hub-pager,hub/library,hub-pager,2,--text-3 --ui-small-fs
+".hp-icocell[data-on=""1""]",hp,hp-icocell,2,--accent --surface-3
+.hp-stagehint,hp,hp-stagehint,2,--text-3 --ui-micro-fs
+.hp-edithint,hp,hp-edithint,2,--text-3 --ui-micro-fs
+.hi-root,hub/library,hi-root,2,--accent-2 --accent-2-rgb
+".hi-root[data-tone=""persona""]",hub/library,hi-root,2,--accent-2 --accent-2-rgb
+".hi-root[data-tone=""template""]",hub/library,hi-root,2,--accent --accent-rgb
+".hi-root[data-tone=""skill""]",hub/library,hi-root,2,--accent-3 --accent-3-rgb
+".hi-root[data-tone=""script""]",hub/library,hi-root,2,--accent-4 --accent-4-rgb
+".hi-root[data-tone=""doc""]",hub/library,hi-root,2,--accent --accent-rgb
+.hi-title,hub/library,hi-title,2,--text-1 --ui-fs
+.hi-desc,hub/library,hi-desc,2,--text-2 --ui-small-fs
+.hi-meta,hub/library,hi-meta,2,--text-3 --ui-small-fs
+.hi-counts,hub/library,hi-counts,2,--text-2 --ui-small-fs
+.hi-fold-ico,hub/library,hi-fold-ico,2,--text-2 --ui-small-fs
+.hi-viewseg,hub/library,hi-viewseg,2,--border --raised-chrome
+.hi-viewseg button,hub/library,hi-viewseg,2,--text-3 --ui-small-fs
+.hi-fab.on,hub/library,hi-fab,2,--err --on-accent
+.hi-fab--use,hub/library,hi-fab--use,2,--accent --on-accent
+.hi-fab--del,hub/library,hi-fab--del,2,--err --err-rgb
+.hi-delbar-text,hub/library,hi-delbar-text,2,--text-1 --ui-small-fs
+.hi-delbar-btn--rm,hub/library,hi-delbar-btn--rm,2,--err --on-accent
+.hp-seg,hp,hp-seg,2,--border --surface-1
+.hp-seg button,hp,hp-seg,2,--text-3 --ui-small-fs
+".hp-seg button[data-on=""1""]",hp,hp-seg,2,--accent-2-rgb --text-1
+.hp-color,hp,hp-color,2,--border --raised-chrome
+.hp-imgmeta,hp,hp-imgmeta,2,--ok --ui-small-fs
+.hp-err,hp,hp-err,2,--err --ui-small-fs
+.hc-step,hc,hc-step,2,--fmt-bright --ui-fs
+.hc-step .hc-num,hc,hc-step,2,--fmt-link --ui-micro-fs
+.hc-sub,hc,hc-sub,2,--text-2 --ui-small-fs
+".dx-pill[data-on=""1""]",dx,dx-pill,2,--accent-2-rgb --text-1
+".dx-pill[data-tone=""persona""][data-on=""1""]",dx,dx-pill,2,--persona-rgb --persona-tint
+".dx-pill[data-tone=""template""][data-on=""1""]",dx,dx-pill,2,--template-rgb --template-tint
+.gr-color,settings,gr-color,2,--border --raised-chrome
+.gr-color:focus-visible,settings,gr-color,2,--accent --accent-rgb
+.gr-rm:hover,settings,gr-rm,2,--accent --text-1
+.gr-mini:hover,settings,gr-mini,2,--border-strong --text-1
+.gr-cap,settings,gr-cap,2,--text-3 --ui-micro-fs
+.gr-preview,settings,gr-preview,2,--border --highlight-inset-rgb
+.crop-hint,crop,crop-hint,2,--text-3 --ui-micro-fs
+.tw-iconcell-letter,tw,tw-iconcell-letter,2,--text-1 --ui-fs
+".tw-iconcell[data-on=""1""]",tw,tw-iconcell,2,--accent-2 --accent-2-rgb
+"[style*=""background:var(--surface-1)""]",other,"[style*=""background",2,--surface-1 --surface-1-gradient
+"[style*=""background:var(--surface-2)""]",other,"[style*=""background",2,--surface-2 --surface-2-gradient
+"[style*=""background:var(--bg-app)""]",other,"[style*=""background",2,--bg-app --bg-app-gradient
+"[style*=""background:var(--accent)""]",other,"[style*=""background",2,--accent --accent-gradient
+"[style*=""background:var(--accent-2)""]",other,"[style*=""background",2,--accent-2 --accent-2-gradient
+"[style*=""background:var(--accent-3)""]",other,"[style*=""background",2,--accent-3 --accent-3-gradient
+"[style*=""background:var(--accent-4)""]",other,"[style*=""background",2,--accent-4 --accent-4-gradient
+"[style*=""background:var(--border-strong)""]",other,"[style*=""background",2,--border-strong --border-strong-gradient
+".cv-section, .mb-more, .wsx-opt",cv,cv-section,2,--card --text-shadow
+".src-wrap, .hub-wrap",src,src-wrap,2,--card --text-shadow
+[data-bright-s2] #menu,other,[data-bright-s2],2,--on-surface-2 --text-1
+"[data-bright-s1] .gr-editor, [data-bright-s1] .gr-swatches, [data-bright-s1] .gr-tools",settings,gr-editor,2,--on-surface-1 --text-1
+"[data-bright-bg] .src-wrap, [data-bright-bg] .hub-wrap",src,src-wrap,2,--on-bg-app --text-1
+"[style*=""solid var(--border)""][style*=""background-color: var(--surface-2)""]",other,"[style*=""solid",2,--border --surface-2
+"[style*=""solid var(--border-strong)""][style*=""background-color: var(--surface-3)""]",other,"[style*=""solid",2,--border-strong --surface-3
+"[style*=""solid var(--border)""][style*=""background-color: var(--bg-app)""]",other,"[style*=""solid",2,--bg-app --border
+".color-row-reset, .settings-nav .tab, .util-btn, .kbd",color,color-row-reset,2,--raised-chrome --raised-ring
+"[data-bright-border] .util-btn, [data-bright-border] .kbd",util,util-btn,2,--on-border --text-1
+".settings-section h3, #chat-header, .pub-head-bar",settings,settings-section,2,--card --text-shadow
+.crc-mark,crc,crc-mark,2,--text-3 --ui-micro-fs
+[data-a1-grad] .sm-row.on .sm-auto,sm,sm-row,2,--accent-gradient --on-accent
+"[data-a2-grad] .ph-scope-pill button[data-on=""1""]",ph,ph-scope-pill,2,--accent-2-gradient --on-accent-2
+"[data-a3-grad] .settings-nav .tab.active[data-page=""general""]",settings,settings-nav,2,--accent-3-gradient --on-accent-3
+[data-a3-grad] .mb-ufchip,mb,mb-ufchip,2,--accent-3-gradient --on-accent-3
+"[data-a1-grad] .hub-libpill[data-tone=""acc1""][data-on=""1""]",hub/library,hub-libpill,2,--accent-gradient --on-accent
+"[data-a2-grad] .hub-libpill[data-tone=""acc2""][data-on=""1""]",hub/library,hub-libpill,2,--accent-2-gradient --on-accent-2
+"[data-a3-grad] .hub-libpill[data-tone=""acc3""][data-on=""1""]",hub/library,hub-libpill,2,--accent-3-gradient --on-accent-3
+"[data-a2-grad] .hub-root[data-tone=""""] .hub-chatpill--mine.on",hub/library,hub-root,2,--accent-2-gradient --on-accent-2
+"[data-a1-grad] .hub-root[data-tone=""doc""] .hub-chatpill--mine.on",hub/library,hub-root,2,--accent-gradient --on-accent
+"[data-a3-grad] .hub-root[data-tone=""skill""] .hub-chatpill--mine.on",hub/library,hub-root,2,--accent-3-gradient --on-accent-3
+[data-a1-grad] .wsx-ico.k-device,wsx,wsx-ico,2,--accent-gradient --on-accent
+[data-a2-grad] .wsx-ico.k-gitea,wsx,wsx-ico,2,--accent-2-gradient --on-accent-2
+[data-a3-grad] .wsx-ico.k-gitlab,wsx,wsx-ico,2,--accent-3-gradient --on-accent-3
+.chatbot .sandbox-badge.bbdg,chat,chatbot,1,--text-1
+"#menu button:hover, #menu button:active",other,menu,1,--border
+"#menu button[data-action=""icon-delete""]",other,menu,1,--err
+.del-ov-btn,del,del-ov-btn,1,--ui-small-fs
+.del-ov-btn:focus-visible,del,del-ov-btn,1,--accent
+#settings-btn:active,other,settings-btn,1,--surface-2
+#settings-btn svg,other,settings-btn,1,--text-3
+[data-s1-grad] #dock-expando:not(.open) #dock-toggle,open,open,1,--surface-1-gradient
+[data-s1-grad] #dock-expando.open,open,open,1,--surface-1-gradient
+#dock-expando:not(.open) #dock-toggle:active,open,open,1,--surface-2
+#dock-sub .dock-btn svg,panel,dock-btn,1,--text-2
+.dock-btn:hover,panel,dock-btn,1,--surface-2
+#dock-toggle:hover,other,dock-toggle,1,--surface-2
+.dock-btn:hover svg,panel,dock-btn,1,--accent
+".dock-btn:focus-visible, #dock-toggle:focus-visible",panel,dock-btn,1,--accent-rgb
+.dock-btn svg,panel,dock-btn,1,--text-3
+.dock-btn:active svg,panel,dock-btn,1,--accent
+#canvas-empty .ce-glyph,ce,ce-glyph,1,--accent-rgb
+#canvas-empty .ce-glyph svg,ce,ce-glyph,1,--accent
+#canvas-empty .ce-btn svg,ce,ce-btn,1,--on-accent
+#canvas-empty .ce-tip b,ce,ce-tip,1,--text-2
+#chat-panel .handle-bar,handle,handle-bar,1,--border
+#chat-panel .panel-header,panel,panel-header,1,--border
+#panel-model-btn:active,other,panel-model-btn,1,--accent-rgb
+#chat-panel .panel-body,panel,panel-body,1,--panel-vis-h
+#chat-scrim,other,chat-scrim,1,--bg-panel-rgb
+.wt-omni:focus,workspace,wt-omni,1,--accent-rgb
+.wt-deck iframe,workspace,wt-deck,1,--bg-app
+.wt-iframe,workspace,wt-iframe,1,--bg-app
+.wt-loading,workspace,wt-loading,1,--bg-app
+.wt-loading span,workspace,wt-loading,1,--accent
+.wt-card-img,workspace,wt-card-img,1,--border
+.wt-guard-txt b,workspace,wt-guard-txt,1,--text-1
+.chatbot .icon .wt-glyph svg,chat,chatbot,1,--shadow-ink-rgb
+.wt-avatar,workspace,wt-avatar,1,--text-1
+.wt-loading-text,workspace,wt-loading-text,1,--text-3
+40%,other,40%,1,--border-strong
+.settings-nav,settings,settings-nav,1,--border
+.settings-section,settings,settings-section,1,--border
+.setting-row,setting,setting-row,1,--border
+.color-row-collapsed,color,color-row-collapsed,1,--border
+.color-row-arrow,color,color-row-arrow,1,--text-3
+.te-tile:active,theme-editor,te-tile,1,--accent
+.te-tile-lock,theme-editor,te-tile-lock,1,--text-3
+".te-tex-row[data-te-tex=""on""] .te-tex-btn:first-child",theme-editor,te-tex-row,1,--text-2
+.te-angle input[type=range],theme-editor,te-angle,1,--accent
+.te-wheel,theme-editor,te-wheel,1,--border
+.te-wheel-handle,theme-editor,te-wheel-handle,1,--shadow-ink-rgb
+.te-sw,theme-editor,te-sw,1,--border
+.te-tag-row,theme-editor,te-tag-row,1,--border
+.slot-pop-head,slot,slot-pop-head,1,--surface-1
+.slot-pop-grid-sec,slot,slot-pop-grid-sec,1,--border
+.slot-row-banner,slot,slot-row-banner,1,--border
+.slot-row-arrow,slot,slot-row-arrow,1,--text-3
+.app-switch input:focus-visible ~ .app-switch-track,app,app-switch,1,--accent
+".setting-row input[type=""color""]",setting,setting-row,1,--border
+.msg-bubble,chat,msg-bubble,1,--chat-fs
+.msg-time,chat,msg-time,1,--text-3
+".msg-day::before, .msg-day::after",chat,msg-day,1,--surface-3
+.msg-day span,chat,msg-day,1,--text-3
+.chat-find-count,chat,chat-find-count,1,--text-3
+.err-suggest,err,err-suggest,1,--err-rgb
+.err-switch .err-switch-ico,err,err-switch,1,--notice
+.err-switch:focus-visible,err,err-switch,1,--accent
+.starter-chip:focus-visible,starter,starter-chip,1,--accent
+.chat-jump:hover,chat,chat-jump,1,--surface-3
+.chat-jump:focus-visible,chat,chat-jump,1,--accent
+.chat-jump.live::after,chat,chat-jump,1,--notice
+.find-hit,find,find-hit,1,--accent-rgb
+70%,other,70%,1,--accent-rgb
+".chat-find-input:focus-visible, #chat-input:focus-visible, #chat-send:focus-visible",chat,chat-find-input,1,--accent-rgb
+"#chat-scroll, #chat-messages, #mb-list, .mb-body",mb,mb-body,1,--border-strong
+"#chat-scroll::-webkit-scrollbar-thumb, #mb-list::-webkit-scrollbar-thumb, .mb-body::-webkit-scrollbar-thumb",mb,mb-body,1,--border-strong
+#chat-input:focus,other,chat-input,1,--accent-rgb
+".msg-row-user > .msg-bubble:hover, .msg-row-assistant > .msg-bubble:hover",chat,msg-row-user,1,--border-rgb
+#edit-banner,other,edit-banner,1,--accent-rgb
+#edit-banner .eb-ico,eb,eb-ico,1,--accent
+#edit-banner .eb-text,eb,eb-text,1,--text-2
+#edit-banner .eb-cancel:hover,eb,eb-cancel,1,--err
+#tpl-chip,other,tpl-chip,1,--accent-rgb
+#tpl-chip .tpl-chip-ico,tpl,tpl-chip-ico,1,--accent
+#tpl-chip .tpl-chip-text,tpl,tpl-chip-text,1,--text-2
+#tpl-chip .tpl-chip-x:hover,tpl,tpl-chip-x,1,--err
+.ts-act:active,ts,ts-act,1,--surface-3
+.ts-group-n,ts,ts-group-n,1,--text-3
+".ts-row:active, .ts-row:hover",ts,ts-row,1,--surface-2
+.ts-row-on,ts,ts-row-on,1,--accent-rgb
+.ts-on-ico,ts,ts-on-ico,1,--accent
+.ts-empty-title,ts,ts-empty-title,1,--text-2
+.ts-empty-sub,ts,ts-empty-sub,1,--ui-micro-fs
+.ts-detail-body,ts,ts-detail-body,1,--border
+.ts-stage,ts,ts-stage,1,--border
+.ts-md,ts,ts-md,1,--ui-small-fs
+.fmt,chat-content,fmt,1,--text-1
+".fmt h1, .fmt h2, .fmt h3, .fmt h4",chat-content,fmt,1,--fmt-bright
+.fmt h1,chat-content,fmt,1,--border
+.fmt h2,chat-content,fmt,1,--fmt-a1
+.fmt h3,chat-content,fmt,1,--fmt-a2
+.fmt h4,chat-content,fmt,1,--fmt-a3
+.fmt strong,chat-content,fmt,1,--fmt-bright
+.fmt em,chat-content,fmt,1,--fmt-a3
+.fmt del,chat-content,fmt,1,--text-3
+.fmt li::marker,chat-content,fmt,1,--fmt-a2
+.fmt hr,chat-content,fmt,1,--border
+".fmt a.fmt-link, .fmt-user a.fmt-link",chat-content,fmt,1,--fmt-link
+.fmt-link-cue,chat-content,fmt-link-cue,1,--fmt-link
+.fmt-yt-thumb,chat-content,fmt-yt-thumb,1,--bg-panel
+.fmt-yt-open,chat-content,fmt-yt-open,1,--fmt-link
+.lv-favi,lv,lv-favi,1,--surface-2
+.lv-desc,lv,lv-desc,1,--text-2
+.lv-note,lv,lv-note,1,--text-3
+#media-zoom,other,media-zoom,1,--bg-panel-rgb
+.fmt-codecard .fmt-pre,chat-content,fmt-codecard,1,--chat-scale
+.fmt-codecard pre,chat-content,fmt-codecard,1,--chat-scale
+.fmt table tbody tr:hover td,chat-content,fmt,1,--accent-rgb
+.fmt th,chat-content,fmt,1,--fmt-a2
+.fmt tr:nth-child(2n),chat-content,fmt,1,--field-ink
+.fmt-cursor,chat-content,fmt-cursor,1,--fmt-a1
+.fmt-thinking,chat-content,fmt-thinking,1,--text-3
+".fmt-thinking h1, .fmt-thinking h2, .fmt-thinking h3",chat-content,fmt-thinking,1,--text-2
+.fmt-thinking strong,chat-content,fmt-thinking,1,--text-2
+.fmt-artifact-ico,chat-content,fmt-artifact-ico,1,--chat-scale
+.cwk-bar,cwk,cwk-bar,1,--accent-rgb
+from,other,from,1,--accent-rgb
+to,other,to,1,--warn-rgb
+.chat-working-stalled .cwd i,chat,chat-working-stalled,1,--warn
+.chat-working-stalled .cwt,chat,chat-working-stalled,1,--warn
+.chat-working-stalled .cwe,chat,chat-working-stalled,1,--warn-rgb
+.cw-switch:hover,cw,cw-switch,1,--warn-rgb
+.tool-pill-head,controls,tool-pill-head,1,--chat-scale
+.tool-pill-chev,controls,tool-pill-chev,1,--chat-fs
+.tool-pill-text,controls,tool-pill-text,1,--text-3
+.tool-pill-progress .tool-pill-name,controls,tool-pill-progress,1,--text-3
+.tool-pill-bar::after,controls,tool-pill-bar,1,--accent-2-rgb
+.tool-pill-row,controls,tool-pill-row,1,--chat-scale
+.tv-name,tv,tv-name,1,--text-1
+.tv-sub,tv,tv-sub,1,--text-3
+.tv-sec + .tv-sec,tv,tv-sec,1,--border
+.tv-k,tv,tv-k,1,--text-3
+.tv-q,tv,tv-q,1,--text-2
+.tv-stream,tv,tv-stream,1,--text-2
+.tv-kb,tv,tv-kb,1,--text-3
+.tv-bar,tv,tv-bar,1,--border
+.tv-result,tv,tv-result,1,--text-1
+.tv-pager,tv,tv-pager,1,--border
+.tv-pg-info,tv,tv-pg-info,1,--text-3
+.src-wrap[open] > .src-wrap-label,src,src-wrap,1,--chat-scale
+.src-wrap .src-chev,src,src-wrap,1,--text-3
+.src-card,src,src-card,1,--chat-scale
+.src-card:active,src,src-card,1,--surface-3
+.hub-wrap[open] > .hub-wrap-label,hub/library,hub-wrap,1,--chat-scale
+.hub-chev,hub/library,hub-chev,1,--text-3
+.hub-list,hub/library,hub-list,1,--chat-scale
+.hmsg-card:active,hmsg,hmsg-card,1,--surface-3
+.hmsg-card:focus-visible,hmsg,hmsg-card,1,--accent
+.hmsg-card-title .hub-have,hmsg,hmsg-card-title,1,--ok
+.hmsg-dl:active,hmsg,hmsg-dl,1,--accent-2-rgb
+.msg-action-btn:active,chat,msg-action-btn,1,--border
+.msg-action-danger .msg-action-ico,chat,msg-action-danger,1,--err
+.msg-action-danger,chat,msg-action-danger,1,--err
+.msg-action-danger:active,chat,msg-action-danger,1,--err-rgb
+".token.comment, .token.prolog, .token.doctype, .token.cdata",token,token,1,--text-3-dim
+.token.punctuation,token,token,1,--text-3
+".token.property, .token.tag, .token.constant, .token.symbol, .token.deleted",token,token,1,--fmt-a3
+".token.boolean, .token.number",token,token,1,--warn
+".token.selector, .token.attr-name, .token.string, .token.char, .token.builtin, .token.inserted",token,token,1,--fmt-a2
+".token.operator, .token.entity, .token.url",token,token,1,--text-2
+".token.atrule, .token.attr-value, .token.keyword",token,token,1,--fmt-a1
+".token.function, .token.class-name",token,token,1,--fmt-a3
+".token.regex, .token.important, .token.variable",token,token,1,--fmt-link
+.art-head,artifacts,art-head,1,--border
+".art-close, .art-back",artifacts,art-close,1,--text-3
+.art-row:active,artifacts,art-row,1,--surface-3
+.art-row-name,artifacts,art-row-name,1,--text-1
+.art-row-btn:active,artifacts,art-row-btn,1,--border
+.art-ed-actions,artifacts,art-ed-actions,1,--border
+.art-ed-body,artifacts,art-ed-body,1,--surface-1
+.art-tree .wb-row:active,artifacts,art-tree,1,--accent-2-rgb
+".art-tree .wb-col-span-title, .art-tree .wb-node span.wb-title",artifacts,art-tree,1,--text-1
+.art-tree .wb-expander,artifacts,art-tree,1,--text-3
+.art-tree .art-act-btn,artifacts,art-tree,1,--text-3
+.art-sheet-btn:active,artifacts,art-sheet-btn,1,--surface-1
+.vw-title,vw,vw-title,1,--text-1
+.vw-h2,vw,vw-h2,1,--text-1
+.vw-b,vw,vw-b,1,--text-1
+.vw-table,vw,vw-table,1,--ui-small-fs
+.vw-table td.vw-num,vw,vw-table,1,--ok
+.vw-arch-head,vw,vw-arch-head,1,--border
+.vw-arch-row:active,vw,vw-arch-row,1,--accent-rgb
+.vw-arch-ico,vw,vw-arch-ico,1,--ui-fs
+.vw-arch-member,vw,vw-arch-member,1,--border
+.vw-member-title,vw,vw-member-title,1,--text-2
+.art-binary,artifacts,art-binary,1,--text-2
+.pe-identity-v,pe,pe-identity-v,1,--text-3
+.cm-s-doomalay .CodeMirror-linenumber,cm,cm-s-doomalay,1,--text-3-dim
+.cm-s-doomalay .CodeMirror-cursor,cm,cm-s-doomalay,1,--fmt-a1
+.cm-s-doomalay .CodeMirror-selected,cm,cm-s-doomalay,1,--accent-2-rgb
+.cm-s-doomalay .CodeMirror-activeline-background,cm,cm-s-doomalay,1,--field-ink
+.cm-s-doomalay .cm-keyword,cm,cm-s-doomalay,1,--fmt-a1
+.cm-s-doomalay .cm-atom,cm,cm-s-doomalay,1,--warn
+.cm-s-doomalay .cm-number,cm,cm-s-doomalay,1,--warn
+.cm-s-doomalay .cm-def,cm,cm-s-doomalay,1,--fmt-a3
+.cm-s-doomalay .cm-variable,cm,cm-s-doomalay,1,--text-1
+.cm-s-doomalay .cm-variable-2,cm,cm-s-doomalay,1,--fmt-a3
+".cm-s-doomalay .cm-variable-3, .cm-s-doomalay .cm-type",cm,cm-s-doomalay,1,--fmt-a3
+.cm-s-doomalay .cm-property,cm,cm-s-doomalay,1,--fmt-a2
+.cm-s-doomalay .cm-operator,cm,cm-s-doomalay,1,--text-2
+.cm-s-doomalay .cm-comment,cm,cm-s-doomalay,1,--text-3-dim
+.cm-s-doomalay .cm-string,cm,cm-s-doomalay,1,--fmt-a2
+.cm-s-doomalay .cm-string-2,cm,cm-s-doomalay,1,--fmt-a2
+.cm-s-doomalay .cm-meta,cm,cm-s-doomalay,1,--text-2
+.cm-s-doomalay .cm-qualifier,cm,cm-s-doomalay,1,--text-2
+.cm-s-doomalay .cm-builtin,cm,cm-s-doomalay,1,--fmt-a3
+.cm-s-doomalay .cm-bracket,cm,cm-s-doomalay,1,--text-3
+.cm-s-doomalay .cm-tag,cm,cm-s-doomalay,1,--fmt-a3
+.cm-s-doomalay .cm-attribute,cm,cm-s-doomalay,1,--fmt-a2
+.cm-s-doomalay .cm-hr,cm,cm-s-doomalay,1,--text-3-dim
+.cm-s-doomalay .cm-link,cm,cm-s-doomalay,1,--fmt-link
+.cm-s-doomalay .cm-error,cm,cm-s-doomalay,1,--err
+.CodeMirror,CodeMirror,CodeMirror,1,--ui-fs
+"#panel-view-back:active, #panel-view-x:active",other,panel-view-back,1,--surface-2
+.pv-row:active,pv,pv-row,1,--surface-2
+.pv-row-chev,pv,pv-row-chev,1,--text-3-dim
+.pv-range,pv,pv-range,1,--accent
+.pe-root .pe-body-fill,pe,pe-root,1,--border
+.ph-scope-pill,ph,ph-scope-pill,1,--border
+".pv-input:focus, .pv-select:focus",pv,pv-input,1,--accent
+.pv-btn:active,pv,pv-btn,1,--surface-3
+#chat-search-input::placeholder,other,chat-search-input,1,--text-3
+#chat-search-input:focus,other,chat-search-input,1,--accent
+.chat-search-nav:active,chat,chat-search-nav,1,--surface-3
+.ctx-cost.priced,ctx,ctx-cost,1,--warn
+.hub-chatpill:hover,hub/library,hub-chatpill,1,--accent-rgb
+.hub-chatpill:active,hub/library,hub-chatpill,1,--accent-rgb
+.hub-chatpill--none,hub/library,hub-chatpill--none,1,--text-3
+.pub-status b,pub,pub-status,1,--ok
+.hub-sortico,hub/library,hub-sortico,1,--text-3
+.hub-libpill .dx-pill-ico,hub/library,hub-libpill,1,--ui-fs
+.hub-step,hub/library,hub-step,1,--text-3
+.hub-step:not(:disabled):hover,hub/library,hub-step,1,--text-1
+.hub-bundles.on,hub/library,hub-bundles,1,--text-2
+.hub-grid,hub/library,hub-grid,1,--hub-cols
+.hub-card:active,hub/library,hub-card,1,--surface-2
+.hub-card-fade,hub/library,hub-card-fade,1,--surface-1-rgb
+.hub-card-name.marquee .hub-card-name-in,hub/library,hub-card-name,1,--slide-t
+"88%, 100%",other,"88%,",1,--slide-d
+.hub-card-stat.on,hub/library,hub-card-stat,1,--text-1
+.hub-card--bunch,hub/library,hub-card--bunch,1,--border-strong
+.hub-bundle-flag i,hub/library,hub-bundle-flag,1,--ui-small-fs
+.hub-bunch-hero,hub/library,hub-bunch-hero,1,--surface-2
+.hub-bunch-hero-scrim,hub/library,hub-bunch-hero-scrim,1,--bg-panel-rgb
+.hub-bunch-hero .hi-meta,hub/library,hub-bunch-hero,1,--bg-panel-rgb
+.hub-bunch-hero .hi-counts .icl,hub/library,hub-bunch-hero,1,--bg-panel-rgb
+.hub-mine-bundle,hub/library,hub-mine-bundle,1,--text-2
+.hubrepo-file-head,hubrepo,hubrepo-file-head,1,--border
+.hp-icogrid,hp,hp-icogrid,1,--border
+.hp-icocell--up,hp,hp-icocell--up,1,--text-3
+.hp-icocell--custom,hp,hp-icocell--custom,1,--surface-3
+.hp-opt,hp,hp-opt,1,--text-3
+.hp-edithint b,hp,hp-edithint,1,--text-2
+.hi-head,hub/library,hi-head,1,--border
+.hi-head-scrim,hub/library,hi-head-scrim,1,--bg-panel-rgb
+.hi-counts b,hub/library,hi-counts,1,--text-1
+.hi-body .fmt,hub/library,hi-body,1,--ui-fs
+.hi-fabs::before,hub/library,hi-fabs,1,--bg-panel-rgb
+.hi-fab:active,hub/library,hi-fab,1,--surface-3
+.hi-delbar-text b,hub/library,hi-delbar-text,1,--err
+.hp-textarea:focus,hp,hp-textarea,1,--accent
+.hp-preview,hp,hp-preview,1,--border
+.dx-pill:active,dx,dx-pill,1,--surface-3
+".dx-pill[data-on=""1""]:not([data-tone])",dx,dx-pill,1,--accent-2-gradient
+.dx-pill--sm .dx-pill-ico,dx,dx-pill--sm,1,--ui-small-fs
+.dx-pill-ico,dx,dx-pill-ico,1,--ui-small-fs
+.gr-color:hover,settings,gr-color,1,--border-strong
+.crop-ui,crop,crop-ui,1,--bg-panel-rgb
+.crop-zoom,crop,crop-zoom,1,--accent
+.hp-sec-bar,hp,hp-sec-bar,1,--text-2
+.hp-sec-title,hp,hp-sec-title,1,--ui-micro-fs
+.hp-star,hp,hp-star,1,--accent
+.pp-heart.on,pp,pp-heart,1,--err
+::selection,other,other,1,--accent-rgb
+::selection:window-inactive,other,other,1,--accent-rgb
+"input, textarea",other,"input,",1,--accent
+.panel-header,panel,panel-header,1,--panel-head-off
+.panel-body,panel,panel-body,1,--panel-field-top
+".chatbot .icon, .chatbot .name",chat,chatbot,1,--card
+.tool-pill-progress),controls,tool-pill-progress,1,--surface-1-gradient
+[data-a1-grad] .app-switch input:checked ~ .app-switch-track,app,app-switch,1,--accent-gradient
+#connect-overlay,other,connect-overlay,1,--text-shadow
+.crc-mark--chat,crc,crc-mark--chat,1,--text-3
+[data-a1-grad] #tpl-chip .tpl-chip-ico,tpl,tpl-chip-ico,1,--on-accent
+[data-a1-grad] .hub-step-val,hub/library,hub-step-val,1,--accent-gradient
+[data-a2-grad] .ts-stage-fo,ts,ts-stage-fo,1,--accent-2-gradient
