@@ -301,6 +301,96 @@
     return p;
   }
 
+  // ── v1.37.2 THE DUAL STAR — the primitive the ENVIRONMENT picks ──
+  // The two ways to paint a star: the analytic arc (beginPath/arc/fill)
+  // and the baked sprite (one scaled drawImage — MDN's pre-render law).
+  // MEASURED LAW (the live conviction this design is built on): on a
+  // HARDWARE canvas the sprite blit wins (texture upload once, O(1)
+  // drawImage); on Skia's SOFTWARE canvas the analytic arc wins ~13x
+  // (a scaled drawImage re-rasterizes through the slow path — the exact
+  // regression a sprite-only diet would have shipped). starPathVerdict()
+  // measures the HOST once (300 arcs vs 300 sprite draws, CLEARING
+  // between paints — the production frame shape; a probe that never
+  // clears accumulates semi-transparent ink and pushes Skia off its
+  // fast path, a ~100x artifact production never sees) and the answer
+  // is sticky per host (localStorage, the GL-gate pattern). Both paths
+  // keep §1's flat math and hoist the fill strings ONCE PER FRAME.
+  var starPath = null;
+  var STARPATH_KEY = 'doomalay.stardraw.v1';
+  function starPathVerdict() {
+    var forced = (ROOT && ROOT.__forceStarPath);   // the rigs' hook
+    if (forced === 'sprite' || forced === 'arc') return forced;
+    if (starPath) return starPath;
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        var saved = localStorage.getItem(STARPATH_KEY);
+        if (saved === 'sprite' || saved === 'arc') { starPath = saved; return saved; }
+      }
+    } catch (e) {}
+    // no canvas at all → the arc path (identical output, no bake)
+    if (typeof OffscreenCanvas === 'undefined' && typeof document === 'undefined') { starPath = 'arc'; return 'arc'; }
+    try {
+      var probe = mkCanvasLocal(160, 160);
+      var g = probe.getContext && probe.getContext('2d');
+      if (!g || !g.clearRect) { starPath = 'arc'; return 'arc'; }
+      var NP = 300;
+      var t0 = performance.now();
+      g.fillStyle = 'rgba(120,120,140,0.9)';
+      for (var i = 0; i < NP; i++) {
+        g.clearRect(0, 0, 160, 160);              // the honest frame shape
+        g.beginPath();
+        g.arc(80, 80, 3 + (i % 5), 0, Math.PI * 2);
+        g.fill();
+      }
+      var tArc = performance.now() - t0;
+      var spc = mkCanvasLocal(64, 64);
+      var sg = spc.getContext && spc.getContext('2d');
+      if (!sg || !sg.arc) { starPath = 'arc'; return 'arc'; }
+      sg.fillStyle = 'rgba(120,120,140,0.9)';
+      sg.beginPath(); sg.arc(32, 32, 30, 0, Math.PI * 2); sg.fill();
+      t0 = performance.now();
+      for (var i2 = 0; i2 < NP; i2++) {
+        g.clearRect(0, 0, 160, 160);              // the honest frame shape
+        g.drawImage(spc, 60, 60, 40, 40);         // scaled, like a star
+      }
+      var tSpr = performance.now() - t0;
+      starPath = (tSpr < tArc) ? 'sprite' : 'arc';
+    } catch (e) { starPath = 'arc'; }
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem(STARPATH_KEY, starPath);
+    } catch (e) {}
+    return starPath;
+  }
+
+  // The baked star sprites: per (color, alpha band) one small flat disc —
+  // alpha composites IDENTICALLY to the analytic fill (the bake paints the
+  // same rgba; the drawn pixel is the same blend), the edge AA differs by
+  // <1px at star sizes (the rig pins ±0.75px). One-entry cache keyed by
+  // the color pair — a theme change rebakes.
+  var STAR_SPRITES = { key: '', a: null };
+  function bakeStarSprites(c) {
+    var key = (c.accent || '') + '|' + (c.accent2 || '');
+    if (STAR_SPRITES.key === key && STAR_SPRITES.a) return STAR_SPRITES.a;
+    var acc = c.accent || '167,139,250', acc2 = c.accent2 || '94,234,212';
+    function disc(rgb, alpha) {
+      var cv = mkCanvasLocal(64, 64);
+      var g = cv.getContext && cv.getContext('2d');
+      if (g) {
+        g.fillStyle = 'rgba(' + rgb + ',' + alpha + ')';
+        g.beginPath();
+        g.arc(32, 32, 30, 0, Math.PI * 2);
+        g.fill();
+      }
+      return cv;
+    }
+    STAR_SPRITES.key = key;
+    STAR_SPRITES.a = {
+      haloA: disc(acc, 0.18), coreA: disc(acc, 0.95), backA: disc(acc, 0.5),
+      haloB: disc(acc2, 0.18), coreB: disc(acc2, 0.95), backB: disc(acc2, 0.5)
+    };
+    return STAR_SPRITES.a;
+  }
+
   // ── THE PAINT — the pure core, parameterized (v0.85.2) ────────────
   // ctx: a 2d context (main #c2 or the worker's transferred offscreen).
   // icons: [{id, type, sessionId, x, y, radius}] — live icon objects OR
@@ -316,6 +406,15 @@
     var c = colors || { accent: triplet(FB().accent), accent2: triplet(FB().accent2), ring: 'rgba(' + triplet(FB().borderStrong) + ',0.35)' };
     var stats = { chats: 0, stars: 0, shells: 0, backHidden: 0, frontInside: 0 };
     var pad = (SHELL_R[SHELL_R.length - 1] + 24) * s + 30;
+    // v1.37.2: the parity fill strings hoist ONCE per frame (960 builds
+    // → 6), and the primitive is the environment's own measured verdict.
+    var fillA18 = 'rgba(' + c.accent + ',0.18)';
+    var fillA95 = 'rgba(' + c.accent + ',0.95)';
+    var fillA50 = 'rgba(' + c.accent + ',0.5)';
+    var fillB18 = 'rgba(' + c.accent2 + ',0.18)';
+    var fillB95 = 'rgba(' + c.accent2 + ',0.95)';
+    var fillB50 = 'rgba(' + c.accent2 + ',0.5)';
+    var spr = (starPathVerdict() === 'sprite') ? bakeStarSprites(c) : null;
     // v0.88: hoisted shell-stroke state (constant for the whole frame —
     // the star fills below only touch fillStyle, so this stays valid
     // across every icon; the save/translate/restore per shell keeps the
@@ -378,16 +477,23 @@
             back[backN++] = px; back[backN++] = py; back[backN++] = pr;
           } else {
             if (inside) stats.frontInside++;
-            // FRONT — full alpha, tiny glow halo (two arcs, no allocations)
+            // FRONT — full alpha, tiny glow halo (two arcs, no allocations);
+            // the sprite path blits the baked discs (the same rgba blend)
             var rr = Math.max(0.9, pr);
-            ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.18)';
-            ctx.beginPath();
-            ctx.arc(cx + px, cy + py, rr * 2.4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.95)';
-            ctx.beginPath();
-            ctx.arc(cx + px, cy + py, rr, 0, Math.PI * 2);
-            ctx.fill();
+            if (spr) {
+              var dHal = rr * 2.4;
+              ctx.drawImage(L % 2 ? spr.haloB : spr.haloA, cx + px - dHal, cy + py - dHal, dHal * 2, dHal * 2);
+              ctx.drawImage(L % 2 ? spr.coreB : spr.coreA, cx + px - rr, cy + py - rr, rr * 2, rr * 2);
+            } else {
+              ctx.fillStyle = L % 2 ? fillB18 : fillA18;
+              ctx.beginPath();
+              ctx.arc(cx + px, cy + py, rr * 2.4, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.fillStyle = L % 2 ? fillB95 : fillA95;
+              ctx.beginPath();
+              ctx.arc(cx + px, cy + py, rr, 0, Math.PI * 2);
+              ctx.fill();
+            }
             stats.stars++;
           }
         }
@@ -402,10 +508,14 @@
           ctx.clip('evenodd');
           for (var q = 0; q < backN; q += 3) {
             var brr = Math.max(0.7, back[q + 2] * 0.85);
-            ctx.fillStyle = 'rgba(' + (L % 2 ? c.accent2 : c.accent) + ',0.5)';
-            ctx.beginPath();
-            ctx.arc(cx + back[q], cy + back[q + 1], brr, 0, Math.PI * 2);
-            ctx.fill();
+            if (spr) {
+              ctx.drawImage(L % 2 ? spr.backB : spr.backA, cx + back[q] - brr, cy + back[q + 1] - brr, brr * 2, brr * 2);
+            } else {
+              ctx.fillStyle = L % 2 ? fillB50 : fillA50;
+              ctx.beginPath();
+              ctx.arc(cx + back[q], cy + back[q + 1], brr, 0, Math.PI * 2);
+              ctx.fill();
+            }
             stats.stars++;
           }
           ctx.restore();
