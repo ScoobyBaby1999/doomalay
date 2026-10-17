@@ -89,8 +89,17 @@
   let W = 0, H = 0;
   let offsetX = 0, offsetY = 0;
   let scale = 1;
-  const MIN_SCALE = 0.5;
-  const MAX_SCALE = 3.0;
+  // v1.36.1 THE CLOSER VIEW (PLAN-V137 §1): the zoom-IN cap drops ~30%
+  // (3.0 → 2.1 — the user's "can't zoom in as much"); the zoom-OUT depth
+  // expands ×4 = +300% (0.5 → 0.125: the world shrinks to 1/8 the size vs
+  // 1/2 — 4× more world on screen). All four clamp sites (zoomAt, pinch,
+  // setView, the boot-restore heal) read these two constants — one law.
+  // Side-effects audited: the lattice ladder rides level-0 downscaled across
+  // the whole s<0.89 range by design (zoom-stable fingerprint); the dot
+  // radius floor (0.6) + findIconAt's 28px minimum hit circle keep deep
+  // zoom-out readable and finger-friendly.
+  const MIN_SCALE = 0.125;
+  const MAX_SCALE = 2.1;
   let velX = 0, velY = 0;
   let animating = false;
 
