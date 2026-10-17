@@ -366,3 +366,51 @@ the bot remembers what its hands read, and the GitHub hand is real.
    reasoning boxes or tool pills). Reopen the first: everything it did
    while backgrounded is there. Many PM chats in parallel, each on its
    own workspace, no interference.
+
+## v1.37.0 — THE COMPASS WAVE (the 5-minute checklist)
+
+The user's five asks, one walk each. Everything below is on the LIVE app
+(real taps/holds, no test harness — the 48-check automated twin is
+`scripts/v1370-compass-walk.mjs`).
+
+1. **The closer view (zoom)**: pinch/zoom IN — the world stops growing at
+   the new cap (noticeably less max zoom-in than before, ~30% less). Zoom
+   OUT far — you can pull back until the whole canvas fits a thimble
+   (4× deeper than the old floor). Pinch out as far as you can, then tap
+   an icon that looks tiny: it still responds (the 28px finger-friendly
+   hit floor). Restart the app: your zoom position survives.
+2. **The held thing (icon menu)**: PRESS AND HOLD an existing chat icon
+   (~half a second) — the same round menu that New Bot uses appears, but
+   with two rows: **📌 pin** (first) and **🗑 delete** (last). Hold empty
+   canvas instead: New Bot / New Tab, unchanged. Release: nothing
+   auto-opens (the outside-tap dismisses law). Pin the chat: a small pin
+   badge rides the icon's top-left; restart the app — the pin survives.
+3. **The forever question (delete)**: hold an icon → 🗑 delete → the
+   rounded Overlay screen asks "Delete <name> forever?" with "(a very
+   long time)" under it. **[keep it]** closes safely. **[delete
+   forever]** — the icon leaves the canvas, the chat's history is GONE
+   from the device (the engine session + every event), a panel that was
+   hosting it closes first. This cannot be undone.
+4. **Pinned first**: open the all-chats panel — a 📌 Pinned section sits
+   ABOVE Today holding your pinned chats (each row wears the pin tag);
+   unpinned chats keep their date buckets exactly.
+5. **The true compass (indicators)**: pin a chat, then pan far away —
+   an indicator rides the screen edge pointing at it. Unpinned chats get
+   NO indicator (pinning earns it). The indicator's color is the chat's
+   own (family color / gradient; unset ones wear a deterministic
+   rainbow color). Tap the indicator: the canvas GLIDES itself to the
+   chat until it's centered (~half a second, smooth) — touch the canvas
+   mid-glide and it stops instantly (your finger is the boss); tapping
+   the settings gear or other UI during the glide does NOT stop it.
+6. **The honest blocks (toggle + editor)**: a chat → Persona (face) →
+   Placeholders: a **live blocks: ON | excluded** toggle rides the top —
+   flip it and the five live blocks leave every preamble AND persona
+   (the facts like {model} still expand). Every block/custom row has a
+   **✎** — it opens the full-text editor (CodeMirror): the whole text,
+   scrollable, editable. Save = your text rides every turn (override
+   chip lights). **↺ reset to default** = the live truth returns.
+7. **The living lexicon (portable placeholders)**: set a custom like
+   `{tip} = "running {model} today"` — the inner {model} now expands
+   live. Publish a persona/preamble that uses your customs — the
+   downloaded file carries the definitions; a friend (or your other
+   chat) importing it gets the customs installed automatically.
