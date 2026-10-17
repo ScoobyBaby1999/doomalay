@@ -206,7 +206,7 @@
   }
   var BUCKET_TITLES = ['Today', 'Yesterday', 'Previous 7 days', 'Older'];
 
-  function rowHTML(c, pickMode, connectedSid) {
+  function rowHTML(c, pickMode, connectedSid, isPinned) {
     var preview = '';
     if (c.preview) {
       preview = '<div class="cv-preview cv-role-' + esc(c.preview_role || 'user') + '">' +
@@ -218,6 +218,11 @@
     var tag = '';
     if (c.sandbox && c.sandbox !== 'quick') {
       tag = '<span class="cv-tag">' + esc(c.sandbox) + '</span>';
+    }
+    // v1.36.2 THE HELD THING: a pinned row wears the pin (accent-toned,
+    // the theme's own vars — never a hardcoded color).
+    if (isPinned) {
+      tag = '<span class="cv-tag" style="background:rgba(var(--accent-rgb),0.14);color:var(--accent);font-weight:700">📌 pinned</span>' + tag;
     }
     // pick mode: show which chat is currently connected
     var mark = (pickMode && connectedSid && c.session_id === connectedSid)
@@ -239,9 +244,9 @@
 
   function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
 
-  function sectionHTML(title, chats, pickMode, connectedSid) {
+  function sectionHTML(title, chats, pickMode, connectedSid, isPinned) {
     var rows = '';
-    for (var i = 0; i < chats.length; i++) rows += rowHTML(chats[i], pickMode, connectedSid);
+    for (var i = 0; i < chats.length; i++) rows += rowHTML(chats[i], pickMode, connectedSid, isPinned);
     return '<div class="cv-section">' +
       '<div class="cv-section-title">' + esc(title) +
         '<span class="cv-sec-count">' + chats.length + '</span>' +
@@ -260,13 +265,29 @@
         : 'No conversations yet — tap a chatbot on the canvas to start one.', '💬');
       return;
     }
+    // v1.36.2 THE HELD THING: pinned chats float FIRST — their own
+    // section above Today (the user's law). Pinning is canvas state
+    // (window.doomalay.pinnedSessions — the icon-hold menu's pin row);
+    // everything unpinned keeps the date buckets exactly as before.
+    var pinnedSet = {};
+    try {
+      var pinnedIds = (window.doomalay && window.doomalay.pinnedSessions)
+        ? window.doomalay.pinnedSessions() : [];
+      for (var pi = 0; pi < pinnedIds.length; pi++) pinnedSet[pinnedIds[pi]] = 1;
+    } catch (e) {}
+    var pinned = [];
+    var rest = [];
+    for (var ri = 0; ri < chats.length; ri++) {
+      (pinnedSet[chats[ri].session_id] ? pinned : rest).push(chats[ri]);
+    }
     var buckets = [[], [], [], []];
-    for (var i = 0; i < chats.length; i++) {
-      buckets[bucketOf(chats[i].updated_at)].push(chats[i]);
+    for (var i = 0; i < rest.length; i++) {
+      buckets[bucketOf(rest[i].updated_at)].push(rest[i]);
     }
     var html = '';
+    if (pinned.length) html += sectionHTML('📌 Pinned', pinned, pickMode, connectedSid, true);
     for (var b = 0; b < 4; b++) {
-      if (buckets[b].length) html += sectionHTML(BUCKET_TITLES[b], buckets[b], pickMode, connectedSid);
+      if (buckets[b].length) html += sectionHTML(BUCKET_TITLES[b], buckets[b], pickMode, connectedSid, false);
     }
     countEl.textContent = chats.length + (chats.length === 1 ? ' chat' : ' chats');
     listEl.innerHTML = html;
@@ -371,6 +392,9 @@
 
     panel.pushView({
       title: pickMode ? 'pick a chat' : 'all chats',
+      // v1.36.2 THE HELD THING: the pins listener (the Pinned section's
+      // live truth) dies with the view — popView calls onClose.
+      onClose: null,
       render: function () {
         var o = findOpts();
         return '<div class="cv-root">' +
@@ -442,6 +466,18 @@
             });
         }
         loadIndex();
+        // v1.36.2 THE HELD THING: a pin flipping on the canvas re-renders
+        // a mounted index (the Pinned section is the live truth). The
+        // search view is untouched — the query result stays as typed.
+        var pinsListener = function () {
+          var q = (input && input.value || '').trim();
+          if (q.length < 2) loadIndex();
+        };
+        window.addEventListener('doomalay:pins-changed', pinsListener);
+        var viewObj = panel.topView();
+        if (viewObj) viewObj.onClose = function () {
+          window.removeEventListener('doomalay:pins-changed', pinsListener);
+        };
 
         // ── the live search (typing) ──────────────────────────────────
         function runSearch() {

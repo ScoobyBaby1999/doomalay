@@ -531,6 +531,77 @@
   #menu button:hover, #menu button:active {
     background: var(--border);
   }
+  /* v1.36.2 THE HELD THING (PLAN-V137 §2): the SAME long-press overlay,
+    two populations. Holding an ICON swaps the menu to its icon rows
+    (pin first · delete LAST, the user's spec); holding the canvas keeps
+    New Bot / New Tab byte-identical. One element, one law, zero new
+    surfaces. The delete row speaks the err tone (theme vars only). */
+  #menu .icon-row { display: none; }
+  #menu.icon-mode .icon-row { display: block; }
+  #menu.icon-mode > button:not(.icon-row) { display: none; }
+  #menu button[data-action="icon-delete"] { color: var(--err); font-weight: 600; }
+
+  /* v1.36.2 — THE PIN BADGE: a pinned icon wears a pin at the disc's
+     top-left (the sandbox badge's mirror position). Accent ring + accent
+     ink, surface-1 base — every pixel theme-var painted. */
+  .chatbot .pin-badge {
+    position: absolute;
+    left: -2px;
+    top: 34px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--surface-1);
+    border: 1.5px solid var(--accent);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(var(--shadow-ink-rgb), 0.5);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .chatbot .pin-badge svg { display: block; width: 11px; height: 11px; }
+
+  /* v1.36.2 — THE DELETE WARNING (the reusable Overlay screen's content):
+    the user's exact words — "delete this chat forever? (a very long time)".
+    Theme vars only: the destructive button rides the err tone, the cancel
+    rides the surface family. */
+  .del-ov { display: flex; flex-direction: column; gap: 10px; padding: 6px 4px 2px; }
+  .del-ov-glyph {
+    width: 44px; height: 44px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--err-rgb), 0.12); border: 1px solid rgba(var(--err-rgb), 0.4);
+    color: var(--err); margin: 0 auto;
+  }
+  .del-ov-glyph svg { width: 20px; height: 20px; }
+  .del-ov-title {
+    font-size: calc(var(--ui-fs) + 2px); font-weight: 700; color: var(--text-1);
+    text-align: center; margin: 2px 0 0;
+  }
+  .del-ov-long {
+    font-size: var(--ui-small-fs); color: var(--text-3); text-align: center;
+    font-style: italic; margin: -6px 0 0;
+  }
+  .del-ov-sub {
+    font-size: var(--ui-small-fs); color: var(--text-2); line-height: 1.5;
+    text-align: center; margin: 0;
+  }
+  .del-ov-row { display: flex; gap: 10px; margin-top: 6px; }
+  .del-ov-btn {
+    flex: 1; min-height: 44px; border-radius: 12px; font: inherit;
+    font-size: var(--ui-small-fs); font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: filter 0.15s ease;
+  }
+  .del-ov-btn:hover, .del-ov-btn:focus-visible { filter: brightness(1.1); }
+  .del-ov-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .del-ov-keep {
+    background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-1);
+  }
+  .del-ov-yes {
+    background: rgba(var(--err-rgb), 0.14); border: 1px solid rgba(var(--err-rgb), 0.55); color: var(--err);
+  }
 
   /* ── Settings icon (the only persistent UI element) ───────────
      v0.79.1: 44px capsule tile (1.29× the v0.78.4 34px — the user's
@@ -6004,6 +6075,11 @@
 <div id="menu" class="hidden">
   <button data-action="new-chat">＋ New Bot</button>
   <button data-action="new-tab">⧉ New Tab</button>
+  <!-- v1.36.2 THE HELD THING: the icon-hold population — pin first,
+       delete LAST (the user's row order). Populated live by showIconMenu
+       (the pin row flips pin/unpin, the delete row names the thing). -->
+  <button data-action="icon-pin" class="icon-row">📌 pin</button>
+  <button data-action="icon-delete" class="icon-row">🗑 delete</button>
 </div>
 <button id="settings-btn" aria-label="Settings">
   <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.62l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.42-.49-.42h-3.84c-.24 0-.43.17-.47.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.48.12.62l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.62l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h3.84c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>

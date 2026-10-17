@@ -25,6 +25,13 @@
 
   const Entity = window.Physics.Entity;
 
+  // v1.36.2 THE HELD THING (PLAN-V137 §2): the pin glyph — a lucide-shaped
+  // pin drawn in currentColor so the badge's ink rides the theme's accent
+  // (zero hard-coded colors; the .pin-badge CSS owns the ring + base).
+  const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>';
+
   // Registry of icon types → factory functions.
   // Each factory takes a data object and returns a GridIcon instance.
   const registry = {};
@@ -100,6 +107,29 @@
       setTimeout(function () { self.el.classList.remove('tapped'); }, 200);
     }
 
+    // ── v1.36.2: THE PIN (the icon-hold menu's pin row) ──────────
+    // A pinned icon wears the themed pin badge (top-left, the sandbox
+    // badge's mirror) + rides serialize() so the pin survives reloads.
+    // The pin ALSO gates the off-screen indicator (app.js computeArrows:
+    // only pinned icons get one — the user's default-off law) and floats
+    // the chat to the Pinned section of the all-chats panel.
+    refreshPinBadge() {
+      const old = this._pinBadgeEl;
+      if (!this.pinned) {
+        this._pinBadgeEl = null;
+        if (old) old.remove();
+        return;
+      }
+      if (old) return;   // already worn — the identity guard (no DOM churn)
+      const badge = document.createElement('div');
+      badge.className = 'pin-badge';
+      badge.innerHTML = PIN_SVG;
+      badge.title = 'pinned — first in all chats · carries the off-screen indicator';
+      badge.setAttribute('aria-label', badge.title);
+      this.el.appendChild(badge);
+      this._pinBadgeEl = badge;
+    }
+
     // ── Serialization ────────────────────────────────────────────
     serialize() {
       return {
@@ -107,10 +137,11 @@
         id: this.id,
         x: this.x, y: this.y,
         vx: this.vx, vy: this.vy,
-        radius: this.radius
+        radius: this.radius,
+        pinned: !!this.pinned   // v1.36.2: the pin survives reloads
       };
     }
   }
 
-  window.GridIcon = { GridIcon, register, create };
+  window.GridIcon = { GridIcon, register, create, PIN_SVG };
 })();

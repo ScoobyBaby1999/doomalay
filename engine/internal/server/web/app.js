@@ -752,6 +752,16 @@
     // v0.90.1: the camera readback for the E2E rigs (the collision rigs
     // map world targets to screen mouse events).
     getView: function () { return { ox: offsetX, oy: offsetY, scale: scale }; },
+    // v1.36.2 THE HELD THING: the pinned session ids — the all-chats
+    // panel's Pinned section reads this (pinned chats float first).
+    pinnedSessions: function () {
+      var out = [];
+      for (var i = 0; i < world.entities.length; i++) {
+        var b = world.entities[i];
+        if (b.pinned && b.sessionId) out.push(b.sessionId);
+      }
+      return out;
+    },
     // v0.90.1: the camera writer (its twin) — the visual rigs center the
     // group for the screenshot probes.
     setView: function (ox, oy, s) {
@@ -1293,6 +1303,13 @@
   }
 
   function showMenu(x, y) {
+    menuEl.classList.remove('icon-mode');
+    placeMenu(x, y);
+  }
+  // v1.36.2 THE HELD THING (PLAN-V137 §2): the position law shared by both
+  // menu populations (the canvas menu + the icon-hold menu) — one element,
+  // one clamped-to-viewport placement, two row sets.
+  function placeMenu(x, y) {
     menuEl.classList.remove('hidden');
     const menuW = menuEl.offsetWidth || 160;
     const menuH = menuEl.offsetHeight || 50;
@@ -1301,7 +1318,29 @@
     menuEl.style.left = cx + 'px';
     menuEl.style.top = cy + 'px';
   }
-  function hideMenu() { menuEl.classList.add('hidden'); }
+  // the ICON-HOLD population: pin first, delete LAST (the user's row
+  // order). The rows are the same themed #menu buttons — the pin row
+  // flips its label, the delete row names what dies.
+  let heldIcon = null;
+  function showIconMenu(icon, x, y) {
+    heldIcon = icon;
+    menuEl.classList.add('icon-mode');
+    const pinBtn = menuEl.querySelector('[data-action="icon-pin"]');
+    const delBtn = menuEl.querySelector('[data-action="icon-delete"]');
+    if (pinBtn) pinBtn.textContent = (icon.pinned ? '📌 unpin' : '📌 pin');
+    if (delBtn) {
+      const label = (icon.type === 'chat')
+        ? (icon.name || 'this chat')
+        : (icon.title || icon.url || 'this tab');
+      delBtn.textContent = '🗑 delete ' + label;
+    }
+    placeMenu(x, y);
+  }
+  function hideMenu() {
+    menuEl.classList.add('hidden');
+    menuEl.classList.remove('icon-mode');
+    heldIcon = null;
+  }
 
   menuEl.addEventListener('click', function (e) {
     const btn = e.target.closest('button[data-action]');
@@ -1328,9 +1367,107 @@
         startAnimation();
         setTimeout(function () { openWebPanelFor(icon); }, 150);
       }
+    } else if (btn.dataset.action === 'icon-pin') {
+      // v1.36.2 THE HELD THING: the pin row — the flag rides the icon
+      // (serialize → localStorage), the themed badge wears/leaves, the
+      // arrows + the all-chats panel follow (the pins-changed event).
+      if (heldIcon) {
+        heldIcon.pinned = !heldIcon.pinned;
+        if (typeof heldIcon.refreshPinBadge === 'function') heldIcon.refreshPinBadge();
+        scheduleSave();
+        try { window.dispatchEvent(new CustomEvent('doomalay:pins-changed', { detail: {} })); } catch (e) {}
+        if (window.DoomToast) window.DoomToast(heldIcon.pinned
+          ? 'pinned — first in all chats + it carries the off-screen indicator'
+          : 'unpinned');
+      }
+    } else if (btn.dataset.action === 'icon-delete') {
+      // the delete row (LAST row, the user's spec) — the reusable Overlay
+      // screen asks the forever question.
+      if (heldIcon) confirmDeleteIcon(heldIcon);
     }
     hideMenu();
   });
+
+  // ── v1.36.2 THE HELD THING: the delete flow (the reusable Overlay
+  // screen — the user's exact words: "delete this chat forever? (a very
+  // long time)"). The warning rides ConnectOverlay (the sanctioned
+  // overlay surface, theme-var painted); confirm deletes the ENGINE
+  // session + its events (the forever part) and lifts the icon off the
+  // canvas; keep-it just closes. A chat whose panel is open closes the
+  // panel first — a deleted session must never keep hosting one.
+  function confirmDeleteIcon(icon) {
+    const label = (icon.type === 'chat')
+      ? (icon.name || 'this chat')
+      : (icon.title || icon.url || 'this tab');
+    const OV = window.ConnectOverlay;
+    const doDelete = function () { deleteIconNow(icon); };
+    if (!OV || typeof OV.open !== 'function') { doDelete(); return; }
+    OV.open(
+      '<div class="del-ov">' +
+        '<div class="del-ov-glyph">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+            'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>' +
+            '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/>' +
+            '<line x1="14" y1="11" x2="14" y2="17"/></svg>' +
+        '</div>' +
+        '<h3 class="del-ov-title">Delete ' + escHtml(label) + ' forever?</h3>' +
+        '<div class="del-ov-long">(a very long time)</div>' +
+        '<p class="del-ov-sub">' + (icon.type === 'chat'
+          ? 'The chat, its history and every message — gone from this device. This cannot be undone.'
+          : 'The tab and its saved address — gone from this canvas. This cannot be undone.') + '</p>' +
+        '<div class="del-ov-row">' +
+          '<button class="del-ov-btn del-ov-keep" id="del-ov-keep">keep it</button>' +
+          '<button class="del-ov-btn del-ov-yes" id="del-ov-yes">delete forever</button>' +
+        '</div>' +
+      '</div>');
+    const root = OV.getContentEl ? OV.getContentEl() : null;
+    if (root) {
+      const keep = root.querySelector('#del-ov-keep');
+      const yes = root.querySelector('#del-ov-yes');
+      if (keep) keep.addEventListener('click', function () { OV.close(); });
+      if (yes) yes.addEventListener('click', function () { OV.close(); doDelete(); });
+    }
+  }
+  function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = (s == null) ? '' : String(s);
+    return d.innerHTML;
+  }
+  function deleteIconNow(icon) {
+    const sid = icon.sessionId || '';
+    const isChat = icon.type === 'chat';
+    // a grouped tab leaves its orbit FIRST (TabGroups' own release law)
+    try { if (window.TabGroups && window.TabGroups.isGrouped && window.TabGroups.isGrouped(icon)) window.TabGroups.release(icon); } catch (e) {}
+    const finish = function (msg) {
+      // the panel that hosts THIS chat closes before the session dies
+      try {
+        const cur = (window.ChatPanel && typeof window.ChatPanel.current === 'function') ? window.ChatPanel.current() : null;
+        if (cur && cur.state && sid && cur.state.sessionId === sid && panel && typeof panel.close === 'function') panel.close();
+      } catch (e) {}
+      world.remove(icon.id);
+      if (icon.el && icon.el.parentNode) icon.el.parentNode.removeChild(icon.el);
+      heldIcon = null;
+      if (window.World3D && window.World3D.sync) window.World3D.sync();   // v0.85.4 twin
+      hideCanvasEmpty();
+      scheduleSave();
+      startAnimation();
+      if (msg && window.DoomToast) window.DoomToast(msg);
+    };
+    if (isChat && sid) {
+      fetch('/api/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+        .then(function (r) { return r.ok; })
+        .then(function (ok) {
+          finish(ok ? 'chat deleted — its history is gone'
+                    : 'chat removed — the engine session was already gone');
+        })
+        .catch(function () {
+          finish('chat removed locally — the engine delete failed (offline?)');
+        });
+    } else {
+      finish(isChat ? 'chat deleted' : 'tab deleted');
+    }
+  }
 
   // ── Input state machine ───────────────────────────────────────
   const LONG_PRESS_MS = 500;
@@ -1380,7 +1517,12 @@
       longPressTimer = null;
       if (inputState === 'PENDING') {
         inputState = 'MENU_OPEN';
-        showMenu(startScreenX, startScreenY);
+        // v1.36.2 THE HELD THING: a hold ON an icon opens the icon rows
+        // (pin + delete) of the SAME overlay; a hold on the canvas keeps
+        // the New Bot / New Tab population byte-identical.
+        const held = findIconAt(startScreenX, startScreenY);
+        if (held) showIconMenu(held, startScreenX, startScreenY);
+        else showMenu(startScreenX, startScreenY);
       }
     }, LONG_PRESS_MS);
   }
@@ -2208,6 +2350,10 @@
             if (!c.type) c.type = 'chat';  // migration from v0.7.0
             const icon = window.GridIcon.create(c);
             if (icon) {
+              // v1.36.2 THE HELD THING: the pin rides the saved blob (the
+              // factories don't take it in their constructors — the restore
+              // applies it + wears the badge the moment the icon exists).
+              if (c.pinned) { icon.pinned = true; if (typeof icon.refreshPinBadge === 'function') icon.refreshPinBadge(); }
               world.add(icon);
               iconLayer.appendChild(icon.el);
             }
