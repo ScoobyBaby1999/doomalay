@@ -77,8 +77,19 @@ keeps the most-recent on top) · `2600` send-menu.
 
 ## The enforcement loop
 1. `scripts/v1040-discipline-audit.sh` — static gates (fast, battery-wireable).
-2. `scripts/v1042-elevation.sh` + `scripts/v1043-shadow-sweep.sh` — the live
+2. `scripts/v1390-theme-source-pin.py` — **THE SOURCE PIN (v1.39.0)**: the full
+   literal-color census of web/ (`scripts/v1390-theme-census.py`, 1136
+   occurrences, context-classified into the canonical zones above) diffed
+   against a committed baseline (`scripts/v1390-theme-pin-baseline.json`).
+   Fails on any NEW literal outside the zones, any STALE baseline entry
+   (fix your ledger when you fix a literal), and any rotted zone marker.
+   The audit's nine known violations are the baseline (the re-slot table
+   lives in docs/THEME-AUDIT-V139.md). `--update` = the explicit,
+   reviewed regeneration. Wired as gate A5.
+3. `scripts/v1042-elevation.sh` + `scripts/v1043-shadow-sweep.sh` — the live
    rigs (themed shadows resolve, follow user theming, CSS≡JS parity).
-3. When extending: extend the audit's allowlist WITH THE REASON, never
+4. `scripts/v1390-theme-verify.py` — the live theme contract rig (all-10-theme
+   editor flip, pixel-determinism screenshots, the canvas timing contracts).
+5. When extending: extend the audit's allowlist WITH THE REASON, never
    delete a gate. If a change needs a gate deleted, that's a design
    conversation, not a commit.

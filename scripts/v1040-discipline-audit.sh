@@ -50,6 +50,14 @@ ok "A2-fallback-literals-canon-owned" "$(python3 -c "print(1 if $A2 == 0 else 0)
 A3=$(grep -c "canvas: '#101016'" $WEB/theme.js)
 ok "A3-canon-exists" "$(python3 -c "print(1 if $A3 >= 1 else 0)")" "theme.js FALLBACKS.canvas missing"
 
+# A5 (v1.39.0): THE SOURCE PIN — the full literal-color census (v1390)
+# diffed against the committed baseline. Fails on any NEW literal color
+# outside the canonical zones, any STALE baseline entry, and any rotted
+# zone marker. The nine known violations are enumerated in the baseline
+# (docs/THEME-AUDIT-V139.md carries the re-slot proposals).
+A5=$(python3 scripts/v1390-theme-source-pin.py 2>&1 | tail -1)
+ok "A5-source-pin-census-baseline" "$(python3 -c "print(1 if '$A5'.endswith('PASS') else 0)")" "$A5"
+
 echo "═══ B. SURFACE DISCIPLINE ═══"
 
 # B1: body-appended full-screen surfaces — the sanctioned set is:
