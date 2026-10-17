@@ -414,3 +414,38 @@ The user's five asks, one walk each. Everything below is on the LIVE app
    live. Publish a persona/preamble that uses your customs — the
    downloaded file carries the definitions; a friend (or your other
    chat) importing it gets the customs installed automatically.
+
+## v1.38.0 — THE SWIFT CANVAS (the 5-minute canvas checklist)
+
+The engine + the web assets changed (atoms.js + pixiworld.js — min_engine
+walls the delta, so this needs ONE fresh APK install; pure web-asset rides
+would have been OTA but the engine build rides with it).
+
+1. **The atoms still live**: open a chat with a few connected workspaces —
+   the electron-shell stars orbit exactly as before (same speed, same
+   back-and-above occlusion: stars dim and slide BEHIND the icon disc,
+   front stars pass OVER it). Pinch-zoom deep out (0.125×) and in (2.1×) —
+   the stars scale + cull exactly as before. **This is the parity
+   guarantee: the geometry is byte-identical to the old paint.**
+2. **The canvas feels lighter**: pan around with 5-10 atom-bearing chats on
+   screen — the stutter the Lippy diagnosis named ("the canvas, even after
+   all our efforts, needs work") should read calmer: the atom pass is now
+   allocation-free (no per-star GC churn), the fill strings build 6× per
+   frame instead of 960, and on your GPU the stars blit as baked sprites.
+   Open Settings → Performance → the painter row still reads its mode; the
+   world row reads `pixi (webgl) · aa · res` when ≥ 60 icons.
+3. **The world layer's shells FINALLY DRAW (the latent bug)**: with ≥ 60
+   icons (or world layer forced on), the atom shells around each chat now
+   draw as true tilted ellipses — since v0.85.4 they were an invisible
+   ~1px blob on this layer (a missing ×R in the Graphics path). Compare a
+   chat with atoms on the DOM path (few icons) vs the pixi path (many
+   icons): the shells match now.
+4. **The tempo parity**: watch a chat's stars on the DOM path, then add
+   icons past 60 so the world layer takes over — the stars orbit at the
+   SAME speed now (the pixi side used to run 2× fast — the v0.97 slow-down
+   never rode its clock).
+5. **The DUAL STAR verdict**: Settings → Appearance → About (or the
+   browser devtools console on the PWA): `localStorage
+   ['doomalay.stardraw.v1']` reads `sprite` on hardware-canvas devices
+   (your phone) — the app measured its own GPU once and picked the faster
+   primitive. Nothing to do; it's the honesty receipt.
