@@ -887,10 +887,31 @@
   // v1.27.2 THE TIE: the detection reads PH_VOCAB (the engine's lists)
   // AND the customs — a preamble using {brand} now declares it, so a
   // foreign runtime (and our own import bridge) knows what it needs.
-  function buildPreambleFile(name, body) {
+  //
+  // v1.36.5 THE LIVING LEXICON (PLAN-V137 §5, the L1 slice that ships):
+  // the frontmatter's `placeholders:` line may now carry DEFINITIONS —
+  // a JSON object {key: {value, scope}} of the customs the text uses
+  // (local values first, global as the fallback scope). A downloader's
+  // import materializes them into their own chat (existing keys win,
+  // reserved keys refused — the hard-refuse law stands) so the custom
+  // placeholders WORK for the end user. The plain-list form stays for
+  // files with no values to carry (byte-compat with every prior export).
+  function phDefinitionsOf(body) {
+    var defs = {};
+    var keys = phKeysUsedBy(body);
+    keys.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(placeholders, k)) {
+        defs[k] = { value: String(placeholders[k]), scope: 'local' };
+      } else if (Object.prototype.hasOwnProperty.call(globalPlaceholders, k)) {
+        defs[k] = { value: String(globalPlaceholders[k]), scope: 'global' };
+      }
+    });
+    return defs;
+  }
+  function phKeysUsedBy(body) {
     var facts = ['name', 'model', 'provider', 'date', 'skills'];
     var keys = PH_VOCAB.blocks.concat(PH_VOCAB.builtin.filter(function (k) {
-      return facts.indexOf(k) >= 0; // the trigger-only metrics never ride preambles
+      return facts.indexOf(k) >= 0;
     }));
     var merged = {};
     Object.keys(globalPlaceholders).forEach(function (k) { merged[k] = 1; });
@@ -900,17 +921,39 @@
     keys.forEach(function (k) {
       if (found.indexOf(k) < 0 && body.indexOf('{' + k + '}') >= 0) found.push(k);
     });
+    return found;
+  }
+  function placeholdersLineFor(body) {
+    var defs = phDefinitionsOf(body);
+    var hasAny = Object.keys(defs).length > 0;
+    if (hasAny) return 'placeholders: ' + JSON.stringify(defs);
+    return 'placeholders: ' + phKeysUsedBy(body).join(', ');
+  }
+  function buildPreambleFile(name, body) {
     return '---\n' +
       'name: ' + String(name || 'Preamble').replace(/[\r\n]/g, ' ') + '\n' +
       'description: Doomalay preamble — the app briefing blocks, written in placeholders.\n' +
-      'placeholders: ' + found.join(', ') + '\n' +
+      placeholdersLineFor(body) + '\n' +
+      '---\n\n' +
+      String(body || '');
+  }
+
+  // buildPersonaFile — v1.36.5: the persona twin (the persona editor's
+  // ⇩ .md + ⇧ publish ride the same portable shape): frontmatter with the
+  // definitions, then the persona body. importPersona strips the head +
+  // materializes the definitions — a downloaded persona's customs work.
+  function buildPersonaFile(name, body) {
+    return '---\n' +
+      'name: ' + String(name || 'Persona').replace(/[\r\n]/g, ' ') + '\n' +
+      'description: Doomalay persona — the voice, written in placeholders.\n' +
+      placeholdersLineFor(body) + '\n' +
       '---\n\n' +
       String(body || '');
   }
 
   function parsePreambleFile(text) {
     var t = String(text || '');
-    var out = { name: '', description: '', placeholders: '', body: t };
+    var out = { name: '', description: '', placeholders: '', definitions: null, body: t };
     if (t.slice(0, 3) === '---') {
       var end = t.indexOf('\n---', 3);
       if (end > 0) {
@@ -923,9 +966,72 @@
           else if (m[1] === 'description') out.description = m[2].trim();
           else if (m[1] === 'placeholders') out.placeholders = m[2].trim();
         });
+        // v1.36.5: the DEFINITIONS form — {key: {value, scope}} JSON on
+        // the placeholders line (validated hard: an object whose entries
+        // carry string values; anything else degrades to the plain list).
+        if (out.placeholders && out.placeholders.charAt(0) === '{') {
+          try {
+            var d = JSON.parse(out.placeholders);
+            if (d && typeof d === 'object' && !Array.isArray(d)) {
+              var clean = {};
+              var n = 0;
+              Object.keys(d).forEach(function (k) {
+                var e = d[k];
+                if (e && typeof e === 'object' && typeof e.value === 'string' &&
+                    /^[A-Za-z0-9_]+$/.test(k)) {
+                  clean[k] = { value: e.value.slice(0, 8192),
+                               scope: (e.scope === 'global') ? 'global' : 'local' };
+                  n++;
+                }
+              });
+              if (n) out.definitions = clean;
+            }
+          } catch (e) { /* not JSON — the plain-list law stands */ }
+        }
       }
     }
     return out;
+  }
+
+  // materializeDefinitions — v1.36.5: install a downloaded file's custom
+  // placeholder definitions into THIS chat's local map (the install-time
+  // "patch": data, evaluated by the engine's existing machinery — no code
+  // ever rides). Existing local keys WIN (the user's own truth); reserved
+  // keys are refused (the engine PATCH's sanitize enforces the same law
+  // engine-side); global-scoped definitions ride the local map too — the
+  // downloader's scope is THEIR choice later (the value is what travels).
+  // Returns a promise of the installed key names.
+  function materializeDefinitions(sessionId, definitions) {
+    if (!sessionId || !definitions) return Promise.resolve([]);
+    var install = {};
+    Object.keys(definitions).forEach(function (k) {
+      if (reservedPlaceholderKey(k)) return;   // the hard-refuse law stands
+      install[k] = String(definitions[k].value);
+    });
+    if (!Object.keys(install).length) return Promise.resolve([]);
+    return fetch('/api/sessions/' + encodeURIComponent(sessionId))
+      .then(function (r) { return r.json(); })
+      .then(function (sess) {
+        var local = {};
+        try { local = JSON.parse((sess && sess.Placeholders) || '{}') || {}; } catch (e) { local = {}; }
+        var added = [];
+        Object.keys(install).forEach(function (k) {
+          if (Object.prototype.hasOwnProperty.call(local, k)) return;   // the user's own truth wins
+          local[k] = install[k];
+          added.push(k);
+        });
+        if (!added.length) return [];
+        return fetch('/api/sessions/' + encodeURIComponent(sessionId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placeholders: JSON.stringify(local) })
+        }).then(function () {
+          // keep the open view's state honest (the placeholders screen
+          // re-renders on its own open)
+          added.forEach(function (k) { placeholders[k] = local[k]; });
+          return added;
+        });
+      });
   }
 
   // ── THE EDITOR VIEW ───────────────────────────────────────────────
@@ -1114,8 +1220,12 @@
     var dlBtn = el.querySelector('#pe-dl');
     if (dlBtn) dlBtn.addEventListener('click', function () {
       var text = cm ? cm.getValue() : (p.text || defaultPersonaFor(cur && cur.sandbox));
+      // v1.36.5 THE LIVING LEXICON: the persona downloads as the PORTABLE
+      // FILE (the preamble twin) — frontmatter carrying the placeholder
+      // DEFINITIONS the body uses, so a friend's import materializes them.
+      var file = buildPersonaFile(p.name || 'persona', text);
       var safe = (p.name || 'persona').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
-      var blob = new Blob([text], { type: 'text/markdown' });
+      var blob = new Blob([file], { type: 'text/markdown' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url; a.download = safe + '.md';
@@ -1127,13 +1237,17 @@
     // its v0.84.2 BADGE) to the hub publisher; the unsaved editor text is
     // what gets shared, and the badge rides the same share (an image
     // badge's bytes fetch from its engine row at publish time).
+    // v1.36.5: the payload is the PORTABLE FILE (frontmatter + body) —
+    // the customs the persona uses ride the definitions, so the
+    // downloader's import materializes them (importPersona strips the
+    // head; raw-text hub personas keep importing byte-identical).
     var pubBtn = el.querySelector('#pe-publish');
     if (pubBtn) pubBtn.addEventListener('click', function () {
       if (!window.HubPublish) { toast('the hub is not available'); return; }
       var text = cm ? cm.getValue() : (p.text || '');
       var badgeImage = (p.badge && p.badge.kind === 'image' && p.badge.rev > 0 && cur && cur.sessionId)
         ? { sid: cur.sessionId, pid: p.id, rev: p.badge.rev } : null;
-      window.HubPublish.open('persona', { name: p.name, payload: text, badge: p.badge || null, badgeImage: badgeImage });
+      window.HubPublish.open('persona', { name: p.name, payload: buildPersonaFile(p.name, text), badge: p.badge || null, badgeImage: badgeImage });
     });
 
     // v0.84.2: the TRASH pill — armed shows "sure?", disarm restores the
@@ -2191,6 +2305,11 @@
     defaultPreambleFor: defaultPreambleFor,
     buildPreambleFile: buildPreambleFile,
     parsePreambleFile: parsePreambleFile,
+    // v1.36.5 THE LIVING LEXICON: the persona twin + the definitions
+    // plumbing (hubitem.js / hub.js materialize a downloaded file's
+    // customs through materializeDefinitions — the install-time patch).
+    buildPersonaFile: buildPersonaFile,
+    materializeDefinitions: materializeDefinitions,
     PREAMBLE_BLOCKS: PREAMBLE_BLOCKS,
     // v1.27.2 THE TIE: the one vocabulary + the import bridge (hub.js
     // calls these when a downloaded preamble carries unknown keys).

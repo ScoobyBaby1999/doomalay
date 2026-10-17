@@ -767,6 +767,13 @@
           .catch(function () { return null; });  // a failed art fetch never blocks the persona
       }
       badgeP.then(function (badge) {
+        // v1.36.5 THE LIVING LEXICON: the payload may be the portable FILE
+        // (frontmatter + body + placeholder DEFINITIONS) — strip the head,
+        // keep the body as the persona text, materialize the definitions
+        // into this chat (a raw-text hub persona has no frontmatter and
+        // imports byte-identical, definitions null).
+        var parsed = (window.Persona && window.Persona.parsePreambleFile)
+          ? window.Persona.parsePreambleFile(payload || '') : { body: payload || '', definitions: null };
         return fetch('/api/sessions/' + state.sessionId)
           .then(function (r) { return r.json(); })
           .then(function (sess) {
@@ -781,7 +788,7 @@
             for (var i = 0; i < list.length; i++) {
               if (list[i].id === item.id) return null; // already imported
             }
-            var entry = { id: item.id, name: item.name, text: payload || '', mode: 'inactive' };
+            var entry = { id: item.id, name: parsed.name || item.name, text: parsed.body || payload || '', mode: 'inactive' };
             if (badge) entry.badge = badge;
             list.push(entry);
             return fetch('/api/sessions/' + state.sessionId, {
@@ -789,11 +796,21 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ personas: JSON.stringify(list) })
             });
+          })
+          .then(function (r) {
+            if (r && r.ok) toast('added to this chat\'s personas — switch it on from its editor');
+            // the definitions materialize AFTER the persona lands
+            // (best-effort: a failed install never blocks the persona)
+            if (parsed.definitions && window.Persona && window.Persona.materializeDefinitions) {
+              window.Persona.materializeDefinitions(state.sessionId, parsed.definitions)
+                .then(function (added) {
+                  if (added && added.length) toast('installed ' + added.length + ' custom placeholder' + (added.length === 1 ? '' : 's') + ' the persona uses — they expand live');
+                })
+                .catch(function () {});
+            }
+            return r;
           });
       })
-        .then(function (r) {
-          if (r && r.ok) toast('added to this chat\'s personas — switch it on from its editor');
-        })
         .catch(function () { toast('saved locally, but the chat import failed'); });
     };
     if (state.sessionId) return go();
@@ -834,6 +851,18 @@
         })
         .then(function (r) {
           if (r && r.ok) toast('preamble added + set active — edit it from Persona → Preamble');
+          // v1.36.5 THE LIVING LEXICON: the file's custom placeholder
+          // DEFINITIONS materialize into this chat (best-effort — the
+          // preamble landed already; a definition install failure never
+          // rolls it back).
+          if (parsed.definitions && window.Persona && window.Persona.materializeDefinitions) {
+            window.Persona.materializeDefinitions(state.sessionId, parsed.definitions)
+              .then(function (added) {
+                if (added && added.length) toast('installed ' + added.length + ' custom placeholder' + (added.length === 1 ? '' : 's') + ' the preamble uses — they expand live');
+              })
+              .catch(function () {});
+          }
+          return r;
         })
         .catch(function () { toast('saved locally, but the chat import failed'); });
     };

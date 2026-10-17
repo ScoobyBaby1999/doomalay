@@ -1065,6 +1065,11 @@
         .catch(function () { return null; });
     }
     badgeP.then(function (badge) {
+      // v1.36.5 THE LIVING LEXICON: the payload may be the portable FILE
+      // (frontmatter + definitions) — strip the head, materialize the
+      // definitions (raw-text personas import byte-identical).
+      var parsed = (window.Persona && window.Persona.parsePreambleFile)
+        ? window.Persona.parsePreambleFile(payload || '') : { body: payload || '', definitions: null };
       return fetch('/api/sessions/' + encodeURIComponent(sessionId))
         .then(function (r) { return r.json(); })
         .then(function (sess) {
@@ -1076,7 +1081,7 @@
           for (var i = 0; i < list.length; i++) {
             if (list[i].id === item.id) return null; // already imported
           }
-          var entry = { id: item.id, name: item.name, text: payload || '', mode: 'inactive' };
+          var entry = { id: item.id, name: parsed.name || item.name, text: parsed.body || payload || '', mode: 'inactive' };
           if (badge) entry.badge = badge;
           list.push(entry);
           return fetch('/api/sessions/' + encodeURIComponent(sessionId), {
@@ -1084,6 +1089,16 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ personas: JSON.stringify(list) })
           });
+        })
+        .then(function (r) {
+          if (parsed.definitions && window.Persona && window.Persona.materializeDefinitions) {
+            window.Persona.materializeDefinitions(sessionId, parsed.definitions)
+              .then(function (added) {
+                if (added && added.length) toast('installed ' + added.length + ' custom placeholder' + (added.length === 1 ? '' : 's') + ' the persona uses');
+              })
+              .catch(function () {});
+          }
+          return r;
         });
     })
       .catch(function () {}); // the local row already saved — the import is a bonus
@@ -1156,8 +1171,13 @@
     if (!sessionId) return;
     var parsed = (window.Persona && window.Persona.parsePreambleFile)
       ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
+    // v1.36.5 THE LIVING LEXICON: keys COVERED by the file's definitions
+    // auto-install on import — the suggestion bridge only surfaces what
+    // the file genuinely leaves to the downloader (unknown + undefined).
+    var covered = (parsed.definitions && Object.keys(parsed.definitions)) || [];
     if (window.Persona && window.Persona.preambleKeyNeeds && window.Persona.suggestPlaceholderKeys) {
-      var needs = window.Persona.preambleKeyNeeds(parsed.body || payload || '');
+      var needs = window.Persona.preambleKeyNeeds(parsed.body || payload || '')
+        .filter(function (k) { return covered.indexOf(k) < 0; });
       if (needs.length) window.Persona.suggestPlaceholderKeys(needs);
     }
     fetch('/api/sessions/' + sessionId)
@@ -1174,6 +1194,16 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ preambles: JSON.stringify(list), preamble_sel: item.id })
         });
+      })
+      .then(function (r) {
+        if (parsed.definitions && window.Persona && window.Persona.materializeDefinitions) {
+          window.Persona.materializeDefinitions(sessionId, parsed.definitions)
+            .then(function (added) {
+              if (added && added.length) toast('installed ' + added.length + ' custom placeholder' + (added.length === 1 ? '' : 's') + ' the preamble uses');
+            })
+            .catch(function () {});
+        }
+        return r;
       })
       .catch(function () { /* the local row is saved; the chat import degrades honestly */ });
   }

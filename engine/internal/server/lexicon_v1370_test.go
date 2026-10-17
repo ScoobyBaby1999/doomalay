@@ -201,6 +201,33 @@ func TestV1370_BlocksEndpointFull(t *testing.T) {
 }
 
 // TestV1370_TemplateCustoms — the bounded second pass (v1.36.5 rung L1).
+func TestV1370_TemplateCustoms(t *testing.T) {
+        // a template custom re-expands once
+        ph := map[string]string{"tip": "running {model} today"}
+        out := substituteAllVars("you are here: {tip}", "Scooby", "stub/model-x", "stub", ph)
+        if !strings.Contains(out, "running") || !strings.Contains(out, "model-x") {
+                t.Fatalf("the template custom must re-expand, got %q", out)
+        }
+        if strings.Contains(out, "{model}") {
+                t.Fatalf("the inner {model} must be gone, got %q", out)
+        }
+
+        // a cycle terminates as a literal leftover — never a loop
+        cyc := map[string]string{"a": "{b}", "b": "{a}"}
+        out2 := substituteAllVars("x {a} y {b} z", "Scooby", "m", "p", cyc)
+        if !strings.Contains(out2, "{") {
+                t.Fatalf("the cycle must leave a literal leftover, got %q", out2)
+        }
+
+        // no template customs → byte-identical single pass (the unknown-key law)
+        plain := map[string]string{"mood": "playful"}
+        a := substituteAllVars("mood: {mood} unknown: {nope}", "Scooby", "m", "p", plain)
+        if a != "mood: playful unknown: {nope}" {
+                t.Fatalf("plain customs keep the single-pass law, got %q", a)
+        }
+}
+
+// TestV1370_PatchRoundTrip — the two new PATCH keys persist + re-read.
 func TestV1370_PatchRoundTrip(t *testing.T) {
         s := newV1370Server(t)
         newV1370Session(t, s, "v1370d")

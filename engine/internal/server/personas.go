@@ -820,10 +820,35 @@ func cmpNum(cur float64, op string, want float64) bool {
 // {name} {model} {provider} {skills} + the chat's custom {key}s.
 // Unknown {keys} are left literal (the user may be writing about
 // syntax, not using a placeholder).
+//
+// v1.36.5 THE LIVING LEXICON (PLAN-V137 §5, rung L1): a custom whose
+// VALUE itself contains {tokens} (a TEMPLATE custom — {tip} = "running
+// {model} today") re-expands in ONE bounded second pass. Depth is TWO
+// exactly: a cycle ({a} = "{b}" + {b} = "{a}") terminates as a literal
+// leftover ({a} in the output — never a loop, deterministic); the pass
+// only runs when some custom value carries a '{' at all (the unknown-
+// key-literal law stays byte-identical for everyone else).
 func substituteAllVars(text, chatName, model, provider string, ph map[string]string) string {
         if !strings.Contains(text, "{") {
                 return text
         }
+        out := substituteVarsOnePass(text, chatName, model, provider, ph)
+        templateCustom := false
+        for _, v := range ph {
+                if strings.Contains(v, "{") {
+                        templateCustom = true
+                        break
+                }
+        }
+        if templateCustom && strings.Contains(out, "{") {
+                out = substituteVarsOnePass(out, chatName, model, provider, ph)
+        }
+        return out
+}
+
+// substituteVarsOnePass — the original single pass (byte-identical math:
+// the fixed replacer + the longest-first custom keys).
+func substituteVarsOnePass(text, chatName, model, provider string, ph map[string]string) string {
         m := prettyModelName(model)
         if m == "" {
                 m = "an AI assistant"
