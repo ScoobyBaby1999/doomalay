@@ -19,10 +19,16 @@
 //     name pill) hand-drawn at 2× into a canvas 2D, anchor (0.5, 0.5) at
 //     the element center — the exact DOM layout;
 //   · THE ATOM STARS as additive-blend glow sprites (the emitted-light
-//     look) with zIndex DEPTH — front stars sort above the disc, back
-//     stars below (the v0.84.1 back-and-above occlusion, free via
-//     sortableChildren — no evenodd clip needed on this layer); the
-//     shell ellipses are Graphics redrawn on layout change only;
+//     look) with THE FIXED BUCKETS (v1.37.3 THE BATCH DIET): immutable
+//     child order shellLayer → backLayer → the icon sprite → frontLayer
+//     paints the v0.84.1 back-and-above occlusion with ZERO zIndex
+//     writes and ZERO sorts — a z-flip reparents the sprite between the
+//     back/front buckets (both render groups, so the flip's structure
+//     invalidation is bucket-local, never root-level); the shell
+//     ellipses are five batched ATLAS sprites on one shared source
+//     (redrawn only on layout/theme change); the star math is folded
+//     into the records (omega/phase/r + the level basis) and the world
+//     clock rides AtomCore.MOTION_TEMPO (the tempo parity);
 //   · per-chat containers scale with the camera (the DOM transform's
 //     twin); off-viewport chats cull to visible=false.
 //
@@ -35,8 +41,8 @@
 // rasters — a theme change re-rasterizes every texture live.
 //
 // THE ATOM FEED + MATH: zero drift — window.AtomCore (atoms.js's pure
-// core) supplies starPos/shellLayout/SHELL_R/SHELL_TILT, and
-// window.Atoms.countsOf() feeds the counts. The atom pass on #c2 (main
+// core) supplies starFieldsOf/shellLayout/SHELL_R/SHELL_TILT/TILT_BASIS/
+// MOTION_TEMPO, and window.Atoms.countsOf() feeds the counts. The atom pass on #c2 (main
 // or worker) is DISABLED while the world layer owns the atoms
 // (World3D.atomsOwned()); Pixi's own ticker drives the stars — the main
 // rAF loop stops burning atom-only frames entirely.
@@ -562,6 +568,7 @@
     S.chats.forEach(function (rec) { unbindFlash(rec.icon); });
     S.chats.clear();
     S.icons = [];
+    shellAtlas.key = ''; shellAtlas.frames = null; shellAtlas.base = null;   // v1.37.3: the app destroy killed the source — the next boot rebakes
     S.mode = settingsMode();
     syncChrome();
     try {
@@ -634,11 +641,31 @@
 
   function addChat(icon) {
     var rec = { icon: icon, container: new PIXI.Container(), sprite: null, tex: null, fp: '',
+                shellLayer: null, backLayer: null, frontLayer: null,
                 shells: null, stars: null, starCount: 0 };
-    rec.container.sortableChildren = true;
+    // v1.37.3 THE FIXED BUCKETS: immutable child order shellLayer →
+    // backLayer → the icon sprite → frontLayer — the exact depth the old
+    // zIndex ladder painted (shells 40 < back 45 < sprite 100 < front
+    // 150) with ZERO zIndex writes, so the vendored setter can never
+    // re-arm sorting (sortableChildren stays false FOREVER). A star
+    // z-flip RE-PARENTS the sprite between backLayer/frontLayer — both
+    // enableRenderGroup() containers, so the structure invalidation the
+    // flip costs is BUCKET-LOCAL (the vendored addChild receipt: the
+    // child re-points parentRenderGroup to the nearest render group).
+    // A render-group API failure degrades to plain containers (still
+    // zero sorts — root-local invalidation, never worse than the old).
+    rec.shellLayer = new PIXI.Container();
+    rec.backLayer = new PIXI.Container();
+    rec.frontLayer = new PIXI.Container();
+    try { rec.shellLayer.enableRenderGroup(); } catch (e) {}
+    try { rec.backLayer.enableRenderGroup(); } catch (e) {}
+    try { rec.frontLayer.enableRenderGroup(); } catch (e) {}
+    rec.container.addChild(rec.shellLayer);
+    rec.container.addChild(rec.backLayer);
     S.stageRoot.addChild(rec.container);
     S.chats.set(icon.id, rec);
-    rasterChat(rec);
+    rasterChat(rec);                 // the icon sprite lands between back and front
+    rec.container.addChild(rec.frontLayer);
     bindFlash(icon);
   }
   function removeChat(id) {
@@ -658,8 +685,7 @@
     rec.tex = PIXI.Texture.from(r.canvas);
     if (!rec.sprite) {
       rec.sprite = new PIXI.Sprite(rec.tex);
-      rec.sprite.zIndex = 100;
-      rec.container.addChild(rec.sprite);
+      rec.container.addChild(rec.sprite);   // v1.37.3: child order is the depth (no zIndex)
     } else rec.sprite.texture = rec.tex;
     rec.sprite.anchor.set(0.5, 0.5);
     rec.sprite.width = r.w; rec.sprite.height = r.h;
@@ -677,12 +703,77 @@
     if (bumped) layoutAtoms(true);
   }
 
+  // ── v1.37.3 THE SHELL ATLAS — five ellipses, one batched source ──
+  // The v8 law (performance-tips, on the record): "Graphics objects are
+  // batched when under a certain size… using 100s of graphics complex
+  // objects can be slow, in this instance use sprites". The five level
+  // ellipses bake ONCE per (theme, ring color) into ONE canvas; five
+  // frame-Textures share that ONE source (sprites on a shared source
+  // batch together). The bake ALSO fixes the latent v0.85.4 bug: the
+  // old Graphics polyline's lineTo points were never multiplied by R
+  // (only the moveTo was) — the world-layer shells drew a ~1px blob
+  // while the DOM twin drew true ellipses; the atlas bakes the true
+  // projected geometry (the rig pins it against shellPath).
+  // destroy() on the frames never passes true — the shared source
+  // lives until deactivate resets the cache (the app destroy kills it).
+  var shellAtlas = { key: '', frames: null, base: null };
+  function shellAtlasFrames() {
+    var AC = window.AtomCore;
+    if (!AC) return null;
+    var cols = atomColors();
+    var m = /^rgba?\((\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/.exec(String(cols.ring || ''));
+    var rr, gg, bb;
+    if (m) { rr = +m[1]; gg = +m[2]; bb = +m[3]; }
+    else {
+      var hxb = /^#([0-9a-fA-F]{6})$/.exec(String(themeColors().borderStrong || ''));
+      var hx = hxb ? parseInt(hxb[1], 16) : 0x5b5b6b;
+      rr = (hx >> 16) & 255; gg = (hx >> 8) & 255; bb = hx & 255;
+    }
+    var key = themeStamp + '|' + rr + ',' + gg + ',' + bb;
+    if (shellAtlas.key === key && shellAtlas.frames) return shellAtlas.frames;
+    var CELL = Math.ceil(AC.SHELL_R[AC.SHELL_R.length - 1] * 2 + 16);
+    var cv = document.createElement('canvas');
+    cv.width = CELL * AC.SHELL_R.length; cv.height = CELL;
+    var g = cv.getContext('2d');
+    if (g) {
+      g.strokeStyle = 'rgba(' + rr + ',' + gg + ',' + bb + ',0.35)';
+      g.lineWidth = 0.75;
+      for (var L = 0; L < AC.SHELL_R.length; L++) {
+        var B = AC.TILT_BASIS[L] || AC.TILT_BASIS[0];
+        var R = AC.SHELL_R[L];
+        var ccx = L * CELL + CELL / 2, ccy = CELL / 2;
+        g.beginPath();
+        for (var k = 0; k <= 64; k++) {
+          var th = (k / 64) * Math.PI * 2;
+          var px = (Math.cos(th) * B.e1x + Math.sin(th) * B.e2x) * R + ccx;
+          var py = (Math.cos(th) * B.e1y + Math.sin(th) * B.e2y) * R + ccy;
+          if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.stroke();
+      }
+    }
+    var base = PIXI.Texture.from(cv);
+    var frames = [];
+    for (var L2 = 0; L2 < AC.SHELL_R.length; L2++) {
+      frames.push(new PIXI.Texture({ source: base.source, frame: new PIXI.Rectangle(L2 * CELL, 0, CELL, CELL) }));
+    }
+    shellAtlas.key = key;
+    shellAtlas.frames = frames;
+    shellAtlas.base = base;
+    return frames;
+  }
+
   // ── layoutAtoms — shells + star sprites per current counts ───────
   // v0.88: the HOISTED STAR PROPS — tint (level parity + accent colors),
-  // width/height (the mint-time radius p.r is a per-star CONSTANT) and
-  // the pre-computed star key all set at MINT; per frame only x/y/zIndex/
-  // alpha ride the orbit. A theme change re-mints (onThemeChanged →
-  // layoutAtoms(true)) so the tints re-derive from the fresh accents.
+  // width/height (the mint-time radius is a per-star CONSTANT) all set at
+  // MINT; per frame only x/y/alpha + the bucket reparent ride the orbit.
+  // v1.37.3 THE BATCH DIET: the shells come from THE SHELL ATLAS (five
+  // batched sprites, not five unbatched 65-point Graphics per chat) and
+  // the star records carry the FOLDED CONSTANTS (omega/phase/r from
+  // AtomCore.starFieldsOf + the level basis floats) — updateWorld's star
+  // loop is pure arithmetic, zero starPos/Map/alloc per frame.
+  // A theme change re-mints (onThemeChanged → layoutAtoms(true)) so the
+  // tints re-derive from the fresh accents + the atlas rebakes.
   function layoutAtoms(force) {
     if (!S.app) return;
     var counts = (window.Atoms && window.Atoms.countsOf()) || {};
@@ -691,59 +782,52 @@
     var cols = atomColors();
     var accentInt = tripletToInt(cols.accent);
     var accent2Int = tripletToInt(cols.accent2);
-    var basis = AC.TILT_BASIS || null;   // v0.88: the precomputed per-level basis
-    var shellCol = hexToInt(themeColors().borderStrong);
+    var frames = shellAtlasFrames();   // v1.37.3: THE SHELL ATLAS (rebakes on theme/ring change)
     S.chats.forEach(function (rec, id) {
       var n = (rec.icon.sessionId && counts[rec.icon.sessionId]) || 0;
       if (n === rec.starCount && !force) return;
       rec.starCount = n;
-      // clear the old shells/stars
-      // v0.88 FIX (a real v0.87.2 latent): the star records are {sp, L, j,
-      // R, key} — the destroy must hit st.SPRITE (st.destroy() threw on
-      // every unbind, leaving stale stars + a broken frame behind).
+      // clear the old shells/stars (the buckets keep their render-group
+      // identity — only their children churn; the shared atlas frames +
+      // glowTex are NEVER texture-destroyed here)
       if (rec.shells) { rec.shells.forEach(function (sh) { sh.destroy(); }); rec.shells = null; }
       if (rec.stars) { rec.stars.forEach(function (st) { st.sp.destroy(); }); rec.stars = null; }
       if (!n) return;
       var layout = AC.shellLayout(n);
+      var fields = AC.starFieldsOf(rec.icon.id, n);   // v1.37.3: the folded constants
       rec.shells = [];
       rec.stars = [];
+      var k3 = 0;
       for (var L = 0; L < layout.length; L++) {
         var R = AC.SHELL_R[L];
-        var e1x, e1y, e2x, e2y;
-        if (basis && basis[L]) {
-          e1x = basis[L].e1x; e1y = basis[L].e1y;
-          e2x = basis[L].e2x; e2y = basis[L].e2y;
-        } else {
-          var tilt = AC.SHELL_TILT[L] || AC.SHELL_TILT[0];
-          var a = tilt[0] * Math.PI / 180, b = tilt[1] * Math.PI / 180;
-          var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
-          e1x = cb; e1y = sb; e2x = -sb * ca; e2y = cb * ca;
+        var B = AC.TILT_BASIS[L] || AC.TILT_BASIS[0];
+        // the shell ellipse — ONE atlas sprite (the batched source; the
+        // true ×R geometry baked — the old Graphics lineTo dropped the R)
+        if (frames && frames[L]) {
+          var sh = new PIXI.Sprite(frames[L]);
+          sh.anchor.set(0.5, 0.5);
+          rec.shellLayer.addChild(sh);
+          rec.shells.push(sh);
         }
-        // the shell ellipse — Graphics, stroked polyline (64 segs)
-        var g = new PIXI.Graphics();
-        g.zIndex = 40;
-        g.moveTo((e1x) * R, (e1y) * R);
-        for (var k = 1; k <= 64; k++) {
-          var th = (k / 64) * Math.PI * 2;
-          g.lineTo(Math.cos(th) * e1x + Math.sin(th) * e2x,
-                   Math.cos(th) * e1y + Math.sin(th) * e2y);
-        }
-        g.stroke({ width: 0.75, color: shellCol, alpha: 0.35 });
-        rec.container.addChild(g);
-        rec.shells.push(g);
-        // the stars on this shell — MINT-TIME constants ride the record
+        // the stars on this shell — MINT-TIME constants ride the record:
+        // omega/phase/r from the flat fields + the level basis floats
+        // (updateWorld is pure arithmetic per frame — no starPos, no
+        // Map, no allocation); the sprite starts in the front bucket and
+        // the first driven frame corrects any back-side mint.
         for (var j = 0; j < layout[L]; j++) {
           var sp = new PIXI.Sprite(S.glowTex);
           sp.anchor.set(0.5, 0.5);
           sp.blendMode = 'add';
-          sp.zIndex = 150;
-          var key = rec.icon.id + '|' + L + '|' + j;
-          var pr = AC.starPos(key, L, R, 0);   // the radius is t-invariant
-          var rr = Math.max(0.9, pr.r);
+          var rr = Math.max(0.9, fields[k3 + 2]);
           sp.width = rr * 5.2; sp.height = rr * 5.2;
           sp.tint = (L % 2) ? accent2Int : accentInt;   // v0.88: HOISTED (was per star per frame)
-          rec.container.addChild(sp);
-          rec.stars.push({ sp: sp, L: L, j: j, R: R, key: key });
+          rec.frontLayer.addChild(sp);
+          rec.stars.push({ sp: sp, L: L, j: j, R: R,
+                           omega: fields[k3], phase: fields[k3 + 1],
+                           e1x: B.e1x, e1y: B.e1y, e1z: B.e1z,
+                           e2x: B.e2x, e2y: B.e2y, e2z: B.e2z,
+                           front: true });
+          k3 += 3;
         }
       }
     });
@@ -802,15 +886,28 @@
           rec.sprite.alpha = 1 - 0.35 * Math.sin(k * Math.PI);
         }
       } else if (rec.sprite.alpha !== 1) rec.sprite.alpha = 1;
-      // the stars — per frame only x/y/zIndex/alpha (tint/size minted)
+      // the stars — per frame pure arithmetic (the folded constants) +
+      // THE BUCKET REPARENT (no zIndex, no sort — the flip invalidates
+      // only the bucket's own render group); alpha rides the flip.
+      // v1.37.3 THE TEMPO PARITY: the world clock × AtomCore.MOTION_TEMPO
+      // — the world stars used to orbit at 2x the DOM twin's speed (the
+      // v0.97 slow-down never rode this clock; the rig pins the parity).
       if (rec.stars && rec.stars.length && AC) {
         wants = true; dirty = true;        // stars orbit — keep driving
+        var tw = t * (AC.MOTION_TEMPO || 1);
         for (var q = 0; q < rec.stars.length; q++) {
           var st = rec.stars[q];
-          var p = AC.starPos(st.key, st.L, st.R, t);
-          st.sp.x = p.x; st.sp.y = p.y;
-          st.sp.zIndex = p.z >= 0 ? 150 : 45;
-          st.sp.alpha = p.z >= 0 ? 0.95 : 0.5;
+          var ang = tw * st.omega + st.phase;
+          var u = Math.cos(ang), v = Math.sin(ang);
+          st.sp.x = (u * st.e1x + v * st.e2x) * st.R;
+          st.sp.y = (u * st.e1y + v * st.e2y) * st.R;
+          var zz = (u * st.e1z + v * st.e2z) * st.R;
+          var front = zz >= 0;
+          if (front !== st.front) {
+            st.front = front;
+            (front ? rec.frontLayer : rec.backLayer).addChild(st.sp);
+            st.sp.alpha = front ? 0.95 : 0.5;
+          }
         }
       }
     });
