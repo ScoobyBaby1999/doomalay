@@ -223,6 +223,10 @@
   var personas = [];      // [{id,name,text,mode,trigger}]
   var placeholders = {};  // {key: value} — this chat's LOCAL customs
   var globalPlaceholders = {}; // v0.29: engine-wide customs (every chatbot)
+  // v1.36.4 THE HONEST BLOCKS: the toggle + the overrides (the session's
+  // own truths — the placeholders screen's toggle + editor own them).
+  var phBlocksOff = false;
+  var blockOverrides = {};
   var legacyPersona = ''; // v0.19 single-persona column (fallback)
   // v1.22.0 THE MIRROR: the chat's saved preamble library + the active
   // selection ('' = the app default · 'off' · '<id>').
@@ -394,6 +398,14 @@
       preambles = preambles.filter(function (p) {
         return p && p.id && p.id !== 'default' && p.id !== 'off';
       });
+      // v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): the live-block toggle +
+      // the per-chat block overrides ride the session row (absent on old
+      // engines = the default: blocks on, no overrides).
+      phBlocksOff = !!(sess && sess.PhBlocksOff);
+      blockOverrides = {};
+      if (sess && sess.BlockOverrides) {
+        try { blockOverrides = JSON.parse(sess.BlockOverrides) || {}; } catch (e) { blockOverrides = {}; }
+      }
       personas.forEach(normalize);
       enforceSingleActive(); // v0.28: migrate stored lists to single-active
       return sess;
@@ -1497,6 +1509,12 @@
   // its CURRENT expansion via GET /api/sessions/{id}/blocks, the same
   // builders the turn path runs), the live facts, the trigger metrics,
   // then the static customs with the hard-refuse law on the add box.
+  // v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): the master toggle (excludes
+  // / includes the five live blocks in preambles AND personas) + the ✎
+  // full-text editor (the CodeMirror screen — view with scrolling, edit
+  // as an override, ↺ reset to the live default) on every block + custom
+  // row (the old truncation dies: the row is a glance, the editor is the
+  // whole truth).
   function placeholdersView() {
     return view('placeholders', function () {
       function builtin(key, val, sub) {
@@ -1507,11 +1525,15 @@
         '</div>';
       }
       // the five MIRROR blocks — tap a row to unfold its live expansion
-      // (the same text the engine renders into the prompt this turn).
+      // (the same text the engine renders into the prompt this turn); the
+      // ✎ opens the FULL-TEXT editor (override + reset).
       function blockRow(key, sub) {
+        var edited = Object.prototype.hasOwnProperty.call(blockOverrides, key);
         return '<button class="pv-row" data-block-row="' + escAttr(key) + '" style="text-align:left;width:100%">' +
-          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}</span>' +
-          '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title" style="font-family:monospace">{' + esc(key) + '}' +
+            (edited ? ' <span style="font-size:calc(var(--ui-micro-fs) - 0.5px);font-weight:700;color:var(--accent);vertical-align:middle">edited</span>' : '') + '</span>' +
+            '<span class="pv-row-sub">' + esc(sub) + '</span></span>' +
+          '<span class="pv-row-chev" data-block-edit="' + escAttr(key) + '" title="open the full text editor" role="button" tabindex="0" aria-label="open the ' + esc(key) + ' full text editor">✎</span>' +
           '<span class="pv-row-chev" aria-hidden="true">›</span>' +
         '</button>' +
         '<div data-block-prev="' + escAttr(key) + '" style="display:none;margin:-2px 0 6px;padding:8px 10px;border:1px solid var(--surface-2);border-radius:8px;background:var(--surface-1);max-height:150px;overflow:auto">' +
@@ -1534,8 +1556,21 @@
           shadow +
           '</span>' +
           '<span style="flex-shrink:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-2);max-width:24%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(v) + '</span>' +
+          '<span class="pv-row-chev" data-ph-edit="' + escAttr(k) + '" data-ph-scope="' + scope + '" title="open the full text editor" role="button" tabindex="0" aria-label="open the ' + esc(k) + ' full text editor">✎</span>' +
           '<button data-del-key="' + escAttr(k) + '" data-del-scope="' + scope + '" style="background:transparent;border:none;color:var(--err);font-size:15px;cursor:pointer;padding:6px 8px;flex-shrink:0">✕</button>' +
         '</div>';
+      }
+      // v1.36.4: THE MASTER TOGGLE — excludes / includes the live blocks
+      // (preambles AND personas; the live facts still expand either way).
+      function blocksToggleRow() {
+        return '<button class="pv-row" id="ph-blocks-toggle" aria-pressed="' + (phBlocksOff ? 'false' : 'true') + '">' +
+          '<span class="pv-row-ico" style="font-family:monospace">' + (phBlocksOff ? '○' : '●') + '</span>' +
+          '<span class="pv-row-meta"><span class="pv-row-title">live blocks — ' + (phBlocksOff ? 'excluded' : 'included') + '</span>' +
+            '<span class="pv-row-sub">' + (phBlocksOff
+              ? 'the five blocks never ride this chat\'s preambles + personas — the live facts still expand'
+              : 'the five blocks expand into preambles + personas every turn — tap to exclude them') + '</span></span>' +
+          '<span class="pv-row-chev" style="font-weight:700">⇄</span>' +
+        '</button>';
       }
       var globals = '';
       Object.keys(globalPlaceholders).sort().forEach(function (k) {
@@ -1560,8 +1595,9 @@
       });
       if (sugg) sugg = '<div class="pv-section-label">the imported preamble needs</div>' + sugg;
       return (
-        '<p class="pv-hint">Two classes: <b>LIVE</b> keys are computed fresh every turn by the app; <b>STATIC</b> keys are your stored values. Both substitute into every persona AND the active preamble on every turn; customs also power trigger conditions. Unknown keys stay as written (portable by design).</p>' +
+        '<p class="pv-hint">Two classes: <b>LIVE</b> keys are computed fresh every turn by the app; <b>STATIC</b> keys are your stored values. Both substitute into every persona AND the active preamble on every turn; customs also power trigger conditions. Unknown keys stay as written (portable by design). The ✎ opens the full-text editor — the rows above are glances, the editor is the whole truth.</p>' +
         '<div class="pv-section-label">live blocks — the preamble machinery</div>' +
+        blocksToggleRow() +
         blockRow('repo_access', '1st block — the workspace manifest: the public read hand + this chat\'s bound repos') +
         blockRow('artifacts', '2nd block — the artifact protocol (empty when your persona already teaches it)') +
         blockRow('library', '3rd block — the library briefing + the live library state') +
@@ -1599,6 +1635,32 @@
   }
 
   function wirePlaceholders(el) {
+    // ── v1.36.4: THE MASTER TOGGLE — excludes / includes the live blocks ──
+    var toggleBtn = el.querySelector('#ph-blocks-toggle');
+    if (toggleBtn) toggleBtn.addEventListener('click', function () {
+      phBlocksOff = !phBlocksOff;
+      persistBlocks().then(function () {
+        toast(phBlocksOff
+          ? 'live blocks excluded — preambles + personas ride without them'
+          : 'live blocks included — they expand every turn again');
+        PV().replaceView(placeholdersView());
+      }).catch(function (e) { toast((e && e.message) || 'could not save the toggle'); });
+    });
+    // ── the ✎ full-text editors (v1.36.4): blocks open the override
+    // editor (CodeMirror + save + ↺ reset to the live default); customs
+    // open the value editor (save writes global or local). The row's
+    // truncation dies — the editor is the whole truth, scrollable. ──
+    el.querySelectorAll('[data-block-edit]').forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        e.stopPropagation();   // the row's own tap unfolds the preview — the ✎ is its own affordance
+        PV().pushView(blockEditorView(a.getAttribute('data-block-edit')));
+      });
+    });
+    el.querySelectorAll('[data-ph-edit]').forEach(function (a) {
+      a.addEventListener('click', function () {
+        PV().pushView(customPhEditorView(a.getAttribute('data-ph-edit'), a.getAttribute('data-ph-scope')));
+      });
+    });
     // ── the live block previews (v1.27.1 §5-B: the engine endpoint) ──
     var blocksData = null;
     function fillPreview(node) {
@@ -1642,6 +1704,11 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           blocksData = (d && d.blocks) || {};
+          // v1.36.4: the toggle's truth rides the same payload — a
+          // staler client state re-syncs with the engine's own answer.
+          if (d && typeof d.ph_blocks_off === 'boolean' && d.ph_blocks_off !== phBlocksOff) {
+            phBlocksOff = d.ph_blocks_off;
+          }
           el.querySelectorAll('[data-block-prev]').forEach(function (n) {
             if (n.style.display !== 'none') fillPreview(n);
           });
@@ -1741,6 +1808,228 @@
         delete placeholders[k];
         persist().then(function () { PV().replaceView(placeholdersView()); });
       });
+    });
+  }
+
+  // ── v1.36.4 THE HONEST BLOCKS: the editors ─────────────────────────
+  // persistBlocks — the toggle + the overrides ride their OWN PATCH keys
+  // (the only-my-keys discipline: personas/placeholders never ride here).
+  function persistBlocks() {
+    return fetch('/api/sessions/' + cur.sessionId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ph_blocks_off: phBlocksOff,
+        block_overrides: JSON.stringify(blockOverrides)
+      })
+    });
+  }
+
+  // blockEditorView — the FULL-TEXT editor for one live block (the persona
+  // editor's twin: CodeMirror, line numbers, line wrapping, scrolling).
+  // The editor opens with the override when set, else the FULL live
+  // expansion (?full=1 — the 2000-char glance cap dies here); [save] rides
+  // the edited text as this chat's override; [↺ reset] clears it back to
+  // the live default. The toggle wins over everything (off = excluded).
+  function blockEditorView(key) {
+    return view('{' + key + '} · full text', function () {
+      var hasOv = Object.prototype.hasOwnProperty.call(blockOverrides, key);
+      return (
+        '<div class="pe-root">' +
+        '<div class="pe-action-row">' +
+          '<button id="pbe-save" class="pe-mode-pill" disabled style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">save override</button>' +
+          '<button id="pbe-reset" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)"' +
+            (hasOv ? '' : ' disabled') + '>↺ reset to default</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin:0 2px 8px;align-items:flex-start;flex:none">' +
+          (phBlocksOff
+            ? '<span class="pv-hint" style="margin:0;color:var(--warn);font-weight:600">live blocks are EXCLUDED for this chat — the toggle above this screen owns that; an override waits for it to come back on</span>'
+            : (hasOv
+              ? '<span class="pv-hint" style="margin:0;flex:1"><b style="color:var(--accent)">override active</b> — your text below rides every turn (the live default: the ↺ reset target)</span>'
+              : '<span class="pv-hint" style="margin:0;flex:1">the live expansion below rides every turn — edit + save to make it YOURS (an override), ↺ to reset back</span>')) +
+        '</div>' +
+        '<div class="pe-body-fill" id="pbe-body"><div class="art-loading">loading the full block…</div></div>' +
+        '</div>'
+      );
+    }, function (el) { wireBlockEditor(el, key); });
+  }
+
+  function wireBlockEditor(el, key) {
+    var cm = null;
+    var dirty = false;
+    var saveBtn = el.querySelector('#pbe-save');
+    var resetBtn = el.querySelector('#pbe-reset');
+    function markDirty() {
+      dirty = true;
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'save · unsaved'; }
+    }
+    function markClean() {
+      dirty = false;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'save override'; }
+    }
+    // the full text: the override when set, else the live expansion
+    // (?full=1 — the editor is the whole truth, not the 2000-char glance)
+    var hasOv = Object.prototype.hasOwnProperty.call(blockOverrides, key);
+    var initial = hasOv ? String(blockOverrides[key]) : null;
+    function loadCM(value) {
+      ensureCSS('/vendor/editor/codemirror.css')
+        .then(function () { return ensureScript('/vendor/editor/codemirror.min.js'); })
+        .then(function () { return ensureScript('/vendor/editor/mode-markdown.min.js'); })
+        .then(function () {
+          var host = el.querySelector('#pbe-body');
+          if (!host || !window.CodeMirror) return;
+          host.innerHTML = '';
+          var wrap = document.createElement('div');
+          wrap.className = 'art-cm-host';
+          host.appendChild(wrap);
+          cm = CodeMirror(wrap, {
+            value: String(value == null ? '' : value),
+            mode: 'markdown', lineNumbers: true, lineWrapping: true,
+            theme: 'doomalay', viewportMargin: 60, readOnly: false
+          });
+          cm.on('change', markDirty);
+          cm.refresh();
+        }).catch(function (e) {
+          var host = el.querySelector('#pbe-body');
+          if (host) host.innerHTML = '<div class="art-loading">editor failed to load — ' + esc(String(e.message || e)) + '</div>';
+        });
+    }
+    if (initial !== null) {
+      loadCM(initial);
+    } else if (cur && cur.sessionId) {
+      fetch('/api/sessions/' + encodeURIComponent(cur.sessionId) + '/blocks?full=1')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var b = (d && d.blocks && d.blocks[key]) || null;
+          var collapsed = !!(b && b.collapsed);
+          var text = collapsed ? '' : String((b && b.text) || '');
+          var host = el.querySelector('#pbe-body');
+          if (collapsed && host) {
+            host.innerHTML = '<div class="art-loading" style="padding:16px">collapsed — your persona already teaches the artifact protocol, so this block rides empty every turn.<br><span style="color:var(--text-3)">edit + save to make it YOURS anyway (an override rides even when collapsed)</span></div>';
+          }
+          loadCM(text);
+          // v1.36.4: the toggle truth re-syncs with the engine's answer
+          if (d && typeof d.ph_blocks_off === 'boolean') phBlocksOff = d.ph_blocks_off;
+        })
+        .catch(function () {
+          var host = el.querySelector('#pbe-body');
+          if (host) host.innerHTML = '<div class="art-loading">preview unavailable — the engine did not answer</div>';
+        });
+    }
+    if (saveBtn) saveBtn.addEventListener('click', function () {
+      if (!cm) return;
+      blockOverrides[key] = cm.getValue();
+      saveBtn.textContent = 'saving…';
+      persistBlocks().then(function () {
+        markClean();
+        toast('{' + key + '} override saved — your text rides every turn');
+        PV().replaceView(blockEditorView(key));   // the chips re-render
+      }).catch(function () {
+        saveBtn.textContent = 'save · retry?';
+        saveBtn.disabled = false;
+      });
+    });
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+      delete blockOverrides[key];
+      resetBtn.textContent = 'resetting…';
+      persistBlocks().then(function () {
+        toast('{' + key + '} reset — the live default rides again');
+        PV().replaceView(blockEditorView(key));   // re-opens with the live text
+      }).catch(function () {
+        resetBtn.textContent = '↺ reset · retry?';
+      });
+    });
+  }
+
+  // customPhEditorView — the full-text editor for a CUSTOM placeholder's
+  // value (the row's ellipsis dies): save writes global (PUT) or local
+  // (the session PATCH); ↺ revert reloads the stored value.
+  function customPhEditorView(key, scope) {
+    return view('{' + key + '} · value', function () {
+      var stored = (scope === 'global') ? globalPlaceholders[key] : placeholders[key];
+      return (
+        '<div class="pe-root">' +
+        '<div class="pe-action-row">' +
+          '<button id="cpe-save" class="pe-mode-pill" disabled style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">save</button>' +
+          '<button id="cpe-revert" class="pe-mode-pill" style="background:var(--surface-1);border:1px solid var(--surface-2);color:var(--text-2)">↺ revert</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin:0 2px 8px;align-items:flex-start;flex:none">' +
+          '<span class="pv-hint" style="margin:0;flex:1">the full value of <b style="font-family:monospace">{' + esc(key) + '}</b> — ' + (scope === 'global' ? '🌐 global (every chatbot)' : '📍 this chat') + '. Static: it substitutes as-is (template values like {model} expand at turn time).</span>' +
+        '</div>' +
+        '<div class="pe-body-fill" id="cpe-body"><div class="art-loading">loading editor…</div></div>' +
+        '</div>'
+      );
+    }, function (el) { wireCustomPhEditor(el, key, scope); });
+  }
+
+  function wireCustomPhEditor(el, key, scope) {
+    var cm = null;
+    var dirty = false;
+    var saveBtn = el.querySelector('#cpe-save');
+    var revertBtn = el.querySelector('#cpe-revert');
+    var stored = (scope === 'global') ? String(globalPlaceholders[key] == null ? '' : globalPlaceholders[key])
+                                       : String(placeholders[key] == null ? '' : placeholders[key]);
+    function markDirty() {
+      dirty = true;
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'save · unsaved'; }
+    }
+    function loadCM() {
+      ensureCSS('/vendor/editor/codemirror.css')
+        .then(function () { return ensureScript('/vendor/editor/codemirror.min.js'); })
+        .then(function () { return ensureScript('/vendor/editor/mode-markdown.min.js'); })
+        .then(function () {
+          var host = el.querySelector('#cpe-body');
+          if (!host || !window.CodeMirror) return;
+          host.innerHTML = '';
+          var wrap = document.createElement('div');
+          wrap.className = 'art-cm-host';
+          host.appendChild(wrap);
+          cm = CodeMirror(wrap, {
+            value: stored,
+            mode: 'markdown', lineNumbers: true, lineWrapping: true,
+            theme: 'doomalay', viewportMargin: 60
+          });
+          cm.on('change', markDirty);
+          cm.refresh();
+        }).catch(function (e) {
+          var host = el.querySelector('#cpe-body');
+          if (host) host.innerHTML = '<div class="art-loading">editor failed to load — ' + esc(String(e.message || e)) + '</div>';
+        });
+    }
+    loadCM();
+    if (saveBtn) saveBtn.addEventListener('click', function () {
+      if (!cm) return;
+      var value = cm.getValue();
+      saveBtn.textContent = 'saving…';
+      var done = function () {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'save';
+        dirty = false;
+        stored = value;
+        toast('{' + key + '} saved — ' + (scope === 'global' ? 'every chatbot' : 'this chat'));
+      };
+      if (scope === 'global') {
+        fetch('/api/placeholders', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: key, value: value })
+        }).then(function (r) {
+          if (!r.ok) return r.json().then(function (d) { throw new Error((d && d.error) || ('HTTP ' + r.status)); });
+          return loadGlobals();
+        }).then(done)
+          .catch(function (e) { saveBtn.textContent = 'save · retry?'; saveBtn.disabled = false; toast(e.message || 'could not save'); });
+        return;
+      }
+      placeholders[key] = value;
+      persist().then(done).catch(function () { saveBtn.textContent = 'save · retry?'; saveBtn.disabled = false; });
+    });
+    if (revertBtn) revertBtn.addEventListener('click', function () {
+      if (!cm) return;
+      cm.setValue(stored);
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'save';
+      dirty = false;
+      toast('reverted — the stored value stands');
     });
   }
 

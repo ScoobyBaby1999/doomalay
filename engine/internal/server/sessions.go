@@ -314,6 +314,17 @@ func (s *Server) handleSessionsUpdate(w http.ResponseWriter, r *http.Request) {
         if v, ok := req["preamble_sel"].(string); ok {
                 sess.PreambleSel = sanitizePreambleSel(v, sess.Preambles)
         }
+        // v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): the live-block toggle
+        // (true = the five MIRROR blocks are excluded from the composed
+        // preamble + persona) + the per-chat block overrides map (an
+        // edited truth per block — the placeholder screen's editor owns
+        // both doors; sanitize keeps only real block keys, 32KB/entry).
+        if v, ok := req["ph_blocks_off"].(bool); ok {
+                sess.PhBlocksOff = v
+        }
+        if v, ok := req["block_overrides"].(string); ok {
+                sess.BlockOverrides = sanitizeBlockOverrides(v)
+        }
         // v0.16: the memory-window pill PATCHes this (sliding context size).
         // v0.28: -1 = the WHOLE chat (no window — user spec, the mind
         // slider's minimum); 0 keeps the default 40.

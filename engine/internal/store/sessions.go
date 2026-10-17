@@ -39,6 +39,14 @@ type Session struct {
         // selection ("" default · "off" · "<id>"). See server/preambles.go.
         Preambles       string
         PreambleSel     string
+        // v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): the live-block toggle
+        // — when true the five MIRROR block tokens are EXCLUDED from the
+        // composed preamble + persona (the live facts still expand);
+        // BlockOverrides is a JSON map {blockKey: text} whose entries
+        // REPLACE that block's live expansion (an edited truth with a ↺
+        // reset path, per-chat).
+        PhBlocksOff    bool
+        BlockOverrides string
         ManuallyRenamed bool
         // v0.21 AUTO-COMPACT (ported from the HF space's proactive compression):
         // when the conversation nears the model's context limit, older turns
@@ -110,8 +118,9 @@ INSERT INTO chat_sessions
    workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed, compact_summary, compact_seq,
    compact_enabled, compact_threshold, template_id, template_auto, skills_auto,
    lib_auto, termux, skill_name, skill_head,
+   ph_blocks_off, block_overrides,
    sandbox_mode, sandbox_repo, created_at, updated_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 s.ID, s.Title, s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode,
                 s.WebSearch, s.DeepResearch, s.WebTemplate, s.DeepTemplate, s.DeepMode,
                 s.JudgeCount, s.JudgeTemplate, s.SlidingWindow, s.MaxContext,
@@ -119,6 +128,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
                 s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed, s.CompactSummary, s.CompactSeq,
                 s.CompactEnabled, s.CompactThresholdPct, s.TemplateID, s.TemplateAuto, s.SkillsAuto,
                 s.LibAuto, s.Termux, s.SkillName, s.SkillHead,
+                s.PhBlocksOff, s.BlockOverrides,
                 s.SandboxMode, s.SandboxRepo, s.CreatedAt, s.UpdatedAt)
         return err
 }
@@ -134,14 +144,14 @@ UPDATE chat_sessions SET
   sliding_window=?, max_context=?, tool_allowlist=?, hooks_config=?,
   routing=?, workspace_id=?, persona=?, personas=?, placeholders=?, preambles=?, preamble_sel=?, manually_renamed=?,
   compact_summary=?, compact_seq=?, compact_enabled=?, compact_threshold=?, template_id=?,
-  template_auto=?, skills_auto=?, lib_auto=?, termux=?, skill_name=?, skill_head=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
+  template_auto=?, skills_auto=?, lib_auto=?, termux=?, skill_name=?, skill_head=?, ph_blocks_off=?, block_overrides=?, sandbox_mode=?, sandbox_repo=?, updated_at=?
 WHERE id=?`,
                 s.Model, s.Provider, s.Sandbox, s.Effort, s.Mode, s.WebSearch, s.DeepResearch,
                 s.WebTemplate, s.DeepTemplate, s.DeepMode, s.JudgeCount, s.JudgeTemplate,
                 s.SlidingWindow, s.MaxContext, s.ToolAllowlist, s.HooksConfig,
                 s.Routing, s.WorkspaceID, s.Persona, s.Personas, s.Placeholders, s.Preambles, s.PreambleSel, s.ManuallyRenamed,
                 s.CompactSummary, s.CompactSeq, s.CompactEnabled, s.CompactThresholdPct, s.TemplateID,
-                s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.Termux, s.SkillName, s.SkillHead, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
+                s.TemplateAuto, s.SkillsAuto, s.LibAuto, s.Termux, s.SkillName, s.SkillHead, s.PhBlocksOff, s.BlockOverrides, s.SandboxMode, s.SandboxRepo, s.UpdatedAt, s.ID)
         return err
 }
 
@@ -183,20 +193,22 @@ func (db *DB) GetSession(id string) (*Session, error) {
         var sandboxMode, sandboxRepo sql.NullString
         var skillName, skillHead sql.NullString
         var preambles, preambleSel sql.NullString
+        var phBlocksOff sql.NullInt64
+        var blockOverrides sql.NullString
         err := db.QueryRow(`
 SELECT id, title, model, provider, sandbox, effort, mode, web_search, deep_research,
        web_template, deep_template, deep_mode, judge_count, judge_template,
        sliding_window, max_context, tool_allowlist, hooks_config, routing,
        workspace_id, persona, personas, placeholders, preambles, preamble_sel, manually_renamed,
        compact_summary, compact_seq, compact_enabled, compact_threshold, template_id,
-       template_auto, skills_auto, lib_auto, termux, skill_name, skill_head, sandbox_mode, sandbox_repo, created_at, updated_at
+       template_auto, skills_auto, lib_auto, termux, skill_name, skill_head, ph_blocks_off, block_overrides, sandbox_mode, sandbox_repo, created_at, updated_at
 FROM chat_sessions WHERE id=?`, id).Scan(
                 &s.ID, &s.Title, &s.Model, &s.Provider, &s.Sandbox, &s.Effort, &s.Mode, &ws, &dr,
                 &s.WebTemplate, &s.DeepTemplate, &s.DeepMode, &s.JudgeCount, &s.JudgeTemplate,
                 &s.SlidingWindow, &s.MaxContext, &s.ToolAllowlist, &s.HooksConfig, &s.Routing,
                 &s.WorkspaceID, &persona, &personas, &placeholders, &preambles, &preambleSel, &mr,
                 &compactSummary, &compactSeq, &compactEnabled, &compactThreshold, &templateID,
-                &templateAuto, &skillsAuto, &libAuto, &termux, &skillName, &skillHead, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
+                &templateAuto, &skillsAuto, &libAuto, &termux, &skillName, &skillHead, &phBlocksOff, &blockOverrides, &sandboxMode, &sandboxRepo, &s.CreatedAt, &s.UpdatedAt)
         if err == sql.ErrNoRows {
                 return nil, nil
         }
@@ -229,6 +241,14 @@ FROM chat_sessions WHERE id=?`, id).Scan(
         }
         if preambleSel.Valid {
                 s.PreambleSel = preambleSel.String
+        }
+        // v1.36.4 THE HONEST BLOCKS: the toggle (absent on pre-migration
+        // rows = the blocks ride, the default) + the overrides map.
+        if phBlocksOff.Valid {
+                s.PhBlocksOff = phBlocksOff.Int64 != 0
+        }
+        if blockOverrides.Valid {
+                s.BlockOverrides = blockOverrides.String
         }
         // v0.28 FIX: these were never scanned before — after a reload every
         // session PATCH (any field: effort, web_search, model…) wrote the

@@ -230,6 +230,13 @@ CREATE TABLE IF NOT EXISTS hub_items (
                 // methodology at turn end).
                 {"chat_sessions", "skill_name", "ALTER TABLE chat_sessions ADD COLUMN skill_name TEXT"},
                 {"chat_sessions", "skill_head", "ALTER TABLE chat_sessions ADD COLUMN skill_head TEXT"},
+                // v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): the live-block
+                // toggle (ph_blocks_off INTEGER DEFAULT 0 — off = the five
+                // MIRROR blocks ride every turn, the default) + the per-chat
+                // block overrides map ({blockKey: text} JSON — an edited
+                // truth that replaces that block's live expansion).
+                {"chat_sessions", "ph_blocks_off", "ALTER TABLE chat_sessions ADD COLUMN ph_blocks_off INTEGER DEFAULT 0"},
+                {"chat_sessions", "block_overrides", "ALTER TABLE chat_sessions ADD COLUMN block_overrides TEXT"},
                 // v0.44: the workspaces wave — the bare v0.17 workspaces
                 // table grows the cloud-repo columns (host kind, owner/repo,
                 // access level, token vault key, default branch, meta JSON).

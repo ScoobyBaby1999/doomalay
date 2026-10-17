@@ -154,29 +154,67 @@ func preambleTextFor(sess *store.Session) string {
 // composed prompt (preamble AND persona — a custom persona may use the
 // same placeholders). personaTeachesArtifact keeps the old rule: a persona
 // that already carries the artifact protocol doesn't get {artifacts} twice.
+//
+// v1.36.4 THE HONEST BLOCKS (PLAN-V137 §4): two per-chat truths ride the
+// session now —
+//   · PhBlocksOff: the five block TOKENS are excluded entirely (removed,
+//     gaps collapsed; the live facts {model} {date} … still expand — they
+//     substitute in the earlier pass). The user's toggle in the
+//     placeholders screen owns it.
+//   · BlockOverrides: {blockKey: text} — an edited truth that replaces
+//     that block's live expansion (the CodeMirror editor's save; ↺ reset
+//     clears it). The {artifacts} yield rule (personaTeachesArtifact)
+//     applies FIRST — the no-duplication law survives overrides.
 func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName string, personaTeachesArtifact bool) string {
         if !strings.Contains(text, "{") {
                 return text
         }
+        // THE TOGGLE: excluded — the blocks leave the prompt, the blank
+        // gaps collapse (the empty-{artifacts} law's own collapse). The
+        // FACTS still expand ({date}'s twin here rides after the strip —
+        // the earlier substituteAllVars pass owns the facts; this direct-
+        // call twin stands for the composed shape).
+        if sess != nil && sess.PhBlocksOff {
+                for _, k := range placeholderBlocks {
+                        text = strings.ReplaceAll(text, "{"+k+"}", "")
+                }
+                if strings.Contains(text, "{date}") {
+                        text = strings.ReplaceAll(text, "{date}", time.Now().Format("Monday, 2 January 2006"))
+                }
+                for strings.Contains(text, "\n\n\n") {
+                        text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
+                }
+                return text
+        }
+        var ov map[string]string
+        if sess != nil {
+                ov = parseBlockOverrides(sess.BlockOverrides)
+        }
+        yield := func(key, live string) string {
+                if v, ok := ov[key]; ok {
+                        return v   // the edited truth wins
+                }
+                return live
+        }
         out := text
         if strings.Contains(out, "{repo_access}") {
-                out = strings.ReplaceAll(out, "{repo_access}", s.workspaceManifestFor(sess.ID))
+                out = strings.ReplaceAll(out, "{repo_access}", yield("repo_access", s.workspaceManifestFor(sess.ID)))
         }
         if strings.Contains(out, "{artifacts}") {
                 art := ""
                 if !personaTeachesArtifact {
                         art = artifactSystemPrompt
                 }
-                out = strings.ReplaceAll(out, "{artifacts}", art)
+                out = strings.ReplaceAll(out, "{artifacts}", yield("artifacts", art))
         }
         if strings.Contains(out, "{library}") {
-                out = strings.ReplaceAll(out, "{library}", libraryPreamble(sess)+s.libStateLine(sess))
+                out = strings.ReplaceAll(out, "{library}", yield("library", libraryPreamble(sess)+s.libStateLine(sess)))
         }
         if strings.Contains(out, "{controls}") {
-                out = strings.ReplaceAll(out, "{controls}", s.chatMetadataPreamble(sess, bundleName))
+                out = strings.ReplaceAll(out, "{controls}", yield("controls", s.chatMetadataPreamble(sess, bundleName)))
         }
         if strings.Contains(out, "{session}") {
-                out = strings.ReplaceAll(out, "{session}", s.sessionContextPreamble(sess))
+                out = strings.ReplaceAll(out, "{session}", yield("session", s.sessionContextPreamble(sess)))
         }
         if strings.Contains(out, "{date}") {
                 out = strings.ReplaceAll(out, "{date}", time.Now().Format("Monday, 2 January 2006"))
@@ -186,6 +224,55 @@ func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName
                 out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
         }
         return out
+}
+
+// ── v1.36.4: the overrides helpers ──────────────────────────────────
+
+// blockOverrideMax caps one override entry (an edited block is a briefing,
+// not a novel — 32KB is ~16× the largest live block).
+const blockOverrideMax = 32 * 1024
+
+// parseBlockOverrides decodes the session's {blockKey: text} map.
+// Malformed / empty → nil (no overrides — the live truth rides).
+func parseBlockOverrides(raw string) map[string]string {
+        trimmed := strings.TrimSpace(raw)
+        if trimmed == "" {
+                return nil
+        }
+        m := map[string]string{}
+        if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+                return nil
+        }
+        return m
+}
+
+// sanitizeBlockOverrides (the PATCH door): only REAL block keys survive,
+// each entry capped; a non-map or all-foreign map stores "" (none). The
+// hard-refuse law's sibling — reserved/unknown keys never ride.
+func sanitizeBlockOverrides(raw string) string {
+        m := parseBlockOverrides(raw)
+        if m == nil {
+                return ""
+        }
+        allowed := map[string]bool{}
+        for _, k := range placeholderBlocks {
+                allowed[k] = true
+        }
+        out := map[string]string{}
+        for k, v := range m {
+                if !allowed[k] {
+                        continue
+                }
+                if len(v) > blockOverrideMax {
+                        v = v[:blockOverrideMax]
+                }
+                out[k] = v
+        }
+        b, err := json.Marshal(out)
+        if err != nil {
+                return ""
+        }
+        return string(b)
 }
 
 // ── v1.27.1 THE FULL LEXICON: the blocks preview endpoint ───────────
@@ -203,12 +290,26 @@ func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName
 
 const blockPreviewCap = 2000
 
+// blockFullCap — v1.36.4: ?full=1 (the placeholder editor's screen)
+// raises the per-block cap: the editor shows the WHOLE block, scrollable
+// (a glance is 2000; a document is 64KB).
+const blockFullCap = 64 * 1024
+
 func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
         sess, err := s.db.GetSession(r.PathValue("id"))
         if err != nil || sess == nil {
                 writeError(w, 404, "session not found")
                 return
         }
+        // v1.36.4: the editor's full-text view (?full=1) + the session's
+        // own truths (the toggle + the overrides) ride the same payload —
+        // the placeholders screen renders what actually rides the turn.
+        full := r.URL.Query().Get("full") == "1"
+        capFor := blockPreviewCap
+        if full {
+                capFor = blockFullCap
+        }
+        ov := parseBlockOverrides(sess.BlockOverrides)
         // the {artifacts} yield rule — the same teachesArtifact test the
         // turn composition runs (active persona text mentions artifacts).
         personaRaw := ""
@@ -224,22 +325,42 @@ func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
 
         blocks := map[string]map[string]any{}
         emit := func(key, text string) {
+                // v1.36.4: the override (the edited truth) rides the emitted
+                // text — the preview AND the editor show what the turn sends;
+                // the live default rides its own field (the ↺ reset target).
+                if v, ok := ov[key]; ok {
+                        live := text
+                        runes := []rune(live)
+                        if len(runes) > capFor {
+                                live = string(runes[:capFor])
+                        }
+                        blocks[key] = map[string]any{
+                                "text": v, "chars": len([]rune(v)),
+                                "truncated": false, "collapsed": false,
+                                "override": true, "live": live,
+                        }
+                        return
+                }
                 chars := len([]rune(text))
-                if chars > blockPreviewCap {
+                if chars > capFor {
                         runes := []rune(text)
-                        text = string(runes[:blockPreviewCap])
+                        text = string(runes[:capFor])
                 }
                 blocks[key] = map[string]any{
                         "text":      text,
                         "chars":     chars,
-                        "truncated": chars > blockPreviewCap,
+                        "truncated": chars > capFor,
                         "collapsed": false,
                 }
         }
         emit("repo_access", s.workspaceManifestFor(sess.ID))
         if teachesArtifact {
-                blocks["artifacts"] = map[string]any{
-                        "text": "", "chars": 0, "truncated": false, "collapsed": true,
+                if _, ok := ov["artifacts"]; ok {
+                        emit("artifacts", artifactSystemPrompt)   // the override rides (emit swaps it in)
+                } else {
+                        blocks["artifacts"] = map[string]any{
+                                "text": "", "chars": 0, "truncated": false, "collapsed": true,
+                        }
                 }
         } else {
                 emit("artifacts", artifactSystemPrompt)
@@ -247,5 +368,6 @@ func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
         emit("library", libraryPreamble(sess)+s.libStateLine(sess))
         emit("controls", s.chatMetadataPreamble(sess, ""))
         emit("session", s.sessionContextPreamble(sess))
-        writeJSON(w, 200, map[string]any{"blocks": blocks})
+        writeJSON(w, 200, map[string]any{"blocks": blocks,
+                "ph_blocks_off": sess.PhBlocksOff})
 }
