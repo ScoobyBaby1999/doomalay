@@ -274,63 +274,49 @@
     } catch (e) {}
   }
 
-  // computeArrows — the off-screen chat arrows (positions + family hexes
-  // resolved HERE: the worker never touches getComputedStyle).
-  // v0.88 ROOT FIX: --border-strong resolves through a 1s-TTL cache (+ a
-  // theme-event reset) instead of a getComputedStyle per DEFAULT-family
-  // off-screen bot PER FRAME — a panned canvas with a dozen off-screen
-  // default chats burned a dozen computed-style reads every frame.
-  var arrowHexCache = { at: -1e9, v: '' };
-  function borderStrongHex() {
-    var now = performance.now();
-    if (now - arrowHexCache.at > 1000) {
-      arrowHexCache.at = now;
-      try {
-        // v0.99.4: --border-strong is a DERIVED color-mix now (its
-        // computed token stream stays unevaluated in the custom
-        // property) — the real hex comes from DoomTheme (culori parity
-        // with what CSS paints). Fallback: the legacy computed read.
-        var DT = window.DoomTheme;
-        var hex = (DT && typeof DT.resolvedThemeVar === 'function')
-          ? DT.resolvedThemeVar('--border-strong') : '';
-        arrowHexCache.v = (/^#[0-9a-fA-F]{6}$/.test(hex))
-          ? hex
-          : getComputedStyle(document.documentElement)
-              .getPropertyValue('--border-strong').trim();
-      } catch (e) {}
-    }
-    return arrowHexCache.v;
-  }
-  function resetArrowHex() { arrowHexCache.at = -1e9; }
-  window.addEventListener('doomalay:theme-changed', resetArrowHex);
-  window.addEventListener('doomalay:theme-applied', resetArrowHex);
+  // computeArrows — the off-screen compass indicators (THE TRUE COMPASS,
+  // v1.36.3: positions + hexes resolved HERE — the worker never touches
+  // getComputedStyle). The v0.88 --border-strong TTL cache died with the
+  // color ladder: default-family icons now sample the RAINBOW (per-icon
+  // hue) with the theme accent's tone, not a shared border color.
   function computeArrows() {
     const margin = 50;
     var out = [];
-    var bs = '';
+    // v1.36.3 THE TRUE COMPASS (PLAN-V137 §3): the indicator is PINNED-
+    // ONLY (the user's default-off law — un-pinned off-screen icons get
+    // nothing), its SCALE is dynamic (the further the icon, the smaller,
+    // between ARROW_SCALE_MAX at the near edge and ARROW_SCALE_MIN at the
+    // far reference — both ~2× today's default chevron, the user's caps,
+    // ordered by their own further=smaller law), and its COLOR follows
+    // the icon's own art (family hex → tab gradient's first stop → the
+    // rainbow gradient of ALL colors, deterministic per icon).
+    var diag = Math.sqrt(W * W + H * H) || 1;
+    var dRef = diag * 1.5;   // the far reference: 1.5× the viewport diagonal
     for (const bot of world.entities) {
+      if (!bot.pinned) continue;   // THE PINNED-ONLY LAW
       const s = worldToScreen(bot.x, bot.y);
       if (s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H) continue;
       const ax = Math.max(margin, Math.min(W - margin, s.x));
       const ay = Math.max(margin, Math.min(H - margin, s.y));
       const angle = Math.atan2(s.y - ay, s.x - ax);
-      const fam = (config.families[bot.family] || config.families.default || {});
-      let color = fam.color || window.DoomTheme.FALLBACKS.origin;
-      if (bot.family === 'default' || !fam.color) {
-        if (!bs) bs = borderStrongHex();
-        color = bs || color;
-      }
-      out.push({ x: ax, y: ay, angle: angle, color: color });
+      const ddx = s.x - ax, ddy = s.y - ay;
+      const d = Math.sqrt(ddx * ddx + ddy * ddy);
+      var tk = d / dRef; if (tk > 1) tk = 1;
+      const k = ARROW_SCALE_MAX - tk * (ARROW_SCALE_MAX - ARROW_SCALE_MIN);
+      out.push({ x: ax, y: ay, angle: angle, color: arrowColorFor(bot), s: k, target: bot.id });
     }
+    lastArrows = out;   // the tap-hit cache (the painted truth)
     return out;
   }
   function paintArrows(g, list) {
     if (!g || !list || !list.length) return;
     for (var i = 0; i < list.length; i++) {
       var ar = list[i];
+      var k = (typeof ar.s === 'number') ? ar.s : 1;
       g.save();
       g.translate(ar.x, ar.y);
       g.rotate(ar.angle);
+      g.scale(k, k);   // v1.36.3: the dynamic scale (gridworker's twin)
       g.fillStyle = ar.color;
       g.beginPath();
       g.moveTo(14, 0);
@@ -343,6 +329,180 @@
     }
   }
   function renderOffScreenArrows() { paintArrows(ctx, computeArrows()); }
+
+  // ── v1.36.3: the compass color ladder + the rainbow sampler ──────
+  // (1) a branded family's hex (the icon's badge color); (2) a custom
+  // tab gradient's first stop (its own art); (3) NOTHING set → a color
+  // sampled from the GRADIENT OF ALL COLORS (the hue wheel): hue from
+  // the icon id's hash (deterministic — never flickers, never repeats
+  // per icon), saturation/lightness from the LIVE theme accent (the
+  // rainbow belongs to the theme's tone). Never a static solid list.
+  var ARROW_SCALE_MAX = 2.2;   // near (just off-screen) — the bigger cap
+  var ARROW_SCALE_MIN = 2.0;   // far (≥ the reference distance)
+  var lastArrows = [];         // the full-frame arrow cache (tap hit truth)
+  function arrowColorFor(bot) {
+    if (bot.family && bot.family !== 'default') {
+      const fam = (config.families[bot.family] || {});
+      if (fam.color && /^#[0-9a-fA-F]{6}$/.test(fam.color)) return fam.color;
+    }
+    if (bot.type === 'web' && bot.gradient && Array.isArray(bot.gradient.colors)) {
+      for (var gi = 0; gi < bot.gradient.colors.length; gi++) {
+        var c0 = bot.gradient.colors[gi];
+        if (/^#[0-9a-fA-F]{6}$/.test(c0)) return c0;
+      }
+    }
+    return rainbowHexFor(bot.id);
+  }
+  var rainbowToneCache = { at: -1e9, s: 62, l: 55 };
+  function rainbowTone() {
+    var now = performance.now();
+    if (now - rainbowToneCache.at > 1000) {
+      rainbowToneCache.at = now;
+      try {
+        var DT = window.DoomTheme;
+        var hex = (DT && typeof DT.resolvedThemeVar === 'function')
+          ? DT.resolvedThemeVar('--accent') : '';
+        if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+          var rgb = hexToRgb(hex);
+          var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+          if (isFinite(hsl.s) && isFinite(hsl.l)) {
+            rainbowToneCache.s = Math.round(Math.min(90, Math.max(40, hsl.s * 100)));
+            rainbowToneCache.l = Math.round(Math.min(72, Math.max(38, hsl.l * 100)));
+          }
+        }
+      } catch (e) {}
+    }
+    return rainbowToneCache;
+  }
+  function resetRainbowTone() { rainbowToneCache.at = -1e9; }
+  window.addEventListener('doomalay:theme-changed', resetRainbowTone);
+  window.addEventListener('doomalay:theme-applied', resetRainbowTone);
+  function hexToRgb(h) {
+    return { r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) };
+  }
+  function rgbToHsl(r, g, b) {
+    var rn = r / 255, gn = g / 255, bn = b / 255;
+    var mx = Math.max(rn, gn, bn), mn = Math.min(rn, gn, bn);
+    var l = (mx + mn) / 2;
+    var s = 0, hue = 0;
+    if (mx !== mn) {
+      var dd = mx - mn;
+      s = l > 0.5 ? dd / (2 - mx - mn) : dd / (mx + mn);
+      if (mx === rn) hue = ((gn - bn) / dd + (gn < bn ? 6 : 0));
+      else if (mx === gn) hue = (bn - rn) / dd + 2;
+      else hue = (rn - gn) / dd + 4;
+      hue /= 6;
+    }
+    return { h: hue * 360, s: s, l: l };
+  }
+  function hslToHex(h, sPct, lPct) {
+    var s = sPct / 100, l = lPct / 100;
+    var c = (1 - Math.abs(2 * l - 1)) * s;
+    var hp = (((h % 360) + 360) % 360) / 60;
+    var xx = c * (1 - Math.abs(hp % 2 - 1));
+    var r = 0, g = 0, b = 0;
+    if (hp < 1) { r = c; g = xx; }
+    else if (hp < 2) { r = xx; g = c; }
+    else if (hp < 3) { g = c; b = xx; }
+    else if (hp < 4) { g = xx; b = c; }
+    else if (hp < 5) { r = xx; b = c; }
+    else { r = c; b = xx; }
+    var m = l - c / 2;
+    var to2 = function (v) { var hv = Math.round((v + m) * 255); return ('0' + Math.max(0, Math.min(255, hv)).toString(16)).slice(-2); };
+    return '#' + to2(r) + to2(g) + to2(b);
+  }
+  function hashIdHue(id) {
+    // FNV-1a over the icon id → a stable 0..360 hue (the rainbow sample)
+    var h = 0x811c9dc5;
+    var str = String(id || '');
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return (h % 360);
+  }
+  function rainbowHexFor(id) {
+    var tone = rainbowTone();
+    return hslToHex(hashIdHue(id), tone.s, tone.l);
+  }
+  // the tap hit: the arrow's own circle (the scaled chevron's extents ×
+  // slack, min 28px — finger-friendly like findIconAt)
+  function arrowAtScreen(x, y) {
+    for (var i = 0; i < lastArrows.length; i++) {
+      var ar = lastArrows[i];
+      var r = Math.max(28, 22 * ((typeof ar.s === 'number') ? ar.s : 1));
+      var dx = x - ar.x, dy = y - ar.y;
+      if (dx * dx + dy * dy <= r * r) return ar;
+    }
+    return null;
+  }
+
+  // ── v1.36.3: THE GLIDE — press an indicator, the canvas carries you ──
+  // The viewport pans itself toward the pinned icon (which lands ≈ the
+  // viewport CENTER) — smooth + quick (ease-out cubic over ~600ms; longer
+  // trips clamp the duration so far icons arrive fast too). It ENDS at
+  // center ±24px (the icon flashes its arrival) or when the target leaves
+  // the world. It CANCELS on any canvas-surface interaction (a press on
+  // #c / #chatbots, a pinch start, a wheel notch) — but taps on the UI
+  // chrome (the settings gear, the dock — separate DOM elements that
+  // never reach the canvas handlers) do NOT cancel it, the user's law.
+  var glide = { active: false, id: null, fromX: 0, fromY: 0,
+                t0: 0, dur: 0 };
+  var GLIDE_MS = 600;
+  var GLIDE_ARRIVE_PX = 24;
+  function glideTargetOf(id) {
+    for (var i = 0; i < world.entities.length; i++) {
+      if (world.entities[i].id === id) return world.entities[i];
+    }
+    return null;
+  }
+  function startCameraGlide(targetId) {
+    var icon = glideTargetOf(targetId);
+    if (!icon) return false;
+    // center the icon: screen center → world point (screenToWorld twin)
+    var toOx = icon.x - (W / 2) / scale;
+    var toOy = icon.y - (H / 2) / scale;
+    var distPx = Math.hypot((toOx - offsetX) * scale, (toOy - offsetY) * scale);
+    if (distPx < GLIDE_ARRIVE_PX) { icon.flash(); return true; }  // already there
+    glide.active = true;
+    glide.id = targetId;
+    glide.fromX = offsetX; glide.fromY = offsetY;
+    glide.t0 = performance.now();
+    glide.dur = Math.max(220, Math.min(GLIDE_MS, distPx * 0.9));  // far → quick, near → snappy
+    velX = 0; velY = 0;
+    startAnimation();
+    return true;
+  }
+  function cancelCameraGlide() {
+    if (!glide.active) return false;
+    glide.active = false; glide.id = null;
+    return true;
+  }
+  // the tick's glide step — returns true when the camera moved (full frame)
+  function stepCameraGlide(now) {
+    if (!glide.active) return false;
+    var icon = glideTargetOf(glide.id);
+    if (!icon) { glide.active = false; return false; }   // the target died mid-flight
+    // the target may DRIFT (physics) — re-home the destination each step;
+    // the interpolation stays from the FIXED start, so a moving target
+    // re-aims the same smooth curve (the standard lerp-with-moving-target)
+    var toOx = icon.x - (W / 2) / scale;
+    var toOy = icon.y - (H / 2) / scale;
+    var tt = Math.max(0, Math.min(1, (now - glide.t0) / glide.dur));
+    var ease = 1 - Math.pow(1 - tt, 3);   // ease-out cubic: quick, then settle
+    offsetX = glide.fromX + (toOx - glide.fromX) * ease;
+    offsetY = glide.fromY + (toOy - glide.fromY) * ease;
+    if (tt >= 1) {
+      glide.active = false;
+      // arrived (≈ centered)? the flash marks the landing
+      var sx = (icon.x - offsetX) * scale - W / 2;
+      var sy = (icon.y - offsetY) * scale - H / 2;
+      if (Math.hypot(sx, sy) <= GLIDE_ARRIVE_PX * 2) icon.flash();
+      scheduleSave();
+      scheduleUpdate();
+    }
+    return true;
+  }
 
   // entitiesForWorker — the plain clones the atom core reads.
   // v0.88 ROOT FIX (the entity-clone omission): the clones rode EVERY
@@ -762,6 +922,10 @@
       }
       return out;
     },
+    // v1.36.3 THE TRUE COMPASS: the rig probes (the v0.90.1 read-back law —
+    // the E2E rigs read the arrow cache + the glide state; read-only).
+    arrowsProbe: function () { return lastArrows.slice(); },
+    glideState: function () { return { active: glide.active, id: glide.id }; },
     // v0.90.1: the camera writer (its twin) — the visual rigs center the
     // group for the screenshot probes.
     setView: function (ox, oy, s) {
@@ -1034,6 +1198,10 @@
     var now = performance.now();
     var dtF = lastStepAt ? Math.min(3, (now - lastStepAt) / 16.667) : 1;
     lastStepAt = now;
+    // v1.36.3 THE GLIDE: the compass-press camera animation runs FIRST —
+    // a gliding camera is a MOVING camera (full frames + icon renders,
+    // exactly the pan semantics; the icons re-render per frame below).
+    if (stepCameraGlide(now)) moving = true;
     if (inputState === 'PANNING') {
       // v0.94.1: THE FINGER OWNS THE CAMERA — while an active finger pan
       // is in flight, tick does NOT integrate velX/velY (the input path
@@ -1513,6 +1681,10 @@
     startScreenY = lastScreenY = screenY;
     lastTime = performance.now();
     velX = 0; velY = 0;
+    // v1.36.3: THE FINGER IS BOSS — any canvas-surface press cancels a
+    // running glide (the user took the wheel; UI chrome taps never reach
+    // here — the user's law).
+    cancelCameraGlide();
     longPressTimer = setTimeout(function () {
       longPressTimer = null;
       if (inputState === 'PENDING') {
@@ -1628,6 +1800,12 @@
             window.ChatPanel.render(panel.bodyEl, icon, panel);
           }
         }, 150);
+      } else {
+        // v1.36.3 THE TRUE COMPASS: no icon under the finger — a pinned
+        // indicator hit starts THE GLIDE (the canvas carries itself to
+        // the pinned icon until it is ≈ centered or the user interacts).
+        var arrowHit = arrowAtScreen(startScreenX, startScreenY);
+        if (arrowHit) startCameraGlide(arrowHit.target);
       }
       inputState = 'IDLE';
       return;
@@ -1735,6 +1913,7 @@
     if (e.touches.length === 2) {
       e.preventDefault();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      cancelCameraGlide();   // v1.36.3: a pinch takes the camera — the glide dies
       inputState = 'IDLE'; velX = 0; velY = 0;
       if (draggedIcon) {
         draggedIcon.dragging = false;
@@ -1811,6 +1990,7 @@
   document.addEventListener('wheel', function (e) {
     if (!onCanvasSurface(e.target)) return;
     e.preventDefault();
+    cancelCameraGlide();   // v1.36.3: a zoom notch takes the camera — the glide dies
     lastWheelAt = performance.now();   // v1.09.3: the wheel burst holds the ladder
     zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX, e.clientY);
     zoomReleaseFrame();

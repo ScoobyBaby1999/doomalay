@@ -155,13 +155,17 @@ function paintFrame(m) {
       camWithDots = { ox: m.cam.ox, oy: m.cam.oy, scale: m.cam.scale, dots: m.dots };
     }
     stats = Lattice.render(gctx, gctx2, W, H, camWithDots, P);
-    // the off-screen arrows (positions + hexes resolved main-side)
+    // the off-screen compass indicators (positions + hexes + the dynamic
+    // scale resolved main-side — v1.36.3 THE TRUE COMPASS: the s field is
+    // the near/far scale, app.js's paintArrows twin)
     if (m.arrows && m.arrows.length && gctx) {
       for (var i = 0; i < m.arrows.length; i++) {
         var ar = m.arrows[i];
+        var k = (typeof ar.s === 'number') ? ar.s : 1;
         gctx.save();
         gctx.translate(ar.x, ar.y);
         gctx.rotate(ar.angle);
+        gctx.scale(k, k);
         gctx.fillStyle = ar.color;
         gctx.beginPath();
         gctx.moveTo(14, 0);
