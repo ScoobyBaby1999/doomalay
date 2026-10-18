@@ -134,6 +134,17 @@
       this._stopReplayTag(); // v0.44: no socket, no backlog drain
       this.lastError = 'WebSocket unavailable: ' + (e && e.message ? e.message : e);
       console.error('WS connect failed', e);
+      // v1.40.1 THE FROZEN-LADDER FIX: a constructor-level throw used to be
+      // a DEAD END — no ladder reschedule, no ws_state event — so the
+      // 20s revive poll armed ONLY through the earlier onClose's
+      // belt-and-braces (a boot-time failure had NOTHING), and a frozen
+      // WebView window (the Android pause: every ladder timer fires into
+      // a throwing constructor — the v1400 rig's conviction) left the
+      // client dead past the unblock. The rung now RESCHEDULES through the
+      // ladder's own backoff; the exhaustion fires ws_state 'failed' like
+      // every other rung, so the UI arms its poll and the forever-revive
+      // law holds on every path.
+      this._scheduleReconnect();
       return;
     }
 
