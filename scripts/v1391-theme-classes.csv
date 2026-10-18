@@ -299,6 +299,7 @@ selector,family,first_class,vars_consumed(count),vars
 .hmsg-card-sub,hmsg,hmsg-card-sub,2,--chat-fs --text-3
 .hmsg-card-stats,hmsg,hmsg-card-stats,2,--chat-fs --text-3
 .hmsg-dl.hmsg-dld,hmsg,hmsg-dl,2,--ok --ok-rgb
+mark.chat-search-mark.chat-search-current,chat,chat-search-mark,2,--on-ok --warn-rgb
 .msg-action-btn,chat,msg-action-btn,2,--text-1 --ui-fs
 .msg-action-ico,chat,msg-action-ico,2,--fmt-a1 --ui-fs
 .msg-action-ts,chat,msg-action-ts,2,--border --text-3
@@ -493,6 +494,7 @@ selector,family,first_class,vars_consumed(count),vars
 #canvas-empty .ce-tip b,ce,ce-tip,1,--text-2
 #chat-panel .handle-bar,handle,handle-bar,1,--border
 #chat-panel .panel-header,panel,panel-header,1,--border
+#chat-panel .panel-header .avatar,panel,panel-header,1,--on-accent-2
 #panel-model-btn:active,other,panel-model-btn,1,--accent-rgb
 #chat-panel .panel-body,panel,panel-body,1,--panel-vis-h
 #chat-scrim,other,chat-scrim,1,--bg-panel-rgb
@@ -627,6 +629,7 @@ to,other,to,1,--warn-rgb
 .hmsg-card:focus-visible,hmsg,hmsg-card,1,--accent
 .hmsg-card-title .hub-have,hmsg,hmsg-card-title,1,--ok
 .hmsg-dl:active,hmsg,hmsg-dl,1,--accent-2-rgb
+mark.chat-search-mark,chat,chat-search-mark,1,--warn-rgb
 .msg-action-btn:active,chat,msg-action-btn,1,--border
 .msg-action-danger .msg-action-ico,chat,msg-action-danger,1,--err
 .msg-action-danger,chat,msg-action-danger,1,--err

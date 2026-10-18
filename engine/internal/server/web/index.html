@@ -1073,7 +1073,11 @@
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    color: #fff;
+    /* v1.39.2 RESLOT (row 9): the glyph ink rides the derived on-accent-2
+       (theme.js's ON_VAR map re-derives it per accent via onColorFor —
+       light themes' bright accents now get dark ink). The #fff fallback
+       keeps today's look for the degenerate no-derivation frame. */
+    color: var(--on-accent-2, #fff);
     overflow: hidden;
     flex-shrink: 0;
   }
@@ -3380,9 +3384,13 @@
     color: var(--ok);
   }
 
-  /* in-chat search highlight */
-  mark.chat-search-mark { background: rgba(250,204,21,0.35); color: inherit; border-radius: 3px; }
-  mark.chat-search-mark.chat-search-current { background: rgba(250,204,21,0.85); color: #1a1a0e; font-weight: 700; }
+  /* in-chat search highlight — v1.39.2 RESLOT (rows 6-8): the mark
+     rides the theme's --warn-rgb triplet (every theme block carries
+     it) and the current-mark ink rides the --on-ok constant (the
+     on-color precedent) — the frozen yellow/near-black literals are
+     dead. */
+  mark.chat-search-mark { background: rgba(var(--warn-rgb), 0.35); color: inherit; border-radius: 3px; }
+  mark.chat-search-mark.chat-search-current { background: rgba(var(--warn-rgb), 0.85); color: var(--on-ok); font-weight: 700; }
 
   /* ── v0.18: snap-state panel (gesture.js — TWO positions only) ── */
   #chat-panel.panel-full {
@@ -6038,23 +6046,13 @@
      inline are being reassigned to ink tones in the .5 pass; this block
      no longer mints clip-windows for them. */
 
-  /* v0.45 ITEM 4 fix (kept): --bg-app-rgb was referenced (L282, L1451)
-     but never defined — per-theme statics below; theme.js now also writes
-     the inline triplet when the user customizes --bg-app (which beats
-     these statics, like every other override). */
-  :root { --bg-app-rgb: 10,10,11; }   /* midnight default */
-  [data-theme="nebula"]  { --bg-app-rgb: 11,9,18; }
-  [data-theme="ember"]   { --bg-app-rgb: 15,10,8; }
-  [data-theme="forest"]  { --bg-app-rgb: 8,13,10; }
-  [data-theme="ocean"]   { --bg-app-rgb: 7,11,16; }
-  [data-theme="rose"]    { --bg-app-rgb: 16,10,13; }
-  [data-theme="mono"]    { --bg-app-rgb: 10,10,10; }
-  [data-theme="solar"]   { --bg-app-rgb: 6,8,16; }
-  [data-theme="paper"]   { --bg-app-rgb: 244,241,234; }
-  [data-theme="frost"]   { --bg-app-rgb: 238,242,247; }
-  /* when the user customizes --bg-app, the inline solid overrides the
-     [data-theme] block; re-derive the rgb from the inline value via a
-     fallback chain (the rgba() consumers already pass a fallback). */
+  /* v1.39.2 (G2): the v0.45 per-theme --bg-app-rgb boot statics lived
+     HERE as a second definition surface; the main [data-theme] blocks
+     carry the IDENTICAL values (verified pair-by-pair before the
+     retirement) and midnight's :root static sits with the other
+     triplets — the duplicate block is gone. applyTheme re-derives the
+     live triplet from the resolved canvas on every apply, so overrides
+     stay exact; the rgba() consumers keep their fallback chain. */
 </style>
 </head>
 <body>

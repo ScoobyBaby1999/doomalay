@@ -431,6 +431,12 @@
     '--text-2-rgb': '--text-2',
     '--text-3-rgb': '--text-3',
     '--border-rgb': '--border',
+    // v1.39.2 (G1): the audit's one real hole — --border-strong-rgb was
+    // read (appearance.js theme-card border) but defined NOWHERE; the
+    // dead literal fallback (52,52,74) was the only resolver. The map
+    // entry derives it from --border-strong on every apply, like its
+    // thirteen siblings.
+    '--border-strong-rgb': '--border-strong',
     '--accent-rgb': '--field-accent-1',
     '--accent-2-rgb': '--field-accent-2',
     '--accent-3-rgb': '--field-accent-3',

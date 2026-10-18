@@ -336,7 +336,7 @@
       var acc = (p && p.accents) || [t.accent, t.accent2, t.accent3];
       html += '<button data-action="set-theme" data-theme="' + id + '"' + (scope ? ' data-scope="' + scope + '"' : '') + ' ' +
         'style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;' +
-        'background:' + surf + ';border:1.5px solid ' + (sel ? (acc[0] || t.accent) : 'rgba(var(--border-strong-rgb, 52,52,74), 0.35)') + ';' +
+        'background:' + surf + ';border:1.5px solid ' + (sel ? (acc[0] || t.accent) : 'rgba(var(--border-strong-rgb), 0.35)') + ';' +
         'border-radius:12px;padding:10px;cursor:pointer;font-family:inherit;' +
         (sel ? 'box-shadow:0 0 0 2px ' + (acc[0] || t.accent) + '40;' : '') + '">' +
         '<span style="display:flex;width:100%;gap:2px;align-items:center">' +
@@ -950,10 +950,13 @@
     // (the canvas-55% mix / the constant white) — the editor opens on
     // what the app shows now, never a dead #000000.
     if (c.field === '--field-shadow' && window.DoomTheme.derivedShadowHex) {
-      return { colors: [window.DoomTheme.derivedShadowHex(st) || '#020202'], dir: 'auto' };
+      // v1.39.2 RESLOT: the seed fallback rides the FALLBACKS canon
+      // (byte-identical values — the dead literals were the audit's
+      // rows 1-2; a fallback can never drift from the system now).
+      return { colors: [window.DoomTheme.derivedShadowHex(st) || window.DoomTheme.FALLBACKS.shadow], dir: 'auto' };
     }
     if (c.field === '--field-highlight' && window.DoomTheme.derivedHighlightHex) {
-      return { colors: [window.DoomTheme.derivedHighlightHex(st) || '#ffffff'], dir: 'auto' };
+      return { colors: [window.DoomTheme.derivedHighlightHex(st) || window.DoomTheme.FALLBACKS.highlight], dir: 'auto' };
     }
     // not customized: the field's CURRENT computed hex, as a 1-color
     // spec (what the editor offers is what the app looks like now)
@@ -1000,11 +1003,12 @@
       // v0.99.4: the INK field is solid-only — a plain color input (ink
       // is never a window; the fmt field owns text gradients).
       if (c.solid) {
-        var inkHex = spec.colors[0] || '#e0e0e8';
+        // v1.39.2 RESLOT: the ink seed fallback rides the canon (rows 3-4).
+        var inkHex = spec.colors[0] || window.DoomTheme.FALLBACKS.ink;
         rowEditorBuilders[pfx] = function (body) {
           body.innerHTML =
             '<div style="padding:12px;display:flex;align-items:center;gap:10px">' +
-            '<input type="color" id="' + pfx + '-solid" value="' + (/^#[0-9a-fA-F]{6}$/.test(inkHex) ? inkHex : '#e0e0e8') + '" ' +
+            '<input type="color" id="' + pfx + '-solid" value="' + (/^#[0-9a-fA-F]{6}$/.test(inkHex) ? inkHex : window.DoomTheme.FALLBACKS.ink) + '" ' +
             'style="width:56px;height:44px;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:4px;cursor:pointer" ' +
             'aria-label="Ink color">' +
             '<span style="font-size:var(--ui-small-fs);color:var(--text-3)">every text color derives from this one ink — solid only</span>' +

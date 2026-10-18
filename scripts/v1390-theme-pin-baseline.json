@@ -1,14 +1,4 @@
 {
  "_doc": "THE SOURCE-PIN BASELINE \u2014 every literal-color occurrence outside the mechanically-safe zones. New literal \u2192 the pin fails; fix it or document its zone in v1390-theme-census.py and --update. Stale entries fail too (delete when fixed). known-violation = the v1390 audit's enumerated findings (see docs/THEME-AUDIT-V139.md for the re-slot proposals).",
- "entries": [
-  "appearance.js:1003:hex:#e0e0e8|VIOLATION-candidate",
-  "appearance.js:1007:hex:#e0e0e8|VIOLATION-candidate",
-  "appearance.js:953:hex:#020202|VIOLATION-candidate",
-  "appearance.js:956:hex:#ffffff|white-constant",
-  "index.html:1076:hex:#fff|index-html-consumer",
-  "index.html:3384:rgb:rgba(250,204,21,0.35)|VIOLATION-candidate",
-  "index.html:3385:hex:#1a1a0e|index-html-consumer",
-  "index.html:3385:rgb:rgba(250,204,21,0.85)|VIOLATION-candidate",
-  "pixiworld.js:432:rgb:rgba(167,139,250,0.9)|VIOLATION-candidate"
- ]
+ "entries": []
 }

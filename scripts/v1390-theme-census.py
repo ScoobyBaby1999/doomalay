@@ -70,13 +70,16 @@ RANGE_ZONES = [
     ('formatter.js', 797, 810, 'media-black', 'popYTOut PiP theater'),
     # index.html .te-* — the theme EDITOR's HSV wheel (the picker IS the
     # color space: the conic hue disc, the white core, the V-ramp)
-    ('index.html', 1890, 1980, 'picker', 'te-wheel-disc'),
+    ('index.html', 1894, 1984, 'picker', 'te-wheel-disc'),
     # index.html .crop-frame — the crop frame's white edge + dark surround
     # (contrast over arbitrary USER images — documented)
-    ('index.html', 5158, 5168, 'crop', '.crop-frame'),
+    # v1.39.2 RESLOT re-anchored the ranges (+4 avatar ink, +4 search-mark,
+    # +3/+1 the editor-seed fallbacks — the ranges ride the CONTENT, the
+    # anti-rot markers keep them honest).
+    ('index.html', 5166, 5176, 'crop', '.crop-frame'),
     # index.html .fmt-yt-* — the YouTube embed surfaces: the player
     # letterbox black + the .fmt-yt-play brand red (documented)
-    ('index.html', 2752, 2870, 'media-black', 'fmt-yt-thumb'),
+    ('index.html', 2756, 2874, 'media-black', 'fmt-yt-thumb'),
     # uikit.js _selftest — the GradientUI pure-function assertions: the
     # oracle hexes are TEST DATA, never chrome (test_uikit.js runs them)
     ('uikit.js', 978, 1172, 'self-test', '_selftest'),
@@ -88,7 +91,7 @@ RANGE_ZONES = [
     # appearance.js — the veil-ink editor's zero defaults (= the :root
     # --veil-ink #000000; the documented zero-point zone)
     ('appearance.js', 872, 872, 'zero-point', 'veil zero'),
-    ('appearance.js', 961, 961, 'zero-point', 'veil zero'),
+    ('appearance.js', 964, 964, 'zero-point', 'veil zero'),
     # lattice.js rgbaStr — the pure hex→rgba converter (callers pass
     # theme-resolved hexes; the numbers here are bit-shift plumbing)
     ('lattice.js', 196, 200, 'converter', 'function rgbaStr'),
