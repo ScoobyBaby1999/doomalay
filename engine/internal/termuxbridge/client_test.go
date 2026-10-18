@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -400,4 +401,157 @@ func serveStatus(t *testing.T, status int, body string) string {
 	}))
 	t.Cleanup(ts.Close)
 	return ts.URL
+}
+
+// ── v1.39.4 THE NET WAKE ─────────────────────────────────────────────────
+
+// netWaitStub — the bridge's /netwait contract with a controllable seq: the
+// handler long-polls exactly like TermuxBridgeServer.handleNetwait (release
+// on seq > since, timeout otherwise), and the test can bump the seq to
+// simulate the Kotlin NetworkCallback firing.
+type netWaitStub struct {
+	mu  sync.Mutex
+	seq int64
+	srv *httptest.Server
+}
+
+func newNetWaitStub(t *testing.T) *netWaitStub {
+	t.Helper()
+	st := &netWaitStub{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /netwait", func(w http.ResponseWriter, r *http.Request) {
+		since, _ := strconv64(r.URL.Query().Get("since"))
+		timeoutMS, _ := strconv64(r.URL.Query().Get("timeout_ms"))
+		if timeoutMS <= 0 || timeoutMS > 60000 {
+			timeoutMS = 30000
+		}
+		deadline := time.Now().Add(time.Duration(timeoutMS) * time.Millisecond)
+		for {
+			st.mu.Lock()
+			seq := st.seq
+			st.mu.Unlock()
+			if seq > since || time.Now().After(deadline) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, fmt.Sprintf(`{"seq": %d, "timeout": %t}`, seq, seq <= since))
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+	st.srv = httptest.NewServer(mux)
+	t.Cleanup(st.srv.Close)
+	return st
+}
+
+func (st *netWaitStub) bump() {
+	st.mu.Lock()
+	st.seq++
+	st.mu.Unlock()
+}
+
+func strconv64(s string) (int64, bool) {
+	var n int64
+	if s == "" {
+		return 0, false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+	}
+	return n, true
+}
+
+// TestV1400_NetWait_TheWakeReleases — a mid-poll seq bump releases the
+// long-poll immediately with the new seq and timeout=false: the exact
+// chain the Kotlin NetworkCallback drives.
+func TestV1400_NetWait_TheWakeReleases(t *testing.T) {
+	st := newNetWaitStub(t)
+	c := NewClient(st.srv.URL)
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		st.bump()
+	}()
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seq, timedOut, err := c.NetWait(ctx, 0, 2000)
+	if err != nil {
+		t.Fatalf("NetWait failed: %v", err)
+	}
+	if timedOut {
+		t.Fatal("a mid-poll wake must not read as a timeout")
+	}
+	if seq < 1 {
+		t.Fatalf("the woken poll must carry the bumped seq, got %d", seq)
+	}
+	if elapsed := time.Since(start); elapsed > 1*time.Second {
+		t.Fatalf("the wake must release the poll fast, took %v", elapsed)
+	}
+}
+
+// TestV1400_NetWait_TimeoutIsHonest — no wake inside the window answers
+// the CURRENT seq with timeout=true (the engine's loop re-arms with that
+// seq — a wake between polls is caught by the since comparison, never lost).
+func TestV1400_NetWait_TimeoutIsHonest(t *testing.T) {
+	st := newNetWaitStub(t)
+	st.bump() // a past wake the caller already saw (since=1)
+	c := NewClient(st.srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seq, timedOut, err := c.NetWait(ctx, 1, 100)
+	if err != nil {
+		t.Fatalf("NetWait failed: %v", err)
+	}
+	if !timedOut {
+		t.Fatal("no new wake inside the window must read as a timeout")
+	}
+	if seq != 1 {
+		t.Fatalf("the timeout must carry the current seq, got %d", seq)
+	}
+}
+
+// TestV1400_NetWait_TokenLaw — the route rides the SAME token law as
+// /run//probe//act: a wrong-token bridge (403 here) maps onto the typed
+// ErrTokenRejected, and the wake loop's 3s backoff path stays honest.
+func TestV1400_NetWait_TokenLaw(t *testing.T) {
+	url := serveStatus(t, 403, `{"error":"forbidden"}`)
+	c := NewClient(url)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _, err := c.NetWait(ctx, 0, 50)
+	if !errors.Is(err, ErrTokenRejected) {
+		t.Fatalf("a wrong-token netwait must map to ErrTokenRejected, got %v", err)
+	}
+}
+
+// TestV1400_NetWait_TimeoutClamp — pathological timeout_ms values clamp to
+// the 30s default (the bridge route does the same clamp — the two halves
+// of the contract agree).
+func TestV1400_NetWait_TimeoutClamp(t *testing.T) {
+	// served instantly (a stub that never wakes would hang these); only the
+	// REQUEST's query shape is asserted.
+	var gotTimeout string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTimeout = r.URL.Query().Get("timeout_ms")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"seq": 5, "timeout": true}`)
+	}))
+	defer ts.Close()
+	c := NewClient(ts.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.NetWait(ctx, 4, -7); err != nil {
+		t.Fatalf("NetWait clamp call failed: %v", err)
+	}
+	if gotTimeout != "30000" {
+		t.Fatalf("timeout_ms must clamp to 30000, request carried %q", gotTimeout)
+	}
+	if _, _, err := c.NetWait(ctx, 4, 999999); err != nil {
+		t.Fatalf("NetWait clamp call failed: %v", err)
+	}
+	if gotTimeout != "30000" {
+		t.Fatalf("timeout_ms must clamp to 30000 on the high side, request carried %q", gotTimeout)
+	}
 }

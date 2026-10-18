@@ -135,6 +135,14 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         // /api/termux/status answers {"available":false}).
         if cfg.TermuxBridge != "" {
                 s.termux = termuxbridge.NewClient(cfg.TermuxBridge)
+                // v1.39.4 THE NET WAKE: the bridge long-poll loop — the
+                // Kotlin NetworkCallback fires through the bridge's /netwait
+                // route the moment Android validates connectivity; this loop
+                // turns it into llm.WakeNet() so every suspended retry waiter
+                // (v1.39.3 THE PATIENT ENGINE) retries within ~1s of the
+                // network's return. Background-derived ctx (the detachment
+                // law), process-lifetime, self-healing on bridge hiccups.
+                go s.netWakeListener()
         }
         // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil = disabled via
         // DOOMALAY_OTA_DISABLE or no URL). The background refresher starts

@@ -459,6 +459,15 @@ class TermuxBridgeServer(private val ctx: Context) {
     // URL from it (the server knows its own port).
     @Volatile private var localPort = 0
 
+    // v1.39.4 THE NET WAKE: the monotonic connectivity seq — the Kotlin
+    // NetworkCallback's onAvailable (EngineService owns the registration)
+    // bumps it through netWake(); the engine's long-poll loop releases the
+    // moment it sees seq > since. The monitor wakes every /netwait waiter;
+    // a late waiter's next poll carries the seq anyway (the honest gap:
+    // a wake between polls is caught by the since comparison — never lost).
+    private val netSeq = java.util.concurrent.atomic.AtomicLong(0)
+    private val netWakeMonitor = Object()
+
     fun start(): String {
         check(serverSocket == null && !running) { "TermuxBridgeServer already started" }
         var sock: ServerSocket? = null
@@ -488,10 +497,64 @@ class TermuxBridgeServer(private val ctx: Context) {
 
     fun stop() {
         running = false
+        // v1.39.4: release any /netwait long-poll waiter so its worker
+        // thread exits instead of sitting out its timeout against a dead
+        // bridge.
+        netWake()
         try {
             serverSocket?.close() // unblocks accept()
         } catch (_: IOException) {}
         serverSocket = null
+    }
+
+    // v1.39.4 THE NET WAKE: bump the connectivity seq + release every
+    // /netwait waiter. Called by EngineService's NetworkCallback.onAvailable
+    // (connectivity VALIDATED — the documented ~instant signal) and by
+    // stop() (thread hygiene).
+    fun netWake() {
+        netSeq.incrementAndGet()
+        synchronized(netWakeMonitor) { netWakeMonitor.notifyAll() }
+    }
+
+    // GET /netwait?since=N&timeout_ms=30000 — the engine's long-poll.
+    // Answers {"seq": S} the moment S > since (a wake), or
+    // {"seq": S, "timeout": true} at the timeout. Same token law as
+    // /run, /probe, /act — loopback + unguessable token.
+    private fun handleNetwait(out: OutputStream, path: String) {
+        var since = 0L
+        var timeoutMS = 30000L
+        try {
+            val q = path.substringAfter('?', "")
+            for (pair in q.split('&')) {
+                if (pair.isEmpty()) continue
+                val eq = pair.indexOf('=')
+                if (eq <= 0) continue
+                val key = pair.substring(0, eq)
+                val value = pair.substring(eq + 1)
+                if (key == "since") since = value.toLongOrNull() ?: 0L
+                if (key == "timeout_ms") timeoutMS = value.toLongOrNull() ?: 30000L
+            }
+        } catch (_: Exception) {
+            // a malformed query waits on the defaults — defensive parse
+        }
+        if (timeoutMS <= 0 || timeoutMS > 60000) timeoutMS = 30000L
+        val deadline = System.currentTimeMillis() + timeoutMS
+        synchronized(netWakeMonitor) {
+            while (netSeq.get() <= since && running && System.currentTimeMillis() < deadline) {
+                val remain = deadline - System.currentTimeMillis()
+                if (remain <= 0) break
+                try {
+                    netWakeMonitor.wait(remain)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+        }
+        val o = JSONObject()
+        o.put("seq", netSeq.get())
+        o.put("timeout", netSeq.get() <= since)
+        writeResponse(out, 200, o.toString())
     }
 
     // ── The accept loop: one worker thread per connection ───────────────
@@ -573,6 +636,8 @@ class TermuxBridgeServer(private val ctx: Context) {
                     handleRun(out, req.body)
                 route == "/act" && req.method == "POST" ->
                     handleAct(out, req.body)
+                route == "/netwait" && req.method == "GET" ->
+                    handleNetwait(out, req.path)
                 else ->
                     writeResponse(out, 404, errJson("not found"))
             }

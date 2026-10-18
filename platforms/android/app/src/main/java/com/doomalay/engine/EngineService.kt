@@ -95,7 +95,42 @@ class EngineService : Service() {
                 ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "doomalay:engine-turns")
         }
         startBusyPoll()
+        startNetWatch()
         return START_STICKY
+    }
+
+    // v1.39.4 THE NET WAKE: Android's own connectivity truth, pushed into
+    // the engine's retry machinery the moment it happens. The
+    // NetworkCallback (a request with NET_CAPABILITY_INTERNET +
+    // NET_CAPABILITY_VALIDATED) fires onAvailable when the OS validates a
+    // network — the documented ~instant signal; the callback bumps the
+    // bridge's net seq, the engine's /netwait long-poll releases, and every
+    // suspended retry waiter (v1.39.3 THE PATIENT ENGINE) retries within
+    // ~1s of the network's return instead of burning the next jittered rung
+    // (fixed timers are the backstop, never the trigger). Multiple fires
+    // (wifi↔cellular transitions, flaps) are harmless: a wake with healthy
+    // net retries and succeeds; a wake into a flap retries and re-suspends
+    // honestly.
+    private var netWatchRegistered = false
+    private fun startNetWatch() {
+        if (netWatchRegistered) return
+        try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+            val request = android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                .build()
+            cm.registerNetworkCallback(request, object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    AppLog.log("NET WAKE: connectivity validated — waking the engine's retry waiters")
+                    bridgeServer?.netWake()
+                }
+            })
+            netWatchRegistered = true
+            AppLog.log("NET WAKE: NetworkCallback registered (validated-network wake armed)")
+        } catch (e: Exception) {
+            AppLog.error("NET WAKE: callback registration failed (the jittered rungs carry the wake alone)", e)
+        }
     }
 
     private fun startEngine() {
