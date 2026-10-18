@@ -345,7 +345,31 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
         // v1.39.3 THE PATIENT ENGINE: the plain path runs through the net
         // ladder (it had ZERO net retry — one transport error ended the
         // turn instantly; the emission tap preserves the double-render law).
-        final, err := netLadderStream(ctx, req, ch, nil)
+        final, streamed, err := netLadderStream(ctx, req, ch, nil)
+        // v1.39.6 THE SEAMLESS CUT (PLAN-V140 §4): a transient cut of a
+        // stream that ALREADY streamed visible content is no longer a
+        // terminal. The double-render guard was right to refuse a blind
+        // restart (the partial would re-print) — the seam is the sanctioned
+        // continuation: seal the partial (round_end finalizes the open
+        // block), persist the seam notice, hold in the suspension until the
+        // network returns, then ONE continuation call whose context carries
+        // the partial + the nudge. The continuation streams a NEW segment
+        // (double-render impossible by construction — the old block is
+        // sealed complete). Bounded at ONE seam per plain turn: a second
+        // cut ends honestly.
+        var cut *emittedCutError
+        if errors.As(err, &cut) {
+                ch <- ChatChunk{Type: "round_end"}
+                ch <- ChatChunk{Type: "notice", Text: "the connection cut mid-reply — holding, and continuing when the network returns (Stop always works)"}
+                seamReq := req
+                msgs := make([]Message, len(req.Messages))
+                copy(msgs, req.Messages)
+                msgs = append(msgs,
+                        Message{Role: "assistant", Content: streamed},
+                        Message{Role: "user", Content: seamNudgeText})
+                seamReq.Messages = msgs
+                final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
+        }
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
@@ -362,7 +386,7 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
         if v := sealTurn(ctx, ch, nil, final); v == "empty" {
                 obs.EmitS(ctx, obs.Notice, "where", "turnfsm", "verdict", v, "text", "plain turn ended empty — one retry armed")
                 ch <- ChatChunk{Type: "progress", Text: "the stream ended without a token — retrying once…"}
-                final, err = netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered too (a net blip during the retry must not kill the turn)
+                final, _, err = netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered too (a net blip during the retry must not kill the turn)
                 if err != nil {
                         sealTurn(ctx, ch, err, nil)
                         emitTurnError(ch, err)
@@ -1623,6 +1647,27 @@ func authHeaders(req ChatRequest) map[string]string {
 // runs runNativeToolsTurn against the mcpbus instead. A request that
 // reaches here without a native search body falls through to a plain
 // streaming completion (the honest no-tools answer).
+// seamNudgeText — the continuation instruction the seam's context rides
+// (v1.39.6): continue exactly from the cut, never repeat. The provider leg
+// is not offset-resumable — partial-as-context is the accepted pattern
+// (research §3.6); the event log absorbs the seam.
+const seamNudgeText = "(your previous reply was cut off mid-stream after the text above. Continue that reply exactly from where it stopped — do not repeat any of it.)"
+
+// netSuspendedLoopPlain — §4's hold-and-continue for the single-completion
+// paths: the suspended machinery (quiet entry — the seam notice is already
+// persisted) with fn = one tap-streamed continuation attempt. The
+// continuation's own emitted cut returns honestly (bounded at one seam).
+func netSuspendedLoopPlain(ctx context.Context, ch chan<- ChatChunk, req ChatRequest) (*Usage, error) {
+        var final *Usage
+        var emitted bool
+        err := netSuspendedLoop(ctx, ch, req.Provider, "", func() (bool, error) {
+                var e error
+                final, emitted, _, e = streamTap(ctx, req, ch, nil)
+                return emitted, e
+        })
+        return final, err
+}
+
 func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
         ch <- ChatChunk{Type: "status", State: "running"}
 
@@ -1640,7 +1685,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 msgs[0].Content = templateBriefBlock(req.TemplateID, req.TemplateBrief) + "\n" + msgs[0].Content
                                 aReq.Messages = msgs
                         }
-                        u, err := netLadderStream(ctx, aReq, ch, native) // v1.39.3: laddered (the web-search answer stream)
+                        u, _, err := netLadderStream(ctx, aReq, ch, native) // v1.39.3: laddered (the web-search answer stream)
                         if err != nil {
                                 sealTurn(ctx, ch, err, nil)
                                 emitTurnError(ch, err)
@@ -1657,7 +1702,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         // Chat sends OpenRouter web turns here; anything else landing on
         // this branch still gets an honest streamed answer, just no
         // provider-side search).
-        u, err := netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered (the plain web-turn stream)
+        u, _, err := netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered (the plain web-turn stream)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
@@ -2104,17 +2149,16 @@ func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, f
         // v1.39.3: the rungs are spent and the network is STILL down — the
         // old ladder returned the error here and the turn died. Now: the
         // suspension.
-        return netSuspendedLoop(ctx, ch, provider, fn)
+        return netSuspendedLoop(ctx, ch, provider,
+                fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", providerLabel(provider)),
+                fn)
 }
 
 // netSuspendedLoop — THE SUSPENDED MODE (v1.39.3 THE PATIENT ENGINE).
 // THE USER'S LAW: an outage is not a turn verdict; "continue with all its
-// effort" is the spec. The loop:
-//   · ENTER notice (PERSISTED — the replay shows it): "connection lost —
-//     the turn holds and keeps retrying" — the returning/reconnecting user
-//     SEES why it was quiet (the ephemeral-only law of v0.39 made the whole
-//     outage invisible after reconnect; the user's ask was the opposite:
-//     "update the chat logs to show everything I missed").
+// effort" is the spec. enterText: the PERSISTED enter notice's text ("
+// = quiet — the caller already persisted its own, e.g. §4's seam notice).
+// The loop:
 //   · waits: full-jittered, growing base→cap, in ≤ netHeartbeatEvery slices;
 //     every slice emits an ephemeral progress heartbeat — the live UI truth
 //     AND the turn-pulse refresh (a suspended turn can never read stale, so
@@ -2126,9 +2170,11 @@ func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, f
 //     PERSISTED "network regained after Ns — continuing" (the second half
 //     of the story the user asked to see). Stop (ctx) exits clean.
 //   · There is no give-up. The turn's own truth or the user's Stop ends it.
-func netSuspendedLoop(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
+func netSuspendedLoop(ctx context.Context, ch chan<- ChatChunk, provider, enterText string, fn func() (bool, error)) error {
         label := providerLabel(provider)
-        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", label)}
+        if enterText != "" {
+                ch <- ChatChunk{Type: "notice", Text: enterText}
+        }
         entered := time.Now()
         next := netSuspendBase
         for {
@@ -2194,45 +2240,75 @@ func netSuspendedLoop(ctx context.Context, ch chan<- ChatChunk, provider string,
         }
 }
 
+// emittedCutError (v1.39.6 THE SEAMLESS CUT) marks a transient network
+// failure of a stream that ALREADY streamed visible content — the
+// double-render guard class. The ladder correctly refuses to blindly
+// retry it; §4's seam owns the sanctioned continuation (seal the partial,
+// hold, continue with it as context) and this marker is how the path
+// layers detect the class.
+type emittedCutError struct{ err error }
+
+func (e *emittedCutError) Error() string { return e.err.Error() }
+func (e *emittedCutError) Unwrap() error { return e.err }
+
+// streamTap runs streamCompletion ONCE through the emission tap: an
+// unbuffered mid channel between the stream and the turn's ch (the
+// handshake law — the result only arrives after every send was
+// received). It reports whether anything VISIBLE streamed (thinking or
+// content — the double-render question) and accumulates the assistant
+// CONTENT that streamed (the seam's context). Channel law:
+// streamCompletion never closes ch (the turn runner owns the close).
+func streamTap(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, bool, string, error) {
+        mid := make(chan ChatChunk) // unbuffered — the handshake law
+        type res struct {
+                u *Usage
+                e error
+        }
+        resCh := make(chan res, 1)
+        go func() {
+                u, e := streamCompletion(ctx, req, mid, extraBody)
+                resCh <- res{u, e}
+        }()
+        emitted := false
+        var content strings.Builder
+        for {
+                select {
+                case c := <-mid:
+                        if !emitted && (c.Type == "thinking" || c.Type == "assistant_delta") {
+                                emitted = true
+                        }
+                        if c.Type == "assistant_delta" {
+                                content.WriteString(c.Text)
+                        }
+                        ch <- c
+                case r := <-resCh:
+                        return r.u, emitted, content.String(), r.e
+                }
+        }
+}
+
 // netLadderStream — v1.39.3: streamCompletion THROUGH the pause ladder for
 // the plain / web-search / deep-research / final-answer paths (the native
 // ReAct rounds already ran the ladder; these paths had ZERO net retry —
-// one transport error ended the turn instantly). THE EMISSION TAP: an
-// unbuffered mid channel sits between streamCompletion and the turn's ch;
-// the tap watches for the first visible content (thinking or delta) so the
-// double-render guard survives intact — a stream that already showed text
-// is NEVER blindly restarted (§4 owns the seamless cut for that class).
-// Channel law: streamCompletion never closes ch (the turn runner owns the
-// close), so mid is closed by THIS function's contract: the unbuffered
-// handshake means the result only arrives after every send was received.
-func netLadderStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, error) {
+// one transport error ended the turn instantly). THE EMISSION TAP preserves
+// the double-render law: a stream that already showed text is NEVER blindly
+// restarted — instead the failure comes back WRAPPED in emittedCutError so
+// the path layer can run §4's seam (the sanctioned continuation).
+// v1.39.6: also returns the streamed assistant content (the seam's context)
+// and wraps the emitted+transient class.
+func netLadderStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, string, error) {
         var final *Usage
+        var streamed string
+        var emitted bool
         err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
-                mid := make(chan ChatChunk) // unbuffered — the handshake law
-                type res struct {
-                        u *Usage
-                        e error
-                }
-                resCh := make(chan res, 1)
-                go func() {
-                        u, e := streamCompletion(ctx, req, mid, extraBody)
-                        resCh <- res{u, e}
-                }()
-                emitted := false
-                for {
-                        select {
-                        case c := <-mid:
-                                if !emitted && (c.Type == "thinking" || c.Type == "assistant_delta") {
-                                        emitted = true
-                                }
-                                ch <- c
-                        case r := <-resCh:
-                                final = r.u
-                                return emitted, r.e
-                        }
-                }
+                var e error
+                final, emitted, streamed, e = streamTap(ctx, req, ch, extraBody)
+                return emitted, e
         })
-        return final, err
+        if err != nil && isTransientNetErr(err) && emitted {
+                err = &emittedCutError{err: err}
+        }
+        return final, streamed, err
 }
 
 // isTransientNetErr reports whether the error looks like a recoverable
@@ -2550,7 +2626,7 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         synthReq := req
         synthReq.SystemPrompt = "You are a meticulous research analyst. Write a thorough, well-structured answer with inline citations like [1], [2] referring to the numbered sources. If sources conflict, say so. End with a short 'Sources' list. Never fabricate facts or URLs."
         synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
-        u, err := netLadderStream(ctx, synthReq, ch, nil) // v1.39.3: laddered (the deep-research synthesis stream)
+        u, _, err := netLadderStream(ctx, synthReq, ch, nil) // v1.39.3: laddered (the deep-research synthesis stream)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)

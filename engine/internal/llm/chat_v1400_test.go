@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -222,7 +224,7 @@ func TestV1400_NonTransientExitsFastNoSuspension(t *testing.T) {
 	ch := make(chan ChatChunk, 16)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := netLadderStream(ctx, req, ch, nil)
+	_, _, err := netLadderStream(ctx, req, ch, nil)
 	if err == nil {
 		t.Fatal("the dead provider must fail honestly")
 	}
@@ -269,4 +271,53 @@ func TestV1400_DurHuman(t *testing.T) {
 		}
 	}
 	_ = fmt.Sprint("")
+}
+
+// TestV1400_SeamWrap_TheCutClassMarker (v1.39.6 THE SEAMLESS CUT): a
+// mid-stream connection death of a stream that ALREADY streamed visible
+// content must come back carrying the emittedCutError marker (the class
+// the seam owns) + the accumulated partial (the seam's context) — while
+// the partial's deltas stay on the record (the on-screen half).
+func TestV1400_SeamWrap_TheCutClassMarker(t *testing.T) {
+	withNetClocks(t, []time.Duration{2 * time.Millisecond}, 5*time.Millisecond, 10*time.Millisecond, 2*time.Millisecond)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fl := w.(http.Flusher)
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"partial answer "}}]}` + "\n\n"))
+		fl.Flush()
+		time.Sleep(20 * time.Millisecond) // let the delta land client-side
+		// THE CUT: the connection dies mid-stream — no [DONE], no
+		// finish_reason. ErrAbortHandler aborts the TCP stream server-side
+		// (the mobile-VPN/NAT-rebind shape).
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+
+	ch := make(chan ChatChunk, 64)
+	req := ChatRequest{
+		Model: "m", Provider: "openrouter", BaseURL: srv.URL,
+		Messages: []Message{{Role: "user", Content: "write a long answer"}},
+	}
+	_, streamed, err := netLadderStream(context.Background(), req, ch, nil)
+	var cut *emittedCutError
+	if !errors.As(err, &cut) {
+		t.Fatalf("a mid-stream cut of emitted content must carry the seam marker, got %v", err)
+	}
+	if !isTransientNetErr(err) {
+		t.Fatalf("the cut class must stay transient-class, got %v", err)
+	}
+	if streamed != "partial answer " {
+		t.Fatalf("the tap must accumulate the partial for the seam's context, got %q", streamed)
+	}
+	close(ch)
+	var text strings.Builder
+	for c := range ch {
+		if c.Type == "assistant_delta" {
+			text.WriteString(c.Text)
+		}
+	}
+	if text.String() != "partial answer " {
+		t.Fatalf("the partial's deltas must stay on the record, got %q", text.String())
+	}
 }

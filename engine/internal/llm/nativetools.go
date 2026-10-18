@@ -233,6 +233,11 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         think := ""
         nudged := false
         proceeds := 0 // v1.29.4 THE PROCEED: bounded at 2 — the third announcement IS the answer
+        // v1.39.6 THE SEAMLESS CUT: bounded at 3 seams per turn — a long
+        // outage may legitimately cut several rounds; the fourth cut ends
+        // honestly (the runaway guard).
+        seams := 0
+        const maxSeams = 3
         // v0.95.4: the repeat-call cache (see the twin in the ReAct loop).
         seenCalls := map[string]string{}
 
@@ -304,6 +309,59 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         emitTurnError(ch, fmt.Errorf("provider rejected tools"))
                         errs <- errToolsRejected
                         return
+                }
+                // v1.39.6 THE SEAMLESS CUT (PLAN-V140 §4): a transient network
+                // failure of a round that ALREADY streamed visible prose was
+                // the last honest terminal for net-class errors — the double-
+                // render guard rightly refused to blindly re-run the round
+                // (the partial would re-print). The seam is the sanctioned
+                // continuation: seal the partial as its own segment (round_end
+                // — the prose block finalizes, the tool pills would render
+                // below it), persist the seam notice, hold in the suspension
+                // until the network returns (the same heartbeats/wake/Stop),
+                // then continue with the PARTIAL AS CONTEXT — the continuation
+                // round streams a NEW segment (double-render impossible by
+                // construction: the old one is sealed complete) and may even
+                // carry tool calls (the full round machinery handles it —
+                // calls, segments, the proceed, the final answer all flow
+                // from here). Bounded at 3 seams per turn.
+                if err != nil && isTransientNetErr(err) && roundHadContent && seams < maxSeams {
+                        seams++
+                        ch <- ChatChunk{Type: "round_end"}
+                        ch <- ChatChunk{Type: "notice", Text: "the connection cut mid-reply — holding, and continuing when the network returns (Stop always works)"}
+                        history = append(history,
+                                Message{Role: "assistant", Content: roundText},
+                                Message{Role: "user", Content: seamNudgeText})
+                        roundReq.Messages = history
+                        err = netSuspendedLoop(ctx, ch, roundReq.Provider, "", func() (bool, error) {
+                                emitted2 := false
+                                u2, c2, e2 := scanSSECollect(ctx, roundReq, extra, ch, func(reasoning, content string) {
+                                        emitted2 = true
+                                        if reasoning != "" {
+                                                ch <- ChatChunk{Type: "thinking", Text: reasoning}
+                                                think += reasoning
+                                                if len(think) > 4800 {
+                                                        think = think[len(think)-2400:]
+                                                }
+                                        }
+                                        if content != "" {
+                                                contentSeen = true
+                                                roundHadContent = true
+                                                roundText += content
+                                                if len(roundText) > 1600 {
+                                                        roundText = roundText[len(roundText)-900:]
+                                                }
+                                                ch <- ChatChunk{Type: "assistant_delta", Text: content}
+                                        }
+                                })
+                                usage, calls = u2, c2
+                                return emitted2, e2
+                        })
+                        // fall through: err == nil → the round's normal flow
+                        // (call validation, execution, segments) continues
+                        // with the continuation round's outcome; err != nil →
+                        // the honest terminal below (a second cut of the
+                        // continuation, a class change, or the user's Stop).
                 }
                 if err != nil {
                         sealTurn(ctx, ch, err, nil)
@@ -535,7 +593,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         // through the net ladder too — the ReAct rounds were laddered since
         // v0.39 but THIS final stream (the turn's actual answer) died
         // instantly on a transport blip.
-        final, err := netLadderStream(ctx, finalReq, ch, nil)
+        final, _, err := netLadderStream(ctx, finalReq, ch, nil)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
