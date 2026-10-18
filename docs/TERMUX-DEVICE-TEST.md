@@ -449,3 +449,50 @@ would have been OTA but the engine build rides with it).
    ['doomalay.stardraw.v1']` reads `sprite` on hardware-canvas devices
    (your phone) — the app measured its own GPU once and picked the faster
    primitive. Nothing to do; it's the honesty receipt.
+
+## THE UNBROKEN STREAM checklist (v1.40.0) — 5 minutes
+
+The engine changed (the wake lock poll, the net wake bridge route, the
+turn-gated gauge) — `min_engine` walls the OTA, so **install the v1.40.0
+APK once** (the CI build), then:
+
+1. **The background proof (the big one)**: start any bot on a real task
+   (something that takes a few minutes), then LEAVE the app — home screen,
+   screen OFF, phone in your pocket. Come back 2–3 minutes later and open
+   the panel: the log should show all the work done in your absence (the
+   replay is the truth). While you were away, the system notification
+   should have read "1 bot working" — that's the wake lock's honesty
+   receipt. If your OEM's battery manager is aggressive (Samsung/Xiaomi
+   "put app to sleep"), unrestrict the app manually once: the one-time
+   system dialog covers stock Android's deep-Doze, but OEM sleep lists are
+   outside any API.
+2. **The battery-exemption ask**: after backgrounding with a live turn
+   once, the app asks (one time, on your next return) to ignore battery
+   optimizations — allow it. That's what keeps the network (and the wake
+   lock) alive in deep Doze.
+3. **The outage proof (level 2)**: start a bot turn, then kill your
+   internet (wifi + data off) mid-turn. The bot does NOT die: the panel
+   keeps Stop armed, and a notice lands in the log ("connection to X
+   lost — the turn holds and keeps retrying"). Turn the internet back on
+   — the turn continues BY ITSELF, and the log now shows the whole story:
+   the pause notice, "network regained after Ns — continuing", and the
+   answer. No manual continue, ever, for a network outage.
+4. **The mid-reply cut (the seam)**: if the connection dies while the bot
+   is mid-sentence, the reply doesn't restart from scratch — you'll see
+   the partial, a one-line "the connection cut mid-reply — holding" notice,
+   and the answer continuing from where it stopped when the network
+   returns.
+5. **The honest return**: with a turn running, background the app for
+   ~30s and come back — the panel catches up within ~a second of opening
+   (the resync: no "connection lost" flash, the work just appears).
+6. **The PM caveat (honest limit)**: PrivateModeAI bots run their agent
+   loop in the app's web layer, not the engine — they slow down (not die)
+   while backgrounded. Every engine-owned provider (OpenRouter, Nvidia,
+   Mistral, OpenCode, HF, Groq) keeps full speed in the background.
+
+**What changed under the hood, one line each**: the engine now holds a
+partial wake lock while turns run (and only then — an idle engine never
+burns battery); a WebView crash no longer kills the engine; a network
+outage suspends a turn instead of ending it (jittered retries, woken in
+~1s by Android's own connectivity signal); a mid-reply cut continues from
+where it stopped; and the panel resyncs the moment you return.

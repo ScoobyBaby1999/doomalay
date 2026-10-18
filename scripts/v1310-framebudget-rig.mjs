@@ -199,6 +199,10 @@ function runCatchup(visibility, streaming, owner) {
     isOwner: () => owner,
     renderActivity: () => { rendered++; },
     tickThinkingMeta: () => { thought++; },
+    // v1.39.5 re-point: THE HONEST RETURN's sweep rides the same listener
+    // (dead-client revive + resync); the sandbox stubs it — T9-T11 still
+    // pin the repaint pass, the sweep has its own walk checks.
+    sweepOnRegain: () => {},
   };
   sb.window = sb;
   vm.createContext(sb);
