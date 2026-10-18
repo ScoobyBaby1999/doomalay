@@ -38,24 +38,31 @@ check('10 themes in doc', doc.count('`midnight`') >= 1 and all(
     ('`%s`' % t) in doc for t in ('nebula', 'ember', 'forest', 'ocean', 'rose',
                                   'mono', 'solar', 'paper', 'frost')))
 
-# 3. G1 — the one real hole
+# 3. G1 — CLOSED in v1.39.2 THE RESLOT: --border-strong-rgb was the one
+#    read-but-UNDEFINED var (the dead 52,52,74 literal at appearance.js
+#    was the only resolver). It now rides theme.js TRIPLET_VARS — derived
+#    from --border-strong on every apply like its thirteen siblings.
 g1 = [r for r in rows if 'G1' in r['flags']]
-check('G1 == --border-strong-rgb only',
-      len(g1) == 1 and g1[0]['var'] == '--border-strong-rgb')
-# ...and it really is never defined
-bs = [r for r in rows if r['var'] == '--border-strong-rgb'][0]
-check('--border-strong-rgb has no root lines', bs['root_line(s)'].strip() == '')
-# source cross-check: not defined anywhere in the tree as --border-strong-rgb:
-defined = False
+check('no G1 hole remains in the catalog', len(g1) == 0)
+# ...and the var itself is present, map-derived, never a CSS static:
+bs = [r for r in rows if r['var'] == '--border-strong-rgb']
+check('--border-strong-rgb still in the catalog', len(bs) == 1)
+check('--border-strong-rgb has no CSS root line', bs and bs[0]['root_line(s)'].strip() == '')
+# source cross-check: the TRIPLET_VARS map entry exists in theme.js,
+# and no HTML/CSS surface defines it as a static:
+tj = open(os.path.join(WEB, 'theme.js'), encoding='utf-8').read()
+check('--border-strong-rgb rides TRIPLET_VARS',
+      re.search(r"'--border-strong-rgb'\s*:\s*'--border-strong'", tj) is not None)
+css_static = False
 for root, dirs, names in os.walk(WEB):
     if 'vendor' in root:
         continue
     for n in names:
-        if n.endswith(('.js', '.html', '.css')):
+        if n.endswith(('.html', '.css')):
             txt = open(os.path.join(root, n), encoding='utf-8', errors='replace').read()
             if re.search(r'(?<![\w-])--border-strong-rgb\s*:', txt):
-                defined = True
-check('--border-strong-rgb truly undefined in sources', not defined)
+                css_static = True
+check('--border-strong-rgb stays map-derived (no CSS static)', not css_static)
 
 # 4. persona/template overrides == paper+frost only (the documented v0.33 intent)
 pt = [r for r in rows if r['var'].startswith(('--persona-tint', '--template-tint'))]

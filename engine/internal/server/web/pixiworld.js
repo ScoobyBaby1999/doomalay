@@ -429,7 +429,14 @@
       if (img) g.drawImage(img, x, y, w, h);
       return;
     }
-    g.fillStyle = 'rgba(167,139,250,0.9)';   // the accent fallback
+    // v1.39.2 RESLOT (row 5): the art-window fallback paint rides the
+    // theme resolver now — themeColors() carries the resolved accent
+    // (midnight = 167,139,250, byte-identical to the retired literal;
+    // every other theme paints ITS accent). hexToInt's own miss → white,
+    // the file's zero-point.
+    var acc = themeColors().accent || '';
+    var ai = hexToInt(acc.charAt(0) === '#' ? acc : '#' + acc);
+    g.fillStyle = 'rgba(' + ((ai >> 16) & 255) + ',' + ((ai >> 8) & 255) + ',' + (ai & 255) + ',0.9)';
     g.fillRect(x, y, w, h);
   }
 
@@ -470,7 +477,13 @@
       if (t && t.accent) return { accent: t.accent, accent2: t.accent2, ring: t.ring };
     }
     var c = themeColors();
-    return { accent: c.accent.replace('#', ''), accent2: c.accent2.replace('#', ''), ring: '120,130,140' };
+    // v1.39.2 RESLOT (F3): the ring fallback rides the canon border-strong
+    // triplet (the frozen '120,130,140' drifted from FALLBACKS.borderStrong
+    // #34344a — the exact drift the canon kills; stub-path only). A miss
+    // decomposes to white, the file's zero-point.
+    var rb = String(c.borderStrong || '');
+    var ri = hexToInt(rb.charAt(0) === '#' ? rb : '#' + rb);
+    return { accent: c.accent.replace('#', ''), accent2: c.accent2.replace('#', ''), ring: ((ri >> 16) & 255) + ',' + ((ri >> 8) & 255) + ',' + (ri & 255) };
   }
 
   // ══ THE LAYER ════════════════════════════════════════════════════
@@ -726,7 +739,11 @@
     if (m) { rr = +m[1]; gg = +m[2]; bb = +m[3]; }
     else {
       var hxb = /^#([0-9a-fA-F]{6})$/.exec(String(themeColors().borderStrong || ''));
-      var hx = hxb ? parseInt(hxb[1], 16) : 0x5b5b6b;
+      // v1.39.2 RESLOT (F3): the hexToInt fallback rides the canon
+      // border-strong (the drifted 0x5b5b6b is dead; a DoomTheme-less
+      // harness composes to white, the zero-point).
+      var hx = hxb ? parseInt(hxb[1], 16)
+        : hexToInt((window.DoomTheme && window.DoomTheme.FALLBACKS) ? window.DoomTheme.FALLBACKS.borderStrong : '');
       rr = (hx >> 16) & 255; gg = (hx >> 8) & 255; bb = hx & 255;
     }
     var key = themeStamp + '|' + rr + ',' + gg + ',' + bb;
@@ -943,7 +960,6 @@
     colCache.at = 0;
     if (S.app) { sync(); layoutAtoms(true); poke(); }
   }
-  window.addEventListener('doomalay:theme-changed', onThemeChanged);
   window.addEventListener('doomalay:theme-applied', onThemeChanged);
   if (window.Settings && window.Settings.onChange) {
     window.Settings.onChange(function (st) {

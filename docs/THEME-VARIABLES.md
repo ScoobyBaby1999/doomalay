@@ -10,11 +10,11 @@
 |---|---|
 | distinct variables (literal, parsed) | **140** |
 | themes | **10** — midnight ships as the `:root` defaults, + nebula, ember, forest, ocean, rose, mono, solar, paper, frost |
-| CSS var() consumption sites (occurrences) | **3588** |
+| CSS var() consumption sites (occurrences) | **3592** |
 | JS reads (resolvedThemeVar / getPropertyValue) | **49** |
 | JS writes (setProperty + the want[] ledger) | **51** |
-| CSS selectors consuming vars (index.html) | **764** |
-| read-but-undefined holes | **`--border-strong-rgb`** |
+| CSS selectors consuming vars (index.html) | **767** |
+| read-but-undefined holes | **none** |
 
 **Count reconciliation**: the v1.39 census counted **160** distinct `--token` spellings in the tree; **140** of them are LITERAL variables (cataloged below); the other 16 are dynamically-composed names or trailing-dash fragments (e.g. `--bunch`, `--chat`, `--checkin`, `--custom`, `--del`, `--field-`…) — string-built prefixes that only become variables at runtime (formatter scheme keys, per-provider wsp tints). They resolve through the same themed values.
 
@@ -54,7 +54,7 @@ variables; (3) new variables join a group below and get a slot meaning.
 | `paper` | Paper | paper | true | #b45309 / #0e7490 / #be185d / #4d7c0f | #f4f1ea / #e0d8c8 / #c9bda6 / #a3906c |
 | `frost` | Frost | frost | true | #4f6ef7 / #0891b2 / #c026d3 / #ea580c | #eef2f7 / #dbe3ec / #c2cfdd / #93a7c0 |
 
-Per-theme field values live in the `[data-theme]` blocks of index.html (lines 157–6054); the JS twin (`THEMES`) feeds the canvas. Adding a theme = one `[data-theme]` block + one `THEMES` entry (all 6 fields + tones + triplets) — the pin and the verify rig (`scripts/v1390-theme-verify.py`) will check it.
+Per-theme field values live in the `[data-theme]` blocks of index.html (lines 157–268); the JS twin (`THEMES`) feeds the canvas. Adding a theme = one `[data-theme]` block + one `THEMES` entry (all 6 fields + tones + triplets) — the pin and the verify rig (`scripts/v1390-theme-verify.py`) will check it.
 
 ## A. THE FIELDS — the 8 user-editable sources
 
@@ -85,8 +85,8 @@ Products of `color-mix(in oklab, …)` in :root — do not edit their values dir
 | `--border` | --field-surface ⊕ --field-ink 13% | 71 | — | color-mix --field-surface ⊕ --field-ink 13% | CSS 245 (#canvas-empty .ce-card #chat-panel #chat-panel .handle #panel-tab-icon +183 more) · JS reads: browserdock.js |  |
 | `--border-strong` | --field-surface ⊕ --field-ink 24% | 72 | — | color-mix --field-surface ⊕ --field-ink 24% | CSS 63 (#chat-scroll, #chat-messages, #mb-list, .mb-body #chat-scroll::-webkit-scrollbar-thumb, #mb-list::-webkit-scrollbar-thumb, .mb-body::-webkit-scrollbar-thumb #media-zoom #mz-close, #media-zoom #mz-open +43 more) · JS reads: app.js, atoms.js, pixiworld.js |  |
 | `--card` | --field-surface ⊕ --field-ink 9% | 70 | — | color-mix --field-surface ⊕ --field-ink 9% | CSS 10 (.chatbot .icon, .chatbot .name .cv-section, .mb-more, .wsx-opt .gr-editor, .gr-swatches, .gr-tools +7 more) · JS reads: pixiworld.js |  |
-| `--raised-chrome` | --field-surface ⊕ --field-ink 5% | 5419, 5421 | — | color-mix --field-surface ⊕ --field-ink 5% | CSS 49 (#chat-panel .handle #panel-tab-icon #chat-search-input #menu +46 more) |  |
-| `--raised-ring` | --field-surface ⊕ --field-ink 16% | 5419, 5422 | — | color-mix --field-surface ⊕ --field-ink 16% | CSS 6 (.color-row-reset, .settings-nav .tab, .util-btn, .kbd .crop-btn .gr-mini +3 more) |  |
+| `--raised-chrome` | --field-surface ⊕ --field-ink 5% | 5427, 5429 | — | color-mix --field-surface ⊕ --field-ink 5% | CSS 49 (#chat-panel .handle #panel-tab-icon #chat-search-input #menu +46 more) |  |
+| `--raised-ring` | --field-surface ⊕ --field-ink 16% | 5427, 5430 | — | color-mix --field-surface ⊕ --field-ink 16% | CSS 6 (.color-row-reset, .settings-nav .tab, .util-btn, .kbd .crop-btn .gr-mini +3 more) |  |
 | `--shadow-ink` | derived alias member (window onto its field) | 93 | — | — | JS reads: pixiworld.js · JS writes: theme.js |  |
 | `--surface-1` | the plate (= --field-surface) | 58 | — | — | CSS 98 (#canvas-empty .ce-card #chat-panel #dock-expando.open +65 more) · JS reads: pixiworld.js |  |
 | `--surface-2` | --field-surface ⊕ --field-ink 5% | 59 | — | color-mix --field-surface ⊕ --field-ink 5% | CSS 174 (#dock-expando:not(.open) #dock-toggle:active #dock-toggle:hover #panel-view-back:active, #panel-view-x:active +75 more) · JS reads: browserdock.js, pixiworld.js |  |
@@ -106,10 +106,10 @@ Products of `color-mix(in oklab, …)` in :root — do not edit their values dir
 | `--accent-3-rgb` | alias of --field-accent-3 | 102 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --field-accent-3 | CSS 25 (.hi-root[data-tone="skill"] .hub-libpill[data-tone="acc3"][data-on="1"] .hub-root[data-tone="skill"] +7 more) |  |
 | `--accent-4-rgb` | alias of --accent-4 | 103 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --accent-4 | CSS 5 (.hi-root[data-tone="script"] .hub-root[data-tone="script"] checkOAuthReturn +1 more) |  |
 | `--accent-rgb` | alias of --field-accent-1 | 102 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --field-accent-1 | CSS 195 (#canvas-empty .ce-glyph #chat-input:focus #edit-banner +75 more) · JS reads: atoms.js |  |
-| `--bg-app-rgb` | alias of --bg-app | 104, 6045 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --bg-app | CSS 6 (#media-zoom #mz-close, #media-zoom #mz-open .chatbot .name .hub-libpill +3 more) | G2: definition split across distant :root blocks |
+| `--bg-app-rgb` | alias of --bg-app | 104 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --bg-app | CSS 6 (#media-zoom #mz-close, #media-zoom #mz-open .chatbot .name .hub-libpill +3 more) |  |
 | `--bg-panel-rgb` | alias of --field-canvas | 104 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --field-canvas | CSS 19 (#chat-scrim #media-zoom .crop-ui +10 more) |  |
 | `--border-rgb` | alias of --border | 106 | — | --border | CSS 9 (#util-row .util-btn .dx-chip .dx-pill +6 more) |  |
-| `--border-strong-rgb` | — | — | — | — | CSS 1 (schemeThemeSwatches) | G1: read but NEVER defined anywhere (root, theme, scope, js-inject); OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
+| `--border-strong-rgb` | alias of --border-strong | — | — | --border-strong | CSS 1 (schemeThemeSwatches) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--card-rgb` | alias of --card | 101 | — | --card | CSS 3 (.chatbot .name .chatbot .sandbox-badge renderGatelock) |  |
 | `--shadow-ink-rgb` | — | 111 | — | — | CSS 38 (#canvas-empty .ce-card #chat-panel #dock-expando.open +30 more) · JS writes: theme.js |  |
 | `--surface-1-rgb` | alias of --field-surface | 100 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | --field-surface | CSS 5 (.hub-card-fade ensureStyles) |  |
@@ -131,7 +131,7 @@ Per-theme semantic colors — every theme block carries all four (+ their `-rgb`
 | `--ok` | success green (pills, dots, banners) | 117 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | — | CSS 56 (#hub-bundle-dl .hub-dl-ok #hub-bundle-dl.is-done #hub-bundle-dl.is-running::after +26 more) · JS reads: pixiworld.js |  |
 | `--ok-rgb` | — | 117 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | — | CSS 39 (#hub-bundle-dl.is-done .art-unsaved-stay .hmsg-dl.hmsg-dld +10 more) |  |
 | `--warn` | warning amber (meters, stalled states) | 118 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | — | CSS 44 (.art-unsaved .chat-working-stalled .cwd i .chat-working-stalled .cwt +24 more) |  |
-| `--warn-rgb` | — | 118 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | — | CSS 36 (.chat-working-stalled .chat-working-stalled .cwe .cw-switch +10 more) |  |
+| `--warn-rgb` | — | 118 | ember, forest, frost, mono, nebula, ocean, paper, rose, solar | — | CSS 38 (.chat-working-stalled .chat-working-stalled .cwe .cw-switch +12 more) |  |
 
 ## E. THE PILL TONES — persona · template
 
@@ -153,12 +153,12 @@ Theme-STABLE constants (the --on-brand precedent): white glyph on brand discs, n
 | `--highlight-inset` | the 1px inner ring on raised chrome | — | — | — | JS writes: theme.js |  |
 | `--highlight-inset-rgb` | — | 116 | — | — | CSS 3 (.color-row-banner .gr-preview injectStyles) · JS writes: theme.js |  |
 | `--on-accent` | readable ink on accent-1 fills | 130 | — | — | CSS 30 (#canvas-empty .ce-btn #canvas-empty .ce-btn svg .hi-delbar-btn--rm +22 more) |  |
-| `--on-accent-2` | readable ink on accent-2 fills | — | — | — | CSS 6 (.tv-ico [data-a2-grad] .hub-libpill[data-tone="acc2"][data-on="1"] [data-a2-grad] .hub-root[data-tone=""] .hub-chatpill--mine.on +3 more) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
+| `--on-accent-2` | readable ink on accent-2 fills | — | — | — | CSS 7 (#chat-panel .panel-header .avatar .tv-ico [data-a2-grad] .hub-libpill[data-tone="acc2"][data-on="1"] +4 more) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--on-accent-3` | readable ink on accent-3 fills | — | — | — | CSS 6 ([data-a3-grad] .hub-libpill[data-tone="acc3"][data-on="1"] [data-a3-grad] .hub-root[data-tone="skill"] .hub-chatpill--mine.on [data-a3-grad] .mb-ufchip +3 more) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--on-bg-app` | — | — | — | — | CSS 1 ([data-bright-bg] .src-wrap, [data-bright-bg] .hub-wrap) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--on-border` | — | — | — | — | CSS 1 ([data-bright-border] .util-btn, [data-bright-border] .kbd) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--on-brand` | white glyph on brand discs (constant) | 144 | — | — | CSS 1 (providerCard) |  |
-| `--on-ok` | near-black ✓ on ok-dots (constant) | 145 | — | — | — |  |
+| `--on-ok` | near-black ✓ on ok-dots (constant) | 145 | — | — | CSS 1 (mark.chat-search-mark.chat-search-current) |  |
 | `--on-surface-1` | — | — | — | — | CSS 1 ([data-bright-s1] .gr-editor, [data-bright-s1] .gr-swatches, [data-bright-s1] .gr-tools) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--on-surface-2` | — | — | — | — | CSS 1 ([data-bright-s2] #menu) | theme.js-resolved (map target: twin alias / ON-var / triplet) |
 | `--text-shadow` | the readability veil under text | 141 | — | — | CSS 9 (#chat-panel #connect-overlay .cv-section, .mb-more, .wsx-opt +6 more) |  |
@@ -186,17 +186,17 @@ Chat-content formatting palette (:root defaults ride --accent-2/--text-1); forma
 
 | variable | role | defined at (index.html lines) | themes overriding | derives | consumers | flags |
 |---|---|---|---|---|---|---|
-| `--fmt-a1` | — | 2180 | — | — | CSS 17 (.art-ed-btn.dirty .art-rename-input .art-sheet-input +11 more) |  |
+| `--fmt-a1` | — | 2184 | — | — | CSS 17 (.art-ed-btn.dirty .art-rename-input .art-sheet-input +11 more) |  |
 | `--fmt-a1-gradient` | — | — | — | — | CSS 3 ([data-fmt-grad~="a1"] .fmt h2 [data-fmt-grad~="a1"] .hub-card-name-in [data-fmt-grad~="a1"] h1, [data-fmt-grad~="a1"] h2, [data-fmt-grad~="a1"] h3) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
 | `--fmt-a1-ink` | — | — | — | — | CSS 3 ([data-fmt-grad~="a1"] .fmt h2 [data-fmt-grad~="a1"] .hub-card-name-in [data-fmt-grad~="a1"] h1, [data-fmt-grad~="a1"] h2, [data-fmt-grad~="a1"] h3) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
-| `--fmt-a2` | — | 2181 | — | — | CSS 18 (.cm-s-doomalay .cm-attribute .cm-s-doomalay .cm-property .cm-s-doomalay .cm-string +12 more) |  |
-| `--fmt-a3` | — | 2182 | — | — | CSS 14 (.cm-s-doomalay .cm-builtin .cm-s-doomalay .cm-def .cm-s-doomalay .cm-tag +9 more) |  |
+| `--fmt-a2` | — | 2185 | — | — | CSS 18 (.cm-s-doomalay .cm-attribute .cm-s-doomalay .cm-property .cm-s-doomalay .cm-string +12 more) |  |
+| `--fmt-a3` | — | 2186 | — | — | CSS 14 (.cm-s-doomalay .cm-builtin .cm-s-doomalay .cm-def .cm-s-doomalay .cm-tag +9 more) |  |
 | `--fmt-a3-gradient` | — | — | — | — | CSS 1 ([data-fmt-grad~="a3"] .fmt h4) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
 | `--fmt-a3-ink` | — | — | — | — | CSS 1 ([data-fmt-grad~="a3"] .fmt h4) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
-| `--fmt-bright` | — | 2183 | — | — | CSS 6 (.fmt h1, .fmt h2, .fmt h3, .fmt h4 .fmt strong .fmt-artifact-name +3 more) |  |
+| `--fmt-bright` | — | 2187 | — | — | CSS 6 (.fmt h1, .fmt h2, .fmt h3, .fmt h4 .fmt strong .fmt-artifact-name +3 more) |  |
 | `--fmt-bright-gradient` | — | — | — | — | CSS 1 ([data-fmt-grad~="bright"] .fmt h1) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
 | `--fmt-bright-ink` | — | — | — | — | CSS 1 ([data-fmt-grad~="bright"] .fmt h1) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
-| `--fmt-link` | — | 2184 | — | — | CSS 10 (.cm-s-doomalay .cm-link .fmt a.fmt-link, .fmt-user a.fmt-link .fmt-artifact-dl +6 more) |  |
+| `--fmt-link` | — | 2188 | — | — | CSS 10 (.cm-s-doomalay .cm-link .fmt a.fmt-link, .fmt-user a.fmt-link .fmt-artifact-dl +6 more) |  |
 | `--fmt-link-gradient` | — | — | — | — | CSS 1 ([data-fmt-grad~="link"] .fmt-user a.fmt-link) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
 | `--fmt-link-ink` | — | — | — | — | CSS 1 ([data-fmt-grad~="link"] .fmt-user a.fmt-link) | OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone) |
 
@@ -206,8 +206,8 @@ Not colors — the text-size system (chat-fs × chat-scale multiplies every px i
 
 | variable | role | defined at (index.html lines) | themes overriding | derives | consumers | flags |
 |---|---|---|---|---|---|---|
-| `--chat-fs` | — | 147, 2185 | — | — | CSS 30 (.chat-working .cw-switch .fmt-artifact-dl +27 more) · JS writes: theme.js |  |
-| `--chat-scale` | — | 148, 2186 | — | — | CSS 101 (.chat-working .cw-switch .fmt th, .fmt td +44 more) · JS writes: theme.js, tweaks.js |  |
+| `--chat-fs` | — | 147, 2189 | — | — | CSS 30 (.chat-working .cw-switch .fmt-artifact-dl +27 more) · JS writes: theme.js |  |
+| `--chat-scale` | — | 148, 2190 | — | — | CSS 101 (.chat-working .cw-switch .fmt th, .fmt td +44 more) · JS writes: theme.js, tweaks.js |  |
 | `--ui-fs` | — | 150 | — | — | CSS 106 (#canvas-empty .ce-btn #canvas-empty .ce-title #chat-panel .panel-body .placeholder +71 more) · JS writes: theme.js |  |
 | `--ui-micro-fs` | — | 154 | — | — | CSS 93 (#canvas-empty .ce-sub #canvas-empty .ce-tip #chat-panel .panel-header .meta .sub +59 more) |  |
 | `--ui-small-fs` | — | 151 | — | — | CSS 340 (#panel-model-btn .art-binary-sub .art-confirm-label +166 more) · JS writes: theme.js |  |
@@ -271,7 +271,7 @@ Each entry below lists where it is defined and consumed so nothing hides outside
 
 | variable | role | defined at (index.html lines) | themes overriding | derives | consumers | flags |
 |---|---|---|---|---|---|---|
-| `--p` | typed @property, init 0 | 3978 · scoped: .ctx-ring | — | — | CSS 2 (.ctx-ring) · JS writes: chatpanel.js |  |
+| `--p` | typed @property, init 0 | 3986 · scoped: .ctx-ring | — | — | CSS 2 (.ctx-ring) · JS writes: chatpanel.js |  |
 
 ## 2. THE PER-THEME PRESENCE MATRIX (the STEP-5 gap check, visualized)
 
@@ -316,7 +316,7 @@ Everything not listed here is :root-derived and intentionally theme-less (the de
 |---|---|---|---|
 | **hub/library** | 130 | 297 | .hub-chatpill (5); .hub-libpill (5); .hub-publish (5) |
 | **other** | 54 | 111 | :root (12); #chat-panel (6); #perf-hud-chip (4) |
-| **chat** | 45 | 95 | .chatbot .icon (5); .chatbot .sandbox-badge (5); .chatbot .name (4) |
+| **chat** | 47 | 98 | .chatbot .icon (5); .chatbot .sandbox-badge (5); .chatbot .name (4) |
 | **artifacts** | 46 | 95 | .art-tree (5); .art-sheet-btn (4); .art-sheet-input (4) |
 | **chat-content** | 50 | 92 | .fmt-yt-pip (4); .fmt-code-inline (4); .fmt-cbtn (4) |
 | **workspace** | 30 | 75 | .wt-omni (5); .wt-card-btn (4); .wt-guard (4) |
@@ -331,8 +331,8 @@ Everything not listed here is :root-derived and intentionally theme-less (the de
 | **slot** | 13 | 25 | .slot-pop (3); .slot-pop-close (3); .slot-pop-btn (3) |
 | **tv** | 17 | 25 | .tv-pg-btn (3); .tv-copy (3); .tv-ico (2) |
 | **src** | 12 | 24 | .src-card-dom (4); .src-wrap (3); .src-wrap .src-count (3) |
+| **panel** | 15 | 20 | .panel-header, .panel-body (3); #chat-panel .panel-header .meta .name (2); #chat-panel .panel-header .meta .sub (2) |
 | **hmsg** | 11 | 20 | .hmsg-card-ico (3); .hmsg-dl (3); .hmsg-card (2) |
-| **panel** | 14 | 19 | .panel-header, .panel-body (3); #chat-panel .panel-header .meta .name (2); #chat-panel .panel-header .meta .sub (2) |
 | **dx** | 9 | 19 | .dx-pill (5); .dx-chip (4); .dx-pill[data-on="1"] (2) |
 | **ce** | 9 | 17 | #canvas-empty .ce-btn (4); #canvas-empty .ce-card (3); #canvas-empty .ce-title (2) |
 | **color** | 8 | 16 | .color-row-reset (3); .color-row-reset:hover (3); .color-row-name (2) |

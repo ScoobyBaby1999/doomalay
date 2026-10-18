@@ -1,5 +1,17 @@
 # THEME-AUDIT-V139 — the element→theme-variable inventory + violation report
 
+> **EXECUTED in v1.39.2 THE RESLOT**: all 9 violations re-slotted (the
+> table's "proposed re-slot" column is now the shipped code), G1 closed
+> (`--border-strong-rgb` rides `TRIPLET_VARS`), G2 folded (the duplicate
+> v0.45 `--bg-app-rgb` block retired — the main `[data-theme]` blocks
+> carried identical values, verified pair-by-pair), F1 retired (the dead
+> `theme-changed` listeners), F2 fixed (atoms' `theme-applied` cache
+> reset), F3 re-slotted (the two canvas soft fallbacks ride the canon).
+> **The pin's ledger is EMPTY** — zero literal colors outside the
+> canonical zones; the census's line ranges re-anchored to the edited
+> tree. Verify: v1390 30/30 · v1391 10/10 · pin PASS · audit 7 PASS
+> (+ the documented pre-existing B1).
+
 > The audit the user ordered: "GOAL: a complete element→theme-variable
 > inventory + violation report" over the embedded web tree
 > (`engine/internal/server/web/`, the go:embed root). Read-first docs

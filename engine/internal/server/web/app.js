@@ -375,7 +375,9 @@
     return rainbowToneCache;
   }
   function resetRainbowTone() { rainbowToneCache.at = -1e9; }
-  window.addEventListener('doomalay:theme-changed', resetRainbowTone);
+  // v1.39.2 (F1): the dead 'doomalay:theme-changed' listener retired —
+  // nobody dispatches that event (only 'doomalay:theme-applied' fires,
+  // theme.js applyTheme); the audit's dead-code finding.
   window.addEventListener('doomalay:theme-applied', resetRainbowTone);
   function hexToRgb(h) {
     return { r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) };

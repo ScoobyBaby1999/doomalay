@@ -802,6 +802,13 @@
     return paintDotsCore(ctx, W, H, offsetX, offsetY, scale, dots, colors(), performance.now() / 1000, par);
   }
 
+  // v1.39.2 (F2): a theme flip re-resolves the tints NOW — the colCache
+  // zeroes and the next colors() call rides the NEW theme (no ≤1s ring
+  // of the previous theme's accents; the pixiworld.js:963 shape). This
+  // file loads BEFORE pixiworld.js, so the reset lands before the world
+  // layer's re-raster reads colorsFor().
+  window.addEventListener('doomalay:theme-applied', function () { colCache.at = 0; });
+
   window.Atoms = {
     refresh: refresh,
     refreshAll: refreshAll,
