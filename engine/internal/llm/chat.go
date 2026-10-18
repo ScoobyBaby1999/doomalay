@@ -22,8 +22,11 @@ import (
         "fmt"
         "io"
         "log"
+        "math/rand"
         "net/http"
+        "os"
         "regexp"
+        "strconv"
         "strings"
         "sync"
         "sync/atomic"
@@ -339,7 +342,10 @@ func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error)
 
 func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
         ch <- ChatChunk{Type: "status", State: "running"}
-        final, err := streamCompletion(ctx, req, ch, nil)
+        // v1.39.3 THE PATIENT ENGINE: the plain path runs through the net
+        // ladder (it had ZERO net retry — one transport error ended the
+        // turn instantly; the emission tap preserves the double-render law).
+        final, err := netLadderStream(ctx, req, ch, nil)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
@@ -356,7 +362,7 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
         if v := sealTurn(ctx, ch, nil, final); v == "empty" {
                 obs.EmitS(ctx, obs.Notice, "where", "turnfsm", "verdict", v, "text", "plain turn ended empty — one retry armed")
                 ch <- ChatChunk{Type: "progress", Text: "the stream ended without a token — retrying once…"}
-                final, err = streamCompletion(ctx, req, ch, nil)
+                final, err = netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered too (a net blip during the retry must not kill the turn)
                 if err != nil {
                         sealTurn(ctx, ch, err, nil)
                         emitTurnError(ch, err)
@@ -1634,7 +1640,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
                                 msgs[0].Content = templateBriefBlock(req.TemplateID, req.TemplateBrief) + "\n" + msgs[0].Content
                                 aReq.Messages = msgs
                         }
-                        u, err := streamCompletion(ctx, aReq, ch, native)
+                        u, err := netLadderStream(ctx, aReq, ch, native) // v1.39.3: laddered (the web-search answer stream)
                         if err != nil {
                                 sealTurn(ctx, ch, err, nil)
                                 emitTurnError(ch, err)
@@ -1651,7 +1657,7 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
         // Chat sends OpenRouter web turns here; anything else landing on
         // this branch still gets an honest streamed answer, just no
         // provider-side search).
-        u, err := streamCompletion(ctx, req, ch, nil)
+        u, err := netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered (the plain web-turn stream)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
@@ -1952,12 +1958,109 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 // pause-not-fail ladder — 15/30/60s waits that keep the turn ALIVE through
 // a network outage (timemanager's NetworkPauseError semantics: network-class
 // failure = paused, not failed). The turn budget + Stop button backstop it.
-var netPauseWaits = []time.Duration{
+// v1.39.3: DOOMALAY_NET_LADDER_WAITS (comma ms) is the RIG-ONLY compression
+// knob — the v1400 rig runs whole outage lifetimes in milliseconds; the
+// production numbers are the defaults below.
+var netPauseWaits = envDurs("DOOMALAY_NET_LADDER_WAITS", []time.Duration{
         1500 * time.Millisecond,
         3 * time.Second,
         15 * time.Second,
         30 * time.Second,
         60 * time.Second,
+})
+
+// ── v1.39.3 THE PATIENT ENGINE ───────────────────────────────────
+// THE USER'S LAW, extended to the network: a network outage is not a turn
+// verdict. After the fixed rungs, the turn enters THE SUSPENDED MODE and
+// waits for the internet to come back — for as long as it takes, bounded
+// only by the user's Stop ("It should continue with all it's effort to work
+// despite me not having internet" — the spec, verbatim).
+var (
+        // netSuspendBase/Cap: the suspended wait grows from base toward the
+        // cap, full-jittered per wait (AWS's backoff-and-jitter law — plain
+        // exponential syncs herds; jitter is the documented best trade).
+        // DOOMALAY_NET_SUSPEND_*_MS are the rig-only compression knobs.
+        netSuspendBase = envDur("DOOMALAY_NET_SUSPEND_BASE_MS", 60*time.Second)
+        netSuspendCap  = envDur("DOOMALAY_NET_SUSPEND_CAP_MS", 5*time.Minute)
+        // netHeartbeatEvery: the suspended wait runs in slices no longer than
+        // this — every slice emits an EPHEMERAL progress heartbeat. The
+        // heartbeat does two jobs: (1) the live UI keeps telling the truth
+        // ("network paused — next attempt in Ns"), and (2) it refreshes the
+        // turn pulse (forwardEvents marks EVERY event, persisted or
+        // ephemeral) — a suspended turn can never go turnStale, so the open
+        // door can never abort a turn that is actively waiting for the
+        // network (a >120s silent wait between attempts would otherwise
+        // arm exactly that — the S5 class reborn).
+        netHeartbeatEvery = envDur("DOOMALAY_NET_HEARTBEAT_MS", 45*time.Second)
+)
+
+// THE NET WAKE (§3): the engine-wide "network regained" broadcast. Every
+// suspended waiter selects on the CURRENT channel; WakeNet() closes it and
+// mints a fresh one — the classic Go broadcast swap. The Kotlin
+// NetworkCallback pushes the signal through the bridge's /netwait long-poll
+// (server-side goroutine → WakeNet); with no bridge (desktop/termux/hf)
+// the jittered rungs carry the wake alone — identical semantics, slower.
+var (
+        netWakeMu sync.Mutex
+        netWakeCh = make(chan struct{})
+)
+
+// netWakeChan returns the current wake channel (always non-nil).
+func netWakeChan() <-chan struct{} {
+        netWakeMu.Lock()
+        ch := netWakeCh
+        netWakeMu.Unlock()
+        return ch
+}
+
+// WakeNet broadcasts "network regained" to every suspended retry waiter —
+// they retry within ~1s of the OS validating connectivity instead of
+// burning the next fixed rung. Safe to call from any goroutine, any number
+// of times; a wake with no waiters is a no-op.
+func WakeNet() {
+        netWakeMu.Lock()
+        close(netWakeCh)
+        netWakeCh = make(chan struct{})
+        netWakeMu.Unlock()
+}
+
+// envDurs/envDur — rig-only env overrides for the ladder's clocks.
+func envDurs(key string, dflt []time.Duration) []time.Duration {
+        raw := os.Getenv(key)
+        if raw == "" {
+                return dflt
+        }
+        var out []time.Duration
+        for _, part := range strings.Split(raw, ",") {
+                if ms, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && ms >= 0 {
+                        out = append(out, time.Duration(ms)*time.Millisecond)
+                }
+        }
+        if len(out) > 0 {
+                return out
+        }
+        return dflt
+}
+
+func envDur(key string, dflt time.Duration) time.Duration {
+        if ms, err := strconv.Atoi(os.Getenv(key)); err == nil && ms > 0 {
+                return time.Duration(ms) * time.Millisecond
+        }
+        return dflt
+}
+
+// durHuman — the notices' clock ("47s", "3m12s").
+func durHuman(d time.Duration) string {
+        s := int(d.Seconds())
+        if s < 60 {
+                return fmt.Sprintf("%ds", s)
+        }
+        m := s / 60
+        s %= 60
+        if m < 60 {
+                return fmt.Sprintf("%dm%02ds", m, s)
+        }
+        return fmt.Sprintf("%dh%02dm", m/60, m%60)
 }
 
 // netPauseLadder retries a network-class failure. fn returns (emitted, err):
@@ -1966,6 +2069,13 @@ var netPauseWaits = []time.Duration{
 // pause rungs announce via EPHEMERAL progress (live-only — a replayed log
 // must not contain stale "network paused" noise). Every failure refreshes
 // the provider's 60s network cooldown for alternate routing.
+//
+// v1.39.3 THE PATIENT ENGINE: when the fixed rungs exhaust, the ladder no
+// longer gives up — netSuspendedLoop takes over and the turn WAITS for the
+// internet to come back (bounded only by ctx — the user's Stop). The old
+// ~110s ceiling was the exact "network issues pause the bots / me having to
+// manually have it continue" report: an outage longer than the ladder
+// ended the turn terminally. Now the outage is a pause, not a verdict.
 func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
         emitted, err := fn()
         if err == nil || !isTransientNetErr(err) || emitted {
@@ -1991,7 +2101,138 @@ func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, f
                         return err
                 }
         }
-        return err
+        // v1.39.3: the rungs are spent and the network is STILL down — the
+        // old ladder returned the error here and the turn died. Now: the
+        // suspension.
+        return netSuspendedLoop(ctx, ch, provider, fn)
+}
+
+// netSuspendedLoop — THE SUSPENDED MODE (v1.39.3 THE PATIENT ENGINE).
+// THE USER'S LAW: an outage is not a turn verdict; "continue with all its
+// effort" is the spec. The loop:
+//   · ENTER notice (PERSISTED — the replay shows it): "connection lost —
+//     the turn holds and keeps retrying" — the returning/reconnecting user
+//     SEES why it was quiet (the ephemeral-only law of v0.39 made the whole
+//     outage invisible after reconnect; the user's ask was the opposite:
+//     "update the chat logs to show everything I missed").
+//   · waits: full-jittered, growing base→cap, in ≤ netHeartbeatEvery slices;
+//     every slice emits an ephemeral progress heartbeat — the live UI truth
+//     AND the turn-pulse refresh (a suspended turn can never read stale, so
+//     the open door can never abort it).
+//   · THE WAKE: every slice also selects on the engine-wide net-wake
+//     channel — regained connectivity retries in ~1s (§3 wires the Kotlin
+//     NetworkCallback into WakeNet).
+//   · EXIT notices: on the first SUCCESSFUL attempt after suspension — a
+//     PERSISTED "network regained after Ns — continuing" (the second half
+//     of the story the user asked to see). Stop (ctx) exits clean.
+//   · There is no give-up. The turn's own truth or the user's Stop ends it.
+func netSuspendedLoop(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
+        label := providerLabel(provider)
+        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", label)}
+        entered := time.Now()
+        next := netSuspendBase
+        for {
+                // THE WAIT — full jitter on the growing next (AWS's law).
+                wait := time.Duration(rand.Int63n(int64(next) + 1))
+                if wait <= 0 {
+                        wait = time.Millisecond // a zero-jitter edge still attempts
+                }
+                deadline := time.Now().Add(wait)
+                // waitLoop: the labeled break exists because a WAKE must
+                // exit the WHOLE wait (not just the slice) — the retry
+                // fires immediately, ~1s after the OS validates the
+                // network. Without the break the wake would announce and
+                // then sit through the remaining rung (the exact timer-waste
+                // §3 exists to kill).
+                waitLoop:
+                for time.Now().Before(deadline) {
+                        slice := netHeartbeatEvery
+                        if d := time.Until(deadline); d < slice {
+                                slice = d
+                        }
+                        select {
+                        case <-time.After(slice):
+                                // THE HEARTBEAT: live-UI truth + turn-pulse
+                                // refresh (forwardEvents marks EVERY event).
+                                select {
+                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("network still paused — %s unreachable, next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
+                                default:
+                                }
+                        case <-netWakeChan():
+                                // §3 THE NET WAKE: connectivity is back —
+                                // attempt NOW, not at the next rung. A live
+                                // heads-up rides the ephemeral path.
+                                select {
+                                case ch <- ChatChunk{Type: "progress", Text: "network is back — retrying now"}:
+                                default:
+                                }
+                                break waitLoop
+                        case <-ctx.Done():
+                                return ctx.Err()
+                        }
+                }
+                RecordProviderFailure(provider, "net", "suspended retry")
+                emitted, err := fn()
+                if err == nil {
+                        // THE REGAINED NOTICE — persisted, the resolution of
+                        // the pause the ENTER notice opened.
+                        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("network regained after %s — continuing", durHuman(time.Since(entered)))}
+                        return nil
+                }
+                if !isTransientNetErr(err) || emitted {
+                        // The failure class changed (auth/protocol) or the
+                        // round streamed content (§4 owns that seam) — the
+                        // honest terminal paths stand exactly as before.
+                        return err
+                }
+                if next < netSuspendCap {
+                        next *= 2
+                        if next > netSuspendCap {
+                                next = netSuspendCap
+                        }
+                }
+        }
+}
+
+// netLadderStream — v1.39.3: streamCompletion THROUGH the pause ladder for
+// the plain / web-search / deep-research / final-answer paths (the native
+// ReAct rounds already ran the ladder; these paths had ZERO net retry —
+// one transport error ended the turn instantly). THE EMISSION TAP: an
+// unbuffered mid channel sits between streamCompletion and the turn's ch;
+// the tap watches for the first visible content (thinking or delta) so the
+// double-render guard survives intact — a stream that already showed text
+// is NEVER blindly restarted (§4 owns the seamless cut for that class).
+// Channel law: streamCompletion never closes ch (the turn runner owns the
+// close), so mid is closed by THIS function's contract: the unbuffered
+// handshake means the result only arrives after every send was received.
+func netLadderStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, error) {
+        var final *Usage
+        err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
+                mid := make(chan ChatChunk) // unbuffered — the handshake law
+                type res struct {
+                        u *Usage
+                        e error
+                }
+                resCh := make(chan res, 1)
+                go func() {
+                        u, e := streamCompletion(ctx, req, mid, extraBody)
+                        resCh <- res{u, e}
+                }()
+                emitted := false
+                for {
+                        select {
+                        case c := <-mid:
+                                if !emitted && (c.Type == "thinking" || c.Type == "assistant_delta") {
+                                        emitted = true
+                                }
+                                ch <- c
+                        case r := <-resCh:
+                                final = r.u
+                                return emitted, r.e
+                        }
+                }
+        })
+        return final, err
 }
 
 // isTransientNetErr reports whether the error looks like a recoverable
@@ -2309,7 +2550,7 @@ func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error
         synthReq := req
         synthReq.SystemPrompt = "You are a meticulous research analyst. Write a thorough, well-structured answer with inline citations like [1], [2] referring to the numbered sources. If sources conflict, say so. End with a short 'Sources' list. Never fabricate facts or URLs."
         synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
-        u, err := streamCompletion(ctx, synthReq, ch, nil)
+        u, err := netLadderStream(ctx, synthReq, ch, nil) // v1.39.3: laddered (the deep-research synthesis stream)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)

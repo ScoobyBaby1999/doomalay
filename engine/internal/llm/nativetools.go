@@ -531,7 +531,11 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
         history = append(history, Message{Role: "user", Content: "Tool budget reached. Write your FINAL answer now."})
         finalReq := req
         finalReq.Messages = history
-        final, err := streamCompletion(ctx, finalReq, ch, nil)
+        // v1.39.3 THE PATIENT ENGINE: the budget-exhausted final answer runs
+        // through the net ladder too — the ReAct rounds were laddered since
+        // v0.39 but THIS final stream (the turn's actual answer) died
+        // instantly on a transport blip.
+        final, err := netLadderStream(ctx, finalReq, ch, nil)
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)

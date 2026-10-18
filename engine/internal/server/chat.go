@@ -318,7 +318,20 @@ func takeoverStaleTurn(sessionID string, sender *websocket.Conn) bool {
 //     for it to finish").
 //   · STALE — no event for the window (the hung-provider wedge the door
 //     was built for) → the door opens exactly as before.
-const turnStaleAfter = 120 * time.Second // mirrors the client's own stall chip
+const turnStaleAfterDefault = 120 * time.Second // mirrors the client's own stall chip
+
+// v1.39.3: DOOMALAY_TURN_STALE_MS is the rig-only compression knob — the
+// v1400 rig proves the suspended-mode heartbeat keeps a retrying turn
+// alive past the stale window without waiting 120 real seconds. Production
+// is always the 120s default (the client's stall-chip twin).
+var turnStaleAfter = envDur("DOOMALAY_TURN_STALE_MS", turnStaleAfterDefault)
+
+func envDur(key string, dflt time.Duration) time.Duration {
+        if ms, err := strconv.Atoi(os.Getenv(key)); err == nil && ms > 0 {
+                return time.Duration(ms) * time.Millisecond
+        }
+        return dflt
+}
 
 var (
         turnActMu    sync.Mutex
