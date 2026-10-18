@@ -4,6 +4,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v1.39.2 THE AWAKE ENGINE: the turn-gated CPU. A dataSync FGS keeps
+         the process out of the freezer class but does NOT keep the CPU
+         scheduled — screen-off suspends the kernel and the engine child
+         stops mid-turn (the "backgrounding pauses all bots" report).
+         PARTIAL_WAKE_LOCK (acquired only while /api/engine/busy reports
+         live turns, released on idle) is the fix; ACCESS_NETWORK_STATE
+         feeds §3's NetworkCallback (the net-regained wake);
+         REQUEST_IGNORE_BATTERY_OPTIMIZATIONS is the one-time deep-Doze
+         exemption ask (deep Doze ignores wake locks and suspends network
+         for non-exempt apps — the exemption is the only escape). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- v1.17.2 THE BRIDGE: the RUN_COMMAND intent contract (PLAN-V117).
          Termux (F-Droid build only — the Play one is dead at 0.101) requires
          BOTH apps to declare this permission and the USER to grant it in

@@ -351,6 +351,56 @@ func releaseTurnPulse(sessionID string) {
         turnActMu.Unlock()
 }
 
+// ── v1.39.2 THE AWAKE ENGINE: the busy gauge ──────────────────────────────
+// The count of in-flight turns — the engine's OWN truth about work, not
+// any client's claim. Kotlin polls GET /api/engine/busy every 5s (the
+// self-healing sync: a missed announce can never wedge the wake lock):
+//   0 → N   acquire the turn-gated PARTIAL_WAKE_LOCK (screen-off no
+//            longer suspends the CPU mid-turn — the Termux law: FGS +
+//            wake lock, together) + the FGS notification flips to
+//            "N bots working" (the battery-honesty receipt).
+//   N → 0   release both — an idle engine never holds the CPU awake.
+// The gauge counts handleTurn bodies (inc after the turn lock is ours,
+// dec via defer on every exit path, panics included — the recover defer
+// above this one still runs, LIFO).
+var turnGaugeMu sync.Mutex
+var turnGaugeN int
+var turnGaugeSessions = map[string]struct{}{}
+
+func turnGaugeInc(sessionID string) {
+        turnGaugeMu.Lock()
+        turnGaugeN++
+        turnGaugeSessions[sessionID] = struct{}{}
+        turnGaugeMu.Unlock()
+}
+
+func turnGaugeDec(sessionID string) {
+        turnGaugeMu.Lock()
+        turnGaugeN--
+        if turnGaugeN < 0 {
+                turnGaugeN = 0 // belt and braces — never a negative gauge
+        }
+        if _, ok := turnGaugeSessions[sessionID]; ok {
+                delete(turnGaugeSessions, sessionID)
+        }
+        turnGaugeMu.Unlock()
+}
+
+// handleEngineBusy is GET /api/engine/busy — {"turns": N, "sessions": …}.
+// Loopback-light, no secrets: the count of live turns + the sessions
+// running them. The notification text and the wake lock ride this.
+func (s *Server) handleEngineBusy(w http.ResponseWriter, r *http.Request) {
+        turnGaugeMu.Lock()
+        n := turnGaugeN
+        ids := make([]string, 0, len(turnGaugeSessions))
+        for id := range turnGaugeSessions {
+                ids = append(ids, id)
+        }
+        turnGaugeMu.Unlock()
+        sort.Strings(ids)
+        writeJSON(w, 200, map[string]any{"turns": n, "sessions": ids})
+}
+
 // turnAbort registers an in-flight turn's cancel per session, so a
 // client "stop" aborts ONLY that turn — not the shared read-loop context
 // (v0.19: the old code called cancel() on the loop's ctx, which poisoned
@@ -1133,6 +1183,14 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
         // release clears the entry so a finished turn can never look alive.
         markTurnEvent(sessionID)
         defer releaseTurnPulse(sessionID)
+
+        // v1.39.2 THE AWAKE ENGINE: this turn counts on the busy gauge —
+        // Kotlin's 5s poll sees it, acquires the PARTIAL_WAKE_LOCK, and
+        // the screen going dark stops pausing the bot. The defer runs on
+        // every exit (error, terminal, panic-recover — LIFO before the
+        // recover defer itself, which still fires).
+        turnGaugeInc(sessionID)
+        defer turnGaugeDec(sessionID)
 
         s.emit(pipe, sessionID, "user", userText, "")
 

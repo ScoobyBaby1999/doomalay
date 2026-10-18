@@ -326,6 +326,27 @@ class MainActivity : Activity() {
                         handler.postDelayed({ view?.loadUrl(failingUrl) }, 2500)
                     }
                 }
+                // v1.39.2 THE RENDERER-DEATH DEFENSE: the default behavior
+                // when a WebView renderer dies (OOM kill, renderer crash —
+                // the LMK/OEM shape that fires when the app sits in the
+                // background) is to KILL THE WHOLE APP PROCESS — the engine
+                // child dies with it mid-turn and the user returns to
+                // "interrupted by engine restart" boot-heal receipts (the
+                // exact "leaving the app pauses the bots" report). Override
+                // it: return true (the app handles it) and rebuild the
+                // WebView through the SAME proceed() path that cold-boot
+                // uses — the engine keeps running untouched (the service
+                // owns it, not the activity), the PWA reloads, replays
+                // &since=, and the v1.35 TAIL LAW re-arms any live turn
+                // from the transcript's truth. API 26+ only (on 24/25 the
+                // renderer crash kills the app by platform default —
+                // nothing to defend).
+                override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean {
+                    AppLog.error("WebView renderer gone (crashed=${detail?.didCrash()}) — rebuilding, engine untouched", null)
+                    if (isFinishing || isDestroyed) return false
+                    handler.post { recreateWebView() }
+                    return true
+                }
             }
             setContentView(webView)
             // v0.64.2: THE SECRET THIRD DOCK — while the native panel
@@ -421,6 +442,28 @@ class MainActivity : Activity() {
     }
 
     @Volatile private var retrying = false
+
+    // v1.39.2 THE RENDERER-DEATH DEFENSE: destroy the dead WebView and
+    // rebuild it through the exact cold-boot path (proceed() builds the
+    // WebView + clients + bridge + health poll + load; setContentView
+    // detaches the old view for us). startForegroundService inside
+    // proceed() is idempotent for a living service (the engine spawn is
+    // guarded). The engine child process is NEVER touched by this — the
+    // service owns its lifetime.
+    private fun recreateWebView() {
+        try {
+            val old = if (this::webView.isInitialized) webView else null
+            proceed()
+            // setContentView above already detached the dead view — now
+            // free its native side.
+            try { old?.destroy() } catch (e: Exception) {
+                AppLog.error("dead WebView destroy failed (non-fatal)", e)
+            }
+        } catch (e: Exception) {
+            AppLog.error("WebView recreate failed", e)
+            showError("Web view crashed and could not restart\n\n${e.message}")
+        }
+    }
 
     // v0.62.3: the bridge object — shared by proceed() and the error
     // screen (addJavascriptInterface replaces by name, so both call
@@ -722,11 +765,50 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         panelSheet?.onPause()
+        // v1.39.2 THE EXEMPTION LADDER: the user backgrounded the app with
+        // a live bot turn while not battery-exempt — deep Doze will suspend
+        // the network AND ignore the wake lock (the one Android corner the
+        // wakelock can't cover; only the exemption list can). Arm the
+        // one-time ask; onResume fires it ONCE per install (the system
+        // dialog carries the honest copy; the user can decline forever).
+        try {
+            if (EngineService.busyTurns > 0) {
+                val pm = getSystemService(POWER_SERVICE) as? android.os.PowerManager
+                if (pm == null || !pm.isIgnoringBatteryOptimizations(packageName)) {
+                    getSharedPreferences("doomalay", MODE_PRIVATE)
+                        .edit().putBoolean("pendingBatteryAsk", true).apply()
+                }
+            }
+        } catch (e: Exception) {
+            AppLog.error("exemption ladder arm failed", e)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         panelSheet?.onResume()
+        // v1.39.2 THE EXEMPTION LADDER: the armed ask fires here — the user
+        // is back, the question is honest ("bots were working while you
+        // were away; allow them to keep working when the phone sleeps"),
+        // and it only ever asks once.
+        try {
+            val prefs = getSharedPreferences("doomalay", MODE_PRIVATE)
+            if (prefs.getBoolean("pendingBatteryAsk", false) &&
+                !prefs.getBoolean("batteryAskDone", false)) {
+                prefs.edit()
+                    .putBoolean("pendingBatteryAsk", false)
+                    .putBoolean("batteryAskDone", true)
+                    .apply()
+                val intent = Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                AppLog.log("exemption ladder: one-time battery-optimization ask fired")
+            }
+        } catch (e: Exception) {
+            AppLog.error("exemption ask failed", e)
+        }
     }
 
     // v0.64.0: configChanges means no recreate — re-seat the sheet's
