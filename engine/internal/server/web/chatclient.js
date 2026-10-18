@@ -194,6 +194,15 @@
         self.state = 'idle';
         return;
       }
+      // v1.39.5 THE HONEST RETURN: resync()'s silent teardown — no ladder,
+      // no onClose side-effects (the "connection lost" indicator must
+      // never flash on a routine return-to-app); the reconnect it owns
+      // lands in a moment with &since= (the gap replay + live tail are
+      // the proof of the work done in the user's absence).
+      if (self._resyncing) {
+        self.state = 'idle';
+        return;
+      }
       // v0.39 LADDER: dropped mid-turn or mid-session → try to RESUME.
       // A mid-turn drop holds the turn (the server keeps it running and
       // persisting; a resume picks the live stream back up), so it earns
@@ -252,6 +261,38 @@
     setTimeout(function () {
       if (!self._closedByUser) self.connect();
     }, wait);
+  };
+
+  // v1.39.5 THE HONEST RETURN — resync(): the zombie-socket killer.
+  // A backgrounded/dozing/roamed app can hold a socket the network
+  // silently killed engine-side (the engine's 75s read deadline clears
+  // its pipe; the client cannot see protocol-level pings, so its socket
+  // reads "open" while carrying nothing). On the user's RETURN the panel
+  // must prove the work within ~1s — not wait out the deadline or the
+  // throttled 20s revive poll. resync() tears the suspicious socket down
+  // SILENTLY (no ladder, no connection-lost flash — the flag onclose
+  // respects) and reconnects with &since=lastSeq: the gap replay + live
+  // tail are the truth. A false positive (the socket was fine) costs one
+  // cheap reconnect — the replay converges and the live feed continues.
+  ChatClient.prototype.resync = function () {
+    if (this._closedByUser) return;
+    var ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // not open → the plain revive path (connect() no-ops while
+      // connecting/open — same guard the revive poll uses)
+      try { this.connect(); } catch (e) { console.error('ws resync connect failed', e); }
+      return;
+    }
+    var self = this;
+    this._resyncing = true;
+    this._attempt = 0; // the resync is a fresh ladder, not a continuation
+    try { ws.close(); } catch (e) { /* already dying */ }
+    // onclose fires on the next tick (async) — reconnect just after it,
+    // clearing the flag so the NEW socket's lifecycle is fully honest.
+    setTimeout(function () {
+      self._resyncing = false;
+      try { self.connect(); } catch (e) { console.error('ws resync reconnect failed', e); }
+    }, 60);
   };
 
   ChatClient.prototype.send = function (text, opts) {

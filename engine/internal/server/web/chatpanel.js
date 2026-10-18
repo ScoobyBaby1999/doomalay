@@ -160,6 +160,34 @@
   // once, never per-turn; the transcript renders are deliberately NOT
   // hidden-gated (they are the persisted record — correctness, not
   // cosmetics — and hidden renders are near-free).
+  // ── v1.39.5 THE HONEST RETURN (PLAN-V140 §5) — the room lights, the
+  // panel PROVES the work. Never trust in-memory streaming state past a
+  // hidden period: on regain, every chat's wire is healed NOW (dead
+  // clients connect instead of waiting the throttled 20s revive tick;
+  // owner-streaming chats with an OPEN socket force resync() — the
+  // zombie killer — because a dozing/roaming app cannot see that the
+  // network killed the socket engine-side). The &since= gap replay +
+  // live tail then show everything that happened in the user's absence
+  // (the engine's persisted pause/regain notices included — the full
+  // story, the user's spec verbatim).
+  function sweepOnRegain(reason) {
+    for (var id in chatStates) {
+      var st = chatStates[id];
+      if (!st || !st.client) continue;
+      var c = st.client;
+      if (c.connected || c.state === 'connecting' || c.state === 'open') {
+        // an OPEN socket with live work is exactly the zombie shape —
+        // one cheap silent resync per return-with-live-work; a false
+        // positive costs a reconnect, the replay converges either way
+        if (st.isStreaming && isOwner(st) && typeof c.resync === 'function') {
+          try { c.resync(); } catch (e) { /* the ladder owns it */ }
+        }
+      } else {
+        reviveClient(st); // dead → connect NOW, not at the next revive tick
+      }
+    }
+  }
+
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
     for (var id in chatStates) {
@@ -169,6 +197,17 @@
         tickThinkingMeta(currentCtx.bodyEl, st);
       }
     }
+    // v1.39.5: the Android WebView fires visibilitychange on window
+    // visibility changes — the app's own return signal, no Kotlin needed
+    sweepOnRegain('visible');
+  });
+
+  // v1.39.5: the browser's own "the network is back" — the browser regains
+  // connectivity before the engine's outbound leg does; both halves get
+  // the sweep (the engine's wake is its own signal — §3 — this heals OUR
+  // wire to it).
+  window.addEventListener('online', function () {
+    sweepOnRegain('online');
   });
 
   // v0.38 PER-CHAT BOX DEFAULTS: thinking / sources / pills remember the
