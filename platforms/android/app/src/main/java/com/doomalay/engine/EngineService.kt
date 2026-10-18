@@ -91,8 +91,14 @@ class EngineService : Service() {
         // crash (turns unreadable) reads as idle — hold nothing for a dead
         // engine.
         if (wakeLock == null) {
-            wakeLock = getSystemService(POWER_SERVICE) as? PowerManager
-                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "doomalay:engine-turns")
+            // v1.41.1: the cast + safe-call across a line break is a parser
+            // trap (the CI conviction: after `as? Type` the parser is in
+            // TYPE context — `?.` on the next line is "unexpected tokens").
+            // The two-step form is unambiguous.
+            val pm = getSystemService(POWER_SERVICE) as? PowerManager
+            if (pm != null) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "doomalay:engine-turns")
+            }
         }
         startBusyPoll()
         startNetWatch()
