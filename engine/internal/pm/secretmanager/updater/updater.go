@@ -1,0 +1,115 @@
+// Copyright (c) Edgeless Systems GmbH
+// SPDX-License-Identifier: MIT
+
+// Package updater contains the functionality to update prompt secrets when the underlying Privatemode deployment is updated.
+package updater
+
+import (
+	"context"
+	"crypto/x509"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/avast/retry-go/v5"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/attest"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/auth"
+)
+
+// Updater implements how to update prompt secrets when the underlying Privatemode deployment is updated. It is not thread-safe.
+type Updater struct {
+	ssClient  ssClient
+	log       *slog.Logger
+	retryOpts []retry.Option
+	caGetter  CAGetter
+	meshCA    *x509.Certificate
+}
+
+type ssClient interface {
+	ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error)
+}
+
+// CAGetter gets the mesh CA.
+type CAGetter interface {
+	GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error)
+}
+
+// New returns a new secret updater.
+func New(ssClient ssClient, caGetter CAGetter, log *slog.Logger) *Updater {
+	retryOpts := []retry.Option{
+		retry.Delay(1 * time.Second),
+		retry.Attempts(3),
+		// Immediately abort if we get manifest mismatch errors
+		// These can't be retried without also updating the manifest,
+		// which has to be done by the caller
+		retry.AttemptsForError(1, attest.ErrManifestMismatch),
+	}
+	return &Updater{
+		ssClient:  ssClient,
+		caGetter:  caGetter,
+		log:       log,
+		retryOpts: retryOpts,
+	}
+}
+
+// UpdateSecret implements how to update prompt secrets when the underlying Privatemode deployment is updated.
+func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, retErr error) {
+	// retry.Context aborts the inter-attempt backoff on cancellation (e.g. shutdown); it's per-call so it's added here.
+	opts := append([]retry.Option{retry.Context(ctx)}, s.retryOpts...)
+	if err := retry.New(opts...).Do(func() error {
+		if ctx.Err() != nil {
+			return retry.Unrecoverable(ctx.Err())
+		}
+		if s.meshCA == nil {
+			if err := s.updateCA(ctx, cred); err != nil {
+				return err
+			}
+		}
+		var err error
+		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
+		if err == nil {
+			return nil
+		}
+		s.log.ErrorContext(ctx, "Set secrets", "error", err)
+		if err := s.updateCA(ctx, cred); err != nil {
+			return err
+		}
+		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
+		return err
+	}); err != nil {
+		return "", nil, fmt.Errorf("setting secrets: %w", err)
+	}
+	return id, data, nil
+}
+
+func (s *Updater) updateCA(ctx context.Context, cred auth.Credential) error {
+	cert, err := s.caGetter.GetMeshCA(ctx, cred)
+	if err != nil {
+		return fmt.Errorf("updating mesh CA: %w", err)
+	}
+	s.meshCA = cert
+	return nil
+}
+
+// StaticCAGetter gets the mesh CA, expecting a static manifest.
+type StaticCAGetter struct {
+	caUpdater       caUpdater
+	expectedMfBytes []byte
+}
+
+// NewStaticCAGetter returns a new StaticCertGetter.
+func NewStaticCAGetter(caUpdater caUpdater, expectedMfBytes []byte) StaticCAGetter {
+	return StaticCAGetter{
+		caUpdater:       caUpdater,
+		expectedMfBytes: expectedMfBytes,
+	}
+}
+
+// GetMeshCA gets the certificate.
+func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
+	return s.caUpdater.GetAttestedMeshCA(ctx, s.expectedMfBytes, cred)
+}
+
+type caUpdater interface {
+	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error)
+}
