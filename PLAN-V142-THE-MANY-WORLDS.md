@@ -1,25 +1,34 @@
 # PLAN-V142 — THE MANY WORLDS
 
 **Status: FEASIBILITY ANALYSIS (this session builds nothing — per the standing law: plan → websearch → real plan → build).**
-Scope: bounded canvas · black holes · multi-canvas with per-canvas everything · canvas bundles on the public library · canvas-within-canvas.
+Scope: bounded canvas · install-age degradation audit + spatial-render rework · multi-canvas with per-canvas everything · black-hole portals (two-way, uncapped) · worlds manager · OOP component publishers · chat + canvas bundles on the public library.
 Baseline: `v1.41.1` (rebased clean, 0 ahead/0 behind at plan time). Ship target: `v1.42.x` (renumber if a parallel wave claims it — the v1.35/v1.40 precedent).
+
+**REV 2 — post-user-review refinements (applied surgically per the user's ask — no rewrite):**
+1. NEW **W0 THE LONG HAUL**: diagnose the reported install-age degradation ("degrades the longer the app is downloaded… even if I never really use the app") and rework the spatial renderer while the world is in play — now is the opportunity.
+2. Black holes REDEFINED as **simple two-way portals** (a ref to a canvas, like a browser tab holds a URL): zoom-through transition with move-to-cancel, auto-paired return portal, **no caps, no depth limit** — the registry is a ref graph, not a containment tree.
+3. W4 becomes **THE MANAGER**: the worlds overlay — rows of owned + downloaded canvases, a browse-the-library row, a create-new row, local rename everywhere, generic default names.
+4. **Chats join the library** as a first-class hub type with a fully toggleable metadata tree.
+5. The publish system re-architected as **OOP component publishers** (interface + composition, per the user's C# OOP reference): ONE ChatPublisher serves the chat library AND canvas bundles — edit one instance, it reflects everywhere.
 
 ---
 
 ## 0. THE ASK, DECOMPOSED
 
-The user's request splits into six workstreams. Every one is assessed below against the
+The user's request splits into seven workstreams (REV 2 adds W0; W3/W4/W5/W6 re-shaped
+per the user's review). Every one is assessed below against the
 real tree (`engine/internal/server/web/` + `engine/internal/`), with file:line receipts,
 web research, cost, and risk.
 
 | # | Workstream | One-line ask |
 |---|---|---|
+| W0 | **THE LONG HAUL** | Diagnose the install-age degradation ("degrades the longer it's downloaded, even unused"); rework the spatial renderer — O(visible), not O(world) |
 | W1 | **THE EDGE** | Bounded world: width/height ≈ "7 seconds of scrolling at max zoom-out" |
 | W2 | **THE SWAP** | Many canvases per user; each with own icons, chats, theme, settings; freeze/snapshot switching; OOP, no coupling, no perf loss |
-| W3 | **THE SINGULARITY** | Black holes: new canvas entity, each customizable, each its own instance like chat |
-| W4 | **THE DEEP** | Canvas-within-canvas (long-press → "+ canvas"); nested canvases |
-| W5 | **THE VESSEL** | Export/import a whole canvas as a sanitized bundle; granular per-setting publish toggles; nested bundles; BYOK for providers |
-| W6 | **THE LIBRARY SHIP** | Publish/download canvas bundles on the public hub; "download an entire setup" |
+| W3 | **THE SINGULARITY** | Black holes = simple two-way portals (a ref to a canvas, browser-tab style); zoom-through transition, cancel-on-move, no caps |
+| W4 | **THE MANAGER** | The worlds overlay: rows of owned + downloaded canvases, browse-the-library row, create-new row, local rename, generic defaults |
+| W5 | **THE VESSEL** | OOP component publishers (chat/settings/iconsets/portals/layout/assets) composed into sanitized canvas bundles; per-leaf publish toggles; BYOK |
+| W6 | **THE LIBRARY SHIP** | Hub types chat + canvas; "download an entire setup" — and chats as a whole library section |
 
 **Honest verdict up front: FEASIBLE without a rewrite.** The tree was accidentally (or
 intuitively) pre-shaped for this: the whole world already round-trips through one
@@ -30,6 +39,13 @@ durable SQLite storage; the hub already ships multi-file items and collections; 
 apply-rollback. The two genuinely hard parts are (a) unwiring ~8 module singletons for
 world switching and (b) the bundle manifest/sanitizer — both have in-repo precedents to
 extend, not invent.
+
+**REV 2 verdict additions:** the reported install-age degradation makes W0 the new FIRST
+phase — measure before anything else (the v1.12 PROFILER-FIRST law), then rework the
+renderer's cost shape from O(world) to O(visible); and the user's OOP publisher mandate
+turns W5 from a monolithic exporter into a component-publisher composition, which also
+adds `chat` as a standalone hub type in W6. The portal redefinition makes W3/W4 SIMPLER
+than REV 1 (refs instead of trees — no depth caps, no containment logic).
 
 ---
 
@@ -82,10 +98,71 @@ All paths relative to `engine/internal/server/web/` unless noted. Verified on `v
 | R8 | HF hosting capacity? | LFS files up to 50 GB; no practical limit for MB-scale canvas bundles. Public datasets are publicly readable — no privacy tier in v1. | HF storage-limits docs + forum |
 | R9 | Frozen-view memory pattern? | Detach DOM into a stash (the app already has per-chat `_domStash` + the panel view-stack precedent); keep only the active world's DOM/Pixi live. Detached-node retention must be avoided (web.dev detached-window leaks) — stash JSON, not nodes, for long-lived freezes. | web.dev detached-window memory leaks; in-repo stash precedents |
 | R10 | BYOK multi-provider pattern? | Keys never leave the device; bundles carry provider *names* + model ids only; import validates `has_key` per provider and warns. This is exactly the current vault design — W5 just obeys it. | in-repo vault + keys API; LibreChat/Open WebUI pattern (same shape) |
+| R11 | Browser-native offscreen skip for DOM icons? | `content-visibility: auto` (Baseline 2024) skips layout+paint for offscreen content and fires `contentvisibilityautostatechange` so JS can pause work. ⚠ CAVEAT for our icon layer: icons are positioned by `transform: translate3d` inside a fixed viewport container — transforms are *visual*, not layout, so CV's cull rect may not track them. The rig must verify CV-respects-transforms on the target WebView first; the JS-driven visible-toggle (we own the camera, so we KNOW what's offscreen) is the guaranteed fallback. | web.dev content-visibility; MDN content-visibility (Baseline 2024) |
+| R12 | Pixi v8 native culling? | `CullerPlugin` (opt-in via `extensions.add`) + `container.cullable` + optional `cullArea`; manual `Culler.shared.cull()` also available. We already hand-roll culling in `updateWorld` (pad 130·sc+40) — keep ours (wired, rig-proven) and note the plugin as the sanctioned alternative. | PixiJS Culler Plugin docs; richardfu.net v8 culling deep-dive |
+| R13 | Why might the app degrade with install age? | Three structural suspects with documented mechanisms: (a) SQLite WAL growth — WAL files grow until checkpointed (default ~1000 pages); VACUUM in WAL mode writes to the WAL and only shrinks the DB after a CHECKPOINT — vacuum-without-checkpoint is wasted work; (b) WebView origin storage (localStorage/IDB/http-cache) accumulating with no in-app eviction path; (c) append-only stores (metrics.jsonl, hub_items rows, chat_events) with no TTL. All measurable, all fixable — W0's rig proves which bite on-device. | sqlite.org WAL (checkpoint cadence); photostructure WAL-vacuum study; super-productivity #7901 |
 
 ---
 
 ## 3. FEASIBILITY & DESIGN (per workstream)
+
+### 3.0 W0 — THE LONG HAUL (install-age degradation audit + spatial-render rework) · **Cost: M audit + M-L rework**
+
+**The symptom (user, REV 2):** "it seems to degrade the longer the app is downloaded… even
+if I never really use the app." Not the v092 shape (that was theme-gradient paint,
+root-caused and shipped) — this is *age*-correlated, *usage-independent* degradation,
+which points at something that GROWS WITHOUT USE. The house law applies: **the profiler
+first** (the v1.12 lesson; RESEARCH-V092's rig lineage continues).
+
+**The hypothesis ledger (each gets a rig verdict before any fix):**
+- **H1 — SQLite growth without maintenance**: `doomalay.db-wal` grows between checkpoints
+  (R13a); `hub_items` rows accumulate on every hub browse/refresh cycle with no eviction;
+  metrics JSONL is append-only. Fix shape: checkpoint + `VACUUM` +
+  `wal_checkpoint(TRUNCATE)` cadence (idle-time, not boot), hub-cache LRU/TTL, metrics
+  rotation.
+- **H2 — WebView origin-storage creep**: localStorage keys with no eviction
+  (`modelcache.v1` 100s KB, `iconreg.v1` ≤2 MB, `chatscroll`/`chatdraft` maps grow with
+  chat count forever, `state.v2` icons carrying `imageData` dataURLs), plus the WebView
+  http cache. Fix shape: TTL/age-out + size-aware pruning per key + a storage-usage row
+  in Settings (the worlds manager already shows usage — generalize it).
+- **H3 — boot storms**: boot-time work that scales with account/hub age (keys validate,
+  model-catalog resync, OTA manifest, hub stale-while-revalidate fan-out at 6-way
+  concurrency). "Never used it" still boots it — every boot pays. Fix shape: defer
+  non-critical syncs (hub refresh on first hub open, not boot), a boot-cost budget
+  measured on the rig, a boot-budget regression test.
+- **H4 — world-size creep**: icons accumulate (the user never deletes); the DOM path has
+  NO culling (§1.2) — per-frame cost is O(world), not O(visible). An "unused" app with
+  300 accumulated icons pays 300 transform writes + physics + hash rebuilds per frame.
+  Fix shape: THE FIELD rework below.
+- **H5 — background cadence while visible**: the 33 ms ambient gate runs whenever visible
+  even with zero input; fine alone, multiplied by H4 it reads as "slow".
+
+**THE FIELD (the spatial-render rework — the user's "now is an opportunity"):**
+1. **The visibility law**: per-frame cost becomes O(visible), not O(world). The DOM path
+   gains the same cull the Pixi path already has (pad-culled): offscreen icons get
+   `display:none` (JS-driven, camera-authoritative — we own the camera so we KNOW what's
+   offscreen; `content-visibility: auto` is tried in the rig first as a freebie, per
+   R11's transform caveat). Offscreen icons skip their transform writes entirely (the
+   skip-if-identical guard does not help for moving icons).
+2. **The sleep law**: physics sleeps entities at rest outside the active radius; wake on
+   touch, camera proximity, or portal influence. The spatial hash only bins awake
+   entities. At-rest worlds approach zero JS per frame (the 33 ms cadence gate already
+   limits full frames — this makes the gated work ~free too).
+3. **The lattice is already right** (tile-periodic, viewport-tested, cached) — untouched.
+4. **The Pixi side**: keep the hand-rolled cull (R12); render-group promotion of stageRoot
+   children if the rig shows batch cost; staggered destroys stay (R5).
+5. **Option B (evaluated, behind a settings flag, ONLY if 1-2 miss the rig budget)**: a
+   full-Pixi icon path (RenderLayer + Culler) retiring the DOM icon layer. Honest costs:
+   CSS-var theming of icons, accessibility, text rendering — documented, default OFF.
+6. **The rig**: an aged-state harness — inflate stores to 30/90-day equivalents (H1/H2)
+   + 100/250/500-icon worlds (H4) → measure boot, interaction latency, frame cost
+   before/after. Regression budgets enter the battery.
+
+**Sequencing note:** W0's rigs run FIRST (v1.42.1-2) because every later phase (bounds,
+swap, portals) inherits its cost shape, and its findings may re-order the queue. The
+visibility/sleep laws are also preconditions for a clean swap: a frozen world must cost
+exactly zero, and a live one must stay cheap enough that "one live world" stays true
+under many worlds.
 
 ### 3.1 W1 — THE EDGE (bounded world) · **Cost: S (~120-180 LOC + rig)**
 
@@ -155,6 +232,10 @@ Deferred texture raster: only on-screen icons re-raster on arrival; offscreen ic
 first sight (a small `sync()` variant). The 33 ms ambient cadence gate + coast architecture
 are untouched — **zero added per-frame cost**; switching is a burst, not a tax.
 
+W0's visibility/sleep laws carry into the swap: a frozen world is zero-cost by
+construction, and a freshly-restored one is cheap immediately (only visible icons
+raster + render; the rest sleep until first sight).
+
 **3.2.3 The singleton unwiring list (the real work).**
 `Physics.World` (1) → per-world instance in registry; camera triple (2) → world-scoped;
 `doomalay.state.v2` slot (3) → engine rows; lattice caches (4) → clear-on-swap; `TabGroups.dots`
@@ -186,98 +267,149 @@ Opening a chat in world B while a turn runs in world A just works — the compos
 and the UNINTERRUPTED TURN law (v1.40/v1.41) already guarantee honesty here. This is a major
 feasibility win: **multi-canvas needs ZERO changes to the turn lifecycle.**
 
-### 3.3 W3 — THE SINGULARITY (black holes) · **Cost: M (~450-650 LOC + rig)**
+### 3.3 W3 — THE SINGULARITY (black holes = simple two-way portals) · **Cost: M (~350-500 LOC + rig)**
 
-A black hole is a new entity type riding `GridIcon.register('hole', factory)` (§1.3) — it
-gets DOM presence, physics, hit-testing, serialize/restore, and persistence nearly free.
+**REV 2 redefinition (the user's call): a black hole is a very simple two-way portal.**
+No attractor mode, no gravity tuning, no depth mechanics — it holds a **reference** to
+another canvas, exactly like a browser tab holds a URL. One mode, one job: fall through.
 
-**What it is (proposed — the one genuinely open design question, §7 Q2):** a customizable
-gravity well that is its own instance, with a config panel like a chat's:
-- **Mode A — Attractor**: O(members) pull in `Physics.World.step` (per-entity force toward
-  the well, mass/radius params); orbiting icons visually cluster around it (an organizational
-  gravity group — the "compartmentalization" tool on-canvas).
-- **Mode B — Portal**: holds a `childWorldId` — the canvas-within-canvas launcher (W4 rides
-  this entity; long-press → "enter"). This unifies the user's two asks elegantly: a nested
-  canvas IS a black hole you fall into.
-- Instance config (serialized per hole): name, mode, mass, reach radius, spin, visual params
-  (accretion ring density, lensing wobble, distortion strength), palette (theme-token keyed —
-  ZERO hardcoded colors; new theme slots only if needed, riding FALLBACKS discipline),
-  label, pinned, portal target.
-- Rendering: `#c2` paint pass (atoms.js precedent — Path2D-cached, sprite-baked) + a Pixi
-  mirror when the GPU layer is live (shell-atlas precedent). Physics attractor is O(members)
-  inside the existing step — no new per-frame systems.
-- "Own instance like the chat": tapping a hole opens its panel (name/params/mode/portal
-  target/contents list). Panel rides Panel/UIKit laws; config lands in `app_settings` or the
-  entity serialize — whichever the state audit prefers.
-
-Cost drivers: the visual (accretion disk done cheaply — baked sprites, no per-frame filters;
-Pixi filters are explicitly perf-dangerous per R5 docs) and the attractor tuning. Everything
-else is the factory pattern.
-
-### 3.4 W4 — THE DEEP (canvas-within-canvas) · **Cost: M (~300-450 LOC on top of W2/W3)**
-
-- `canvases.parent_id` makes the registry a tree. Depth cap **3** (root → child → grandchild)
-  for memory sanity and navigation clarity.
-- Entry: long-press canvas → radial "+ Canvas" (creates child + portal hole at drop point),
-  or from a hole's panel. The user's exact words ("additional row when a canvas is held down").
-- Navigation: breadcrumb chip row (World A ▸ World B) + system-back mapping; switch = W2's
-  `switchTo` with a back-stack. Frozen ancestors are just rows.
-- Bundles: a canvas bundle may embed child canvases (recursion capped by depth + size — §3.5).
-- Thumbnails of children surface inside the parent's hole panel ("what's inside").
-
-### 3.5 W5 — THE VESSEL (canvas bundles) · **Cost: L (~1,000-1,400 LOC incl. engine sanitizer)**
-
-**Format: `.doomcanvas` — a ZIP** (fflate already vendored; lookio v2 precedent), versioned,
-schema-checked:
-
+**Data model (OOP, ref-shaped):**
 ```
-manifest.json      schema v1: uuid, created_at, appVersion, name, author,
-                   contents{} (the toggle tree's chosen includes), counts,
-                   sizes (computed recursively), flags (provenance, requires[])
-canvas.json        WorldState (camera, icons, dots, holes+configs, child refs)
-settings.json      CANVAS-scope settings slice (per §3.2.4) — blocklist-enforced
-iconsets.json      icon registry subset (lookio's existing shape, ≤2 MB cap as today)
-chats/<sid>.json   per-chat: session row subset + events (TOGGLE, default per §7 Q3)
-assets/…           custom icons/images (per-file caps, total cap)
-children/<uuid>.doomcanvas   nested child canvases (depth-capped)
+HoleEntity extends GridIcon('hole')      // the factory's freebies: DOM, physics, hit-test, serialize
+  ├─ targetWorldId   // the REF — the whole point; portals are edges in a worlds graph
+  ├─ pairId          // the two-way law: A→B and B→A share one pairId
+  ├─ label, style    // name + theme-token palette + ring style (minimal, customizable)
+  └─ x, y, r         // position + radius, physics-entity as always
+```
+- **The two-way law**: creating a portal A→B atomically ensures the return portal exists
+  in B (auto-created at the target's arrival point, same pairId). Deleting a world marks
+  its inbound/outbound portals "lost" (a re-target state, never a crash). Cycles are fine —
+  A→B→A is just two hops; refs need no containment logic and **no caps** (the user's
+  call: "no caps needed really").
+- **Customizable, own instance like chat**: tap a portal → its panel (rename, palette,
+  ring style, retarget via a world-picker, delete pair). Zero hardcoded colors — theme
+  tokens only, riding FALLBACKS discipline (the pin A5 holds).
+- **Rendering**: `#c2` paint pass (atoms.js precedent — Path2D-cached, sprite-baked) + the
+  Pixi mirror when the GPU layer is live. Baked sprites only — no per-frame filters (R5).
+- Persistence: `GridIcon.register('hole', factory)` gives serialize/restore nearly free
+  (§1.3); portal state lives in WorldState like every other entity.
+
+**The transition (the user's spec, verbatim-shaped):**
+`PortalTransition` — a small state machine riding W2's `switchTo` (ONE code path, ONE rig):
+1. **DIVE**: press → the camera zooms INTO the portal (ease-in, ~700 ms; the portal's
+   aperture consumes the view = the loading veil). Any move/gesture **cancels** (ease
+   back; nothing has swapped yet, so cancel is trivial).
+2. **SWAP** (under the veil, at max zoom): the target world loads via the normal
+   `switchTo` (registry fetch → rebuild → settings slice). If it can't load: gentle
+   zoom-back + toast.
+3. **EMERGE**: the view zooms OUT from the target's paired portal (~700 ms) to the
+   target's saved camera. Total ~1.4 s; both legs cancellable up to the swap point.
+
+Cost drivers: the aperture visual (baked sprites, theme tokens) and the dive/emerge
+camera choreography (pure `offsetX/offsetY/scale` interpolation — the existing camera
+pipeline, no new systems). Everything else is the factory pattern.
+
+### 3.4 W4 — THE MANAGER (the worlds overlay) · **Cost: M (~350-500 LOC on top of W2/W3)**
+
+**REV 2 reshape: the registry is a flat ref GRAPH (portal edges), not a containment
+tree — `parent_id` is retired, the depth cap is retired (the user's "no caps"), and
+"+ Canvas" opens a manager overlay instead of immediately creating a child.**
+
+**Entry**: long-press canvas → radial gains "+ Canvas" → the worlds overlay opens
+(the user: "a follow-up overlay screen or the tab itself should change"). Three zones,
+top to bottom:
+1. **Your canvases** — rows for every canvas the user owns or downloaded: thumbnail,
+   display name, updated-at, size. Tap = jump (plain `switchTo`, or the portal dive when
+   entered from a portal's panel). Long-press row = rename / duplicate / delete / publish.
+   **Rename is local-only and works on downloaded canvases too** — `display_name` rides
+   the local row; the hub's published name is never touched. New canvases get generic
+   names (`canvas_1`, first free index).
+2. **Browse worlds** — a row that opens the hub pre-filtered to the canvas type (W6).
+   Downloading a canvas adds it to zone 1's rows automatically (the hub download pipeline
+   exists; the canvas import creates the local row).
+3. **+ Create new canvas** — a row that creates a blank world, adds it to the rows, and
+   (when entered from a portal) wires the return portal per W3's two-way law.
+
+Navigation stays trivial BECAUSE refs are flat: a back-stack (visited worlds in this
+dive) plus the manager as home base. No breadcrumbs-of-a-tree — the graph is the user's
+mental model, the overlay is its map. Bundles may carry portal refs as world uuids +
+optional embedded canvases (§3.5); a ref whose target didn't ship = "lost" state with
+re-target.
+
+### 3.5 W5 — THE VESSEL (component publishers → canvas bundles) · **Cost: L (~1,100-1,500 LOC incl. engine sanitizer)**
+
+**REV 2 re-architecture (the user's mandate): no monolithic canvas exporter. The publish
+system is a set of OOP component publishers sharing ONE contract; the canvas bundle is
+their composition.** The user's C# reference (interfaces, encapsulation, composition over
+inheritance, polymorphism) maps directly onto the JS idioms:
+
+```js
+// THE CONTRACT (the C# interface, duck-typed — every component implements exactly this)
+Publisher {
+  id                    // 'settings' | 'iconsets' | 'chat' | 'portals' | 'layout' | 'assets'
+  togglesSchema(world)  // → the toggle-tree node (groups → leaves), GENERATED from live state
+  collect(world, picks) // → { manifestSlice, files[] } — the chosen includes only
+  size(picks)           // → bytes, RECURSIVE for nested refs (bundle-info math lives HERE, once)
+  sanitize(picks)       // → the blocklist law enforced HERE, inside the component (encapsulation)
+  applyImport(payload, ctx) // → side effects + rollback journal + warnings[] (BYOK, provenance)
+}
+
+// THE COMPOSITE (composition, has-a — NOT inheritance)
+CanvasPublisher { publishers: [SettingsPublisher, IconsetPublisher, LayoutPublisher,
+                                PortalPublisher, ChatPublisher[], ChildCanvasPublisher[]] }
+// polymorphic walk: one loop drives the toggle sheet, the size sum, collect, applyImport —
+// the composite never knows any concrete publisher's fields.
 ```
 
-**The publish toggle tree (the user's "each setting within each setting" ask):** the manifest
-schema IS the toggle tree — the publish sheet renders groups (Canvas layout / Settings ▸
-Colors, Grid / Icon sets / Chats ▸ per-chat ▸ history, workspaces, persona, tweaks /
-Black holes / Child canvases) with per-leaf switches. Banned keys are **structurally absent**
-(not just unchecked): a `PUBLISH_BLOCKLIST` in one module — connected accounts, view-size
-reset, performance knobs, import/export settings, text sizes, and (hard law) anything
-vault-backed. The bundle builder physically cannot reach the vault (`/api/keys` returns
-has_key flags only) — BYOK is enforced by architecture, not by discipline.
+**The publishers:**
+- **ChatPublisher** — the star of REV 2: ONE instance serves (a) the standalone **chat hub
+  type** (W6), (b) chats inside a canvas bundle, (c) the import validator for both. Toggle
+  tree per chat: name · persona(s) · preambles · model+provider (names/ids only) ·
+  capabilities · tweaks · template/skills/mind · pinned · history (default OFF, §7 Q3) ·
+  artifacts (capped) · connected workspaces (as refs — host/repo/branch, never tokens;
+  device/Termux folders become "reconnect required" rows) · **the library bundles the chat
+  uses** (hub refs `type|repo|id`, optional embed — nested bundles, `size()` walks them).
+  Editing this one instance changes the chat-lib publish sheet, the canvas sheet, AND the
+  import validator — the user's "edit 1 instance, reflects everywhere" law, literally.
+- **SettingsPublisher** — the CANVAS-scope settings slice (§3.2.4): theme, colors-tab,
+  grid effects & spacing. Blocklist enforced here (text sizes, performance knobs,
+  view-size reset, connected accounts, import/export keys NEVER ride — structurally
+  absent, not unchecked).
+- **IconsetPublisher** — the icon-registry subset (lookio's iconsets shape, ≤2 MB).
+- **LayoutPublisher** — icons, positions, dots, families, the canvas camera.
+- **PortalPublisher** — portal entities + the pair graph + target uuids (+ optional
+  embedded target canvases via ChildCanvasPublisher, size-accounted).
+- **AssetsPublisher** — custom images/icons with per-file + total caps.
 
-**Chatbot bundling:** a chat = session subset (name, model id, provider name, capabilities,
-template/preamble/persona refs, tweaks, pinned, skills/mind) + optional history (seq-ordered
-events, capped) + optional artifacts (per-file cap) + workspace **references** (host/repo/branch
-— never tokens; device/Termux folders export as "reconnect required" rows). Custom chat icons
-already engine-side (`/api/sessions/{sid}/icon`) — exported into assets/.
+**Format: `.doomcanvas` — a ZIP** (fflate vendored; lookio v2 precedent), versioned,
+schema-checked. `manifest.json` = uuid/created_at/appVersion/name/author + `contents{}`
+(the merge of every publisher's manifestSlice = the toggle tree's chosen state) +
+`sizes{}` + `flags{provenance, requires[]}`, plus per-publisher payload files
+(`settings.json`, `iconsets.json`, `canvas.json` = layout+portals, `chats/<sid>.json`,
+`assets/…`, `children/<uuid>.doomcanvas`).
 
-**Nested bundles:** a chat may reference library bundles it downloaded (the user's "bundled
-libraries"); v1 exports those as **hub references** (type|repo|id) with an optional
-"embed copies" switch for offline portability. Size accounting walks the tree recursively
-(references counted at last-known size) and the publish sheet shows the total before upload.
-
-**Import (the other half of V):**
-- New world created from `canvas.json`; sessions POST engine-side with **fresh session ids**
-  (collision policy: always rebind; the icons' session heals already tolerate this), mapping
-  old→new kept in world state for future relationship links.
-- Missing provider key/model → non-blocking warnings; model falls back to a recommended
-  provider (capabilities precedent); the chat opens ready-to-configure.
-- Imported personas land **inactive** with a provenance badge (current hub import law,
-  hubitem.js:788-790); imported history is marked (R7); no tool/hook auto-activation from
-  imports. Text size stays global (user's exclusion) — a bundle carrying it is a schema
+**Import (per-publisher, polymorphic — one driver loop):**
+- The composite walks publishers in dependency order (assets → iconsets → settings →
+  chats → layout → portals); each `applyImport` writes a rollback journal entry
+  (lookio's failed-apply-rollback precedent, now per-component).
+- Chats POST engine-side with **fresh session ids** (collision law: always rebind; the
+  restore-time heals already tolerate it), old→new map kept for future relationship links.
+- Missing provider key/model → warnings + a recommended-model fallback; personas land
+  **inactive** with provenance badges; no tool/hook auto-activation from imports (R7).
+  Text size stays global (the user's exclusion) — a bundle carrying it is a schema
   violation and rejected.
-- Validation: full schema walk, zip ladder (R6), depth ≤ 3, entry caps, per-file + total caps
+- Validation: schema walk per publisher slice, zip ladder (R6), entry/size caps
   (proposed: 96 MB total, 8 MB/chat history, 6 MB/asset), decompression-ratio guard,
-  apply-with-rollback (lookio precedent).
+  portal-target integrity (uuid refs resolve, else "lost").
 
-### 3.6 W6 — THE LIBRARY SHIP (hub integration) · **Cost: M (~450-650 LOC)**
+### 3.6 W6 — THE LIBRARY SHIP (hub integration) · **Cost: M-L (~600-800 LOC)**
 
+- **New hub type `chat` (tag `doomalay-chat`) — the user's REV 2 ask: "chats are a whole
+  lib section themselves".** Publishing a chat = ChatPublisher standalone (§3.5): the
+  full toggleable metadata tree + the downloaded bundles it uses; downloading = a new
+  chat icon on the current canvas (a choose-canvas picker when portals exist). BYOK
+  warnings, provenance marks, and history toggles ride the SAME applyImport as the canvas
+  path — one publisher, two front doors, zero divergence.
 - New hub type `canvas` (tag `doomalay-canvas`, payload `.doomcanvas`), riding the existing
   registry/publish/download/collections machinery. Publish caps: total ≤ 96 MB via LFS (R8 —
   trivial for HF), card = canvas thumbnail, description + toggle-tree summary auto-written.
@@ -296,12 +428,15 @@ libraries"); v1 exports those as **hub references** (type|repo|id) with an optio
 
 | Budget | Target | Basis |
 |---|---|---|
-| Per-frame cost added by ALL of this | **0** | Bounds = O(1) clamps at existing write sites; attractor = O(members) in existing step; no new tick handlers; switch is a burst |
+| Per-frame cost added by ALL of this | **0** (and W0 removes existing cost) | Bounds = O(1) clamps at existing write sites; portals = refs, no per-frame physics work; the sleep law makes at-rest icons ~free; no new tick handlers; switch is a burst |
 | World switch (100 icons) | < 400 ms burst, no dropped frame after settle | DOM rebuild ~100 nodes (existing boot path does this today), deferred raster, staggered destroys |
 | Live memory | Active world unchanged; each frozen world ≈ its JSON (KBs–low MBs) + ≤64 KB thumb | R9: JSON stashes, not detached trees |
 | Storage | N worlds ≈ N × (state JSON + thumb); 50 canvases ≈ low tens of MB engine-side | engine SQLite, no WebView quota |
 | Lattice | Unchanged (periodic tiles are world-size-free) | §1.2 |
 | Pixi | Unchanged while active; swap = removeChildren + staggered destroy | R5 |
+| Frame cost (W0 THE FIELD) | O(visible), not O(world) — a 500-icon world costs like a 20-icon viewport; at-rest icons ~zero JS | R11/R12 + the sleep law; rig-budgeted |
+| Boot cost (W0) | Flat with install age; hub/model syncs deferred to first use | H3 + the boot-budget regression test |
+| Portal transition | ~1.4 s total (700 ms dive + 700 ms emerge), cancellable until the swap point | §3.3 state machine on the existing camera pipeline |
 | APK size | +0 (no new libs; fflate/Pixi already vendored) | §1 |
 
 Red lines inherited: no hardcoded colors (pin A5 enforces), UI only via Panel/Overlay,
@@ -333,21 +468,26 @@ no per-frame style-var streams (the v1.12 lesson), nothing in the coast path.
 
 | Phase | Name | Ship | Content | Size |
 |---|---|---|---|---|
-| v1.42.1 | THE EDGE | v1.42.1 | W1 bounds + physics walls + settings key + edge rig | S |
-| v1.42.2 | THE LEDGER | v1.42.1 | engine canvases table + /api/canvases + Worlds registry + state.v2 migration | M |
-| v1.42.3 | THE SWAP | v1.42.2 | freeze/switch mechanics + canvas manager panel + settings layering + switch-budget rig | L |
-| v1.42.4 | THE SINGULARITY | v1.42.2 | black holes (entity, attractor, portal stub, panel, serialize) + rig | M |
-| v1.42.5 | THE DEEP | v1.42.3 | canvas-in-canvas (parent_id tree, "+ Canvas", breadcrumbs, depth cap) | M |
-| v1.42.6 | THE VESSEL | v1.43.0 | .doomcanvas export/import + toggle tree + sanitizers + conflict policy + import rig | L |
-| v1.43.0 | THE LIBRARY SHIP | v1.43.0 | hub 'canvas' type + publish/download + nested accounting + provenance + trust ladder | M |
+| v1.42.1 | THE LONG HAUL (audit) | v1.42.1 | W0: the hypothesis rigs (WAL/cache/boot-storms/world-size creep) + rig-proven hygiene (checkpoint/vacuum cadence, TTLs, deferred boot syncs) + the aged-state harness joins the battery | M |
+| v1.42.2 | THE FIELD | v1.42.1 | W0: the visibility law (O(visible) DOM culling) + the sleep law + the frame-budget rig; Option B (full-Pixi icons) only if the rig demands | M-L |
+| v1.42.3 | THE EDGE | v1.42.2 | W1 bounds + physics walls + settings key + edge rig | S |
+| v1.42.4 | THE LEDGER | v1.42.2 | engine canvases table + /api/canvases + Worlds registry + state.v2 migration | M |
+| v1.42.5 | THE SWAP | v1.42.3 | freeze/switch + settings layering + switch-budget rig + the manager panel core | L |
+| v1.42.6 | THE SINGULARITY | v1.42.3 | portals: HoleEntity + two-way pairing + dive/emerge transition + cancel + rig | M |
+| v1.42.7 | THE MANAGER | v1.42.3 | the worlds overlay full spec (rows / browse-the-library row / create row / local rename incl. downloaded / generic defaults) | M |
+| v1.42.8 | THE VESSEL | v1.43.0 | the Publisher contract + the six publishers + CanvasPublisher composite + .doomcanvas + import rig | L |
+| v1.43.0 | THE LIBRARY SHIP | v1.43.0 | hub types chat + canvas + publish/download + nested accounting + provenance + trust ladder | M-L |
 
-Ordering rationale: bounds first (trivial, immediately felt, de-risks nothing else);
-registry before swap (storage must exist); black holes before deep (portals need the entity);
-vessel before library (format must be final before it's public). Phases 1-3 alone deliver a
-usable multi-canvas app; 4-5 deliver the cosmology; 6-7 open the library.
+Ordering rationale (REV 2): the audit runs FIRST because everything else inherits its
+cost shape and its findings may re-order the queue; the render rework precedes the swap
+(a frozen world must be provably zero-cost, and a live one must stay cheap under many
+worlds); bounds stay trivial and early; registry before swap; portals before the manager
+(the manager wires portal pairs); the publisher framework before the library (chat and
+canvas types share ChatPublisher — build it once, front-door it twice).
 
-**Cost summary (engineering)**: ~7 phases, 4 sessions-ish of phase-pushes at the current
-cadence; largest single risk concentration in v1.42.3 (the swap). No rewrite anywhere; no
+**Cost summary (engineering)**: ~9 phases, ~5 sessions-ish of phase-pushes at the current
+cadence; the two risk concentrations are v1.42.2 (the render rework — measurement-led,
+fallback-coded) and v1.42.5 (the swap — the singleton unwiring). No rewrite anywhere; no
 new dependencies; APK size unchanged.
 
 ### The will-NOT list (the spaghetti boundary)
@@ -356,6 +496,7 @@ new dependencies; APK size unchanged.
 - No real-time collaboration, no multiplayer, no cloud sync (out of scope, unrequested).
 - No React islands, no framework migration, no new UI surfaces outside Panel/Overlay.
 - No per-frame cost additions of any kind.
+- No full-Pixi icon-layer rewrite (W0 Option B) unless the rig proves the cull/sleep laws miss budget — and then behind a settings flag, default OFF.
 - No private/encrypted hub listings in v1 (public library only).
 - Browser stays unlisted on the hub (user's explicit call).
 
@@ -365,18 +506,27 @@ new dependencies; APK size unchanged.
 
 1. **Q1 — the 7 s metric**: default world 65,536 × 65,536 (±32,768), configurable
    16k→128k + off. Confirm or re-tune after feeling v1.42.1.
-2. **Q2 — black hole semantics**: proposed = attractor + portal (canvas-in-canvas) in one
-   customizable entity. If you meant purely visual/organizational (or something else —
-   trash-can? warped region? spawn point?), W4 re-routes but W3's shape holds.
+2. **Q2 — black hole semantics: ANSWERED (REV 2)** — simple two-way portals holding a
+   canvas ref, zoom-through transition with move-to-cancel, auto-paired return portal,
+   no attractor mode, no caps. §3.3 as specified.
 3. **Q3 — chat history in published bundles**: proposed default **OFF** (private until
    toggled), per-chat switch at publish.
-4. **Q4 — canvas count cap**: proposed soft cap 50 with a friendly warning (perf headroom),
-   hard limit none.
+4. **Q4 — canvas count cap: REVISED (REV 2)** — no cap. The registry is rows in SQLite;
+   frozen worlds are just rows + thumbnails. Perf guidance lives in the manager (a size/
+   count readout), not a wall. The old soft-cap-50 proposal is withdrawn.
 5. **Q5 — history cap per chat in a bundle**: proposed last 200 turns or 8 MB, whichever first.
 6. **Q6 — thumbnail privacy**: thumbnails show layout, not content (icons are abstract) —
    publish toggle anyway. Confirm.
 7. **Q7 — global font**: `fontFamily` global or canvas-scope? Proposed global (device
    preference) with a settings-bundle toggle to include it.
+8. **Q8 — naming (REV 2)**: UI keeps "canvases" (the user's word — "canvas or world or
+   whatever we name it"); "worlds" stays the code/module name; portals are "portals" in
+   UI. One string map if you rename later.
+9. **Q9 — portal transition timing (REV 2)**: proposed 700 ms dive / 700 ms emerge
+   ("slowly as a loading" per your spec; tunable after feeling it). Move-to-cancel
+   confirmed.
+10. **Q10 — chat history default (REV 2)**: unchanged default OFF (Q3), now enforced
+    through ChatPublisher so the chat hub type and canvas bundles share one switch.
 
 ---
 
@@ -399,3 +549,6 @@ new dependencies; APK size unchanged.
 - Microsoft MSRC — Defending against indirect prompt injection: https://www.microsoft.com/en-us/msrc/blog/2025/07/how-microsoft-defends-against-indirect-prompt-injection-attacks
 - Hugging Face — Storage limits (LFS per-file up to 50 GB): https://huggingface.co/docs/hub/en/storage-limits · https://discuss.huggingface.co/t/is-there-a-size-limit-for-dataset-hosting/14861
 - web.dev — Detached window memory leaks: https://web.dev/articles/detached-window-memory-leaks
+- web.dev + MDN — content-visibility (offscreen render skip; Baseline 2024; the transform-culling caveat): https://web.dev/articles/content-visibility · https://developer.mozilla.org/en-US/docs/Web/CSS/content-visibility
+- PixiJS v8 — Culler Plugin (opt-in cullable/cullArea; manual Culler.shared.cull): https://pixijs.download/dev/docs/app-3.html · https://www.richardfu.net/optimizing-rendering-with-pixijs-v8-a-deep-dive-into-the-new-culling-api
+- SQLite — Write-Ahead Logging (checkpoint cadence) + the WAL-vacuum study (vacuum needs a checkpoint to shrink): https://www.sqlite.org/wal.html · https://photostructure.com/coding/how-to-vacuum-sqlite
