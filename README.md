@@ -34,6 +34,25 @@ streams clean (the "every word appears twice" bug), and the provider's own
 `reasoning_tokens` share of the completion rides the usage ledger end-to-end
 (the 🧠 stat on the usage panel).
 
+**Two new native hands + a retired bridge** (v1.47 PLAN-V147): the
+engine's tool registry grew to 31. `djournal` — the personal journal
+(the authentic Go port of `brain/tools/dt_journal.py`: moods, tags,
+highlights, gratitude, energy, day streaks, rotating prompts, weekly
+reviews, md/json exports) — one append-only diary per install at
+`<data-dir>/journal/entries.jsonl`; exports also land in the chat's
+artifact drawer. The port is pinned byte-for-byte against the Python
+spec itself (`engine/internal/djournal/djournal_parity_test.go` runs
+both implementations over one scenario — banker's rounding, the
+own-zone date law, and the JSON entry shape all agree exactly).
+`fleet` — the other-chatbots roster + detail (the A2A agent-card
+grammar over the engine's own truth: title/model/canvas/live state/
+turns, the q filter, and one chat's full card with its CURRENT action
+from the live events tail + the running/idle turn-gauge truth).
+And the old PM bridge's orphaned `/api/tools/*` tool-server routes are
+GONE (the WebView-bridge chat that consumed them died with the native
+PM; a full-tree sweep found zero consumers) — the mcpbus, `/mcp`, and
+the brain's `/api/pm/local` bridge all stay.
+
 ## Structure
 
 ```
