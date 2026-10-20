@@ -78,7 +78,7 @@ func str(key, desc string, required bool) PropDef {
 	return prop(key, desc, PropString, required)
 }
 
-// defs is the full tool registry — 29 tools, ported VERBATIM from
+// defs is the full tool registry — 30 tools: the 29 ported VERBATIM from
 // nativeToolSpecs (descriptions + props + required + gating) so the
 // model-visible manifest is byte-identical to the proven one (v1.20.3
 // THE ARM adds the gated termux hand).
@@ -240,6 +240,29 @@ var defs = []Def{
 		Props: []PropDef{
 			prop("action", "'exec' (run ANY shell command), 'cmds' (inventory every available command), 'git_setup' (arm the vault's GitHub token — git push works after one call), 'ls', 'read', 'write', 'append', 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "cmds", "git_setup", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
 			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]}.`, true),
+		}},
+	// ── the personal journal (always armed — the app-global diary) ──
+	// v1.47.1 THE JOURNAL HAND (PLAN-V147 §1): the authentic port of
+	// brain/tools/dt_journal.py — moods, tags, highlights, gratitude,
+	// energy, streaks, reviews, rotating prompts. ONE journal per
+	// install (<DataDir>/journal/entries.jsonl, append-only).
+	{Name: "djournal",
+		Desc: "Rich personal journal: moods, tags, daily highlights, gratitude, energy, streaks, and rotating journaling prompts. Use whenever the user wants to record or reflect on their day, search past entries, or review their week or month (mood trend, top tags, highlights). Actions: write, read, search, review, moods, prompt, export, help.",
+		Props: []PropDef{
+			prop("action", "The verb — call action='help' for the full cheat-sheet.", PropString, true, "write", "read", "search", "review", "moods", "prompt", "export", "help"),
+			str("text", "Entry body (write; required).", false),
+			str("date", "ISO date for the entry (write), or the day to read (read).", false),
+			str("mood", "1-5, word (great/good/ok/low/awful), or emoji (write; search filter).", false),
+			str("tags", "Comma- or newline-separated tags (write).", false),
+			str("highlights", "Comma- or newline-separated wins of the day (write).", false),
+			str("gratitude", "Comma- or newline-separated gratitude items (write).", false),
+			str("energy", "1-5 energy level (write).", false),
+			str("query", "The text to search for (search).", false),
+			str("in_field", "text|tags|highlights|gratitude|all (search, default all).", false),
+			str("date_range", "'2026-06-01..2026-06-30' or 'last 7' (search, moods, export).", false),
+			str("period", "week|month|'last N days' (review, default week).", false),
+			str("target", "date|today|yesterday|'A..B'|'last N' (read).", false),
+			str("format", "md|json (export).", false),
 		}},
 	// ── the swarm delegate (gated on the Delegate closure) ──────────
 	{Name: "delegate", Gate: GateDelegate,

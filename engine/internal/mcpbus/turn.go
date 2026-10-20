@@ -79,6 +79,13 @@ type Turn struct {
 	// Delegate fans a prompt out to other models (server closure).
 	Delegate func(ctx context.Context, prompt string, models []string) []map[string]any
 
+	// Djournal runs the personal journal tool (server closure —
+	// v1.47.1 THE JOURNAL HAND: the app-global diary at
+	// <DataDir>/journal/entries.jsonl; nil = the tool honestly reports
+	// it is not armed for this chat).
+	Djournal func(ctx context.Context, argJSON string) string
+
+
 	// Summarize builds the pill text for a tool call. Optional — nil
 	// falls back to DefaultSummary (the ported per-category logic).
 	Summarize func(name, argJSON string) string
@@ -223,6 +230,11 @@ func DefaultSummary(name, argJSON string) string {
 		return first("command", "path", "pattern", "name", "action")
 	case "delegate":
 		return clampRunes(get("prompt"), 80)
+	case "djournal":
+		// v1.40.2's informative-body law: the action + the operand head
+		// (the target/query/text) so the pill teaches what the model is
+		// doing with its diary.
+		return clampRunes(strings.TrimSpace(get("action")+" "+first("target", "query", "date_range", "period", "text")), 80)
 	case "persona_list":
 		return ""
 	case "persona_set", "persona_activate":

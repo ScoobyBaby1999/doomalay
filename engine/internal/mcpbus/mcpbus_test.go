@@ -127,8 +127,8 @@ func TestListToolsServesAll29(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools) != 29 {
-		t.Fatalf("want 29 tools, got %d", len(tools))
+	if len(tools) != 30 {
+		t.Fatalf("want 30 tools (29 base + djournal, v1.47.1), got %d", len(tools))
 	}
 	for _, tool := range tools {
 		if tool.Name == "" || tool.Description == "" {
@@ -236,12 +236,12 @@ func TestGatedToolsRefuseWhenUnarmed(t *testing.T) {
 func TestSpecsGating(t *testing.T) {
 	b, _ := newTestBus(t)
 	none := b.Specs(Gates{})
-	if len(none) != 20 {
-		t.Fatalf("want 20 always-on specs (29 - 9 gated), got %d", len(none))
+	if len(none) != 21 {
+		t.Fatalf("want 21 always-on specs (30 - 9 gated), got %d", len(none))
 	}
 	all := b.Specs(Gates{Hublib: true, Skills: true, Persona: true, Workspace: true, Termux: true, Delegate: true})
-	if len(all) != 29 {
-		t.Fatalf("want 29 specs with all gates, got %d", len(all))
+	if len(all) != 30 {
+		t.Fatalf("want 30 specs with all gates, got %d", len(all))
 	}
 	// spot-check the OpenAI wire shape against the proven one
 	var found bool
@@ -516,13 +516,14 @@ func TestChain100ExternalTools(t *testing.T) {
 	if got := b.ExternalTools(); got != 100 {
 		t.Fatalf("want 100 attached tools, got %d", got)
 	}
-	// the manifest crosses the 100+ horizon: 20 always-on internal + 100
+	// the manifest crosses the 100+ horizon: 21 always-on internal
+	// (29 base + djournal, v1.47.1) + 100 chained
 	specs := b.Specs(Gates{})
-	if len(specs) != 120 {
-		t.Fatalf("want 120 specs (20 always-on internal + 100 chained), got %d", len(specs))
+	if len(specs) != 121 {
+		t.Fatalf("want 121 specs (21 always-on internal + 100 chained), got %d", len(specs))
 	}
 	// every external spec has a real JSON Schema
-	for _, s := range specs[20:] {
+	for _, s := range specs[21:] {
 		fn, _ := s["function"].(map[string]any)
 		if fn == nil || !strings.HasPrefix(fn["name"].(string), "scale_tool_") {
 			t.Fatalf("external spec shape wrong: %v", s)
@@ -555,8 +556,8 @@ func TestChain100ExternalTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools) != 129 {
-		t.Fatalf("protocol tools/list should serve 129 (29 internal + 100 chained), got %d", len(tools))
+	if len(tools) != 130 {
+		t.Fatalf("protocol tools/list should serve 130 (30 internal + 100 chained), got %d", len(tools))
 	}
 }
 

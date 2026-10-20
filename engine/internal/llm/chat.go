@@ -96,6 +96,13 @@ type ChatRequest struct {
         // the bridge); nil = the tool is not offered. Armed only when the
         // session holds the ⌨ Termux capability AND a device folder is bound.
         TermuxToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+        // v1.47.1 THE JOURNAL HAND: the personal journal on the direct
+        // path — the authentic dt_journal.py port (engine/internal/
+        // djournal) over the app-global diary (<DataDir>/journal/
+        // entries.jsonl). Set by the server; nil = the tool reports
+        // it needs a live session. Exports also sink into the session's
+        // artifact drawer via ArtifactSink (the docx/xlsx pattern).
+        DjournalToolFn func(ctx context.Context, argJSON string) string `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1915,6 +1922,16 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_use", Name: "termux", Summary: summary, Args: argJSON}
                 observation = req.TermuxToolFn(ctx, argJSON)
                 ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "termux"}
+                return observation
+        }
+        if action == "djournal" && req.DjournalToolFn != nil {
+                // v1.47.1 THE JOURNAL HAND on the direct path — the
+                // degraded-bus ladder still serves the diary through
+                // the server's runner (same dispatch, same shapes).
+                summary := mcpbus.DefaultSummary("djournal", argJSON)
+                ch <- ChatChunk{Type: "tool_use", Name: "djournal", Summary: summary, Args: argJSON}
+                observation = req.DjournalToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "djournal"}
                 return observation
         }
         if action == "delegate" && req.DelegateFn != nil {

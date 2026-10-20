@@ -74,6 +74,7 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
                 Workspace:     req.WorkspaceToolFn,
                 Termux:        req.TermuxToolFn,
                 Delegate:      req.DelegateFn,
+                Djournal:      req.DjournalToolFn,
                 ProgressTo: func(text string) {
                         ch <- ChatChunk{Type: "progress", Text: text}
                 },

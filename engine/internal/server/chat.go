@@ -2052,6 +2052,12 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 WorkspaceToolFn: func(ctx context.Context, argJSON string) string {
                         return s.runWorkspaceAction(ctx, sessionID, argJSON)
                 },
+                // v1.47.1 THE JOURNAL HAND: the app-global diary (the
+                // authentic dt_journal.py port) — always armed; exports
+                // also sink into this session's artifact drawer.
+                DjournalToolFn: func(ctx context.Context, argJSON string) string {
+                        return s.runDjournalAction(ctx, sessionID, argJSON)
+                },
                 // v1.22.0 THE MIRROR: the workspace manifest NO LONGER
                 // prepends llm-side — {repo_access} in the composed system
                 // prompt carries it (the expansion covers both turn paths;

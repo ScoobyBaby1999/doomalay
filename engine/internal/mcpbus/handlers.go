@@ -167,6 +167,15 @@ func handlerFor(d *Def) server.ToolHandlerFunc {
 			}
 			return textResult(t.Termux(ctx, argJSON)), nil
 
+		case d.Name == "djournal":
+			// v1.47.1 THE JOURNAL HAND: the server closure owns the
+			// app-global diary (<DataDir>/journal/entries.jsonl) and
+			// sinks exports into this session's artifact drawer.
+			if t.Djournal == nil {
+				return mcp.NewToolResultError("error: the journal tool needs a live session on this server"), nil
+			}
+			return textResult(t.Djournal(ctx, argJSON)), nil
+
 		case personaTools[d.Name]:
 			if t.Persona == nil {
 				return mcp.NewToolResultError("error: persona tools need a live session on this server"), nil
