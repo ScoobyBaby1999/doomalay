@@ -1388,6 +1388,16 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 if chunk.Usage != nil {
                         usage.InputTokens = chunk.Usage.PromptTokens
                         usage.OutputTokens = chunk.Usage.CompletionTokens
+                        // v1.44.6: the total is computed HERE (chunk-parse
+                        // time), not only at the scan's clean end — the
+                        // v0.71 bridge's normUsage law, engine-side: every
+                        // early exit (tool-call collection, a cut stream,
+                        // the empty-round nets) still reports the honest
+                        // sum, never total=0 with real in/out numbers.
+                        usage.TotalTokens = chunk.Usage.TotalTokens
+                        if usage.TotalTokens == 0 {
+                                usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+                        }
                 }
         }
         // v1.14.1 THE LEDGER: the terminal verdict — the LAST non-empty
@@ -2373,12 +2383,21 @@ func mergeUsage(a, b *Usage) *Usage {
         }
         // v1.14.1 THE LEDGER: the terminal state rides the LAST round — the
         // turn ended however the final completion ended, not the first.
-        return &Usage{
+        // v1.44.6 FIX: TotalTokens rides the merge (it was DROPPED here —
+        // multi-round turns always reported total=0 beside real in/out
+        // numbers; the v1440 rig convicted it). Belt-and-braces: a zero
+        // total beside real numbers recomputes from the parts.
+        out := &Usage{
                 InputTokens:  a.InputTokens + b.InputTokens,
                 OutputTokens: a.OutputTokens + b.OutputTokens,
+                TotalTokens:  a.TotalTokens + b.TotalTokens,
                 FinishReason: b.FinishReason,
                 OutputCut:    b.OutputCut,
         }
+        if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
+                out.TotalTokens = out.InputTokens + out.OutputTokens
+        }
+        return out
 }
 
 // (v1.13.3 THE GUT: parseAction/parseActions/actionRe died with the
