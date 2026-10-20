@@ -24,15 +24,16 @@ import (
 
 // usageAccum aggregates one session's usage events.
 type usageAccum struct {
-        TokensIn   int64   `json:"tokensIn"`
-        TokensOut  int64   `json:"tokensOut"`
-        Turns      int     `json:"turns"`
-        Cost       float64 `json:"cost"`
-        HasCost    bool    `json:"hasCost"`
-        LastSeq    int     `json:"lastSeq"`
-        HistTokens []int64 `json:"-"` // per-turn totals (context chart)
-        LengthCuts int              `json:"lengthCuts"`      // v1.14.1: turns the provider cut at its cap
-        Finish     map[string]int    `json:"finishReasons"` // v1.14.1: why turns ended
+        TokensIn        int64   `json:"tokensIn"`
+        TokensOut       int64   `json:"tokensOut"`
+        ReasoningTokens int64   `json:"reasoningTokens"` // v1.46.2: the thinking share of tokensOut
+        Turns           int     `json:"turns"`
+        Cost            float64 `json:"cost"`
+        HasCost         bool    `json:"hasCost"`
+        LastSeq         int     `json:"lastSeq"`
+        HistTokens      []int64 `json:"-"` // per-turn totals (context chart)
+        LengthCuts      int              `json:"lengthCuts"`      // v1.14.1: turns the provider cut at its cap
+        Finish          map[string]int    `json:"finishReasons"` // v1.14.1: why turns ended
 }
 
 // handleSessionUsage is GET /api/sessions/{id}/usage.
@@ -61,10 +62,11 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 var st struct {
                         State string `json:"state"`
                         Usage *struct {
-                                InputTokens  int    `json:"input_tokens"`
-                                OutputTokens int    `json:"output_tokens"`
-                                FinishReason string `json:"finish_reason"`
-                                OutputCut    bool   `json:"output_cut"`
+                                InputTokens     int    `json:"input_tokens"`
+                                OutputTokens    int    `json:"output_tokens"`
+                                ReasoningTokens int64  `json:"reasoning_tokens"` // v1.46.2 THE REASONING LEDGER
+                                FinishReason    string `json:"finish_reason"`
+                                OutputCut       bool   `json:"output_cut"`
                         } `json:"usage"`
                 }
                 if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
@@ -87,6 +89,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 }
                 acc.TokensIn += int64(st.Usage.InputTokens)
                 acc.TokensOut += int64(st.Usage.OutputTokens)
+                acc.ReasoningTokens += st.Usage.ReasoningTokens // v1.46.2: absent in old events = 0, never invented
                 acc.Turns++
                 acc.LastSeq = ev.Seq
                 // v1.14.1 THE LEDGER: the terminal verdict tallies — how
@@ -104,6 +107,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 }
                 total.TokensIn += int64(st.Usage.InputTokens)
                 total.TokensOut += int64(st.Usage.OutputTokens)
+                total.ReasoningTokens += st.Usage.ReasoningTokens // v1.46.2
                 total.Turns++
                 if st.Usage.FinishReason != "" {
                         if total.Finish == nil {
@@ -154,6 +158,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 acc := byModel[k]
                 models = append(models, map[string]any{
                         "model": k, "tokensIn": acc.TokensIn, "tokensOut": acc.TokensOut,
+                        "reasoningTokens": acc.ReasoningTokens, // v1.46.2 THE REASONING LEDGER
                         "turns": acc.Turns, "cost": round2(acc.Cost), "hasCost": acc.HasCost,
                         // v1.14.1 THE LEDGER: per-model honesty metrics.
                         "lengthCuts": acc.LengthCuts, "finishReasons": acc.Finish,
@@ -182,6 +187,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
                 "sessionId": id,
                 "totals": map[string]any{
                         "tokensIn": total.TokensIn, "tokensOut": total.TokensOut,
+                        "reasoningTokens": total.ReasoningTokens, // v1.46.2 THE REASONING LEDGER
                         "turns": total.Turns, "cost": round2(total.Cost), "hasCost": total.HasCost,
                         // v1.14.1: the honesty metrics.
                         "lengthCuts": total.LengthCuts, "finishReasons": total.Finish,
@@ -228,10 +234,11 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
                         }
                         var st struct {
                                 Usage *struct {
-                                        InputTokens  int    `json:"input_tokens"`
-                                        OutputTokens int    `json:"output_tokens"`
-                                        FinishReason string `json:"finish_reason"`
-                                        OutputCut    bool   `json:"output_cut"`
+                                        InputTokens     int    `json:"input_tokens"`
+                                        OutputTokens    int    `json:"output_tokens"`
+                                        ReasoningTokens int64  `json:"reasoning_tokens"` // v1.46.2
+                                        FinishReason    string `json:"finish_reason"`
+                                        OutputCut       bool   `json:"output_cut"`
                                 } `json:"usage"`
                         }
                         if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
@@ -254,6 +261,7 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
                         for _, a := range []*usageAccum{pa, ma, &grand} {
                                 a.TokensIn += int64(st.Usage.InputTokens)
                                 a.TokensOut += int64(st.Usage.OutputTokens)
+                                a.ReasoningTokens += st.Usage.ReasoningTokens // v1.46.2
                                 a.Turns++
                                 // v1.14.1 THE LEDGER: the fleet honesty metrics.
                                 if st.Usage.FinishReason != "" {
@@ -276,16 +284,16 @@ func (s *Server) handleUsageGlobal(w http.ResponseWriter, r *http.Request) {
         }
         provOut := map[string]any{}
         for k, a := range byProvider {
-                provOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
+                provOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "reasoningTokens": a.ReasoningTokens, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
                         "lengthCuts": a.LengthCuts, "finishReasons": a.Finish}
         }
         modelOut := map[string]any{}
         for k, a := range byModel {
-                modelOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
+                modelOut[k] = map[string]any{"tokensIn": a.TokensIn, "tokensOut": a.TokensOut, "reasoningTokens": a.ReasoningTokens, "turns": a.Turns, "cost": round2(a.Cost), "hasCost": a.HasCost,
                         "lengthCuts": a.LengthCuts, "finishReasons": a.Finish}
         }
         writeJSON(w, 200, map[string]any{
-                "totals": map[string]any{"tokensIn": grand.TokensIn, "tokensOut": grand.TokensOut, "turns": grand.Turns, "cost": round2(grand.Cost), "hasCost": grand.HasCost,
+                "totals": map[string]any{"tokensIn": grand.TokensIn, "tokensOut": grand.TokensOut, "reasoningTokens": grand.ReasoningTokens, "turns": grand.Turns, "cost": round2(grand.Cost), "hasCost": grand.HasCost,
                         "lengthCuts": grand.LengthCuts, "finishReasons": grand.Finish},
                 "providers": provOut,
                 "models":    modelOut,

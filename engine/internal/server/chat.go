@@ -2198,6 +2198,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                         "input_tokens":  chunk.Usage.InputTokens,
                                         "output_tokens": chunk.Usage.OutputTokens,
                                         "total_tokens":  chunk.Usage.TotalTokens,
+                                        // v1.46.2 THE REASONING LEDGER: the
+                                        // provider's own reasoning share rides
+                                        // the ledger (PM's gateway reports it per
+                                        // chunk + final; 0 = not reported).
+                                        "reasoning_tokens": chunk.Usage.ReasoningTokens,
                                         // v1.14.1 THE LEDGER: the terminal
                                         // verdict persists with the numbers —
                                         // replays and the usage ledger can

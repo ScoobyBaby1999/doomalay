@@ -46,10 +46,16 @@
   }
   function modelRow(m) {
     var cost = fmtCost(m);
+    var think = Number(m.reasoningTokens || 0);
+    // v1.46.2 THE REASONING LEDGER: the model's thinking share (the
+    // provider's own completion_tokens_details.reasoning_tokens — PM's
+    // gateway reports it per-chunk + final). 0/unreported hides the chip.
+    var thinkSpan = '<span data-usthink style="font-size:var(--ui-micro-fs);color:var(--accent-3);flex-shrink:0' + (think > 0 ? '' : ';display:none') + '">🧠' + fmtTokens(think) + '</span>';
     return '<div data-usmodel="' + esc(String(m.model || '')) + '" style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px">' +
         '<span style="flex:1;min-width:0;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(String(m.model || '').split('/').pop()) + '</span>' +
         '<span style="font-size:var(--ui-micro-fs);color:var(--text-3);flex-shrink:0">' + (m.turns || 0) + ' turns</span>' +
         '<span style="font-size:var(--ui-micro-fs);color:var(--text-2);flex-shrink:0">↑' + fmtTokens(m.tokensIn) + ' ↓' + fmtTokens(m.tokensOut) + '</span>' +
+        thinkSpan +
         (cost ? '<span style="font-size:var(--ui-micro-fs);color:var(--warn);flex-shrink:0">' + cost + '</span>' : '') +
       '</div>';
   }
@@ -90,6 +96,7 @@
     set('us-in', fmtTokens(t.tokensIn));
     set('us-out', fmtTokens(t.tokensOut));
     set('us-cost', t.hasCost ? fmtCost(t) : '—');
+    set('us-think', thinkStatValue(t));
 
     var fill = Math.max(0, Math.min(100, ctx.fillPct || 0));
     var bar = el.querySelector('#us-ctx-fill');
@@ -135,6 +142,7 @@
             if (spans[1].textContent !== s1) spans[1].textContent = s1;
             if (spans[2].textContent !== s2) spans[2].textContent = s2;
           }
+          patchThinkChip(row, m); // v1.46.2: the 🧠 chip refreshes in place too
         });
       }
     }
@@ -155,6 +163,33 @@
       }).catch(function () { /* transient — next tick retries */ });
     }, POLL_MS);
     return function stop() { clearInterval(timer); };
+  }
+
+  // v1.46.2: the thinking chip patch — the row's 🧠 span toggles by
+  // presence without changing the row's shape (spans[1]/[2] keep their
+  // indexes; the chip rides its own data-usthink hook).
+  function patchThinkChip(row, m) {
+    var ts = row.querySelector('[data-usthink]');
+    if (!ts) return;
+    var think = Number((m && m.reasoningTokens) || 0);
+    if (think > 0) {
+      var tval = '🧠' + fmtTokens(think);
+      ts.style.display = '';
+      if (ts.textContent !== tval) ts.textContent = tval;
+    } else {
+      ts.style.display = 'none';
+    }
+  }
+
+  // v1.46.2: the stat cell pair — the thinking share reads '—' when the
+  // provider does not report it (never invented).
+  function thinkStatValue(t) {
+    var think = Number((t && t.reasoningTokens) || 0);
+    return think > 0 ? '🧠 ' + fmtTokens(think) : '—';
+  }
+  function thinkStat(t, id) {
+    return statCell(thinkStatValue(t),
+      'thinking tokens', 'var(--accent-3)', id);
   }
 
   function open(panel, u, opts) {
@@ -182,6 +217,7 @@
             statCell(fmtTokens(t.tokensIn), 'tokens in', null, 'us-in') +
             statCell(fmtTokens(t.tokensOut), 'tokens out', null, 'us-out') +
             statCell(t.hasCost ? fmtCost(t) : '—', t.hasCost ? 'est. cost' : 'unpriced', t.hasCost ? 'var(--warn)' : 'var(--text-3)', 'us-cost') +
+            thinkStat(t, 'us-think') +
           '</div>' +
           '<div style="background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px">' +
             '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:8px">' +
@@ -242,6 +278,7 @@
           '<span style="flex:1;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1)">' + esc(k) + '</span>' +
           '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + (p.turns || 0) + ' turns</span>' +
           '<span style="font-size:var(--ui-micro-fs);color:var(--text-2)">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
+          (Number(p.reasoningTokens || 0) > 0 ? '<span style="font-size:var(--ui-micro-fs);color:var(--accent-3)">🧠' + fmtTokens(p.reasoningTokens) + '</span>' : '') +
           (p.hasCost ? '<span style="font-size:var(--ui-micro-fs);color:var(--warn)">' + fmtCost(p) + '</span>' : '') +
         '</div>';
     });
@@ -255,6 +292,7 @@
             statCell(fmtTokens(t.tokensIn), 'tokens in · all chats', null, 'usf-in') +
             statCell(fmtTokens(t.tokensOut), 'tokens out', null, 'usf-out') +
             statCell(t.hasCost ? fmtCost(t) : '—', 'est. cost', t.hasCost ? 'var(--warn)' : 'var(--text-3)', 'usf-cost') +
+            thinkStat(t, 'usf-think') +
           '</div>' +
           '<div class="pv-section-label">' + (fu.sessions || 0) + ' chats · by provider</div>' +
           '<div id="usf-provs" style="display:flex;flex-direction:column;gap:6px">' + (rows || '<div class="art-loading" style="padding:14px">no usage recorded yet</div>') + '</div>'
@@ -272,6 +310,7 @@
           set('usf-in', fmtTokens(nt.tokensIn));
           set('usf-out', fmtTokens(nt.tokensOut));
           set('usf-cost', nt.hasCost ? fmtCost(nt) : '—');
+          set('usf-think', thinkStatValue(nt));
           var list = el.querySelector('#usf-provs');
           if (!list) return;
           var keys = Object.keys(d.providers || {}).sort().join('\u0001');
@@ -286,6 +325,7 @@
                   '<span style="flex:1;font-size:calc(var(--ui-small-fs) - 0.5px);color:var(--text-1)">' + esc(k) + '</span>' +
                   '<span style="font-size:var(--ui-micro-fs);color:var(--text-3)">' + (p.turns || 0) + ' turns</span>' +
                   '<span style="font-size:var(--ui-micro-fs);color:var(--text-2)">↑' + fmtTokens(p.tokensIn) + ' ↓' + fmtTokens(p.tokensOut) + '</span>' +
+                  (Number(p.reasoningTokens || 0) > 0 ? '<span style="font-size:var(--ui-micro-fs);color:var(--accent-3)">🧠' + fmtTokens(p.reasoningTokens) + '</span>' : '') +
                   (p.hasCost ? '<span style="font-size:var(--ui-micro-fs);color:var(--warn)">' + fmtCost(p) + '</span>' : '') +
                 '</div>';
             });

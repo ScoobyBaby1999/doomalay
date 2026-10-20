@@ -166,12 +166,18 @@ type ChatChunk struct {
 // carries the provider's terminal verdict so the numbers are honest —
 // finish_reason is WHY the stream ended (stop / tool_calls / length),
 // output_cut flags the length class (the mid-file truncation shape).
+// v1.46.2 THE REASONING LEDGER: ReasoningTokens is the provider's own
+// reasoning share of the completion (completion_tokens_details.
+// reasoning_tokens — live-captured on PM's gateway per-chunk AND in the
+// final; other OpenAI-compat hosts send the same OpenAI detail field).
+// 0 = the provider does not report it (never invented).
 type Usage struct {
-        InputTokens  int    `json:"input_tokens"`
-        OutputTokens int    `json:"output_tokens"`
-        TotalTokens  int    `json:"total_tokens"`
-        FinishReason string `json:"finish_reason,omitempty"`
-        OutputCut    bool   `json:"output_cut,omitempty"`
+        InputTokens     int    `json:"input_tokens"`
+        OutputTokens    int    `json:"output_tokens"`
+        TotalTokens     int    `json:"total_tokens"`
+        ReasoningTokens int64  `json:"reasoning_tokens,omitempty"`
+        FinishReason    string `json:"finish_reason,omitempty"`
+        OutputCut       bool   `json:"output_cut,omitempty"`
 }
 
 // openAIChunk is the raw SSE chunk from an OpenAI-compatible provider.
@@ -200,6 +206,13 @@ type openAIChunk struct {
                 PromptTokens     int `json:"prompt_tokens"`
                 CompletionTokens int `json:"completion_tokens"`
                 TotalTokens      int `json:"total_tokens"`
+                // v1.46.2 THE REASONING LEDGER: the OpenAI detail block —
+                // PM's gateway (live: glm-5.3, 53 of 56 completion tokens)
+                // and OpenAI-compatible hosts report the reasoning share
+                // here. Pointer: absent block = 0, never invented.
+                CompletionTokensDetails *struct {
+                        ReasoningTokens int64 `json:"reasoning_tokens"`
+                } `json:"completion_tokens_details,omitempty"`
         } `json:"usage,omitempty"`
 }
 
@@ -1398,6 +1411,12 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 if chunk.Usage != nil {
                         usage.InputTokens = chunk.Usage.PromptTokens
                         usage.OutputTokens = chunk.Usage.CompletionTokens
+                        // v1.46.2 THE REASONING LEDGER: the reasoning share
+                        // rides the same per-chunk overwrite (the final chunk's
+                        // usage is the honest one — PM streams it every frame).
+                        if chunk.Usage.CompletionTokensDetails != nil {
+                                usage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+                        }
                         // v1.44.6: the total is computed HERE (chunk-parse
                         // time), not only at the scan's clean end — the
                         // v0.71 bridge's normUsage law, engine-side: every
@@ -2528,11 +2547,12 @@ func mergeUsage(a, b *Usage) *Usage {
         // numbers; the v1440 rig convicted it). Belt-and-braces: a zero
         // total beside real numbers recomputes from the parts.
         out := &Usage{
-                InputTokens:  a.InputTokens + b.InputTokens,
-                OutputTokens: a.OutputTokens + b.OutputTokens,
-                TotalTokens:  a.TotalTokens + b.TotalTokens,
-                FinishReason: b.FinishReason,
-                OutputCut:    b.OutputCut,
+                InputTokens:     a.InputTokens + b.InputTokens,
+                OutputTokens:    a.OutputTokens + b.OutputTokens,
+                TotalTokens:     a.TotalTokens + b.TotalTokens,
+                ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens,
+                FinishReason:    b.FinishReason,
+                OutputCut:       b.OutputCut,
         }
         if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
                 out.TotalTokens = out.InputTokens + out.OutputTokens
