@@ -957,11 +957,30 @@
     // read-only camera + bounds truth for the E2E rigs; W2's per-canvas
     // camera work builds on this).
     cameraProbe: function () {
-      return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H };
+      return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H, maxScale: MAX_SCALE, minScale: MIN_SCALE };
     },
     // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
     // manager panel + v1.42.6's portals both ride the ONE switchTo).
     switchTo: switchTo,
+    // v1.42.6 THE SINGULARITY: the portal runtime's hooks — camera
+    // writes (the dive/emerge interpolation), entity removal (a pair
+    // death), the immediate save, and the rAF pump. holes.js consumes.
+    setCamera: function (x, y, s) {
+      offsetX = x; offsetY = y;
+      if (isFinite(s) && s > 0) scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+      clampCamera();
+    },
+    removeEntity: function (icon) {
+      if (!icon) return;
+      try { if (window.TabGroups && window.TabGroups.isGrouped && window.TabGroups.isGrouped(icon)) window.TabGroups.release(icon); } catch (e) {}
+      world.remove(icon.id);
+      if (icon.el && icon.el.parentNode) icon.el.parentNode.removeChild(icon.el);
+      if (window.World3D && window.World3D.sync) window.World3D.sync();
+      hideCanvasEmpty();
+      scheduleSave();
+    },
+    saveNow: saveNow,
+    startAnimation: startAnimation,
     worldsProbe: function () {
       return {
         active: (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null,
@@ -1379,6 +1398,10 @@
     // a gliding camera is a MOVING camera (full frames + icon renders,
     // exactly the pan semantics; the icons re-render per frame below).
     if (stepCameraGlide(now)) moving = true;
+    // v1.42.6 THE SINGULARITY: the portal dive/emerge camera choreography
+    // — the glide's twin (interpolation in the tick, cancel on gesture).
+    // Idle is a 2-line early-out inside step(): zero per-frame cost at rest.
+    if (window.Holes && window.Holes.step(now)) moving = true;
     if (inputState === 'PANNING') {
       // v0.94.1: THE FINGER OWNS THE CAMERA — while an active finger pan
       // is in flight, tick does NOT integrate velX/velY (the input path
@@ -1677,7 +1700,9 @@
     if (delBtn) {
       const label = (icon.type === 'chat')
         ? (icon.name || 'this chat')
-        : (icon.title || icon.url || 'this tab');
+        : (icon.type === 'hole')
+          ? (icon.label || 'this portal')
+          : (icon.title || icon.url || 'this tab');
       delBtn.textContent = '🗑 delete ' + label;
     }
     placeMenu(x, y);
@@ -1686,6 +1711,45 @@
     menuEl.classList.add('hidden');
     menuEl.classList.remove('icon-mode');
     heldIcon = null;
+  }
+
+  // v1.42.6 THE SINGULARITY: the portal picker — a PANEL view (the
+  // Panel law: no new surface) listing every OTHER world; a tap births
+  // the pair via Holes.createPair at the long-press point.
+  function openPortalPicker(at) {
+    if (!(window.Worlds && window.Worlds.CanvasStore && window.Holes)) return;
+    var me = (window.Worlds.activeId) ? window.Worlds.activeId() : 'default';
+    window.Worlds.CanvasStore.list().then(function (rows) {
+      var others = rows.filter(function (r) { return r.id !== me; });
+      var rowBtn = function (r) {
+        return '<button data-portal-to="' + escHtml(r.id) + '" style="text-align:left;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:var(--ui-small-fs);cursor:pointer;display:flex;justify-content:space-between;gap:10px">' +
+          '<span>' + escHtml(r.name || r.id) + '</span>' +
+          '<span style="color:var(--text-3);font-size:var(--ui-tiny-fs)">' + (r.icon_count || 0) + ' icons</span></button>';
+      };
+      panel.open({
+        title: 'New portal',
+        subtitle: 'a way through',
+        bodyHTML: '<div style="padding:16px;display:flex;flex-direction:column;gap:8px">' +
+          '<div style="color:var(--text-3);font-size:var(--ui-small-fs)">fall through to which world?</div>' +
+          (others.length
+            ? others.map(rowBtn).join('')
+            : '<div style="color:var(--text-3);font-size:var(--ui-small-fs)">no other worlds yet — make one in Settings → Canvases first</div>') +
+          '</div>'
+      });
+      if (!others.length) return;
+      panel.bodyEl.querySelectorAll('[data-portal-to]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var target = b.getAttribute('data-portal-to');
+          window.Holes.createPair(at, target).then(function () {
+            panel.close();
+            startAnimation();
+          }).catch(function (e) {
+            panel.close();
+            console.warn('doomalay: portal create failed', e);
+          });
+        });
+      });
+    }).catch(function () { /* the engine is unreachable — the panel stays empty */ });
   }
 
   menuEl.addEventListener('click', function (e) {
@@ -1713,6 +1777,14 @@
         startAnimation();
         setTimeout(function () { openWebPanelFor(icon); }, 150);
       }
+    } else if (btn.dataset.action === 'new-portal') {
+      // v1.42.6 THE SINGULARITY: the world picker — every OTHER world is
+      // a destination; picking one births the PAIR (the local hole at
+      // the press point + the return hole written into the target's row).
+      const r = menuEl.getBoundingClientRect();
+      const wp = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+      hideMenu();
+      openPortalPicker(wp);
     } else if (btn.dataset.action === 'icon-pin') {
       // v1.36.2 THE HELD THING: the pin row — the flag rides the icon
       // (serialize → localStorage), the themed badge wears/leaves, the
@@ -1729,6 +1801,16 @@
     } else if (btn.dataset.action === 'icon-delete') {
       // the delete row (LAST row, the user's spec) — the reusable Overlay
       // screen asks the forever question.
+      // v1.42.6: a hole's hold-delete kills the PAIR (the pair is the
+      // unit — a lone far-side hole is an orphan, never a feature).
+      if (heldIcon && heldIcon.type === 'hole' && window.Holes) {
+        var hpair = heldIcon.pairId;
+        hideMenu();
+        window.Holes.deletePair(hpair).then(function () {
+          if (window.DoomToast) window.DoomToast('the pair is gone');
+        });
+        return;
+      }
       if (heldIcon) confirmDeleteIcon(heldIcon);
     }
     hideMenu();
@@ -1861,8 +1943,11 @@
     velX = 0; velY = 0;
     // v1.36.3: THE FINGER IS BOSS — any canvas-surface press cancels a
     // running glide (the user took the wheel; UI chrome taps never reach
-    // here — the user's law).
+    // here — the user's law). v1.42.6: it also cancels a portal DIVE
+    // (the spec's cancel-on-move law — nothing has swapped yet, so the
+    // cancel is a trivial ease-back).
     cancelCameraGlide();
+    if (window.Holes) window.Holes.cancelDive();
     longPressTimer = setTimeout(function () {
       longPressTimer = null;
       if (inputState === 'PENDING') {
@@ -1964,6 +2049,13 @@
           // panel; everywhere else: the master panel + WebPanel).
           if (icon.type === 'web') {
             openWebPanelFor(icon);
+            return;
+          }
+          // v1.42.6 THE SINGULARITY: holes own their panel (rename,
+          // palette, ring, re-target, dive, delete-pair) — the generic
+          // getters path plus holes.js's live wiring.
+          if (icon.type === 'hole' && window.Holes) {
+            window.Holes.openPanel(icon, panel);
             return;
           }
           panel.open({
@@ -2094,6 +2186,7 @@
       e.preventDefault();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       cancelCameraGlide();   // v1.36.3: a pinch takes the camera — the glide dies
+      if (window.Holes) window.Holes.cancelDive();   // v1.42.6: the dive dies with it
       inputState = 'IDLE'; velX = 0; velY = 0;
       if (draggedIcon) {
         draggedIcon.dragging = false;
@@ -2172,6 +2265,7 @@
     if (!onCanvasSurface(e.target)) return;
     e.preventDefault();
     cancelCameraGlide();   // v1.36.3: a zoom notch takes the camera — the glide dies
+    if (window.Holes) window.Holes.cancelDive();   // v1.42.6: the dive dies with it
     lastWheelAt = performance.now();   // v1.09.3: the wheel burst holds the ladder
     zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX, e.clientY);
     zoomReleaseFrame();
@@ -2828,6 +2922,13 @@
     // dispatches doomalay:persona-saved after every PATCH).
     refreshPersonaRings();
     update();   // v1.42.5: one poke — the fresh world paints now (switches must not wait for a tick)
+    // v1.42.6 THE SINGULARITY: the lost-hole heal — holes whose target
+    // row died render 'lost' + refuse the dive (a re-target state,
+    // never a crash). One list fetch per apply (boot + switch), never
+    // per-frame.
+    if (window.Holes && window.Holes.healLost) {
+      try { window.Holes.healLost(); } catch (e) {}
+    }
   }
 
   // captureThumb() — the outgoing world's card: a composite of the

@@ -234,8 +234,11 @@ const activeId = () => pstr("(window.Worlds&&window.Worlds.activeId)?window.Worl
   // ── W6 the close-out laws ──────────────────────────────────────
   rows = await api('GET', '/api/canvases');
   ok('W6 one row per world (no leaks)', rows.body.canvases.length === 2, JSON.stringify(rows.body.canvases.map((c) => c.id)));
+  // NOTE: `agent-browser errors` is decorative in this CLI build (bare ✗
+  // marks regardless of page state) — only real error TEXT fails.
   const errs = ab(['errors']);
-  ok('W6 zero page errors across the whole walk', !errs || errs.trim() === '' || errs === '[]', String(errs).slice(0, 300));
+  const realErrLines = String(errs).split('\n').map((l) => l.trim()).filter((l) => l && l !== '✗' && l !== '✓');
+  ok('W6 zero page errors across the whole walk', realErrLines.length === 0, JSON.stringify(realErrLines).slice(0, 300));
   ok('W6 zero in-page exceptions', abJson("JSON.stringify(window.__errs||[])") === '[]' || pstr("JSON.stringify(window.__errs||[])") === '[]',
     pstr("JSON.stringify(window.__errs||[])"));
 

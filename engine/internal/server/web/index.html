@@ -6070,9 +6070,18 @@
      browser panel") — NEW BOT (the renamed create-chat action, still
      create-only at the exact press point) + NEW TAB (creates the web
      entity + opens its browser-in-browser panel). -->
+<!-- v1.42.6 THE SINGULARITY: the portal veil — the dive/emerge
+     aperture (a themed full-screen radial that consumes the view at
+     max zoom). A STATIC element toggled by holes.js (opacity ramps,
+     pointer-events:none) — the B1 discipline: no body appenders, the
+     overlay is born in the document like #menu itself. -->
+<div id="hole-veil" style="position:fixed;inset:0;z-index:2900;pointer-events:none;opacity:0;display:none"></div>
 <div id="menu" class="hidden">
   <button data-action="new-chat">＋ New Bot</button>
   <button data-action="new-tab">⧉ New Tab</button>
+  <!-- v1.42.6 THE SINGULARITY: the portal birth row — opens the world
+       picker (a PANEL view); picking births the two-way pair. -->
+  <button data-action="new-portal">◉ New Portal</button>
   <!-- v1.36.2 THE HELD THING: the icon-hold population — pin first,
        delete LAST (the user's row order). Populated live by showIconMenu
        (the pin row flips pin/unpin, the delete row names the thing). -->
@@ -6378,6 +6387,11 @@
      restore source). Data plane only — the switch/UI arrive with
      v1.42.5+ (THE SWAP / THE MANAGER). -->
 <script src="worlds.js"></script>
+<!-- v1.42.6 THE SINGULARITY: black holes = simple two-way portals —
+     the HoleEntity (GridIcon 'hole' type), the pair law (createPair /
+     deletePair across engine rows), the portal panel, and the dive →
+     swap → emerge transition riding v1.42.5's ONE switchTo. -->
+<script src="holes.js"></script>
 <!-- v1.42.5 THE SWAP: the Canvases manager CORE — the settings page
      (rows / switch / create / rename / duplicate / delete + the storage
      line). The full worlds overlay (browse-the-library row, downloaded

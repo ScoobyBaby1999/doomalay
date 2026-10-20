@@ -200,9 +200,13 @@ async function dragIcon(dx, dy) {
   ok('W5 the stale entry dies', !!scrollMap && !('chat_gone_ghost' in scrollMap), JSON.stringify(scrollMap));
 
   // ── W6 zero errors ────────────────────────────────────────────
+  // NOTE: `agent-browser errors` is decorative in this CLI build (bare ✗
+  // marks regardless of page state — convicted live in v1.42.6) — only
+  // real error TEXT fails.
   const errs = ab(['errors']);
-  ok('W6 zero page errors across the whole walk', !errs || errs.trim() === '' || errs === '[]',
-    String(errs).slice(0, 400));
+  const realErrLines = String(errs).split('\n').map((l) => l.trim()).filter((l) => l && l !== '✗' && l !== '✓');
+  ok('W6 zero page errors across the whole walk', realErrLines.length === 0,
+    JSON.stringify(realErrLines).slice(0, 400));
 
   try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
   console.log(`\n${n - fails.length}/${n} passed${fails.length ? '  FAILED: ' + fails.join(' · ') : ''}`);

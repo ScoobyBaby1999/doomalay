@@ -389,8 +389,12 @@ const lastSwitch = () => abJson("(window.__sw&&window.__sw.length)?JSON.stringif
   listed = await api('GET', '/api/canvases');
   ok('T8 one row per world (no leaks)', listed.body.canvases.length === 1 && listed.body.canvases[0].id === 'default',
     JSON.stringify(listed.body.canvases.map((c) => c.id)));
+  // NOTE: `agent-browser errors` is decorative in this CLI build (bare ✗
+  // marks regardless of page state — convicted live) — only real error
+  // TEXT fails; the in-page listener is the truth.
   const errs = ab(['errors']);
-  ok('T8 zero page errors across the whole rig', !errs || errs.trim() === '' || errs === '[]', String(errs).slice(0, 300));
+  const realErrLines = String(errs).split('\n').map((l) => l.trim()).filter((l) => l && l !== '✗' && l !== '✓');
+  ok('T8 zero page errors across the whole rig', realErrLines.length === 0, JSON.stringify(realErrLines).slice(0, 300));
 
   try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
   console.log(`\n${n - fails.length}/${n} passed${fails.length ? '\n  FAILED: ' + fails.join(' · ') : ''}`);
