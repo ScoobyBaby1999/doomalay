@@ -78,7 +78,7 @@ func str(key, desc string, required bool) PropDef {
 	return prop(key, desc, PropString, required)
 }
 
-// defs is the full tool registry — 30 tools: the 29 ported VERBATIM from
+// defs is the full tool registry — 31 tools: the 29 ported VERBATIM from
 // nativeToolSpecs (descriptions + props + required + gating) so the
 // model-visible manifest is byte-identical to the proven one (v1.20.3
 // THE ARM adds the gated termux hand).
@@ -263,6 +263,18 @@ var defs = []Def{
 			str("period", "week|month|'last N days' (review, default week).", false),
 			str("target", "date|today|yesterday|'A..B'|'last N' (read).", false),
 			str("format", "md|json (export).", false),
+		}},
+	// ── the fleet roster (always armed — the engine's own truth) ────
+	// v1.47.2 THE FLEET HAND (PLAN-V147 §2): check the OTHER chatbots —
+	// the roster (name/model · canvas · live state · last activity) and
+	// one bot's full detail (identity, capabilities, current actions,
+	// progress). The A2A-agent-card grammar over the engine's tables.
+	{Name: "fleet",
+		Desc: "Check the OTHER chatbots on this engine — who is active, where they live (which canvas), what they are, and what they are doing right now. roster lists every chat: title, provider/model, canvas, live state (running/idle), last activity, turns; q filters by title/model/provider/canvas. detail expands ONE chat's full card: identity (persona, effort, mode, template), armed capabilities, the CURRENT action (the live events tail — what it is doing right now) and progress (turns, tokens, cost, last activity). Use it whenever the user asks about their other chats or wants a status board.",
+		Props: []PropDef{
+			prop("action", "'roster' (the list; default) or 'detail' (one bot's full card + current actions).", PropString, false, "roster", "detail", "help"),
+			str("q", "Roster filter: case-insensitive substring on title/model/provider/canvas.", false),
+			str("target", "The chat to detail: its id, or a title prefix (also matched case-insensitively).", false),
 		}},
 	// ── the swarm delegate (gated on the Delegate closure) ──────────
 	{Name: "delegate", Gate: GateDelegate,

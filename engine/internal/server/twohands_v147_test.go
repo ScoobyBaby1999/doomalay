@@ -11,6 +11,7 @@ import (
         "os"
         "strings"
         "testing"
+        "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
@@ -123,5 +124,145 @@ func TestV1471_DjournalDefAndSummaryRegistered(t *testing.T) {
         // the pill body law: the action + operand head
         if got := mcpbus.DefaultSummary("djournal", `{"action":"read","target":"today"}`); got != "read today" {
                 t.Errorf("djournal summary = %q, want 'read today'", got)
+        }
+}
+
+// ── v1.47.2 THE FLEET HAND: roster + detail over the store ──────────
+
+func TestV1472_FleetRosterRunningFirstAndFilter(t *testing.T) {
+        s := newTestServerV147(t)
+        ctx := context.Background()
+        seedSessionV147(t, s, "sess-a", "Alpha Bot", "nvidia", "nemotron")
+        seedSessionV147(t, s, "sess-b", "Research Chat", "privatemodeai", "glm-5.3")
+        seedSessionV147(t, s, "sess-c", "Journal Chat", "openrouter", "minimax")
+        seedCanvasV147(t, s, "canvas-work", "Work", []string{"sess-a", "sess-b"})
+        seedCanvasV147(t, s, "canvas-home", "Home", []string{"sess-c"})
+        seedEventV147(t, s, "sess-a", "user", "run the rig")
+        seedEventV147(t, s, "sess-a", "assistant", "the rig is green")
+        seedEventV147(t, s, "sess-a", "status", `{"state":"idle","usage":{"input_tokens":120,"output_tokens":30,"reasoning_tokens":12}}`)
+
+        // sess-b RUNNING (the turn gauge — the engine's own truth)
+        turnGaugeInc("sess-b")
+        defer turnGaugeDec("sess-b")
+
+        out := s.runFleetAction(ctx, "sess-c", `{"action":"roster"}`)
+        // the running chat leads
+        ra := strings.Index(out, "Research Chat")
+        rb := strings.Index(out, "Alpha Bot")
+        if ra < 0 || rb < 0 || ra > rb {
+                t.Fatalf("the RUNNING chat must lead the roster:\n%s", out)
+        }
+        if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "canvas \"Work\"") {
+                t.Fatalf("roster rows must carry state + canvas:\n%s", out)
+        }
+        if !strings.Contains(out, "1 turn") {
+                t.Fatalf("the user-event count rides the row:\n%s", out)
+        }
+
+        // the filter narrows (name/model/provider/canvas)
+        out = s.runFleetAction(ctx, "sess-c", `{"action":"roster","q":"glm"}`)
+        if strings.Contains(out, "Alpha Bot") || !strings.Contains(out, "Research Chat") {
+                t.Fatalf("q=glm must narrow to the glm chat:\n%s", out)
+        }
+        out = s.runFleetAction(ctx, "sess-c", `{"action":"roster","q":"home"}`)
+        if !strings.Contains(out, "Journal Chat") {
+                t.Fatalf("q=home must match by canvas name:\n%s", out)
+        }
+        // no-match honesty
+        out = s.runFleetAction(ctx, "sess-c", `{"action":"roster","q":"zebra"}`)
+        if !strings.Contains(out, "no chats match") {
+                t.Fatalf("no-match must be honest:\n%s", out)
+        }
+}
+
+func TestV1472_FleetDetailCurrentActionsAndProgress(t *testing.T) {
+        s := newTestServerV147(t)
+        ctx := context.Background()
+        seedSessionV147(t, s, "sess-r", "Rig Chat", "nvidia", "nemotron")
+        seedCanvasV147(t, s, "canvas-lab", "Lab", []string{"sess-r"})
+        seedEventV147(t, s, "sess-r", "user", "run the rig please")
+        seedEventV147(t, s, "sess-r", "assistant", "starting now")
+        seedEventV147(t, s, "sess-r", "status", `{"state":"idle","usage":{"input_tokens":3593,"output_tokens":81,"reasoning_tokens":64}}`)
+        // a personas JSON so the identity block resolves a name
+        sess, _ := s.db.GetSession("sess-r")
+        sess.Personas = `[{"id":"p1","name":"Rigger","text":"you rig things","mode":"always"}]`
+        if err := s.db.UpdateSession(sess); err != nil {
+                t.Fatalf("update session: %v", err)
+        }
+
+        turnGaugeInc("sess-r")
+        defer turnGaugeDec("sess-r")
+
+        out := s.runFleetAction(ctx, "sess-other", `{"action":"detail","target":"Rig"}`)
+        for _, want := range []string{
+                "fleet — detail: Rig Chat",
+                "model: nvidia/nemotron · effort: max",
+                "persona: Rigger (always)",
+                "canvas: \"Lab\"",
+                "state: RUNNING — a turn is in flight right now",
+                "recent events (oldest first):",
+                "user: run the rig please",
+                "status: idle",
+                "last turn usage: 3,593 in / 81 out (🧠 64 thinking)",
+                "turns: 1",
+        } {
+                if !strings.Contains(out, want) {
+                        t.Errorf("detail missing %q:\n%s", want, out)
+                }
+        }
+        // the THIS-IS-YOU mark
+        out = s.runFleetAction(ctx, "sess-r", `{"action":"detail","target":"sess-r"}`)
+        if !strings.Contains(out, "THIS IS YOU") {
+                t.Errorf("the caller's own chat is marked:\n%s", out)
+        }
+        // the target can be the id
+        out = s.runFleetAction(ctx, "sess-other", `{"action":"detail","target":"sess-r"}`)
+        if !strings.Contains(out, "fleet — detail: Rig Chat") {
+                t.Errorf("detail by id:\n%s", out)
+        }
+}
+
+func TestV1472_FleetDefRegisteredAndHonestHelp(t *testing.T) {
+        specs := mcpbus.SpecsFor(mcpbus.Gates{})
+        found := false
+        for _, sp := range specs {
+                fn, _ := sp["function"].(map[string]any)
+                if fn != nil && fn["name"] == "fleet" {
+                        found = true
+                }
+        }
+        if !found {
+                t.Fatal("fleet missing from the always-armed manifest")
+        }
+        if got := mcpbus.DefaultSummary("fleet", `{"action":"detail","target":"Rig"}`); got != "detail Rig" {
+                t.Errorf("fleet summary = %q, want 'detail Rig'", got)
+        }
+        s := newTestServerV147(t)
+        out := s.runFleetAction(context.Background(), "x", `{"action":"frobnicate"}`)
+        if !strings.Contains(out, "unknown action") {
+                t.Errorf("unknown fleet action must teach the grammar: %s", out)
+        }
+}
+
+func TestV1472_FleetAmbiguityHonesty(t *testing.T) {
+        s := newTestServerV147(t)
+        ctx := context.Background()
+        seedSessionV147(t, s, "s1", "Rig One", "nvidia", "n1")
+        seedSessionV147(t, s, "s2", "Rig Two", "nvidia", "n2")
+        out := s.runFleetAction(ctx, "s1", `{"action":"detail","target":"Rig"}`)
+        if !strings.Contains(out, "ambiguous") || !strings.Contains(out, "Rig One (s1)") {
+                t.Fatalf("a prefix hitting two chats must say so honestly:\n%s", out)
+        }
+        // no-target honesty
+        out = s.runFleetAction(ctx, "s1", `{"action":"detail"}`)
+        if !strings.Contains(out, "detail needs a target") {
+                t.Fatalf("no-target must teach the roster first:\n%s", out)
+        }
+}
+
+// relTime smoke: the relative clock never lies about "never".
+func TestV1472_RelTimeNever(t *testing.T) {
+        if got := relTime(0, time.Now()); got != "never" {
+                t.Errorf("relTime(0) = %q, want never", got)
         }
 }

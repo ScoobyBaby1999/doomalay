@@ -2058,6 +2058,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 DjournalToolFn: func(ctx context.Context, argJSON string) string {
                         return s.runDjournalAction(ctx, sessionID, argJSON)
                 },
+                // v1.47.2 THE FLEET HAND: the other-chatbots roster +
+                // detail — always armed (the engine's own read surface).
+                FleetToolFn: func(ctx context.Context, argJSON string) string {
+                        return s.runFleetAction(ctx, sessionID, argJSON)
+                },
                 // v1.22.0 THE MIRROR: the workspace manifest NO LONGER
                 // prepends llm-side — {repo_access} in the composed system
                 // prompt carries it (the expansion covers both turn paths;

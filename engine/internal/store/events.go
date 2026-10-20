@@ -274,3 +274,29 @@ WHERE session_id=? ORDER BY seq DESC LIMIT ?`, sessionID, tailLimit)
         }
         return false, false
 }
+
+// CountUserTurnsPerSession (v1.47.2 THE FLEET HAND) — ONE query for the
+// whole roster: session_id → user-event count (a "turn" is a user
+// message + everything it triggered). Cheap on the (session_id, seq)
+// index; the roster never pays N round-trips.
+func (db *DB) CountUserTurnsPerSession() (map[string]int, error) {
+	rows, err := db.Query(`
+SELECT session_id, COUNT(*)
+FROM chat_events
+WHERE event_type='user'
+GROUP BY session_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

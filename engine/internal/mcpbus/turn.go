@@ -84,7 +84,10 @@ type Turn struct {
 	// <DataDir>/journal/entries.jsonl; nil = the tool honestly reports
 	// it is not armed for this chat).
 	Djournal func(ctx context.Context, argJSON string) string
-
+	// Fleet runs the other-chatbots roster/detail tool (server
+	// closure — v1.47.2 THE FLEET HAND: the engine's own sessions +
+	// canvases + live turn state; nil = not armed).
+	Fleet func(ctx context.Context, argJSON string) string
 
 	// Summarize builds the pill text for a tool call. Optional — nil
 	// falls back to DefaultSummary (the ported per-category logic).
@@ -235,6 +238,8 @@ func DefaultSummary(name, argJSON string) string {
 		// (the target/query/text) so the pill teaches what the model is
 		// doing with its diary.
 		return clampRunes(strings.TrimSpace(get("action")+" "+first("target", "query", "date_range", "period", "text")), 80)
+	case "fleet":
+		return clampRunes(strings.TrimSpace(get("action")+" "+first("q", "target")), 80)
 	case "persona_list":
 		return ""
 	case "persona_set", "persona_activate":

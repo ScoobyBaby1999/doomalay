@@ -103,6 +103,11 @@ type ChatRequest struct {
         // it needs a live session. Exports also sink into the session's
         // artifact drawer via ArtifactSink (the docx/xlsx pattern).
         DjournalToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+        // v1.47.2 THE FLEET HAND: the other-chatbots roster/detail on
+        // the direct path — the server reads its own store (sessions,
+        // canvases, the live turn locks, the events tail). nil = the
+        // tool reports it needs a live session.
+        FleetToolFn func(ctx context.Context, argJSON string) string `json:"-"`
         // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
         // time) lets a deprovisioned model rotate to another provider hosting
         // the same logical model; FallbackTried caps it at one rotation/turn.
@@ -1932,6 +1937,15 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                 ch <- ChatChunk{Type: "tool_use", Name: "djournal", Summary: summary, Args: argJSON}
                 observation = req.DjournalToolFn(ctx, argJSON)
                 ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "djournal"}
+                return observation
+        }
+        if action == "fleet" && req.FleetToolFn != nil {
+                // v1.47.2 THE FLEET HAND on the direct path — the roster
+                // + detail through the server's runner.
+                summary := mcpbus.DefaultSummary("fleet", argJSON)
+                ch <- ChatChunk{Type: "tool_use", Name: "fleet", Summary: summary, Args: argJSON}
+                observation = req.FleetToolFn(ctx, argJSON)
+                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "fleet"}
                 return observation
         }
         if action == "delegate" && req.DelegateFn != nil {

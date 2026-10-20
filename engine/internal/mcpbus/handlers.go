@@ -176,6 +176,15 @@ func handlerFor(d *Def) server.ToolHandlerFunc {
 			}
 			return textResult(t.Djournal(ctx, argJSON)), nil
 
+		case d.Name == "fleet":
+			// v1.47.2 THE FLEET HAND: the roster + detail over the
+			// engine's own sessions (the server closure reads the
+			// store + the live turn locks).
+			if t.Fleet == nil {
+				return mcp.NewToolResultError("error: the fleet tool needs a live session on this server"), nil
+			}
+			return textResult(t.Fleet(ctx, argJSON)), nil
+
 		case personaTools[d.Name]:
 			if t.Persona == nil {
 				return mcp.NewToolResultError("error: persona tools need a live session on this server"), nil
