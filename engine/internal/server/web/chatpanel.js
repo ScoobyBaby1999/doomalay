@@ -2532,7 +2532,10 @@
         stopTurnIfStreaming(state, bodyEl);
         state.model = canonicalModel(provider, modelId);
         state.provider = provider;
-        pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
+        // v1.45.4 THE QUIET ORACLE: the model-pick nudge is GONE — PM
+        // chats work engine-native on the TOFU pin like every provider;
+        // the attestation verification is the optional Re-verify button
+        // in the provider card (the only wasm trigger left).
         // v0.89.2: every model CHOICE gets one self-heal chance (same as
         // applyModelChoice — a dial-less pick must not consume the chat's
         // only catalog refresh for the NEXT model).
@@ -3766,33 +3769,17 @@
   // for the same fresh chat (quick-chat + cloud provider repro) — two POSTs
   // raced, the WS bound session #1 while state.sessionId landed on #2, and
   // histories crossed after reload. One in-flight creation, queued cbs.
-  // ── v1.44.4 THE STRIP: the PM attestation-oracle nudge ──────────
-  // With the WebView turn bridge retired, the wasm verify() (the only
-  // licensed attestation verifier — PLAN-V144 §V4) runs at PM CONNECT:
-  // when a PrivateMode chat opens (session restore) or a PM model is
-  // picked, an UNVERIFIED pin (headless TOFU) gets its oracle upgrade
-  // here — once per chat per page life, fire-and-forget, never blocking
-  // the panel. Verified pins skip the 6.1MB wasm entirely (the lazy-wasm
-  // law); the provider card's Re-verify button remains the manual drive.
-  function pmOracleNudge(state) {
-    if (!state || state.provider !== 'privatemodeai') return;
-    if (state._pmOracleNudged) return;
-    state._pmOracleNudged = true;
-    if (!(window.PMBridge && window.PMBridge.rerunOracle)) return;
-    fetch('/api/pm/state').then(function (r) { return r.json(); }).then(function (p) {
-      if (p && p.pinned && p.verified) return; // already verified — no wasm load
-      return window.PMBridge.rerunOracle().then(function () {
-        return fetch('/api/pm/state').then(function (r) { return r.json(); });
-      }).then(function (p2) {
-        if (p2 && p2.pinned && p2.verified && window.toast) {
-          window.toast('✓ PrivateMode attestation verified — the engine pin is upgraded');
-        }
-      });
-    }).catch(function (e) {
-      console.warn('[pm-oracle] connect-time verify failed:', e && e.message);
-    });
-  }
-
+  //
+  // v1.45.4 THE QUIET ORACLE: the v1.44.4 connect-time nudge is DELETED.
+  // It auto-loaded the 6.1MB wasm + ran a full attestation handshake on
+  // every PM chat open / model pick with an unverified pin — on a device
+  // where PM is unreachable that is a guaranteed failing 6MB download +
+  // console noise at the exact moment the user tries PM (the user's
+  // report: "network was unreachable when I initially used pm as a
+  // provider"). PM turns need ZERO wasm (the engine speaks the protocol
+  // natively on the TOFU pin — PLAN-V144); the ONLY wasm trigger left is
+  // the provider card's explicit Re-verify button (providers.js), labeled
+  // as the optional attestation check it is.
   function ensureSession(icon, state, cb) {
     if (state.sessionId) { cb(); return; }
     if (state._ensureQ) { state._ensureQ.push(cb); return; }
@@ -3920,7 +3907,8 @@
         if (data.SandboxRepo !== undefined && data.Sandbox === 'hf') state.sandboxRepo = data.SandboxRepo || '';
         if (!state.model && data.Model) state.model = data.Model;
         if (!state.provider && data.Provider) state.provider = data.Provider;
-        pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
+        // v1.45.4 THE QUIET ORACLE: the session-restore nudge is GONE —
+        // zero wasm loads at PM connect (see the model-pick note above).
         if (data.SlidingWindow) state.slidingWindow = data.SlidingWindow;
         // v0.20 FIX: restore the FULL capability set from the engine
         // session — the old restore dropped web_search/deep_research/effort/
@@ -6496,7 +6484,8 @@
     stopTurnIfStreaming(state, bodyEl);
     state.model = canonicalModel(provider, modelId);
     state.provider = provider;
-    pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
+    // v1.45.4 THE QUIET ORACLE: the applyModel nudge is GONE — zero
+    // auto-wasm anywhere in the chat UI (see the model-pick note above).
     // v0.89.2: every model CHOICE gets one self-heal chance — the flag
     // resets here so a dial-less pick (e.g. deepseek-ocr) doesn't consume
     // the chat's only refresh for the NEXT model (cloudflare after ocr

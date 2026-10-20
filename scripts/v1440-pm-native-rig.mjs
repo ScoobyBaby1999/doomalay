@@ -326,7 +326,7 @@ try {
   check('R9b: pmsdk carries the oracle + re-verify drive', /reportBootstrap/.test(pmsdk) && /rerunOracle/.test(pmsdk));
   check('R9c: chatframework has no PM branch (every quick chat rides runWSTurn)', !/privatemodeai/.test(framework));
   check('R9d: chatpanel has no PM turn twins (no runPMTurn/pmSystemContext/pmDocsLadder)', !/runPMTurn|pmSystemMessage|pmDocsLadder/.test(panel));
-  check('R9e: the connect-moment nudge exists', /pmOracleNudge/.test(panel));
+  check('R9e: ZERO auto-wasm in the chat UI (the v1.44.4 nudge died in v1.45.4 THE QUIET ORACLE — PM chats ride the TOFU pin; the provider card\'s explicit button is the only wasm trigger)', !/pmOracleNudge/.test(panel) && !/rerunOracle/.test(panel));
   check('R9f: the ticket gate guards the key endpoint', /consumePMTicket/.test(keysGo));
   check('R9g: the local bridge route is registered', /\/api\/pm\/local\/v1\/chat\/completions/.test(serverGo));
   check('R9h: the bridge enforces api-key-fallback=never (constant-time)', /subtle\.ConstantTimeCompare/.test(pmlocal));

@@ -302,21 +302,30 @@
       // the header — never truncated (user report: the OpenCode 401 text was
       // cut off mid-sentence and unreadable).
       var valReasonBlock = (val && !val.checking && val.reason) ? reasonHTML(val.reason) : '';
-      // v1.44.2 THE PIN: the honest engine-pin pill (PrivateMode only).
-      // The engine pins the deployment's mesh CA for its NATIVE PM turns
-      // (encrypted at rest); verified=true ONLY when the one-shot wasm
-      // oracle (the app's own PM handshake) ran the attestation
-      // verification in the pin window. TOFU is surfaced honestly, never
+      // v1.44.2 THE PIN / v1.45.4 THE QUIET ORACLE: the honest engine-pin
+      // pill (PrivateMode only). The engine pins the deployment's mesh CA
+      // for its NATIVE PM turns (encrypted at rest) — PM chats work on the
+      // TOFU pin exactly like every provider, with ZERO wasm. The optional
+      // attestation check (the one-shot wasm oracle — Edgeless's own
+      // verifier, the only legally runnable one) upgrades the pin to
+      // verified=true; it runs ONLY from this card's explicit verify
+      // button, never automatically (the v1.44.4 connect-time nudge died
+      // in v1.45.4 — a 6.1MB auto-download + a failing handshake at PM
+      // connect was noise, not security). TOFU is surfaced honestly, never
       // silently upgraded. Theme tokens only (the theme law).
       var pinHTML = '';
       if (name === 'privatemodeai' && isActive && pmPin && pmPin.pinned) {
+        var pmVerifyBtn = '<button data-pm-reverify="1" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap">' + (pmPin.verified ? 're-verify' : 'verify attestation') + '</button>';
         if (pmPin.verified) {
           pinHTML = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">' +
             '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">🔒 engine pinned · attestation verified</span>' +
-            '<button data-pm-reverify="1" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap">re-verify</button>' +
+            pmVerifyBtn +
             '</div>';
         } else {
-          pinHTML = '<div style="margin-top:6px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--warn);line-height:1.4">◦ engine pinned · TOFU — unverified first contact. Open a PrivateMode chat once to run the verification handshake.</div>';
+          pinHTML = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.4">◦ engine pinned · TOFU — your PrivateMode chats work; the attestation check is optional</span>' +
+            pmVerifyBtn +
+            '</div>';
         }
       }
       // Cloudflare also needs an Account ID (stored as its own vault entry).
@@ -431,12 +440,12 @@
         });
       });
 
-      // v1.44.2 THE PIN: re-verify clears the engine's PM pin and asks
-      // the oracle to RUN AGAIN NOW (the button's promise: verification
-      // happens here, not "at the next chat"). The bridge re-runs the
-      // wasm verify() against the CURRENT deployment; its bootstrap
-      // report re-pins the engine verified. Failure = the pin stays
-      // cleared + the honest error.
+      // v1.44.2 THE PIN / v1.45.4 THE QUIET ORACLE: re-verify clears the
+      // engine's PM pin and asks the oracle to RUN AGAIN NOW (the ONLY
+      // wasm trigger — the explicit button; the connect-time auto-nudge
+      // died in v1.45.4). The bridge re-runs the wasm verify() against
+      // the CURRENT deployment; its bootstrap report re-pins the engine
+      // verified. Failure = the pin stays cleared + the honest error.
       contentEl.querySelectorAll('[data-pm-reverify]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           btn.disabled = true; btn.textContent = 'verifying…';
@@ -446,7 +455,7 @@
               pmPin = null;
               render();
               if (!(window.PMBridge && window.PMBridge.rerunOracle)) {
-                if (window.toast) window.toast('PM pin cleared — the next PrivateMode chat re-runs the verification');
+                if (window.toast) window.toast('PM pin cleared — press verify attestation to run the check');
                 return;
               }
               window.PMBridge.rerunOracle()
@@ -459,7 +468,7 @@
                   if (pmPin && pmPin.pinned && pmPin.verified) {
                     if (window.toast) window.toast('✓ PrivateMode re-verified — the engine pin is back, attestation verified');
                   } else {
-                    if (window.toast) window.toast('PM re-verify did not complete — the pin stays cleared; open a PrivateMode chat to retry');
+                    if (window.toast) window.toast('PM verify did not complete — the pin stays cleared; press verify attestation to retry');
                   }
                   render();
                 })
