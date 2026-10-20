@@ -132,7 +132,12 @@ function seedAged(dataDir) {
 }
 
 // ── the local manifest server (the OTA sweep E2E) ──────────────────
-function startManifestServer(dir) {
+// v1.42.7 battery note: the engine boots in ~130ms on this hardware and
+// its ONE boot-time OTA fetch does not retry for 5 minutes — python's
+// http.server needs ~150-300ms to answer. The server must be READY
+// before the engine spawns, or the sweep test races (the A8 flake this
+// readiness loop fixed).
+async function startManifestServer(dir) {
   const manifest = {
     version: 'v0.0.0-rig',
     ref: 'main',
@@ -144,7 +149,15 @@ function startManifestServer(dir) {
   };
   fs.writeFileSync(path.join(dir, 'patch-manifest.json'), JSON.stringify(manifest));
   const child = spawn('python3', ['-m', 'http.server', String(MPORT), '--bind', '127.0.0.1'], { cwd: dir, stdio: 'ignore' });
-  return child;
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${MPORT}/patch-manifest.json`);
+      if (r.ok) return child;
+    } catch (e) { /* not up yet */ }
+    if (Date.now() - t0 > 10000) return child;   // give up honest — the A8 failure will tell
+    await sleep(120);
+  }
 }
 
 // ── PHASE A ─────────────────────────────────────────────────────────
@@ -181,7 +194,7 @@ async function phaseA() {
 
   // the aged boot: OTA pointed at the local manifest server (A8 rides it)
   const mdir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1421-manifest-'));
-  const msrv = startManifestServer(mdir);
+  const msrv = await startManifestServer(mdir);
   const otaDir = path.join(dir1, 'ota');
   fs.mkdirSync(otaDir, { recursive: true });
   fs.writeFileSync(path.join(otaDir, 'app.js'), 'the kept overlay bytes');

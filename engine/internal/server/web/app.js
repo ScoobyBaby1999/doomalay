@@ -962,6 +962,10 @@
     // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
     // manager panel + v1.42.6's portals both ride the ONE switchTo).
     switchTo: switchTo,
+    // v1.42.7 THE MANAGER: the ONE hub-open-from-canvas law — the dock
+    // glyph and the manager's browse row both call it (an optional type
+    // pre-filters; 'canvas' when the library wave registers it).
+    openLibrary: function (type) { openLibrary(type); },
     // v1.42.6 THE SINGULARITY: the portal runtime's hooks — camera
     // writes (the dive/emerge interpolation), entity removal (a pair
     // death), the immediate save, and the rAF pump. holes.js consumes.
@@ -1785,6 +1789,12 @@
       const wp = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
       hideMenu();
       openPortalPicker(wp);
+    } else if (btn.dataset.action === 'new-canvas') {
+      // v1.42.7 THE MANAGER: REV 2's law — "+ Canvas" opens the worlds
+      // overlay (the three-zone manager), never an immediate child
+      // create. The overlay owns jump / browse / create / rename.
+      hideMenu();
+      if (window.WorldsManager) window.WorldsManager.open();
     } else if (btn.dataset.action === 'icon-pin') {
       // v1.36.2 THE HELD THING: the pin row — the flag rides the icon
       // (serialize → localStorage), the themed badge wears/leaves, the
@@ -2594,27 +2604,40 @@
     // from the canvas it carries NO chat connection ({chat:null} — the
     // pill reads "no chat"); opened from an already-open chat panel it
     // still auto-connects that chatbot's chat.
+    // v1.42.7 THE MANAGER: the body is ONE function now (openLibrary)
+    // — the dock and the manager's browse row call the same law, the
+    // manager optionally pre-filtered to a type ('canvas' when the
+    // library wave registers it; until then the hub's type-reset law
+    // lands on the hub home honestly).
     const dockLibraryBtn = dockStripEl.querySelector('#dock-library');
     if (dockLibraryBtn) dockLibraryBtn.addEventListener('click', function () {
-      if (!window.Hub) return;
-      // A chat panel is already up → the pill's exact path applies
-      // (Hub.open derives + connects THIS chat).
-      var cur = window.ChatPanel && window.ChatPanel.current();
-      if (cur && cur.panel && cur.panel.isOpen()) { window.Hub.open(); return; }
-      // From the bare canvas (the dock sits under an open panel's scrim,
-      // so this is the only other case) — open a host panel first, then
-      // push the hub view on top of it with NO chat connected.
-      var icon = (cur && cur.icon) || null;
-      if (!icon) {
-        for (const e of world.entities) { if (e.type === 'chat') { icon = e; break; } }
-      }
-      if (!icon) { window.Hub.open(); return; }  // toasts "open a chat first"
-      openChatPanelFor(icon);
-      // v0.60 pt B: canvasHost — the panel below is just a HOST for the
-      // library. Back/✕ on the library's main browsing page closes the
-      // whole panel (canvas), never the synthetic host chat.
-      window.Hub.open(undefined, { chat: null, canvasHost: true });
+      openLibrary();
     });
+  }
+
+  // openLibrary(type) — the ONE hub-open-from-canvas law (v1.42.7): a
+  // chat panel already up → the pill's exact path (Hub.open derives +
+  // connects THIS chat, or the given type with no chat); from the bare
+  // canvas → open a host panel first, then push the hub view on top of
+  // it with NO chat connected (canvasHost — back/✕ closes the whole
+  // panel, never the synthetic host chat).
+  function openLibrary(type) {
+    if (!window.Hub) return;
+    var cur = window.ChatPanel && window.ChatPanel.current();
+    if (cur && cur.panel && cur.panel.isOpen()) {
+      window.Hub.open(type, { chat: type ? null : undefined });
+      return;
+    }
+    var icon = (cur && cur.icon) || null;
+    if (!icon) {
+      for (const e of world.entities) { if (e.type === 'chat') { icon = e; break; } }
+    }
+    if (!icon) { window.Hub.open(type); return; }  // toasts "open a chat first"
+    openChatPanelFor(icon);
+    // v0.60 pt B: canvasHost — the panel below is just a HOST for the
+    // library. Back/✕ on the library's main browsing page closes the
+    // whole panel (canvas), never the synthetic host chat.
+    window.Hub.open(type, { chat: null, canvasHost: true });
   }
 
   // ── v0.79.1: THE CANVAS FINGERPRINT GATE + rAF COALESCING ──────

@@ -486,6 +486,43 @@ func TestV1424_SavedAtProbe(t *testing.T) {
 	}
 }
 
+// TestV1427_StateBytesProbe — v1.42.7 THE MANAGER: the list row carries
+// the stored state's size (the manager rows' size line). A shell row (no
+// state) probes 0 — poison tolerance, the saved_at law's twin.
+func TestV1427_StateBytesProbe(t *testing.T) {
+        s := newLongHaulServer(t)
+        v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "sz", "state": v1424State(1)})
+        _, body, _ := v1424Get(t, s, "/api/canvases")
+        rows, _ := body["canvases"].([]any)
+        var withState float64 = -1
+        for _, r := range rows {
+                if r.(map[string]any)["id"] == "sz" {
+                        withState = r.(map[string]any)["state_bytes"].(float64)
+                }
+        }
+        if withState <= 0 {
+                t.Fatalf("state_bytes must be > 0 for a stored state, got %v", withState)
+        }
+        // shell row (no state) probes 0
+        v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "shelldb"})
+        _, body, _ = v1424Get(t, s, "/api/canvases")
+        for _, r := range body["canvases"].([]any) {
+                rm := r.(map[string]any)
+                if rm["id"] == "shelldb" && rm["state_bytes"].(float64) != 0 {
+                        t.Fatalf("shell row state_bytes must be 0: %v", rm)
+                }
+        }
+        // a rename-only PUT keeps the state (its bytes still present)
+        v1424Send(t, s, "PUT", "/api/canvases/sz", map[string]any{"name": "renamed"})
+        _, body, _ = v1424Get(t, s, "/api/canvases")
+        for _, r := range body["canvases"].([]any) {
+                rm := r.(map[string]any)
+                if rm["id"] == "sz" && (rm["name"] != "renamed" || rm["state_bytes"].(float64) <= 0) {
+                        t.Fatalf("rename must keep state bytes: %v", rm)
+                }
+        }
+}
+
 func TestV1424_CreatedAtImmutableOnUpsert(t *testing.T) {
 	s := newLongHaulServer(t)
 	_, body := v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "birth"})

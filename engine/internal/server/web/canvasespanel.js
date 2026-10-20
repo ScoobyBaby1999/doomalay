@@ -174,9 +174,17 @@
 
   function doCreate() {
     note('creating…');
-    var n = 2;
-    rowsCache.forEach(function (r) { if (/^Canvas \d+$/.test(r.name || '')) n = Math.max(n, parseInt(r.name.split(' ')[1], 10) + 1); });
-    api('POST', '/api/canvases', { name: 'Canvas ' + n, state: { icons: [], dots: [], savedAt: Date.now(), offset: { x: 0, y: 0 }, scale: 1 } })
+    // v1.42.7 THE MANAGER: the generic-default law is ONE helper
+    // (canvas_N, first free index — catches the legacy 'Canvas N' names
+    // too). The settings page and the worlds overlay share it.
+    var name = (window.WorldsManager && window.WorldsManager.nextName)
+      ? window.WorldsManager.nextName(rowsCache)
+      : (function () {
+        var n = 2;
+        rowsCache.forEach(function (r) { if (/^Canvas \d+$/.test(r.name || '')) n = Math.max(n, parseInt(r.name.split(' ')[1], 10) + 1); });
+        return 'Canvas ' + n;
+      })();
+    api('POST', '/api/canvases', { name: name, state: { icons: [], dots: [], savedAt: Date.now(), offset: { x: 0, y: 0 }, scale: 1 } })
       .then(function (d) {
         var id = d && d.canvas && d.canvas.id;
         if (!id) throw new Error('no id');

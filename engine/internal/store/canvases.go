@@ -39,16 +39,19 @@ type Canvas struct {
 
 // CanvasRow is the LIST shape (no state, no thumb) — the boot registry
 // fetch and the manager's gallery rows. IconCount/SavedAt are the JSON1
-// probes; HasThumb says whether /thumb has bytes.
+// probes; HasThumb says whether /thumb has bytes. StateBytes (v1.42.7
+// THE MANAGER) is the stored state's size — the manager rows' size line
+// (additive JSON: every existing consumer reads named fields, none breaks).
 type CanvasRow struct {
-        ID        string  `json:"id"`
-        Name      string  `json:"name"`
-        Sort      int64   `json:"sort"`
-        IconCount int64   `json:"icon_count"`
-        HasThumb  bool    `json:"has_thumb"`
-        CreatedAt float64 `json:"created_at"`
-        UpdatedAt float64 `json:"updated_at"`
-        SavedAt   float64 `json:"saved_at"`
+        ID         string  `json:"id"`
+        Name       string  `json:"name"`
+        Sort       int64   `json:"sort"`
+        IconCount  int64   `json:"icon_count"`
+        HasThumb   bool    `json:"has_thumb"`
+        StateBytes int64   `json:"state_bytes"`
+        CreatedAt  float64 `json:"created_at"`
+        UpdatedAt  float64 `json:"updated_at"`
+        SavedAt    float64 `json:"saved_at"`
 }
 
 // CanvasDigest is the hygiene-sweep join shape: every icon id + every
@@ -66,6 +69,7 @@ func (db *DB) ListCanvases() ([]*CanvasRow, error) {
                 SELECT id, name, sort,
                        COALESCE(json_array_length(state, '$.icons'), 0),
                        thumb IS NOT NULL,
+                       COALESCE(length(state), 0),
                        created_at, updated_at,
                        COALESCE(CAST(json_extract(state, '$.savedAt') AS REAL), 0)
                 FROM canvases
@@ -77,7 +81,7 @@ func (db *DB) ListCanvases() ([]*CanvasRow, error) {
         out := []*CanvasRow{}
         for rows.Next() {
                 r := &CanvasRow{}
-                if err := rows.Scan(&r.ID, &r.Name, &r.Sort, &r.IconCount, &r.HasThumb, &r.CreatedAt, &r.UpdatedAt, &r.SavedAt); err != nil {
+                if err := rows.Scan(&r.ID, &r.Name, &r.Sort, &r.IconCount, &r.HasThumb, &r.StateBytes, &r.CreatedAt, &r.UpdatedAt, &r.SavedAt); err != nil {
                         return nil, err
                 }
                 out = append(out, r)

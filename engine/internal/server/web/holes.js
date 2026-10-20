@@ -297,10 +297,23 @@
           var rt = host.querySelector('#hole-retarget');
           if (!rt) return;
           var others = rows.filter(function (r) { return r.id !== activeId(); });
-          if (!others.length) { rt.textContent = 'no other worlds to re-target'; return; }
-          rt.innerHTML = 're-target: ' + others.map(function (r) {
-            return '<button data-rt="' + esc(r.id) + '" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:var(--ui-tiny-fs);cursor:pointer;margin:2px">' + esc(r.name || r.id) + '</button>';
-          }).join('');
+          // v1.42.7 THE MANAGER: the map behind the quick buttons — the
+          // worlds overlay opened in portal context (tap a world there =
+          // re-target + fall through; the create row wires a fresh pair).
+          var mapBtn = (window.WorldsManager)
+            ? '<button id="hole-wm" style="display:block;width:100%;margin-top:6px;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:var(--ui-tiny-fs);cursor:pointer">⊞ all worlds…</button>'
+            : '';
+          if (!others.length) {
+            rt.innerHTML = mapBtn;
+          } else {
+            rt.innerHTML = 're-target: ' + others.map(function (r) {
+              return '<button data-rt="' + esc(r.id) + '" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:var(--ui-tiny-fs);cursor:pointer;margin:2px">' + esc(r.name || r.id) + '</button>';
+            }).join('') + mapBtn;
+          }
+          var wm = rt.querySelector('#hole-wm');
+          if (wm) wm.addEventListener('click', function () {
+            if (window.WorldsManager) window.WorldsManager.open({ fromPortal: icon });
+          });
           others.forEach(function (r) {
             var b = rt.querySelector('[data-rt="' + r.id + '"]');
             if (b) b.addEventListener('click', function () {
@@ -526,12 +539,20 @@
 
   // ── the exports ──────────────────────────────────────────────────
 
+  // closeHostPanel() — v1.42.7 THE MANAGER's portal context closes the
+  // hosting panel before the dive (the dive button's own law, exposed
+  // for the manager's retarget+dive path).
+  function closeHostPanel() {
+    if (panelHost && panelHost.close) { try { panelHost.close(); } catch (e) {} }
+  }
+
   window.Holes = {
     createPair: createPair,
     deletePair: deletePair,
     openPanel: openPanel,
     transition: transition,
     cancelDive: cancelDive,
+    closeHostPanel: closeHostPanel,
     step: step,
     healLost: healLost,
     isTransitioning: function () { return T.phase !== 'idle'; },

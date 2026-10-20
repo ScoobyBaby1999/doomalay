@@ -6082,6 +6082,10 @@
   <!-- v1.42.6 THE SINGULARITY: the portal birth row — opens the world
        picker (a PANEL view); picking births the two-way pair. -->
   <button data-action="new-portal">◉ New Portal</button>
+  <!-- v1.42.7 THE MANAGER: the worlds overlay row — REV 2's law: "+ Canvas"
+       opens the MANAGER (the three-zone overlay), never an immediate
+       child create. -->
+  <button data-action="new-canvas">⊞ + Canvas</button>
   <!-- v1.36.2 THE HELD THING: the icon-hold population — pin first,
        delete LAST (the user's row order). Populated live by showIconMenu
        (the pin row flips pin/unpin, the delete row names the thing). -->
@@ -6397,6 +6401,12 @@
      line). The full worlds overlay (browse-the-library row, downloaded
      canvases) is v1.42.7 THE MANAGER. -->
 <script src="canvasespanel.js"></script>
+<!-- v1.42.7 THE MANAGER: the worlds overlay (ConnectOverlay) — the
+     three zones (your canvases rows / browse worlds / + create), the
+     local-only rename, the generic canvas_N defaults, the back-stack,
+     and the portal context (retarget + dive when entered from a hole's
+     panel). Rides canvasespanel's data law + the ONE switchTo. -->
+<script src="worldsmanager.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
 <script src="ota.js"></script><!-- v1.17.4 THE LIVE UPDATE: the delta OTA banner (appended AFTER the last script — a different position from the termuxsetup.js tag the parallel wave owns, to keep the merge clean) -->
