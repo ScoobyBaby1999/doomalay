@@ -336,6 +336,9 @@ func (s *Server) routes() {
         // v1.44.3 THE WIRE: the scoped one-shot ticket the SDK bridge
         // redeems at /api/keys/value (the standing plaintext hole is dead).
         s.mux.HandleFunc("POST /api/pm/handshake-ticket", s.handlePMHandshakeTicket)
+        // v1.44.5 THE BRAIN: the local PM bridge — plain OpenAI on the engine
+        // port for the co-located brain (the Node sidecar is retired).
+        s.mux.HandleFunc("POST /api/pm/local/v1/chat/completions", s.handlePMLocalChat)
         s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
         s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview)                  // v0.62.1: the universal link verdict
         s.mux.HandleFunc("GET /api/preview/screenshot", s.handlePreviewScreenshot) // v0.62.4: the T3 tier (501 when no chromium)

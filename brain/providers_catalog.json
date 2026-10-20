@@ -219,7 +219,11 @@
    "name": "privatemodeai",
    "pool": "core",
    "env_var": "PRIVATEMODEAI_API_KEY",
-   "base_url": "http://127.0.0.1:8530/v1/chat/completions",
+   "requires": [
+    "PRIVATEMODEAI_API_KEY",
+    "DOOMALAY_ENGINE_URL"
+   ],
+   "base_url": "{DOOMALAY_ENGINE_URL}/api/pm/local/v1/chat/completions",
    "models_url": "https://api.privatemode.ai/v1/models",
    "region": "eu",
    "limits": {
@@ -240,7 +244,7 @@
     "enabled": true,
     "params": {}
    },
-   "note": "v0.91.8 THE SIDECAR: chat rides brain/pmproxy.mjs (the Node OpenAI-compatible shim doing the E2E-encrypted calls through the vendored SDK — pm_sidecar.py spawns it lazily on first PM use; litellm cannot speak the protocol). Model LISTING stays on the real API (the /v1/models listing is not encrypted). Port via DOOMALAY_PM_PROXY_PORT (default 8530)."
+   "note": "v1.44.5 THE BRAIN: chat rides the ENGINE's local PM bridge (POST {DOOMALAY_ENGINE_URL}/api/pm/local/v1/chat/completions — plain OpenAI on the engine port, E2E-encrypted upstream by the engine's pinned client; the key rides the Authorization header, api-key-fallback=never). The v0.91.8 Node sidecar (pmproxy.mjs + the 6MB wasm) is RETIRED; no co-located engine (a standalone space brain) = PM honestly skipped at registration. Model LISTING stays on the real API (the /v1/models listing is not encrypted)."
   },
   {
    "name": "hf",

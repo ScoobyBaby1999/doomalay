@@ -1,106 +1,60 @@
-"""pm_sidecar.py — THE PRIVATEMODE SIDECAR SPAWNER (v0.91.8).
+"""pm_sidecar.py — THE PRIVATEMODE ENGINE BRIDGE RESOLVER (v1.44.5).
 
-The brain's agent turns run through litellm (Python), which cannot speak
-PM's E2E-encryption protocol (attestation + AES-GCM — implemented in the
-official SDK's WASM). pmproxy.mjs (this directory) is a tiny Node shim
-that exposes the PLAIN OpenAI-compatible API on loopback and does the
-encrypted calls through the vendored SDK — the same architecture as the
-app's WebView bridge, moved server-side so HF-space agent chats can use
-PrivateMode.
+v0.91.8 ran a Node sidecar here: brain/pmproxy.mjs, a Node shim exposing
+the plain OpenAI wire on loopback:8530 and doing PM's E2E-encrypted calls
+through the vendored npm SDK (a 6MB wasm). RETIRED — since v1.44.3 THE
+WIRE the ENGINE speaks PM's protocol itself (pure Go, the pinned client
+in engine/internal/pmstate), and it exposes the plain OpenAI wire for
+this co-located brain:
 
-This module lazily ensures the sidecar is running (one spawn per brain
-process, node is present on both space flavors — ZeroGPU probe v0.46 and
-the Docker image) and returns its base URL. The providers catalog's
-privatemodeai entry points at it; model LISTING stays on the real API
-(the /v1/models listing is not encrypted).
+    POST {DOOMALAY_ENGINE_URL}/api/pm/local/v1/chat/completions
+    Authorization: Bearer <the vault's PrivateMode key>
+
+The engine injects DOOMALAY_ENGINE_URL before spawning this process
+(cmd/doomalay/main.go); it defaults to http://127.0.0.1:8080. The
+per-request key rides litellm's normal Authorization header — the bridge
+enforces the official proxy's --api-key-fallback=never law (constant-time
+exact match against the vault's PM key).
+
+NO Node. NO wasm. NO spawn. One env read. When the engine is not
+co-located (an HF-space brain runs standalone), PM is honestly
+unavailable: providers.py skips the provider (the catalog's
+{DOOMALAY_ENGINE_URL} placeholder requires it) and agent turns route to
+other providers — never a silent fallback.
 """
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
-import threading
-import urllib.request
-from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-PM_PROXY_PORT = int(os.environ.get("DOOMALAY_PM_PROXY_PORT", "8530"))
-PM_PROXY_BASE = f"http://127.0.0.1:{PM_PROXY_PORT}"
-# the catalog's chat base_url (litellm api_base after the brain strips the
-# trailing /chat/completions) — keep in sync with providers_catalog.json.
-PM_PROXY_CHAT_URL = PM_PROXY_BASE + "/v1/chat/completions"
-
-_lock = threading.Lock()
-_proc: subprocess.Popen | None = None
-_ready = False
+_DEFAULT_ENGINE_URL = "http://127.0.0.1:8080"
+_BRIDGE_PATH = "/api/pm/local/v1/chat/completions"
 
 
-def _log(kind: str, **kw) -> None:
-    """Best-effort lifecycle log — the spawner must never be silent (the
-    v0.91.5 strands lesson: a quietly-dead dependency is undebuggable)."""
-    try:
-        import json as _json
-        print(f"[pm_sidecar] {kind} {_json.dumps(kw)}", flush=True)
-    except Exception:
-        pass
-
-
-def _probe(timeout: float = 2.0) -> bool:
-    """Is something already answering /healthz on the sidecar port?"""
-    try:
-        req = urllib.request.Request(PM_PROXY_BASE + "/healthz", method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status == 200
-    except Exception:
-        return False
+def _engine_url() -> str | None:
+    """The co-located engine's base URL, or None when we run brain-only."""
+    return (os.environ.get("DOOMALAY_ENGINE_URL", "") or "").strip().rstrip("/") or None
 
 
 def pm_proxy_chat_url() -> str | None:
-    """Ensure the PM sidecar is up; return its chat URL (None when Node is
-    unavailable — the caller keeps the catalog URL and the litellm call
-    fails honestly with connection refused, which route_judge bounces)."""
-    global _proc, _ready
-    with _lock:
-        if _ready:
-            return PM_PROXY_CHAT_URL
-        if _probe():
-            _ready = True
-            return PM_PROXY_CHAT_URL
-        node = shutil.which("node")
-        if node is None:
-            _log("spawn_fail", reason="node not found on PATH")
-            return None
-        # the node process's stdout/stderr ride the container log — the
-        # v0.91.5 lesson: a silent sidecar death is undebuggable from outside
-        proc = subprocess.Popen(
-            [node, str(_HERE / "pmproxy.mjs")],
-            cwd=str(_HERE),
-            stderr=None,  # inherit → the HF run log
-            stdout=None,
-            start_new_session=True,  # survives the request; dies with the container
-        )
-        # the wasm decompress (5.9MB gz) + boot: give it up to 45s
-        import time
-        deadline = time.time() + 45
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                _log("spawn_fail", rc=proc.returncode,
-                     hint="pmproxy.mjs died at boot — see its stderr above")
-                return None  # died at boot (missing files / node version)
-            if _probe():
-                _proc = proc
-                _ready = True
-                _log("spawn_ok", port=PM_PROXY_PORT, pid=proc.pid)
-                return PM_PROXY_CHAT_URL
-            time.sleep(0.5)
-        _log("spawn_timeout", port=PM_PROXY_PORT)
-        try:
-            proc.terminate()
-        except Exception:
-            pass
+    """The PM chat URL on the engine's local bridge (None = no co-located
+    engine — the caller skips PM honestly; kept for the v0.91.8 callers).
+
+    The old contract spawned the Node shim lazily here; the engine bridge
+    needs no lifecycle — the ENGINE owns the pin, the secret, the renewals.
+    """
+    base = _engine_url()
+    if base is None:
         return None
+    return base + _BRIDGE_PATH
+
+
+def pm_engine_base() -> str | None:
+    """The co-located engine's base URL (litellm appends the wire path).
+    agent_core's resolver uses this as the PM chat base; None = no
+    co-located engine (the registration gate already skipped PM)."""
+    return _engine_url()
 
 
 def pm_proxy_running() -> bool:
-    """The cheap check (no spawn) — for /health reporting."""
-    return _ready or _probe(0.5)
+    """The cheap check (no spawn, no probe) — for /health reporting."""
+    return _engine_url() is not None
