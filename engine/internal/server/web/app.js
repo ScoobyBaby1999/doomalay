@@ -734,7 +734,12 @@
   }
 
   // ── World + icons ──────────────────────────────────────────────
-  const world = new Physics.World();
+  // v1.42.5 THE SWAP: the world instance is SWAPPABLE — every switch
+  // births a fresh Physics.World (the plan's singleton-unwiring #1;
+  // the sleeper grids + spatial hash + bounds ride the instance, so a
+  // new world must never inherit the old one's bins). The onContacts
+  // wiring (line ~745) re-arms on every swap — see newWorld().
+  let world = new Physics.World();
   const iconLayer = document.getElementById('chatbots');
   // v0.88.2: THE CONTACT TAP — every physics frame's touches report here
   // once; v0.90.3: ANY icon pair feeds the orbit groups ("if any two icons
@@ -742,15 +747,21 @@
   // — chats orbit too, their workspace stars nested atop). A topology
   // change repaints the grid furniture (the star + its sphere are painted
   // state on #c2).
-  world.onContacts = function (contacts) {
-    if (!window.TabGroups) return;
-    var changed = false;
-    for (var i = 0; i < contacts.length; i++) {
-      var c = contacts[i];
-      if (c.a && c.b && window.TabGroups.collide(c.a, c.b, c.x, c.y)) changed = true;
-    }
-    if (changed) { update(); startAnimation(); }
-  };
+  // v1.42.5 THE SWAP: every fresh World instance re-arms the contact
+  // tap (the wiring is the LAW, not the instance's — switchTo births
+  // the new world then calls this).
+  function armWorldContacts() {
+    world.onContacts = function (contacts) {
+      if (!window.TabGroups) return;
+      var changed = false;
+      for (var i = 0; i < contacts.length; i++) {
+        var c = contacts[i];
+        if (c.a && c.b && window.TabGroups.collide(c.a, c.b, c.x, c.y)) changed = true;
+      }
+      if (changed) { update(); startAnimation(); }
+    };
+  }
+  armWorldContacts();
   // v0.85.1 THE ICON-LAYER BUDGET: past 40 icons every .chatbot's
   // will-change:transform costs more in standing compositor layers +
   // texture memory than the rare re-promotion on drag — the .many-icons
@@ -865,7 +876,10 @@
     getFamily: () => currentFamily,
     getConfig: () => config,
     scheduleSave,
-    world: world,
+    // v1.42.5 THE SWAP: a GETTER, not a snapshot — the world instance
+    // swaps on every switchTo; a captured property would strand every
+    // late reader (tabgroups deserialize, the rigs) on a dead world.
+    get world() { return world; },
     // v0.85.3: the web-tab entity paths (webtab.js's WebTabs controller
     // calls back into these — the app owns world/iconLayer/save).
     addEntity: function (icon) {
@@ -944,6 +958,17 @@
     // camera work builds on this).
     cameraProbe: function () {
       return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H };
+    },
+    // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
+    // manager panel + v1.42.6's portals both ride the ONE switchTo).
+    switchTo: switchTo,
+    worldsProbe: function () {
+      return {
+        active: (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null,
+        switching: switching,
+        icons: world.entities.length,
+        canvasScopeKeys: CANVAS_SCOPE_KEYS.length
+      };
     },
     // v0.90.1: THE SIM STEPPER for the E2E rigs — advances physics + the
     // orbit steering TOGETHER at the tick's own 60Hz pairing with a
@@ -2618,6 +2643,10 @@
       currentFamily: currentFamily,
       icons: world.entities.map(function (c) { return c.serialize(); }),
       dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
+      // v1.42.5 THE SWAP: the canvas-scope settings ride the WorldState —
+      // each canvas carries its own look (theme + grid); the GLOBAL keys
+      // (text sizes, renderer knobs, worldSize) never enter a world row.
+      settings: (window.Settings) ? pickCanvasScope(window.Settings.getState()) : {},
       savedAt: Date.now(),
       // v1.42.4 THE LEDGER: the scratch carries its canvas id — the
       // boot heal's ownership check (a fresher scratch only wins for
@@ -2644,6 +2673,283 @@
       if (!raw) return null;
       return JSON.parse(raw);
     } catch (e) { return null; }
+  }
+
+  // ══ v1.42.5 THE SWAP (PLAN-V142 §3.2) ══════════════════════════
+  // The multi-canvas runtime: the ONE world-apply path (boot AND
+  // switchTo), the per-canvas settings layer, the switch itself, and
+  // the thumbnail capture. Zero per-frame additions — a switch is a
+  // burst; the coast/tick paths are untouched.
+
+  // CANVAS-scope settings (plan §3.2.4): the canvas's LOOK — these
+  // round-trip through the WorldState (saveNow picks them; switchTo
+  // materializes the target's). Everything else (text sizes, renderer
+  // knobs, worldSize, names, fontFamily per Q7) is GLOBAL — the
+  // device's truth, never in a world row.
+  const CANVAS_SCOPE_KEYS = [
+    'theme', 'themeOverrides', 'fmtOverrides', 'chatScheme',
+    'gridSize', 'bg', 'lineColor', 'dotColor', 'originColor',
+    'hideGridLines', 'hideDots',
+    'gridScatter', 'gridSizeVariation', 'gridRotation',
+    'dotScatter', 'lineScatter', 'dotSizeVariation', 'lineSizeVariation',
+    'dotSizeBias', 'lineSizeBias', 'dotRotation', 'lineRotation',
+    'dotAnimate', 'lineAnimate', 'spaceParallax'
+  ];
+  function pickCanvasScope(st) {
+    var out = {};
+    if (!st) return out;
+    for (var i = 0; i < CANVAS_SCOPE_KEYS.length; i++) {
+      var k = CANVAS_SCOPE_KEYS[i];
+      if (st[k] !== undefined) out[k] = st[k];
+    }
+    return out;
+  }
+  // Materialize the target world's slice into the live settings —
+  // DIFF-gated: only keys that actually change ride setState (the
+  // onChange listeners fire repaints; the canvasFingerprint gate
+  // dedupes the canvas repaint itself — the plan's "repaint only on
+  // actual key deltas" law).
+  function materializeCanvasScope(slice) {
+    if (!slice || typeof slice !== 'object') return 0;
+    var st = window.Settings.getState();
+    var patch = null;
+    for (var i = 0; i < CANVAS_SCOPE_KEYS.length; i++) {
+      var k = CANVAS_SCOPE_KEYS[i];
+      if (slice[k] === undefined) continue;
+      if (st[k] !== slice[k]) {
+        (patch = patch || {})[k] = slice[k];
+      }
+    }
+    if (patch) window.Settings.setState(patch);
+    return patch ? Object.keys(patch).length : 0;
+  }
+
+  // applyWorldState(saved, opts) — the ONE restore path. Boot and
+  // switchTo both ride it; every heal (dup ids, session isolation,
+  // white-screen guard, camera clamp) applies identically whatever
+  // the caller. opts.boot gates the first-run empty-state card.
+  function applyWorldState(saved, opts) {
+    opts = opts || {};
+    if (saved) {
+      offsetX = (saved.offset && saved.offset.x) || 0;
+      offsetY = (saved.offset && saved.offset.y) || 0;
+      if (typeof saved.scale === 'number') {
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
+      }
+      clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the boot-heal law)
+      updateEdgeAffordance();   // the edge line reflects the restored camera immediately (tick may not run at rest)
+      if (saved.currentFamily && config.families[saved.currentFamily]) {
+        currentFamily = saved.currentFamily;
+      }
+      // Migrate: old storage key (v1) stored chatbots; new key (v2) stores icons.
+      // Try both 'icons' (new) and 'chatbots' (old v0.7.0/v0.8.0).
+      const savedIcons = saved.icons || saved.chatbots;
+      if (Array.isArray(savedIcons)) {
+        // v0.20 HEAL: installs saved before the unique-id fix can carry
+        // DUPLICATE ids (the nextId reset bug) — two chats sharing one id
+        // cross-wired their panel states. Rename later duplicates BEFORE
+        // construction so every restored chat gets its own state entry.
+        // The renamed chat keeps its sessionId, so its history stays
+        // attached — only the internal id changes.
+        // v0.38 SESSION-ISOLATION HEAL: the same era of saves can also
+        // carry TWO icons bound to the SAME engine sessionId — both then
+        // replay each other's full history on every WS connect and write
+        // into one event log (the data-level chat leak). The FIRST icon
+        // keeps the session; later duplicates are unbound and create a
+        // fresh engine session on their next open.
+        const seenIds = new Set();
+        const seenSessions = new Set();
+        for (const c of savedIcons) {
+          // v0.35 WHITE-SCREEN GUARD: one corrupt entry (a string, null, or
+          // a malformed object from a crashed write) used to throw here in
+          // strict mode → init() aborted → __doomalayReady never set → the
+          // app booted to a dead blank screen, permanently. Skip poison
+          // entries; the rest of the chats still load.
+          if (!c || typeof c !== 'object') continue;
+          try {
+            if (!c.id) c.id = 'chat_' + Math.random().toString(36).slice(2, 10);
+            while (seenIds.has(c.id)) {
+              c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
+            }
+            seenIds.add(c.id);
+            if (c.sessionId) {
+              if (seenSessions.has(c.sessionId)) c.sessionId = ''; // own sandbox on next open
+              else seenSessions.add(c.sessionId);
+            }
+          } catch (e) { continue; }
+        }
+        for (const c of savedIcons) {
+          try {
+            if (!c || typeof c !== 'object') continue;
+            if (!c.type) c.type = 'chat';  // migration from v0.7.0
+            const icon = window.GridIcon.create(c);
+            if (icon) {
+              // v1.36.2 THE HELD THING: the pin rides the saved blob (the
+              // factories don't take it in their constructors — the restore
+              // applies it + wears the badge the moment the icon exists).
+              if (c.pinned) { icon.pinned = true; if (typeof icon.refreshPinBadge === 'function') icon.refreshPinBadge(); }
+              world.add(icon);
+              iconLayer.appendChild(icon.el);
+            }
+          } catch (e) {
+            console.warn('doomalay: skipped a corrupt saved chat entry', e);
+          }
+        }
+      }
+    }
+
+    // v0.82.2: the first-run empty-state — only a FRESH install (no
+    // saved layout at all) with ZERO restored icons sees the card.
+    // `saved` null = this device has never placed an icon (returning
+    // users who deleted everything still have a saved layout → skip).
+    if (opts.boot) maybeShowCanvasEmpty(!saved);
+
+    // v0.88.2: THE COLLISION DOTS restore — the grouped web tabs re-bind
+    // (each member re-baselines its (r, φ) from its saved position —
+    // "the user can move an icon somewhere and have it orbit but stay in
+    // that location")
+    if (window.TabGroups && saved && Array.isArray(saved.dots)) {
+      try { window.TabGroups.deserialize(saved.dots); } catch (e) { console.warn('dots restore failed', e); }
+    }
+
+    updateIconBudget();   // v0.85.1: the restored world sets the icon budget
+    // v0.85.4: the world layer evaluates its gate on the restored count
+    if (window.World3D) { window.World3D.evaluate(); window.World3D.sync(); }
+    resize();
+
+    // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces
+    // gets its orbiting stars: one count fetch per session (parallel,
+    // best-effort), then the rAF loop starts itself through the
+    // atoms-changed event below.
+    if (window.Atoms) window.Atoms.refreshAll(world.entities);
+
+    // v0.84.2 THE PERSONA BADGE — the ACTIVE persona's ring paints around
+    // each chat's icon (boot + every persona save; persona.js's persist()
+    // dispatches doomalay:persona-saved after every PATCH).
+    refreshPersonaRings();
+    update();   // v1.42.5: one poke — the fresh world paints now (switches must not wait for a tick)
+  }
+
+  // captureThumb() — the outgoing world's card: a composite of the
+  // canvas layers at card width, PNG-laddered under the 64KB engine
+  // cap. Best-effort (a failed capture never blocks a switch).
+  function captureThumb() {
+    // the id is pinned at GRAB time — the pixels are captured
+    // synchronously from the OUTGOING world; the ladder + PUT resolve
+    // asynchronously, by which point Worlds.setCurrent may already
+    // point at the NEW world (the card would land on the wrong row).
+    var cid = (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null;
+    try {
+      var c1 = document.getElementById('c'), c2 = document.getElementById('c2');
+      var srcW = c1 && c1.width, srcH = c1 && c1.height;
+      if (!srcW || !srcH) return Promise.resolve(false);
+      var TW = 320, TH = Math.max(1, Math.round(srcH * TW / srcW));
+      var off = document.createElement('canvas');
+      off.width = TW; off.height = TH;
+      var ctx = off.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0)';  // transparent base — the card rides theme vars behind it
+      ctx.drawImage(c1, 0, 0, TW, TH);
+      if (c2 && c2.width) ctx.drawImage(c2, 0, 0, TW, TH);
+      var layer = iconLayer;   // the DOM icons: draw as raster via SVG foreignObject is heavy —
+      // the lattice + atoms composite IS the world's look (the icons are
+      // abstract circles); v1.42.7's full manager can add the DOM capture.
+      void layer;
+      return new Promise(function (resolve) {
+        var ladder = [TW, 240, 176, 128];
+        var i = 0;
+        var attempt = function () {
+          if (i >= ladder.length) { resolve(false); return; }
+          var w = ladder[i++];
+          var h = Math.max(1, Math.round(srcH * w / srcW));
+          var oc = document.createElement('canvas');
+          oc.width = w; oc.height = h;
+          var octx = oc.getContext('2d');
+          octx.drawImage(off, 0, 0, w, h);
+          oc.toBlob(function (blob) {
+            if (blob && blob.size <= 64 * 1024) {
+              blob.arrayBuffer().then(function (buf) {
+                resolve(new Uint8Array(buf));
+              });
+            } else attempt();
+          }, 'image/png');
+        };
+        attempt();
+      }).then(function (bytes) {
+        if (!bytes || !window.Worlds || !cid) return false;
+        return window.Worlds.CanvasStore.putThumb(cid, bytes)
+          .then(function () { return true; })
+          .catch(function () { return false; });
+      });
+    } catch (e) { return Promise.resolve(false); }
+  }
+
+  // switchTo(id) — THE canonical world switch (the plan §3.2.2; v1.42.6's
+  // portals ride this one path too). A burst, never a tax: freeze the
+  // outgoing world (save + flush + thumb), tear down, apply the target.
+  // Chats stay continuous by construction — the WS + sessions are
+  // world-agnostic (§3.2.6, zero turn-lifecycle changes).
+  let switching = false;
+  function switchTo(id) {
+    if (!window.Worlds || !id) return Promise.resolve({ ok: false, error: 'no registry' });
+    if (switching) return Promise.resolve({ ok: false, error: 'a switch is already in flight' });
+    var currentId = window.Worlds.activeId();
+    if (id === currentId) return Promise.resolve({ ok: true, already: true });
+    switching = true;
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    var finish = function (res) {
+      switching = false;
+      try { window.dispatchEvent(new CustomEvent('doomalay:world-switched', { detail: { id: id, from: currentId, ms: Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0), ok: !!(res && res.ok) } })); } catch (e) {}
+      return res;
+    };
+    // 1. FREEZE the outgoing world: the flush PUT lands NOW (the world
+    //    is about to stop existing in memory), then its card.
+    saveNow();
+    if (window.Worlds.flushNow) window.Worlds.flushNow();
+    var thumbP = captureThumb();
+    // 2. FETCH the target (parallel with the freeze).
+    return window.Worlds.CanvasStore.get(id).then(function (row) {
+      var st = row && row.canvas && row.canvas.state;
+      if (!st || typeof st !== 'object') throw new Error('target canvas has no state');
+      // 3. TEARDOWN: DOM discard (R9: long-lived detached nodes are leak
+      //    bait — rebuild-from-JSON on return; the stash decision point
+      //    stays open for v1.42.6 if the budget rig demands it), a fresh
+      //    Physics.World (no inherited bins), the orbit dots die, the
+      //    lattice caches clear (fingerprint-keyed anyway — the clear
+      //    keeps multi-world sessions from growing them unbounded), the
+      //    pixi layer's per-entity records die with the entity swap
+      //    (sync()'s removal pass destroys containers + textures).
+      iconLayer.textContent = '';
+      world = new Physics.World();
+      armWorldContacts();
+      applyWorldSize(WORLD_SIZE);   // the bounds ride the NEW instance
+      if (window.TabGroups && window.TabGroups.reset) window.TabGroups.reset();
+      if (window.Lattice && window.Lattice.resetCaches) window.Lattice.resetCaches();
+      // 4. The registry pointer + the settings layer BEFORE the apply
+      //    (the lattice bake + icon raster read the target's look).
+      window.Worlds.setCurrent(id);
+      materializeCanvasScope(pickCanvasScopeFromState(st));
+      // 5. APPLY the target world (the one restore path).
+      applyWorldState(st, { boot: false });
+      return thumbP;
+    }).then(function () {
+      // the new world's first save re-baselines the scratch (the canvas
+      // field + the target's state) — quiet, no user-visible change.
+      lastSavedBody = null;   // the body changed worlds — force the next save
+      saveNow();
+      return { ok: true, id: id };
+    }).catch(function (e) {
+      // the honest failure: the current world SURVIVES untouched (the
+      // teardown never ran — it lives inside the then-branch).
+      return { ok: false, error: String(e && e.message || e) };
+    }).then(function (res) {
+      if (res && res.ok) { if (window.Worlds.flushNow) window.Worlds.flushNow(); }
+      return finish(res);
+    });
+  }
+  // the target state's own slice (the row's state.settings — what the
+  // world was saved with), NOT the live global settings.
+  function pickCanvasScopeFromState(st) {
+    return (st && st.settings && typeof st.settings === 'object') ? st.settings : null;
   }
 
   // ── Init ──────────────────────────────────────────────────────
@@ -2717,103 +3023,17 @@
       saved = loadState();
     }
     // 'fresh' → saved stays null → the first-run empty-state path
-    if (saved) {
-      offsetX = (saved.offset && saved.offset.x) || 0;
-      offsetY = (saved.offset && saved.offset.y) || 0;
-      if (typeof saved.scale === 'number') {
-        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
-      }
-      clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the boot-heal law)
-      updateEdgeAffordance();   // the edge line reflects the restored camera immediately (tick may not run at rest)
-      if (saved.currentFamily && config.families[saved.currentFamily]) {
-        currentFamily = saved.currentFamily;
-      }
-      // Migrate: old storage key (v1) stored chatbots; new key (v2) stores icons.
-      // Try both 'icons' (new) and 'chatbots' (old v0.7.0/v0.8.0).
-      const savedIcons = saved.icons || saved.chatbots;
-      if (Array.isArray(savedIcons)) {
-        // v0.20 HEAL: installs saved before the unique-id fix can carry
-        // DUPLICATE ids (the nextId reset bug) — two chats sharing one id
-        // cross-wired their panel states. Rename later duplicates BEFORE
-        // construction so every restored chat gets its own state entry.
-        // The renamed chat keeps its sessionId, so its history stays
-        // attached — only the internal id changes.
-        // v0.38 SESSION-ISOLATION HEAL: the same era of saves can also
-        // carry TWO icons bound to the SAME engine sessionId — both then
-        // replay each other's full history on every WS connect and write
-        // into one event log (the data-level chat leak). The FIRST icon
-        // keeps the session; later duplicates are unbound and create a
-        // fresh engine session on their next open.
-        const seenIds = new Set();
-        const seenSessions = new Set();
-        for (const c of savedIcons) {
-          // v0.35 WHITE-SCREEN GUARD: one corrupt entry (a string, null, or
-          // a malformed object from a crashed write) used to throw here in
-          // strict mode → init() aborted → __doomalayReady never set → the
-          // app booted to a dead blank screen, permanently. Skip poison
-          // entries; the rest of the chats still load.
-          if (!c || typeof c !== 'object') continue;
-          try {
-            if (!c.id) c.id = 'chat_' + Math.random().toString(36).slice(2, 10);
-            while (seenIds.has(c.id)) {
-              c.id = c.id + '_' + Math.random().toString(36).slice(2, 6);
-            }
-            seenIds.add(c.id);
-            if (c.sessionId) {
-              if (seenSessions.has(c.sessionId)) c.sessionId = ''; // own sandbox on next open
-              else seenSessions.add(c.sessionId);
-            }
-          } catch (e) { continue; }
-        }
-        for (const c of savedIcons) {
-          try {
-            if (!c || typeof c !== 'object') continue;
-            if (!c.type) c.type = 'chat';  // migration from v0.7.0
-            const icon = window.GridIcon.create(c);
-            if (icon) {
-              // v1.36.2 THE HELD THING: the pin rides the saved blob (the
-              // factories don't take it in their constructors — the restore
-              // applies it + wears the badge the moment the icon exists).
-              if (c.pinned) { icon.pinned = true; if (typeof icon.refreshPinBadge === 'function') icon.refreshPinBadge(); }
-              world.add(icon);
-              iconLayer.appendChild(icon.el);
-            }
-          } catch (e) {
-            console.warn('doomalay: skipped a corrupt saved chat entry', e);
-          }
-        }
-      }
-    }
+    // v1.42.5 THE SWAP: the ONE apply path — boot rides it exactly like
+    // switchTo does (the heals apply identically whatever the source).
+    // The boot materializes the ACTIVE world's slice FIRST (the switch
+    // order law): the canvas carries its look — the row's slice is the
+    // truth, the device's global settings are just the last session's
+    // residue (a fresh install or a drifted device converges here).
+    materializeCanvasScope(pickCanvasScopeFromState(saved));
+    applyWorldState(saved, { boot: true });
 
-    // v0.82.2: the first-run empty-state — only a FRESH install (no
-    // saved layout at all) with ZERO restored icons sees the card.
-    // `saved` null = this device has never placed an icon (returning
-    // users who deleted everything still have a saved layout → skip).
-    maybeShowCanvasEmpty(!saved);
-
-    // v0.88.2: THE COLLISION DOTS restore — the grouped web tabs re-bind
-    // (each member re-baselines its (r, φ) from its saved position —
-    // "the user can move an icon somewhere and have it orbit but stay in
-    // that location")
-    if (window.TabGroups && saved && Array.isArray(saved.dots)) {
-      try { window.TabGroups.deserialize(saved.dots); } catch (e) { console.warn('dots restore failed', e); }
-    }
-
-    updateIconBudget();   // v0.85.1: the restored world sets the icon budget
-    // v0.85.4: the world layer evaluates its gate on the restored count
-    if (window.World3D) { window.World3D.evaluate(); window.World3D.sync(); }
-    resize();
-
-    // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces
-    // gets its orbiting stars: one count fetch per session (parallel,
-    // best-effort), then the rAF loop starts itself through the
-    // atoms-changed event below.
-    if (window.Atoms) window.Atoms.refreshAll(world.entities);
-
-    // v0.84.2 THE PERSONA BADGE — the ACTIVE persona's ring paints around
-    // each chat's icon (boot + every persona save; persona.js's persist()
-    // dispatches doomalay:persona-saved after every PATCH).
-    refreshPersonaRings();
+    // v0.84.2: the persona-saved listener (boot-only wiring — the
+    // per-world refresh rides applyWorldState itself).
     window.addEventListener('doomalay:persona-saved', function (e) {
       var sid = e && e.detail && e.detail.sessionId;
       if (sid) refreshPersonaRings(sid); else refreshPersonaRings();

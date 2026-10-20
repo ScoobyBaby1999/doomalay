@@ -86,10 +86,15 @@
   // ── the DOM half ────────────────────────────────────────────────
 
   var active = null;        // {id, name, sort} — the ONE active world (this phase: always the boot pick)
-  var dirty = null;         // the latest unsent state
+  var dirty = null;         // the latest unsent state — {state, id}: the id is
+                            // tagged at save() time (a switch can move `active`
+                            // between the save and the flush; the payload
+                            // belongs to ITS world)
   var syncing = false;      // a PUT in flight
   var lastSync = 0;
   var syncTimer = 0;
+  var syncLog = [];         // v1.42.5: the last 64 flush attempts (the rigs'
+                            // PUT-law evidence — id, savedAt, icon count)
   var booted = false;
 
   function lsGet(k) { try { return window.localStorage ? window.localStorage.getItem(k) : null; } catch (e) { return null; } }
@@ -194,7 +199,7 @@
   // debounce keeps the engine at ≤1 PUT / 2s steady-state (the drag law).
   function save(state) {
     if (!active) return;
-    dirty = state;
+    dirty = { state: state, id: active.id };   // v1.42.5: the id rides the payload
     if (!syncTimer) {
       syncTimer = setTimeout(flush, SYNC_MIN_MS);
     }
@@ -205,35 +210,41 @@
     if (!dirty || syncing) return;
     var wait = syncWait(Date.now(), lastSync, dirty);
     if (wait > 0) { syncTimer = setTimeout(flush, wait); return; }
-    var st = dirty;
-    var id = active.id;
+    var st = dirty.state;
+    var id = dirty.id;   // tagged at save() time — a switch can move `active`
+    // between the save and this flush; the payload belongs to ITS world.
     dirty = null;
     syncing = true;
     lastSync = Date.now();
+    syncLog.push({ at: lastSync, id: id, savedAt: st && st.savedAt, icons: st && st.icons ? st.icons.length : -1, theme: st && st.settings ? st.settings.theme : null });
+    if (syncLog.length > 64) syncLog.shift();
     CanvasStore.upsert(id, { state: st }).catch(function () {
       // the PUT failed — restore the payload for the next flush; the
       // crash-window heal covers the rest at boot.
-      if (!dirty || (st.savedAt || 0) >= (dirty.savedAt || 0)) dirty = st;
+      if (!dirty || (st.savedAt || 0) >= (dirty.state.savedAt || 0)) dirty = { state: st, id: id };
     }).then(function () {
       syncing = false;
       if (dirty && !syncTimer) syncTimer = setTimeout(flush, 250);
     });
   }
 
-  // flushNow() — pagehide/visibility-hidden: the last-chance sync
-  // (bypasses the calm throttle; the browser is going away).
+  // flushNow() — pagehide/visibility-hidden AND the world switch: the
+  // last-chance sync (bypasses the calm throttle; the browser is going
+  // away or the world is about to stop existing in memory).
   function flushNow() {
     if (syncTimer) { clearTimeout(syncTimer); syncTimer = 0; }
-    if (!dirty || !active) return;
-    var st = dirty;
+    if (!dirty) return;
+    var d = dirty;
     dirty = null;
     // sendBeacon-style best-effort: a plain fetch with keepalive so the
     // browser doesn't cancel it on teardown.
     try {
-      fetch('/api/canvases/' + encodeURIComponent(active.id), {
+      syncLog.push({ at: Date.now(), id: d.id, savedAt: d.state && d.state.savedAt, icons: d.state && d.state.icons ? d.state.icons.length : -1, now: true });
+      if (syncLog.length > 64) syncLog.shift();
+      fetch('/api/canvases/' + encodeURIComponent(d.id), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: st }),
+        body: JSON.stringify({ state: d.state }),
         keepalive: true
       }).catch(function () {});
     } catch (e) {}
@@ -264,6 +275,7 @@
       CanvasStore: CanvasStore,
       _decideBoot: decideBoot,
       _syncWait: syncWait,
+      _syncLog: function () { return syncLog.slice(); },
       DEFAULT_ID: DEFAULT_ID,
       SYNC_MIN_MS: SYNC_MIN_MS
     };

@@ -2567,6 +2567,27 @@
     lastStats: function () { return lastStats; },
     IN_WORKER: IN_WORKER,
     cheapJSON: cheapJSON,       // v0.88: the spec digests (app.js's gates)
+    // v1.42.5 THE SWAP (PLAN-V142 §3.2.2 step 4): the world switch's
+    // cache clear — the LC maps + bgCache are fingerprint-keyed (no
+    // stale HITS are possible), but a multi-world session with per-
+    // world looks would grow them without bound; a clean swap keeps
+    // the caches honest. The TL bake + bgCache die with it (the new
+    // world's first frame re-bakes).
+    resetCaches: function () {
+      if (IN_WORKER) return;   // the main thread owns the switch
+      lcClearParams();
+      lcClearColors();
+      LC.fp = ''; LC.gen++; LC.cfp = ''; LC.cgen++;
+      LC.samplers.clear(); LC.paints.clear(); LC.sprites.clear();
+      bgCache.key = ''; bgCache.tile = null; bgCache.quadKey = ''; bgCache.quad = null; bgCache.pat = null;
+      // the tile ladder: the in-flight bake timer dies, every cached
+      // level set frees (the LRU cap made leaks slow, not impossible),
+      // the next render re-bakes at the new world's fingerprint.
+      if (TL.bakeT) { clearTimeout(TL.bakeT); TL.bakeT = 0; }
+      TL.fp = ''; TL.tiles = null; TL.pendP = null; TL.pendCam = null;
+      TL.wantFp = ''; TL.pendFp = ''; TL.pendQ = 0; TL.pendRef = '';
+      TL.sets.clear(); TL.ladderBytes = 0;
+    },
     // v0.97: the one-object debug twin (the rigs' proof of mode + memory)
     oneObject: function () {
       return {

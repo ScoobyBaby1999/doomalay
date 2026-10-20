@@ -428,6 +428,15 @@
     });
   }
 
+  // v1.42.5 THE SWAP: the world switch's dot teardown — every orbit
+  // group dies (the new world's deserialize re-binds from its own
+  // saved members). The tick loop coasts empty (active() false) until
+  // the new world's collisions re-form groups.
+  function reset() {
+    dots.length = 0;
+    byId.clear();
+  }
+
   window.TabGroups = {
     collide: collide,
     step: step,
@@ -437,6 +446,7 @@
     dotsFor: dotsFor,
     serialize: serialize,
     deserialize: deserialize,
+    reset: reset,
     _debug: {
       dots: function () { return dots.slice(); },
       dotCount: function () { return dots.length; },
