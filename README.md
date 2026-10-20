@@ -9,6 +9,17 @@ Go Engine (universal runtime) + Python Brain (Strands agent, full tools)
 + PWA (spatial canvas, physics-driven chat icons)
 ```
 
+**PrivateMode is engine-native** (v1.44, PLAN-V144): PM chat turns ride
+the engine's own E2E-encrypted wire — `engine/internal/pm` vendors the
+MIT-licensed half of Edgeless's pure-Go client (PROVENANCE.md records
+every delta), the engine pins the deployment's mesh CA (TOFU, upgraded
+to verified by the one-shot WASM oracle at PM connect — the only thing
+licensed to run Edgeless's BSL-1.1 attestation verifier is their own
+MIT-distributed wasm artifact, `web/vendor/pm/`), and the WebView SDK
+bridge is the oracle ONLY — no PM turn runs in the web layer. The
+co-located brain rides `POST /api/pm/local/v1/chat/completions`
+(api-key-fallback=never).
+
 ## Structure
 
 ```

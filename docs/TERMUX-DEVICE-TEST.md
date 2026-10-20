@@ -109,12 +109,12 @@ endpoints):
 and device folders bound answered *"the termux tool is not armed for
 this chat"* on every call. Three stacked causes, all fixed in v1.21.1:
 
-1. **The PM arm** — PrivateMode chats run their turns in the WebView
-   (the engine can't speak PM's E2E protocol), and their tool calls go
-   through the engine's `/mcp` endpoint. That session Turn was missing
-   the Termux closure entirely — PM bots could NEVER use the termux tool
-   no matter what you stacked. Fixed: the closure now wires (the
-   v1211 rig proves every verb through the exact PM call path).
+1. **The PM arm** — v1.44 THE NATIVE PM: PrivateMode turns run in the
+   ENGINE (the E2E-encrypted wire is engine-native since v1.44.3; the
+   WebView wasm is the connect-time attestation oracle only). PM bots'
+   tool calls ride the engine's native tool loop against the mcpbus —
+   the termux closure wires for PM exactly like every provider (the
+   v1211 rig proves every verb through the exact call path).
 2. **The bind is the consent** — your session row said
    `Termux:false` even though you stacked the row (the PATCH died
    silently once). Now binding a device folder AUTO-STACKS the
@@ -485,10 +485,10 @@ APK once** (the CI build), then:
 5. **The honest return**: with a turn running, background the app for
    ~30s and come back — the panel catches up within ~a second of opening
    (the resync: no "connection lost" flash, the work just appears).
-6. **The PM caveat (honest limit)**: PrivateModeAI bots run their agent
-   loop in the app's web layer, not the engine — they slow down (not die)
-   while backgrounded. Every engine-owned provider (OpenRouter, Nvidia,
-   Mistral, OpenCode, HF, Groq) keeps full speed in the background.
+6. **The PM caveat — RETIRED by v1.44 THE NATIVE PM**: PrivateMode turns
+   are engine-owned now (the encrypted wire runs in the Go engine); PM
+   bots keep full speed in the background exactly like every provider.
+   The old WebView-bridge slowdown is gone with the bridge itself.
 
 **What changed under the hood, one line each**: the engine now holds a
 partial wake lock while turns run (and only then — an idle engine never

@@ -1299,3 +1299,18 @@ Work Log:
 
 Stage Summary:
 - One pill per action, the program as the placeholder, the query as the tail, the loading bar while in flight — live, replayed, and pre-merge chats alike. The PWA side lands OTA. The stream (v1.23.3) fills the same vessel.
+
+---
+Task ID: v1.44.0 (THE NATIVE PM — the wave record)
+Agent: Main orchestrator (PLAN-V144, the user's ask: "Try to make PM run engine side and not in a web layer if possible so it's native like the other providers")
+
+The wave, one line per phase (the full records live in the phase commits):
+- v1.44.1 THE VENDOR (586b133) — the MIT chat-path closure vendored at engine/internal/pm; the TOFU attest getter; go 1.26 toolchain; PLAN-V144 ships.
+- v1.44.2 THE PIN (d64244e) — the vault-persisted mesh CA + active manifest + cached secret (AES-256-GCM, the __STATE__ namespace); TOFU headless, verified ONLY by the one-shot WASM oracle (/api/pm/bootstrap); /api/pm/state + reverify; the provider-card pill; drift = the honest re-verify error, never silent re-pin.
+- v1.44.3 THE WIRE (048e1c7) — llm.Chat speaks PM natively (llm/pmwire.go: the synthetic SSE response over the decrypted stream; every downstream ladder unmodified); the "no secret for ID" retry-once; /api/keys/value's standing plaintext hole DIED behind single-use handshake tickets.
+- v1.44.4 THE STRIP (5621b75) — the web layer's PM twins deleted (~700 lines in chatpanel + the 835-line pmsdk turn bridge → the 176-line oracle); PM turns ride the engine WS; the connect-moment nudge upgrades TOFU pins; 7 bridge rigs retired, 3 updated.
+- v1.44.5 THE BRAIN (cf94cb3) — the Node sidecar retired (pmproxy.mjs + both 6MB wasm copies deleted); the engine's local PM bridge (POST /api/pm/local/v1/chat/completions, api-key-fallback=never, constant-time); the brain catalogs point at {DOOMALAY_ENGINE_URL}.
+- v1.44.6 THE PROOF (db55dfe) — scripts/v1440-pm-native-rig.mjs 27/27 live (the 300+ token unbroken stream, the mid-turn socket cut + armed-truth resume, effort, model + provider switches, re-verify, revoked-key honesty, the source pins); v1400 58/58 + v1350 62/62 + all four pmlive gates; the rig convicted the pre-existing mergeUsage TotalTokens drop (fixed).
+- v1.44.7 THE SHIP (this commit) — buildinfo 1.44.0; the README/OTA/TERMUX/SECURITY doc notes; this record.
+
+The honest limits, on the record: the manifest-mismatch drift conviction is offline-proven (pmstate's fake-cert battery — the live deployment has not rotated its CA during the wave); the forced 45-minute secret renewal is offline-proven (the floor + import laws) with live cached-secret reuse proven across turns; PM agent turns need a CO-LOCATED engine (a standalone HF-space brain honestly skips PM at registration — the space runs brain-only, no engine to speak the protocol; the old Node sidecar covered that shape at the price of a 6MB wasm + a second protocol copy).
